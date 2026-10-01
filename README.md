@@ -132,6 +132,10 @@ scripts/      build script, headless runner, reference generator
 
 ## Credits and licence
 
+FielDes was created by its author ([Tinomart](https://github.com/Tinomart)) **with the help of Claude Code**
+(Anthropic's AI coding assistant): the author set the direction and the design, tested the result and decided what
+stays; much of the code was written together with Claude Code.
+
 FielDes stands on **libfive** by Matt Keeter ([github.com/libfive/libfive](https://github.com/libfive/libfive)):
 its kernel (`kernel/`, namespace `libfive`) and Python bindings (`python/`) are under the
 **Mozilla Public License 2.0** (`LICENSE-MPL-2.0`), and the application (`app/`) derives from its
