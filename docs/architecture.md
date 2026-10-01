@@ -113,7 +113,10 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
    code; where two cubes meet inside the material their wall would be 0 in both, an internal wall that an
    offset, a shell or a lattice skin would keep, so the **consensus** of those two cubes (their surfaces but the one
    between them) is added: it lies inside their union whatever the surfaces do, so a dragged surface (`expose`,
-   handles) keeps the part one continuous solid. Only the bridges a wall needs are added.
+   handles) keeps the part one continuous solid. It also leaves the field **outside** the part untouched (where the
+   field is positive the consensus is never below the lower of the two cubes), which a section's field view, an
+   outward shell or an offset read. A cube grown further than the consensus has fewer surfaces and lower values,
+   and would lower the outside. Only the bridges a wall needs are added.
 5. **Emit** a tree (an expression of `x, y, z`) per solid. The import cache stores these trees.
 
 ## The exact tessellator

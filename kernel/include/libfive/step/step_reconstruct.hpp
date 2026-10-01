@@ -71,7 +71,11 @@ namespace step {
 //   3  2026-10-01  one continuous solid: where two cells of the part meet
 //                  inside the material the field is no longer 0 on the wall
 //                  between them (the field of a part's tree changes)
-constexpr int kImportVersion = 3;
+//   4  2026-10-01  the bridges across those walls are consensus cubes, which
+//                  leave the field outside the part as it was (version 3 grew
+//                  them and lowered the outside: section field, outward shell
+//                  and thickening came out wrong)
+constexpr int kImportVersion = 4;
 
 // True if every face of `solid` has an analytic (non-B-spline) surface
 // -- the precondition for reconstruct() to be usable at all. A solid

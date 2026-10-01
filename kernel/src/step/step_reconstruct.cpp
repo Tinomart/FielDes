@@ -1466,13 +1466,9 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
             }
         }
     };
-    // (`dropFirst`, `dropSecond`: literals that start out dropped -- the wall's, or the edge's, for a
-    // cube that bridges it)
-    auto expandOne = [&](const Bits& v, int dropFirst = -1, int dropSecond = -1) -> Cube {
+    auto expandOne = [&](const Bits& v) -> Cube {
         Bits care;
         for (size_t i = 0; i < S; i++) care.set(i);
-        if (dropFirst >= 0) care.clear(size_t(dropFirst));
-        if (dropSecond >= 0) care.clear(size_t(dropSecond));
         const size_t nOut = outside.size();
         std::vector<int> diffCount(nOut, 0);
         std::vector<int> blockedCount(S, 0);
@@ -1818,25 +1814,63 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
     // min: an internal wall that an inward offset, a shell, a skin or a
     // lattice then keeps as material's surface, and that makes the zero of a
     // mesh made from the part exactly where a mesh has to decide inside from
-    // outside. A cube that holds both sides of the wall (the wall's literal
-    // dropped, every other literal as the two cells have it, then grown the
-    // way the cubes were) lies inside the union by logic alone, whatever the
-    // surfaces are, so adding it changes no point's inside or outside -- a
-    // dragged surface (expose, handles) keeps it true -- and it is strictly
-    // negative on the wall. A wall is a pair of sampled inside cells that
-    // differ in one literal; where four inside cells meet along an edge (two
-    // literals, each of the four a neighbour of the next) the edge is a line
-    // of zeros the same way, and is bridged by a cube without those two
-    // literals. The bridges are made only for what no cube holds both sides
-    // of, one cube serving every wall it holds (each cube costs the renderer,
-    // which evaluates all of them near the surface).
-    {
+    // outside.
+    //
+    // The bridge across such a wall is the CONSENSUS of the two cubes: both
+    // cubes' literals but x. It lies inside their union by logic alone,
+    // whatever the surfaces are (a dragged surface -- expose, handles --
+    // keeps it true), and it is strictly negative on the wall. And it leaves
+    // the field OUTSIDE the part exactly as it was: with a the largest of
+    // A's other literals and b of B's, A = max(a, L), B = max(b, -L) and
+    // the consensus C = max(a, b); wherever C >= 0, min(A, B) <= C -- so the
+    // min with C changes no value where the field is positive, and the
+    // distance-like outside that a section's field view, an outward shell,
+    // a thickening or an offset read stays what it was. (A cube grown
+    // further than the consensus has fewer literals and lower values, and
+    // does lower the outside: the first version of this did that.) Cubes
+    // made of consensus cubes are consensus too, so the same holds for them.
+    //
+    // A wall is a pair of sampled inside cells that differ in one literal;
+    // where four inside cells meet along an edge (two literals, each of the
+    // four a neighbour of the next) the edge is a line of zeros the same
+    // way, and is bridged by the consensus of two cubes that each hold two
+    // of the cells (a wall across the first literal). Only what no cube
+    // holds both sides of is bridged, with the cubes of fewest literals
+    // (the deepest bridge), one bridge serving every wall it holds (each
+    // cube costs the renderer, which evaluates all of them near the surface).
+    // FIELDES_STEP_NO_BRIDGES leaves the walls (a diagnostic: the field
+    // outside the part is the same with and without bridges).
+    static const bool noBridges = std::getenv("FIELDES_STEP_NO_BRIDGES") != nullptr;
+    if (!noBridges) {
         struct Wall { uint32_t a, b; int literal, literal2; };      // (literal2: -1 for a wall, the second literal of an edge)
         const auto absorbs = [&](const Cube& x, const Cube& y) {   // y lies inside x
             for (int i = 0; i < nWords; i++) {
                 if (x.care.w[i] & ~y.care.w[i]) return false;
                 if ((x.val.w[i] ^ y.val.w[i]) & x.care.w[i]) return false;
             }
+            return true;
+        };
+        const auto literalCount = [&](const Cube& c) {
+            int n = 0;
+            for (int i = 0; i < nWords; i++) n += popcnt(c.care.w[i]);
+            return n;
+        };
+        // both cubes' literals but the one they clash in; false unless they clash in exactly one
+        const auto consensusOf = [&](const Cube& a, const Cube& b, Cube& out) {
+            int bit = -1;
+            for (int i = 0; i < nWords; i++) {
+                const uint64_t d = a.care.w[i] & b.care.w[i] & (a.val.w[i] ^ b.val.w[i]);
+                if (!d) continue;
+                if (bit >= 0 || (d & (d - 1))) return false;
+                bit = i * 64 + ctz64(d);
+            }
+            if (bit < 0) return false;
+            for (int i = 0; i < W; i++) {
+                out.care.w[i] = a.care.w[i] | b.care.w[i];
+                out.val.w[i] = a.val.w[i] | b.val.w[i];
+            }
+            out.care.clear(size_t(bit));
+            out.val.clear(size_t(bit));
             return true;
         };
         const size_t before = chosen.size();
@@ -1880,29 +1914,51 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
         });
         for (size_t p = 0; p < walls.size(); p++) if (!bridged[p]) open.push_back(p);
         const size_t openAtStart = open.size();
+
+        std::vector<Cube> pool = chosen;       // what a bridge can be made of: the cubes and the bridges so far
         std::vector<Cube> picked;
-        size_t next = 0;
-        const size_t B = 16;
-        while (next < open.size()) {
-            std::vector<size_t> batch;
-            while (next < open.size() && batch.size() < B) {
-                if (!bridged[open[next]]) batch.push_back(open[next]);
-                next++;
+        // the cube of fewest literals that holds the cell (and the second cell, if given)
+        const auto fewest = [&](size_t cell, long cell2) -> long {
+            long best = -1;
+            int bestCount = 1 << 30;
+            for (size_t k = 0; k < pool.size(); k++) {
+                if (!covers(pool[k], inside[cell]) || (cell2 >= 0 && !covers(pool[k], inside[size_t(cell2)]))) continue;
+                const int n = literalCount(pool[k]);
+                if (n < bestCount) { bestCount = n; best = long(k); }
             }
-            if (batch.empty()) break;
-            std::vector<Cube> grown(batch.size());
-            parallelFor(batch.size(), 1, [&](size_t k0, size_t k1) {
-                for (size_t k = k0; k < k1; k++) grown[k] = expandOne(inside[walls[batch[k]].a], walls[batch[k]].literal, walls[batch[k]].literal2);
-            });
-            for (size_t k = 0; k < batch.size(); k++) {
-                if (bridged[batch[k]]) continue;
-                picked.push_back(grown[k]);
-                for (size_t q = 0; q < open.size(); q++) {
-                    const size_t p = open[q];
-                    if (bridged[p]) continue;
-                    if (covers(grown[k], inside[walls[p].a]) && covers(grown[k], inside[walls[p].b])) bridged[p] = 1;
-                }
+            return best;
+        };
+        const auto bridge = [&](const Cube& c) {
+            picked.push_back(c);
+            pool.push_back(c);
+            for (size_t q = 0; q < open.size(); q++) {
+                const size_t p = open[q];
+                if (!bridged[p] && covers(c, inside[walls[p].a]) && covers(c, inside[walls[p].b])) bridged[p] = 1;
             }
+        };
+        // 1) walls: the consensus of the best cube on each side (they clash in the wall's literal only: both
+        //    cells agree in every other, and a cube that did not care about it would hold both sides already)
+        for (size_t q = 0; q < open.size(); q++) {
+            const size_t p = open[q];
+            if (bridged[p] || walls[p].literal2 >= 0) continue;
+            const long ia = fewest(walls[p].a, -1), ib = fewest(walls[p].b, -1);
+            Cube c;
+            if (ia >= 0 && ib >= 0 && consensusOf(pool[size_t(ia)], pool[size_t(ib)], c)) bridge(c);
+        }
+        // 2) edges: the four cells u, u^i, u^j, u^i^j; a bridge holds u and u^i (every wall has one now), another
+        //    u^j and u^i^j, and the two clash in j only
+        for (size_t q = 0; q < open.size(); q++) {
+            const size_t p = open[q];
+            if (bridged[p] || walls[p].literal2 < 0) continue;
+            const Wall& w = walls[p];
+            Bits ui = inside[w.a], uj = inside[w.a];
+            ui.w[size_t(w.literal) >> 6] ^= 1ull << (w.literal & 63);
+            uj.w[size_t(w.literal2) >> 6] ^= 1ull << (w.literal2 & 63);
+            const auto iti = indexOf.find(ui), itj = indexOf.find(uj);
+            if (iti == indexOf.end() || itj == indexOf.end()) continue;
+            const long d1 = fewest(w.a, long(iti->second)), d2 = fewest(itj->second, long(w.b));
+            Cube c;
+            if (d1 >= 0 && d2 >= 0 && consensusOf(pool[size_t(d1)], pool[size_t(d2)], c)) bridge(c);
         }
         // a bridge another one made unnecessary goes (last made first): every wall it holds is held
         // by another bridge too
@@ -1929,6 +1985,7 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
         }
         size_t stillOpen = 0;
         for (size_t p : open) if (!bridged[p]) stillOpen++;
+        // (a cube that has all of a bridge's literals and more is never below it: the min does without it)
         chosen.erase(std::remove_if(chosen.begin(), chosen.end(), [&](const Cube& c) {
             for (const Cube& q : picked) if (absorbs(q, c)) return true;
             return false;

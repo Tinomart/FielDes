@@ -54,8 +54,10 @@ analysis workbench driven by fields, now with its own name, design and documenta
   with a field of exactly 0 on the wall between them, so an inward offset, a shell, a skin or a lattice (the
   field-driven design example) showed internal walls, and a mesh exported from such a part had zeros where a
   re-import has to tell inside from outside. The cells are now bridged by their consensus (see the
-  architecture notes); the surface is unchanged, handles still drag the surfaces and the part stays solid. Parts
-  imported earlier are imported again once (the import cache is versioned).
+  architecture notes); the surface is unchanged, handles still drag the surfaces and the part stays solid. The
+  field **outside** the part is exactly what it was (verified against the unbridged field on every example part), so
+  the section's field view, outward shells, thickening and offsets read the same. Parts imported earlier are
+  imported again once (the import cache is versioned).
 - **Mesh import reads back what was exported.** Where the nearest feature of a mesh has no clear side (a sliver
   folded back over its neighbour, a knife edge: a dual-contouring mesh has them along sharp edges), the sign of the
   distance came out wrong, so points a few millimetres from a part exported with `save_stl` read as inside it on
