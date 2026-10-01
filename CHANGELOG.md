@@ -66,8 +66,15 @@ analysis workbench driven by fields, now with its own name, design and documenta
   that box. Nothing inside the part changes, so the shape is exactly what it was (identical inside/outside at
   150 000 points of every example part, identical volumes); at a 3 mm offset the largest overshoot against the true
   offset is 1.2 mm (a square corner alone gives 1.2 mm), down from 8.4 mm, and at 6 mm 4.4 mm, down from 15 mm.
-  Meshing an imported part is about 1.5 times slower. Convex edges of an offset are still mitred, not rounded:
-  the field is a lower bound of the distance, not the distance.
+  Meshing an imported part is about 1.5 times slower.
+- **Offsets of an imported part are round on every convex edge.** The max of two planes' distances is a mitre, so
+  a thickening came out sharp at some edges (and round at others, where a cylinder or a face box took over). A cube
+  of the part is now also taken with the exact distance to the box its axis-parallel planes bound, where it has a
+  real convex edge: the offset a ball makes. Inside nothing changes (identical inside/outside at 150 000 points of
+  every example part, identical volumes, the same numbers to drag); against the true offset the part is at most
+  0.7 % too big (largest overshoot 0.4 mm at a 1 mm offset, 1.0 mm at 3 mm). Edges between tilted planes are
+  still mitred. Meshing an imported part with many edges takes up to about three times as long as without the
+  rounding (the example scripts that mesh one: 1.2 to 1.7 times; importing the kitchen assembly 6 % longer).
 - **Mesh import reads back what was exported.** Where the nearest feature of a mesh has no clear side (a sliver
   folded back over its neighbour, a knife edge: a dual-contouring mesh has them along sharp edges), the sign of the
   distance came out wrong, so points a few millimetres from a part exported with `save_stl` read as inside it on

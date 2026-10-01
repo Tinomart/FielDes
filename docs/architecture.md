@@ -123,6 +123,15 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
    `s <= 0` this is `s` itself, so a point is inside exactly where it was; the boxes are written
    `square(max(max(lo - x, x - hi), 0))`, which `expose()` does not offer for dragging. Cylinders and the other
    round surfaces are left alone (they gain almost nothing for their cost).
+   **Convex edges are round.** A cube is a max of its surfaces' distances, and the max of two distances is a
+   mitre: the offset of a convex edge would come out sharp, while cylinders and the face boxes come out round.
+   Where a cube has a real convex edge on the outside of the part (the cell diagonally across both of the edge's
+   surfaces is outside), the cube is also taken with the exact distance to the box its axis-parallel planes
+   bound, `sqrt(sum of the squared outside distances per axis) + min(deepest, 0)` (a cylinder with the planes
+   across its axis: `sqrt(axial^2 + radial^2) + ...`). Inside the box this is the largest of the surfaces'
+   distances, which the cube already is, so nothing inside changes; outside it is the straight-line distance, the
+   offset a ball makes. Edges between tilted planes, or between a plane and a cylinder that is not on an axis, are
+   still mitred.
 5. **Emit** a tree (an expression of `x, y, z`) per solid. The import cache stores these trees.
 
 ## The exact tessellator

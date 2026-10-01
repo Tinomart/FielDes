@@ -80,7 +80,11 @@ namespace step {
 //                  the distance to the box of its own faces (it was the
 //                  distance to the infinite plane, so shells, thickenings and
 //                  offsets of an imported part grew blocks and fins)
-constexpr int kImportVersion = 6;
+//   7  2026-10-01  convex edges of an imported part's offsets are round: where
+//                  a cube's planes are axis-parallel its outside value is the
+//                  straight-line distance to the box they bound, not the max
+//                  of the plane distances (a mitre)
+constexpr int kImportVersion = 7;
 
 // True if every face of `solid` has an analytic (non-B-spline) surface
 // -- the precondition for reconstruct() to be usable at all. A solid
