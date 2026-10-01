@@ -12,6 +12,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cmath>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -104,6 +105,56 @@ Tree walk(const Tree& root0, bool rebuild, const std::function<Tree(const Tree&)
     std::unordered_map<const TreeData*, Info> info;
     std::vector<std::pair<Tree, bool>> stack;
     stack.push_back({root, false});
+    // The box an imported part keeps around each surface's faces (so that the field outside the part is no
+    // smaller than the distance to them) is written square(max(max(lo - x, x - hi), 0)): its numbers bound
+    // where the surface's faces are, they do not place a surface, so they are not for dragging.
+    std::unordered_set<const TreeData*> notGeometry;
+    {
+        std::unordered_set<const TreeData*> seen;
+        std::vector<const TreeData*> todo = {root.get()};
+        while (!todo.empty())
+        {
+            const TreeData* d = todo.back();
+            todo.pop_back();
+            if (!seen.insert(d).second) continue;
+            if (auto u = std::get_if<TreeUnaryOp>(d))
+            {
+                if (u->op == Opcode::OP_SQUARE)
+                {
+                    if (auto outer = std::get_if<TreeBinaryOp>(u->lhs.get()))
+                    {
+                        const auto isZero = [](const Tree& t) {
+                            const auto c = std::get_if<TreeConstant>(t.get());
+                            return c && c->value == 0.0f;
+                        };
+                        if (outer->op == Opcode::OP_MAX && (isZero(outer->lhs) || isZero(outer->rhs)))
+                        {
+                            const Tree& inner = isZero(outer->lhs) ? outer->rhs : outer->lhs;
+                            if (auto in = std::get_if<TreeBinaryOp>(inner.get()))
+                            {
+                                if (in->op == Opcode::OP_MAX)
+                                {
+                                    for (const Tree& side : {in->lhs, in->rhs})
+                                    {
+                                        if (auto sb = std::get_if<TreeBinaryOp>(side.get()))
+                                        {
+                                            if (sb->op == Opcode::OP_SUB) notGeometry.insert(side.get());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                todo.push_back(u->lhs.get());
+            }
+            else if (auto b = std::get_if<TreeBinaryOp>(d))
+            {
+                todo.push_back(b->lhs.get());
+                todo.push_back(b->rhs.get());
+            }
+        }
+    }
     // A plane through the origin (or the centre of a sphere or a cylinder's axis there) is put at a
     // number: x becomes x - c with c = 0 for it
     // (one number to a node: a plane shared by several unions or intersections -- as the cubes
@@ -149,7 +200,7 @@ Tree walk(const Tree& root0, bool rebuild, const std::function<Tree(const Tree&)
         {
             Tree a = memo.at(bi->lhs.get()), b = memo.at(bi->rhs.get());
             // one side of a subtraction is a geometry constant and the other is not a constant at all
-            if (bi->op == Opcode::OP_SUB)
+            if (bi->op == Opcode::OP_SUB && !notGeometry.count(node.get()))
             {
                 if (isGeometry(bi->lhs) && !isConstant(bi->rhs)) a = place(bi->lhs);
                 else if (isGeometry(bi->rhs) && !isConstant(bi->lhs)) b = place(bi->rhs);

@@ -58,6 +58,16 @@ analysis workbench driven by fields, now with its own name, design and documenta
   field **outside** the part is exactly what it was (verified against the unbridged field on every example part), so
   the section's field view, outward shells, thickening and offsets read the same. Parts imported earlier are
   imported again once (the import cache is versioned).
+- **Shells, thickening and offsets of an imported part no longer grow blocks and fins.** Outside the part its field
+  is the distance to the surfaces its faces lie on, and a plane or cylinder goes on far past its face: a plane's
+  side face may end well before the plane does, a hole's cylinder continues past the hole. An outward shell or a
+  thickening of the part then filled in sheets of empty space, up to 8 mm out at a 3 mm offset. Each plane (and
+  each helper plane of the cell code) is now no smaller, outside the box of its own faces, than the distance to
+  that box. Nothing inside the part changes, so the shape is exactly what it was (identical inside/outside at
+  150 000 points of every example part, identical volumes); at a 3 mm offset the largest overshoot against the true
+  offset is 1.2 mm (a square corner alone gives 1.2 mm), down from 8.4 mm, and at 6 mm 4.4 mm, down from 15 mm.
+  Meshing an imported part is about 1.5 times slower. Convex edges of an offset are still mitred, not rounded:
+  the field is a lower bound of the distance, not the distance.
 - **Mesh import reads back what was exported.** Where the nearest feature of a mesh has no clear side (a sliver
   folded back over its neighbour, a knife edge: a dual-contouring mesh has them along sharp edges), the sign of the
   distance came out wrong, so points a few millimetres from a part exported with `save_stl` read as inside it on

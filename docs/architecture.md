@@ -117,6 +117,12 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
    field is positive the consensus is never below the lower of the two cubes), which a section's field view, an
    outward shell or an offset read. A cube grown further than the consensus has fewer surfaces and lower values,
    and would lower the outside. Only the bridges a wall needs are added.
+   Outside the part the value of a plane is its distance to the INFINITE plane, which can be far less than its
+   distance to the faces that lie on it. So a plane (and each helper plane) is not allowed to be smaller, outside
+   the box of its faces, than the distance to that box: `s' = max(s, min(distance to the box, 1000 s))`. Where
+   `s <= 0` this is `s` itself, so a point is inside exactly where it was; the boxes are written
+   `square(max(max(lo - x, x - hi), 0))`, which `expose()` does not offer for dragging. Cylinders and the other
+   round surfaces are left alone (they gain almost nothing for their cost).
 5. **Emit** a tree (an expression of `x, y, z`) per solid. The import cache stores these trees.
 
 ## The exact tessellator

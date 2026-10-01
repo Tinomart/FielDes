@@ -75,7 +75,12 @@ namespace step {
 //                  leave the field outside the part as it was (version 3 grew
 //                  them and lowered the outside: section field, outward shell
 //                  and thickening came out wrong)
-constexpr int kImportVersion = 4;
+//   5  2026-10-01  (a first try at the next: boxes round whole cubes; replaced)
+//   6  2026-10-01  outside the part the field of a plane is no smaller than
+//                  the distance to the box of its own faces (it was the
+//                  distance to the infinite plane, so shells, thickenings and
+//                  offsets of an imported part grew blocks and fins)
+constexpr int kImportVersion = 6;
 
 // True if every face of `solid` has an analytic (non-B-spline) surface
 // -- the precondition for reconstruct() to be usable at all. A solid

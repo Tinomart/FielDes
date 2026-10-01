@@ -666,6 +666,9 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
     // (its half-space h(p) = (p - c) . n, see step_bspline.hpp)
     struct Surf { int kind; Vec3 o, a; double R; double ta = 0.0; double r2 = 0.0;
                   Vec3 bmin = Vec3::Zero(), bmax = Vec3::Zero();   // B-spline: its box
+                  Vec3 fmin = Vec3::Constant(1e300), fmax = Vec3::Constant(-1e300);   // the box of the faces on it
+                  bool faces = false;
+                  bool helper = false;      // a helper plane: no face of its own, the box is its parents'
                   std::shared_ptr<const BSplinePatch> bs;
                   std::shared_ptr<const FittedSurface> fit; };   // kind 6
     std::vector<Surf> surfs;
@@ -725,32 +728,40 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
             if (errOut) *errOut = "unrecognized face type in imported model (surface kind " + std::to_string(int(s.kind)) + ")";
             return Tree(1e9);
         }
+        c.fmin = f.boundMin;
+        c.fmax = f.boundMax;
+        c.faces = true;
         bool dup = false;
-        for (const Surf& e : surfs) {
+        const auto mergeFace = [&](Surf& e) {
+            e.fmin = e.fmin.cwiseMin(f.boundMin);
+            e.fmax = e.fmax.cwiseMax(f.boundMax);
+            e.faces = true;
+        };
+        for (Surf& e : surfs) {
             if (e.kind != c.kind) continue;
             if (c.kind == 0) {
-                if (e.a.dot(c.a) > 1.0 - 1e-9 && std::abs((c.o - e.o).dot(e.a)) < tol) { dup = true; break; }
+                if (e.a.dot(c.a) > 1.0 - 1e-9 && std::abs((c.o - e.o).dot(e.a)) < tol) { dup = true; mergeFace(e); break; }
             } else if (c.kind == 1) {
                 Vec3 d = c.o - e.o;
                 Vec3 perp = d - d.dot(e.a) * e.a;
                 if (std::abs(e.a.dot(c.a)) > 1.0 - 1e-9 && perp.norm() < tol &&
-                    std::abs(e.R - c.R) < tol) { dup = true; break; }
+                    std::abs(e.R - c.R) < tol) { dup = true; mergeFace(e); break; }
             } else if (c.kind == 2) {
-                if ((c.o - e.o).norm() < tol && std::abs(e.R - c.R) < tol) { dup = true; break; }
+                if ((c.o - e.o).norm() < tol && std::abs(e.R - c.R) < tol) { dup = true; mergeFace(e); break; }
             } else if (c.kind == 3) {
                 if ((c.o - e.o).norm() < tol && e.a.dot(c.a) > 1.0 - 1e-9 &&
-                    std::abs(e.R - c.R) < tol && std::abs(e.ta - c.ta) < 1e-9) { dup = true; break; }
+                    std::abs(e.R - c.R) < tol && std::abs(e.ta - c.ta) < 1e-9) { dup = true; mergeFace(e); break; }
             } else if (c.kind == 6) {
                 const FittedSurface& a = *e.fit;
                 const FittedSurface& b = *c.fit;
                 if ((e.bmin - c.bmin).norm() > tol || (e.bmax - c.bmax).norm() > tol) continue;
                 if (&a == &b || (a.kind == b.kind && (a.center - b.center).norm() < tol &&
                                  std::abs(a.scale - b.scale) < tol && (a.frame - b.frame).norm() < 1e-9 &&
-                                 (a.coef - b.coef).norm() < 1e-9)) { dup = true; break; }
+                                 (a.coef - b.coef).norm() < 1e-9)) { dup = true; mergeFace(e); break; }
             } else {
                 Vec3 d = c.o - e.o;
                 if (d.norm() < tol && std::abs(e.a.dot(c.a)) > 1.0 - 1e-9 &&
-                    std::abs(e.R - c.R) < tol && std::abs(e.r2 - c.r2) < tol) { dup = true; break; }
+                    std::abs(e.R - c.R) < tol && std::abs(e.r2 - c.r2) < tol) { dup = true; mergeFace(e); break; }
             }
         }
         if (!dup) surfs.push_back(c);
@@ -785,7 +796,12 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
                     if (std::abs(dist - c.R) > tolT) continue;
                     Vec3 m = c.a.cross(e.a);
                     if (m.norm() < 1e-9) continue;
-                    extra.push_back(canonPlane(m, c.o));
+                    {   // (a tangency matters where both of its faces are)
+                        Surf hp = canonPlane(m, c.o);
+                        const Vec3 b0 = c.fmin.cwiseMax(e.fmin), b1 = c.fmax.cwiseMin(e.fmax);
+                        if ((b0.array() <= b1.array()).all()) { hp.fmin = b0; hp.fmax = b1; hp.faces = true; hp.helper = true; }
+                        extra.push_back(hp);
+                    }
                 } else if (e.kind == 1 && j > i) {
                     if (std::abs(std::abs(c.a.dot(e.a)) - 1.0) > 1e-9) continue;
                     Vec3 d = e.o - c.o;
@@ -795,7 +811,12 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
                     if (std::abs(dd - (c.R + e.R)) > tolT && std::abs(dd - std::abs(c.R - e.R)) > tolT) continue;
                     Vec3 m = c.a.cross(perp / dd);
                     if (m.norm() < 1e-9) continue;
-                    extra.push_back(canonPlane(m, c.o));
+                    {   // (a tangency matters where both of its faces are)
+                        Surf hp = canonPlane(m, c.o);
+                        const Vec3 b0 = c.fmin.cwiseMax(e.fmin), b1 = c.fmax.cwiseMin(e.fmax);
+                        if ((b0.array() <= b1.array()).all()) { hp.fmin = b0; hp.fmax = b1; hp.faces = true; hp.helper = true; }
+                        extra.push_back(hp);
+                    }
                 }
             }
         }
@@ -818,7 +839,14 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
                     if (e.curve.kind != CurveKind::Circle && e.curve.kind != CurveKind::Ellipse) continue;
                     Vec3 n = e.curve.placement.zAxis;
                     if (n.norm() < 1e-9) continue;
-                    extra.push_back(canonPlane(n, e.curve.placement.origin));
+                    {   // (the plane of a face's edge circle matters where that face is)
+                        Surf hp = canonPlane(n, e.curve.placement.origin);
+                        hp.fmin = f.boundMin;
+                        hp.fmax = f.boundMax;
+                        hp.faces = true;
+                        hp.helper = true;
+                        extra.push_back(hp);
+                    }
                 }
             }
         }
@@ -905,8 +933,10 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
     // existing plane normal, or between the two groups' centroids), then
     // re-partition. Cubes drop any helper that turns out unnecessary.
     constexpr int NREP = 10;
-    struct Cell { std::vector<size_t> reps; std::vector<size_t> probes; int nProbe = 0; size_t best = 0; double bestMargin = -1; int count = 0; };
+    struct Cell { std::vector<size_t> reps; std::vector<size_t> probes; int nProbe = 0; size_t best = 0; double bestMargin = -1; int count = 0;
+                  Vec3 bmin = Vec3::Constant(1e300), bmax = Vec3::Constant(-1e300); };   // (the box of its grid samples)
     std::unordered_map<Bits, Cell, BitsHash> cells;
+    std::unordered_map<Bits, Vec3, BitsHash> thinPos;     // where the thin-feature pass found an inside cell
     std::vector<Bits> inside, outside;
     int ambiguous = 0, rounds = 0;
     int lastMixed = 0;          // mixed cells left after the last round
@@ -1187,6 +1217,8 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
             }
             Cell& c = cells[sampleKey[k]];
             c.count++;
+            c.bmin = c.bmin.cwiseMin(samplePos[k]);
+            c.bmax = c.bmax.cwiseMax(samplePos[k]);
             if (sampleMargin[k] > c.bestMargin) { c.bestMargin = sampleMargin[k]; c.best = k; }
             if (int(c.reps.size()) < NREP) c.reps.push_back(k);
             else { int j = int(rnd2() * c.count); if (j < NREP) c.reps[size_t(j)] = k; }
@@ -1754,6 +1786,7 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
                 if (known.count(key)) continue;
                 known[key] = verdict;
                 (verdict == 1 ? inside : outside).push_back(key);
+                if (verdict == 1) thinPos[key] = tps[reps[k]];
                 if (verdict == 0) newOutside.push_back(key);
                 added++;
             }
@@ -2025,6 +2058,49 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
     std::vector<Tree> negTrees;
     for (const Tree& t : surfTrees) negTrees.push_back(Tree(-1.0) * t);
 
+    // Outside the part the value of a surface is its distance to the INFINITE surface, which can be far less
+    // than its distance to the faces that lie on it (a plane's side face may end well before the plane does;
+    // a hole's cylinder goes on past the hole): the field there is only a lower bound, and an outward shell, a
+    // thickening or an offset of it grows blocks and fins into empty space. So a surface is not allowed to
+    // be smaller, outside the box of its faces, than the distance to that box:
+    //     surface' = max(surface, min(distance to the box, 1000 * surface))
+    // Where the surface is <= 0 (inside) min(distance, 1000 * surface) <= 1000 * surface <= surface, so
+    // surface' IS surface -- and a cube is inside only where all its surfaces are <= 0, so no point's inside or
+    // outside changes, whatever the boxes are (a dragged surface included). Surfaces without a face of
+    // their own (helper planes) and those spanning the region are left alone.
+    const bool noGate = std::getenv("FIELDES_STEP_NO_GATE") != nullptr;      // a diagnostic
+    static const int gateKinds = std::getenv("FIELDES_STEP_GATE_KINDS") ? std::atoi(std::getenv("FIELDES_STEP_GATE_KINDS")) : 5;
+    static const double gateFrac = std::getenv("FIELDES_STEP_GATE_FRAC") ? std::atof(std::getenv("FIELDES_STEP_GATE_FRAC")) : 0.5;
+    std::vector<Tree> posLit = surfTrees, negLit = negTrees;
+    if (!noGate) {
+        const auto coordTree = [](int a) { return a == 0 ? Tree::X() : (a == 1 ? Tree::Y() : Tree::Z()); };
+        for (size_t i = 0; i < S; i++) {
+            const Surf& sf = surfs[i];
+            if (!sf.faces || sf.kind == 6) continue;
+            if (!(gateKinds & (sf.helper ? 4 : (sf.kind == 0 ? 1 : 2)))) continue;
+            const Vec3 b0 = sf.fmin - Vec3::Constant(1e-3 * sz), b1 = sf.fmax + Vec3::Constant(1e-3 * sz);
+            bool whole = true;
+            for (int a = 0; a < 3; a++)
+                if (b0[a] > lo[a] + 0.05 * (hi[a] - lo[a]) || b1[a] < hi[a] - 0.05 * (hi[a] - lo[a])) whole = false;
+            if (whole) continue;
+            // worth its nodes only if the faces are small somewhere ALONG the surface: the box of an axis-aligned
+            // plane is flat across it, which says nothing
+            int across = -1;
+            if (sf.kind == 0 && sf.a.cwiseAbs().maxCoeff(&across) < 0.99) across = -1;
+            bool small = false;
+            for (int a = 0; a < 3; a++)
+                if (a != across && b1[a] - b0[a] < gateFrac * (hi[a] - lo[a])) small = true;
+            if (!small) continue;
+            const auto excess = [&](int a) {
+                return max(max(Tree(b0[a]) - coordTree(a), coordTree(a) - Tree(b1[a])), Tree(0.0));
+            };
+            const Tree ex0 = excess(0), ex1 = excess(1), ex2 = excess(2);
+            const Tree dist = sqrt(square(ex0) + square(ex1) + square(ex2));
+            posLit[i] = max(surfTrees[i], min(dist, Tree(1000.0) * surfTrees[i]));
+            negLit[i] = max(negTrees[i], min(dist, Tree(1000.0) * negTrees[i]));
+        }
+    }
+
     Tree unionTree(1e9);
     bool first = true;
     for (const Cube& c : chosen) {
@@ -2032,7 +2108,7 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
         bool firstLit = true;
         for (size_t i = 0; i < S; i++) {
             if (!c.care.test(i)) continue;
-            const Tree& lit = c.val.test(i) ? negTrees[i] : surfTrees[i];
+            const Tree& lit = c.val.test(i) ? negLit[i] : posLit[i];
             cube = firstLit ? lit : max(cube, lit);
             firstLit = false;
         }
