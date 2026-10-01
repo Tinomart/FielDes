@@ -1,0 +1,14 @@
+<RCC>
+    <qresource prefix="/">
+        <file>gl/basic.vert</file>
+        <file>gl/basic.frag</file>
+        <file>gl/busy.frag</file>
+        <file>gl/line.vert</file>
+        <file>gl/slice.vert</file>
+        <file>gl/slice.frag</file>
+
+        <file>examples/welcome.py</file>
+
+        <file>font/Inconsolata.otf</file>
+    </qresource>
+</RCC>

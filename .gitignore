@@ -1,0 +1,29 @@
+# build outputs
+build/
+dist/
+*.obj
+*.pdb
+*.exp
+*.lib
+*.ilk
+
+# Python
+__pycache__/
+*.pyc
+
+# FielDes caches and outputs
+*.fieldes-cache.py
+*.fieldes-cache.trees/
+examples/meshes/
+.out.stl
+
+# sample STEP files (GrabCAD downloads, not ours to redistribute): only their README is tracked
+examples/step/*
+!examples/step/README.md
+
+# editors and OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,91 @@
+# Getting started
+
+## Running FielDes
+
+**Portable folder (Windows x64).** Unzip it anywhere and run `FielDes.exe`. The folder contains the
+application, its libraries, a private Python runtime, the Python library, the examples and these
+documents. Nothing is installed and nothing is written outside your user settings and the cache files
+next to the STEP files you import.
+
+**From source.** See [Building from source](building.md).
+
+FielDes always opens maximised, so the model has the room. The first time it shows a small welcome script;
+afterwards the split between editor and viewport and the recent files are remembered.
+
+## The window
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ [Open] [Import] │  File  Edit  View  Settings  Help                       │  top dock
+├──────────────────────────┬────────────────────────────────────────────────┤
+│  editor (the script)     │  viewport                                      │
+│                          │   ┌ model tree ┐            ┌ section ┐ triad  │
+│                          │   └────────────┘            └─────────┘        │
+│                          │                     ┌ result card / legends ┐  │
+├──────────────────────────┤                     └───────────────────────┘  │
+│  output                  │  scale bar        cursor position              │
+├──────────────────────────┴────────────────────────────────────────────────┤
+│  status: render state · region · resolution · quality                     │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+The script is always the model. Every button in the viewport edits the script, so everything can be
+undone (`Ctrl+Z`) and read back. The dark cards floating on the viewport (model tree, section card,
+legends, result card) belong to the model; the dark top dock and status bar frame the window, and the
+editor is on the light side.
+
+See [The interface](interface.md) for every part of it.
+
+## Your first model
+
+Replace the script with:
+
+```python
+from fieldes import *
+
+view.set_bounds([-12, -12, -12], [12, 12, 12])
+view.set_resolution(8)
+view.set_quality(8)
+
+r = var(4)
+ball = sphere(r)
+hole = cylinder_z(1.5, 30, (0, 0, -15))
+difference(ball, hole)
+```
+
+- The **last expression** is displayed. Variables that hold shapes (`ball`, `hole`) appear in the model
+  tree; the eye shows or hides them (hidden ones get a `# hidden:` comment line).
+- `var(4)` makes the number **draggable**: hover the sphere and drag its surface, or use the gizmo. The
+  number in the script changes as you drag.
+- `view.set_bounds`, `view.set_resolution` and `view.set_quality` say where and how finely the
+  viewport meshes the shape. They are plain statements in the script.
+
+## Importing a STEP file
+
+**File → Import model…** (`Ctrl+I`), or drag a `.step`/`.stp` file onto the window. FielDes writes
+
+```python
+# Imported model: part.step
+part = import_step_parts(r"C:\path\to\part.step")
+view.set_bounds(*roi(part))
+view.set_resolution(roi_resolution(part))
+view.set_quality(8)
+```
+
+with a variable named after the file. Once it has run, the parts appear under the import in the model tree
+and, one named line each, in the script and the viewport. The eye of the import shows or hides every part. See [Importing STEP files](step-import.md).
+
+## Running a script without the window
+
+```
+python scripts/run_example.py examples/05_static_analysis.py
+```
+
+runs it with the Python library and the kernel only (set `FIELDES_DIR` to the folder with `fieldes.dll`
+if it is not found): prints appear in the console, nothing is drawn.
+
+## Where to go next
+
+- Open the scripts in `examples/` in order; each is commented and starts from an imported part.
+- [Scripting](scripting.md) for the language of shapes and fields.
+- [Analysis](analysis.md) and [Lattices](lattices.md) for the two big toolboxes.
