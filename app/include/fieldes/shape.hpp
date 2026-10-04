@@ -124,6 +124,28 @@ public:
      */
     void setColorField(const libfive::Tree& field, float lo, float hi, bool autoRange,
                        const QString& label, const QString& colormap);
+    /*
+     *  The symbols of boundary conditions drawn over the model by the viewport (see boundary_conditions.py): arrows and
+     *  pads at points of the surface, and the texts beside them.  `kind` is the category of the colour map "bc"
+     *  (1 fixed support, 2 sliding support, 3 force, 4 gravity)
+     */
+    struct BcGlyph
+    {
+        int kind = 0;
+        bool tip = false;           // the point is the arrow's tip (it pushes in), else its tail
+        QVector3D pos, dir;
+        float size = 1;
+    };
+    struct BcLabel
+    {
+        int kind = 0;
+        QString text;
+        QVector3D pos;
+    };
+    void setBoundarySymbols(std::vector<BcGlyph> glyphs, std::vector<BcLabel> labels);
+    const std::vector<BcGlyph>& boundaryGlyphs() const { return bc_glyphs; }
+    const std::vector<BcLabel>& boundaryLabels() const { return bc_labels; }
+
     bool hasColorField() const { return has_color; }
     const libfive::Tree& colorFieldTree() const { return color_field; }
     QString colorLabel() const { return color_label; }
@@ -164,6 +186,28 @@ public:
      *  set_resolution) the part's changes with it, in proportion.  A part whose
      *  box is not inside the render region uses the scene's resolution. */
     void setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res);
+
+    /*  The render cache (fieldes.stdlib.render_cache.render_cache): when it is on, the finished mesh of
+     *  the shape is kept on disk -- by what the shape is: its expression with the numbers it is drawn
+     *  with, its colours and exact regions, the region and resolution it is meshed at -- and read from
+     *  there when the same shape is rendered again: in another run of the program, or after the script
+     *  was changed and changed back.  Whatever changes about the math is another key: the shape is
+     *  meshed again, shown, and kept again.  A shape that depends on something no other run can
+     *  recognise (a solved analysis) is not kept.  */
+    void setRenderCache(bool on, bool forced = false)
+    {
+        m_cache_on.store(on);
+        m_cache_forced.store(forced);
+    }
+    bool renderCache() const { return m_cache_on.load(); }
+    /*  What the cache did for the last render, in words ("" when it is off)  */
+    QString renderCacheState() const;
+    /*  ...and in one word: "" (off), "wait" (on, not meshed yet), "kept", "read", "no" (cannot be kept)  */
+    QString renderCacheKind() const;
+    /*  Where the meshes are kept (FIELDES_RENDER_CACHE_DIR, else the program's cache folder)  */
+    static QString renderCacheDir();
+    /*  Deletes every kept mesh; the number of files deleted  */
+    static int clearRenderCache();
 
     /*  Handles (fieldes.stdlib.handles): a placed part is the shape scaled about
      *  `about`, rotated by three angles (degrees; x, then y, then z) and moved,
@@ -370,6 +414,8 @@ public:
 signals:
     void gotMesh();
     void redraw();
+    /*  The render cache read or kept the mesh (or could not)  */
+    void cacheStateChanged();
 
 public slots:
     void deleteLater();
@@ -404,6 +450,9 @@ protected:
     libfive::BRepSettings mesh_settings;
 
     libfive::Tree tree;
+    // (the tree as the script built it: the render cache's key is made of it -- the optimizer's output differs
+    // from run to run in the order of operands)
+    libfive::Tree built_tree;
     std::map<libfive::Tree::Id, float> vars;
     std::vector<libfive::Evaluator,
                 Eigen::aligned_allocator<libfive::Evaluator>> es;
@@ -504,11 +553,35 @@ protected:
 
     Handles m_handles;
 
+    // The render cache (see setRenderCache)
+    enum CacheState { CACHE_OFF = 0, CACHE_KEPT, CACHE_READ, CACHE_NO_KEY, CACHE_RESULT, CACHE_FAILED };
+    // On unless the script says render_cache(x, False).  A shape the script does not mention is kept only if
+    // meshing it took a while (a sphere is not worth a file); one under an explicit render_cache(x) always is.
+    std::atomic<bool> m_cache_on{true};
+    std::atomic<bool> m_cache_forced{false};
+    std::atomic<int> cache_state{CACHE_OFF};
+    std::atomic<bool> cache_read{false};        // the level just rendered was read from the cache (it is the finished one)
+    bool next_follows = false;                  // `next` is the next level of this render, not a newer request
+    // The numbers the evaluators hold: a snapshot of `vars` made where they are given them (the keys are of those)
+    std::map<libfive::Tree::Id, float> cache_vars;
+    unsigned long cache_vars_gen = 1, cache_tree_gen = 0;
+    std::string cache_tree_key;                 // (of the expression, the colours and the exact regions: made once per snapshot)
+    std::string cache_miss_key;                 // the last key that was looked for and not found
+    std::string renderCacheTreeKey() const;
+    std::string renderCacheKey(const RenderSettings& s, const libfive::Region<3>& region, double res);
+    bool readRenderCache(const std::string& key, BoundedMesh& out) const;
+    bool writeRenderCache(const std::string& key, const BoundedMesh& out) const;
+    /*  The finished mesh is not in the cache yet: mesh again, at the finest level, to keep it  */
+    bool keepCurrent();
 
     // The free variables the shape uses (found on first use)
     mutable std::unordered_set<const void*> m_deps;
     mutable bool m_deps_known = false;
     void buildDeps() const;
+
+    std::vector<BcGlyph> bc_glyphs;
+    std::vector<BcLabel> bc_labels;
+    QString bc_key;                                        // identifies them (shapes are only reused when it matches)
 
     // Colouring by a field (see setColorField)
     bool has_color=false;

@@ -44,6 +44,19 @@ public:
                      const Eigen::Vector3f& upper)=0;
 
     /*
+     *  The value of a variable (a var() of the script, by its Tree::Id).
+     *  An oracle that holds expressions of its own, with variables in them
+     *  (a transformed oracle: a mesh moved by a gizmo), reads them from here;
+     *  the evaluators call this with every variable they are given and
+     *  whenever one changes.  The others have nothing to do.
+     */
+    virtual void setVar(const void* var, float value)
+    {
+        (void)var;
+        (void)value;
+    }
+
+    /*
      *  Return the result of interval arithmetic over the range previously
      *  defined with set(Interval).  If the output range could include
      *  NaN, the oracle must return the interval {NaN, NaN}.

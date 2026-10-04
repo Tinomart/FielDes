@@ -566,6 +566,20 @@ int libfive_fea_history(libfive_fea* f, double* out, int max);
 void libfive_tree_eval_points(libfive_tree t, const float* xyz, int n, float* out);
 
 /*
+ *  Meshes a tree with variables (see libfive_tree_render_mesh): `vars` (count of them) are the variable
+ *  trees and `values` the numbers they stand for.
+ */
+libfive_mesh* libfive_tree_render_mesh_vars(libfive_tree tree, libfive_region3 R, float res,
+                                            const libfive_tree* vars, const float* values, int count);
+
+/*
+ *  The same for a shape with variables: `vars` (count of them) are the variable trees and `values` the
+ *  numbers they stand for (without them every variable reads as 0).
+ */
+void libfive_tree_eval_points_vars(libfive_tree t, const float* xyz, int n, float* out,
+                                   const libfive_tree* vars, const float* values, int count);
+
+/*
  *  Deletes a tree.  If binding in a higher-level language, call this in
  *  a destructor / finalizer to avoid leaking memory
  */
@@ -597,6 +611,8 @@ libfive_graph* libfive_lattice_surface_graph(libfive_tree body, libfive_region3 
 libfive_graph* libfive_lattice_points_graph(const float* points, int count, int mode);
 void libfive_graph_delete(libfive_graph* g);
 const char* libfive_lattice_last_error(void);
+/*  What the last conformal layout leaves in doubt (a map whose topology is not certain, holes that were closed); empty when nothing */
+const char* libfive_lattice_last_warning(void);
 libfive_tree libfive_beam_lattice(const float* nodes, int node_count, const int* beams,
                                   int beam_count, const float* radii, float blend);
 
@@ -621,6 +637,10 @@ void libfive_debug_crash_handler(void);
 /*  Serializes the given tree to a file, return true on success.
  *  The file format is not archival, and may change without notice */
 bool libfive_tree_save(libfive_tree ptr, const char* filename);
+
+/*  Can the whole tree be kept in a file and read back?  (Every oracle in it knows how to save itself.)  libfive_tree_save
+ *  refuses a tree that cannot.  */
+bool libfive_tree_can_save(libfive_tree ptr);
 
 /*  Deserializes a tree from a file. */
 libfive_tree libfive_tree_load(const char* filename);
@@ -697,6 +717,73 @@ libfive_mesh* libfive_step_exact_clipped(const char* filename, int solid, int in
                                          const double* m, libfive_tree field, double cell,
                                          int turn_samples);
 
+/*  The tessellated import: a STEP file as the exact surface itself, nothing reconstructed or fitted.
+ *  Every solid is tessellated once, in its own coordinates (the file's units), directly from its trimmed
+ *  faces (the free-form faces refined inside their outlines, on all the threads there are); each placed
+ *  occurrence of a solid is described by its placement.  The caller makes the mesh a signed distance field
+ *  (libfive_mesh_from_arrays) and places it: p = linear * q + offset takes the solid's coordinates q to
+ *  millimetres p.  Instances are in the order of libfive_import_step_parts_reconstructed's parts. */
+typedef struct libfive_step_brep_solid {
+    libfive_mesh* mesh;      /*  NULL if the solid could not be tessellated (then `error` says why)  */
+    char* error;
+    int32_t faces;
+    int32_t bspline_faces;
+} libfive_step_brep_solid;
+
+typedef struct libfive_step_brep_instance {
+    int32_t solid;
+    int32_t instance;
+    double linear[9];        /*  row-major 3 x 3  */
+    double offset[3];
+    char* name;              /*  the occurrence's assembly path or the solid's name; NULL if none  */
+    libfive_region3 bounds;  /*  placed, in millimetres  */
+    double detail;           /*  as in libfive_step_part, in millimetres  */
+    double area_flat;
+    double area_curved;
+} libfive_step_brep_instance;
+
+typedef struct libfive_step_brep {
+    libfive_step_brep_solid* solids;
+    uint32_t solid_count;
+    libfive_step_brep_instance* instances;
+    uint32_t instance_count;
+} libfive_step_brep;
+
+/*  NULL if the file could not be read (libfive_import_step_last_message() says why).  Free with
+ *  libfive_step_brep_delete.  `turn_samples`: points per full turn of a circle (the quality; 64).  */
+libfive_step_brep* libfive_step_brep_read(const char* filename, int turn_samples);
+void libfive_step_brep_delete(libfive_step_brep* b);
+
+/*  The version of the tessellation (kTessellationVersion): meshes kept from before it changed are stale.  */
+int libfive_step_tessellation_version(void);
+
+/*  A strut lattice's cells laid on the surface of `body` (where its field is zero), as a graph of beams -- from the
+ *  field alone: its value and gradient, no mesh.  `vars`/`values` (`var_count` of them) are the script's variables.
+ *  `lo3`..`hi3` is the box to look for the surface in, `unit_beams` are `unit_beam_count` beams of 6 floats (two ends in
+ *  unit-cube coordinates), carried to every cell.  The cells are one closed mesh of quads over the surface, one quad to a
+ *  cell (laid out by a global solve: see surface_cells.cpp); `direction3` is the way their rows run where the surface gives
+ *  none (zero: along x).  `grid_offset` (0 to 3) is which of four fixed grids the surface is sampled on: the layout is made once,
+ *  from that grid, and is the same every time; a part that does not close with one grid may with another (the error says so).
+ *  No cell is left out for the way it is distorted.  `height_dir` -1: the layers fill the body (`depth` deep, or as deep as the body is when
+ *  `depth` <= 0), +1: they stand out of it.  `layers` <= 0: as many as fit; `radius` <= 0: 12 % of the smaller of the
+ *  cell and the layer.  Returns the graph (free it with libfive_graph_delete), or NULL with libfive_lattice_last_error()
+ *  set.  `info` (10 doubles, may be NULL) gets the cells made, 0, the nodes, the beams, the direction used, the radius
+ *  used, the layers and how deep they are.  */
+libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
+                                     const double* lo3, const double* hi3, const double* direction3, int grid_offset,
+                                     double cell, const float* unit_beams, int unit_beam_count,
+                                     double depth, int layers, double radius, double height_dir, double* info);
+
+/*  The same cells with a periodic surface (a TPMS) laid on them that follows the surface: returns the field (a tree) or NULL
+ *  with libfive_lattice_last_error() set.  `kind` 0 gyroid, 1 Schwarz P, 2 diamond, 3 Neovius, 4 Lidinoid, 5 split P, 6 IWP,
+ *  7 FRD, 8 Fischer-Koch S; `style` 0 a sheet `thickness` mm thick, 1 / 2 the solid on one side / the other, grown by
+ *  `offset`; `skin` mm: a solid skin against the faces of the layers.  The other arguments and `info` are those of
+ *  libfive_surface_cells (info[3], the beams, is 0).  */
+libfive_tree libfive_surface_tpms(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
+                                  const double* lo3, const double* hi3, const double* direction3, int grid_offset,
+                                  double cell, double depth, int layers, double height_dir, int kind, double thickness,
+                                  int style, double offset, double skin, double* info);
+
 /*  Triangle-mesh import (.stl binary / ASCII, .obj): the returned tree is
  *  the exact signed distance to the triangles (negative inside), after
  *  welding, cleaning and re-orienting them; every coordinate is multiplied
@@ -718,6 +805,21 @@ typedef struct libfive_mesh_import_info {
 
 libfive_tree libfive_import_mesh(const char* filename, float scale,
                                  libfive_mesh_import_info* info);
+
+/*  Selecting a patch of a surface mesh by a flood fill from the triangle nearest to `seed` (3 floats):
+ *  mode 0 spreads while a triangle's normal is within `angle_degrees` of the first one's (a flat face),
+ *  mode 1 while it is within that of the triangle it is reached from (a round face, up to a sharp edge);
+ *  max_radius > 0 also limits how far from `seed` (0: no limit).  `selected` (tri_count bytes) gets 1
+ *  for the triangles of the patch.  Returns how many, or -1 (libfive_import_mesh_last_message() says why);
+ *  *seed_distance (may be NULL) is how far the seed is from the surface.  */
+int64_t libfive_mesh_flood(const float* xyz, uint32_t vertex_count, const uint32_t* tri, uint32_t tri_count,
+                           const float* seed, float angle_degrees, int mode, float max_radius,
+                           uint8_t* selected, float* seed_distance);
+
+/*  The unsigned distance to the triangles with selected[i] != 0 (an open patch of a surface has no
+ *  inside).  NULL on failure.  */
+libfive_tree libfive_mesh_patch(const float* xyz, uint32_t vertex_count, const uint32_t* tri,
+                                uint32_t tri_count, const uint8_t* selected, libfive_mesh_import_info* info);
 
 /*  The same from triangles in memory: `xyz` holds 3 * vertex_count floats,
  *  `tri` 3 * tri_count vertex indices (0-based).  */
@@ -751,6 +853,14 @@ char* libfive_tree_print(libfive_tree t);
  *  tells oracles and free variables apart.  Free with libfive_free_str.
  */
 char* libfive_tree_content_key(libfive_tree t);
+
+/*
+ *  The key the render cache keeps a shape's mesh by (libfive::treePersistentKey of the tree as built, not optimized: free
+ *  variables count by their value, `values` of the `count` variables `vars`; an oracle by what it holds), as text,
+ *  or NULL when the tree holds something no other run could recognise (a solved analysis, a variable with no
+ *  value).  Free with libfive_free_str.
+ */
+char* libfive_tree_persistent_key(libfive_tree t, const libfive_tree* vars, const float* values, int count);
 
 /*
  *  The numbers of a tree that place its surfaces (a plane's offset, a radius,

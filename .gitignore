@@ -14,6 +14,8 @@ __pycache__/
 # FielDes caches and outputs
 *.fieldes-cache.py
 *.fieldes-cache.trees/
+*.fieldes-tessellation/
+*.fieldes-bspline/
 examples/meshes/
 .out.stl
 

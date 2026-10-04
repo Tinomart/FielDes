@@ -100,6 +100,7 @@ add_library(libfive SHARED
 
     mesh_import/mesh_import.cpp
     lattice/lattice_graph.cpp
+    lattice/surface_cells.cpp
     fields/field_oracles.cpp
     fields/data_fields.cpp
 

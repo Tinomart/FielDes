@@ -26,14 +26,15 @@ the viewport.
 |---|---|
 | **Model with fields** | Primitives, CSG, smooth and chamfered booleans, offsets, shells, twists, bends, repeats, extrusions, revolves, helical and free-form surfaces — all of them fields, composable with ordinary arithmetic. |
 | **Import STEP** | Every solid is rebuilt from its faces as a field: planes, cylinders, cones, spheres and tori exactly, **free-form (B-spline) faces by fitted closed-form surfaces**, with the deviation from the CAD reported and painted on the model. Assemblies arrive assembled, each part in its own units. |
+| **Parts that are all free-form** | `import_step_tessellated_parts()` fits nothing: every solid is tessellated straight from its faces (on all threads, kept next to the file) and the triangles are made the exact signed distance field — for gears, worms, threads and sculpted bodies the fitted surfaces do not follow. Meshing it takes 0.5 to 2.8 times as long as the main importer's formulas. |
 | **Exact where it matters** | `exclude()` (or `auto_exclude=True` on the import) puts the STEP file's *own* surface back wherever the fit is poor: inside the region (any field object) the surface is meshed straight from the B-rep. |
 | **Edit by dragging** | A gizmo (move, rotate, scale), native handles on any surface of a shape or imported part, and `var()` numbers — what you drag is written back into the script. |
 | **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface; structural and thermal topology optimization; load cases; materials. |
 | **Drive design with results** | `colored(part, field)`, `ramp(result.von_mises, …)`, `fit(data)(depth_below(part))` — results and data are fields that feed lattices, offsets and thicknesses. |
-| **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, surface and graph lattices, custom unit cells and equations, conformal cell maps; any size or density can be a field. |
+| **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, surface and graph lattices, custom unit cells and equations, conformal cell maps (struts or a periodic surface that follows the part); any size or density can be a field. |
 | **Inspect** | A section card that cuts the model and paints the field on the plane (distance, or an analysis result with its elements); wall thickness, overhang, curvature and depth fields; hover probing; legends. |
 | **Bring meshes in** | STL, OBJ, PLY, 3MF and glTF as exact distance fields. |
-| **Fast to work in** | Content-addressed caches (imports, exact distances, analyses, graphs), per-statement progress, breakpoints, go to definition into any library or module file (opened in a tab), hot reload of imported files, cancel for slow renders. |
+| **Fast to work in** | Content-addressed caches (imports, exact distances, analyses, graphs), a render cache for the meshes you pick in the model tree, per-statement progress, breakpoints, go to definition into any library or module file (opened in a tab), hot reload of imported files, cancel for slow renders. |
 
 ## Quick start
 
@@ -79,6 +80,9 @@ in a script. The first import of a file takes a few seconds and is cached next t
 | [`10_field_driven_design.py`](examples/10_field_driven_design.py) | Stress field → lattice density |
 | [`11_custom_lattice.py`](examples/11_custom_lattice.py) | Your own strut cell and TPMS equation |
 | [`12_mesh_export_and_import.py`](examples/12_mesh_export_and_import.py) | STL out and back in |
+| [`13_tessellated_import.py`](examples/13_tessellated_import.py) | The kitchen imported exactly, nothing fitted |
+| [`14_conformal_lattice.py`](examples/14_conformal_lattice.py) | A lattice of a cell of your own (`cell_custom`) that follows an open surface |
+| [`15_conformal_closed_body.py`](examples/15_conformal_closed_body.py) | A conformal strut lattice filling the wall of a whole bracket: faces, fillets, bores, edges followed |
 
 <p align="center">
   <img src="docs/images/inspect.png" width="900" alt="The wall thickness of an imported part painted on it; hovering reads the value under the cursor">
@@ -93,10 +97,11 @@ in a script. The first import of a file takes a few seconds and is cached next t
 | [Getting started](docs/getting-started.md) | Install, first script, a tour of the window |
 | [The interface](docs/interface.md) | Top bar, editor, viewport, model tree, section card, result card, shortcuts |
 | [Scripting](docs/scripting.md) | Shapes, fields, `var()`, view settings, what gets displayed |
-| [Importing STEP files](docs/step-import.md) | Reconstruction, B-spline fits, `exclude()`, `auto_exclude`, assemblies, units, caches |
+| [Importing STEP files](docs/step-import.md) | Reconstruction, B-spline fits, `exclude()`, `auto_exclude`, the tessellated importer, assemblies, units, caches |
 | [Handles](docs/handles.md) | Gizmo, native handles, `expose()`, reimport |
 | [Fields and regressions](docs/fields.md) | Distance fields, maps, `fit()`, analysis fields, coloring |
-| [Analysis](docs/analysis.md) | Static, modal, thermal, thermal stress, topology optimization |
+| [Analysis](docs/analysis.md) | Static, modal, thermal, thermal stress, topology optimization; seeing the boundary conditions |
+| [Selecting surfaces](docs/selecting-surfaces.md) | Right-click a face: a flood-filled surface as a field, for supports, loads and lattices |
 | [Lattices](docs/lattices.md) | Every lattice type and parameter |
 | [Meshes](docs/meshes.md) | Mesh import, STL export |
 | [Caching and performance](docs/caching-and-performance.md) | What is cached, resolution and quality, long renders |

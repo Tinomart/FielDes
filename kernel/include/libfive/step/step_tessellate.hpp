@@ -22,6 +22,16 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 namespace libfive {
 namespace step {
 
+// The version of the tessellation: raised when a change alters the triangles it makes, so meshes kept
+// from before (the tessellated import's cache) are made again.
+//   1  2026-10-02  free-form faces refined in parallel, after the others (the same triangles, in
+//                  another order)
+//   2  2026-10-02  helical cuts of cylinders with windows that wind round them, holes put where the
+//                  outline is, spheres' caps and tori refined
+//   3  2026-10-02  holes of closed free-form patches put where the outline is, the second ring of a zip
+//                  started where the first is
+constexpr int kTessellationVersion = 3;
+
 struct TessMesh
 {
     std::vector<Vec3> verts;
@@ -42,7 +52,9 @@ struct TessMesh
 // give us over an oracle wrapping the raw trimmed B-rep.
 // `turnSamples`: points per full turn of a circle / ellipse (B-spline
 // edges get three quarters as many) -- the tessellation's quality.
-TessMesh tessellateSolid(const Solid& solid, int turnSamples = 64);
+// `threads`: how many threads the refinement of the solid's free-form faces may use (each is refined
+// independently of the others; 0: all the machine has).
+TessMesh tessellateSolid(const Solid& solid, int turnSamples = 64, int threads = 0);
 
 }  // namespace step
 }  // namespace libfive

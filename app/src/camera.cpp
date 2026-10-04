@@ -197,6 +197,12 @@ void Camera::toTurnY()
     animateAxis(QQuaternion::fromDirection({0, 1, 0}, {0, 0, 1}));
 }
 
+void Camera::setUpAxis(bool y)
+{
+    axis = y ? QQuaternion::fromDirection({0, 1, 0}, {0, 0, 1}) : QQuaternion();
+    emit(changed());
+}
+
 void Camera::setRotationSensitivity(float sensitivity)
 {
     rotationSensitivity = sensitivity;

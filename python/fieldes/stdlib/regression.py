@@ -12,7 +12,7 @@ operation (a lattice thickness, an offset, a blend):
     t_of_depth = fit([(0, 2.0), (5, 1.4), (15, 0.9), (30, 0.6)], model='poly', degree=2)
     print(t_of_depth)                  # equation and goodness of fit (R^2)
     thickness = t_of_depth(depth_below(ball))      # a field
-    lat = lattice(ball, 'gyroid', cell_size=8, thickness=thickness, skin=1.5)
+    lat = lattice(ball, cell_periodic('gyroid'), cell_size=8, thickness=thickness, skin=1.5)
 
 Models (fit(..., model=...)):
     'linear'        a + b x

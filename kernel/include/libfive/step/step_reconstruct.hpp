@@ -84,7 +84,10 @@ namespace step {
 //                  a cube's planes are axis-parallel its outside value is the
 //                  straight-line distance to the box they bound, not the max
 //                  of the plane distances (a mitre)
-constexpr int kImportVersion = 7;
+//   8  2026-10-01  back to the plain cubes (version 4's field): the box of
+//                  each plane's faces of version 6 and the round corners of
+//                  version 7 slowed the render of a part several times
+constexpr int kImportVersion = 8;
 
 // True if every face of `solid` has an analytic (non-B-spline) surface
 // -- the precondition for reconstruct() to be usable at all. A solid

@@ -7,11 +7,13 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -101,7 +103,14 @@ int children(const TreeData* d, const TreeData* out[4])
     return 0;
 }
 
-Hash keyOf(const Tree& root)
+// How a key is made: the usual way, or for keeping (treePersistentKey)
+struct KeyMode
+{
+    const std::map<Tree::Id, float>* vars = nullptr;    // set: a key to keep
+    bool ok = true;                                     // (a key to keep: false when the tree has none)
+};
+
+Hash keyOf(const Tree& root, KeyMode& mode)
 {
     // (a heap-allocated walk: trees can be too deep to recurse on)
     std::unordered_map<const TreeData*, Hash> memo;
@@ -139,7 +148,29 @@ Hash keyOf(const Tree& root)
             add(h, uint64_t(2));
             add(h, uint64_t(o->op));
             // (a free variable is the variable itself: its value is not part of the tree)
-            if (o->op == Opcode::VAR_FREE) add(h, uint64_t(reinterpret_cast<uintptr_t>(d)));
+            if (o->op == Opcode::VAR_FREE)
+            {
+                if (!mode.vars)
+                {
+                    add(h, uint64_t(reinterpret_cast<uintptr_t>(d)));
+                }
+                else
+                {
+                    // (to keep, its address means nothing: the number it stands for does)
+                    const auto v = mode.vars->find(d);
+                    if (v == mode.vars->end())
+                    {
+                        mode.ok = false;
+                    }
+                    else
+                    {
+                        uint32_t bits;
+                        const float val = v->second;
+                        std::memcpy(&bits, &val, sizeof(bits));
+                        add(h, uint64_t(bits));
+                    }
+                }
+            }
         }
         else if (auto u = std::get_if<TreeUnaryOp>(d))
         {
@@ -159,11 +190,16 @@ Hash keyOf(const Tree& root)
             const OracleClause& clause = *oc->oracle;
             add(h, uint64_t(5));
             add(h, clause.name());
-            const std::string content = clause.contentKey();
+            const std::string content = mode.vars ? clause.persistentKey() : clause.contentKey();
             if (!content.empty())
             {
                 add(h, uint64_t(6));
                 add(h, content);
+            }
+            else if (mode.vars)
+            {
+                // (to keep, there is nothing to say what it is: no key)
+                mode.ok = false;
             }
             else
             {
@@ -173,7 +209,7 @@ Hash keyOf(const Tree& root)
             }
             for (const Tree& dep : clause.dependencies())
             {
-                add(h, dep.get() ? keyOf(dep) : Hash());
+                add(h, dep.get() ? keyOf(dep, mode) : Hash());
             }
         }
         else if (std::get_if<TreeRemap>(d))
@@ -197,14 +233,73 @@ Hash keyOf(const Tree& root)
 
 }   // anonymous namespace
 
-std::string treeContentKey(const Tree& t)
+namespace {
+std::string keyText(const Hash& h)
 {
-    if (!t.get()) return std::string();
-    const Hash h = keyOf(t);
     char buf[40];
     std::snprintf(buf, sizeof(buf), "%016llx%016llx",
                   static_cast<unsigned long long>(h.a), static_cast<unsigned long long>(h.b));
     return buf;
+}
+}   // anonymous namespace
+
+std::string treeContentKey(const Tree& t)
+{
+    if (!t.get()) return std::string();
+    KeyMode mode;
+    return keyText(keyOf(t, mode));
+}
+
+std::string treePersistentKey(const Tree& t, const std::map<Tree::Id, float>& vars)
+{
+    if (!t.get()) return std::string();
+    KeyMode mode;
+    mode.vars = &vars;
+    const Hash h = keyOf(t, mode);
+    return mode.ok ? keyText(h) : std::string();
+}
+
+std::string meshContentKey(const std::vector<Eigen::Vector3d>& verts,
+                           const std::vector<std::array<uint32_t, 3>>& tris)
+{
+    std::vector<std::array<double, 9>> rows;
+    rows.reserve(tris.size());
+    auto less = [&](uint32_t a, uint32_t b) {
+        const auto& p = verts[a];
+        const auto& q = verts[b];
+        if (p[0] != q[0]) return p[0] < q[0];
+        if (p[1] != q[1]) return p[1] < q[1];
+        return p[2] < q[2];
+    };
+    for (const auto& t : tris)
+    {
+        // (the corner that comes first, then the others in the order of the triangle: its winding is kept)
+        int first = 0;
+        for (int k = 1; k < 3; ++k)
+            if (less(t[size_t(k)], t[size_t(first)])) first = k;
+        std::array<double, 9> r;
+        for (int k = 0; k < 3; ++k)
+        {
+            const auto& p = verts[t[size_t((first + k) % 3)]];
+            r[size_t(3 * k)] = p[0];
+            r[size_t(3 * k + 1)] = p[1];
+            r[size_t(3 * k + 2)] = p[2];
+        }
+        rows.push_back(r);
+    }
+    std::sort(rows.begin(), rows.end());
+    Hash h;
+    add(h, uint64_t(rows.size()));
+    for (const auto& r : rows)
+    {
+        for (double d : r)
+        {
+            uint64_t bits;
+            std::memcpy(&bits, &d, sizeof(bits));
+            add(h, bits);
+        }
+    }
+    return keyText(h);
 }
 
 uint64_t nextContentSerial()

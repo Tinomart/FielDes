@@ -86,8 +86,9 @@ offending line underlined in the editor. The error's text is red, everything els
 
 | | |
 |---|---|
-| **Left-drag** | Rotate (turntable; Z or Y up in **Settings → Rotation mode**) |
+| **Left-drag** | Rotate (turntable; **Y points up** unless you choose Z up in **Settings → Rotation mode**) |
 | **Right-drag** | Pan |
+| **Right-click** a model | The menu of the **surface selection**: the angle, the mode, the thickness and the radius of a flood fill from the point you clicked; **Select** writes a `select_surface(...)` line into the script, under the model's definition. See [Selecting surfaces](selecting-surfaces.md) |
 | **Wheel** | Zoom (about the cursor or the scene: **Settings → Zoom center**) |
 | **Double-click** a model / the background | Frame that model / everything (`Home`) |
 | **Click a model** | Select it: its row in the tree and its code in the editor |
@@ -115,10 +116,12 @@ file are listed under it. **Render settings** at the top lists the script's `vie
 | **Eye** | Show or hide (hidden displays become `# hidden: …` lines). On an import it shows or hides every part; on a part it adds the part to the script, or toggles it |
 | **Double-click a part** | Use that part in the import statement |
 | **Handles button** (keys `M`, `G`, `H`, `L`) | Cycle the way the shape is edited by dragging: gizmo → handles → lock. A shape nobody has touched yet starts at the gizmo. On a displayed expression such as `sphere(3)` it first gives the expression a name (`sphere_1 = sphere(3)`). See [Handles](handles.md) |
+| **Cache button** (stack of disks) | The **render cache** is on for every shape unless you turn it off: the button writes (or deletes) the line `part = render_cache(part, False)` under its definition. With it on (the default), the finished mesh is kept on disk and shown at once the next time the same shape is rendered; anything that changes about the math makes it mesh again. Blue: on; green: the mesh on screen was read from the cache; amber: the shape cannot be kept (hover). Off until you click it. See [Caching and performance](caching-and-performance.md#the-render-cache) |
 | **⟳ Reimport** (on an import) | Read the file again (bumps `rev=` in the call). Imported files are also watched: one saved by another program is read again by itself |
 | **⟳ Reimport** (on a part) | Back to what the file says: the part's handle edits are deleted and the file read again |
-| **Bin** (on an import) | Reset: delete the import's cache and the handle edits of all its parts, and import afresh |
-| **Right-click** | The same, plus *Go to code* and *Focus camera* |
+| **↺ Reset** (on an import) | Delete the import's cache and the handle edits of all its parts, and import afresh |
+| **Bin** (every row) | **Delete** the row's object: its statement, the line that shows it, the line that hides it and its `handles()`, `expose()` and `render_cache()` lines are removed from the script (one undo restores them). On an import it deletes the parts' variables too; on a part row, the part's variable; on a render setting, its `view.set_…` line (back to the default). If the rest of the script still uses the name, FielDes asks first |
+| **Right-click** | The same, plus *Go to code*, *Focus camera* and *Delete* |
 
 Grey rows are hidden, or shown but outside the render region. An amber row is imported but worth a look
 (an open mesh, a suspicious size): hover it.

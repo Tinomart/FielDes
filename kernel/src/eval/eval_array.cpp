@@ -53,6 +53,16 @@ ArrayEvaluator::ArrayEvaluator(
     {
         v.row(c.first) = c.second;
     }
+
+    // (the oracles that hold expressions of their own read the variables too: they
+    // are not walked with the tree, so their variables are not in deck->vars)
+    for (auto& o : deck->oracles)
+    {
+        for (auto& var_ : vars)
+        {
+            o->setVar(var_.first, var_.second);
+        }
+    }
 }
 
 float ArrayEvaluator::value(const Eigen::Vector3f& pt) {
@@ -173,6 +183,10 @@ std::pair<float, Tape::Handle> ArrayEvaluator::valueAndPush(
 
 bool ArrayEvaluator::setVar(Tree::Id var_, float value)
 {
+    for (auto& o : deck->oracles)
+    {
+        o->setVar(var_, value);
+    }
     auto var = deck->vars.right.find(var_);
     if (var != deck->vars.right.end())
     {

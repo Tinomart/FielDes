@@ -28,6 +28,9 @@ public:
     std::unique_ptr<Oracle> getOracle() const override;
     std::string name() const override { return "TransformedOracleClause"; }
 
+    /*  (what it is lies in its dependencies: the oracle, and the three maps)  */
+    std::string persistentKey() const override { return "transformed"; }
+
     /*
      *  More efficient remap implementation that remaps the underlying Trees
      */

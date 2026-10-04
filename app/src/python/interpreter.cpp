@@ -954,6 +954,22 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        // Kept in the render cache: on unless the script says render_cache(x, False)
+        // (fieldes.stdlib.render_cache.render_cache); written for every shape that took a while to mesh, and for
+        // one under an explicit render_cache(x) always
+        if (PyObject_HasAttrString(obj, "_render_cache"))
+        {
+            PyObject* v = PyObject_GetAttrString(obj, "_render_cache");
+            const bool on = v && PyObject_IsTrue(v) == 1;
+            shape->setRenderCache(on, on);
+            Py_XDECREF(v);
+            PyErr_Clear();
+        }
+        else
+        {
+            shape->setRenderCache(true, false);
+        }
+
         // Exact regions (fieldes.stdlib.cad_import.exclude): each one's
         // _flat() is (path, solid, instance, matrix (16), region (16),
         // lo (3), hi (3), quality), every number a float or a Shape
@@ -1005,6 +1021,46 @@ void Interpreter::recordShape(
             }
             Py_XDECREF(list);
             shape->setExactRegions(regions);
+        }
+
+        // The symbols of boundary conditions the viewport draws over it (fieldes.stdlib.boundary_conditions):
+        // _bc_glyphs = [(kind, tip, x, y, z, dx, dy, dz, size)], _bc_labels = [(kind, text, x, y, z)]
+        if (PyObject_HasAttrString(obj, "_bc_glyphs"))
+        {
+            std::vector<Shape::BcGlyph> glyphs;
+            std::vector<Shape::BcLabel> labels;
+            auto number = [](PyObject* t, Py_ssize_t k) { return float(PyFloat_AsDouble(PyTuple_GetItem(t, k))); };
+            PyObject* gl = PyObject_GetAttrString(obj, "_bc_glyphs");
+            if (gl && PyList_Check(gl))
+                for (Py_ssize_t k = 0; k < PyList_Size(gl); k++)
+                {
+                    PyObject* t = PyList_GetItem(gl, k);
+                    if (!PyTuple_Check(t) || PyTuple_Size(t) != 9) continue;
+                    Shape::BcGlyph g;
+                    g.kind = int(PyLong_AsLong(PyTuple_GetItem(t, 0)));
+                    g.tip = PyLong_AsLong(PyTuple_GetItem(t, 1)) != 0;
+                    g.pos = QVector3D(number(t, 2), number(t, 3), number(t, 4));
+                    g.dir = QVector3D(number(t, 5), number(t, 6), number(t, 7));
+                    g.size = number(t, 8);
+                    glyphs.push_back(g);
+                }
+            Py_XDECREF(gl);
+            PyObject* lb = PyObject_GetAttrString(obj, "_bc_labels");
+            if (lb && PyList_Check(lb))
+                for (Py_ssize_t k = 0; k < PyList_Size(lb); k++)
+                {
+                    PyObject* t = PyList_GetItem(lb, k);
+                    if (!PyTuple_Check(t) || PyTuple_Size(t) != 5) continue;
+                    Shape::BcLabel l;
+                    l.kind = int(PyLong_AsLong(PyTuple_GetItem(t, 0)));
+                    PyObject* text = PyTuple_GetItem(t, 1);
+                    l.text = text && PyUnicode_Check(text) ? QString::fromUtf8(PyUnicode_AsUTF8(text)) : QString();
+                    l.pos = QVector3D(number(t, 2), number(t, 3), number(t, 4));
+                    labels.push_back(l);
+                }
+            Py_XDECREF(lb);
+            PyErr_Clear();
+            shape->setBoundarySymbols(std::move(glyphs), std::move(labels));
         }
 
         // Shown coloured by a field (fieldes.stdlib.fea.colored)

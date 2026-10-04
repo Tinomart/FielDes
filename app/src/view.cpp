@@ -17,7 +17,15 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <QComboBox>
 #include <QDateTime>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QMenu>
+#include <QPushButton>
+#include <QSettings>
+#include <QWidgetAction>
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QMessageBox>
@@ -216,6 +224,7 @@ void View::setShapes(QList<Shape*> new_shapes)
             connect(s, &Shape::redraw, this, &View::update);
             connect(s, &Shape::gotMesh, this, &View::checkMeshes);
             connect(s, &Shape::gotMesh, this, &View::updateResultPanel);
+            connect(s, &Shape::cacheStateChanged, this, &View::cacheStatesChanged);
             connect(s, &Shape::gotMesh, &pick_timer,
                     QOverload<>::of(&QTimer::start));
             connect(this, &View::startRender,
@@ -377,6 +386,7 @@ void View::initializeGL()
     Shader::initializeGL();
 
     arrow.initializeGL();
+    glyphs.initializeGL();
     axes.initializeGL();
     background.initializeGL();
     bbox.initializeGL();
@@ -492,7 +502,15 @@ void View::paintGL()
     setClipUniform(clipping);
     for (auto& s : shapes)
     {
+        // The boundary conditions are drawn on the part's own surface: pulled a hair towards the eye, they win over the part when both are shown
+        const bool onTheSurface = !s->boundaryGlyphs().empty();
+        if (onTheSurface)
+        {
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(-1.0f, -1.0f);
+        }
         s->draw(m);
+        if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
     }
     if (clipping)
     {
@@ -503,6 +521,19 @@ void View::paintGL()
     {
         drawSlicePlane(m);
     }
+
+    // The arrows and pads of boundary conditions, over the model they belong to
+    for (auto& s : shapes)
+        for (const auto& g : s->boundaryGlyphs())
+        {
+            float r = 0.8f, gr = 0.8f, b = 0.8f;
+            bcCategoryRGB(g.kind, r, gr, b);
+            const QColor color = QColor::fromRgbF(r, gr, b);
+            if (g.kind == 1 || g.kind == 2)
+                glyphs.drawPad(m, g.pos, g.size, g.dir, color);
+            else
+                glyphs.drawArrow(m, g.pos, g.size, g.dir, color, g.tip);
+        }
 
     if (show_axes)
     {
@@ -587,6 +618,7 @@ void View::paintOverlay(QPainter& painter)
         painter.drawText(box, Qt::AlignCenter, section_readout);
     }
 
+    drawBoundaryLabels(painter);
     legend_close.clear();
     bottom_items.clear();
     drawLegends(painter);
@@ -759,15 +791,51 @@ void View::drawScaleBar(QPainter& painter)
     painter.setRenderHint(QPainter::Antialiasing, true);
 }
 
+// The names and values beside the arrows and pads of boundary conditions: a small card in the colour of the symbol
+void View::drawBoundaryLabels(QPainter& painter)
+{
+    QFont font = painter.font();
+    font.setPointSizeF(9);
+    font.setBold(true);
+    painter.setFont(font);
+    const QFontMetrics fm(font);
+    for (auto& s : shapes)
+        for (const auto& l : s->boundaryLabels())
+        {
+            const QPointF at = toScreen(l.pos);
+            if (!(at.x() > -50 && at.y() > -50 && at.x() < width() + 50 && at.y() < height() + 50)) continue;
+            float r = 0.8f, g = 0.8f, b = 0.8f;
+            bcCategoryRGB(l.kind, r, g, b);
+            const QSizeF sz(fm.horizontalAdvance(l.text) + 14, fm.height() + 6);
+            const QRectF box(at.x() - sz.width() / 2, at.y() - sz.height() / 2, sz.width(), sz.height());
+            painter.setPen(QPen(QColor::fromRgbF(r, g, b), 1.5));
+            painter.setBrush(QColor(22, 76, 94, 225));
+            painter.drawRoundedRect(box, 4, 4);
+            painter.setPen(QColor(0xee, 0xe8, 0xd5));
+            painter.drawText(box, Qt::AlignCenter, l.text);
+        }
+}
+
 void View::drawLegends(QPainter& painter)
 {
+    // The boundary conditions: a key of the colours the pictures use ("bc:1,3" is categories 1 and 3)
+    QSet<int> bcCategories;
+    for (auto s : shapes)
+    {
+        if (!s->hasColorField() || !s->hasMesh() || s->colorMap() != "bc") continue;
+        for (const QString& c : s->colorLabel().section(':', 1).split(',', Qt::SkipEmptyParts))
+        {
+            bcCategories.insert(c.toInt());
+        }
+    }
+
     // One bar per distinct colouring (label, map, range), right to left
     struct Bar { QString label, map; float lo, hi; };
     QVector<Bar> bars;
     for (auto s : shapes)
     {
         // (analysis results have their own card)
-        if (!s->hasColorField() || !s->hasMesh() || s->hasResult()) continue;
+        if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc") continue;
         Bar b{s->colorLabel(), s->colorMap(), s->colorLo(), s->colorHi()};
         bool dup = false;
         for (auto& o : bars)
@@ -782,7 +850,7 @@ void View::drawLegends(QPainter& painter)
         }
         if (!dup && !hidden_legends.contains(b.label)) bars.push_back(b);
     }
-    if (bars.isEmpty() || !show_legends) return;
+    if ((bars.isEmpty() && bcCategories.isEmpty()) || !show_legends) return;
 
     QFont font = painter.font();
     font.setPointSizeF(8.5);
@@ -791,6 +859,46 @@ void View::drawLegends(QPainter& painter)
     const int barH = std::min(220, std::max(90, height() / 3));
     const int barW = 14;
     int right = width() - 14;
+
+    // (only selected surfaces shown: the key is called so)
+    const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";
+    if (!bcCategories.isEmpty() && !hidden_legends.contains(bcTitle))
+    {
+        static const char* names[7] = {"", "Fixed support", "Sliding support", "Force", "Gravity", "Heat",
+                                       "Selected surface"};
+        QList<int> cats = bcCategories.values();
+        std::sort(cats.begin(), cats.end());
+        int textW = fm.horizontalAdvance(bcTitle) + 16;
+        for (int c : cats) textW = std::max(textW, 18 + fm.horizontalAdvance(names[std::max(0, std::min(6, c))]));
+        const int rowH = fm.height() + 4;
+        const int boxW = textW + 20, boxH = fm.height() + 20 + rowH * cats.size();
+        const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(22, 76, 94, 200));
+        painter.drawRoundedRect(box, 6, 6);
+        painter.setPen(QColor(0xee, 0xe8, 0xd5));
+        painter.drawText(QRect(box.left() + 10, box.top() + 6, boxW - 20, fm.height()),
+                         Qt::AlignLeft | Qt::AlignVCenter, bcTitle);
+        bottom_items.push_back(QRectF(box));
+        const QRect close(box.right() - 18, box.top() + 4, 14, 14);
+        painter.setPen(QColor(0xee, 0xe8, 0xd5, 170));
+        painter.drawText(close, Qt::AlignCenter, QString(QChar(0x00d7)));
+        legend_close.push_back({close, bcTitle});
+        int y = box.top() + fm.height() + 14;
+        for (int c : cats)
+        {
+            float r, g, b;
+            bcCategoryRGB(c, r, g, b);
+            painter.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
+            painter.setBrush(QColor::fromRgbF(r, g, b));
+            painter.drawRect(QRect(box.left() + 10, y + 2, 12, fm.height() - 2));
+            painter.setPen(QColor(0xee, 0xe8, 0xd5));
+            painter.drawText(QRect(box.left() + 28, y, textW, rowH), Qt::AlignLeft | Qt::AlignVCenter,
+                             names[std::max(0, std::min(6, c))]);
+            y += rowH;
+        }
+        right = box.left() - 8;
+    }
     for (const auto& b : bars)
     {
         auto num = [](float v) { return QString::number(v, 'g', 4); };
@@ -1170,6 +1278,13 @@ void View::mousePressEvent(QMouseEvent* event)
         }
         else if (event->button() == Qt::RightButton)
         {
+            // (a right-click that does not move opens the menu of the surface selection: what is under it)
+            syncPicker();
+            const auto picked = pick_img.valid(event->pos())
+                ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
+            right_press_pos = event->pos();
+            right_press_target = (picked && int(picked) <= shapes.size()) ? shapes.at(picked - 1) : nullptr;
+            right_press_point = right_press_target ? toModelPos(event->pos()) : QVector3D();
             mouse.state = mouse.DRAG_PAN;
         }
     }
@@ -1206,6 +1321,17 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     }
     press_target = nullptr;
 
+    if (event->button() == Qt::RightButton && right_press_target &&
+        (event->pos() - right_press_pos).manhattanLength() < 4 && shapes.contains(right_press_target))
+    {
+        Shape* target = right_press_target;
+        right_press_target = nullptr;
+        mouse.state = mouse.RELEASED;
+        showSelectMenu(event->globalPos(), target, right_press_point);
+        return;
+    }
+    right_press_target = nullptr;
+
     if (mouse.state != mouse.RELEASED)
     {
         redrawPicker();
@@ -1218,6 +1344,93 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         }
     }
     mouse.state = mouse.RELEASED;
+}
+
+bool View::selectSurfaceAt(QPoint pos, const QString& mode, double angle, double thickness, double radius)
+{
+    syncPicker();
+    const auto picked = pick_img.valid(pos) ? (pick_img.pixel(pos) & 0xFFFFFF) : 0;
+    if (!picked || int(picked) > shapes.size()) return false;
+    Shape* target = shapes.at(picked - 1);
+    if (target->sourceLine() < 0) return false;
+    emit(surfaceSelectRequested(target->sourceLine(), toModelPos(pos), mode, angle, thickness, radius));
+    return true;
+}
+
+void View::showSelectMenu(QPoint globalPos, Shape* target, const QVector3D& point)
+{
+    const int line = target->sourceLine();
+    if (line < 0) return;
+
+    QSettings store;
+    QMenu menu(this);
+    auto title = menu.addAction("Select surface (flood fill)");
+    title->setEnabled(false);
+    menu.addSeparator();
+
+    auto holder = new QWidget;
+    auto form = new QFormLayout(holder);
+    form->setContentsMargins(10, 4, 10, 6);
+    auto mode = new QComboBox;
+    mode->addItem("Flat face", "flat");
+    mode->addItem("Round / smooth faces", "smooth");
+    mode->setToolTip("Flat: spreads while the surface faces the way it does at the click.\n"
+                     "Smooth: spreads over round faces (cylinders, fillets) up to a sharp edge.");
+    mode->setCurrentIndex(store.value("select/mode", "flat").toString() == "smooth" ? 1 : 0);
+    auto angle = new QDoubleSpinBox;
+    angle->setRange(0.5, 90.0);
+    angle->setSuffix(" deg");
+    angle->setDecimals(1);
+    angle->setToolTip("Flat: how far from the click's direction the surface may face.\n"
+                      "Smooth: how much it may turn from one triangle to the next.");
+    auto defaultAngle = [mode]{ return mode->currentData().toString() == "smooth" ? 30.0 : 10.0; };
+    angle->setValue(store.value("select/angle-" + mode->currentData().toString(), defaultAngle()).toDouble());
+    connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), angle, [=](int) {
+        QSettings s;
+        angle->setValue(s.value("select/angle-" + mode->currentData().toString(), defaultAngle()).toDouble());
+    });
+    auto thickness = new QDoubleSpinBox;
+    thickness->setRange(0.0, 1000.0);
+    thickness->setDecimals(2);
+    thickness->setSuffix(" mm");
+    thickness->setSpecialValueText("automatic");
+    thickness->setValue(store.value("select/thickness", 0.0).toDouble());
+    thickness->setToolTip("How thick the field across the patch is (automatic: a hundredth of the model).");
+    auto radius = new QDoubleSpinBox;
+    radius->setRange(0.0, 100000.0);
+    radius->setDecimals(1);
+    radius->setSuffix(" mm");
+    radius->setSpecialValueText("no limit");
+    radius->setValue(store.value("select/radius", 0.0).toDouble());
+    radius->setToolTip("Stop this far from the click.");
+    form->addRow("Spread", mode);
+    form->addRow("Angle", angle);
+    form->addRow("Thickness", thickness);
+    form->addRow("Radius", radius);
+    auto buttons = new QHBoxLayout;
+    auto select = new QPushButton("Select");
+    select->setDefault(true);
+    auto cancel = new QPushButton("Cancel");
+    buttons->addStretch();
+    buttons->addWidget(cancel);
+    buttons->addWidget(select);
+    form->addRow(buttons);
+
+    bool confirmed = false;
+    connect(select, &QPushButton::clicked, &menu, [&]{ confirmed = true; menu.close(); });
+    connect(cancel, &QPushButton::clicked, &menu, [&]{ menu.close(); });
+    auto action = new QWidgetAction(&menu);
+    action->setDefaultWidget(holder);
+    menu.addAction(action);
+
+    menu.exec(globalPos);
+    if (!confirmed) return;
+    const QString m = mode->currentData().toString();
+    store.setValue("select/mode", m);
+    store.setValue("select/angle-" + m, angle->value());
+    store.setValue("select/thickness", thickness->value());
+    store.setValue("select/radius", radius->value());
+    emit(surfaceSelectRequested(line, point, m, angle->value(), thickness->value(), radius->value()));
 }
 
 void View::mouseDoubleClickEvent(QMouseEvent* event)
@@ -1395,7 +1608,7 @@ void View::checkHoverTarget(QPoint pos)
     // the probing; an analysis result has its own card and is always probed)
     const bool legend_on = target && (target->hasResult() ||
                                       (show_legends && !hidden_legends.contains(target->colorLabel())));
-    probe_valid = target && target->hasColorField() && legend_on &&
+    probe_valid = target && target->hasColorField() && target->colorMap() != "bc" && legend_on &&
                   target->probe(cursor_pos, probe_value);
     if (probe_valid)
     {
@@ -2256,6 +2469,18 @@ void View::checkMeshes() const
     {
         emit(meshesReady(meshes));
     }
+}
+
+QHash<int, QString> View::cacheStates() const
+{
+    QHash<int, QString> out;
+    for (const auto* s : shapes)
+    {
+        if (!s->renderCache() || s->sourceLine() < 0) continue;
+        const QString kind = s->renderCacheKind();
+        out[s->sourceLine()] = (kind == "wait" ? QString("on") : kind) + "|" + s->renderCacheState();
+    }
+    return out;
 }
 
 }   // namespace FielDes

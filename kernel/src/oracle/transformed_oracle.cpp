@@ -27,6 +27,15 @@ void TransformedOracle::set(const Eigen::Vector3f& p, size_t index)
     zEvaluator.set(p, index);
 }
 
+void TransformedOracle::setVar(const void* var, float value)
+{
+    const std::map<Tree::Id, float> one{{static_cast<Tree::Id>(var), value}};
+    xEvaluator.updateVars(one);
+    yEvaluator.updateVars(one);
+    zEvaluator.updateVars(one);
+    underlying->setVar(var, value);
+}
+
 void TransformedOracle::evalInterval(Interval& out)
 {
     auto xRange = xEvaluator.eval(lower, upper);

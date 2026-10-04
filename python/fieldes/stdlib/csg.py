@@ -57,7 +57,8 @@ def offset(a, o):
     """ Expand or contract a given shape by an offset
         Positive offsets expand the shape; negative offsets shrink it
     """
-    args = [Shape.wrap(a), Shape.wrap(o)]
+    from fieldes.stdlib.fields import _dist      # (an imported part: its exact distance)
+    args = [_dist(a), Shape.wrap(o)]
     return Shape(stdlib.offset(
         args[0].ptr,
         args[1].ptr))
@@ -177,9 +178,28 @@ blend = blend_expt_unit
 import functools
 
 _prev_union = union
-def union(a, *args):
+
+
+def _round_union(a, b, r):
+    """ The union of two fields with a circular blend of radius r where their surfaces meet (they are about
+        distances: negative inside).  Far from the meeting it is the plain union. """
+    ua = (Shape.wrap(r) - a).max(0)
+    ub = (Shape.wrap(r) - b).max(0)
+    return a.min(b).max(r) - (ua.square() + ub.square()).sqrt()
+
+
+def union(a, *args, radius=0):
+    """ The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
+        with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
+        a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included.
+        (A radius that is a field makes a blend that varies.) """
+    if radius is not None and not (isinstance(radius, (int, float)) and radius == 0):
+        a = Shape.wrap(a)
+        out = a
+        for b in args:
+            out = _round_union(out, Shape.wrap(b), radius)
+        return out
     return functools.reduce(_prev_union, args, a)
-union.__doc__ = _prev_union.__doc__
 
 _prev_intersection = intersection
 def intersection(a, *args):

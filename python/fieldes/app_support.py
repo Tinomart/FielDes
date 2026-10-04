@@ -287,7 +287,7 @@ import os
 import re
 
 IMPORT_FUNCS = ('import_step_parts', 'import_step', 'import_step_parts_reconstructed',
-                'import_mesh')
+                'import_step_tessellated_parts', 'import_step_tessellated', 'import_mesh')
 SETTINGS_FUNCS = ('set_bounds', 'set_resolution', 'set_quality')
 HIDDEN_RE = re.compile(r'^(\s*)(?:#\s*hidden:\s?)+(.*)$')
 MAX_ITEMS = 400
@@ -635,13 +635,27 @@ def scene_json(source, gs, results):
             items.append(item)
             continue
 
-        # --- "x = handles(x, ...)" / "x = expose(x, [...])": what edits the shape x (not shapes of their own)
+        # --- "x = handles(x, ...)" / "x = expose(x, [...])" / "x = render_cache(x)": what edits the shape x
+        # (not shapes of their own)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and \
                 isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call) and \
-                _short_name(_call_name(stmt.value)) in ('handles', 'expose') and stmt.value.args and \
+                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache') and stmt.value.args and \
                 isinstance(stmt.value.args[0], ast.Name) and \
                 stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
             target = by_name[stmt.targets[0].id]
+            if _short_name(_call_name(stmt.value)) == 'render_cache':
+                # (the render cache keeps every shape's mesh unless the script says render_cache(x, False): that line
+                # is the opt-out; render_cache(x) is the default said aloud)
+                on = True
+                flag = stmt.value.args[1] if len(stmt.value.args) > 1 else None
+                for kw in stmt.value.keywords:
+                    if kw.arg == 'on':
+                        flag = kw.value
+                if isinstance(flag, ast.Constant):
+                    on = bool(flag.value)
+                info = {'line': line, 'end_line': end, 'call': _span(stmt.value), 'text': _short(src.segment(stmt), 60)}
+                target['cache' if on else 'cache_off'] = info
+                continue
             if _short_name(_call_name(stmt.value)) == 'expose':
                 # (its numbers are var()s: the shape's surfaces can be dragged)
                 target['exposed'] = {'line': line, 'end_line': end, 'call': _span(stmt.value),
@@ -680,6 +694,7 @@ def scene_json(source, gs, results):
                     item = {'kind': 'failed' if is_failed(v) else 'shape',
                             'line': line, 'end_line': end,
                             'var': t.id, 'label': t.id,
+                            'no_handles': bool(getattr(v, '_no_handles', False)),
                             'text': _short(src.segment(stmt.value), 70),
                             'deps': sorted(n for n in _names_in(stmt.value)
                                            if n in by_name and n != t.id)}

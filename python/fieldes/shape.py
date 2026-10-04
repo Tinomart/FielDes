@@ -242,7 +242,9 @@ class Shape:
         '''
         region = libfive_region_t(*[libfive_interval_t(a, b) for a, b
                                     in zip(xyz_min, xyz_max)])
-        ptr_array = [self.ptr]
+        # (the C function reads trees until a null pointer: without that terminator it read whatever lay after
+        # the array, and crashed now and then)
+        ptr_array = [self.ptr, None]
         trees = (libfive_tree * len(ptr_array))(*ptr_array)
         lib.libfive_tree_save_meshes(trees, region, resolution, quality,
                                    filename.encode('ascii'))

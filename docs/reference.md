@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Caching](#caching)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
 
 ## Primitive shapes
 
@@ -245,9 +245,12 @@ Positive offsets expand the shape; negative offsets shrink it
 
 Returns a shell of a shape with the given offset
 
-### `union(a, *args)`
+### `union(a, *args, radius=0)`
 
-Returns the union of two shapes
+The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
+with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
+a lattice and the body it is added to, a rib and a plate.  It works on any field, lattices included.
+(A radius that is a field makes a blend that varies.)
 
 ## Moving, rotating, scaling, deforming
 
@@ -785,6 +788,67 @@ Millimetres per length unit of a STEP file, read from the unit its
 (The importers themselves read every part's own unit: a file can
 mix them.)
 
+## Importing STEP models exactly (almost all free-form)
+
+STEP import for parts that are almost all free-form (B-spline) surface: the
+exact surface, as a distance field.
+
+    parts = import_step_tessellated_parts("organic_bracket.step")
+    part, bounds = parts[0]
+
+The main importer (import_step_parts) rebuilds a solid as CSG: planes, cylinders,
+cones, spheres and tori exactly, and a free-form face as a closed-form surface
+fitted to it -- fast, but an approximation that a gear, a thread or a sculpted
+body does not survive.  This function does not reconstruct or fit anything:
+every solid is tessellated straight from its trimmed faces (the free-form faces
+refined inside their outlines until no triangle turns the surface by more
+than a turn's share, 2 pi over `quality`), the way a CAD program or nTop does
+for an implicit body, and the triangles are made the exact signed distance
+field of the part (see mesh_import).  What comes back are ordinary shapes, with the same parts, names,
+units and bounds as import_step_parts(), and offsets, shells and lattices of
+them are made from the true distance.
+
+What it costs: tessellating a part with many free-form faces takes seconds
+(done once, on all the processor's threads, and kept in a folder next to the
+STEP file: a 90-part assembly 22 s, a worm gear 4 s); building the distance
+field a fraction of a second a part; meshing it, in FielDes or for an export,
+0.5 to 2.8 times as long as the main importer's formulas (about as long for
+free-form parts, 2.2 to 2.8 times for analytic ones).  What it is not: a
+rebuilt solid -- the planes and cylinders of the part are triangles here, and
+the faces cannot be dragged (expose) -- so use import_step_parts() for parts
+that are mostly analytic.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `import_step_tessellated(path, units='mm', quality=64, cache=True, rev=None)`
+
+import_step_tessellated_parts() as ONE Shape (the union of its parts), as import_step() is of
+import_step_parts().  Raises RuntimeError if any solid could not be tessellated.
+
+### `import_step_tessellated_parts(path, units='mm', quality=64, cache=True, rev=None)`
+
+Imports a STEP (.step/.stp) file as a separate Shape PER PART whose surface is the file's own, exactly
+(see the module's text): the solids are tessellated from their faces, and each tessellation is the
+exact signed distance field of its triangles.  For parts that are almost all free-form (B-spline)
+faces -- sculpted bodies, gears, threads -- which the fitted closed-form surfaces of import_step_parts()
+do not follow; for the rest import_step_parts() is the faster and lighter choice.
+
+Returns a list of (Shape, (xyz_min, xyz_max)), one per part, as import_step_parts() does: the same
+order, the same names (`_part_name`), the assemblies assembled, each part in `units` ('mm', 'cm',
+'m', 'in', or 'file').  A solid that could not be tessellated is a FailedPart that says why the moment
+it is used.
+
+quality   points per full turn of a circle (2 pi over it is the most a triangle may turn the surface
+          by): 64 is about 0.05 % of a radius off the surface; 128 halves the triangles' size ... and
+          makes four times as many of them
+cache     the tessellation is kept in the folder '<file>.fieldes-tessellation' next to the STEP file
+          (cache=False: not; a string: some other folder) until the file, the quality or the
+          tessellation changes
+rev       a number that is part of what the tessellation is kept by: another one tessellates again
+          ("Reimport" in FielDes)
+
 ## Importing triangle meshes
 
 Triangle-mesh import: STL (binary or ASCII), Wavefront OBJ, PLY (ASCII or
@@ -914,7 +978,7 @@ drive a parameter such as a lattice thickness or an offset:
     part  = sphere(30)
     depth = depth_below(part)                        # 0 at the surface, 30 at the centre
     t     = ramp(depth, (0, 30), (2.0, 0.6))         # 2 mm walls at the skin -> 0.6 mm inside
-    lat   = lattice(part, 'gyroid', cell_size=8, thickness=t, skin=1.5)
+    lat   = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)
 
 Groups:
     coordinates        x_field(), y_field(), z_field(), radial_field(),
@@ -1018,6 +1082,8 @@ distance (e.g. flat, square-cornered outside a box's edges); after
 this, offsets and shells are uniform and depth_below() is a true
 depth.  resolution: mesh samples per mm (default ~150 along the
 longest side); margin: extra room around the bounds for offsets.
+(A shape with var() numbers is meshed with the numbers they have in
+the script, and the result is remembered by them.)
 
 ### `field_from_csv(path, x='x', y='y', z='z', value='value', neighbours=8, power=2.0, delimiter=None, scale=1.0)`
 
@@ -1145,6 +1211,12 @@ falling to 0.5 at z = 50 and above.
 
 Same as ramp()
 
+### `render_mesh(shape, region, res)`
+
+The library's mesh of a shape over a region (a libfive_region_t) at `res` samples per mm: the
+pointer libfive_tree_render_mesh gives (free it with libfive_mesh_delete), or None. A shape with
+var()s is meshed with the numbers they have in the script.
+
 ### `repeat(shape, spacing, center=(0, 0, 0))`
 
 Repeats a shape infinitely on a grid.  spacing: a number or (sx, sy,
@@ -1270,7 +1342,7 @@ operation (a lattice thickness, an offset, a blend):
     t_of_depth = fit([(0, 2.0), (5, 1.4), (15, 0.9), (30, 0.6)], model='poly', degree=2)
     print(t_of_depth)                  # equation and goodness of fit (R^2)
     thickness = t_of_depth(depth_below(ball))      # a field
-    lat = lattice(ball, 'gyroid', cell_size=8, thickness=thickness, skin=1.5)
+    lat = lattice(ball, cell_periodic('gyroid'), cell_size=8, thickness=thickness, skin=1.5)
 
 Models (fit(..., model=...)):
     'linear'        a + b x
@@ -1466,32 +1538,46 @@ z_top = sz / 2 + amplitude sin(2 pi x / period) sin(2 pi y / period)
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
+Every lattice operation takes a CELL: the thing the lattice is made of.  Three functions make one --
+
+    cell_periodic(kind)          a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS (gyroid,
+                                 schwarz_p ...) or a planar pattern (hexagon ...)
+    cell_non_periodic(kind)      cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
+    cell_custom(...)             your own: nodes and beams, a TPMS equation, or any shape that tiles
+
+-- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
+name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
+it is, how big, and where it goes (a body, a surface, a cell map) are the operation's.
+
 The one-call version:
 
     from fieldes import *
 
     part = sphere(30)
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=1.0, skin=1.5)
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0, skin=1.5)
 
     # graded: thicker walls near the skin, by a ramp or a regression
     t = ramp(depth_below(part), (0, 30), (1.6, 0.5))
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=t, skin=1.5)
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)
 
     # by relative density instead of thickness (calibrated automatically;
     # the density may itself be a field)
-    lat = lattice(part, 'octet', cell_size=10, density=0.2)
+    lat = lattice(part, cell_periodic('octet'), cell_size=10, density=0.2)
+
+    # a foam that does not repeat
+    foam = lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
 
     # cells that follow a sphere / cylinder
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=1.0,
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0,
                   cell_map=spherical(cells_around=16))
 
 Building blocks (infinite lattices -- fields; fill() or lattice() trims them):
-    tpms(kind, cell_size, thickness=..., style='sheet' | 'network', ...)
-    strut_lattice(cell, cell_size, radius, node_radius=None, blend=0, ...)
-    planar_lattice(kind, cell_size, wall, axis='z')      honeycombs, grids
+    tpms(cell, cell_size, thickness=..., style='sheet' | 'network', ...)
+    strut_lattice(cell, cell_size, radius=... | thickness=..., node_radius=None, blend=0, ...)
+    planar_lattice(cell, cell_size, wall, axis='z')      honeycombs, grids
     fill(body, lattice, skin=0, region='volume' | 'shell', depth=...)
     relative_density(lattice, cell_size)                 volume fraction
-    lattice_parameter_for_density(kind, cell_size, density)
+    lattice_parameter_for_density(cell, cell_size, density)
 
 TPMS kinds: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid,
     split_p, iwp, frd, fischer_koch_s.  style='sheet' is a wall of the given
@@ -1501,6 +1587,7 @@ TPMS kinds: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid,
 Strut cells: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
     diamond, cross, tesseract, cuboctahedron.
 Planar (2.5D) patterns: hexagon (honeycomb), triangle, square, kagome.
+(All of them are names for cell_periodic(); the kinds are listed there.)
 
 Thickness, radius, offset, density, node radius -- any of them can be a
 field (a Shape), e.g. a regression of test data applied to a distance field.
@@ -1524,6 +1611,18 @@ A short description of the mapping, for the output pane
 
 The point p as lattice coordinates (u, v, w) in mm, in which the lattice repeats every `cell`
 
+### `FoamCell`
+
+Cells that do not repeat (see cell_non_periodic)
+
+### `LatticeCell`
+
+What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic() or cell_custom(),
+taken by every lattice operation as its `cell`.
+.family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
+             (a shape that tiles) or 'foam' (cells that do not repeat)
+.periodic    whether the cell repeats on a grid (so can follow a cell map or a surface)
+
 ### `LatticeGraph`
 
 A graph of nodes and beams: nodes [(x, y, z), ...], beams [(i, j), ...].
@@ -1538,14 +1637,31 @@ The length of every beam (mm)
 
 The graph as round beams of `radius` mm: see graph_lattice()
 
+### `PlanarCell`
+
+A standard planar (2.5D) pattern (see cell_periodic)
+
+### `ShapeCell`
+
+Any shape that tiles, as a cell (see cell_custom): the shape is modelled in the box from (0, 0, 0) to the
+cell size the lattice is made with
+
+### `StrutCell`
+
+A standard strut cell that repeats (see cell_periodic)
+
+### `TPMSCell`
+
+A standard triply periodic minimal surface (see cell_periodic)
+
 ### `TPMSEquation`
 
 Your own TPMS (or any triply periodic) equation, for tpms() and
 lattice(): f(a, b, c) -> value, where a, b, c are the position in the
 cell as phases (2 pi per cell).  Write it with + - * / and the
 methods .sin() .cos() .sqrt() .square() of a, b, c, e.g. a gyroid:
-    tpms_equation(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
-                                  + c.sin() * a.cos())
+    cell_custom(equation=lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
+                                         + c.sin() * a.cos())
 Its value is turned into a distance in mm (its gradient is followed),
 so thickness= is a real wall thickness.
 
@@ -1553,8 +1669,8 @@ so thickness= is a real wall thickness.
 
 A strut unit cell of your own: beams between nodes in the unit cube
 (coordinates 0..1 across the cell, scaled by cell_size when used).
-Use it wherever a cell is taken: strut_lattice(cell=...),
-lattice(..., cell=...).
+What cell_custom(nodes, beams, mirror) makes; use it wherever a cell is
+taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
 
 nodes: {name: (x, y, z)} or a list of (x, y, z) (then names are the
     indices)
@@ -1583,6 +1699,48 @@ The beams that carry their own radius: {beam: radius in mm}
 Straight cells, optionally shifted (origin) and turned (rotation =
 (rx, ry, rz) degrees)
 
+### `cell_custom(nodes=None, beams=None, mirror='', equation=None, shape=None, name='custom', check=True)`
+
+A cell of your own -- one of three kinds:
+
+struts      cell_custom(nodes, beams, mirror='')   beams between nodes in the unit cube (see UnitCell: the
+            nodes {name: (x, y, z)} or a list, the beams pairs of nodes, optionally with a radius of their own,
+            `mirror` 'x', 'xy', 'xyz' to draw one part of a symmetric cell)
+a surface   cell_custom(equation=f)                f(a, b, c) of the position in the cell as phases (2 pi per
+            cell), written with + - * / and .sin() .cos() .sqrt() .square(); its value becomes a distance in
+            mm, so thickness= is a real wall (see TPMSEquation)
+a shape     cell_custom(shape=s)                   the shape you model in one cell, the box from (0, 0, 0) to
+            the cell size, repeated; model it so that it tiles (check=True warns where the faces do not match)
+
+    cell = cell_custom({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
+    lattice(part, cell, cell_size=8, radius=0.6)
+
+### `cell_non_periodic(kind='voronoi', relax=2, seed=1)`
+
+Cells that do not repeat: points at random about a cell size apart, joined into a graph that fills the body
+(or lies on a surface).
+
+kind    'voronoi' (the edges of the Voronoi cells: a foam) or 'delaunay' (the Delaunay edges: a stochastic truss)
+relax   iterations that make the cells more even
+seed    another number is another random pattern
+
+    lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
+
+### `cell_periodic(kind='octet')`
+
+A standard cell that repeats on a grid -- what a lattice, a conformal lattice or a lattice on a cell map is
+made of.
+
+kind    a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin (= truncated_octahedron),
+        diamond_struts, cross, tesseract, cuboctahedron;
+        a TPMS: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid, split_p, iwp, frd, fischer_koch_s;
+        a planar pattern (2.5D walls): hexagon, triangle, square, kagome
+
+Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
+    lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
+    lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
+(Your own cell: cell_custom().  Cells that do not repeat: cell_non_periodic().)
+
 ### `cylindrical(origin=(0, 0, 0), axis='z', cells_around=None, radius=None, rotation=None)`
 
 Cells that wrap around an axis: radial, around, and along the axis.
@@ -1604,18 +1762,18 @@ beams [(i, j), ...] (node indices).  radius: a number, one per node,
 or a field (evaluated at the nodes; each beam tapers linearly
 between its ends).  blend rounds the joints.
 
-### `lattice(body, kind='gyroid', cell_size=10.0, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z')`
+### `lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z')`
 
 A body filled with a lattice, in one call.
 
-kind: a TPMS (gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
-    iwp, frd, fischer_koch_s), a strut cell (cubic, bcc, bccz, fcc,
-    fccz, octet, octahedron, kelvin, diamond_struts, cross,
-    tesseract, cuboctahedron), a planar pattern (hexagon,
-    triangle, square, kagome) or a random one (voronoi, stochastic)
+cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
+    iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
+    diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
+    cell_non_periodic('voronoi' | 'delaunay') or cell_custom(...).  Default: cell_periodic('gyroid')
 cell_size: mm, or (sx, sy, sz)
-thickness (sheet TPMS), offset (network TPMS), radius (struts), wall
-    (planar): the member size -- numbers or fields
+thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
+    or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
+    (planar).  Numbers or fields
 density: instead of the member size, a relative density 0..1 (a
     number or a field); calibrated automatically
 style: 'sheet' or 'network' (TPMS)
@@ -1625,29 +1783,18 @@ cell_map: cartesian(...), cylindrical(...) or spherical(...)
 node_radius, blend: joint spheres and joint rounding (struts)
 skin_blend: rounds the lattice-to-skin joints
 
-### `lattice_parameter_for_density(kind, cell_size, density, style='sheet', samples=40)`
+### `lattice_parameter_for_density(cell, cell_size, density, style='sheet', samples=40)`
 
 The thickness (sheet TPMS), offset (network TPMS), wall (planar) or
-radius (struts) that gives a lattice the requested relative density
+radius (struts) that gives a lattice of this cell the requested relative density
 (0..1), found by bisection on a sampled unit cell
 
-### `periodic(shape, cell_size=10.0, cell_map=None, check=True)`
-
-Any shape as a unit cell: the shape you model in one cell -- the box
-from (0, 0, 0) to cell_size -- repeated through space (along a cell
-map too: cylindrical, spherical ...).  Model the cell so that it
-tiles: what leaves one face must come in on the opposite face (a
-solid that touches a face must touch it the same way on the other
-side).  check=True samples the faces and warns where they don't
-match (the lattice would have steps or holes at every cell
-boundary).
-
-### `planar_lattice(kind='hexagon', cell_size=10.0, wall=0.8, axis='z', cell_map=None)`
+### `planar_lattice(cell, cell_size=10.0, wall=0.8, axis='z', cell_map=None)`
 
 A 2.5D pattern of walls, extruded along an axis: a honeycomb
-(kind='hexagon'; cell_size = flat-to-flat width), or a triangle,
-square or kagome grid.  wall is the wall thickness (mm, may be a
-field).
+(cell_periodic('hexagon'); cell_size = flat-to-flat width), or a
+triangle, square or kagome grid.  wall is the wall thickness (mm,
+may be a field).
 
 ### `points_graph(points, style='delaunay')`
 
@@ -1664,18 +1811,17 @@ Cells in shells around a point: radial, around (longitude) and pole
 to pole (latitude).  Give cells_around= or radius= (where the cells
 should be cell_size wide).  Cells shrink towards the poles.
 
-### `strut_lattice(cell='octet', cell_size=10.0, radius=0.8, node_radius=None, blend=0.0, cell_map=None)`
+### `strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0, cell_map=None, thickness=None)`
 
-An infinite strut (beam) lattice: round beams of `radius` mm along
-the edges of a unit cell, repeated every cell_size.
-cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
-    diamond, cross, tesseract, cuboctahedron -- or your own cell:
-    unit_cell(nodes, beams) (beams may have their own radius), or a
-    plain list of beams ((x0, y0, z0), (x1, y1, z1)) in unit-cube
-    coordinates
+An infinite strut (beam) lattice: round beams of `thickness` mm (their diameter;
+or `radius` mm, which is half of it: give one of the two, default radius 0.8)
+along the edges of a unit cell, repeated every cell_size.
+cell: a strut cell -- cell_periodic('cubic' | 'bcc' | 'bccz' | 'fcc' | 'fccz' | 'octet' | 'octahedron' |
+    'kelvin' | 'diamond_struts' | 'cross' | 'tesseract' | 'cuboctahedron'), or your own:
+    cell_custom(nodes, beams) (beams may have their own radius)
 node_radius: spheres at the joints (defaults to none)
 blend: rounds the joints with a smooth blend of this radius
-radius / node_radius may be fields.
+thickness / radius / node_radius may be fields.
 
 ### `surface_graph(body, cell_size=8.0, pattern='triangle', seed=1, bounds=None)`
 
@@ -1683,20 +1829,12 @@ A graph on a body's surface: points about cell_size apart joined into
 triangles (pattern='triangle') or the dual cells (pattern='voronoi',
 mostly hexagons)
 
-### `surface_lattice(body, cell_size=8.0, radius=0.6, pattern='triangle', seed=1, blend=0.0, bounds=None, with_body=None)`
-
-Round beams on a body's surface: a triangle lattice
-(pattern='triangle') or its dual, a Voronoi / hexagon-like pattern
-(pattern='voronoi').  The beams are centred on the surface; pass
-with_body='inside' to keep only their part inside the body, or
-'union' to add them to the body.
-
-### `tpms(kind='gyroid', cell_size=10.0, thickness=1.0, style='sheet', offset=0.0, cell_map=None, invert=False, fast=False)`
+### `tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0, cell_map=None, invert=False, fast=False)`
 
 An infinite TPMS lattice (a field; trim it with fill() or use
 lattice()).
-kind: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p, iwp,
-    frd, fischer_koch_s -- or your own: tpms_equation(f)
+cell: a TPMS cell -- cell_periodic('gyroid' | 'schwarz_p' | 'diamond' | 'neovius' | 'lidinoid' |
+    'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom(equation=f)
 style='sheet': walls of `thickness` mm centred on the surface
 style='network': the solid on one side of the surface, grown by
     `offset` mm (0 = half the volume for gyroid / diamond / P);
@@ -1705,21 +1843,9 @@ style='surface': the signed distance to the surface itself
 thickness / offset may be fields.
 fast=True: a quicker, slightly less exact distance (walls ~5 % thin)
 
-### `tpms_equation(func, name='custom')`
-
-Your own TPMS equation: see TPMSEquation
-
-### `unit_cell(nodes, beams, mirror='')`
-
-Your own strut unit cell: see UnitCell.  Example (a body-centred cell
-with thicker diagonals, drawn once and mirrored):
-    cell = unit_cell({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)},
-                     [('c', 'o', 1.2)], mirror='xyz')
-    strut_lattice(cell, cell_size=8, radius=0.6)
-
 ### `unit_cell_beams(cell)`
 
-The beams of a strut unit cell (in unit-cube coordinates), made
+The beams of a strut cell (in unit-cube coordinates), made
 periodic: every beam of the infinite lattice that passes near the
 cell, clipped to it (with a margin for cells that aren't
 mirror-symmetric).  Returns (beams, margin).
@@ -1731,12 +1857,221 @@ apart, joined by the edges of their Voronoi cells (style='voronoi',
 a foam) or by their Delaunay edges (style='delaunay', a stochastic
 truss).  relax: iterations that make the cells more even.
 
-### `voronoi_lattice(body, cell_size=8.0, radius=0.6, style='voronoi', relax=2, seed=1, skin=0.0, blend=0.0, skin_blend=0.0, bounds=None, density=None)`
+## Lattices that follow a surface
 
-A body filled with a random Voronoi foam (or, style='delaunay', a
-stochastic truss) of round beams.  radius may be a field (e.g. from
-a regression); seed picks a different random pattern.
-density: a relative density instead of the radius (a number).
+A lattice that follows a surface: its cells lie on the surface, face its normal and are as big as asked all
+along it -- the "conformal" lattice of nTop.
+
+    from fieldes import *
+
+    # a thin shell of the part filled with strut cells 6 mm wide: the cells run through its thickness
+    skin = lattice_surface_conform(shell_outside(part, 4), cell_periodic('octet'), cell_size=6)
+
+    # strut cells standing 6 mm out of the surface of the part
+    ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', depth=6, cell_size=6, radius=0.6)
+
+    # ... or only over a face you picked (right-click it in FielDes, or select_surface())
+    top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
+    ribs = lattice_surface_conform(top, cell_periodic('bcc'), side='outside', depth=6, cell_size=6, radius=0.6)
+
+    part_with_ribs = union(part, ribs)
+
+    # an open surface of no thickness -- a field that is zero on it (negative below, positive above) -- with a patch
+    # of it: one layer of cells on its positive side, cut off at the edge of the patch
+    wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
+    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box_exact((-30, -20, -14), (30, 20, 14)),
+                                    side='outside', depth=6)
+
+    # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
+    texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_size=6, thickness=1.0)
+
+A body's surface is what the cells are laid on.  Where a plain lattice() cuts a straight grid off at the surface,
+here the grid is drawn on the surface itself: a row of cells runs along it and bends with it, round a cylinder,
+over a fillet, along an S-shaped surface, and every cell has its top and bottom face parallel to the surface and its
+sides along the surface normal -- the same face towards the normal everywhere.  By default (side='inside') the
+lattice FILLS the body: the cells run through its thickness, one layer for a thin shell or sheet, more where it is
+thicker (at most three cells deep, or `depth`).  With side='outside' the layers stand out of the surface instead
+(ribbing standing on the part), `depth` deep.  A *surface* -- a field that is only a surface, with no thickness (and so
+no other face, no rim) -- gets one layer, on the side `side` names (`'outside'` is the side the field is positive on),
+cut off at the edge of the region given as `within=`.
+
+It is made from the body's field and nothing else: the surface is where the field is zero, its normal the field's
+gradient.  No mesh of the body is made and no distance is taken to one; the mesh is only what is drawn at the end.
+
+How the cells are laid out
+    The surface is first covered by ONE MESH OF QUADS, one quad to a cell, before any cell is made: its rows follow the surface's own
+    directions -- along a sharp edge, round a hole, along a handle -- and its quads are `cell_size` wide where the surface lets them be.
+    There are two layouts, because there are two kinds of surface; which one is used is found out from the field (does the surface go on
+    past the region it is wanted in?).
+
+    A BODY (a closed solid, or a selection of one): the surface ends inside its box, and the mesh is CLOSED and covers ALL of it.  It is made
+    from a cloud of points of the surface, in five steps, all from the field:
+
+    1. points of the surface a third of a spacing apart (the centres of the cubes the surface passes through, put onto the surface along the
+       field's gradient); two points are neighbours when the SURFACE joins them, not when they are close in space -- a hop is accepted if its
+       middle lies on the surface, or if the chord put onto the surface is a connected curve of about its length -- so a thin wall or a gap
+       between two points is never crossed; at a sharp edge a point is put ON the edge;
+    2. a direction field with four-fold symmetry and a lattice position field over the points; sharp edges are lines the field follows, so
+       the rows of cells run along them;
+    3. lattice vertices where the position field puts them, made fine enough that the part of the surface nearest to each vertex is a disc
+       and two vertices that are neighbours touch along ONE arc;
+    4. a face for every three of those parts that meet at a place (one for four when four meet), taken in the order of how many points see
+       them, as long as the faces keep making a surface: every edge on two faces, the faces round a vertex one fan, all going round the
+       same way;
+    5. a face with k corners is made into k quads -- a corner, the middle of the side after it, the middle of the face, the middle of the
+       side before it -- the middle of a side being shared by the two faces that have it, so the quads fit edge to edge.  Finally the nodes
+       are moved over the surface towards the middle of their neighbours and put back on it, a little at a time (a node on a sharp edge
+       stays; no move may fold a cell or make a corner worse): the cells stay the same cells.
+
+    NOTHING IS LEFT OUT.  Every separate piece of the surface is mapped on its own and checked on its own (four different corners to every
+    cell, every edge on two cells, one fan round every vertex, one connected surface).  A piece too small for cells of `cell_size` -- a
+    cavity inside a boss, a small island of the field -- is sampled finer, by itself, until it can have a closed map: its cells are then
+    smaller than asked.  Two surfaces that the points join by a few hops (two walls closer together than the points can tell apart) are
+    cut apart and laid out again.  A speck that the points found where the field comes near zero but never crosses it is not a surface: it
+    is given up only after the field has been read on a fine grid round it and found to keep one sign.  The layout is made
+    from several placements of the grid the samples are taken on, and the topology of what comes out is VOTED on: a map is used when
+    two placements agree on how many separate surfaces there are and on their Euler number; a surface that the cells can resolve gives
+    the same answer from every placement, one they cannot (a hole or a gap narrower than a cell, a wall thinner than one) gives answers
+    that differ with where the samples fall, and then nothing is made and the error says so.  If every placement is refused, a piece
+    that can be judged but is not a good map may be sampled once finer (cells half as big).  An error says which piece of the surface
+    could not be mapped and where, and what to try (a cell size about half as big), and nothing is returned: a map that does not cover
+    the whole surface, or that another map of the same surface contradicts, is never used.
+
+    A SURFACE THAT IS ONLY A SURFACE -- a field that is zero on a sheet with no body behind it, which goes on past the region you give with
+    within=: the layout has an edge where the region cuts it, and only there.  A scaffold of it is made (a triangle mesh by marching
+    tetrahedra over the cubes the surface passes through, its vertices moved onto the surface and onto its sharp edges), a direction field
+    and a lattice position field are solved over the scaffold, the triangles that lie in one square of the lattice make a region, and a
+    region with k corners is made into k quads as above; the nodes are moved over the surface until the cells are even.  The sheet is laid
+    out over a margin of two cells round the region, so that the region lies well inside it.
+
+    Every node is on the surface, and every point of a cell is put back on it too, so no strut lies in a hole or outside the body.  Cells
+    are distorted wherever the surface cannot be flattened -- over a fillet, round the lip of a rim, across a dome -- and none is left out
+    for that: a cell is as stretched, squeezed or bent as the surface makes it, and the beams of the unit cell follow.  Where a narrow
+    fillet or a small step is narrower than a cell, or the rows of cells have to turn a corner, some cells are less regular.
+
+cell
+    a strut cell ('octet', 'bcc', 'cubic', 'kelvin', ...: see lattice()) -- `radius` is the strut radius.  The cell's
+    beams are carried over to every cell of the grid: the lattice is a graph of straight beams, and the mesher
+    measures the distance to the beams near a point, so it is as quick as a graph lattice.
+
+    or a periodic surface ('gyroid', 'schwarz_p', 'diamond', 'neovius', 'lidinoid', 'split_p', 'iwp', 'frd',
+    'fischer_koch_s') -- `thickness` is the wall of a sheet, or style='network' for the solid on one side of it.  The
+    periodic function is evaluated in the coordinates of the cell a point is in (s, t along the surface, w through the
+    layer, found from the four edges of the cell and the depth of the layer), one period to each cell on the surface and
+    to each layer, so its sheets run through the layers and bend with the surface.  The ones made of cosines only
+    (schwarz_p, neovius, iwp, frd) look the same after a quarter turn, so they join up where rows of cells meet; the
+    others (gyroid, diamond, ...) have a seam there.  Rendering costs more than for struts: the sheets fill the layers.
+    Where three or five cells meet the pattern is rougher; where the surface is flat enough, or one orientation of the
+    texture on every face is fine, a plain union(part, lattice(shell_outside(part, depth), cell_periodic(...),
+    cell_size=...)) has none of that.
+
+The lattice reaches a little into the part (by a strut's radius) so that it fuses with it when you add the two.  It
+makes no skin, adds no body and cuts nothing of the part: combine it with the part yourself.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0, radius=None, layers=None, side='inside', blend=0.0, direction=None, bounds=None, thickness=None, style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0)`
+
+A lattice that follows a surface (see the module): its cells lie on it, as big as asked all along it, each
+with a face towards the surface normal -- filling the body the surface bounds (side='inside', the default) or
+standing out of it (side='outside').
+
+surface_field   the surface, as ONE argument whatever it is: a body (a closed solid: its surface), a surface
+                (a field that is zero on it, with no body behind it), or a select_surface(...) selection (the
+                patch picked on a body: the lattice is laid on that patch only).  Which of them it is is found
+                out, not told
+cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
+                TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
+                surface, or cell_custom(nodes, beams).  Default: cell_periodic('octet')
+depth           how deep the layers are together (mm).  Default: as deep as the body is under each cell (a thin
+                shell: its thickness; at most three cells) for side='inside', one cell for 'outside'
+within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
+cell_size       mm along the surface
+thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
+            the wall of a TPMS sheet (below).  Default: beams 24 % of the smaller of cell_size and the layer's
+            depth across, a sheet 15 % of cell_size
+radius      the same for beams, as a radius (half of thickness; give one of the two): a number, or a field (the
+            struts taper between the nodes).  Struts inside a body keep inside it
+layers      the number of cells through the depth (default: as many as fit, at least 1)
+side        'inside' (the default: the lattice fills the body) or 'outside' (it stands out of the surface)
+blend       rounds the joints of struts
+direction   the way the rows of cells run where the surface gives them no way (a flat or smoothly curved part with
+            no edge to follow) (default: along x)
+bounds      ((x0, y0, z0), (x1, y1, z1)) of the surface, if its extent cannot be found (a field with no end: an
+            open surface).  Default: its extent, and if it has none, that of `within`
+grid_offset 0 (the default), 1, 2 or 3: which of four fixed grids of sample points the surface is laid out from.
+            The layout is made ONCE, from that grid, and is the same every time.  Where the surface has detail
+            about as small as the spacing of the points (a narrow neck, a thin wall, a tiny gap) the grid decides
+            which points are joined, so a part that does not close with one value may close with another, or give a
+            different count of holes: if the call says no closed map could be made, or the warning says the
+            topology may be off, try the other values (or a smaller cell_size), looking at what the part has there
+
+For a TPMS kind (gyroid, schwarz_p, diamond, neovius, lidinoid, split_p, iwp, frd, fischer_koch_s) the periodic
+surface follows the surface, one period to each cell on it and to each layer:
+thickness   the wall of a sheet, mm (default 15 % of cell_size)
+style       'sheet' (walls `thickness` thick), or 'network' (the solid on one side of the surface, grown by
+            `offset` mm; `invert=True` takes the other side)
+skin        a solid skin this deep (mm) against the faces of the layers
+
+Returns the lattice alone, as a shape: add it to the part with union().
+
+## Selecting surfaces
+
+Selecting a surface: the flood fill of a CAD program, as a field.
+
+    from fieldes import *
+
+    top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
+    top                                       # displayed: the patch, lit up on the part
+
+`select_surface` picks the patch of the part's surface around `seed` (a point on or near it) by spreading over
+the neighbouring triangles of the surface mesh: with mode='flat' (the default) as long as the surface stays
+within `angle` degrees of the way it faced at the seed -- a flat face, or a gently curved one; with mode='smooth'
+as long as it turns less than `angle` degrees from one triangle to the next -- a cylinder, a fillet, a whole
+rounded skin, up to a sharp edge.  `radius` stops it that far from the seed.
+
+What comes back is a field, like everything else here: negative in a thin layer (`thickness`) across the
+patch, positive elsewhere, so it is a region you can give to `fixed()` and `force()`, show on the part, combine
+with other shapes, or hand to `lattice_surface_conform()` as the surface to put a lattice on:
+
+    conditions = static_boundary_conditions(part, [fixed(select_surface(part, (0, 0, 0)))],
+                                            [force(top, (0, -100, 0))])
+    result = static_analysis(part, conditions, material=aluminium)
+
+In FielDes, right-click a surface in the viewport: the menu holds the angle, the mode and the thickness, and
+writes the `select_surface(...)` line into the script under the part, like everything else the program does.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `SurfaceSelection`
+
+A patch of a surface (see select_surface): a field, negative in a thin layer across the patch.
+.shape (what it was picked on), .seed, .angle, .mode, .thickness, .triangles (how many of the surface
+mesh's), .patch (the unsigned distance to the patch itself, a field), .whole (the same to the whole
+surface mesh: it equals .patch exactly where the nearest point of the surface is in the patch),
+.arrays (the patch's own triangles)
+
+### `select_surface(shape, seed, angle=15.0, mode='flat', thickness=None, radius=None, resolution=None, bounds=None)`
+
+The patch of the surface of `shape` around the point `seed`, found by a flood fill over the triangles of
+its surface (see the module), as a field: negative in a layer `thickness` mm thick across the patch.
+
+seed        a point on (or near) the surface: (x, y, z)
+angle       degrees: with mode='flat' how far a triangle may face from the way the seed's does, with
+            mode='smooth' how much the surface may turn from one triangle to the next
+mode        'flat' (a face, flat or gently curved) or 'smooth' (round faces, up to a sharp edge)
+thickness   mm (default: a hundredth of the shape's size, at least two cells of the surface mesh)
+radius      mm: stop this far from the seed (default: no limit)
+resolution  samples per mm of the surface mesh the fill runs over (default: about 200 along the
+            longest side, at least 1): finer follows small faces
+bounds      ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
+
+Returns a SurfaceSelection: a shape (so it is shown, hidden, deleted like any), usable as a region:
+fixed(selection), force(selection, ...), lattice_surface_conform(shape, surface=selection, ...).
 
 ## Structural analysis and topology optimization
 
@@ -1745,11 +2080,12 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
     from fieldes import *
 
     bracket = ...                                        # any Shape, in mm
-    result = static_analysis(
+    conditions = static_boundary_conditions(
         bracket,
         supports=[fixed(box((0, 0, 0), (5, 40, 20)))],   # clamp the left end
-        loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))],   # 200 N down
-        material=aluminium, element_size=1.0)
+        loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))])   # 200 N down
+    conditions                                           # shown on the part: held (blue), pushed (red)
+    result = static_analysis(bracket, conditions, material=aluminium, element_size=1.0)
     colored(bracket, result.von_mises)       # show the stress on the part (FielDes)
     stiffer = bracket - 0.002 * result.von_mises   # results are fields like any other
 
@@ -1932,11 +2268,13 @@ works too.
 The part's own weight: acceleration in mm/s^2 (default: 1 g down
 along -Z), with the material's density
 
-### `modal_analysis(shape, supports, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, max_iterations=100, tolerance=1e-06, cache=True, element='tet')`
+### `modal_analysis(shape, conditions, material=Material('steel', E=200000 MPa, nu=0.3), modes=6, element_size=None, bounds=None, max_iterations=100, tolerance=1e-06, cache=True, element='tet')`
 
 The natural frequencies and mode shapes of `shape` (a Shape, in
-mm), held by `supports` (fixed(...) items) -- how it vibrates.
-No loads are needed; the material's E and density are used.
+mm), held by the supports of the boundary conditions
+(static_boundary_conditions(part, supports=[fixed(...)]) -- how it
+vibrates.  No loads are needed (any given are not used); the
+material's E and density are used.
 
 modes        how many (the lowest first)
 element_size mm (default: about 40 elements along the longest side)
@@ -1948,12 +2286,13 @@ fields -- displacement, ux, uy, uz -- and .show()).  The shapes are
 fields like any other: e.g. stiffen the part where the first mode
 moves most.  An unchanged problem is cached.
 
-### `static_analysis(shape, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, max_iterations=20000, tolerance=1e-06, cache=True, element='tet')`
+### `static_analysis(shape, conditions, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, max_iterations=20000, tolerance=1e-06, cache=True, element='tet')`
 
 Linear static analysis of `shape` (a Shape, in mm).
 
-supports   fixed(...) items (at least one)
-loads      force(...) / gravity(...) / thermal_expansion(...) items
+conditions the boundary conditions: static_boundary_conditions(part, supports, loads) -- the
+           supports are fixed(...) items (at least one), the loads force(...) / gravity(...) /
+           thermal_expansion(...) items.  They are a shape of their own, drawn on the part
 material   a Material (default steel); E in MPa
 element_size   the element edge in mm (default: the part's longest
            side over 60)
@@ -1975,11 +2314,11 @@ material's expansion coefficient per degree above `reference`
 (where it is stress-free).  Held parts are stressed; free ones grow.
 Static analysis only.
 
-### `topology_optimization(part, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), volume_fraction=0.3, element_size=None, iterations=60, filter_radius=None, keep=None, avoid=None, extrude=None, penalty=3.0, move=0.2, bounds=None, max_iterations=20000, tolerance=1e-05, cache=True, element='tet')`
+### `topology_optimization(part, conditions, material=Material('steel', E=200000 MPa, nu=0.3), volume_fraction=0.3, element_size=None, iterations=60, filter_radius=None, keep=None, avoid=None, extrude=None, penalty=3.0, move=0.2, bounds=None, max_iterations=20000, tolerance=1e-05, cache=True, element='tet')`
 
 Topology optimization: the stiffest part that uses `volume_fraction`
-of the material of `part` (the design space), for the given supports
-and loads (as in static_analysis).
+of the material of `part` (the design space), for the supports and
+loads of the boundary conditions (as in static_analysis).
 
 keep:   regions (Shapes, or a list) that must stay solid -- e.g. bolt
         bosses, mounting faces; the material around supports and
@@ -1995,15 +2334,76 @@ filter_radius: the smallest member size scale, mm (default 1.5
 element: 'tet' (default: tetrahedra that follow the part's surface, a density in each),
         'hex' or 'hex_basic' (a regular grid of hexahedra)
 
-loads:  a list of loads -- or several load cases, a list of such
-        lists: [[force(a, ...)], [force(b, ...), gravity()]].  Each
-        case acts on its own and the part is made stiff for all of
-        them (the sum of their compliances is minimised) -- e.g. a
+conditions: static_boundary_conditions(part, supports, loads): the loads
+        a list of loads -- or several load cases, a list of such
+        lists: loads=[[force(a, ...)], [force(b, ...), gravity()]].
+        Each case acts on its own and the part is made stiff for all
+        of them (the sum of their compliances is minimised) -- e.g. a
         bracket pushed down in use and sideways in assembly.
 
 Returns a TopologyResult: .density (a field), .shape() (the
 optimized part), .compliance, .verify().  An unchanged problem is
 cached, so re-running a script is instant.
+
+## Seeing the boundary conditions
+
+Boundary conditions you can see.
+
+    from fieldes import *
+
+    part = ...
+    conditions = static_boundary_conditions(
+        part,
+        supports=[fixed(base)],                                   # held here
+        loads=[force(lug, (0, -2000, 0)), gravity()])             # pushed here, and its own weight
+    conditions                                                    # displayed: supports and loads drawn on the part
+    result = static_analysis(part, conditions, material=aluminium, element_size=4)
+
+`static_boundary_conditions(part, supports, loads)` is the problem to solve, without the solving: the supports
+and loads of a static analysis, tied to the part they act on.  It is a shape, so it has a row in the model tree
+(show, hide, delete) like any other.  It is drawn the way structural analysis programs draw it:
+
+    * the faces that are held or loaded are tinted (blue: fixed support, cyan: sliding support, red: force)
+    * a force is an ARRAY of identical arrows over the loaded faces, all along the force, each touching the surface
+      with its tip when it pushes in and with its tail when it pulls out, with the total force written beside it
+    * a support is an array of flat pads lying on the held faces, with its name beside it
+    * gravity is one arrow beside the part along the acceleration, with its value
+
+The arrows, pads and texts are not part of the meshed model: the viewport draws them over it, with a size that follows
+the zoom, so they are never cut off by the render region or made ragged by the render's resolution.
+
+`static_analysis`, `modal_analysis` and `topology_optimization` take it: it is the only way to give them
+their supports and loads (they take no `supports=` and `loads=` lists).  The tint is the part's own
+surface, coloured (and drawn a hair towards the eye, so that it wins over the part if both are shown); a place of the part counts
+as in a region when it is within about 1 % of the part's size of it.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `StaticBoundaryConditions`
+
+The supports and loads of a static analysis and the part they act on, drawn on the part (see the
+module).  .part, .supports, .loads; pass it to static_analysis(part, conditions, ...)
+
+#### `StaticBoundaryConditions.describe(self)`
+
+One line for each support and load
+
+### `static_boundary_conditions(part, supports=(), loads=())`
+
+The supports and loads of a static analysis, tied to the `part` they act on and drawn on it.
+
+supports   fixed(...) items
+loads      force(...), gravity(...) and thermal_expansion(...) items -- for topology_optimization
+           also several load cases, a list of such lists
+
+Returns a shape to display (the held faces tinted blue, the loaded faces red; arrows for the forces, pads for
+the supports, with their names and values; hide it with the eye of the model tree) that the analyses are given:
+
+    conditions = static_boundary_conditions(part, [fixed(base)], [force(lug, (0, -2000, 0))])
+    conditions
+    result = static_analysis(part, conditions, material=aluminium)
 
 ## Thermal analysis and thermal topology optimization
 
@@ -2223,3 +2623,61 @@ tree, not its printed text.  (Raises Uncacheable when the library has no such ke
 A hashable key for an argument, by its content: numbers (every bit), text, sequences, shapes (by
 their expression), and the library's own small objects (a material, a support, a load: by their
 fields).  Raises Uncacheable for anything else
+
+## Keeping rendered meshes (render cache)
+
+The render cache: keep what FielDes meshes, so a shape that has not changed is on screen at once.
+
+    part = difference(box_exact((0, 0, 0), (40, 30, 10)), sphere(8))
+    part                            # its mesh is kept: nothing to write
+    part = render_cache(part, False)    # ... unless you opt out (the model tree's cache button writes this line)
+
+Meshing is the slow part of showing a shape.  Every shape's finished mesh is saved (in FielDes's cache
+folder, outside your project) once it has taken a while to make, and read back when the same shape is
+shown again -- the next time you open the script, or after you changed the script and changed it back --
+instead of being meshed again.  When anything about the math changes -- an operation, a number, a
+var() you dragged, an imported file, the render region, the resolution -- the shape is not the same
+one any more: it is meshed again, shown as usual, and the new mesh is kept.
+
+It is ON unless you turn it off: click the cache button on a row of the model tree (or write
+`part = render_cache(part, False)`) to turn it off for that shape; click again (or delete the line) for
+the default.  `part = render_cache(part)` says the default aloud and keeps the mesh however quickly it was
+made.  The line is the whole setting: it is saved with the script and nothing else about the script
+changes.  The shape itself is not touched.
+
+A shape is kept when everything it is made of can be recognised from one run to the next: nodes,
+numbers, var()s, imported meshes and parts, lattices, fields.  A shape that is shown with the fields of
+an analysis (a result coloured by stress) is not -- the analysis has caches of its own.
+
+The kept meshes are deleted oldest first when they fill more than 4 GB (the environment variable
+FIELDES_RENDER_CACHE_MB sets that); Settings > Clear the caches deletes them all (and the files of the field cache).
+
+Every field a script builds with `name = <expression>` is kept the same way -- by the statement's text, the exact
+content of what it reads, the var() numbers and the code that builds it -- so a lattice laid out on a part is not laid
+out again when the script is run again, also after FielDes was closed (when every part of the field can be saved).
+FIELDES_FIELD_CACHE_DIR moves the files; the details are in caching-and-performance.md.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `render_cache(shape, on=True)`
+
+`shape`, with its finished mesh kept on disk: shown from there when the same shape is rendered
+again (see the module).  Every shape is kept by default; `render_cache(shape, False)` opts it out, and
+`render_cache(shape)` keeps it however quickly it was meshed.  Returns the shape itself in every
+other way: it keeps its bounds, handles, colours and exact regions.
+
+Write it as the last line of a shape's definition, after handles() and expose():
+
+    part = render_cache(part)
+
+(FielDes's model tree has a button for it on every shape.)
+
+### `render_cache_key(shape)`
+
+The key the render cache keeps `shape`'s mesh by, as text -- the same in every run of the program for the
+same math, another one when anything about the math changes (an operation, a number, a var() with the
+value it has now, an imported file) -- or None when the shape cannot be kept: it depends on something no
+other run could recognise (a solved analysis).  (The region, resolution and quality it is meshed at are
+part of the key the application uses, which is made of this and them.)

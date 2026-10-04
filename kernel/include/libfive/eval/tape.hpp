@@ -63,6 +63,19 @@ public:
 
     Clause::Id root() const { return i; }
 
+    /*  Whether an oracle is still part of this tape (a mesh's distance, a
+     *  data field): evaluating one costs about a microsecond a point, which is
+     *  more than the rest of the tape, so a renderer spends fewer points on
+     *  it where it can (see the edge search of the dual contouring)  */
+    bool hasOracle() const
+    {
+        for (const auto& c : t)
+        {
+            if (c.op == Opcode::ORACLE) return true;
+        }
+        return false;
+    }
+
 protected:
     /*  The tape itself, as a vector of clauses  */
     std::vector<Clause> t;

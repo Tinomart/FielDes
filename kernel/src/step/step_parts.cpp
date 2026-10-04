@@ -18,25 +18,29 @@ namespace step {
 
 SolidMetrics solidMetrics(const Solid& solid)
 {
+    // (from a coarse tessellation: 12 points a turn gives an area within a few percent, at a fraction
+    // of the cost)
+    try {
+        return solidMetricsFromMesh(solid, tessellateSolid(solid, 12));
+    } catch (const std::exception&) {
+        return solidMetricsFromMesh(solid, TessMesh());
+    }
+}
+
+SolidMetrics solidMetricsFromMesh(const Solid& solid, const TessMesh& mesh)
+{
     SolidMetrics m;
-    // Surface area by face, from a coarse tessellation (12 points a turn:
-    // an area within a few percent, at a fraction of the cost)
+    // Surface area by face
     std::vector<double> faceArea(solid.faces.size(), 0.0);
     double volume = 0.0;    // (signed, from the same triangles: a closed surface encloses it)
-    try {
-        const TessMesh mesh = tessellateSolid(solid, 12);
-        for (size_t t = 0; t < mesh.tris.size(); ++t) {
-            const int f = mesh.triFaceIdx[t];
-            if (f < 0 || size_t(f) >= faceArea.size()) continue;
-            const Vec3& a = mesh.verts[size_t(mesh.tris[t][0])];
-            const Vec3& b = mesh.verts[size_t(mesh.tris[t][1])];
-            const Vec3& c = mesh.verts[size_t(mesh.tris[t][2])];
-            faceArea[size_t(f)] += 0.5 * (b - a).cross(c - a).norm();
-            volume += a.dot(b.cross(c)) / 6.0;
-        }
-    } catch (const std::exception&) {
-        std::fill(faceArea.begin(), faceArea.end(), 0.0);
-        volume = 0.0;
+    for (size_t t = 0; t < mesh.tris.size(); ++t) {
+        const int f = mesh.triFaceIdx[t];
+        if (f < 0 || size_t(f) >= faceArea.size()) continue;
+        const Vec3& a = mesh.verts[size_t(mesh.tris[t][0])];
+        const Vec3& b = mesh.verts[size_t(mesh.tris[t][1])];
+        const Vec3& c = mesh.verts[size_t(mesh.tris[t][2])];
+        faceArea[size_t(f)] += 0.5 * (b - a).cross(c - a).norm();
+        volume += a.dot(b.cross(c)) / 6.0;
     }
     double total = 0;
     for (double a : faceArea) total += a;

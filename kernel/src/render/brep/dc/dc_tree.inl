@@ -17,6 +17,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <Eigen/StdVector>
 #include <boost/lockfree/queue.hpp>
 
+#include <cstdlib>
+
 #include "libfive/eval/evaluator.hpp"
 #include "libfive/eval/tape.hpp"
 
@@ -342,8 +344,37 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                     _edges(N) * POINTS_PER_SEARCH <= ArrayEvaluator::N,
                     "Potential overflow");
 
+            // Where an oracle is part of the tape (the distance to a mesh, a
+            // field of data) one point costs about a microsecond, more than all
+            // of the rest of the tape: the 4 x 16 points of the search below
+            // were 98 % of the oracle's evaluations in a mesh of a thickened
+            // imported part. A plain bisection finds the same crossing from
+            // 10 points (to a 1024th of the cell, past what a float holds
+            // at the coordinates of a part).
+            bool bisected = false;
+            static const bool noBisect = std::getenv("FIELDES_NO_BISECT") != nullptr;   // (a test: the search of 4 x 16 points)
+            if (eval_count && tape->hasOracle() && !noBisect)
+            {
+                constexpr int BISECT_STEPS = 10;
+                bisected = true;
+                for (unsigned e=0; e < eval_count; ++e)
+                {
+                    Vec a = targets[e].first, b = targets[e].second;
+                    for (int s=0; s < BISECT_STEPS; ++s)
+                    {
+                        const Vec m = (a + b) / 2;
+                        eval->set<N>(m, this->region, 0);
+                        const float v = eval->values(1, *tape)(0);
+                        const bool outside = (v > 0) ||
+                            (v == 0 && !eval->isInside<N>(m, this->region, tape));
+                        if (outside) { b = m; } else { a = m; }
+                    }
+                    targets[e] = {a, b};
+                }
+            }
+
             // Multi-stage binary search for intersection
-            for (int s=0; s < SEARCH_COUNT; ++s)
+            for (int s=0; s < (bisected ? 0 : SEARCH_COUNT); ++s)
             {
                 // Load search points into evaluator
                 Eigen::Array<double, N, POINTS_PER_SEARCH * _edges(N)> ps;
@@ -802,6 +833,16 @@ double DCTree<N>::findVertex(unsigned index)
     Vec center = this->leaf->mass_point.template head<N>() /
                  this->leaf->mass_point(N);
     Vec v = AtAp * (this->leaf->AtB - (this->leaf->AtA * center)) + center;
+
+    // A vertex may leave its cell to keep a sharp feature, but one more than a cell's width away comes from
+    // noisy normals (a thin wall only a few cells thick, creases at a nearly flat angle): it makes a spike
+    // that no surface goes through, up to hundreds of millimetres long.  Such a vertex is pulled back to
+    // the cell widened by its own width.
+    {
+        const Vec pad = (this->region.upper - this->region.lower).matrix();
+        v = v.cwiseMax(this->region.lower.matrix() - pad)
+             .cwiseMin(this->region.upper.matrix() + pad);
+    }
 
     // Store this specific vertex in the verts matrix
     this->leaf->verts.col(index) = v;

@@ -11,7 +11,7 @@ the script.
 
 | File name the examples expect | Used by | What it was |
 |---|---|---|
-| `PivotBearingSupportBracket.STEP` | 01, 05, 08, 10 | a pivot-bearing support bracket |
+| `PivotBearingSupportBracket.STEP` | 01, 05, 08, 10, 15 | a pivot-bearing support bracket |
 | `ShaftSupportStand.STEP` | 02, 06, 07 | a shaft support stand |
 | `Keukencombinatie.stp` | 03 | a kitchen unit assembly (90 parts, free-form surfaces) |
 | `MobileStand.step` | 04, 12 | a phone stand |

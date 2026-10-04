@@ -11,6 +11,8 @@ of the License, or (at your option) any later version.
 #include <cstdio>
 #include <functional>
 
+#include <algorithm>
+
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -41,7 +43,7 @@ namespace FielDes {
 namespace {
 
 enum Role { ROLE_ITEM = Qt::UserRole, ROLE_TYPE, ROLE_PART, ROLE_KEY, ROLE_LINE };
-enum Column { COL_NAME = 0, COL_EYE, COL_HANDLES, COL_ACTION, COL_RESET };
+enum Column { COL_NAME = 0, COL_EYE, COL_HANDLES, COL_CACHE, COL_ACTION, COL_RESET, COL_DELETE };
 
 const QColor kText(0xee, 0xe8, 0xd5);
 const QColor kDim(0x93, 0xa1, 0xa1);
@@ -181,7 +183,59 @@ void setModeButton(QTreeWidgetItem* row, const QJsonObject& target)
     row->setToolTip(COL_HANDLES, tip + "  ·  click: " + nextMode(target));
 }
 
+// The render cache button: a stack of disks -- dim when the cache is off, filled when a shape's mesh is
+// kept, green when the mesh on screen was read from it, amber when the shape cannot be kept
+const QIcon& cacheIcon(const QString& state)
+{
+    auto make = [](QColor line, QColor fill) {
+        return makeIcon([=](QPainter& p) {
+            p.setPen(QPen(line, 1.3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(fill);
+            p.drawRect(QRectF(3, 3, 10, 10));
+            p.setBrush(Qt::NoBrush);
+            p.drawLine(QPointF(3, 6.4), QPointF(13, 6.4));
+            p.drawLine(QPointF(3, 9.6), QPointF(13, 9.6));
+            p.setBrush(line);
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPointF(10.6, 4.7), 0.7, 0.7);
+            p.drawEllipse(QPointF(10.6, 8.0), 0.7, 0.7);
+            p.drawEllipse(QPointF(10.6, 11.3), 0.7, 0.7);
+        });
+    };
+    QColor off = kDim;
+    off.setAlpha(120);
+    QColor blue(0x26, 0x8b, 0xd2), green(0x74, 0xb8, 0x1f), amber(0xe0, 0xb0, 0x50);
+    QColor blueFill = blue, greenFill = green, amberFill = amber;
+    blueFill.setAlpha(60);
+    greenFill.setAlpha(60);
+    amberFill.setAlpha(50);
+    static QIcon iOff = make(off, Qt::transparent);
+    static QIcon iOn = make(blue, blueFill);
+    static QIcon iRead = make(green, greenFill);
+    static QIcon iNo = make(amber, amberFill);
+    if (state == "on" || state == "kept") return iOn;
+    if (state == "read") return iRead;
+    if (state == "no") return iNo;
+    return iOff;
+}
+
 const QIcon& resetIcon()
+{
+    static QIcon i = makeIcon([](QPainter& p) {         // an arrow turning back
+        p.setPen(QPen(kText, 1.4));
+        p.drawArc(QRectF(3, 3, 10, 10), 120 * 16, -290 * 16);
+        QPainterPath head;
+        head.moveTo(2.4, 2.8);
+        head.lineTo(2.6, 7.2);
+        head.lineTo(6.7, 5.8);
+        head.closeSubpath();
+        p.setBrush(kText);
+        p.drawPath(head);
+    });
+    return i;
+}
+
+const QIcon& deleteIcon()
 {
     static QIcon i = makeIcon([](QPainter& p) {         // a bin
         p.setPen(QPen(kText, 1.3, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
@@ -378,13 +432,13 @@ ScenePanel::ScenePanel(QWidget* parent)
     m_header->setToolTip("Show / hide the model tree");
     connect(m_header, &QToolButton::clicked, this, [this]{ setCollapsed(!m_collapsed); });
 
-    m_tree->setColumnCount(5);
+    m_tree->setColumnCount(7);
     m_tree->setHeaderHidden(true);
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(COL_NAME, QHeaderView::Stretch);
     m_tree->header()->setMinimumSectionSize(16);
     m_tree->header()->setDefaultSectionSize(20);
-    for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_ACTION), int(COL_RESET)})
+    for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE)})
     {
         m_tree->header()->setSectionResizeMode(c, QHeaderView::Fixed);
         m_tree->header()->resizeSection(c, 20);
@@ -418,14 +472,14 @@ ScenePanel::ScenePanel(QWidget* parent)
     layout->addWidget(m_tree);
     layout->addWidget(m_note);
 
-    setFixedWidth(300);
+    setFixedWidth(320);
     m_tree->setTextElideMode(Qt::ElideMiddle);
     if (parent)
     {
         parent->installEventFilter(this);
     }
     move(8, 8);
-    resize(300, 60);
+    resize(320, 60);
 }
 
 bool ScenePanel::eventFilter(QObject* obj, QEvent* e)
@@ -485,7 +539,7 @@ void ScenePanel::setScene(const QString& json)
             const QString mode = m_pending.mode;
             m_pending = Pending();
             m_selectedKey = keyOf(target);          // (the new variable is the selected model now)
-            QTimer::singleShot(0, this, [=]{ setMode(target, mode); });
+            QTimer::singleShot(0, this, [=]{ if (mode == "cache") toggleCache(target); else setMode(target, mode); });
         }
         else if (++m_pending.tries > 8)
         {
@@ -529,6 +583,11 @@ void ScenePanel::rebuild()
             c->setToolTip(COL_NAME, s.contains("text") ? s["text"].toString()
                                                       : "Not set in the script (default)");
             if (!s.contains("line")) c->setForeground(COL_NAME, kDim);
+            else
+            {
+                c->setIcon(COL_DELETE, deleteIcon());
+                c->setToolTip(COL_DELETE, "Delete this line (back to the default)");
+            }
         };
         auto fmtBounds = [](const QJsonValue& v) {
             const auto b = v.toArray();
@@ -648,7 +707,8 @@ void ScenePanel::rebuild()
         }
 
         // Handles: how it is edited by dragging in the view (a button cycling the three ways)
-        if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool())
+        if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool() &&
+            !it["no_handles"].toBool())
         {
             setModeButton(row, it);
         }
@@ -656,6 +716,13 @@ void ScenePanel::rebuild()
         {
             // (a displayed expression has no name: the button gives it one first)
             setModeButton(row, it);
+        }
+
+        // Render cache: keeps the shape's mesh (a button writing and deleting `x = render_cache(x)`)
+        if (!failed && ((it.contains("var") && kind != "display" && !it["reassigned"].toBool()) ||
+                        (kind == "display" && it["can_name"].toBool() && it["visible"].toBool())))
+        {
+            setCacheButton(row, it);
         }
 
         // Reset: an import back to the file (its cache deleted, its handle edits removed)
@@ -671,6 +738,10 @@ void ScenePanel::rebuild()
             row->setIcon(COL_ACTION, reimportIcon());
             row->setToolTip(COL_ACTION, "Reimport the file");
         }
+
+        // Delete: its statements go from the script
+        row->setIcon(COL_DELETE, deleteIcon());
+        row->setToolTip(COL_DELETE, "Delete from the script");
 
         // Children: parts of an import, inputs of a shape
         const auto parts = it["parts"].toArray();
@@ -702,12 +773,19 @@ void ScenePanel::rebuild()
                 if (ok && !target.isEmpty())
                 {
                     setModeButton(c, target);
+                    setCacheButton(c, target);
                 }
                 // Reimport: back to what the file says (its handle edits gone), the file read again
                 if (ok && it["func"].toString().startsWith("import_step"))
                 {
                     c->setIcon(COL_RESET, reimportIcon());
                     c->setToolTip(COL_RESET, "Reimport this part");
+                }
+                // Delete: the part's variable (a part that is not in the script has nothing to delete)
+                if (!bound.isEmpty())
+                {
+                    c->setIcon(COL_DELETE, deleteIcon());
+                    c->setToolTip(COL_DELETE, "Delete this part from the script");
                 }
                 const bool partVisible = !bound.isEmpty() ? bound["visible"].toBool()
                                          : (k == current && it["visible"].toBool());
@@ -1226,6 +1304,98 @@ void ScenePanel::setMode(const QJsonObject& target, const QString& next)
     emit(editScript(edits, "Edit " + var + ": " + next));
 }
 
+void ScenePanel::setCacheButton(QTreeWidgetItem* row, const QJsonObject& target)
+{
+    const bool on = !target.contains("cache_off");          // (on unless the script says render_cache(x, False))
+    // What the cache did is looked up by the line that displays the shape
+    const int line0 = (target.contains("display_line") ? target["display_line"].toInt() : target["line"].toInt()) - 1;
+    QString state = on ? "on" : "off", words;
+    if (on && m_cacheStates.contains(line0))
+    {
+        const QString s = m_cacheStates[line0];         // "state|words"
+        state = s.section('|', 0, 0);
+        words = s.section('|', 1);
+    }
+    row->setIcon(COL_CACHE, cacheIcon(state));
+    QString tip = on ? "Render cache: on (the default)" : "Render cache: off";
+    if (!words.isEmpty()) tip += "  ·  " + words;
+    tip += on ? "\nClick: turn it off for this shape (writes render_cache(x, False) under its definition)"
+              : "\nClick: turn it back on (deletes its render_cache line)";
+    row->setToolTip(COL_CACHE, tip);
+}
+
+void ScenePanel::setCacheStates(const QHash<int, QString>& states)
+{
+    if (states == m_cacheStates) return;
+    m_cacheStates = states;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (row->icon(COL_CACHE).isNull()) continue;
+        const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+        const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        const auto target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        if (!target.isEmpty()) setCacheButton(row, target);
+    }
+}
+
+void ScenePanel::toggleCache(const QJsonObject& target)
+{
+    if (target.isEmpty()) return;
+    if (target["kind"].toString() == "display")
+    {
+        // "sphere(3)" becomes "sphere_1 = sphere(3)" and a line "sphere_1" under it (as the handles
+        // button does); the cache line goes in once the script has run again
+        const QString name = target["new_var"].toString();
+        const auto span = target["span"].toArray();            // [line, column, end line, end column]
+        if (name.isEmpty() || span.size() != 4 || !m_pending.var.isEmpty()) return;   // (one at a time)
+        const int a = span[0].toInt() - 1, b = span[2].toInt() - 1;
+        const QString head = target["label"].toString().section("...", 0, 0).left(12).simplified();
+        if (lineText(a).mid(span[1].toInt()).simplified().left(head.size()) != head) return;
+        const QString last = lineText(b);
+        QList<TextEdit> edits;
+        edits << TextEdit{a, span[1].toInt(), a, span[1].toInt(), name + " = "};
+        edits << TextEdit{b, int(last.size()), b, int(last.size()), "\n" + name};
+        m_pending = Pending{name, "cache", 0};
+        emit(editScript(edits, "Name " + name));
+        return;
+    }
+    if (!target.contains("var")) return;
+    const QString var = target["var"].toString();
+    // Off by a line `x = render_cache(x, False)`: the button takes the line away, and it is on again (the default)
+    if (target.contains("cache_off"))
+    {
+        const auto c = target["cache_off"].toObject();
+        emit(editScript({deleteLines(c["line"].toInt() - 1, c["end_line"].toInt() - 1)},
+                        "Render cache on: " + var));
+        return;
+    }
+    // On, and said so by a line `x = render_cache(x)`: the line is turned into the one that says off
+    if (target.contains("cache"))
+    {
+        const auto c = target["cache"].toObject();
+        const int a = c["line"].toInt() - 1, b = c["end_line"].toInt() - 1;
+        const QString indent = indentOf(lineText(a));
+        emit(editScript({TextEdit{a, 0, b, int(lineText(b).size()), indent + var + " = render_cache(" + var + ", False)"}},
+                        "Render cache off: " + var));
+        return;
+    }
+    // On by default: the line that turns it off goes under the definition, and under the numbers exposed for its
+    // surfaces and its handles: the cache is the last of what is done to the shape, so that it keeps the shape as it is shown
+    int after = target["end_line"].toInt() - 1;
+    for (const char* key : {"exposed", "handles"})
+    {
+        if (target.contains(key)) after = std::max(after, target[key].toObject()["end_line"].toInt() - 1);
+    }
+    const QString indent = indentOf(lineText(target["line"].toInt() - 1));
+    const QString last = lineText(after);
+    QList<TextEdit> edits;
+    edits << TextEdit{after, int(last.size()), after, int(last.size()),
+                      "\n" + indent + var + " = render_cache(" + var + ", False)"};
+    addImportIfMissing(edits, "render_cache", "render_cache");
+    emit(editScript(edits, "Render cache off: " + var));
+}
+
 TextEdit ScenePanel::deleteLines(int a, int b) const
 {
     const QStringList lines = m_source ? m_source().split('\n') : QStringList();
@@ -1233,6 +1403,114 @@ TextEdit ScenePanel::deleteLines(int a, int b) const
     if (b + 1 < lines.size()) return TextEdit{a, 0, b + 1, 0, QString()};
     if (a > 0) return TextEdit{a - 1, int(lines[a - 1].size()), b, int(lines[b].size()), QString()};
     return TextEdit{a, 0, b, int(lines[b].size()), QString()};
+}
+
+void ScenePanel::deleteRow(QTreeWidgetItem* row)
+{
+    const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+    const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    if (type == "setting")
+    {
+        if (it.contains("line"))
+        {
+            emit(editScript({deleteLines(it["line"].toInt() - 1, it["end_line"].toInt() - 1)},
+                            "Delete " + it["text"].toString()));
+        }
+        return;
+    }
+    if (type == "part")
+    {
+        const auto parts = it["parts"].toArray();
+        const int k = row->data(COL_NAME, ROLE_PART).toInt();
+        if (k >= 0 && k < parts.size() && parts[k].toObject().contains("var"))
+        {
+            deleteItem(itemForVar(parts[k].toObject()["var"].toString()));
+        }
+        return;
+    }
+    deleteItem(it);
+}
+
+void ScenePanel::deleteItem(const QJsonObject& it)
+{
+    if (it.isEmpty()) return;
+
+    // What goes: the statement(s) of the item, the line showing it, the line hiding it, its handles() and
+    // expose() lines -- and, for a list of an import's parts, the same for every part variable made from it
+    QList<QJsonObject> all;
+    all << it;
+    if (it["kind"].toString() == "import" && it.contains("list_var"))
+    {
+        for (const auto v : m_scene["items"].toArray())
+        {
+            const auto o = v.toObject();
+            if (o.contains("part_of") && o["part_of"].toInt() == it["line"].toInt()) all << o;
+        }
+    }
+    QList<QPair<int, int>> ranges;                  // 0-based, inclusive
+    QStringList names;
+    for (const auto& o : all)
+    {
+        ranges << qMakePair(o["line"].toInt() - 1, o["end_line"].toInt() - 1);
+        if (o.contains("display_line")) ranges << qMakePair(o["display_line"].toInt() - 1, o["display_line"].toInt() - 1);
+        if (o.contains("hidden_line")) ranges << qMakePair(o["hidden_line"].toInt() - 1, o["hidden_line"].toInt() - 1);
+        for (const char* key : {"handles", "exposed", "cache", "cache_off"})
+        {
+            if (!o.contains(key)) continue;
+            const auto h = o[key].toObject();
+            ranges << qMakePair(h["line"].toInt() - 1, h["end_line"].toInt() - 1);
+        }
+        for (const char* key : {"var", "list_var", "part_tuple_var"})
+        {
+            if (o.contains(key) && !names.contains(o[key].toString())) names << o[key].toString();
+        }
+    }
+    std::sort(ranges.begin(), ranges.end());
+    QList<QPair<int, int>> merged;
+    for (const auto& r : ranges)
+    {
+        if (r.first < 0 || r.second < r.first) continue;
+        if (!merged.isEmpty() && r.first <= merged.last().second + 1)
+            merged.last().second = std::max(merged.last().second, r.second);
+        else
+            merged << r;
+    }
+    if (merged.isEmpty()) return;
+
+    // Does the rest of the script still use what is deleted?
+    const QStringList lines = m_source ? m_source().split('\n') : QStringList();
+    QStringList users;
+    for (int L = 0; L < lines.size(); ++L)
+    {
+        bool gone = false;
+        for (const auto& r : merged) gone |= (L >= r.first && L <= r.second);
+        if (gone) continue;
+        QString text = lines[L];
+        const int hash = text.indexOf('#');
+        if (hash >= 0) text = text.left(hash);
+        for (const QString& n : names)
+        {
+            if (QRegularExpression("\\b" + QRegularExpression::escape(n) + "\\b").match(text).hasMatch())
+            {
+                users << QString::number(L + 1);
+                break;
+            }
+        }
+    }
+    const QString what = it.contains("var") ? it["var"].toString() : it["label"].toString();
+    if (!users.isEmpty() && !qEnvironmentVariableIsSet("FIELDES_AUTOMATION"))
+    {
+        QMessageBox box(QMessageBox::Question, "Delete", "Delete " + what + "?", QMessageBox::Yes | QMessageBox::Cancel, this);
+        box.setInformativeText(QString("The script still uses %1 on line%2 %3: those lines will fail until you edit them.")
+                                   .arg(names.join(", "), users.size() > 1 ? "s" : "",
+                                        users.mid(0, 8).join(", ") + (users.size() > 8 ? ", ..." : "")));
+        box.setDefaultButton(QMessageBox::Cancel);
+        if (box.exec() != QMessageBox::Yes) return;
+    }
+
+    QList<TextEdit> edits;
+    for (const auto& r : merged) edits << deleteLines(r.first, r.second);
+    emit(editScript(edits, "Delete " + what));
 }
 
 void ScenePanel::removeHandles(const QJsonObject& target)
@@ -1311,6 +1589,7 @@ void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
     // ...and the cache: the import is rebuilt (and its cache written again) by the run
     QFile::remove(cacheFile);
     QDir(treesDir).removeRecursively();
+    QDir(path + ".fieldes-tessellation").removeRecursively();          // (the tessellated import's tessellation)
     if (!edits.isEmpty())
     {
         emit(editScript(edits, "Reset " + label));
@@ -1619,6 +1898,16 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
         cycleMode(type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
         return;
     }
+    if (column == COL_CACHE && !row->icon(COL_CACHE).isNull())
+    {
+        toggleCache(type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
+        return;
+    }
+    if (column == COL_DELETE && !row->icon(COL_DELETE).isNull())
+    {
+        deleteRow(row);
+        return;
+    }
     if (column == COL_RESET && !row->icon(COL_RESET).isNull())
     {
         if (type == "part") reimportPart(it, row->data(COL_NAME, ROLE_PART).toInt());
@@ -1699,6 +1988,11 @@ void ScenePanel::onContextMenu(const QPoint& pos)
         else if (ok)
             menu.addAction("Show / hide", this, [=]{ showPart(it, k); });
     }
+    if (!row->icon(COL_DELETE).isNull())
+    {
+        menu.addSeparator();
+        menu.addAction(deleteIcon(), "Delete", this, [=]{ deleteRow(row); });
+    }
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
 }
 
@@ -1718,6 +2012,77 @@ void ScenePanel::addModeActions(QMenu& menu, const QJsonObject& target)
     {
         menu.addAction("Remove its handles() line", this, [=]{ removeHandles(target); });
     }
+    menu.addSeparator();
+    auto cache = menu.addAction("Render cache (on unless turned off)", this, [=]{ toggleCache(target); });
+    cache->setCheckable(true);
+    cache->setChecked(!target.contains("cache_off"));
+}
+
+void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double thickness,
+                                     double radius)
+{
+    // The model that is displayed on that line: a variable (the shape, a part of an import) or an expression
+    QJsonObject target;
+    for (const auto v : m_scene["items"].toArray())
+    {
+        const auto o = v.toObject();
+        if (o["failed"].toBool() || o["kind"].toString() == "failed") continue;
+        if (linesOf(o).contains(line0) && (o.contains("var") || o["kind"].toString() == "display"))
+        {
+            target = o;
+            break;
+        }
+    }
+    if (target.isEmpty()) return;
+
+    QString source;
+    int after = target["end_line"].toInt() - 1;
+    if (target.contains("var"))
+    {
+        source = target["var"].toString();
+        for (const char* key : {"exposed", "handles"})
+        {
+            if (target.contains(key)) after = std::max(after, target[key].toObject()["end_line"].toInt() - 1);
+        }
+    }
+    else
+    {
+        // (an expression: its own text goes into the call)
+        const auto span = target["span"].toArray();
+        if (span.size() == 4) source = spanText(span);
+        else
+        {
+            QStringList parts;
+            for (int L = target["line"].toInt() - 1; L <= target["end_line"].toInt() - 1; ++L) parts << lineText(L).trimmed();
+            source = parts.join(' ');
+        }
+        source = source.trimmed();
+    }
+    if (source.isEmpty()) return;
+
+    // A free name: selection_1, selection_2, ...
+    const QString src = m_source ? m_source() : QString();
+    QString name;
+    for (int n = 1;; ++n)
+    {
+        name = "selection_" + QString::number(n);
+        if (!QRegularExpression("\\b" + name + "\\b").match(src).hasMatch()) break;
+    }
+    auto num = [](double v) { return QString::number(v, 'g', 5); };
+    QString call = QString("%1 = select_surface(%2, seed=(%3, %4, %5), angle=%6")
+                       .arg(name, source, num(seed.x()), num(seed.y()), num(seed.z()), num(angle));
+    if (mode != "flat") call += ", mode='" + mode + "'";
+    if (thickness > 0) call += ", thickness=" + num(thickness);
+    if (radius > 0) call += ", radius=" + num(radius);
+    call += ")";
+
+    const QString indent = indentOf(lineText(target["line"].toInt() - 1));
+    const QString last = lineText(after);
+    QList<TextEdit> edits;
+    edits << TextEdit{after, int(last.size()), after, int(last.size()),
+                      "\n" + indent + call + "\n" + indent + name};
+    addImportIfMissing(edits, "select_surface", "selection");
+    emit(editScript(edits, "Select surface " + name));
 }
 
 void ScenePanel::selectByLine(int line0)

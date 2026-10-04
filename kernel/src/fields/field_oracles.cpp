@@ -239,8 +239,9 @@ public:
         // writes constants to six digits and an oracle by its name alone.)
         char number[40];
         std::snprintf(number, sizeof(number), "%.17g", param);
-        key = std::string(kind == GRADIENT ? "gradient" : kind == THICKNESS ? "thickness" : "curvature") + "#" +
-              std::to_string(mode) + "#" + number + "#" + treeContentKey(tree);
+        prefix = std::string(kind == GRADIENT ? "gradient" : kind == THICKNESS ? "thickness" : "curvature") + "#" +
+                 std::to_string(mode) + "#" + number + "#";
+        key = prefix + treeContentKey(tree);
     }
 
     std::unique_ptr<Oracle> getOracle() const override
@@ -248,6 +249,12 @@ public:
         return std::make_unique<FieldOracle>(tree, kind, mode, param, key);
     }
     std::string contentKey() const override { return key; }
+    std::string persistentKey() const override
+    {
+        // (of the shape's expression, when that can be kept: it has no free variables there)
+        const std::string t = treePersistentKey(tree, {});
+        return t.empty() ? std::string() : prefix + t;
+    }
     std::string name() const override
     {
         return kind == GRADIENT ? "GradientField" : kind == THICKNESS ? "ThicknessField"
@@ -260,7 +267,7 @@ private:
     Kind kind;
     int mode;
     double param;
-    std::string key;
+    std::string key, prefix;
 };
 
 }   // anonymous namespace

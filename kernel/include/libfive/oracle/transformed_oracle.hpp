@@ -28,6 +28,12 @@ public:
      */
     void set(const Eigen::Vector3f& p, size_t index=0) override;
 
+    /*
+     *  The variables in the three coordinate expressions (and in the
+     *  oracle underneath)
+     */
+    void setVar(const void* var, float value) override;
+
     void evalInterval(Interval& out) override;
 
     void evalPoint(float& out, size_t index=0) override;

@@ -2,32 +2,46 @@
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
+Every lattice operation takes a CELL: the thing the lattice is made of.  Three functions make one --
+
+    cell_periodic(kind)          a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS (gyroid,
+                                 schwarz_p ...) or a planar pattern (hexagon ...)
+    cell_non_periodic(kind)      cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
+    cell_custom(...)             your own: nodes and beams, a TPMS equation, or any shape that tiles
+
+-- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
+name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
+it is, how big, and where it goes (a body, a surface, a cell map) are the operation's.
+
 The one-call version:
 
     from fieldes import *
 
     part = sphere(30)
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=1.0, skin=1.5)
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0, skin=1.5)
 
     # graded: thicker walls near the skin, by a ramp or a regression
     t = ramp(depth_below(part), (0, 30), (1.6, 0.5))
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=t, skin=1.5)
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)
 
     # by relative density instead of thickness (calibrated automatically;
     # the density may itself be a field)
-    lat = lattice(part, 'octet', cell_size=10, density=0.2)
+    lat = lattice(part, cell_periodic('octet'), cell_size=10, density=0.2)
+
+    # a foam that does not repeat
+    foam = lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
 
     # cells that follow a sphere / cylinder
-    lat = lattice(part, 'gyroid', cell_size=8, thickness=1.0,
+    lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0,
                   cell_map=spherical(cells_around=16))
 
 Building blocks (infinite lattices -- fields; fill() or lattice() trims them):
-    tpms(kind, cell_size, thickness=..., style='sheet' | 'network', ...)
-    strut_lattice(cell, cell_size, radius, node_radius=None, blend=0, ...)
-    planar_lattice(kind, cell_size, wall, axis='z')      honeycombs, grids
+    tpms(cell, cell_size, thickness=..., style='sheet' | 'network', ...)
+    strut_lattice(cell, cell_size, radius=... | thickness=..., node_radius=None, blend=0, ...)
+    planar_lattice(cell, cell_size, wall, axis='z')      honeycombs, grids
     fill(body, lattice, skin=0, region='volume' | 'shell', depth=...)
     relative_density(lattice, cell_size)                 volume fraction
-    lattice_parameter_for_density(kind, cell_size, density)
+    lattice_parameter_for_density(cell, cell_size, density)
 
 TPMS kinds: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid,
     split_p, iwp, frd, fischer_koch_s.  style='sheet' is a wall of the given
@@ -37,6 +51,7 @@ TPMS kinds: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid,
 Strut cells: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
     diamond, cross, tesseract, cuboctahedron.
 Planar (2.5D) patterns: hexagon (honeycomb), triangle, square, kagome.
+(All of them are names for cell_periodic(); the kinds are listed there.)
 
 Thickness, radius, offset, density, node radius -- any of them can be a
 field (a Shape), e.g. a regression of test data applied to a distance field.
@@ -57,13 +72,13 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
 
-__all__ = ['lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
-           'graph_lattice', 'voronoi_lattice', 'surface_lattice', 'voronoi_graph',
+__all__ = ['cell_periodic', 'cell_non_periodic', 'cell_custom', 'LatticeCell',
+           'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
+           'graph_lattice', 'voronoi_graph',
            'surface_graph', 'points_graph', 'LatticeGraph',
            'cartesian', 'cylindrical', 'spherical', 'CellMap',
            'relative_density', 'lattice_parameter_for_density',
-           'TPMS_KINDS', 'STRUT_CELLS', 'PLANAR_KINDS', 'unit_cell_beams',
-           'unit_cell', 'UnitCell', 'periodic', 'tpms_equation', 'TPMSEquation']
+           'TPMS_KINDS', 'STRUT_CELLS', 'PLANAR_KINDS']
 
 X, Y, Z = Shape.X, Shape.Y, Shape.Z
 
@@ -205,6 +220,20 @@ def _rotation(rot):
     def mm(A, B):
         return [[sum(A[i][k] * B[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
     return mm(Rz, mm(Ry, Rx))
+
+
+class LatticeCell:
+    ''' What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic() or cell_custom(),
+        taken by every lattice operation as its `cell`.
+        .family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
+                     (a shape that tiles) or 'foam' (cells that do not repeat)
+        .periodic    whether the cell repeats on a grid (so can follow a cell map or a surface) '''
+    family = ''
+    periodic = True
+    name = ''
+
+    def __repr__(self):
+        return '{}({!r})'.format(type(self).__name__, self.name)
 
 
 class CellMap:
@@ -424,12 +453,12 @@ def _tpms_distance(kind, cell, cell_map, fast=False):
     return d1 + corr.max(-lim).min(lim)
 
 
-def tpms(kind='gyroid', cell_size=10.0, thickness=1.0, style='sheet', offset=0.0,
+def tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0,
          cell_map=None, invert=False, fast=False):
     ''' An infinite TPMS lattice (a field; trim it with fill() or use
         lattice()).
-        kind: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p, iwp,
-            frd, fischer_koch_s -- or your own: tpms_equation(f)
+        cell: a TPMS cell -- cell_periodic('gyroid' | 'schwarz_p' | 'diamond' | 'neovius' | 'lidinoid' |
+            'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom(equation=f)
         style='sheet': walls of `thickness` mm centred on the surface
         style='network': the solid on one side of the surface, grown by
             `offset` mm (0 = half the volume for gyroid / diamond / P);
@@ -437,8 +466,9 @@ def tpms(kind='gyroid', cell_size=10.0, thickness=1.0, style='sheet', offset=0.0
         style='surface': the signed distance to the surface itself
         thickness / offset may be fields.
         fast=True: a quicker, slightly less exact distance (walls ~5 % thin) '''
+    kind = _need_cell(cell, 'tpms', 'tpms')
     cell = _cell3(cell_size)
-    d = _tpms_distance(kind, cell, cell_map or CellMap(), fast)
+    d = _tpms_distance(_plain(kind), cell, cell_map or CellMap(), fast)
     if style == 'sheet':
         return abs(d) - Shape.wrap(thickness) / 2
     if style == 'network':
@@ -582,21 +612,13 @@ def _clip(a, b, lo, hi):
 
 
 def unit_cell_beams(cell):
-    ''' The beams of a strut unit cell (in unit-cube coordinates), made
+    ''' The beams of a strut cell (in unit-cube coordinates), made
         periodic: every beam of the infinite lattice that passes near the
         cell, clipped to it (with a margin for cells that aren't
         mirror-symmetric).  Returns (beams, margin). '''
+    cell = _need_cell(cell, 'unit_cell_beams', 'strut')
     radius_of = cell.radii() if isinstance(cell, UnitCell) else {}
-    if callable(cell):
-        motif = cell()
-    elif isinstance(cell, str):
-        key = cell.lower().replace('-', '_').replace(' ', '_')
-        if key not in STRUT_CELLS:
-            raise ValueError('unknown unit cell {!r}; cells: {}'.format(
-                cell, ', '.join(sorted(STRUT_CELLS))))
-        motif = STRUT_CELLS[key]()
-    else:
-        motif = [tuple(map(tuple, b)) for b in cell]
+    motif = cell() if isinstance(cell, UnitCell) else STRUT_CELLS[cell.key]()
     # the infinite lattice around the cell, clipped to the cell (each
     # clipped piece remembers its beam's own radius, if it has one)
     radii = {}
@@ -662,18 +684,29 @@ def _smin(a, b, k):
     return a.min(b) - h * h * k / 4
 
 
-def strut_lattice(cell='octet', cell_size=10.0, radius=0.8, node_radius=None, blend=0.0,
-                  cell_map=None):
-    ''' An infinite strut (beam) lattice: round beams of `radius` mm along
-        the edges of a unit cell, repeated every cell_size.
-        cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
-            diamond, cross, tesseract, cuboctahedron -- or your own cell:
-            unit_cell(nodes, beams) (beams may have their own radius), or a
-            plain list of beams ((x0, y0, z0), (x1, y1, z1)) in unit-cube
-            coordinates
+def _beam_radius(who, thickness, radius, default):
+    ''' The radius of round beams from what the caller gave: `thickness` (their diameter) or `radius` (half of it), numbers or
+        fields; both is a mistake, none gives `default` '''
+    if thickness is not None and radius is not None:
+        raise ValueError('{}: give the beams\' size as thickness (their diameter) or as radius (half of it), not both'.format(who))
+    if thickness is not None:
+        return Shape.wrap(thickness) / 2 if isinstance(thickness, Shape) else float(thickness) / 2.0
+    return radius if radius is not None else default
+
+
+def strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0,
+                  cell_map=None, thickness=None):
+    ''' An infinite strut (beam) lattice: round beams of `thickness` mm (their diameter;
+        or `radius` mm, which is half of it: give one of the two, default radius 0.8)
+        along the edges of a unit cell, repeated every cell_size.
+        cell: a strut cell -- cell_periodic('cubic' | 'bcc' | 'bccz' | 'fcc' | 'fccz' | 'octet' | 'octahedron' |
+            'kelvin' | 'diamond_struts' | 'cross' | 'tesseract' | 'cuboctahedron'), or your own:
+            cell_custom(nodes, beams) (beams may have their own radius)
         node_radius: spheres at the joints (defaults to none)
         blend: rounds the joints with a smooth blend of this radius
-        radius / node_radius may be fields. '''
+        thickness / radius / node_radius may be fields. '''
+    cell = _need_cell(cell, 'strut_lattice', 'strut')
+    radius = _beam_radius('strut_lattice', thickness, radius, 0.8)
     c = _cell3(cell_size)
     beams, _ = unit_cell_beams(cell)
     own = dict(getattr(unit_cell_beams, 'radii', {}))
@@ -740,12 +773,13 @@ def _clip2(a, b, w, h):
     return None if c is None else ((c[0][0], c[0][1]), (c[1][0], c[1][1]))
 
 
-def planar_lattice(kind='hexagon', cell_size=10.0, wall=0.8, axis='z', cell_map=None):
+def planar_lattice(cell, cell_size=10.0, wall=0.8, axis='z', cell_map=None):
     ''' A 2.5D pattern of walls, extruded along an axis: a honeycomb
-        (kind='hexagon'; cell_size = flat-to-flat width), or a triangle,
-        square or kagome grid.  wall is the wall thickness (mm, may be a
-        field). '''
-    segs, (w, h) = _planar_motif(kind)
+        (cell_periodic('hexagon'); cell_size = flat-to-flat width), or a
+        triangle, square or kagome grid.  wall is the wall thickness (mm,
+        may be a field). '''
+    cell = _need_cell(cell, 'planar_lattice', 'planar')
+    segs, (w, h) = _planar_motif(_plain(cell))
     s = float(cell_size)
     W, H = w * s, h * s
     m = cell_map or CellMap()
@@ -801,25 +835,25 @@ def relative_density(lattice_field, cell_size, samples=40, origin=(0, 0, 0)):
     return _stats(lattice_field, lo, hi, n)
 
 
-def _builder(kind, cell, style):
-    key = kind.lower().replace('-', '_').replace(' ', '_') if isinstance(kind, str) else None
-    if isinstance(kind, TPMSEquation):
-        key = kind
-    if isinstance(key, TPMSEquation) or key in TPMS_KINDS:
+def _builder(c, cell, style):
+    if c.family == 'tpms':
         if style == 'network':
-            return (lambda p: tpms(key, cell, style='network', offset=p)), (-0.45 * min(cell), 0.45 * min(cell))
-        return (lambda p: tpms(key, cell, thickness=p, style='sheet')), (0.0, 0.9 * min(cell))
-    if isinstance(kind, str) and key in PLANAR_KINDS + ('honeycomb', 'hex'):
-        return (lambda p: planar_lattice(key, cell[0], wall=p)), (0.0, 0.9 * cell[0])
-    return (lambda p: strut_lattice(kind, cell, radius=p)), (0.0, 0.5 * min(cell))
+            return (lambda p: tpms(c, cell, style='network', offset=p)), (-0.45 * min(cell), 0.45 * min(cell))
+        return (lambda p: tpms(c, cell, thickness=p, style='sheet')), (0.0, 0.9 * min(cell))
+    if c.family == 'planar':
+        return (lambda p: planar_lattice(c, cell[0], wall=p)), (0.0, 0.9 * cell[0])
+    if c.family != 'strut':
+        raise ValueError('a density cannot be calibrated for a {} cell'.format(c.family))
+    return (lambda p: strut_lattice(c, cell, radius=p)), (0.0, 0.5 * min(cell))
 
 
-def lattice_parameter_for_density(kind, cell_size, density, style='sheet', samples=40):
+def lattice_parameter_for_density(cell, cell_size, density, style='sheet', samples=40):
     ''' The thickness (sheet TPMS), offset (network TPMS), wall (planar) or
-        radius (struts) that gives a lattice the requested relative density
+        radius (struts) that gives a lattice of this cell the requested relative density
         (0..1), found by bisection on a sampled unit cell '''
+    cellobj = _need_cell(cell, 'lattice_parameter_for_density')
     cell = _cell3(cell_size)
-    build, (lo, hi) = _builder(kind, cell, style)
+    build, (lo, hi) = _builder(cellobj, cell, style)
     target = float(density)
     if not 0 < target < 1:
         raise ValueError('density is a volume fraction between 0 and 1')
@@ -839,10 +873,10 @@ def lattice_parameter_for_density(kind, cell_size, density, style='sheet', sampl
     return (lo + hi) / 2
 
 
-def _density_map(kind, cell, style, samples=32, points=10):
+def _density_map(c, cell, style, samples=32, points=10):
     ''' Monotone map density -> parameter, for density fields '''
     from fieldes.stdlib.regression import fit
-    build, (lo, hi) = _builder(kind, cell, style)
+    build, (lo, hi) = _builder(c, cell, style)
     table = []
     for i in range(points + 1):
         p = lo + (hi - lo) * i / points
@@ -889,19 +923,19 @@ def fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0):
     return out
 
 
-def lattice(body, kind='gyroid', cell_size=10.0, thickness=None, radius=None, density=None,
+def lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, density=None,
             style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None,
             node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z'):
     ''' A body filled with a lattice, in one call.
 
-        kind: a TPMS (gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
-            iwp, frd, fischer_koch_s), a strut cell (cubic, bcc, bccz, fcc,
-            fccz, octet, octahedron, kelvin, diamond_struts, cross,
-            tesseract, cuboctahedron), a planar pattern (hexagon,
-            triangle, square, kagome) or a random one (voronoi, stochastic)
+        cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
+            iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
+            diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
+            cell_non_periodic('voronoi' | 'delaunay') or cell_custom(...).  Default: cell_periodic('gyroid')
         cell_size: mm, or (sx, sy, sz)
-        thickness (sheet TPMS), offset (network TPMS), radius (struts), wall
-            (planar): the member size -- numbers or fields
+        thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
+            or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
+            (planar).  Numbers or fields
         density: instead of the member size, a relative density 0..1 (a
             number or a field); calibrated automatically
         style: 'sheet' or 'network' (TPMS)
@@ -910,27 +944,19 @@ def lattice(body, kind='gyroid', cell_size=10.0, thickness=None, radius=None, de
         cell_map: cartesian(...), cylindrical(...) or spherical(...)
         node_radius, blend: joint spheres and joint rounding (struts)
         skin_blend: rounds the lattice-to-skin joints '''
+    cellobj = _need_cell(cell, 'lattice', default=lambda: cell_periodic('gyroid'))
     cell = _cell3(cell_size)
-    key = kind.lower().replace('-', '_').replace(' ', '_') if isinstance(kind, str) else None
-    if isinstance(kind, TPMSEquation):
-        key = kind
-    if key in ('voronoi', 'voronoi_foam', 'stochastic', 'delaunay'):
-        r = radius if radius is not None else (
-            thickness / 2 if isinstance(thickness, numbers.Number) else
-            (Shape.wrap(thickness) / 2 if thickness is not None else None))
+    if cellobj.family == 'foam':
+        r = _beam_radius('lattice', thickness, radius, None)
         if r is None and density is None:
             r = 0.08 * min(cell)
-        return voronoi_lattice(body, min(cell), radius=r, style='voronoi' if 'voronoi' in key else 'delaunay',
-                               skin=skin, blend=blend, skin_blend=skin_blend, density=density)
-    if key == 'diamond_struts':
-        key, kind = 'diamond', 'diamond'
-        is_tpms = False
-    else:
-        is_tpms = isinstance(key, TPMSEquation) or key in TPMS_KINDS
-    is_planar = isinstance(key, str) and (key in PLANAR_KINDS or key in ('honeycomb', 'hex'))
-    if isinstance(kind, str) and not (is_tpms or is_planar or key in STRUT_CELLS):
-        raise ValueError('unknown lattice kind {!r}. TPMS: {}; struts: {}; planar: {}'.format(
-            kind, ', '.join(sorted(TPMS_KINDS)), ', '.join(sorted(STRUT_CELLS)), ', '.join(PLANAR_KINDS)))
+        return _voronoi_lattice(body, min(cell), radius=r, style=cellobj.style, relax=cellobj.relax, seed=cellobj.seed,
+                                skin=skin, blend=blend, skin_blend=skin_blend, density=density)
+    if cellobj.family == 'shape':
+        lat = _periodic(cellobj.shape, cell_size, cell_map, check=cellobj.check)
+        return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
+    is_tpms = cellobj.family == 'tpms'
+    is_planar = cellobj.family == 'planar'
 
     # the member size: given, or from a density
     size = None
@@ -939,42 +965,39 @@ def lattice(body, kind='gyroid', cell_size=10.0, thickness=None, radius=None, de
     elif is_planar:
         size = wall if wall is not None else thickness
     else:
-        size = radius if radius is not None else (
-            None if thickness is None else Shape.wrap(thickness) / 2 if isinstance(thickness, Shape)
-            else thickness / 2.0)
+        size = _beam_radius('lattice', thickness, radius, None)
     if density is not None:
         if size is not None:
             raise ValueError('lattice: give either density or the member size, not both')
         if isinstance(density, Shape):
-            size = _density_map(key if is_tpms or is_planar else kind, cell, style)(density)
+            size = _density_map(cellobj, cell, style)(density)
         else:
-            size = lattice_parameter_for_density(key if is_tpms or is_planar else kind, cell,
-                                                 density, style)
+            size = lattice_parameter_for_density(cellobj, cell, density, style)
     if size is None:
         size = 0.0 if (is_tpms and style == 'network') else (min(cell) * 0.1)
 
     if is_tpms:
         if style == 'network':
-            lat = tpms(key, cell, style='network', offset=size, cell_map=cell_map)
+            lat = tpms(cellobj, cell, style='network', offset=size, cell_map=cell_map)
         else:
-            lat = tpms(key, cell, thickness=size, style=style, cell_map=cell_map)
+            lat = tpms(cellobj, cell, thickness=size, style=style, cell_map=cell_map)
     elif is_planar:
-        lat = planar_lattice(key, cell[0], wall=size, axis=axis, cell_map=cell_map)
+        lat = planar_lattice(cellobj, cell[0], wall=size, axis=axis, cell_map=cell_map)
     else:
-        lat = strut_lattice(kind, cell, radius=size, node_radius=node_radius, blend=blend,
+        lat = strut_lattice(cellobj, cell, radius=size, node_radius=node_radius, blend=blend,
                             cell_map=cell_map)
     return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
 
 
 ################################################################################
-# Custom lattices (like nTop's custom unit cells): your own strut cell from
-# nodes and beams, any shape as a periodic cell, your own TPMS equation
+# Custom cells (like nTop's custom unit cells), made by cell_custom(): your own strut
+# cell from nodes and beams, any shape as a periodic cell, your own TPMS equation
 
-class UnitCell:
+class UnitCell(LatticeCell):
     ''' A strut unit cell of your own: beams between nodes in the unit cube
         (coordinates 0..1 across the cell, scaled by cell_size when used).
-        Use it wherever a cell is taken: strut_lattice(cell=...),
-        lattice(..., cell=...).
+        What cell_custom(nodes, beams, mirror) makes; use it wherever a cell is
+        taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
 
         nodes: {name: (x, y, z)} or a list of (x, y, z) (then names are the
             indices)
@@ -989,6 +1012,9 @@ class UnitCell:
         tile: nodes outside the cell, beams of zero length, nodes on a cell
         face without a partner on the opposite face (the neighbouring cell
         has nothing to connect to there), and loose ends inside the cell. '''
+
+    family = 'strut'
+    name = 'custom'
 
     def __init__(self, nodes, beams, mirror=''):
         if isinstance(nodes, dict):
@@ -1051,16 +1077,7 @@ class UnitCell:
         return 'UnitCell({} beams)'.format(len(self.segments))
 
 
-def unit_cell(nodes, beams, mirror=''):
-    ''' Your own strut unit cell: see UnitCell.  Example (a body-centred cell
-        with thicker diagonals, drawn once and mirrored):
-            cell = unit_cell({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)},
-                             [('c', 'o', 1.2)], mirror='xyz')
-            strut_lattice(cell, cell_size=8, radius=0.6) '''
-    return UnitCell(nodes, beams, mirror)
-
-
-def periodic(shape, cell_size=10.0, cell_map=None, check=True):
+def _periodic(shape, cell_size=10.0, cell_map=None, check=True):
     ''' Any shape as a unit cell: the shape you model in one cell -- the box
         from (0, 0, 0) to cell_size -- repeated through space (along a cell
         map too: cylindrical, spherical ...).  Model the cell so that it
@@ -1075,7 +1092,7 @@ def periodic(shape, cell_size=10.0, cell_map=None, check=True):
         mism = _periodic_mismatch(shape, c)
         if mism:
             import warnings
-            warnings.warn('periodic(): the cell does not tile -- {}'.format(mism), stacklevel=2)
+            warnings.warn('cell_custom(shape=): the cell does not tile -- {}'.format(mism), stacklevel=2)
     m = cell_map or CellMap()
     u = m.map((X(), Y(), Z()), c)
     q = [u[i] % c[i] for i in range(3)]
@@ -1104,15 +1121,17 @@ def _periodic_mismatch(shape, c, n=9):
     return '; '.join(bad)
 
 
-class TPMSEquation:
+class TPMSEquation(LatticeCell):
     ''' Your own TPMS (or any triply periodic) equation, for tpms() and
         lattice(): f(a, b, c) -> value, where a, b, c are the position in the
         cell as phases (2 pi per cell).  Write it with + - * / and the
         methods .sin() .cos() .sqrt() .square() of a, b, c, e.g. a gyroid:
-            tpms_equation(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
-                                          + c.sin() * a.cos())
+            cell_custom(equation=lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
+                                                 + c.sin() * a.cos())
         Its value is turned into a distance in mm (its gradient is followed),
         so thickness= is a real wall thickness. '''
+
+    family = 'tpms'
 
     def __init__(self, func, name='custom'):
         if not callable(func):
@@ -1124,9 +1143,158 @@ class TPMSEquation:
         return 'TPMSEquation({})'.format(self.name)
 
 
-def tpms_equation(func, name='custom'):
-    ''' Your own TPMS equation: see TPMSEquation '''
-    return TPMSEquation(func, name)
+################################################################################
+# Cells: what every lattice operation takes
+
+class StrutCell(LatticeCell):
+    ''' A standard strut cell that repeats (see cell_periodic) '''
+    family = 'strut'
+
+    def __init__(self, key):
+        self.key = key
+        self.name = key
+
+
+class TPMSCell(LatticeCell):
+    ''' A standard triply periodic minimal surface (see cell_periodic) '''
+    family = 'tpms'
+
+    def __init__(self, key):
+        self.key = key
+        self.name = key
+
+
+class PlanarCell(LatticeCell):
+    ''' A standard planar (2.5D) pattern (see cell_periodic) '''
+    family = 'planar'
+
+    def __init__(self, key):
+        self.key = key
+        self.name = key
+
+
+class ShapeCell(LatticeCell):
+    ''' Any shape that tiles, as a cell (see cell_custom): the shape is modelled in the box from (0, 0, 0) to the
+        cell size the lattice is made with '''
+    family = 'shape'
+
+    def __init__(self, shape, check=True):
+        self.shape = Shape.wrap(shape)
+        self.check = check
+        self.name = 'shape'
+
+
+class FoamCell(LatticeCell):
+    ''' Cells that do not repeat (see cell_non_periodic) '''
+    family = 'foam'
+    periodic = False
+
+    def __init__(self, style='voronoi', relax=2, seed=1):
+        self.style = style
+        self.relax = int(relax)
+        self.seed = int(seed)
+        self.name = style
+
+
+def _norm(name):
+    return name.lower().replace('-', '_').replace(' ', '_')
+
+
+def cell_periodic(kind='octet'):
+    ''' A standard cell that repeats on a grid -- what a lattice, a conformal lattice or a lattice on a cell map is
+        made of.
+
+        kind    a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin (= truncated_octahedron),
+                diamond_struts, cross, tesseract, cuboctahedron;
+                a TPMS: gyroid, schwarz_p, diamond (Schwarz D), neovius, lidinoid, split_p, iwp, frd, fischer_koch_s;
+                a planar pattern (2.5D walls): hexagon, triangle, square, kagome
+
+        Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
+            lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
+            lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
+        (Your own cell: cell_custom().  Cells that do not repeat: cell_non_periodic().) '''
+    if not isinstance(kind, str):
+        raise TypeError('cell_periodic(kind): kind is the name of a standard cell, e.g. cell_periodic(\'gyroid\')')
+    key = _norm(kind)
+    if key in ('voronoi', 'voronoi_foam', 'stochastic', 'delaunay'):
+        raise ValueError('cell_periodic: {!r} does not repeat: use cell_non_periodic({!r})'.format(kind, kind))
+    if key == 'diamond_struts':
+        return StrutCell('diamond')
+    if key in TPMS_KINDS:
+        return TPMSCell(key)
+    if key in PLANAR_KINDS or key in ('honeycomb', 'hex'):
+        return PlanarCell('hexagon' if key in ('honeycomb', 'hex') else key)
+    if key in STRUT_CELLS:
+        return StrutCell(key)
+    raise ValueError('unknown cell {!r}. Struts: {}; TPMS: {}; planar: {}'.format(
+        kind, ', '.join(sorted(STRUT_CELLS)), ', '.join(sorted(TPMS_KINDS)), ', '.join(PLANAR_KINDS)))
+
+
+def cell_non_periodic(kind='voronoi', relax=2, seed=1):
+    ''' Cells that do not repeat: points at random about a cell size apart, joined into a graph that fills the body
+        (or lies on a surface).
+
+        kind    'voronoi' (the edges of the Voronoi cells: a foam) or 'delaunay' (the Delaunay edges: a stochastic truss)
+        relax   iterations that make the cells more even
+        seed    another number is another random pattern
+
+            lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5) '''
+    key = _norm(kind) if isinstance(kind, str) else kind
+    if key in ('voronoi', 'voronoi_foam'):
+        return FoamCell('voronoi', relax, seed)
+    if key in ('delaunay', 'stochastic'):
+        return FoamCell('delaunay', relax, seed)
+    raise ValueError("cell_non_periodic: kind is 'voronoi' or 'delaunay'")
+
+
+def cell_custom(nodes=None, beams=None, mirror='', equation=None, shape=None, name='custom', check=True):
+    ''' A cell of your own -- one of three kinds:
+
+        struts      cell_custom(nodes, beams, mirror='')   beams between nodes in the unit cube (see UnitCell: the
+                    nodes {name: (x, y, z)} or a list, the beams pairs of nodes, optionally with a radius of their own,
+                    `mirror` 'x', 'xy', 'xyz' to draw one part of a symmetric cell)
+        a surface   cell_custom(equation=f)                f(a, b, c) of the position in the cell as phases (2 pi per
+                    cell), written with + - * / and .sin() .cos() .sqrt() .square(); its value becomes a distance in
+                    mm, so thickness= is a real wall (see TPMSEquation)
+        a shape     cell_custom(shape=s)                   the shape you model in one cell, the box from (0, 0, 0) to
+                    the cell size, repeated; model it so that it tiles (check=True warns where the faces do not match)
+
+            cell = cell_custom({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
+            lattice(part, cell, cell_size=8, radius=0.6) '''
+    given = [nodes is not None or beams is not None, equation is not None, shape is not None]
+    if sum(given) != 1:
+        raise ValueError('cell_custom: give nodes and beams, or equation=, or shape= (one of the three)')
+    if equation is not None:
+        return TPMSEquation(equation, name)
+    if shape is not None:
+        return ShapeCell(shape, check)
+    if nodes is None or beams is None:
+        raise ValueError('cell_custom: struts need both nodes and beams')
+    return UnitCell(nodes, beams, mirror)
+
+
+def _need_cell(cell, who, family=None, default=None):
+    ''' `cell` as the cell it has to be: a LatticeCell (of this family, if one is asked for) -- and nothing else: not the
+        name of a cell, not a list of beams '''
+    if cell is None and default is not None:
+        return default()
+    if not isinstance(cell, LatticeCell):
+        hint = ''
+        if isinstance(cell, str):
+            hint = ': write cell_periodic({!r}) (a standard cell), cell_non_periodic(...) or cell_custom(...)'.format(cell)
+        raise TypeError('{}: the cell is made by cell_periodic(...), cell_non_periodic(...) or cell_custom(...), not {}{}'
+                        .format(who, repr(cell) if isinstance(cell, str) else 'a ' + type(cell).__name__, hint))
+    if family is not None and cell.family != family:
+        raise ValueError('{}: needs a {} cell, and {!r} is a {} cell'.format(who, family, cell, cell.family))
+    return cell
+
+
+def _plain(cell):
+    ''' What the low-level builders (strut_lattice, tpms, planar_lattice) take: the name of a standard cell, or your own
+        UnitCell / TPMSEquation '''
+    if isinstance(cell, (StrutCell, TPMSCell, PlanarCell)):
+        return cell.key
+    return cell
 
 
 ################################################################################
@@ -1272,8 +1440,8 @@ def points_graph(points, style='delaunay'):
     return _graph_from_c(lib.libfive_lattice_points_graph(cp, len(pts), mode), 'points_graph')
 
 
-def voronoi_lattice(body, cell_size=8.0, radius=0.6, style='voronoi', relax=2, seed=1,
-                    skin=0.0, blend=0.0, skin_blend=0.0, bounds=None, density=None):
+def _voronoi_lattice(body, cell_size=8.0, radius=0.6, style='voronoi', relax=2, seed=1,
+                     skin=0.0, blend=0.0, skin_blend=0.0, bounds=None, density=None):
     ''' A body filled with a random Voronoi foam (or, style='delaunay', a
         stochastic truss) of round beams.  radius may be a field (e.g. from
         a regression); seed picks a different random pattern.
@@ -1300,8 +1468,8 @@ def voronoi_lattice(body, cell_size=8.0, radius=0.6, style='voronoi', relax=2, s
     return fill(body, lat, skin=skin, blend=skin_blend)
 
 
-def surface_lattice(body, cell_size=8.0, radius=0.6, pattern='triangle', seed=1, blend=0.0,
-                    bounds=None, with_body=None):
+def _surface_lattice(body, cell_size=8.0, radius=0.6, pattern='triangle', seed=1, blend=0.0,
+                     bounds=None, with_body=None):
     ''' Round beams on a body's surface: a triangle lattice
         (pattern='triangle') or its dual, a Voronoi / hexagon-like pattern
         (pattern='voronoi').  The beams are centred on the surface; pass
@@ -1315,7 +1483,7 @@ def surface_lattice(body, cell_size=8.0, radius=0.6, pattern='triangle', seed=1,
     elif with_body == 'union':
         lat = lat.min(body)
     elif with_body is not None:
-        raise ValueError("surface_lattice: with_body is None, 'inside' or 'union'")
+        raise ValueError("with_body is None, 'inside' or 'union'")
     b = getattr(body, '_bounds', None)
     if b:
         lat._bounds = b

@@ -67,5 +67,29 @@ Tree meshTreeFromArrays(const float* xyz, size_t vertex_count,
                         const uint32_t* tri, size_t tri_count, double scale,
                         MeshImportInfo& info, bool& ok, std::string& error);
 
+/*
+ *  Selecting a patch of a surface mesh (a flood fill, as when picking a face in a CAD program) and
+ *  the field of the patch.
+ *
+ *  floodSurface starts at the triangle nearest to `seed` and spreads over the triangles that share an
+ *  edge with it:
+ *      mode 0 (flat)     while the triangle's normal is within `angleDegrees` of the seed triangle's
+ *      mode 1 (smooth)   while it is within `angleDegrees` of the triangle it is reached from
+ *                        (round faces such as a cylinder or a fillet, up to a sharp edge)
+ *  and, if `maxRadius` > 0, lies (its middle) within that distance of `seed`.  `selected` gets 1 for
+ *  every triangle of the patch, else 0 (tri_count bytes); the count is returned in `count`.  `seedDistance`
+ *  is the distance from `seed` to the surface.
+ */
+bool floodSurface(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
+                  const double seed[3], double angleDegrees, int mode, double maxRadius,
+                  uint8_t* selected, size_t& count, double& seedDistance, std::string& error);
+
+/*
+ *  The UNSIGNED distance to the triangles with selected[i] != 0 (an open patch has no inside): a tree
+ *  that is 0 on the patch and grows away from it.
+ */
+Tree patchTreeFromArrays(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
+                         const uint8_t* selected, MeshImportInfo& info, bool& ok, std::string& error);
+
 }   // namespace mesh
 }   // namespace libfive

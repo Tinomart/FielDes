@@ -9,7 +9,7 @@ program: *anything can drive anything*.
 part  = sphere(30)
 depth = depth_below(part)                      # 0 at the surface, 30 at the centre
 t     = ramp(depth, (0, 30), (2.0, 0.6))       # 2 mm walls at the skin -> 0.6 mm inside
-lat   = lattice(part, 'gyroid', cell_size=8, thickness=t, skin=1.5)
+lat   = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)
 ```
 
 Fields are evaluated lazily and exactly: nothing is sampled onto a grid (except where a function says it

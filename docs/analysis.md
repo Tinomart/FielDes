@@ -6,6 +6,7 @@ fill the part they came from.
 
 - [Units and conventions](#units-and-conventions)
 - [Regions: supports and loads are shapes](#regions-supports-and-loads-are-shapes)
+- [Boundary conditions](#boundary-conditions)
 - [Materials](#materials)
 - [Static structural analysis](#static-structural-analysis)
 - [Reading a result](#reading-a-result)
@@ -42,7 +43,44 @@ lugs = box_exact((-60, -90, -61), (60, -60, 29))
 ```
 
 View the regions by displaying them together with the part (and hide them afterwards with the eye in the
-model tree) to check that they touch the part where you mean them to.
+model tree) to check that they touch the part where you mean them to — or better, as below.
+
+A region can also be a **picked surface**: right-click a face in the viewport (or write `select_surface(part,
+seed=(x, y, z))`) and give the selection to `fixed()` or `force()`; see [Selecting surfaces](selecting-surfaces.md).
+
+## Boundary conditions
+
+The supports and loads of an analysis are **boundary conditions**, made once and given to the analysis:
+`static_boundary_conditions(part, supports, loads)` is the problem to solve without the solving: the supports
+and loads tied to the part they act on. It is a shape — it has a row in the model tree (eye, delete) like any
+other — and it draws the conditions **on the part**:
+
+```python
+conditions = static_boundary_conditions(bracket,
+                                        supports=[fixed(plates)],
+                                        loads=[force(lugs, (0, -2000, 0)), gravity((0, -9810, 0))])
+conditions                                   # display it; hide it with the eye of the model tree
+result = static_analysis(bracket, conditions, material=aluminium, element_size=4)
+```
+
+| Drawn | Means |
+|---|---|
+| blue place on the part, with blue pads and "Fixed" | fixed support (all directions): an array of flat pads lying on the held faces |
+| cyan place, with cyan pads and "Sliding (fixed in …)" | sliding support (`fixed(region, y=False)` and the like) |
+| red place, with an array of red arrows and the force ("2000 N") | force: identical arrows spread evenly over the loaded faces, all along the force; each touches the surface with its tip when it pushes in and with its tail when it pulls out; the text is the total force |
+| one orange arrow and "Gravity 9.81 m/s²" | gravity, from where the line through the middle of the part along it leaves the part |
+
+A legend at the bottom right names the colours (close it with its ×). The arrows, pads and texts are drawn by the
+viewport over the model, not meshed with it: they follow the zoom and are never cut off by the render region. The
+coloured places are the part's own surface, drawn a hair towards the eye, so the part can stay displayed or not. A place counts as in a region when it is within
+about a hundredth of the part's size of it. `conditions.describe()` lists them; the object also holds `.part`,
+`.supports` and `.loads`.
+
+`static_analysis`, `modal_analysis` (the supports only) and `topology_optimization` are given the conditions —
+that is the only way to give them their supports and loads: they have no `supports=` and `loads=` of their own,
+and a list of `fixed(...)` items passed to them is an error that says so. One set of conditions can be given
+to several analyses (a static one, a modal one, an optimisation of the same part), and for
+`topology_optimization` the loads may be several load cases, `loads=[[force(a, …)], [force(b, …), gravity()]]`.
 
 ## Materials
 
@@ -66,18 +104,19 @@ These are typical handbook values. Check them against the real material before r
 ## Static structural analysis
 
 ```python
-result = static_analysis(bracket,
-                         supports=[fixed(plates)],
-                         loads=[force(lugs, (0, -2000, 0))],
-                         material=aluminium,
-                         element_size=4)
+conditions = static_boundary_conditions(bracket,
+                                        supports=[fixed(plates)],
+                                        loads=[force(lugs, (0, -2000, 0))])
+conditions                                         # shown on the part
+result = static_analysis(bracket, conditions, material=aluminium, element_size=4)
 print(result)
 print("safety factor: %.1f" % result.safety_factor)
 result.show("von_mises")
 ```
 
-`static_analysis(shape, supports, loads, material=steel, element_size=None, bounds=None,
-max_iterations=20000, tolerance=1e-6, cache=True, element='tet')`. The element size defaults to the part's
+`static_analysis(shape, conditions, material=steel, element_size=None, bounds=None,
+max_iterations=20000, tolerance=1e-6, cache=True, element='tet')` with the
+`static_boundary_conditions(...)` of [Boundary conditions](#boundary-conditions). The element size defaults to the part's
 longest side over 60. It raises `FeaError` if the problem cannot be solved as given (no support touching the
 part, supports that do not hold it in place).
 
@@ -114,13 +153,15 @@ and they feed lattices (see [Field-driven design](lattices.md#driving-a-lattice-
 ## Modal analysis
 
 ```python
-modes = modal_analysis(part, supports=[fixed(base)], material=aluminium, modes=6, element_size=3)
+conditions = static_boundary_conditions(part, supports=[fixed(base)])
+modes = modal_analysis(part, conditions, material=aluminium, modes=6, element_size=3)
 print(modes.frequencies)            # Hz, lowest first
 modes.modes[0].show()               # the first mode shape, deformed
 ```
 
-`modal_analysis(shape, supports, material, modes=6, element_size=None, bounds=None, max_iterations=100,
-tolerance=1e-6, cache=True, element='tet')`. No loads: the material's E and density are used. Each
+`modal_analysis(shape, conditions, material, modes=6, element_size=None, bounds=None, max_iterations=100,
+tolerance=1e-6, cache=True, element='tet')`. Only the supports of the conditions are used: no loads, the
+material's E and density are. Each
 `Mode` has `.frequency`, the shape as fields (`displacement`, `ux`, `uy`, `uz`, scaled so the largest
 movement is 1 — a shape, not an amplitude) and `.show(field, deformation)`. Use the mode shape as a field:
 stiffen the part where the first mode moves most.
@@ -155,9 +196,9 @@ material, or `conductivity=` overrides it.
 
 ```python
 temp = thermal_analysis(part, [...], material=aluminium)
-stress = static_analysis(part, supports=[fixed(base)],
-                         loads=[thermal_expansion(temp.temperature, reference=20)],
-                         material=aluminium)
+conditions = static_boundary_conditions(part, supports=[fixed(base)],
+                                        loads=[thermal_expansion(temp.temperature, reference=20)])
+stress = static_analysis(part, conditions, material=aluminium)
 ```
 
 A part at `temperature` (a field, e.g. a thermal result's, or a number) expands by the material's
@@ -166,10 +207,10 @@ just grow. Static analysis only.
 
 ## Topology optimization
 
-`topology_optimization(part, supports, loads, material, volume_fraction=0.3, element_size=None,
+`topology_optimization(part, conditions, material, volume_fraction=0.3, element_size=None,
 iterations=60, filter_radius=None, keep=None, avoid=None, extrude=None, penalty=3, move=0.2, bounds=None,
 max_iterations=20000, tolerance=1e-5, cache=True, element='tet')` finds the **stiffest** layout that uses
-`volume_fraction` of `part` (the design space) for the given supports and loads.
+`volume_fraction` of `part` (the design space) for the supports and loads of the conditions.
 
 | Option | |
 |---|---|
@@ -177,7 +218,7 @@ max_iterations=20000, tolerance=1e-5, cache=True, element='tet')` finds the **st
 | `avoid` | regions that must stay empty |
 | `extrude` | `'x'`, `'y'`, `'z'`: the same design along that axis (a profile to extrude, or to cut right through) |
 | `filter_radius` | the smallest member size, mm (default 1.5 elements) |
-| `loads` | a list of loads, **or several load cases** `[[force(a, …)], [force(b, …), gravity()]]`: the part is made stiff for all of them (the sum of the compliances is minimised) |
+| the conditions' `loads` | a list of loads, **or several load cases** `[[force(a, …)], [force(b, …), gravity()]]`: the part is made stiff for all of them (the sum of the compliances is minimised) |
 
 The optimisation solves the analysis 30–60 times. Returns a `TopologyResult`:
 

@@ -59,6 +59,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -957,7 +958,7 @@ void refineFreeform(const BSplinePatch& patch, const Eigen::Vector2d& scale, siz
 
 }  // namespace
 
-TessMesh tessellateSolid(const Solid& solid, int turnSamples)
+TessMesh tessellateSolid(const Solid& solid, int turnSamples, int threads)
 {
     g_turnSamples = std::max(8, turnSamples);
     g_patchWidth.clear();
@@ -985,6 +986,58 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                 if (std::find(list.begin(), list.end(), face.patch.get()) == list.end()) list.push_back(face.patch.get());
             }
     }
+
+    // Emits triangles (indices into pts), the whole face oriented once
+    // by an area-weighted vote -- see below for why not per triangle
+    auto emitFace = [&](const Face& face, size_t faceIdx, const BSplinePatch* patch,
+                    const std::vector<Vec3>& pts, const std::vector<std::array<int, 3>>& tris) {
+        double vote = 0.0;
+        // (a refined free-form face has thousands of triangles and finding the surface point
+        // nearest one costs a search: the vote is taken on an even sample of at most 96)
+        const size_t every = std::max<size_t>(1, tris.size() / 96);
+        for (size_t q = 0; q < tris.size(); q += every) {
+            const auto& tri = tris[q];
+            Vec3 a = pts[tri[0]], b = pts[tri[1]], c = pts[tri[2]];
+            Vec3 geomNormal = (b - a).cross(c - a);
+            if (patch) {
+                const BSplinePatch::Foot foot = patch->closest((a + b + c) / 3.0);
+                vote += geomNormal.dot(patch->normal(foot.u, foot.v));
+            } else {
+                Surface::Closest c3 = face.surface.closestPoint((a + b + c) / 3.0);
+                vote += geomNormal.dot(face.surface.normalAt(c3.u, c3.v));
+            }
+        }
+        const bool flip = face.sameSense ? (vote < 0) : (vote > 0);
+        for (auto& tri : tris) {
+            // (zero-area triangles are kept: dropping them opens the
+            // mesh -- only ones collapsed onto a repeated vertex go)
+            Vec3 a = pts[tri[0]], b = pts[tri[1]], c = pts[tri[2]];
+            if (flip) std::swap(a, c);
+            int ia = dedup.get(a), ib = dedup.get(b), ic = dedup.get(c);
+            if (ia == ib || ib == ic || ia == ic) continue;
+            mesh.tris.push_back({ia, ib, ic});
+            mesh.triFaceIdx.push_back(int(faceIdx));
+            mesh.triIsBSpline.push_back(face.surface.kind == SurfaceKind::BSpline);
+        }
+    };
+
+    // A free-form face is triangulated between its outline's points here and refined inside afterwards,
+    // all of them together and in parallel: each depends on nothing but its own outline, and refining
+    // takes a second or more a face (a gear's flank).  What is kept of one until then:
+    struct Deferred
+    {
+        size_t faceIdx = 0;
+        const BSplinePatch* patch = nullptr;
+        Eigen::Vector2d scale = Eigen::Vector2d::Ones();
+        size_t pts0 = 0;                    // the outline's points
+        double noise = 0;
+        std::unordered_set<uint64_t> outlineEdges;
+        std::vector<Vec3> pts;
+        std::vector<Eigen::Vector2d> raw;
+        std::vector<std::array<int, 3>> tris, tris0;
+        bool folds = false;
+    };
+    std::vector<Deferred> deferred;
 
     for (size_t faceIdx = 0; faceIdx < solid.faces.size(); faceIdx++) {
         const Face& face = solid.faces[faceIdx];
@@ -1071,38 +1124,48 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
         }
         if (!haveOuter) continue;
 
-        // Emits triangles (indices into pts), the whole face oriented once
-        // by an area-weighted vote -- see below for why not per triangle
         auto emit = [&](const std::vector<Vec3>& pts, const std::vector<std::array<int, 3>>& tris) {
-            double vote = 0.0;
-            // (a refined free-form face has thousands of triangles and finding the surface point
-            // nearest one costs a search: the vote is taken on an even sample of at most 96)
-            const size_t every = std::max<size_t>(1, tris.size() / 96);
-            for (size_t q = 0; q < tris.size(); q += every) {
-                const auto& tri = tris[q];
-                Vec3 a = pts[tri[0]], b = pts[tri[1]], c = pts[tri[2]];
-                Vec3 geomNormal = (b - a).cross(c - a);
-                if (patch) {
-                    const BSplinePatch::Foot foot = patch->closest((a + b + c) / 3.0);
-                    vote += geomNormal.dot(patch->normal(foot.u, foot.v));
-                } else {
-                    Surface::Closest c3 = face.surface.closestPoint((a + b + c) / 3.0);
-                    vote += geomNormal.dot(face.surface.normalAt(c3.u, c3.v));
+            emitFace(face, faceIdx, patch, pts, tris);
+        };
+
+        // The holes of a face round a periodic surface: each loop is unwrapped on its own, so a window cut in
+        // the half of a cylinder (the outline runs u = pi to 2 pi) can come out a turn away at u = -2.4 to
+        // -0.8, outside the outline, and the face was triangulated as if it had no hole (a cross hole of an
+        // engine block came out 76 % too big in area).  The holes are moved by whole turns to where the
+        // outline is.
+        if (!holes.empty()) {
+            const SurfaceKind k = face.surface.kind;
+            // (the period of each parameter: a turn for the analytic surfaces, the knot span of a free-form patch that
+            // closes on itself -- a big panel of Keukencombinatie whose two round holes were a period away from its
+            // outline and so were not cut out: 5 % too much area and volume)
+            double periodU = 0, periodV = 0;
+            if (k == SurfaceKind::Cylinder || k == SurfaceKind::Cone || k == SurfaceKind::Sphere || k == SurfaceKind::Torus)
+                periodU = 2 * M_PI;
+            if (k == SurfaceKind::Torus) periodV = 2 * M_PI;
+            if (patch) {
+                if (patch->closedU) periodU = patch->u1 - patch->u0;
+                if (patch->closedV) periodV = patch->v1 - patch->v0;
+            }
+            auto turned = [](const std::vector<Eigen::Vector2d>& uv, int axis, double period) {
+                return uv.size() >= 4 && std::abs(uv.back()[axis] - uv.front()[axis]) > 0.75 * period;
+            };
+            auto centre = [](const std::vector<Eigen::Vector2d>& uv, int axis) {
+                double lo = 1e300, hi = -1e300;
+                for (const auto& q : uv) { lo = std::min(lo, q[axis]); hi = std::max(hi, q[axis]); }
+                return 0.5 * (lo + hi);
+            };
+            for (int axis = 0; axis < 2; axis++) {
+                const double period = axis == 0 ? periodU : periodV;
+                if (!(period > 0)) continue;
+                if (turned(outerUV, axis, period)) continue;        // (a loop that goes all the way round has no side)
+                const double oc = centre(outerUV, axis);
+                for (auto& h : holes) {
+                    if (turned(h.second, axis, period)) continue;
+                    const double shift = period * std::round((oc - centre(h.second, axis)) / period);
+                    if (shift != 0.0) for (auto& q : h.second) q[axis] += shift;
                 }
             }
-            const bool flip = face.sameSense ? (vote < 0) : (vote > 0);
-            for (auto& tri : tris) {
-                // (zero-area triangles are kept: dropping them opens the
-                // mesh -- only ones collapsed onto a repeated vertex go)
-                Vec3 a = pts[tri[0]], b = pts[tri[1]], c = pts[tri[2]];
-                if (flip) std::swap(a, c);
-                int ia = dedup.get(a), ib = dedup.get(b), ic = dedup.get(c);
-                if (ia == ib || ib == ic || ia == ic) continue;
-                mesh.tris.push_back({ia, ib, ic});
-                mesh.triFaceIdx.push_back(int(faceIdx));
-                mesh.triIsBSpline.push_back(face.surface.kind == SurfaceKind::BSpline);
-            }
-        };
+        }
 
         // A band with holes: a face of a surface of revolution between two
         // complete circles, with more holes in it -- a bore with a cross
@@ -1139,30 +1202,79 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                     }
                     const double twoPi = 2 * M_PI;
                     auto wrap = [&](double x) { x = std::fmod(x, twoPi); return x < 0 ? x + twoPi : x; };
+                    // The cut: a line from one circle to the other that misses the holes.  Where the holes
+                    // are windows that wind round the face (a worm's grooves: each runs a third of a turn
+                    // while it climbs, and nine of them cover every u) no line along the axis misses them,
+                    // but a line that winds the same way does: u' = u - slope (v - vRef) makes them
+                    // straight again, and everything below is done in (u', v), then moved back.
+                    const double vRef = full[0].second[0].y();
+                    auto sheared = [&](const Eigen::Vector2d& q, double slope) { return q.x() - slope * (q.y() - vRef); };
+                    struct Cut { double slope = 0, cut = -1, widest = 0; };
                     // the holes' spans round the circle, from the first
                     // circle's start: the cut goes through the widest gap
-                    const double u0 = full[0].second[0].x();
-                    std::vector<std::pair<double, double>> spans;
-                    for (const auto& r : rest) {
-                        double lo = 1e300, hi = -1e300;
-                        for (const auto& q : r.second) { lo = std::min(lo, q.x()); hi = std::max(hi, q.x()); }
-                        const double a = wrap(lo - u0);
-                        spans.push_back({a, a + (hi - lo)});
-                    }
-                    std::sort(spans.begin(), spans.end());
-                    double cut = -1, widest = 0, end = spans[0].second;
-                    for (size_t i = 1; i < spans.size(); i++) {
-                        if (spans[i].first - end > widest) {
-                            widest = spans[i].first - end;
-                            cut = 0.5 * (spans[i].first + end);
+                    auto findCut = [&](double slope) {
+                        Cut c;
+                        c.slope = slope;
+                        const double u0 = sheared(full[0].second[0], slope);
+                        std::vector<std::pair<double, double>> spans;
+                        for (const auto& r : rest) {
+                            double lo = 1e300, hi = -1e300;
+                            for (const auto& q : r.second) { const double u = sheared(q, slope); lo = std::min(lo, u); hi = std::max(hi, u); }
+                            const double a = wrap(lo - u0);
+                            spans.push_back({a, a + (hi - lo)});
                         }
-                        end = std::max(end, spans[i].second);
+                        std::sort(spans.begin(), spans.end());
+                        double end = spans[0].second;
+                        for (size_t i = 1; i < spans.size(); i++) {
+                            if (spans[i].first - end > c.widest) {
+                                c.widest = spans[i].first - end;
+                                c.cut = 0.5 * (spans[i].first + end);
+                            }
+                            end = std::max(end, spans[i].second);
+                        }
+                        if (spans[0].first + twoPi - end > c.widest) {
+                            c.widest = spans[0].first + twoPi - end;
+                            c.cut = 0.5 * (end + spans[0].first + twoPi);
+                        }
+                        return c;
+                    };
+                    Cut chosen = findCut(0.0);
+                    if (!(chosen.cut >= 0 && chosen.widest > 1e-6)) {
+                        // how much u each window advances per unit of v: the median over the steps of its
+                        // outline that climb
+                        std::vector<double> slopes;
+                        for (const auto& r : rest) {
+                            double vLo = 1e300, vHi = -1e300;
+                            for (const auto& q : r.second) { vLo = std::min(vLo, q.y()); vHi = std::max(vHi, q.y()); }
+                            std::vector<double> mine;
+                            for (size_t i = 0; i + 1 < r.second.size(); i++) {
+                                const double dv = r.second[i + 1].y() - r.second[i].y();
+                                const double du = r.second[i + 1].x() - r.second[i].x();
+                                if (std::abs(dv) > 0.01 * (vHi - vLo) && std::abs(du) < M_PI) mine.push_back(du / dv);
+                            }
+                            if (mine.empty()) continue;
+                            std::nth_element(mine.begin(), mine.begin() + mine.size() / 2, mine.end());
+                            slopes.push_back(mine[mine.size() / 2]);
+                        }
+                        if (!slopes.empty()) {
+                            std::nth_element(slopes.begin(), slopes.begin() + slopes.size() / 2, slopes.end());
+                            const double typical = slopes[slopes.size() / 2];
+                            // (a little either side of it: the windows' sides are curves, not lines)
+                            for (double f : {1.0, 0.9, 1.1, 0.8, 1.2, 0.7, 1.3}) {
+                                const Cut c = findCut(typical * f);
+                                if (c.cut >= 0 && c.widest > chosen.widest) chosen = c;
+                            }
+                        }
                     }
-                    if (spans[0].first + twoPi - end > widest) {
-                        widest = spans[0].first + twoPi - end;
-                        cut = 0.5 * (end + spans[0].first + twoPi);
-                    }
-                    if (cut >= 0 && widest > 1e-6) {
+                    if (std::getenv("FIELDES_TESS_DEBUG"))
+                        std::fprintf(stderr, "[tess] face %zu: %zu windows round a periodic face, cut at slope %.4g, widest gap %.4g rad (%s)\n",
+                                     faceIdx, rest.size(), chosen.slope, chosen.widest, chosen.cut >= 0 && chosen.widest > 1e-6 ? "cut" : "no cut found");
+                    if (chosen.cut >= 0 && chosen.widest > 1e-6) {
+                        const double slope = chosen.slope;
+                        for (auto& r : full) for (auto& q : r.second) q.x() = sheared(q, slope);
+                        for (auto& r : rest) for (auto& q : r.second) q.x() = sheared(q, slope);
+                        const double u0 = full[0].second[0].x();
+                        const double cut = chosen.cut;
                         // each circle's sample nearest the cut
                         auto nearest = [&](const Ring& r, double u) {
                             size_t best = 0;
@@ -1189,7 +1301,20 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                             bandUV.push_back(Eigen::Vector2d(q == 0 ? uS : u, A.second[i].y()));
                         }
                         // ... across the cut to B, and back down along it
+                        // (a cut that winds round the face is a helix, not a line: its points go in too, one
+                        // turn's share apart, or the triangles on it are chords through the cylinder)
+                        auto addSide = [&](const Eigen::Vector2d& a, const Eigen::Vector2d& b) {
+                            if (slope == 0.0) return;
+                            const double turn = (b.x() - a.x()) + slope * (b.y() - a.y());
+                            const int m = int(std::ceil(std::abs(turn) * double(g_turnSamples) / twoPi));
+                            for (int j = 1; j < m; j++) {
+                                const Eigen::Vector2d q = a + (double(j) / double(m)) * (b - a);
+                                band3D.push_back(face.surface.evalParam(q.x() + slope * (q.y() - vRef), q.y()));
+                                bandUV.push_back(q);
+                            }
+                        };
                         const double uB = uS + twoPi + std::remainder(B.second[iB].x() - uS, twoPi);
+                        addSide(bandUV.back(), Eigen::Vector2d(uB, B.second[iB].y()));
                         for (size_t q = 0; q <= nB; q++) {
                             const size_t i = (iB + nB - q % nB) % nB;
                             double u = uB - wrap(B.second[iB].x() - B.second[i].x());
@@ -1197,6 +1322,7 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                             band3D.push_back(B.first[i]);
                             bandUV.push_back(Eigen::Vector2d(u, B.second[i].y()));
                         }
+                        addSide(bandUV.back(), bandUV.front());
                         // the holes moved by whole turns to lie inside the cut-open band
                         for (auto& r : rest) {
                             double lo = 1e300;
@@ -1204,6 +1330,9 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                             const double shift = twoPi * std::floor((lo - uS) / twoPi);
                             for (auto& q : r.second) q.x() -= shift;
                         }
+                        // (back from u' to u)
+                        for (auto& q : bandUV) q.x() += slope * (q.y() - vRef);
+                        for (auto& r : rest) for (auto& q : r.second) q.x() += slope * (q.y() - vRef);
                         outer3D = std::move(band3D);
                         outerUV = std::move(bandUV);
                         holes = std::move(rest);
@@ -1243,7 +1372,34 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                 if (rings.size() == 2) {
                     auto& A = rings[0];
                     auto& B = rings[1];
-                    // B's u moved by whole periods to start where A starts
+                    // B's u moved by whole periods to start where A starts -- and B started there: a ring
+                    // begins wherever its first edge does, and zipped with A half a turn out of step a
+                    // sphere's zone came out as a twisted strip, 13 % too big
+                    {
+                        const double twoPi = 2 * M_PI;
+                        const size_t m = B.first.size();
+                        if (m >= 4 && (B.first.front() - B.first.back()).norm() < 1e-6 * (1.0 + B.first.front().norm())) {
+                            size_t best = 0;
+                            double bestD = 1e300;
+                            for (size_t i = 0; i + 1 < m; i++) {
+                                const double d = std::abs(std::remainder(B.second[i].x() - A.second[0].x(), twoPi));
+                                if (d < bestD) { bestD = d; best = i; }
+                            }
+                            if (best != 0) {
+                                std::vector<Vec3> p3;
+                                std::vector<Eigen::Vector2d> uv;
+                                for (size_t i = 0; i + 1 < m; i++) {
+                                    const size_t at = (best + i) % (m - 1);
+                                    p3.push_back(B.first[at]);
+                                    uv.push_back(Eigen::Vector2d(B.second[at].x() + (at < best ? twoPi : 0.0), B.second[at].y()));
+                                }
+                                p3.push_back(B.first[best]);
+                                uv.push_back(Eigen::Vector2d(B.second[best].x() + twoPi, B.second[best].y()));
+                                B.first = std::move(p3);
+                                B.second = std::move(uv);
+                            }
+                        }
+                    }
                     const double shift = 2 * M_PI * std::round((A.second[0].x() - B.second[0].x()) / (2 * M_PI));
                     for (auto& q : B.second) q.x() += shift;
                     // On a sphere or torus the meridian between the two
@@ -1321,8 +1477,40 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                     if (tip >= 0) {
                         pts = rings[0].first;
                         const int n = int(pts.size());
+                        // A sphere's cap, fanned from its pole to its outline, is a cone (a ball of two
+                        // hemispheres came out as two cones, half its volume): curves between, on the surface,
+                        // each point of the outline moved a share of the way to the pole along its meridian, one
+                        // turn's share of the sphere apart, and zipped in turn.  (Only where every meridian
+                        // crosses the outline once: where u runs round it without turning back.)
+                        const double vPole = tip == 0 ? 0.5 * M_PI : -0.5 * M_PI;      // (tips[0] is the pole on +z)
+                        int lat = 0;
+                        if (k == SurfaceKind::Sphere) {
+                            bool monotone = true;
+                            double gap = 0;
+                            const auto& uv = rings[0].second;
+                            for (size_t i = 0; i < uv.size(); i++) {
+                                gap = std::max(gap, std::abs(vPole - uv[i].y()));
+                                if (i && uv[i].x() < uv[i - 1].x() - 1e-9) monotone = false;
+                            }
+                            if (monotone) lat = std::max(0, int(std::ceil(double(g_turnSamples) * gap / (2 * M_PI))) - 1);
+                        }
+                        int last = 0;                                                  // (the start of the last curve in pts)
+                        for (int q = 1; q <= lat; q++) {
+                            const double share = double(q) / double(lat + 1);
+                            const int base = int(pts.size());
+                            for (int i = 0; i < n; i++) {
+                                const auto& uvi = rings[0].second[size_t(i)];
+                                pts.push_back(face.surface.evalParam(uvi.x(), uvi.y() + (vPole - uvi.y()) * share));
+                            }
+                            for (int i = 0; i + 1 < n; i++) {
+                                tris.push_back({last + i, last + i + 1, base + i});
+                                tris.push_back({last + i + 1, base + i + 1, base + i});
+                            }
+                            last = base;
+                        }
+                        const int pole = int(pts.size());
                         pts.push_back(tips[size_t(tip)]);
-                        for (int q = 0; q + 1 < n; q++) tris.push_back({q, q + 1, n});
+                        for (int i = 0; i + 1 < n; i++) tris.push_back({last + i, last + i + 1, pole});
                     }
                 }
                 if (!tris.empty()) {
@@ -1479,21 +1667,26 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
         // turn) are split at their (u, v) middle, on the surface -- in both
         // triangles that share them (a triangle with 1 / 2 / 3 split edges
         // becomes 2 / 3 / 4), so no cracks; the outline's edges are left
-        // alone (the face next door shares them).  Tori are not refined:
-        // ArcRevolve.step's large tori
-        // (R 28.9, r 27 -- the tube nearly touching the axis) came out 21 %
-        // too big refined, for a reason not found (each new point checked
-        // out on the surface, between its edge's ends).  A free-form B-spline
+        // alone (the face next door shares them).  Tori are refined the same
+        // way, but kept only if the area of the mesh comes closer to the
+        // torus patch's own (an integral over its outline in (u, v)):
+        // ArcRevolve.step's large tori (R 28.9, r 27 -- the tube nearly
+        // touching the axis) came out 21 % too big refined, for a reason not
+        // found (each new point checked out on the surface, between its
+        // edge's ends); and an unrefined fillet torus, its triangles spanning
+        // the outline, is 8 to 11 % too small.  A free-form B-spline
         // face is refined by refineFreeform, below.
         {
             const SurfaceKind k = face.surface.kind;
             const bool curved = k == SurfaceKind::Cylinder || k == SurfaceKind::Cone ||
-                                k == SurfaceKind::Sphere;
+                                k == SurfaceKind::Sphere || k == SurfaceKind::Torus;
             if (curved && !tris.empty() && scale.x() > 0 && scale.y() > 0) {
                 const double rad = (k == SurfaceKind::Cylinder || k == SurfaceKind::Cone)
                                        ? scale.x() : std::min(scale.x(), scale.y());
                 const double tol = std::max(1e-9, rad * (1 - std::cos(M_PI / double(g_turnSamples))));
-                const size_t cap = 4 * pts.size() + 64;
+                // (a worm's helical grooves leave triangles that span the cylinder, 200 degrees of it: splitting
+                // them to a sagitta takes a dozen rounds and a good many points)
+                const size_t cap = std::max<size_t>(4 * pts.size() + 64, 120000);
                 const size_t pts0 = pts.size();
                 const std::vector<std::array<int, 3>> tris0 = tris;
                 std::vector<Eigen::Vector2d> raw(ptsUV.size());
@@ -1505,7 +1698,7 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                 // part of the surface than the face: the face's (u, v) doesn't
                 // describe it well, and it keeps its outline triangulation)
                 bool astray = false;
-                for (int round = 0; round < 8 && !astray; round++) {
+                for (int round = 0; round < 16 && !astray; round++) {
                     std::map<std::pair<int, int>, int> use;
                     for (const auto& t : tris)
                         for (int e = 0; e < 3; e++) {
@@ -1516,10 +1709,28 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                     for (const auto& e : use) {
                         if (e.second != 2 || pts.size() >= cap) continue;   // the outline: never
                         const int a = e.first.first, b = e.first.second;
-                        const Eigen::Vector2d m = 0.5 * (raw[size_t(a)] + raw[size_t(b)]);
-                        const Vec3 on = face.surface.evalParam(m.x(), m.y());
+                        Eigen::Vector2d m = 0.5 * (raw[size_t(a)] + raw[size_t(b)]);
+                        Vec3 on = face.surface.evalParam(m.x(), m.y());
+                        if (k == SurfaceKind::Torus) {
+                            // (the (u, v) middle of a long edge across a dome of a torus whose tube is much wider
+                            // than its axis -- a spindle -- is not near the edge: u is all but undefined at the
+                            // apex.  The point of the surface nearest the middle of the edge is.)
+                            const Surface::Closest c = face.surface.closestPoint(0.5 * (pts[size_t(a)] + pts[size_t(b)]));
+                            const double twoPi = 2 * M_PI;
+                            m = Eigen::Vector2d(c.u + twoPi * std::round((m.x() - c.u) / twoPi),
+                                                c.v + twoPi * std::round((m.y() - c.v) / twoPi));
+                            on = face.surface.evalParam(m.x(), m.y());
+                        }
                         const double off = (on - 0.5 * (pts[size_t(a)] + pts[size_t(b)])).norm();
-                        if (off <= tol) continue;
+                        if (k == SurfaceKind::Torus) {
+                            // (a torus curves round its axis and round its tube at different radii: an edge is
+                            // short enough when the surface turns by no more than a turn's share between its
+                            // ends, whichever way it runs, not when its sagitta is a share of the smaller radius)
+                            const Vec3 na = face.surface.normalAt(raw[size_t(a)].x(), raw[size_t(a)].y());
+                            const Vec3 nb = face.surface.normalAt(raw[size_t(b)].x(), raw[size_t(b)].y());
+                            const double nn = na.norm() * nb.norm();
+                            if (nn > 0 && std::acos(std::max(-1.0, std::min(1.0, na.dot(nb) / nn))) <= 2 * M_PI / double(g_turnSamples)) continue;
+                        } else if (off <= tol) continue;
                         const double len = (pts[size_t(a)] - pts[size_t(b)]).norm();
                         if (off > 0.5 * len * (1 + 1e-6) + 1e-12) {
                             astray = true;
@@ -1569,11 +1780,47 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
                 // face whose outline triangulation overlaps itself in
                 // (u, v) came out with folds; it then keeps its outline
                 // triangulation)
+                if (std::getenv("FIELDES_TESS_DEBUG") && k != SurfaceKind::BSpline)
+                    std::fprintf(stderr, "[tess] face %zu (kind %d): refined %zu -> %zu points, %zu triangles%s%s\n", faceIdx, int(k),
+                                 pts0, pts.size(), tris.size(), astray ? ", astray" : "",
+                                 pts.size() > pts0 && runsTwice(pts, tris) ? ", runs twice" : "");
                 if (astray) {
                     tris = tris0;
                     pts.resize(pts0);
                 } else if (pts.size() > pts0 && !runsTwice(pts, tris)) {
                     // (clean)
+                    if (k == SurfaceKind::Torus) {
+                        // the torus patch's area from its outline: A = r |closed integral of (R v + r sin v) du|
+                        const double R = face.surface.radius, r = face.surface.radius2;
+                        double integral = 0;
+                        for (size_t c = 0; c < polys.size(); c++) {
+                            const size_t n = polys[c].size(), s0 = size_t(contourStart[c]);
+                            for (size_t i = 0; i < n; i++) {
+                                const Eigen::Vector2d a = ptsUV[s0 + i], b = ptsUV[s0 + (i + 1) % n];
+                                const double ua = a.x() / scale.x(), va = a.y() / scale.y();
+                                const double ub = b.x() / scale.x(), vb = b.y() / scale.y();
+                                integral += 0.5 * ((R * va + r * std::sin(va)) + (R * vb + r * std::sin(vb))) * (ub - ua);
+                            }
+                        }
+                        const double exact = r * std::abs(integral);
+                        // (a patch that reaches the axis of a torus whose tube is wider than its axis -- the apex
+                        // of a dome -- has no (u, v) outline to take the area of: it is judged by the refinement
+                        // itself, which is checked not to fold)
+                        double radialMin = 1e300;
+                        for (size_t i = 0; i < ptsUV.size(); i++)
+                            radialMin = std::min(radialMin, R + r * std::cos(ptsUV[i].y() / scale.y()));
+                        const bool apex = radialMin < 0.02 * r;
+                        auto meshArea = [&](const std::vector<std::array<int, 3>>& T) {
+                            double area = 0;
+                            for (const auto& t : T)
+                                area += 0.5 * (pts[size_t(t[1])] - pts[size_t(t[0])]).cross(pts[size_t(t[2])] - pts[size_t(t[0])]).norm();
+                            return area;
+                        };
+                        if (!apex && !(std::abs(meshArea(tris) - exact) < std::abs(meshArea(tris0) - exact))) {
+                            tris = tris0;
+                            pts.resize(pts0);
+                        }
+                    }
                 } else if (pts.size() > pts0) {
                     tris = tris0;
                     pts.resize(pts0);
@@ -1581,80 +1828,93 @@ TessMesh tessellateSolid(const Solid& solid, int turnSamples)
             }
         }
 
-        // A free-form face: the same inside its outline, see refineFreeform
+        // A free-form face: the same inside its outline, see refineFreeform -- after the other faces
         if (patch && !tris.empty()) {
-            const size_t pts0 = pts.size();
-            const std::vector<std::array<int, 3>> tris0 = tris;
-            std::vector<Eigen::Vector2d> raw(ptsUV.size());
+            Deferred d;
+            d.faceIdx = faceIdx;
+            d.patch = patch;
+            d.scale = scale;
+            d.pts0 = pts.size();
+            d.tris0 = tris;
+            d.raw.resize(ptsUV.size());
             for (size_t i = 0; i < ptsUV.size(); i++)
-                raw[i] = Eigen::Vector2d(ptsUV[i].x() / scale.x(), ptsUV[i].y() / scale.y());
+                d.raw[i] = Eigen::Vector2d(ptsUV[i].x() / scale.x(), ptsUV[i].y() / scale.y());
             // the outline's edges: consecutive points of a contour, which the face next door shares
-            std::unordered_set<uint64_t> outlineEdges;
             for (size_t c = 0; c < polys.size(); c++) {
                 const size_t n = polys[c].size(), s0 = size_t(contourStart[c]);
                 for (size_t i = 0; i < n; i++) {
                     const int a = int(s0 + i), b = int(s0 + (i + 1) % n);
-                    outlineEdges.insert((uint64_t(uint32_t(std::min(a, b))) << 32) | uint32_t(std::max(a, b)));
+                    d.outlineEdges.insert((uint64_t(uint32_t(std::min(a, b))) << 32) | uint32_t(std::max(a, b)));
                 }
             }
             // how far the outline's points are from the surface
-            double noise = 0;
-            for (size_t i = 0; i < pts0; i++) {
+            for (size_t i = 0; i < d.pts0; i++) {
                 Vec3 at;
-                patch->evalWrapped(raw[i].x(), raw[i].y(), at);
-                noise = std::max(noise, (at - pts[i]).norm());
+                patch->evalWrapped(d.raw[i].x(), d.raw[i].y(), at);
+                d.noise = std::max(d.noise, (at - pts[i]).norm());
             }
-            refineFreeform(*patch, scale, pts0, noise, outlineEdges, pts, raw, tris, g_turnSamples, faceIdx);
+            d.pts = std::move(pts);
+            d.tris = std::move(tris);
+            deferred.push_back(std::move(d));
+            continue;
+        }
+
+        emit(pts, tris);
+    }
+
+    // The free-form faces, refined inside their outlines: a few at a time on as many threads as there are
+    // (`threads`: 0 for all of them, 1 for none besides this one), then put into the mesh in the order of the faces
+    if (!deferred.empty()) {
+        const int turn = g_turnSamples;
+        const double tolAbs = g_tolAbs;
+        std::atomic<size_t> next{0};
+        auto work = [&]() {
+            g_turnSamples = turn;           // (thread_local: each thread has its own)
+            g_tolAbs = tolAbs;
+            for (size_t q; (q = next.fetch_add(1)) < deferred.size();) {
+                Deferred& d = deferred[q];
+                refineFreeform(*d.patch, d.scale, d.pts0, d.noise, d.outlineEdges, d.pts, d.raw, d.tris, turn, d.faceIdx);
+                d.folds = d.pts.size() > d.pts0 && runsTwice(d.pts, d.tris);
+            }
+        };
+        const size_t hw = std::max(1u, std::thread::hardware_concurrency());
+        const size_t nThreads = std::max<size_t>(1, std::min<size_t>(deferred.size(), threads > 0 ? size_t(threads) : hw));
+        std::vector<std::thread> pool;
+        for (size_t t = 1; t < nThreads; t++) pool.emplace_back(work);
+        work();
+        for (auto& th : pool) th.join();
+
+        for (Deferred& d : deferred) {
             if (std::getenv("FIELDES_TESS_QUALITY")) {
                 // how the triangles lie on the surface: the angle between each triangle's normal and the surface's at its middle,
                 // and how far the middle is from the surface -- by area
-                double areaAll = 0, areaTilted = 0, areaMeshed = 0, worstTilt = 0, worstOff = 0;
-                const size_t every = std::max<size_t>(1, tris.size() / 3000);
-                for (size_t q = 0; q < tris.size(); q += every) {
-                    const Vec3 a = pts[size_t(tris[q][0])], b = pts[size_t(tris[q][1])], c = pts[size_t(tris[q][2])];
+                double areaAll = 0, areaTilted = 0, worstTilt = 0, worstOff = 0;
+                const size_t every = std::max<size_t>(1, d.tris.size() / 3000);
+                for (size_t q = 0; q < d.tris.size(); q += every) {
+                    const Vec3 a = d.pts[size_t(d.tris[q][0])], b = d.pts[size_t(d.tris[q][1])], c = d.pts[size_t(d.tris[q][2])];
                     const Vec3 n = (b - a).cross(c - a);
                     const double ar = 0.5 * n.norm();
                     if (!(ar > 0)) continue;
                     const Vec3 mid = (a + b + c) / 3.0;
-                    const BSplinePatch::Foot ft = patch->closest(mid);
-                    const Vec3 sn = patch->normalWrapped(ft.u, ft.v);
+                    const BSplinePatch::Foot ft = d.patch->closest(mid);
+                    const Vec3 sn = d.patch->normalWrapped(ft.u, ft.v);
                     const double tilt = std::acos(std::min(1.0, std::abs(n.normalized().dot(sn)))) * 180.0 / M_PI;
                     areaAll += ar;
                     if (tilt > 20) areaTilted += ar;
                     worstTilt = std::max(worstTilt, tilt);
                     worstOff = std::max(worstOff, ft.dist);
-                    (void)areaMeshed;
                 }
                 std::fprintf(stderr, "[quality] face %zu: %zu triangles; %.1f %% of the area tilted more than 20 deg from the surface (worst %.1f deg), mid-points up to %.4g mm off the surface\n",
-                             faceIdx, tris.size(), areaAll > 0 ? 100.0 * areaTilted / areaAll : 0.0, worstTilt, worstOff);
+                             d.faceIdx, d.tris.size(), areaAll > 0 ? 100.0 * areaTilted / areaAll : 0.0, worstTilt, worstOff);
             }
-            if (const char* dumpDir = std::getenv("FIELDES_TESS_DUMP")) {
-                std::FILE* df = std::fopen((std::string(dumpDir) + "/mesh_" + std::to_string(faceIdx) + ".txt").c_str(), "w");
-                if (df) {
-                    std::fprintf(df, "outline %zu\n", pts0);
-                    for (size_t i = 0; i < pts.size(); i++)
-                        std::fprintf(df, "v %.17g %.17g %.17g %.17g %.17g\n", pts[i].x(), pts[i].y(), pts[i].z(), raw[i].x(), raw[i].y());
-                    for (const auto& t : tris0) std::fprintf(df, "o %d %d %d\n", t[0], t[1], t[2]);
-                    for (const auto& t : tris) std::fprintf(df, "t %d %d %d\n", t[0], t[1], t[2]);
-                    std::fclose(df);
-                }
-            }
-            if (pts.size() > pts0 && runsTwice(pts, tris)) {
+            if (d.folds) {
                 if (std::getenv("FIELDES_TESS_DEBUG"))
-                    std::fprintf(stderr, "[tess] face %zu: refined to %zu points but the patch folds: left as it is\n", faceIdx, pts.size());
-                tris = tris0;
-                pts.resize(pts0);
+                    std::fprintf(stderr, "[tess] face %zu: refined to %zu points but the patch folds: left as it is\n", d.faceIdx, d.pts.size());
+                d.tris = d.tris0;
+                d.pts.resize(d.pts0);
             }
+            emitFace(solid.faces[d.faceIdx], d.faceIdx, d.patch, d.pts, d.tris);
         }
-
-
-        // (The WHOLE face's triangles are oriented uniformly, decided once
-        // by an area-weighted vote across every triangle: per triangle, a
-        // normalAt() query near a pole, axis or seam of a curved surface
-        // could land on the wrong side and flip just some of them --
-        // HingedTable.step's hinge knuckle and table top showed hundreds
-        // of non-manifold edges that way.)
-        emit(pts, tris);
     }
     orientFaces(mesh);
     return mesh;

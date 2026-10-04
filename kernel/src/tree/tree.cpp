@@ -842,12 +842,15 @@ Tree Tree::optimized_helper(
             // which in turn helps with common subexpression elimination
             //
             // We sort by the multiplier first (to make deterministic unit
-            // tests easier), then by the pointer (to make CSE work)
+            // tests easier), then by the order the nodes were made in (to
+            // make CSE work).  Not by the pointer: it differs from run to
+            // run, and with it the order the terms are added in, and the
+            // rounding of the sum.
             auto sort_fn = [](auto a, auto b) -> bool {
                 if (a.second != b.second) {
                     return a.second < b.second;
                 } else {
-                    return a.first < b.first;
+                    return a.first->serial < b.first->serial;
                 }
             };
             std::sort(pos_.begin(), pos_.end(), sort_fn);
@@ -923,7 +926,12 @@ Tree Tree::optimized_helper(
             // Sort so that commutative operations with the same list of
             // children will be deduplicated, since the arguments are
             // already deduplicated by now.
-            std::sort(comm.list.begin(), comm.list.end());
+            // (by the order the nodes were made in, not by address: see the
+            // affine terms above)
+            std::sort(comm.list.begin(), comm.list.end(),
+                [](const Tree& a, const Tree& b) {
+                    return a.ptr->serial < b.ptr->serial;
+                });
 
             // If this is a min or max operation, then cancel out duplicates
             // (since min(f, f) = f)

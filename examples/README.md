@@ -21,8 +21,11 @@ can be deleted at any time.
 | `08_topology_optimization.py` | `PivotBearingSupportBracket.STEP` | the stiffest part in 45 % of the material |
 | `09_lattice.py` | `Bracket.step` | a gyroid whose wall follows a regression over the depth below the skin |
 | `10_field_driven_design.py` | `PivotBearingSupportBracket.STEP` | stress field → lattice density |
-| `11_custom_lattice.py` | `Bracket.step` | your own strut cell and TPMS equation |
+| `11_custom_lattice.py` | `Bracket.step` | your own cells with `cell_custom`: a strut cell and a TPMS equation |
 | `12_mesh_export_and_import.py` | `MobileStand.step` | STL out and back in |
+| `13_tessellated_import.py` | `Keukencombinatie.stp` | `import_step_tessellated_parts`: the kitchen of example 03 imported exactly, nothing fitted; an exact shell of a part |
+| `14_conformal_lattice.py` | none (an S-shaped surface, the zero of a field) | `lattice_surface_conform` on an open surface of no thickness with a cell of your own (`cell_custom`): one layer on one side of it, cut off at the edge of a patch |
+| `15_conformal_closed_body.py` | `PivotBearingSupportBracket.STEP` | `lattice_surface_conform` on a closed body (a whole bracket): the cells fill its wall all the way round, over the faces, fillets and bores, with a row of nodes on every sharp edge |
 
 (Open each script: the comment at its top says what to look at.)
 

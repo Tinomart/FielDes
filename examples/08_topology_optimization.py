@@ -18,9 +18,9 @@ plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
                box_exact((45, 5, -61), (76, 36, 29)))
 lugs = box_exact((-60, -90, -61), (60, -60, 29))
 
-opt = topology_optimization(space, supports=[fixed(plates)],
-                            loads=[force(lugs, (0, -2000, 0))],
-                            material=aluminium, volume_fraction=0.45, element_size=5)
+conditions = static_boundary_conditions(space, supports=[fixed(plates)],
+                                        loads=[force(lugs, (0, -2000, 0))])
+opt = topology_optimization(space, conditions, material=aluminium, volume_fraction=0.45, element_size=5)
 print(opt)
 
 optimized = opt.shape()                       # where the density is above the level that keeps the 45 % asked for

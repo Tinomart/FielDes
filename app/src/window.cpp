@@ -48,6 +48,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDir>
 #include <QClipboard>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QLabel>
 #include <QProgressBar>
 #include <QStatusBar>
@@ -69,6 +70,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/scenetree.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/section.hpp"
+#include "fieldes/shape.hpp"
 #include "fieldes/shortcuts.hpp"
 #include "fieldes/view.hpp"
 
@@ -153,8 +155,9 @@ static QString guideHtml()
     h += "<h2>Fields and lattices</h2><ul>"
          "<li>Any shape is a field. <code>depth_below(part)</code>, <code>ramp()</code>, <code>fit(data)</code> and "
          "analysis results can drive offsets, thicknesses and lattices.</li>"
-         "<li><code>lattice(body, 'gyroid', cell_size=8, thickness=t, skin=1.5)</code> fills a body; "
-         "<code>density=</code> sets the share of material instead.</li>"
+         "<li><code>lattice(body, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)</code> fills a body; "
+         "<code>density=</code> sets the share of material instead. A cell is <code>cell_periodic(kind)</code>, "
+         "<code>cell_non_periodic(kind)</code> or <code>cell_custom(...)</code>.</li>"
          "<li><code>colored(part, field)</code> paints a part by a field.</li></ul>";
 
     h += "<h2>Editor</h2><ul>"
@@ -544,31 +547,30 @@ Window::Window(Arguments args)
     else
         perspective_action->setChecked(true);
 
-    auto turn_z_up = new QAction("Turntable (Z up)", nullptr);
     auto turn_y_up = new QAction("Turntable (Y up)", nullptr);
+    auto turn_z_up = new QAction("Turntable (Z up)", nullptr);
     auto rotation_menu = new QMenu("Rotation mode");
-    rotation_menu->addAction(turn_z_up);
     rotation_menu->addAction(turn_y_up);
+    rotation_menu->addAction(turn_z_up);
     turn_z_up->setCheckable(true);
     turn_y_up->setCheckable(true);
     auto rot_mode = new QActionGroup(rotation_menu);
-    rot_mode->addAction(turn_z_up);
     rot_mode->addAction(turn_y_up);
-    connect(turn_z_up, &QAction::toggled, [this](bool b) {
-        if (!b) return;
+    rot_mode->addAction(turn_z_up);
+    // (the Y axis points up unless the user chose otherwise: the choice is stored under its own key, only
+    // when it is made -- the old "rotation" key was written at every start, so it says nothing about a choice)
+    connect(turn_z_up, &QAction::triggered, [this](bool) {
         view->toTurnZ();
-        settings.setValue("rotation", "turntable-z-up");
+        settings.setValue("up-axis", "z");
     });
-    connect(turn_y_up, &QAction::toggled, [this](bool b) {
-        if (!b) return;
+    connect(turn_y_up, &QAction::triggered, [this](bool) {
         view->toTurnY();
-        settings.setValue("rotation", "turntable-y-up");
+        settings.setValue("up-axis", "y");
     });
     settings_menu->addMenu(rotation_menu);
-    if (settings.value("rotation", "").toString() == "turntable-y-up")
-        turn_y_up->setChecked(true);
-    else
-        turn_z_up->setChecked(true);
+    const bool y_is_up = settings.value("up-axis", "y").toString() != "z";
+    (y_is_up ? turn_y_up : turn_z_up)->setChecked(true);
+    view->setUpAxis(y_is_up);
 
     auto sensitivity_low = new QAction("Low", nullptr);
     auto sensitivity_medium = new QAction("Medium", nullptr);
@@ -781,6 +783,29 @@ Window::Window(Arguments args)
     else
         dc_meshing->setChecked(true);
 
+    // The render cache (the model tree's cache button keeps a shape's mesh): everything it kept
+    settings_menu->addSeparator();
+    auto clear_cache = settings_menu->addAction("Clear the caches");
+    clear_cache->setToolTip("Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next "
+                            "time they are needed, and kept again)");
+    connect(clear_cache, &QAction::triggered, this, [this]{
+        qint64 bytes = 0;
+        for (const auto& f : QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files))
+            bytes += f.size();
+        const int n = Shape::clearRenderCache();
+        // the field cache (field_cache.py) sits beside the render cache: a file or two to a field
+        int fields = 0;
+        const QDir fieldDir(QFileInfo(Shape::renderCacheDir()).absolutePath() + "/field-cache");
+        for (const auto& f : fieldDir.entryInfoList({"*.fdtree", "*.fdfield", "*.part"}, QDir::Files))
+        {
+            bytes += f.size();
+            if (f.suffix() == "fdfield") ++fields;
+            QFile::remove(f.absoluteFilePath());
+        }
+        statusBar()->showMessage(QString("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
+                                     .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);
+    });
+
     menuBar()->addMenu(settings_menu);
 
     // Help menu
@@ -870,6 +895,9 @@ Window::Window(Arguments args)
             if (line >= 0) scene->selectByLine(line);
             else view->highlightLines({});
         });
+        connect(view, &View::surfaceSelectRequested, scene, &ScenePanel::addSurfaceSelection);
+        // (what the render cache did, on the cache buttons of the shapes that have it on)
+        connect(view, &View::cacheStatesChanged, scene, [=]{ scene->setCacheStates(view->cacheStates()); });
     }
 
     {   // Status bar: render state on the left, region / resolution on the right
@@ -942,6 +970,29 @@ Window::Window(Arguments args)
         auto script = editor->scriptWidget();
         a->add("focus", [=](const QString& w){
             if (w == "view") view->setFocus(); else script->setFocus();
+        });
+        // waitrender [seconds [seconds to start]]: wait until the render that the script started has finished (at most
+        // that long; 1800 s by default), so that a grab shows the finished picture however long it takes.  The render
+        // has that many seconds (default 20) to begin after the script has run -- a script that takes longer to run
+        // has to say so, or the grab is of a render that has not begun
+        a->add("waitrender", [=](const QString& args){
+            const auto parts = args.split(' ', Qt::SkipEmptyParts);
+            const qint64 limit = (parts.isEmpty() ? 1800 : parts[0].toInt()) * 1000;
+            const qint64 startWindow = (parts.size() > 1 ? parts[1].toInt() : 20) * 1000;
+            QElapsedTimer total;
+            total.start();
+            QEventLoop loop;
+            QTimer poll;
+            bool started = false;
+            QObject::connect(&poll, &QTimer::timeout, [&]() {
+                if (view->isRendering()) started = true;
+                // (a render has a moment to begin after the script has run)
+                if ((started && !view->isRendering()) || (!started && total.elapsed() > startWindow) || total.elapsed() > limit)
+                    loop.quit();
+            });
+            poll.start(200);
+            loop.exec();
+            std::cerr << "automation: render finished after " << total.elapsed() / 1000 << " s" << std::endl;
         });
         a->add("cursor", [=](const QString& args){
             const auto p = args.split(' ');
@@ -1108,6 +1159,17 @@ Window::Window(Arguments args)
                 send(QEvent::MouseMove, from + d * i / 10, Qt::NoButton, Qt::LeftButton);
             }
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+        });
+        // selectsurface <x> <y> [mode angle thickness radius]: what the right-click menu does when confirmed
+        a->add("selectsurface", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 2) return;
+            if (!view->selectSurfaceAt(QPoint(p[0].toInt(), p[1].toInt()), p.value(2, "flat"),
+                                       p.value(3, "10").toDouble(), p.value(4, "0").toDouble(),
+                                       p.value(5, "0").toDouble()))
+            {
+                std::cerr << "automation: no shape at " << args.toStdString() << std::endl;
+            }
         });
         // handledrag <kind 0|1|2> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
         // rotation ring or a scale square), drag by (dx, dy) pixels in steps, release

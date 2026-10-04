@@ -77,6 +77,7 @@ struct TreeData : public TreeDataVariant
     TreeData(TreeDataVariant&& v)
         : TreeDataVariant(std::move(v))
         , flags(compute_flags())
+        , serial(next_serial())
     { /* Nothing to do here */ }
 
     /*  Returns the opcode of this clause */
@@ -156,6 +157,19 @@ struct TreeData : public TreeDataVariant
         TREE_FLAG_HAS_XYZ=(1<<2),
     };
     const uint32_t flags;
+
+    // The order in which the nodes were made (a number that grows with every one).  Where the optimizer has to put terms in SOME order (a sum is
+    // added up term by term, a product multiplied factor by factor, and float arithmetic is not associative) it uses this and not the node's
+    // ADDRESS: addresses change from one run to the next (the heap layout does), and with them the rounding of the field's values in the last
+    // bits -- the same field gave slightly different numbers in different processes.  The order the nodes are made in is the same on every run of
+    // the same script.
+    const uint64_t serial;
+
+    static uint64_t next_serial()
+    {
+        static std::atomic<uint64_t> counter{0};
+        return ++counter;
+    }
 
 protected:
     /*  Used to calculate flags during the constructor, after the variant

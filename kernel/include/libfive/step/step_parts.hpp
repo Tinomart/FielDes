@@ -33,6 +33,10 @@ struct SolidMetrics
     double detail = 0, areaFlat = 0, areaCurved = 0;
 };
 SolidMetrics solidMetrics(const Solid& solid);
+/*  The same from a tessellation of the solid that is there already (its triangles carry the face they
+ *  belong to, see TessMesh)  */
+struct TessMesh;
+SolidMetrics solidMetricsFromMesh(const Solid& solid, const TessMesh& mesh);
 
 struct StepPart
 {

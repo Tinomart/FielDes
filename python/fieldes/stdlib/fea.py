@@ -4,11 +4,12 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
     from fieldes import *
 
     bracket = ...                                        # any Shape, in mm
-    result = static_analysis(
+    conditions = static_boundary_conditions(
         bracket,
         supports=[fixed(box((0, 0, 0), (5, 40, 20)))],   # clamp the left end
-        loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))],   # 200 N down
-        material=aluminium, element_size=1.0)
+        loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))])   # 200 N down
+    conditions                                           # shown on the part: held (blue), pushed (red)
+    result = static_analysis(bracket, conditions, material=aluminium, element_size=1.0)
     colored(bracket, result.von_mises)       # show the stress on the part (FielDes)
     stiffer = bracket - 0.002 * result.von_mises   # results are fields like any other
 
@@ -133,6 +134,29 @@ def _shape(x, what):
     if not isinstance(x, Shape):
         raise TypeError('{} must be a Shape (a region), not {!r}'.format(what, type(x).__name__))
     return x
+
+
+class _PlainConditions:
+    ''' The supports and loads of an analysis made inside the library (what static_boundary_conditions() gives,
+        without the picture) '''
+    static_conditions = True
+
+    def __init__(self, supports, loads):
+        self.supports, self.loads = list(supports), loads
+
+
+def _conditions(conditions, what):
+    ''' (supports, loads) of the boundary conditions an analysis is given -- the one way to give them:
+
+            conditions = static_boundary_conditions(part, supports=[fixed(base)], loads=[force(lug, (0, -2000, 0))])
+            result = static_analysis(part, conditions, material=aluminium)
+        '''
+    if not getattr(conditions, 'static_conditions', False):
+        raise TypeError(
+            '{0}: the supports and loads are boundary conditions that are given to it, no longer lists of '
+            'fixed(...) and force(...) items: {0}(part, static_boundary_conditions(part, supports=[fixed(...)], '
+            'loads=[force(...)]), ...) -- and show them with `conditions` on a line of its own'.format(what))
+    return list(conditions.supports), conditions.loads
 
 
 def fixed(region, x=True, y=True, z=True):
@@ -380,12 +404,13 @@ def _bounds(shape):
     return found
 
 
-def static_analysis(shape, supports, loads, material=steel, element_size=None,
+def static_analysis(shape, conditions, material=steel, element_size=None,
                     bounds=None, max_iterations=20000, tolerance=1e-6, cache=True, element='tet'):
     ''' Linear static analysis of `shape` (a Shape, in mm).
 
-        supports   fixed(...) items (at least one)
-        loads      force(...) / gravity(...) / thermal_expansion(...) items
+        conditions the boundary conditions: static_boundary_conditions(part, supports, loads) -- the
+                   supports are fixed(...) items (at least one), the loads force(...) / gravity(...) /
+                   thermal_expansion(...) items.  They are a shape of their own, drawn on the part
         material   a Material (default steel); E in MPa
         element_size   the element edge in mm (default: the part's longest
                    side over 60)
@@ -400,7 +425,10 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
         that don't hold it in place, ...). '''
     if not isinstance(shape, Shape):
         raise TypeError('static_analysis: the part must be a Shape')
-    supports = list(supports if isinstance(supports, (list, tuple)) else [supports])
+    supports, loads = _conditions(conditions, 'static_analysis')
+    if _is_cases(loads):
+        raise FeaError('a static analysis has one set of loads: load cases (a list of lists) are for '
+                       'topology_optimization')
     loads = list(loads if isinstance(loads, (list, tuple)) else [loads])
     # The whole problem by its content, before anything is built: a problem asked again (a script run
     # again, a section moving over its fields) is neither meshed nor solved again
@@ -726,11 +754,13 @@ class ModalResult:
 _modal_cache = OrderedDict()
 
 
-def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, bounds=None,
+def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None, bounds=None,
                    max_iterations=100, tolerance=1e-6, cache=True, element='tet'):
     ''' The natural frequencies and mode shapes of `shape` (a Shape, in
-        mm), held by `supports` (fixed(...) items) -- how it vibrates.
-        No loads are needed; the material's E and density are used.
+        mm), held by the supports of the boundary conditions
+        (static_boundary_conditions(part, supports=[fixed(...)]) -- how it
+        vibrates.  No loads are needed (any given are not used); the
+        material's E and density are used.
 
         modes        how many (the lowest first)
         element_size mm (default: about 40 elements along the longest side)
@@ -745,7 +775,7 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         raise TypeError('modal_analysis: the part must be a Shape')
     if not material.density > 0:
         raise FeaError('modal_analysis needs a material with a density')
-    supports = list(supports if isinstance(supports, (list, tuple)) else [supports])
+    supports = _conditions(conditions, 'modal_analysis')[0]
     if not supports:
         raise FeaError('modal_analysis needs supports (fixed(...))')
     # The whole problem by its content, before anything is built (see static_analysis)
@@ -899,7 +929,7 @@ class TopologyResult:
             loads and material -- with several load cases, a list of them,
             one per case '''
         cases = self._loads if _is_cases(self._loads) else [self._loads]
-        out = [static_analysis(self.shape(threshold), self._supports, list(case), self.material,
+        out = [static_analysis(self.shape(threshold), _PlainConditions(self._supports, list(case)), self.material,
                                element_size=element_size or self.element_size, bounds=self.bounds,
                                element=self.settings.get('element', 'hex'))
                for case in cases]
@@ -922,13 +952,13 @@ def _is_cases(loads):
             all(isinstance(c, (list, tuple)) for c in loads))
 
 
-def topology_optimization(part, supports, loads, material=steel, volume_fraction=0.3,
+def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
                           element_size=None, iterations=60, filter_radius=None, keep=None,
                           avoid=None, extrude=None, penalty=3.0, move=0.2, bounds=None,
                           max_iterations=20000, tolerance=1e-5, cache=True, element='tet'):
     ''' Topology optimization: the stiffest part that uses `volume_fraction`
-        of the material of `part` (the design space), for the given supports
-        and loads (as in static_analysis).
+        of the material of `part` (the design space), for the supports and
+        loads of the boundary conditions (as in static_analysis).
 
         keep:   regions (Shapes, or a list) that must stay solid -- e.g. bolt
                 bosses, mounting faces; the material around supports and
@@ -944,10 +974,11 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
         element: 'tet' (default: tetrahedra that follow the part's surface, a density in each),
                 'hex' or 'hex_basic' (a regular grid of hexahedra)
 
-        loads:  a list of loads -- or several load cases, a list of such
-                lists: [[force(a, ...)], [force(b, ...), gravity()]].  Each
-                case acts on its own and the part is made stiff for all of
-                them (the sum of their compliances is minimised) -- e.g. a
+        conditions: static_boundary_conditions(part, supports, loads): the loads
+                a list of loads -- or several load cases, a list of such
+                lists: loads=[[force(a, ...)], [force(b, ...), gravity()]].
+                Each case acts on its own and the part is made stiff for all
+                of them (the sum of their compliances is minimised) -- e.g. a
                 bracket pushed down in use and sideways in assembly.
 
         Returns a TopologyResult: .density (a field), .shape() (the
@@ -957,7 +988,7 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
         raise TypeError('topology_optimization: the part must be a Shape')
     if getattr(lib, 'libfive_fea_optimize', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization')
-    supports = list(supports if isinstance(supports, (list, tuple)) else [supports])
+    supports, loads = _conditions(conditions, 'topology_optimization')
     if _is_cases(loads):
         cases = [list(c) for c in loads]
     else:

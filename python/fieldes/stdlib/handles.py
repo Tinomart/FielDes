@@ -34,7 +34,7 @@ import struct
 
 from fieldes.ffi import lib
 from fieldes.shape import Shape
-from fieldes.stdlib.transforms import move as _move, rotate_x, rotate_y, rotate_z, scale_xyz
+from fieldes.stdlib.transforms import move as _move, rotate_x, rotate_y, rotate_z, scale_xyz, _lazy_once
 
 __all__ = ['handles', 'expose']
 
@@ -115,8 +115,33 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
     if b and all(_is_number(m) for m in move) and all(_is_number(r) and r == 0 for r in rotate) \
             and all(_is_number(s) and s == 1 for s in scale):
         out._bounds = tuple(tuple(float(b[k][i]) + move[i] for i in range(3)) for k in range(2))
+    # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
     out._handles = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
+    return out
+
+
+def _var_numbers(values):
+    ''' The numbers of these values: plain numbers, or the current numbers of var() shapes (the script being run
+        keeps them), or None if one of them is neither '''
+    by_id = {}
+    try:
+        import _fieldes_host as host
+        for e in (getattr(host, '__vars', None) or []):
+            try:
+                by_id[id(e[0])] = float(e[1])
+            except (TypeError, ValueError, IndexError):
+                pass
+    except ImportError:
+        pass
+    out = []
+    for v in values:
+        if _is_number(v):
+            out.append(float(v))
+        elif id(v) in by_id:
+            out.append(by_id[id(v)])
+        else:
+            return None
     return out
 
 
@@ -142,6 +167,25 @@ def exposed_values(shape):
     buf = (ctypes.c_float * max(1, n))()
     lib.libfive_tree_expose_values(shape.ptr, buf)
     return [_float32_text(buf[i]) for i in range(n)]
+
+
+def _exposed_distance(shape, out, values, get):
+    ''' The distance for the offsets, shells and thickenings of an exposed part: the exact distance of the part with
+        the numbers it has now, and what dragging them changes after that (the change of the part's own field, which
+        follows the variables). With the part's own numbers that is its exact distance. Faces that were dragged
+        before the script was run give the exact distance of the part as edited (meshed again, cached by content). '''
+    base, ref = get(), shape
+    nums = _var_numbers(values)
+    orig = [float(x) for x in exposed_values(shape)]
+    if nums is not None and len(nums) == len(orig) and             any(abs(a - b) > 1e-4 * max(1.0, abs(b)) for a, b in zip(nums, orig)):
+        ref = expose(shape, nums)                       # the part as edited, with plain numbers
+        b = getattr(shape, '_bounds', None)
+        if b:
+            pad = 0.15 * max(float(b[1][i]) - float(b[0][i]) for i in range(3))
+            b = (tuple(float(v) - pad for v in b[0]), tuple(float(v) + pad for v in b[1]))
+        from fieldes.stdlib.fields import exact_distance
+        base = exact_distance(ref, b)
+    return base + (out - ref)
 
 
 def expose(shape, values):
@@ -170,6 +214,10 @@ def expose(shape, values):
         raise ValueError('expose(): the shape could not be rebuilt with those numbers')
     out = Shape(p)
     _carry(out, shape)
+    # an offset, a shell or a thickening of it (fields._dist) uses the exact distance of the part
+    get = getattr(shape, '_distance_of', None)
+    if get is not None:
+        out._distance_of = _lazy_once(lambda: _exposed_distance(shape, out, values, get))
     # (what the importer, roi() and the viewport read off a part: its box, its colouring, its exact regions)
     from fieldes.stdlib import cad_import
     for name in ('_bounds', '_render_hint') + tuple(cad_import._CARRIED):

@@ -16,8 +16,10 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <cstdio>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -29,6 +31,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/mesh_import/mesh_import.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/oracle/oracle_storage.hpp"
+#include "libfive/tree/content_key.hpp"
 #include "libfive/eval/feature.hpp"
 
 namespace libfive {
@@ -385,6 +388,9 @@ public:
     std::vector<uint32_t> shellOf;         // per triangle
     std::vector<std::pair<uint32_t, Eigen::AlignedBox3d>> overlapBoxes;
 
+    // A patch of a surface (see patchTreeFromArrays): the distance to it, unsigned
+    bool unsignedMode = false;
+
     struct Node
     {
         Eigen::AlignedBox3d box;
@@ -424,19 +430,35 @@ public:
         V3 cp = V3::Zero();
     };
 
-    Hit closest(const V3& p) const
+    // `hint`: a triangle the previous (nearby) point was closest to. Its distance is an upper bound that
+    // is almost always the answer, so the search starts with a tight radius and skips nearly every node;
+    // the result is the same as without it (a triangle that is nearer still takes over)
+    Hit closest(const V3& p, uint32_t hint = std::numeric_limits<uint32_t>::max()) const
     {
         Hit best;
-        uint32_t stack[128];
+        if (hint < t.size())
+        {
+            const Tri& tr = t[hint];
+            int f;
+            const V3 cp = closestOnTriangle(p, v[tr[0]], v[tr[1]], v[tr[2]], f);
+            best.d2 = (p - cp).squaredNorm();
+            best.tri = hint;
+            best.feature = f;
+            best.cp = cp;
+        }
+        // (the box distance of a node is worked out once, when it is pushed)
+        struct Item { uint32_t node; double d2; };
+        Item stack[128];
         int sp = 0;
-        stack[sp++] = 0;
+        stack[sp++] = {0, 0.0};
         while (sp)
         {
-            const Node& n = nodes[stack[--sp]];
-            if (n.box.squaredExteriorDistance(p) >= best.d2)
+            const Item it = stack[--sp];
+            if (it.d2 >= best.d2)
             {
                 continue;
             }
+            const Node& n = nodes[it.node];
             if (n.left < 0 || sp + 2 > 128)
             {
                 // A leaf (or, if the stack is ever full, the whole subtree,
@@ -464,13 +486,13 @@ public:
                 // The nearer child is searched first
                 if (dl < dr)
                 {
-                    stack[sp++] = n.right;
-                    stack[sp++] = n.left;
+                    if (dr < best.d2) stack[sp++] = {static_cast<uint32_t>(n.right), dr};
+                    if (dl < best.d2) stack[sp++] = {static_cast<uint32_t>(n.left), dl};
                 }
                 else
                 {
-                    stack[sp++] = n.left;
-                    stack[sp++] = n.right;
+                    if (dl < best.d2) stack[sp++] = {static_cast<uint32_t>(n.left), dl};
+                    if (dr < best.d2) stack[sp++] = {static_cast<uint32_t>(n.right), dr};
                 }
             }
         }
@@ -545,10 +567,22 @@ public:
     // as a true distance.
     static constexpr double SOFT_LIPSCHITZ = 4.0;
 
-    double signedDistance(const V3& p, V3* grad, bool* soft=nullptr) const
+    double signedDistance(const V3& p, V3* grad, bool* soft=nullptr, uint32_t* hint=nullptr) const
     {
-        const Hit h = closest(p);
+        const Hit h = closest(p, hint ? *hint : std::numeric_limits<uint32_t>::max());
+        if (hint)
+        {
+            *hint = h.tri;
+        }
         const double dist = std::sqrt(h.d2);
+        if (unsignedMode)
+        {
+            if (grad)
+            {
+                *grad = dist > 1e-9 * scaleRef ? V3((p - h.cp) / dist) : faceNormal[h.tri];
+            }
+            return dist;
+        }
 
         // The pseudo-normal of the closest feature gives the exact side of
         // that feature's (closed) shell.  It can't be trusted when the point
@@ -1313,16 +1347,17 @@ public:
         const V3 c = (lo + hi) / 2;
         const double r = (hi - lo).norm() / 2;
         bool soft = false;
-        const double d = mesh->signedDistance(c, nullptr, &soft);
+        const double d = mesh->signedDistance(c, nullptr, &soft, &hint);
         // Blended near holes the field may change faster than a distance
         const double k = soft ? MeshData::SOFT_LIPSCHITZ : 1.0;
-        out = Interval(static_cast<float>(d - k * r), static_cast<float>(d + k * r));
+        const double low = mesh->unsignedMode ? std::max(0.0, d - k * r) : d - k * r;
+        out = Interval(static_cast<float>(low), static_cast<float>(d + k * r));
     }
 
     void evalPoint(float& out, size_t index) override
     {
         const V3 p = points.col(index).matrix().cast<double>();
-        out = static_cast<float>(mesh->signedDistance(p, nullptr));
+        out = static_cast<float>(mesh->signedDistance(p, nullptr, nullptr, &hint));
     }
 
     void checkAmbiguous(
@@ -1336,13 +1371,15 @@ public:
     {
         const V3 p = points.col(0).matrix().cast<double>();
         V3 g;
-        mesh->signedDistance(p, &g);
+        mesh->signedDistance(p, &g, nullptr, &hint);
         const Eigen::Vector3f gf = g.cast<float>();
         out.push_back(Feature(gf));
     }
 
 private:
     std::shared_ptr<const MeshData> mesh;
+    // the triangle the last point was closest to (the cells of the renderer ask about points that lie together)
+    uint32_t hint = std::numeric_limits<uint32_t>::max();
 };
 
 class MeshOracleClause : public OracleClause
@@ -1357,8 +1394,21 @@ public:
 
     std::string name() const override { return "MeshOracle"; }
 
+    // What the mesh is, for keeping across runs: a hash of its triangles (made once, when asked for)
+    std::string persistentKey() const override
+    {
+        std::call_once(keyOnce, [this] {
+            // (of the surface, not of the order the mesher wrote it in)
+            key = "mesh#" + meshContentKey(mesh->v, mesh->t) + (mesh->unsignedMode ? "#u" : "#s") + "#" +
+                  std::to_string(mesh->t.size());
+        });
+        return key;
+    }
+
 private:
     std::shared_ptr<const MeshData> mesh;
+    mutable std::once_flag keyOnce;
+    mutable std::string key;
 };
 
 }   // anonymous namespace
@@ -1471,6 +1521,187 @@ Tree finishMesh(std::vector<V3> verts, std::vector<Tri> tris, double scale,
     return Tree(std::make_unique<MeshOracleClause>(mesh));
 }
 }   // anonymous namespace
+
+namespace {
+
+// The triangle of the arrays nearest to p, and its distance (a scan: the arrays are used once)
+uint32_t nearestTriangle(const std::vector<V3>& v, const std::vector<Tri>& t, const V3& p, double& dist)
+{
+    double best = std::numeric_limits<double>::infinity();
+    uint32_t bi = 0;
+    for (uint32_t i=0; i < t.size(); ++i)
+    {
+        int f;
+        const V3 cp = closestOnTriangle(p, v[t[i][0]], v[t[i][1]], v[t[i][2]], f);
+        const double d2 = (p - cp).squaredNorm();
+        if (d2 < best)
+        {
+            best = d2;
+            bi = i;
+        }
+    }
+    dist = std::sqrt(best);
+    return bi;
+}
+
+}   // anonymous namespace
+
+bool floodSurface(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
+                  const double seed[3], double angleDegrees, int mode, double maxRadius,
+                  uint8_t* selected, size_t& count, double& seedDistance, std::string& error)
+{
+    count = 0;
+    seedDistance = 0;
+    if (!xyz || !tri || !vertex_count || !tri_count || !selected)
+    {
+        error = "the surface has no triangles";
+        return false;
+    }
+    std::vector<V3> verts(vertex_count);
+    for (size_t i=0; i < vertex_count; ++i)
+    {
+        verts[i] = V3(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]);
+    }
+    std::vector<Tri> tris(tri_count);
+    for (size_t i=0; i < tri_count; ++i)
+    {
+        for (int k=0; k < 3; ++k)
+        {
+            if (tri[3 * i + k] >= vertex_count)
+            {
+                error = "a triangle refers to a vertex that does not exist";
+                return false;
+            }
+            tris[i][k] = tri[3 * i + k];
+        }
+    }
+    // (the triangles keep their numbers; vertices that coincide are given one index, so that the
+    // triangles around them are neighbours)
+    {
+        Eigen::AlignedBox3d box;
+        for (const auto& p : verts) box.extend(p);
+        const double diag = box.diagonal().norm();
+        if (!(diag > 0) || !std::isfinite(diag))
+        {
+            error = "the surface has no extent";
+            return false;
+        }
+        std::vector<V3> v2 = verts;
+        std::vector<Tri> t2 = tris;
+        weld(v2, t2, diag * 1e-7);
+        verts.swap(v2);
+        tris.swap(t2);
+    }
+
+    std::vector<V3> normal(tri_count, V3(0, 0, 1)), middle(tri_count);
+    std::vector<char> usable(tri_count, 1);
+    for (size_t i=0; i < tri_count; ++i)
+    {
+        const V3 c = (verts[tris[i][1]] - verts[tris[i][0]]).cross(verts[tris[i][2]] - verts[tris[i][0]]);
+        const double len = c.norm();
+        usable[i] = len > 0;
+        if (len > 0) normal[i] = c / len;
+        middle[i] = (verts[tris[i][0]] + verts[tris[i][1]] + verts[tris[i][2]]) / 3.0;
+    }
+
+    // Neighbours: the triangles that share an edge
+    std::unordered_map<uint64_t, std::vector<uint32_t>> edges;
+    edges.reserve(tri_count * 2);
+    auto key = [](uint32_t a, uint32_t b) {
+        return (static_cast<uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    for (uint32_t i=0; i < tri_count; ++i)
+    {
+        for (int k=0; k < 3; ++k)
+        {
+            edges[key(tris[i][k], tris[i][(k + 1) % 3])].push_back(i);
+        }
+    }
+
+    const V3 s(seed[0], seed[1], seed[2]);
+    const uint32_t first = nearestTriangle(verts, tris, s, seedDistance);
+    const double cosLimit = std::cos(std::max(0.0, angleDegrees) * 3.14159265358979323846 / 180.0);
+    std::fill(selected, selected + tri_count, 0);
+    std::vector<uint32_t> queue;
+    queue.push_back(first);
+    selected[first] = 1;
+    for (size_t q=0; q < queue.size(); ++q)
+    {
+        const uint32_t ti = queue[q];
+        for (int k=0; k < 3; ++k)
+        {
+            const auto it = edges.find(key(tris[ti][k], tris[ti][(k + 1) % 3]));
+            if (it == edges.end()) continue;
+            for (uint32_t u : it->second)
+            {
+                if (selected[u] || !usable[u]) continue;
+                const double c = (mode == 0 ? normal[first] : normal[ti]).dot(normal[u]);
+                if (c < cosLimit) continue;
+                if (maxRadius > 0 && (middle[u] - s).norm() > maxRadius) continue;
+                selected[u] = 1;
+                queue.push_back(u);
+            }
+        }
+    }
+    count = queue.size();
+    return true;
+}
+
+Tree patchTreeFromArrays(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
+                         const uint8_t* selected, MeshImportInfo& info, bool& ok, std::string& error)
+{
+    ok = false;
+    info = MeshImportInfo();
+    if (!xyz || !tri || !selected || !vertex_count || !tri_count)
+    {
+        error = "the patch has no triangles";
+        return Tree::invalid();
+    }
+    // (only the vertices of the selected triangles: the box of the patch is theirs)
+    std::vector<V3> verts;
+    std::vector<int64_t> renumbered(vertex_count, -1);
+    std::vector<Tri> tris;
+    for (size_t i=0; i < tri_count; ++i)
+    {
+        if (!selected[i]) continue;
+        Tri t;
+        for (int k=0; k < 3; ++k)
+        {
+            const uint32_t vi = tri[3 * i + k];
+            if (vi >= vertex_count)
+            {
+                error = "a triangle refers to a vertex that does not exist";
+                return Tree::invalid();
+            }
+            if (renumbered[vi] < 0)
+            {
+                const V3 p(xyz[3 * vi], xyz[3 * vi + 1], xyz[3 * vi + 2]);
+                if (!p.allFinite())
+                {
+                    error = "the surface contains invalid (NaN or infinite) coordinates";
+                    return Tree::invalid();
+                }
+                renumbered[vi] = static_cast<int64_t>(verts.size());
+                verts.push_back(p);
+            }
+            t[k] = static_cast<uint32_t>(renumbered[vi]);
+        }
+        tris.push_back(t);
+    }
+    if (tris.empty())
+    {
+        error = "no triangle is selected";
+        return Tree::invalid();
+    }
+    auto mesh = buildMesh(std::move(verts), std::move(tris), info, error);
+    if (!mesh)
+    {
+        return Tree::invalid();
+    }
+    mesh->unsignedMode = true;
+    ok = true;
+    return Tree(std::make_unique<MeshOracleClause>(mesh));
+}
 
 }   // namespace mesh
 }   // namespace libfive

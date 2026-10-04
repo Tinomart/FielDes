@@ -88,7 +88,7 @@ if ($Package) {
     # 3. The Python package
     Mirror (Join-Path $Source 'python') (Join-Path $PackageDir 'python') @('/XD', '__pycache__')
     # 4. The examples (without sample STEP files: those are GrabCAD downloads that may not be redistributed)
-    Mirror (Join-Path $Source 'examples') (Join-Path $PackageDir 'examples') @('/XD', '__pycache__', '*.fieldes-cache.trees', 'meshes', '/XF', '*.fieldes-cache.py', '*.step', '*.stp')
+    Mirror (Join-Path $Source 'examples') (Join-Path $PackageDir 'examples') @('/XD', '__pycache__', '*.fieldes-cache.trees', '*.fieldes-bspline', '*.fieldes-tessellation', 'meshes', '/XF', '*.fieldes-cache.py', '*.step', '*.stp')
     foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md') {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }

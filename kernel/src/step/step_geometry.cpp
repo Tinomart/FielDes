@@ -462,6 +462,21 @@ Circle3 circumcircle3D(const Vec3& p0, const Vec3& p1, const Vec3& p2)
     return {center, (center - p0).norm(), n, true};
 }
 
+// A rational quadratic Bezier arc (control points p0, p1, p2, weights 1, w1, 1) is a circle's only if
+// more of its points than the three the circle was made from lie on that circle: the quarter of an
+// ellipse has the same weights (a quarter ellipse of 250 x 100 mm was read as a circular cylinder of
+// radius 237 mm, a tessellation 17 % too big in area).
+bool arcOnCircle(const Vec3& p0, const Vec3& p1, const Vec3& p2, double w1, const Circle3& c)
+{
+    for (double t : {0.25, 0.75}) {
+        const double b0 = (1 - t) * (1 - t), b1 = 2 * t * (1 - t) * w1, b2 = t * t;
+        const Vec3 p = (b0 * p0 + b1 * p1 + b2 * p2) / (b0 + b1 + b2);
+        if (std::abs((p - c.center).norm() - c.radius) > 1e-4 * c.radius) return false;
+        if (std::abs((p - c.center).dot(c.normal)) > 1e-4 * c.radius) return false;
+    }
+    return true;
+}
+
 // SolveSpace's STEP exporter (confirmed against a real user-provided
 // file, 2026-09-24) writes EVERY surface as a B_SPLINE_SURFACE, even
 // trivially analytic ones -- a flat quad becomes a degree-(1,1)
@@ -549,6 +564,7 @@ bool tryCylinderFromRationalArc(Surface& s)
         Vec3 mid = (0.25 * p0 + 0.5 * w1 * p1 + 0.25 * p2) / (0.5 + 0.5 * w1);
         Circle3 c = circumcircle3D(p0, mid, p2);
         if (!c.ok) return false;
+        if (!arcOnCircle(p0, p1, p2, w1, c)) return false;     // (an ellipse has these weights too)
         circles[axialIdx] = c;
     }
 
@@ -667,6 +683,7 @@ bool tryConeFromRationalArc(Surface& s)
         Vec3 mid = (0.25 * p0 + 0.5 * w1 * p1 + 0.25 * p2) / (0.5 + 0.5 * w1);
         Circle3 c = circumcircle3D(p0, mid, p2);
         if (!c.ok) return false;
+        if (!arcOnCircle(p0, p1, p2, w1, c)) return false;     // (an ellipse has these weights too)
         circles[axialIdx] = c;
     }
 

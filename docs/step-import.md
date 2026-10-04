@@ -9,6 +9,7 @@ the exact dimensions of the CAD.
 - [What is reconstructed, and how exactly](#what-is-reconstructed-and-how-exactly)
 - [Free-form (B-spline) faces](#free-form-b-spline-faces)
 - [Putting the exact surface back: exclude()](#putting-the-exact-surface-back-exclude)
+- [Parts that are almost all free-form: import_step_tessellated_parts()](#parts-that-are-almost-all-free-form-import_step_tessellated_parts)
 - [Automatic: auto_exclude](#automatic-auto_exclude)
 - [Parts, assemblies and names](#parts-assemblies-and-names)
 - [Units](#units)
@@ -158,15 +159,72 @@ final = exclude(light, sphere(12, center=(0, 0, 6)), source=part)
 - `quality` sets the points per full turn of a circle in the exact mesh (default 64).
 - Several regions can be excluded one after the other.
 
-A note on the exact mesh: the free-form tessellation is verified watertight and matches OpenCascade on the
-test set. **Large torus faces** are sampled without refinement and can come out a few percent small
-(−8 % volume on the worst test part); use the field for tori — they are exact there.
+A note on the exact mesh: the tessellation is verified watertight and matches OpenCascade on the test set
+(face areas to 0.1 %, see [the tessellating importer](#parts-that-are-almost-all-free-form-import_step_tessellated_parts),
+which is made of the same tessellation). Tori are refined like the other curved faces, and a refinement is kept only if the
+mesh's area comes closer to the torus patch's own.
 
 `exact_region_mesh(shape, cell=1.0)` returns the exact pieces as vertex and triangle lists, for scripts that
 work outside the application.
 
 `examples/03_kitchen_assembly.py` excludes the poor fits of the whole kitchen with one region, a union of the
 parts' `poor_fit_region` fields.
+
+## Parts that are almost all free-form: import_step_tessellated_parts()
+
+The fitted surfaces above are the right trade for a part that is mostly planes, cylinders and fillets with a
+few free-form faces. A part that is *almost all* free-form — a sculpted or organic body, a gear, a worm, a
+thread, an impeller — does not survive them: the faces fit poorly, the poor fits get painted red, and
+`exclude()` only draws the exact surface, it does not give the field. For those there is a separate importer
+that **does not reconstruct or fit anything**:
+
+```python
+parts = import_step_tessellated_parts("step/worm_gear.step")      # (shape, bounds) per part, like import_step_parts
+worm = parts[0][0]
+view.set_bounds(*roi(parts))
+worm
+```
+
+(`import_step_tessellated(path)` is the union of the parts, as `import_step()` is of `import_step_parts()`.) It is the
+way nTop makes an implicit body of a B-rep: every solid is **tessellated straight from its trimmed faces** — each
+face in its own parameter space, edges shared so the pieces are watertight, free-form faces refined inside their
+outlines until no triangle turns the surface by more than a turn's share (2π over `quality`, 64 by default) — and
+the triangles are made the **exact signed distance field** of the part ([mesh import](meshes.md)). What comes back
+are ordinary shapes with the same parts, names, units, bounds and assembly placements as `import_step_parts()`
+(the parts are numbered the same way, so `parts[3]` is the same part in both), and since the field is a true
+distance, `thicken`, `shell_*`, `offset_by`, lattices and analyses of it are exact where the main importer's
+field is only roughly a distance.
+
+| | `import_step_parts` | `import_step_tessellated_parts` |
+|---|---|---|
+| a plane, cylinder, … | an exact formula | triangles |
+| a free-form face | a fitted closed-form surface (0.1 % to 10 % off) | the face's own surface, to the tessellation's tolerance |
+| first import | seconds to minutes (the reconstruction) | seconds: HingedTable (13 parts) 2.4 s, Bandextruder (18 parts, a worm gear) 7 s, Keukencombinatie (90 parts) 22 s, Cribadora (111 parts, 3 500 faces) 16 s |
+| meshing a part (viewport, STL export) | the formula's | the mesh's distance: 0.5 to 2.8 times as long — about the same for a part of free-form faces (the worm gear: 0.7 to 1.1), 2.2 to 2.8 times for analytic ones |
+| dragging faces (`expose`) | yes | no — the field is a mesh; `handles()` (the gizmo) works |
+| STEP faces it cannot handle | per part, with the reason | per part, with the reason |
+
+**Accuracy**, measured on the test files (HingedTable, Bandextruder, PT, an engine assembly, Keukencombinatie,
+Cribadora; more than 260 parts in all):
+
+- against **OpenCascade** (gmsh): the area of every face agrees to 0.05 % for planes and cylinders and 0.1 % for
+  free-form faces; the volume of a part to 0.5 % (the table tops of HingedTable, mostly free-form: 0.3 %);
+- against the **main importer**, inside and outside at 1 500 random points of every part: no difference in HingedTable,
+  Bandextruder (the worm gear too), PT, MobileStand and Cribadora (111 parts); four pistons of the engine differ in
+  1 to 2 % of the points — there the tessellation matches OpenCascade's volume to 0.4 %.
+
+`quality=128` halves the triangles' size where that matters (and makes four times as many). Not watertight is
+possible (the output says so for the solids): the mesh's winding number then decides inside and outside there.
+
+**Cost and caching.** The tessellation is the work, and it is done once, on all the processor's threads (the
+solids of an assembly a few at a time, the free-form faces of each on every thread): it is kept in the folder
+`<file>.fieldes-tessellation` next to the STEP file (`cache=False`: not; **↺ Reset** in the model tree deletes it;
+`rev=` / **⟳ Reimport** makes it again) until the file, `quality` or the tessellation changes. Building the distance
+fields takes a fraction of a second a part; they are kept in memory while the script is run again.
+
+**When not to use it.** A part that is mostly analytic faces (a bracket, a housing, a plate with holes) is
+better imported with `import_step_parts()`: it is a formula, exact at every plane and cylinder, with faces you can drag,
+and the lighter field. Use the tessellating importer for the part where its fitted faces are red.
 
 ## Automatic: auto_exclude
 

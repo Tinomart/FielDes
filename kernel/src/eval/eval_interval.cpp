@@ -51,6 +51,15 @@ IntervalEvaluator::IntervalEvaluator(
     {
         store(c.second, c.first);
     }
+
+    // (see ArrayEvaluator: the oracles with expressions of their own read the variables too)
+    for (auto& o : d->oracles)
+    {
+        for (auto& var_ : vars)
+        {
+            o->setVar(var_.first, var_.second);
+        }
+    }
 }
 
 
@@ -170,6 +179,10 @@ Tape::Handle IntervalEvaluator::push(const Tape::Handle& tape)
 
 bool IntervalEvaluator::setVar(Tree::Id var, float value)
 {
+    for (auto& o : deck->oracles)
+    {
+        o->setVar(var, value);
+    }
     auto v = deck->vars.right.find(var);
     if (v != deck->vars.right.end())
     {

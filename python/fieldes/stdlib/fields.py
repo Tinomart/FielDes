@@ -12,7 +12,7 @@ drive a parameter such as a lattice thickness or an offset:
     part  = sphere(30)
     depth = depth_below(part)                        # 0 at the surface, 30 at the centre
     t     = ramp(depth, (0, 30), (2.0, 0.6))         # 2 mm walls at the skin -> 0.6 mm inside
-    lat   = lattice(part, 'gyroid', cell_size=8, thickness=t, skin=1.5)
+    lat   = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)
 
 Groups:
     coordinates        x_field(), y_field(), z_field(), radial_field(),
@@ -43,6 +43,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 import ctypes
 import math
 import numbers
+import os
+import sys
 
 from fieldes.ffi import lib, libfive_vec3_t
 from fieldes.shape import Shape
@@ -73,6 +75,52 @@ X, Y, Z = Shape.X, Shape.Y, Shape.Z
 def _s(v):
     ''' A Shape from a number or a Shape '''
     return Shape.wrap(v)
+
+
+def _dist(v):
+    ''' A Shape for the operations that need a DISTANCE (offsets, shells, thickening). The field of a part imported
+        from STEP is exact in sign but outside and inside it is only a lower bound of the distance to the part (the
+        distance to the infinite surfaces its faces lie on, and the cells it is built from end in places where there
+        is no face): an offset or a shell of it grows blocks and fins, and a thickening has stray walls inside. So an
+        imported part is replaced by its exact distance (exact_distance(): its mesh and the distance to it), which is
+        what these operations mean. A part that was moved, turned or scaled (handles(), a gizmo, transforms in the
+        script) has the same placement on its distance; one whose faces are dragged (expose()) has the distance of
+        its numbers when the script was run, and what dragging changes since. Set FIELDES_NO_EXACT_OFFSETS to use
+        the part's own field. '''
+    s = _s(v)
+    get = getattr(s, '_distance_of', None)
+    if get is not None and not os.environ.get('FIELDES_NO_EXACT_OFFSETS'):
+        try:
+            return get()
+        except Exception as e:
+            sys.stderr.write("fieldes: the exact distance of this part could not be made (%s); its own field is used\n" % e)
+    return s
+
+
+def _script_vars():
+    ''' The numbers of the script's var()s, inside the application: (trees, values, count) for the library
+        calls that take them, or None (outside it, or when the script has none) '''
+    try:
+        from fieldes.app_support import _var_values
+        return _var_values()
+    except Exception:
+        return None
+
+
+def _vars_key():
+    ''' The script's var() numbers as a cache key (a mesh of a shape with var()s depends on them) '''
+    known = _script_vars()
+    return None if known is None else tuple(known[1][i] for i in range(known[2]))
+
+
+def render_mesh(shape, region, res):
+    ''' The library's mesh of a shape over a region (a libfive_region_t) at `res` samples per mm: the
+        pointer libfive_tree_render_mesh gives (free it with libfive_mesh_delete), or None. A shape with
+        var()s is meshed with the numbers they have in the script. '''
+    known = _script_vars() if hasattr(lib, 'libfive_tree_render_mesh_vars') else None
+    if known is not None:
+        return lib.libfive_tree_render_mesh_vars(shape.ptr, region, res, known[0], known[1], known[2]) or None
+    return lib.libfive_tree_render_mesh(shape.ptr, region, res) or None
 
 
 def _vec(p, n=3):
@@ -327,18 +375,18 @@ def thicken(field, thickness):
     ''' A solid wall of the given thickness centred on a field's zero
         surface (e.g. a plane, a TPMS surface, a shape's skin); the
         thickness may be a field '''
-    return abs(_s(field)) - _s(thickness) / 2
+    return abs(_dist(field)) - _s(thickness) / 2
 
 
 def shell_inside(shape, thickness):
     ''' A hollow shell: the part of `shape` within `thickness` of its surface '''
-    s = _s(shape)
+    s = _dist(shape)
     return s.max(-(s + thickness))
 
 
 def shell_outside(shape, thickness):
     ''' A skin grown outwards from the surface by `thickness` '''
-    s = _s(shape)
+    s = _dist(shape)
     return (s - thickness).max(-s)
 
 
@@ -350,7 +398,7 @@ def shell_centered(shape, thickness):
 def offset_by(shape, distance):
     ''' Offsets a shape by a distance -- which may be a field, e.g. grow a
         part by 0.02 mm per MPa of stress: offset_by(part, 0.02 * stress) '''
-    return _s(shape) - distance
+    return _dist(shape) - distance
 
 
 def smooth_union(a, b, radius):
@@ -477,7 +525,18 @@ def _eval_many(shape, points):
     if f is not None:
         xyz = (ctypes.c_float * (3 * n))(*[c for p in pts for c in p])
         out = (ctypes.c_float * n)()
-        f(shape.ptr, xyz, n, out)
+        # (a script's var() numbers, when it runs in the application: without them every one reads as 0)
+        known = None
+        if hasattr(lib, 'libfive_tree_eval_points_vars'):
+            try:
+                from fieldes.app_support import _var_values
+                known = _var_values()
+            except Exception:
+                known = None
+        if known is not None:
+            lib.libfive_tree_eval_points_vars(shape.ptr, xyz, n, out, known[0], known[1], known[2])
+        else:
+            f(shape.ptr, xyz, n, out)
         return list(out)
     return [lib.libfive_tree_eval_f(shape.ptr, libfive_vec3_t(*p)) for p in pts]
 
@@ -588,8 +647,21 @@ def _shape_bounds(shape, bounds):
     return ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
 
 
-@content_cached('exact_distance', limit=8)
 def exact_distance(shape, bounds=None, resolution=None, margin=0.0):
+    ''' The exact signed distance field of a shape (mm): the shape is meshed
+        and the distance to that mesh is used.  Many shapes built with
+        booleans, blends or warps have fields that are only roughly a
+        distance (e.g. flat, square-cornered outside a box's edges); after
+        this, offsets and shells are uniform and depth_below() is a true
+        depth.  resolution: mesh samples per mm (default ~150 along the
+        longest side); margin: extra room around the bounds for offsets.
+        (A shape with var() numbers is meshed with the numbers they have in
+        the script, and the result is remembered by them.) '''
+    return _exact_distance(shape, bounds, resolution, margin, _vars_key())
+
+
+@content_cached('exact_distance', limit=8)
+def _exact_distance(shape, bounds=None, resolution=None, margin=0.0, script_vars=None):
     ''' The exact signed distance field of a shape (mm): the shape is meshed
         and the distance to that mesh is used.  Many shapes built with
         booleans, blends or warps have fields that are only roughly a
@@ -604,7 +676,7 @@ def exact_distance(shape, bounds=None, resolution=None, margin=0.0):
     res = float(resolution) if resolution else 150.0 / size
     from fieldes.ffi import libfive_region_t, libfive_interval_t, libfive_mesh_import_info_t
     region = libfive_region_t(*[libfive_interval_t(a - pad, b + pad) for a, b in zip(lo, hi)])
-    mesh_p = lib.libfive_tree_render_mesh(shape.ptr, region, res)
+    mesh_p = render_mesh(shape, region, res)
     if not mesh_p:
         raise ValueError('exact_distance: the shape could not be meshed')
     try:

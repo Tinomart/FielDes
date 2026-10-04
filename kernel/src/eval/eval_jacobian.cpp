@@ -55,6 +55,17 @@ std::map<Tree::Id, float> JacobianEvaluator::gradient(
     v.row(deck->Y) = p.y();
     v.row(deck->Z) = p.z();
 
+    // (the oracles on the tape read the point from their own copy: without
+    // this they would evaluate at the point of an earlier call, and the
+    // sign and the pieces of a field that holds one come out wrong)
+    for (auto& o : deck->oracles)
+    {
+        for (size_t i = 0; i < ArrayEvaluator::N; ++i)
+        {
+            o->set(p, i);
+        }
+    }
+
     // Turn on a flag which modifies the DerivArrayEvaluator
     // behavior for the CONST_VAR opcode.
     clear_vars = true;

@@ -17,12 +17,26 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <QDateTime>
 #include <cstdlib>
+#include <cmath>
+#include <functional>
 #include <limits>
+#include <map>
+#include <utility>
+#include <vector>
 #include <Eigen/Dense>
+
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
 
 #include "fieldes/shape.hpp"
 #include "fieldes/shader.hpp"
@@ -31,6 +45,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "libfive/eval/tape.hpp"
 #include "libfive/eval/evaluator.hpp"
 #include "libfive/tree/data.hpp"
+#include "libfive/tree/content_key.hpp"
+#include "libfive/oracle/oracle_clause.hpp"
 
 namespace FielDes {
 
@@ -41,10 +57,12 @@ const int Shape::MESH_DIV_NEW_VARS_SMALL;
 
 Shape::Shape(const libfive::Tree& t,
              std::map<libfive::Tree::Id, float> vars)
-    : tree(t.optimized()), vars(vars),
+    : tree(t.optimized()), built_tree(t), vars(vars),
       vert_vbo(QOpenGLBuffer::VertexBuffer),
       tri_vbo(QOpenGLBuffer::IndexBuffer)
 {
+    cache_vars = vars;
+
     // Construct evaluators to run meshing (in parallel)
     es.reserve(8);
     for (unsigned i=0; i < es.capacity(); ++i)
@@ -75,6 +93,18 @@ void Shape::setColorField(const libfive::Tree& field, float lo, float hi, bool a
     color_hi = hi;
     color_label = label;
     color_map = colormap;
+}
+
+void Shape::setBoundarySymbols(std::vector<BcGlyph> glyphs, std::vector<BcLabel> labels)
+{
+    bc_glyphs = std::move(glyphs);
+    bc_labels = std::move(labels);
+    QString key;
+    for (const auto& g : bc_glyphs)
+        key += QString("%1,%2,%3,%4,%5,%6,%7,%8,%9;").arg(g.kind).arg(g.tip).arg(g.pos.x()).arg(g.pos.y()).arg(g.pos.z())
+                   .arg(g.dir.x()).arg(g.dir.y()).arg(g.dir.z()).arg(g.size);
+    for (const auto& l : bc_labels) key += QString("%1,%2;").arg(l.kind).arg(l.text);
+    bc_key = key;
 }
 
 void Shape::setExactRegions(std::vector<ExactRegion> regions)
@@ -238,8 +268,8 @@ QString Shape::colorKeyBase() const
         for (const auto& c : m_channels) key += QString("|%1").arg(quintptr(c.tree.id()));
         return key;
     }
-    return QString("%1|%2|%3|%4|%5|%6").arg(quintptr(color_field.id()))
-        .arg(color_auto).arg(color_lo).arg(color_hi).arg(color_label, color_map);
+    return QString("%1|%2|%3|%4|%5|%6|%7").arg(quintptr(color_field.id()))
+        .arg(color_auto).arg(color_lo).arg(color_hi).arg(color_label, color_map, bc_key);
 }
 
 namespace {
@@ -927,18 +957,32 @@ bool Shape::updateFrom(const Shape* other)
     // (the same tree: only whether its handles are shown, and their pivot,
     // can differ)
     m_handles = other->m_handles;
-    return updateVars(other->vars);
+    bool started = false;
+    m_cache_forced.store(other->m_cache_forced.load());
+    if (other->m_cache_on.load() != m_cache_on.load())
+    {
+        m_cache_on.store(other->m_cache_on.load());
+        cache_state.store(CACHE_OFF);
+        if (m_cache_on.load()) started = keepCurrent();
+        emit(cacheStateChanged());
+    }
+    return updateVars(other->vars) || started;
 }
 
 void Shape::buildDeps() const
 {
     if (!m_deps_known)
     {
-        auto add = [&](const libfive::Tree& t) {
+        // (the variables inside an oracle -- a mesh moved by a gizmo -- are not walked with the tree)
+        std::function<void(const libfive::Tree&)> add = [&](const libfive::Tree& t) {
             if (!t.is_valid()) return;
             for (const auto* d : t.walk())
             {
                 if (d->op() == libfive::Opcode::VAR_FREE) m_deps.insert(d);
+                else if (d->op() == libfive::Opcode::ORACLE)
+                {
+                    for (const auto& dep : d->oracle_clause().dependencies()) add(dep);
+                }
             }
         };
         add(tree);
@@ -1208,6 +1252,7 @@ void Shape::startRender(RenderSettings s)
         {
             mesh_settings.cancel.store(true);
             next = s;
+            next_follows = false;
         }
     }
     else
@@ -1219,6 +1264,9 @@ void Shape::startRender(RenderSettings s)
             {
                 e.updateVars(vars);
             }
+            // (what the render cache's keys are of: the numbers the evaluators hold now)
+            cache_vars = vars;
+            ++cache_vars_gen;
             s.div = (s.div == MESH_DIV_NEW_VARS) ? default_div : 0;
         }
 
@@ -1241,6 +1289,7 @@ void Shape::startRender(RenderSettings s)
         mesh_watcher.setFuture(mesh_future);
 
         next = {s.settings, s.div - 1, s.alg};
+        next_follows = true;
     }
 }
 
@@ -1352,6 +1401,14 @@ void Shape::onFutureFinished()
     running = false;
 
     auto bm = mesh_future.result();
+    // The mesh was read from the render cache: it is the finished one, whatever level asked for it
+    const bool fromCache = bm.mesh != nullptr && cache_read.exchange(false);
+    if (fromCache)
+    {
+        target_div = 0;
+        if (next_follows) next.div = MESH_DIV_EMPTY;
+    }
+    if (m_cache_on.load()) emit(cacheStateChanged());
     if (bm.mesh != nullptr)
     {
         mesh.reset(bm.mesh);
@@ -1388,7 +1445,7 @@ void Shape::onFutureFinished()
 
         auto t = timer.elapsed();
 
-        if (target_div == default_div)
+        if (target_div == default_div && !fromCache)
         {
             if (t < 20 && default_div > 0)
             {
@@ -1484,6 +1541,43 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     mesh_settings.min_feature = 1 / (res / (1 << s.div));
     mesh_settings.max_err = pow(10, -s.settings.quality);
     mesh_settings.alg = s.alg;
+
+    // The render cache: the finished mesh of this very shape may be on disk (a coarser level is not
+    // kept: a render is read from it in one step, or meshed level by level)
+    const auto renderStart = std::chrono::steady_clock::now();
+    std::string cacheKey;
+    if (m_cache_on.load())
+    {
+        if (has_result)
+        {
+            cache_state.store(CACHE_RESULT);
+        }
+        else
+        {
+            cacheKey = renderCacheKey(s, mesh_region, res);
+            if (cacheKey.empty())
+            {
+                cache_state.store(CACHE_NO_KEY);
+            }
+            else if (cacheKey != cache_miss_key)
+            {
+                BoundedMesh hit;
+                const auto tRead = std::chrono::steady_clock::now();
+                if (readRenderCache(cacheKey, hit))
+                {
+                    if (std::getenv("FIELDES_TIMING"))
+                        fprintf(stderr, "[render cache] read the mesh of line %d: %zu vertices, %.0f ms\n",
+                                source_line + 1, hit.mesh->verts.size(),
+                                1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tRead).count());
+                    mesh_settings.progress_handler = nullptr;
+                    cache_state.store(CACHE_READ);
+                    cache_read.store(true);
+                    return hit;
+                }
+                cache_miss_key = cacheKey;
+            }
+        }
+    }
 
     auto m = libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
     if (std::getenv("FIELDES_TIMING") && s.div == 0 && m && (own_render || m->verts.empty()))
@@ -1669,30 +1763,89 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     if (has_color && out.mesh)
     {
         const auto tMeshed = std::chrono::steady_clock::now();
-        const auto& verts = out.mesh->verts;
+        auto& verts = out.mesh->verts;
         out.values.resize(verts.size());
         const size_t N = LIBFIVE_EVAL_ARRAY_SIZE;
-        const size_t batches = (verts.size() + N - 1) / N;
-        const size_t T = std::max<size_t>(1, std::min<size_t>(es.size(), (batches + 3) / 4));
-        color_evals.resize(std::max(color_evals.size(), T));
-        std::atomic<size_t> next{0}, done{0};
-        auto work = [&](size_t t) {
-            if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field));
-            auto& e = *color_evals[t];
-            for (size_t b; (b = next.fetch_add(1)) < batches; )
-            {
-                const size_t i = b * N;
-                const size_t n = std::min(N, verts.size() - i);
-                for (size_t j = 0; j < n; j++) e.set(verts[i + j].template cast<float>(), j);
-                const auto vals = e.values(n);
-                for (size_t j = 0; j < n; j++) out.values[i + j] = vals[j];
-                colour_progress.store(double(done.fetch_add(1) + 1) / double(batches));
-            }
+        // The colour field at the vertices first..last, in batches, on as many threads as the mesher uses; returns the
+        // number of threads
+        auto evaluate = [&](size_t first, size_t last, bool report) -> size_t {
+            const size_t batches = (last - first + N - 1) / N;
+            const size_t T = std::max<size_t>(1, std::min<size_t>(es.size(), (batches + 3) / 4));
+            color_evals.resize(std::max(color_evals.size(), T));
+            std::atomic<size_t> next{0}, done{0};
+            auto work = [&](size_t t) {
+                if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field));
+                auto& e = *color_evals[t];
+                for (size_t b; (b = next.fetch_add(1)) < batches; )
+                {
+                    const size_t i = first + b * N;
+                    const size_t n = std::min(N, last - i);
+                    for (size_t j = 0; j < n; j++) e.set(verts[i + j].template cast<float>(), j);
+                    const auto vals = e.values(n);
+                    for (size_t j = 0; j < n; j++) out.values[i + j] = vals[j];
+                    if (report) colour_progress.store(double(done.fetch_add(1) + 1) / double(batches));
+                }
+            };
+            std::vector<std::thread> threads;
+            for (size_t t = 1; t < T; t++) threads.emplace_back(work, t);
+            work(0);
+            for (auto& th : threads) th.join();
+            return T;
         };
-        std::vector<std::thread> threads;
-        for (size_t t = 1; t < T; t++) threads.emplace_back(work, t);
-        work(0);
-        for (auto& th : threads) th.join();
+        const size_t T = evaluate(0, verts.size(), true);
+
+        // A colour that is a CATEGORY (the places of boundary conditions, a selected surface) changes all at once at the
+        // edge of its region, but it is only known at the vertices of the mesh, and a flat face is a few big triangles:
+        // the colour would run across them from one category to the other.  A triangle whose corners are in different
+        // categories is cut into four (at the middles of its edges), again and again, until it is small, so that the
+        // edge of the region is as sharp as the mesh is fine.  The shape of the surface does not change
+        if (color_map == "bc" && verts.size() > 1)
+        {
+            double extent = 0;
+            for (int a = 0; a < 3; a++) extent = std::max(extent, r.upper[a] - r.lower[a]);
+            const float smallest2 = float((0.002 * extent) * (0.002 * extent));
+            using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+            auto category = [](float v) { return std::isfinite(v) ? int(std::lround(v)) : -1; };
+            for (int level = 0; level < 9; level++)
+            {
+                const size_t before = verts.size();
+                std::map<std::pair<uint32_t, uint32_t>, uint32_t> middles;
+                auto middle = [&](uint32_t a, uint32_t b) {
+                    const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+                    const auto it = middles.find(key);
+                    if (it != middles.end()) return it->second;
+                    const Eigen::Vector3f p = 0.5f * (verts[a] + verts[b]);
+                    const uint32_t id = uint32_t(verts.size());
+                    verts.push_back(p);
+                    middles.emplace(key, id);
+                    return id;
+                };
+                std::vector<Tri, Eigen::aligned_allocator<Tri>> cut;
+                cut.reserve(out.mesh->branes.size() + out.mesh->branes.size() / 8);
+                bool any = false;
+                for (const Tri t : out.mesh->branes)
+                {
+                    const int ca = category(out.values[t[0]]), cb = category(out.values[t[1]]), cc = category(out.values[t[2]]);
+                    const float longest = std::max({(verts[t[0]] - verts[t[1]]).squaredNorm(), (verts[t[1]] - verts[t[2]]).squaredNorm(),
+                                                    (verts[t[2]] - verts[t[0]]).squaredNorm()});
+                    if ((ca == cb && cb == cc) || longest <= smallest2)
+                    {
+                        cut.push_back(t);
+                        continue;
+                    }
+                    any = true;
+                    const uint32_t m01 = middle(t[0], t[1]), m12 = middle(t[1], t[2]), m20 = middle(t[2], t[0]);
+                    cut.push_back(Tri(t[0], m01, m20));
+                    cut.push_back(Tri(m01, t[1], m12));
+                    cut.push_back(Tri(m20, m12, t[2]));
+                    cut.push_back(Tri(m01, m12, m20));
+                }
+                if (!any) break;
+                out.values.resize(verts.size());
+                evaluate(before, verts.size(), false);
+                out.mesh->branes = std::move(cut);
+            }
+        }
 
         const auto tEnd = std::chrono::steady_clock::now();
         const double meshing = std::chrono::duration<double>(tMesher - tLevel).count();
@@ -1701,7 +1854,261 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
             fprintf(stderr, "[fieldes] level %d: meshing %.0f ms, colouring %zu vertices %.0f ms (%zu threads)\n",
                     s.div, 1000 * meshing, verts.size(), 1000 * colouring, T);
     }
+
+    // The finished mesh goes to the render cache (a shape the script has not asked for by name only if it took a while
+    // to mesh: a sphere is not worth a file)
+    const double sinceStart = std::chrono::duration<double>(std::chrono::steady_clock::now() - renderStart).count();
+    if (!cacheKey.empty() && out.mesh && s.div == 0 && m_cache_on.load() && (m_cache_forced.load() || sinceStart >= 0.4))
+    {
+        const auto tWrite = std::chrono::steady_clock::now();
+        const bool ok = writeRenderCache(cacheKey, out);
+        cache_state.store(ok ? CACHE_KEPT : CACHE_FAILED);
+        if (ok) cache_miss_key.clear();
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[render cache] %s the mesh of line %d: %zu vertices, %.0f ms\n",
+                    ok ? "kept" : "could not keep", source_line + 1, out.mesh->verts.size(),
+                    1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tWrite).count());
+    }
     return out;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The render cache (see Shape::setRenderCache)
+
+namespace {
+
+// Bump when what the mesher makes from the same shape changes (a mesh kept by an older one would
+// be read in its place).  Not tied to a build: a rebuild that changes no mesh keeps the meshes.
+const char* const kRenderCacheVersion = "fdrc1";
+
+const quint32 kCacheMagic = 0x43524446u;       // "FDRC"
+const quint32 kCacheFormat = 1;
+
+QString cacheFile(const std::string& key)
+{
+    const QByteArray h = QCryptographicHash::hash(QByteArray::fromStdString(key), QCryptographicHash::Sha1).toHex();
+    return Shape::renderCacheDir() + "/" + QString::fromLatin1(h) + ".fdmesh";
+}
+
+qint64 cacheLimitBytes()
+{
+    bool ok = false;
+    const qint64 mb = qEnvironmentVariableIntValue("FIELDES_RENDER_CACHE_MB", &ok);
+    return (ok && mb > 0 ? mb : 4096) * 1024 * 1024;
+}
+
+// The oldest kept meshes go when the folder is over its limit
+void pruneRenderCache()
+{
+    const qint64 limit = cacheLimitBytes();
+    QFileInfoList files = QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files);
+    qint64 total = 0;
+    for (const auto& f : files) total += f.size();
+    if (total <= limit) return;
+    std::sort(files.begin(), files.end(), [](const QFileInfo& a, const QFileInfo& b) {
+        return a.lastModified() < b.lastModified();
+    });
+    for (const auto& f : files)
+    {
+        if (total <= limit * 8 / 10) break;
+        total -= f.size();
+        QFile::remove(f.absoluteFilePath());
+    }
+}
+
+}   // anonymous namespace
+
+QString Shape::renderCacheDir()
+{
+    const QByteArray env = qgetenv("FIELDES_RENDER_CACHE_DIR");
+    const QString dir = !env.isEmpty() ? QString::fromLocal8Bit(env)
+                                       : QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/render-cache";
+    QDir().mkpath(dir);
+    return dir;
+}
+
+int Shape::clearRenderCache()
+{
+    int n = 0;
+    for (const auto& f : QDir(renderCacheDir()).entryInfoList({"*.fdmesh", "*.fdmesh.*"}, QDir::Files))
+    {
+        if (QFile::remove(f.absoluteFilePath())) ++n;
+    }
+    return n;
+}
+
+QString Shape::renderCacheKind() const
+{
+    if (!m_cache_on.load()) return QString();
+    switch (cache_state.load())
+    {
+        case CACHE_KEPT:   return "kept";
+        case CACHE_READ:   return "read";
+        case CACHE_NO_KEY:
+        case CACHE_RESULT:
+        case CACHE_FAILED: return "no";
+        default:           return "wait";
+    }
+}
+
+QString Shape::renderCacheState() const
+{
+    if (!m_cache_on.load()) return QString();
+    switch (cache_state.load())
+    {
+        case CACHE_KEPT:    return "meshed, and kept in the render cache";
+        case CACHE_READ:    return "read from the render cache";
+        case CACHE_NO_KEY:  return "cannot be kept: it depends on something no other run can recognise "
+                                   "(a variable it has no value for, or a solved analysis)";
+        case CACHE_RESULT:  return "a result shown with its fields is not kept";
+        case CACHE_FAILED:  return "the mesh could not be written to the cache folder";
+        default:            return "on: kept once it has been meshed";
+    }
+}
+
+// What the shape is, apart from where and how finely it is meshed: its expression, with the numbers
+// it is drawn with (the snapshot of the evaluators'), what colours it and what the exact regions
+// are.  Empty when some of it cannot be told from one run to the next.
+std::string Shape::renderCacheTreeKey() const
+{
+    using libfive::treePersistentKey;
+    std::string out = treePersistentKey(built_tree, cache_vars);
+    if (out.empty()) return out;
+    if (has_color)
+    {
+        const std::string c = treePersistentKey(color_field, cache_vars);
+        if (c.empty()) return c;
+        out += "|colour|" + c;
+    }
+    for (const auto& e : exact_regions)
+    {
+        const QFileInfo file(QString::fromStdString(e.path));
+        out += "|exact|" + e.path + "|" + std::to_string(file.size()) + "|" +
+               std::to_string(file.lastModified().toMSecsSinceEpoch()) + "|" + std::to_string(e.solid) + "|" +
+               std::to_string(e.instance);
+        auto add = [&](const libfive::Tree& t) {
+            const std::string k = treePersistentKey(t, cache_vars);
+            out += "|" + k;
+            return !k.empty();
+        };
+        for (const auto* v : {&e.matrix, &e.region})
+            for (const auto& t : *v)
+                if (!add(t)) return std::string();
+        if (e.field.is_valid() && !add(e.field)) return std::string();
+        if (e.quality.is_valid() && !add(e.quality)) return std::string();
+    }
+    return out;
+}
+
+std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region<3>& region, double res)
+{
+    if (cache_tree_gen != cache_vars_gen)
+    {
+        cache_tree_key = renderCacheTreeKey();
+        cache_tree_gen = cache_vars_gen;
+    }
+    if (cache_tree_key.empty()) return std::string();
+    char buf[400];
+    std::snprintf(buf, sizeof(buf), "|%a %a %a %a %a %a|%a|%a|%d",
+                  region.lower.x(), region.lower.y(), region.lower.z(),
+                  region.upper.x(), region.upper.y(), region.upper.z(),
+                  res, double(s.settings.quality), int(s.alg));
+    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + buf;
+}
+
+bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
+{
+    QFile f(cacheFile(key));
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return false;
+    const QByteArray data = f.readAll();
+    f.close();
+
+    // header: magic, format, key length, vertex count, triangle count, colour count; then the box (6
+    // doubles), the key, the vertices, the triangles and the colours
+    const qint64 head = 6 * sizeof(quint32) + 6 * sizeof(double);
+    if (data.size() < head) return false;
+    const char* p = data.constData();
+    quint32 h[6];
+    std::memcpy(h, p, sizeof(h));
+    double box[6];
+    std::memcpy(box, p + sizeof(h), sizeof(box));
+    if (h[0] != kCacheMagic || h[1] != kCacheFormat) return false;
+    const quint64 keyLen = h[2], nv = h[3], nt = h[4], nc = h[5];
+    const quint64 need = quint64(head) + keyLen + nv * 12 + nt * 12 + nc * 4;
+    if (quint64(data.size()) != need || keyLen != key.size()) return false;
+    p += head;
+    if (std::memcmp(p, key.data(), keyLen) != 0) return false;       // (the file name is a hash of the key)
+    p += keyLen;
+
+    auto mesh = std::make_unique<libfive::Mesh>();
+    mesh->verts.resize(nv);
+    for (quint64 i = 0; i < nv; ++i)
+    {
+        float v[3];
+        std::memcpy(v, p + 12 * i, 12);
+        mesh->verts[i] = Eigen::Vector3f(v[0], v[1], v[2]);
+    }
+    p += nv * 12;
+    mesh->branes.resize(nt);
+    for (quint64 i = 0; i < nt; ++i)
+    {
+        quint32 t[3];
+        std::memcpy(t, p + 12 * i, 12);
+        if (t[0] >= nv || t[1] >= nv || t[2] >= nv) return false;
+        mesh->branes[i] = Eigen::Matrix<uint32_t, 3, 1>(t[0], t[1], t[2]);
+    }
+    p += nt * 12;
+    out.values.resize(nc);
+    if (nc) std::memcpy(out.values.data(), p, nc * 4);
+    if (has_color && out.values.size() != nv) return false;
+    out.mesh = mesh.release();
+    out.region = libfive::Region<3>({box[0], box[1], box[2]}, {box[3], box[4], box[5]});
+    return true;
+}
+
+bool Shape::writeRenderCache(const std::string& key, const BoundedMesh& out) const
+{
+    if (!out.mesh) return false;
+    QSaveFile f(cacheFile(key));
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    const auto& verts = out.mesh->verts;
+    const auto& tris = out.mesh->branes;
+    const quint32 head[6] = {kCacheMagic, kCacheFormat, quint32(key.size()), quint32(verts.size()),
+                             quint32(tris.size()), quint32(out.values.size())};
+    const double box[6] = {out.region.lower.x(), out.region.lower.y(), out.region.lower.z(),
+                           out.region.upper.x(), out.region.upper.y(), out.region.upper.z()};
+    f.write(reinterpret_cast<const char*>(head), sizeof(head));
+    f.write(reinterpret_cast<const char*>(box), sizeof(box));
+    f.write(key.data(), qint64(key.size()));
+    QByteArray buf;
+    buf.resize(int(verts.size() * 12));
+    for (size_t i = 0; i < verts.size(); ++i)
+    {
+        const float v[3] = {verts[i].x(), verts[i].y(), verts[i].z()};
+        std::memcpy(buf.data() + 12 * i, v, 12);
+    }
+    f.write(buf);
+    buf.resize(int(tris.size() * 12));
+    for (size_t i = 0; i < tris.size(); ++i)
+    {
+        const quint32 t[3] = {tris[i][0], tris[i][1], tris[i][2]};
+        std::memcpy(buf.data() + 12 * i, t, 12);
+    }
+    f.write(buf);
+    if (!out.values.empty())
+        f.write(reinterpret_cast<const char*>(out.values.data()), qint64(out.values.size() * 4));
+    if (!f.commit()) return false;
+    pruneRenderCache();
+    return true;
+}
+
+bool Shape::keepCurrent()
+{
+    if (running || !mesh || mesh_div != 0 || has_result || next.div != MESH_DIV_EMPTY) return false;
+    // (the mesh on screen was not meshed with the cache on: mesh it again at its level, which keeps it
+    // -- or reads what an earlier run kept)
+    startRender(RenderSettings{next.settings, 0, next.alg});
+    return true;
 }
 
 }   // namespace FielDes

@@ -59,6 +59,36 @@ struct ExactSpec
  *  each solid tessellated once per file version (cached).  */
 ExactPiece exactSurface(const ExactSpec& spec);
 
+/*  The tessellated import: a STEP file's parts as the exact surface itself -- every solid tessellated once
+ *  (the free-form faces refined on all the threads there are, the solids a few at a time), in its own
+ *  coordinates, and each of its placed occurrences described: nothing is reconstructed or fitted, the
+ *  mesh is made into a distance field by the caller (mesh_import).  Instances are in the order of the
+ *  main importer's parts (the first of each solid in the solid's slot, the others after the last solid).  */
+struct BrepSolid
+{
+    ExactPiece mesh;                // in the solid's own coordinates (the file's units); `error` as for ExactPiece
+    int faces = 0, bsplineFaces = 0;
+};
+
+struct BrepInstance
+{
+    int solid = 0, instance = 0;
+    Eigen::Matrix3d linear = Eigen::Matrix3d::Identity();     // p = linear * q + offset: the solid's own
+    Eigen::Vector3d offset = Eigen::Vector3d::Zero();         //   coordinates q to millimetres p
+    std::string name;
+    Eigen::Vector3d boundMin = Eigen::Vector3d::Zero(), boundMax = Eigen::Vector3d::Zero();   // placed, mm
+    double detail = 0, areaFlat = 0, areaCurved = 0;          // placed, mm (see SolidMetrics)
+};
+
+struct BrepParts
+{
+    std::vector<BrepSolid> solids;
+    std::vector<BrepInstance> instances;
+    std::string error;              // non-empty when the file could not be read at all
+};
+
+BrepParts brepParts(const std::string& path, int turnSamples);
+
 /*  Whether a region (a field, with the numbers `vars` for its variables) can
  *  reach the part at all, judged by the part's own bounds in the STEP file --
  *  without tessellating it.  False means the region is nowhere near.  */

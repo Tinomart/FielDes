@@ -43,6 +43,11 @@ public:
     void toTurnY();
 
     /*
+     *  Sets the axis member at once (true: Y points up, false: Z)
+     */
+    void setUpAxis(bool y);
+
+    /*
      *  Animates the camera so that it looks at the model from the given
      *  world-space direction (e.g. {0, -1, 0} = front view)
      */

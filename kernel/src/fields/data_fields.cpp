@@ -268,6 +268,7 @@ public:
     }
     std::string name() const override { return label; }
     std::string contentKey() const override { return data->key; }
+    std::string persistentKey() const override { return data->key; }    // (a hash of the data)
 
 private:
     std::shared_ptr<const Data> data;

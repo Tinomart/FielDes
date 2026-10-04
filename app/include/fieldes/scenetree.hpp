@@ -68,6 +68,17 @@ public slots:
 
     void setCollapsed(bool c);
 
+    /*  A surface picked in the viewport: writes `name = select_surface(shape, seed=(x, y, z), ...)` and a
+     *  line showing it under the definition of the shape displayed by the (0-based) line `line0`
+     *  (the thickness and the radius are mm, 0: automatic / no limit)  */
+    void addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double thickness,
+                             double radius);
+
+    /*  What the render cache did for the shapes displayed by (0-based) lines: "kept" (meshed and kept),
+     *  "read" (the mesh on screen came from the cache), "no" (cannot be kept), "on" (not meshed yet),
+     *  with the words for the tooltip, as `state|text`  */
+    void setCacheStates(const QHash<int, QString>& states);
+
 signals:
     /*  Scroll the editor to a (0-based) line and flash it  */
     void goToLine(int line0);
@@ -111,12 +122,20 @@ protected:
     void cycleMode(const QJsonObject& target);
     QJsonObject selectedTarget() const;
     void setMode(const QJsonObject& target, const QString& mode);
+    /*  The render cache button: a `name = render_cache(name)` line under the shape's definition (and under
+     *  its handles and expose lines) when it is turned on, deleted when it is turned off  */
+    void toggleCache(const QJsonObject& target);
+    void setCacheButton(QTreeWidgetItem* row, const QJsonObject& target);
     void addModeActions(QMenu& menu, const QJsonObject& target);
     /*  A part back to what the file says: its handles() and expose() lines are deleted and the
      *  import is read again (reimport)  */
     void reimportPart(const QJsonObject& imp, int part);
     /*  Deletes a shape's handles() line: back to where it was defined  */
     void removeHandles(const QJsonObject& target);
+    /*  The delete button: the statements of a row's item (and the lines that show, hide and edit it) go
+     *  from the script; asks first if the rest of the script still uses its name  */
+    void deleteRow(QTreeWidgetItem* row);
+    void deleteItem(const QJsonObject& it);
     /*  The edit deleting whole lines a..b (0-based), newline included  */
     TextEdit deleteLines(int a, int b) const;
     /*  Back to the file: deletes the import's cache and the handles() lines
@@ -146,6 +165,7 @@ protected:
     QLabel* m_note;
 
     QJsonObject m_scene;
+    QHash<int, QString> m_cacheStates;
     QString m_selectedKey;
     QHash<QString, bool> m_expandState;   // user's expand / collapse, by row key
     std::function<QString()> m_source;

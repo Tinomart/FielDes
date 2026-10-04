@@ -8,8 +8,10 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <limits>
 #include <map>
@@ -20,6 +22,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/lattice/lattice_graph.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/oracle/oracle_storage.hpp"
+#include "libfive/tree/serializer.hpp"
+#include "libfive/tree/deserializer.hpp"
 #include "libfive/eval/eval_array.hpp"
 #include "libfive/eval/eval_deriv_array.hpp"
 #include "libfive/render/brep/mesh.hpp"
@@ -35,6 +39,22 @@ namespace {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Beams through a bounding volume hierarchy
+
+// (what the distance to beams costs: FIELDES_BEAM_STATS=1 prints it when the program ends)
+struct BeamStats
+{
+    std::atomic<uint64_t> calls{0}, nodes{0}, tests{0}, intervals{0}, derivs{0};
+    const bool on = std::getenv("FIELDES_BEAM_STATS") != nullptr;
+    ~BeamStats()
+    {
+        if (on && calls.load())
+            std::fprintf(stderr, "[beams] %llu distances (%.1f nodes, %.1f beams tested each), %llu intervals, %llu gradients\n",
+                         (unsigned long long)calls.load(), double(nodes.load()) / double(calls.load()),
+                         double(tests.load()) / double(calls.load()), (unsigned long long)intervals.load(),
+                         (unsigned long long)derivs.load());
+    }
+};
+BeamStats g_beamStats;
 
 struct Beam
 {
@@ -61,7 +81,6 @@ public:
     BeamData(const Graph& g, const std::vector<double>& radius, double blend)
         : blend(std::max(0.0, blend))
     {
-        double maxSlope = 0;
         for (const auto& e : g.beams)
         {
             Beam s;
@@ -69,14 +88,35 @@ public:
             s.b = g.nodes[size_t(e[1])];
             s.ra = std::max(0.0, radius[size_t(e[0])]);
             s.rb = std::max(0.0, radius[size_t(e[1])]);
+            beams.push_back(s);
+        }
+        finish();
+    }
+
+    // From the beams themselves (a lattice that was kept: each beam's ends and radii)
+    BeamData(std::vector<Beam> kept, double blend)
+        : blend(std::max(0.0, blend)), beams(std::move(kept))
+    {
+        finish();
+    }
+
+    const std::vector<Beam>& allBeams() const { return beams; }
+    double blendRadius() const { return blend; }
+
+private:
+    void finish()
+    {
+        double maxSlope = 0;
+        for (auto& s : beams)
+        {
             const double r = std::max(s.ra, s.rb);
             s.lo = (s.a.cwiseMin(s.b).array() - r).matrix();
             s.hi = (s.a.cwiseMax(s.b).array() + r).matrix();
             const double L = (s.b - s.a).norm();
             if (L > 0) maxSlope = std::max(maxSlope, std::abs(s.rb - s.ra) / L);
-            beams.push_back(s);
         }
         lip = 1.0 + maxSlope;
+        tapered = maxSlope > 1e-9;
         order.resize(beams.size());
         for (size_t i = 0; i < order.size(); ++i) order[i] = int(i);
         if (!beams.empty())
@@ -101,19 +141,47 @@ public:
         char buf[64];
         std::snprintf(buf, sizeof(buf), "beams#%016llx#%zu", (unsigned long long)h, beams.size());
         key = buf;
+        // What the render cache keeps the lattice by: the same hash, of the beams rounded to a thousandth of a millimetre.  A
+        // lattice that was laid out again has the last digits of its floats anywhere; the lattice is the same, and so is its mesh.
+        // A layout that was changed has other beams, and so another key: the cache never gives the mesh of another lattice.
+        uint64_t hq = 1469598103934665603ull;
+        auto mixq = [&hq](double x, double scale) {
+            const long long v = std::llround(x * scale);
+            const unsigned char* c = reinterpret_cast<const unsigned char*>(&v);
+            for (size_t i = 0; i < sizeof(v); ++i)
+            {
+                hq ^= c[i];
+                hq *= 1099511628211ull;
+            }
+        };
+        for (const auto& s : beams)
+        {
+            for (int k = 0; k < 3; ++k) mixq(s.a[k], 1000.0);
+            for (int k = 0; k < 3; ++k) mixq(s.b[k], 1000.0);
+            mixq(s.ra, 1000.0);
+            mixq(s.rb, 1000.0);
+        }
+        mixq(this->blend, 1000.0);
+        std::snprintf(buf, sizeof(buf), "beamsq#%016llx#%zu", (unsigned long long)hq, beams.size());
+        persist = buf;
     }
 
-    double value(const V3& p, std::vector<double>& near) const
+public:
+
+    double value(const V3& p, std::vector<double>& near, int* bestBeam = nullptr) const
     {
         if (beams.empty()) return 1e9;
         double best = std::numeric_limits<double>::infinity();
+        if (bestBeam) *bestBeam = -1;
         near.clear();
+        uint64_t visited = 0, tested = 0;
         int stack[128];
         int top = 0;
         stack[top++] = 0;
         while (top)
         {
             const Node& n = nodes[size_t(stack[--top])];
+            if (g_beamStats.on) ++visited;
             const double bd = std::sqrt(boxDist2(p, n.lo, n.hi));
             const double lb = bd > 0 ? bd : -n.rmax;
             if (lb >= best + blend) continue;
@@ -121,9 +189,14 @@ public:
             {
                 for (int k = n.first; k < n.first + n.count; ++k)
                 {
+                    if (g_beamStats.on) ++tested;
                     const double d = beamDistance(beams[size_t(order[size_t(k)])], p);
                     if (blend > 0 && d < best + blend) near.push_back(d);
-                    if (d < best) best = d;
+                    if (d < best)
+                    {
+                        best = d;
+                        if (bestBeam) *bestBeam = order[size_t(k)];
+                    }
                 }
             }
             else if (top + 2 <= 128)
@@ -135,6 +208,12 @@ public:
                 if (dl < dr) { stack[top++] = n.right; stack[top++] = n.left; }
                 else         { stack[top++] = n.left;  stack[top++] = n.right; }
             }
+        }
+        if (g_beamStats.on)
+        {
+            ++g_beamStats.calls;
+            g_beamStats.nodes += visited;
+            g_beamStats.tests += tested;
         }
         if (blend > 0 && near.size() > 1)
         {
@@ -153,6 +232,23 @@ public:
 
     V3 gradient(const V3& p, std::vector<double>& near) const
     {
+        // Round beams all of one radius, not blended: the distance to the nearest is the distance to its axis less the
+        // radius, and its gradient the unit vector from the nearest point of the axis -- from the one search
+        if (blend <= 0 && !tapered)
+        {
+            int nearest = -1;
+            value(p, near, &nearest);
+            if (nearest >= 0)
+            {
+                const Beam& s = beams[size_t(nearest)];
+                const V3 ab = s.b - s.a;
+                const double L2 = ab.squaredNorm();
+                const double h = L2 > 1e-300 ? std::min(1.0, std::max(0.0, (p - s.a).dot(ab) / L2)) : 0.0;
+                const V3 r = p - (s.a + h * ab);
+                const double rn = r.norm();
+                if (rn > 1e-9) return r / rn;
+            }
+        }
         const double e = step;
         V3 g;
         for (int a = 0; a < 3; ++a)
@@ -166,7 +262,8 @@ public:
     }
 
     double lipschitz() const { return lip; }
-    std::string key;
+    std::string key;                // a hash of the beams
+    std::string persist;            // a hash of the beams rounded to a thousandth of a millimetre: what the render cache keeps it by
     double step = 1e-4;
 
 private:
@@ -232,6 +329,7 @@ private:
     std::vector<Node> nodes;
     double blend;
     double lip = 1;
+    bool tapered = false;
 };
 
 class BeamOracle : public OracleStorage<>
@@ -282,10 +380,50 @@ public:
     }
     std::string name() const override { return "BeamLattice"; }
     std::string contentKey() const override { return data->key; }
+    std::string persistentKey() const override { return data->persist; }
+
+    // A lattice can be kept in a file: its beams (the ends and the radii at them) and the blend
+    bool serialize(Serializer& out) const
+    {
+        out.serializeBytes(data->blendRadius());
+        const auto& bs = data->allBeams();
+        out.serializeBytes(uint64_t(bs.size()));
+        for (const auto& b : bs)
+        {
+            for (int k = 0; k < 3; ++k) out.serializeBytes(b.a[k]);
+            for (int k = 0; k < 3; ++k) out.serializeBytes(b.b[k]);
+            out.serializeBytes(b.ra);
+            out.serializeBytes(b.rb);
+        }
+        return true;
+    }
+    static std::unique_ptr<const OracleClause> deserialize(Deserializer& in)
+    {
+        const double blend = in.deserializeBytes<double>();
+        const uint64_t n = in.deserializeBytes<uint64_t>();
+        std::vector<Beam> beams;
+        beams.reserve(size_t(n));
+        for (uint64_t i = 0; i < n; ++i)
+        {
+            Beam s;
+            for (int k = 0; k < 3; ++k) s.a[k] = in.deserializeBytes<double>();
+            for (int k = 0; k < 3; ++k) s.b[k] = in.deserializeBytes<double>();
+            s.ra = in.deserializeBytes<double>();
+            s.rb = in.deserializeBytes<double>();
+            beams.push_back(s);
+        }
+        return std::make_unique<BeamClause>(std::make_shared<const BeamData>(std::move(beams), blend));
+    }
 
 private:
     std::shared_ptr<const BeamData> data;
 };
+
+struct BeamClauseInstaller
+{
+    BeamClauseInstaller() { OracleClause::install<BeamClause>("BeamLattice"); }
+};
+static BeamClauseInstaller beamClauseInstaller;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Delaunay (Bowyer-Watson)

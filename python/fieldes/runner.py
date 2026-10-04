@@ -180,7 +180,8 @@ def resume(breakpoints=None):
 def _continue(state, breakpoints, skip_first):
     global last_lines, last_scene, last_output, last_paused, _paused, last_globals
     import contextlib
-    from fieldes import run_progress
+    import time
+    from fieldes import field_cache, run_progress
     body, gs, out, lines = state['body'], state['gs'], state['out'], state['lines']
     source_lines = state['source_lines']
     last_paused = -1
@@ -213,7 +214,21 @@ def _continue(state, breakpoints, skip_first):
                     mod = ast.Module([p])
                     mod.type_ignores = []
                     f = compile(mod, '<file>', 'exec')
-                    r = exec(f, gs)
+                    # A field built by `name = ...` that has been built before from the same inputs is not built again
+                    # (see field_cache.py): in this session, or from the file an earlier session kept
+                    hit, key = field_cache.lookup(p, gs, source_lines)
+                    if hit is not None:
+                        gs[p.targets[0].id] = hit[0]
+                        if hit[1]:
+                            print(hit[1], end='')
+                        r = None
+                    else:
+                        before = len(state['printed'].getvalue())
+                        started = time.time()
+                        r = exec(f, gs)
+                        if key is not None:
+                            field_cache.store(key, gs.get(p.targets[0].id), state['printed'].getvalue()[before:],
+                                              time.time() - started)
                 out.append(r)
                 lines.append((p.lineno, p.end_lineno))
                 state['i'] = i + 1

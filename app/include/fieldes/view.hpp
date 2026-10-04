@@ -108,6 +108,10 @@ public:
      *  scripted tests): kind 0 = move arrow, 1 = rotation ring; the axis 0-2  */
     bool handleGripPoint(int kind, int axis, QPoint& pos) const;
 
+    /*  Selects the surface under a widget position as the menu of a right-click does (for scripted
+     *  tests); false if no shape with a line of the script is there  */
+    bool selectSurfaceAt(QPoint pos, const QString& mode, double angle, double thickness, double radius);
+
     bool sectionHandlePoints(QPointF& knob, QPointF& tip) const
     {
         float len;
@@ -138,6 +142,8 @@ public slots:
     void toPerspective()  { camera.toPerspective();   }
     void toTurnZ() { y_up = false; camera.toTurnZ();  }
     void toTurnY()  { y_up = true; camera.toTurnY();   }
+    /*  Which axis is up, at once (the start of a session: no turn to animate)  */
+    void setUpAxis(bool y) { y_up = y; camera.setUpAxis(y); update(); }
     void setLowRotSensitivity()  { camera.setRotationSensitivity(240); }
     void setMedRotSensitivity()  { camera.setRotationSensitivity(360); }
     void setHighRotSensitivity() { camera.setRotationSensitivity(720); }
@@ -154,6 +160,10 @@ public slots:
      *  are at their final (highest) resolution
      */
     void checkMeshes() const;
+
+    /*  What the render cache did for each shape that has it on, by the 0-based line that displays the shape:
+     *  "state|words" (see ScenePanel::setCacheStates)  */
+    QHash<int, QString> cacheStates() const;
 
     /*
      *  Called when the script changes settings
@@ -192,6 +202,9 @@ signals:
     /*  Meshing started (true) or every shape finished (false)  */
     void renderBusy(bool running);
 
+    /*  A shape's render cache read or kept its mesh (see cacheStates)  */
+    void cacheStatesChanged();
+
     /*  The section plane was dragged by its handle in the viewport  */
     void sectionOffsetDragged(float offset);
 
@@ -207,6 +220,14 @@ signals:
      *  line of the statement displaying it, or -1 for empty space
      */
     void shapeClicked(int line0);
+
+    /*
+     *  The menu of a right-click on a shape was confirmed: select the surface of the shape displayed by
+     *  the (0-based) line `line0` around `point` (a flood fill: mode "flat" or "smooth", the angle in
+     *  degrees, the thickness and the radius in mm, 0 = automatic / no limit)
+     */
+    void surfaceSelectRequested(int line0, QVector3D point, QString mode, double angle, double thickness,
+                                double radius);
 
 protected slots:
     void update() { QOpenGLWidget::update(); }
@@ -239,6 +260,7 @@ protected:
 
     /*  Background items to render  */
     Arrow arrow;
+    Glyphs glyphs;                      // the arrows and pins of boundary conditions
     Axes axes;
     Background background;
     BBox bbox;
@@ -248,6 +270,13 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+
+    /*  A right-click (not a pan) on a shape: the menu of the surface selection  */
+    void showSelectMenu(QPoint globalPos, Shape* target, const QVector3D& point);
+    QPoint right_press_pos = QPoint(-100000, -100000);
+    Shape* right_press_target = nullptr;
+    QVector3D right_press_point;
+
     void leaveEvent(QEvent* event) override
     {
         if (triad_hover >= 0)
@@ -332,6 +361,7 @@ protected:
 
     /*  Colour bars of the models shown coloured by a field  */
     void drawLegends(QPainter& p);
+    void drawBoundaryLabels(QPainter& p);
     /*  A ruler for the scale at the middle of the view  */
     void drawScaleBar(QPainter& p);
 

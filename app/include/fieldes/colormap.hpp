@@ -19,14 +19,38 @@ of the License, or (at your option) any later version.
 
 namespace FielDes {
 
+/*  The categories of the colour map "bc" (boundary conditions, a selected surface): the field's value over
+ *  (0, 6) is the number of the category, 0 being the part itself  */
+inline void bcCategoryRGB(int k, float& r, float& g, float& b)
+{
+    static const float table[7][3] = {
+        {0.80f, 0.80f, 0.77f},      // the part
+        {0.149f, 0.545f, 0.824f},   // 1 fixed support (blue)
+        {0.165f, 0.631f, 0.596f},   // 2 sliding support (cyan)
+        {0.863f, 0.196f, 0.184f},   // 3 force (red)
+        {0.796f, 0.294f, 0.086f},   // 4 gravity (orange)
+        {0.710f, 0.537f, 0.000f},   // 5 heat (yellow)
+        {0.827f, 0.212f, 0.510f}};  // 6 a selected surface (magenta)
+    k = std::max(0, std::min(6, k));
+    r = table[k][0];
+    g = table[k][1];
+    b = table[k][2];
+}
+
 /*  t in [0, 1] -> colour.  "turbo" (Google's rainbow, polynomial fit by
  *  Mikhailov), "viridis" (polynomial fit), "fit" (a part's own light grey
- *  turning red: shades where an import is approximate), anything else
+ *  turning red: shades where an import is approximate), "bc" (the nearest
+ *  of the seven categories of boundary conditions and selections), anything else
  *  grey.  */
 inline void colormapRGB(const QString& map, float t, float& r, float& g, float& b)
 {
     if (!(t == t)) t = 0;   // NaN
     t = std::max(0.f, std::min(1.f, t));
+    if (map == "bc")
+    {
+        bcCategoryRGB(int(std::lround(t * 6.0f)), r, g, b);
+        return;
+    }
     if (map == "viridis")
     {
         r = 0.2777273f + t*(0.1050930f + t*(-0.3308618f + t*(-4.6342305f + t*(6.2282699f + t*(4.7763850f + t*-5.4354559f)))));

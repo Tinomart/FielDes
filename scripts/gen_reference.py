@@ -17,15 +17,20 @@ MODULES = [
     ('transforms', 'Moving, rotating, scaling, deforming', 'fieldes.stdlib.transforms'),
     ('text', 'Text', 'fieldes.stdlib.text'),
     ('cad_import', 'Importing STEP models', 'fieldes.stdlib.cad_import'),
+    ('tessellated_import', 'Importing STEP models exactly (almost all free-form)', 'fieldes.stdlib.tessellated_import'),
     ('mesh_import', 'Importing triangle meshes', 'fieldes.stdlib.mesh_import'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
     ('fields', 'Fields', 'fieldes.stdlib.fields'),
     ('regression', 'Regressions and data', 'fieldes.stdlib.regression'),
     ('surfaces', 'Surfaces and offsets', 'fieldes.stdlib.surfaces'),
     ('lattices', 'Lattices', 'fieldes.stdlib.lattices'),
+    ('conformal', 'Lattices that follow a surface', 'fieldes.stdlib.conformal'),
+    ('selection', 'Selecting surfaces', 'fieldes.stdlib.selection'),
     ('fea', 'Structural analysis and topology optimization', 'fieldes.stdlib.fea'),
+    ('boundary_conditions', 'Seeing the boundary conditions', 'fieldes.stdlib.boundary_conditions'),
     ('thermal', 'Thermal analysis and thermal topology optimization', 'fieldes.stdlib.thermal'),
     ('content_cache', 'Caching', 'fieldes.stdlib.content_cache'),
+    ('render_cache', 'Keeping rendered meshes (render cache)', 'fieldes.stdlib.render_cache'),
 ]
 
 

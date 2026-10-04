@@ -8,6 +8,8 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 - [What is cached](#what-is-cached)
 - [How keys work](#how-keys-work)
 - [Controlling the caches](#controlling-the-caches)
+- [The field cache](#the-field-cache)
+- [The render cache](#the-render-cache)
 - [Resolution and quality](#resolution-and-quality)
 - [Long renders](#long-renders)
 - [Making things faster](#making-things-faster)
@@ -17,7 +19,9 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | What | Kept | Key |
 |---|---|---|
 | **STEP import** (the rebuilt fields) | on disk, next to the STEP file: `<file>.fieldes-cache.py` and `.fieldes-cache.trees` | the file's SHA-256, the import-algorithm version, `rev=` |
+| **Any field a script builds** (`name = <expression>`: a lattice laid out on a part, an offset, a thickness field — [the field cache](#the-field-cache)) | in memory, and on disk when every part of the field can be saved | the statement's text, the exact content of every name it reads, the `var()` numbers, the code that builds it |
 | **Shapes already meshed in the viewport** | in memory, for the session | the shape's expression (structural identity) and its colouring |
+| **The finished mesh of a shape you asked for** ([render cache](#the-render-cache)) | on disk, in FielDes's cache folder | the shape's expression with the numbers it is drawn with, its colours, the render region, resolution and quality |
 | **Analyses** (static, modal, thermal, all optimisations) | in memory | the whole problem: part, supports, loads, material, element size |
 | **`exact_distance`** (and so `offset_exact`, `shell_exact`, `round_edges`, `fillet`) | in memory | the shape's expression and the bounds/resolution |
 | **Mesh imports** | in memory | path, size, modification time, units |
@@ -53,12 +57,77 @@ cache_info()        # {name: (entries, hits, misses)}
 clear_caches()      # forget everything held in memory (to measure, or to free it)
 ```
 
+The tessellating importer (`import_step_tessellated_parts`) keeps the tessellation of a file in the folder
+`<file>.fieldes-tessellation` next to it, by the file's content, `quality` and the tessellation's version; `cache=False`
+does not, `rev=` makes it again.
+
 Analyses take `cache=False` to solve every time; `import_step_parts` takes `cache=False` or
 `cache='path.py'`. Memory caches are bounded (least recently used goes first).
 
 Developers writing their own expensive construction can use the same machinery from
 `fieldes.stdlib.content_cache`: `@content_cached('name', limit=8)` on a function of shapes and numbers,
 `shape_key(shape)`, `value_key(v)`, `problem_key(kind, **parts)`.
+
+## The field cache
+
+Every statement of the form `name = <expression>` whose value is a field is remembered, **by what it was made of**: its
+text, the exact content of every name it reads (a field by the structural hash of its expression, a number by its bits,
+lists, text, the library's own functions), the numbers of the script's `var()`s and the code that builds it (the library
+and its Python files). There is nothing to switch on and no function to wrap: a lattice laid out on a bracket, an exact
+offset or a thickness field is cached because it is a field, not because somebody wrote a cache for it. Run the same
+statement with the same inputs and the field is not built again: in the same session the very same field is handed back,
+and in a later session (after closing and opening FielDes) it is read from a file. What the statement printed is printed
+again. A hit returns exactly what a run builds; nothing is sampled onto a grid.
+
+What is not kept this way:
+
+- a statement that calls something that reads or writes a file (`import_...`, `load...`, `read...`, `open`, `save...`,
+  `write...`, `export...`) or `var()`, `expose()`, `handles()` — a file may have changed (imports have their own cache next
+  to the file);
+- a statement that reads a function or module of your own (it has no content to compare);
+- a statement that took less than a quarter of a second (a file would be slower than the run).
+
+A field is written to disk when **every part of it can be saved** (`libfive_tree_can_save`): operations, bodies, the
+struts of a lattice (the cell map included), any expression of them. A field with a part that cannot be saved (a conformal
+TPMS lattice, a field an analysis solved, a mesh distance field) is kept in memory for the session and is computed again in
+the next one — the cache never writes a file it could not read back. The files are in `field-cache` beside the render
+cache (`FIELDES_FIELD_CACHE_DIR` moves them); the folder holds at most 3 GB, oldest first out.
+**Settings → Clear the caches** deletes them together with the kept meshes of the render cache.
+
+A call of `lattice_surface_conform` has **one bar** from its first step to its last, so you can tell when that line of the
+script will be over. The text says which of the steps it is in (`step 6 of 17: joining the samples into a surface`, with
+the round or level it is at); the bar moves through every step's share of the whole and, inside a step, counts what the
+step has really done (levels, rounds, field evaluations against the number the step needs). The shares are those of a
+typical call, measured on the bracket and the pan (the joining of the samples and the two evening-out steps are most of
+it), so on another body a step can end earlier or later than its share says: the bar never goes back and is full when the
+call is over. When the layout has to be made again (a second attempt, text `attempt 2, ...`), it goes on from where the
+first one left the bar and takes the rest.
+
+## The render cache
+
+Meshing is the slow part of showing a big shape, and the viewport's memory of it ends with the session. So **every
+shape keeps its finished mesh on disk** (in FielDes's cache folder, never in your project) once it has taken a while to
+mesh (a sphere is not worth a file), and is shown from there at once the next time it is rendered — when you open the
+script again, or after you changed it and changed it back. It is **on** unless you turn it off: the model tree's
+**cache button** on every shape (a stack of disks; a menu entry in the right-click menu too) writes the line
+`part = render_cache(part, False)` under the shape's definition; click it again (or delete the line) to have it on
+again. `part = render_cache(part)` says the default aloud and keeps the mesh however quickly it was made.
+
+The mesh is looked up by what the shape *is*: its expression with the numbers it is drawn with (a dragged `var()`
+is another shape), what colours it, the render region, resolution and quality, and the STEP files it uses (their size
+and time). When **anything about the math changes** the key is another one: the shape is meshed again, shown as
+usual, and the new mesh is kept. The button shows what happened — blue: on, green: the mesh on screen was read from
+the cache, amber: this shape cannot be kept (hover for why).
+
+`render_cache_key(shape)` shows the key a shape is kept by (the same text in every run for the same math, another one when
+anything about the math changes, `None` when the shape cannot be kept).
+
+A shape can be kept when everything it is made of can be recognised from one run to the next: operations, numbers,
+`var()`s, imported meshes and parts, lattices and their surface coordinates, field-driven sizes. A shape shown with the
+fields of an analysis (a result coloured by stress) cannot: the analyses have caches of their own. The folder holds at
+most 4 GB (`FIELDES_RENDER_CACHE_MB` changes that), oldest files first out; **Settings → Clear the caches**
+deletes all of it (and the field cache's files). The mesher's output changes now and then; the cache then starts anew by a version number
+(`kRenderCacheVersion`), not on every build.
 
 ## Resolution and quality
 

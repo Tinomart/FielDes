@@ -1,6 +1,6 @@
 # A lattice inside an imported part, graded by a regression.
 #
-# lattice(body, kind, cell_size, ...) fills any body with a gyroid, a strut lattice, a honeycomb
+# lattice(body, cell, cell_size, ...) fills any body with a gyroid, a strut lattice, a honeycomb
 # ...  Here the wall of the gyroid follows a regression through a few data points over the depth
 # below the skin of the part: thick at the skin, thinner inside.  The thickness is a field, so
 # the part can be painted by it (hover to read it; the section card shows it inside).
@@ -24,10 +24,11 @@ thickness_of_depth = fit(data, model="pchip")
 thickness = thickness_of_depth(depth_below(body))
 
 # 4) the field drives the lattice: gyroid walls, 6 mm cells, a 1 mm solid skin
-graded = lattice(body, "gyroid", cell_size=6, thickness=thickness, skin=1.0)
+graded = lattice(body, cell_periodic("gyroid"), cell_size=6, thickness=thickness, skin=1.0)
 colored(graded, thickness, label="wall thickness (mm)")
 
 # Other things to try:
-#   lattice(body, "octet", cell_size=8, density=0.2)                       # struts, by relative density
-#   lattice(body, "gyroid", cell_size=6, density=ramp(z_field(), (-30, 30), (0.1, 0.4)))
-#   lattice(body, "kelvin", cell_size=8, radius=0.7, region="shell", depth=6, skin=1)
+#   lattice(body, cell_periodic("octet"), cell_size=8, density=0.2)        # struts, by relative density
+#   lattice(body, cell_periodic("gyroid"), cell_size=6, density=ramp(z_field(), (-30, 30), (0.1, 0.4)))
+#   lattice(body, cell_periodic("kelvin"), cell_size=8, radius=0.7, region="shell", depth=6, skin=1)
+#   lattice(body, cell_non_periodic("voronoi"), cell_size=8, radius=0.5)   # a random foam

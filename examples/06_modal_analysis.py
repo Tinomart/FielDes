@@ -16,7 +16,9 @@ view.set_quality(8)
 
 base_plate = box_exact((-51, -1, -1), (51, 20, 12))        # held by its bolts
 
-result = modal_analysis(stand, [fixed(base_plate)], material=steel, modes=6, element_size=4)
+conditions = static_boundary_conditions(stand, supports=[fixed(base_plate)])
+conditions
+result = modal_analysis(stand, conditions, material=steel, modes=6, element_size=4)
 print(result)
 for i, f in enumerate(result.frequencies):
     print("mode %d: %.0f Hz" % (i + 1, f))

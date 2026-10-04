@@ -21,8 +21,8 @@ plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
 lugs = box_exact((-60, -90, -61), (60, -60, 29))
 
 # 1) analysis: bolted at the plates, pulled at the lugs
-result = static_analysis(bracket, [fixed(plates)], [force(lugs, (0, -2000, 0))],
-                         material=aluminium, element_size=4)
+conditions = static_boundary_conditions(bracket, [fixed(plates)], [force(lugs, (0, -2000, 0))])
+result = static_analysis(bracket, conditions, material=aluminium, element_size=4)
 print(result)
 
 # 2) the stress field -> a relative density field: 0.15 where the stress is low, rising to 0.5
@@ -32,10 +32,10 @@ density = ramp(result.von_mises, (0, 0.4 * peak), (0.15, 0.5))
 
 # 3) the density field drives the lattice (calibrated per point), inside a 1.5 mm skin;
 #    shown coloured by the density it follows
-graded = lattice(bracket, "gyroid", cell_size=8, density=density, skin=1.5)
+graded = lattice(bracket, cell_periodic("gyroid"), cell_size=8, density=density, skin=1.5)
 colored(graded, density, label="lattice density (from stress)")
 
 # Other ways to drive it:
 #   density = ramp(result.displacement, (0, result.max_displacement), (0.5, 0.15))
-#   opt = topology_optimization(bracket, [fixed(plates)], [force(lugs, (0, -2000, 0))], volume_fraction=0.4)
-#   graded = lattice(bracket, "octet", cell_size=8, density=ramp(opt.density, (0, 1), (0.1, 0.5)), skin=1.5)
+#   opt = topology_optimization(bracket, conditions, volume_fraction=0.4)
+#   graded = lattice(bracket, cell_periodic("octet"), cell_size=8, density=ramp(opt.density, (0, 1), (0.1, 0.5)), skin=1.5)

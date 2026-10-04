@@ -996,9 +996,28 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
             scale = [[factor if r == c and r < 3 else (1.0 if r == c else 0.0) for c in range(4)]
                      for r in range(4)]
             shape._exact_source = _ExactSource(step_path, ref[0], ref[1], scale)
+    for shape, bounds in parts:
+        # the part as it is in the file (fresh or from the cache): its offsets, shells and thickenings use its exact
+        # distance (fields._dist), made when one is asked for. Placed copies (transforms, handles) and exposed
+        # copies (expose) derive theirs from it.
+        if isinstance(shape, Shape) and not isinstance(shape, FailedPart):
+            shape._distance_of = _distance_getter(shape, bounds)
     if auto_exclude:
         parts = _auto_exclude(parts, exclude_threshold, exclude_quality)
     return parts
+
+
+def _distance_getter(shape, bounds):
+    """ A function that gives the exact distance of an imported part (its mesh and the distance to it, cached
+        by content: see fields.exact_distance), made on the first call """
+    cell = []
+
+    def get():
+        if not cell:
+            from fieldes.stdlib.fields import exact_distance
+            cell.append(exact_distance(shape, bounds))
+        return cell[0]
+    return get
 
 
 def import_step(path, cache=True, units='mm', rev=None):

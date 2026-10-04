@@ -2058,191 +2058,19 @@ static Tree reconstructByArrangement(const Solid& solid, const Vec3& lo, const V
     std::vector<Tree> negTrees;
     for (const Tree& t : surfTrees) negTrees.push_back(Tree(-1.0) * t);
 
-    // Outside the part the value of a surface is its distance to the INFINITE surface, which can be far less
-    // than its distance to the faces that lie on it (a plane's side face may end well before the plane does;
-    // a hole's cylinder goes on past the hole): the field there is only a lower bound, and an outward shell, a
-    // thickening or an offset of it grows blocks and fins into empty space. So a surface is not allowed to
-    // be smaller, outside the box of its faces, than the distance to that box:
-    //     surface' = max(surface, min(distance to the box, 1000 * surface))
-    // Where the surface is <= 0 (inside) min(distance, 1000 * surface) <= 1000 * surface <= surface, so
-    // surface' IS surface -- and a cube is inside only where all its surfaces are <= 0, so no point's inside or
-    // outside changes, whatever the boxes are (a dragged surface included). Surfaces without a face of
-    // their own (helper planes) and those spanning the region are left alone.
-    const bool noGate = std::getenv("FIELDES_STEP_NO_GATE") != nullptr;      // a diagnostic
-    static const int gateKinds = std::getenv("FIELDES_STEP_GATE_KINDS") ? std::atoi(std::getenv("FIELDES_STEP_GATE_KINDS")) : 5;
-    static const double gateFrac = std::getenv("FIELDES_STEP_GATE_FRAC") ? std::atof(std::getenv("FIELDES_STEP_GATE_FRAC")) : 0.5;
-    std::vector<Tree> posLit = surfTrees, negLit = negTrees;
-    if (!noGate) {
-        const auto coordTree = [](int a) { return a == 0 ? Tree::X() : (a == 1 ? Tree::Y() : Tree::Z()); };
-        for (size_t i = 0; i < S; i++) {
-            const Surf& sf = surfs[i];
-            if (!sf.faces || sf.kind == 6) continue;
-            if (!(gateKinds & (sf.helper ? 4 : (sf.kind == 0 ? 1 : 2)))) continue;
-            const Vec3 b0 = sf.fmin - Vec3::Constant(1e-3 * sz), b1 = sf.fmax + Vec3::Constant(1e-3 * sz);
-            bool whole = true;
-            for (int a = 0; a < 3; a++)
-                if (b0[a] > lo[a] + 0.05 * (hi[a] - lo[a]) || b1[a] < hi[a] - 0.05 * (hi[a] - lo[a])) whole = false;
-            if (whole) continue;
-            // worth its nodes only if the faces are small somewhere ALONG the surface: the box of an axis-aligned
-            // plane is flat across it, which says nothing
-            int across = -1;
-            if (sf.kind == 0 && sf.a.cwiseAbs().maxCoeff(&across) < 0.99) across = -1;
-            bool small = false;
-            for (int a = 0; a < 3; a++)
-                if (a != across && b1[a] - b0[a] < gateFrac * (hi[a] - lo[a])) small = true;
-            if (!small) continue;
-            const auto excess = [&](int a) {
-                return max(max(Tree(b0[a]) - coordTree(a), coordTree(a) - Tree(b1[a])), Tree(0.0));
-            };
-            const Tree ex0 = excess(0), ex1 = excess(1), ex2 = excess(2);
-            const Tree dist = sqrt(square(ex0) + square(ex1) + square(ex2));
-            posLit[i] = max(surfTrees[i], min(dist, Tree(1000.0) * surfTrees[i]));
-            negLit[i] = max(negTrees[i], min(dist, Tree(1000.0) * negTrees[i]));
-        }
-    }
-
-    // Round corners. A cube is a max of its surfaces' distances, and the max of two distances is a MITRE: the
-    // offset of a convex edge comes out sharp, while every cylinder, and the face boxes above, come out round.
-    // The exact distance to the box that a cube's axis-parallel planes bound is the straight-line distance
-    // sqrt(a^2 + b^2 + c^2) (a, b, c: how far outside the plane of each axis the point is; 0 inside), and it never
-    // exceeds the distance to the cube, so the cube's value becomes max(max of its surfaces, that): round
-    // convex edges everywhere (the offset a ball makes). The same holds for a cylinder and the planes
-    // perpendicular to its axis: sqrt(axial^2 + radial^2). Where the term is a distance to a box it is a max
-    // of the surfaces' distances inside, so inside nothing changes (below); the plain (not the boxed)
-    // distances are used so that one separation is never counted twice. (Written with abs(), not squares:
-    // expose() must not take these for the boxes of the faces.)
-    const bool noRound = std::getenv("FIELDES_STEP_NO_ROUND") != nullptr;      // a diagnostic
-    // Only where a cube has a real convex edge on the outside of the part does the corner matter: the cell
-    // diagonally across BOTH of the edge's surfaces from a cell of the cube (their two signs flipped) is an
-    // outside cell. Everywhere else the term would cost the mesher and change nothing.
-    const auto axisOf = [&](const Surf& sf) {
-        int k = 0;
-        return ((sf.kind == 0 || sf.kind == 1) && sf.a.cwiseAbs().maxCoeff(&k) > 0.9999) ? k : -1;
-    };
-    struct Need { bool axis[3] = {false, false, false}; std::vector<int> round; };   // (round: cylinders, by surface)
-    std::vector<Need> need(chosen.size());
-    if (!noRound) {
-        std::unordered_set<Bits, BitsHash> outsideSet(outside.begin(), outside.end());
-        parallelFor(chosen.size(), 1, [&](size_t k0, size_t k1) {
-            for (size_t ci = k0; ci < k1; ci++) {
-                const Cube& c = chosen[ci];
-                std::vector<int> planes, rounds;
-                for (size_t i = 0; i < S; i++) {
-                    if (!c.care.test(i)) continue;
-                    const int k = axisOf(surfs[i]);
-                    if (k < 0) continue;
-                    (surfs[i].kind == 0 ? planes : rounds).push_back(int(i));
-                }
-                struct Pair { int i, j; bool found; };
-                std::vector<Pair> pairs;
-                for (size_t x = 0; x < planes.size(); x++)
-                    for (size_t y = x + 1; y < planes.size(); y++)
-                        if (axisOf(surfs[size_t(planes[x])]) != axisOf(surfs[size_t(planes[y])])) pairs.push_back({planes[x], planes[y], false});
-                for (int r : rounds)
-                    for (int pl : planes)
-                        if (axisOf(surfs[size_t(pl)]) == axisOf(surfs[size_t(r)])) pairs.push_back({r, pl, false});
-                if (pairs.empty()) continue;
-                size_t remaining = pairs.size();
-                for (const Bits& v : inside) {
-                    if (!remaining) break;
-                    if (!covers(c, v)) continue;
-                    for (Pair& pr : pairs) {
-                        if (pr.found) continue;
-                        Bits w = v;
-                        w.w[size_t(pr.i) >> 6] ^= 1ull << (pr.i & 63);
-                        w.w[size_t(pr.j) >> 6] ^= 1ull << (pr.j & 63);
-                        if (outsideSet.count(w)) { pr.found = true; remaining--; }
-                    }
-                }
-                for (const Pair& pr : pairs) {
-                    if (!pr.found) continue;
-                    if (surfs[size_t(pr.i)].kind == 1) {
-                        need[ci].round.push_back(pr.i);
-                    } else {
-                        need[ci].axis[axisOf(surfs[size_t(pr.i)])] = true;
-                        need[ci].axis[axisOf(surfs[size_t(pr.j)])] = true;
-                    }
-                }
-            }
-        });
-    }
-    // the box distance of a cube's axis-parallel planes (and of a cylinder with the planes across its axis) is
-    // sqrt(sum of the squares of how far outside each axis the point is) + min(how deep inside the box it is, 0):
-    // exact. Inside the box it is the largest of the surfaces' distances, which the cube is at least, so
-    // max(cube, box distance) IS the cube inside; outside it is the straight-line distance, which a max of
-    // distances is not at a corner. No guard is needed: the term is shared by every cube with the same surfaces
-    // and a cube only takes a max with it.
-    std::map<std::vector<int>, std::pair<Tree, Tree>> groupMemo;   // a set of surfaces of one axis: (largest, its outside part)
-    std::map<std::array<std::vector<int>, 3>, Tree> cornerMemo;    // the box distance of such sets, shared
-    std::map<std::pair<int, std::vector<int>>, Tree> roundMemo;    // a cylinder's, shared
-    const auto keyOf = [](const std::vector<std::pair<int, Tree>>& v) {
-        std::vector<int> key;
-        for (const auto& e : v) key.push_back(e.first);
-        std::sort(key.begin(), key.end());
-        return key;
-    };
-    const auto groupOf = [&](const std::vector<std::pair<int, Tree>>& v) {
-        const std::vector<int> key = keyOf(v);
-        const auto it = groupMemo.find(key);
-        if (it != groupMemo.end()) return it->second;
-        Tree m = v[0].second;
-        for (size_t j = 1; j < v.size(); j++) m = max(m, v[j].second);
-        const std::pair<Tree, Tree> g = {m, max(m, Tree(0.0))};
-        groupMemo.emplace(key, g);
-        return g;
-    };
+    // A cube is the largest of its surfaces' distances; the union of the cubes is their smallest. (Outside the part
+    // that is a lower bound of the distance to the part, cheap to evaluate: every term added to it, a box around the
+    // faces, round corners, the distance to the faces, made the render of the part several times slower.)
     Tree unionTree(1e9);
     bool first = true;
-    for (size_t ci = 0; ci < chosen.size(); ci++) {
-        const Cube& c = chosen[ci];
+    for (const Cube& c : chosen) {
         Tree cube(-1e9);
         bool firstLit = true;
-        std::vector<std::pair<int, Tree>> axisLits[3];      // (surface and side, its plain distance)
-        std::vector<std::pair<int, std::pair<int, Tree>>> roundLits;   // (surface, (axis, a cylinder's plain distance))
         for (size_t i = 0; i < S; i++) {
             if (!c.care.test(i)) continue;
-            const Tree& lit = c.val.test(i) ? negLit[i] : posLit[i];
+            const Tree& lit = c.val.test(i) ? negTrees[i] : surfTrees[i];
             cube = firstLit ? lit : max(cube, lit);
             firstLit = false;
-            if (noRound) continue;
-            const int k = axisOf(surfs[i]);
-            if (k < 0) continue;
-            const Tree& plain = c.val.test(i) ? negTrees[i] : surfTrees[i];
-            if (surfs[i].kind == 0) axisLits[k].push_back({int(i) * 2 + (c.val.test(i) ? 1 : 0), plain});
-            else roundLits.push_back({int(i), {k, plain}});
-        }
-        if (!firstLit && !noRound) {
-            const Need& nd = need[ci];
-            if (int(nd.axis[0]) + int(nd.axis[1]) + int(nd.axis[2]) >= 2) {
-                std::array<std::vector<int>, 3> key;
-                for (int k = 0; k < 3; k++) if (nd.axis[k] && !axisLits[k].empty()) key[size_t(k)] = keyOf(axisLits[k]);
-                auto it = cornerMemo.find(key);
-                if (it == cornerMemo.end()) {
-                    bool f = true;
-                    Tree sum(0.0), deepest(0.0);
-                    for (int k = 0; k < 3; k++) {
-                        if (key[size_t(k)].empty()) continue;
-                        const auto g = groupOf(axisLits[k]);
-                        sum = f ? g.second * abs(g.second) : sum + g.second * abs(g.second);
-                        deepest = f ? g.first : max(deepest, g.first);
-                        f = false;
-                    }
-                    it = cornerMemo.emplace(key, f ? Tree(-1e9) : sqrt(sum) + min(deepest, Tree(0.0))).first;
-                }
-                cube = max(cube, it->second);
-            }
-            for (const auto& rl : roundLits) {
-                if (std::find(nd.round.begin(), nd.round.end(), rl.first) == nd.round.end()) continue;
-                if (axisLits[rl.second.first].empty()) continue;
-                const std::pair<int, std::vector<int>> key = {rl.first * 2 + (c.val.test(size_t(rl.first)) ? 1 : 0), keyOf(axisLits[rl.second.first])};
-                auto it = roundMemo.find(key);
-                if (it == roundMemo.end()) {
-                    const auto g = groupOf(axisLits[rl.second.first]);
-                    const Tree rad = max(rl.second.second, Tree(0.0));
-                    it = roundMemo.emplace(key, sqrt(g.second * abs(g.second) + rad * abs(rad)) + min(max(g.first, rl.second.second), Tree(0.0))).first;
-                }
-                cube = max(cube, it->second);
-            }
         }
         unionTree = first ? cube : min(unionTree, cube);
         first = false;

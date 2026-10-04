@@ -233,7 +233,18 @@ void DerivArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
             break;
 
         case Opcode::ORACLE:
-            deck->oracles[a_]->evalDerivArray(d(id).leftCols(count_actual));
+            if (clear_vars) {
+                // The derivative lanes hold derivatives with respect to the
+                // variables here (JacobianEvaluator::gradient, which is what
+                // drags a surface by its variables), and X, Y and Z do not
+                // change with a variable: an oracle, which only reads
+                // the point, does not either. What the oracle would write is
+                // its gradient in space, which is a different thing in
+                // those lanes and would add to the gradient of every variable.
+                od = 0.0;
+            } else {
+                deck->oracles[a_]->evalDerivArray(d(id).leftCols(count_actual));
+            }
             break;
 
         case Opcode::INVALID:

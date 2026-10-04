@@ -25,7 +25,7 @@ void main() {
     if (shading != 0)
     {
         vec3 norm;
-        if (shading == 1)
+        if (shading == 1 || shading == 4)
         {
             norm = frag_norm;
         }
@@ -44,6 +44,11 @@ void main() {
         // Per-fragment shading
         vec3 dpos = normalize(vec3(1.0, -1.0, 4.0) - frag_pos);
         float brightness = clamp(dot(norm, dpos), 0.0, 1.0);
+        // shading 4: lit from the eye, so that a surface and its mirror image are lit alike (the symbols of boundary conditions)
+        if (shading == 4)
+        {
+            brightness = 0.2 + 0.8 * abs(norm.z);
+        }
 
         // shading 3: the vertex colour (a field's colour map), lit
         fragColor = (shading == 3)

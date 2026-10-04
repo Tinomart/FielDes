@@ -39,6 +39,7 @@ struct Graph
 /*  Round beams along a graph's edges.  radius: one per node (a beam's
  *  radius varies linearly between its ends); blend > 0 rounds the joints
  *  (smooth minimum of that radius).  */
+// (The render cache keeps it by a hash of the beams, rounded to a thousandth of a millimetre.)
 Tree beamLattice(const Graph& g, const std::vector<double>& radius, double blend);
 
 /*  Delaunay tetrahedralization (Bowyer-Watson).  Returns the tetrahedra as

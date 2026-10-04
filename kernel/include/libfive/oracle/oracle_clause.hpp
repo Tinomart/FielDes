@@ -46,6 +46,16 @@ public:
      *  being re-meshed.
      */
     virtual std::string contentKey() const { return std::string(); }
+
+    /*
+     *  A key of what this oracle computes that stays the same from one run of
+     *  the program to the next (a hash of the data it holds -- not an address
+     *  or a number of this run), or an empty string (the default) when it has
+     *  none.  Meshes kept on disk (the render cache) are looked up by it: an
+     *  oracle with none makes a tree that cannot be kept.  It names the
+     *  oracle's own content; the trees in dependencies() are counted besides.
+     */
+    virtual std::string persistentKey() const { return std::string(); }
     virtual std::vector<libfive::Tree> dependencies() const
     {
         return {};
@@ -87,6 +97,12 @@ public:
      */
     static bool serialize(const std::string& name, const OracleClause*,
                           Serializer& ser);
+
+    /*  Can an oracle of this name be written to a file and read back?  */
+    static bool canSerialize(const std::string& name)
+    {
+        return installed().find(name) != installed().end();
+    }
 
     /*
      *  Deserializes an oracle clause by looking up an installed deserializer.

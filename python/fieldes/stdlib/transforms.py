@@ -516,10 +516,25 @@ move.__doc__ = _move_prev.__doc__
 # Hand-written: an imported STEP part's exact-geometry information (see
 # fieldes.stdlib.cad_import.exclude) follows it through the rigid and
 # scaling transforms, as the 4x4 matrix each one applies
+def _lazy_once(fn):
+    ''' A function that works its result out on the first call only '''
+    cell = []
+    def get():
+        if not cell:
+            cell.append(fn())
+        return cell[0]
+    return get
+
+
 def _exact_follows(name, matrix):
     prev = globals()[name]
     def f(t, *args, **kwargs):
         out = prev(t, *args, **kwargs)
+        # the exact distance of an imported part (fields._dist) is moved, turned and scaled with it, with the
+        # same numbers: a part placed with handles() (var()s and all) or in the script still has it
+        get = getattr(t, '_distance_of', None) if isinstance(t, Shape) else None
+        if get is not None:
+            out._distance_of = _lazy_once(lambda: prev(get(), *args, **kwargs))
         if isinstance(t, Shape) and (hasattr(t, '_exact') or hasattr(t, '_exact_source') or
                                      hasattr(t, '_exact_sources')):
             from fieldes.stdlib import cad_import
