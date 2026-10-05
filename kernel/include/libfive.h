@@ -371,6 +371,12 @@ float libfive_fea_mode_field_min(libfive_fea* f, int i, int field);
 float libfive_fea_mode_field_max(libfive_fea* f, int i, int field);
 int libfive_fea_prepare(libfive_fea* f);
 uint64_t libfive_fea_hash(libfive_fea* f);
+/*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
+ *  as the solved one did; set_salt before solving makes the results' field keys a function of the salt (the
+ *  whole problem as asked), the same in every session.  save: 1 on success; load: NULL when the file is not one  */
+int libfive_fea_save(libfive_fea* f, const char* path);
+libfive_fea* libfive_fea_load(const char* path);
+void libfive_fea_set_salt(libfive_fea* f, uint64_t salt);
 int libfive_fea_solve(libfive_fea* f, int max_iterations, float tolerance);
 const char* libfive_fea_message(libfive_fea* f);
 /*  Fields: 0 von Mises, 1 |u|, 2-4 ux uy uz, 5-10 sxx syy szz sxy syz szx,
@@ -436,6 +442,12 @@ void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, flo
 /*  Meshes the part and resolves supports and loads; 1 on success (else the message says why)  */
 int libfive_tetfea_prepare(libfive_tetfea* f);
 uint64_t libfive_tetfea_hash(libfive_tetfea* f);
+/*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
+ *  as the solved one did; set_salt before solving makes the results' field keys a function of the salt (the
+ *  whole problem as asked), the same in every session.  save: 1 on success; load: NULL when the file is not one  */
+int libfive_tetfea_save(libfive_tetfea* f, const char* path);
+libfive_tetfea* libfive_tetfea_load(const char* path);
+void libfive_tetfea_set_salt(libfive_tetfea* f, uint64_t salt);
 int libfive_tetfea_solve(libfive_tetfea* f, int max_iterations, float tolerance);
 const char* libfive_tetfea_message(libfive_tetfea* f);
 libfive_tree libfive_tetfea_field(libfive_tetfea* f, int field);
@@ -472,6 +484,12 @@ int libfive_tetfea_optimize(libfive_tetfea* f, float volume_fraction, float pena
                             int extrude);
 libfive_tree libfive_tetfea_density(libfive_tetfea* f);
 int libfive_tetfea_history(libfive_tetfea* f, double* out, int max);
+/*  The density field after iteration k (0-based, one per compliance value; NULL past the end)  */
+libfive_tree libfive_tetfea_density_at(libfive_tetfea* f, int k);
+/*  How many separate pieces the optimised design is in when it is cut at the density `threshold`: the part is where the
+ *  density at the nodes is above it, and a link less than `margin` above it is too thin to count (specks under 2 % of
+ *  the body are not counted); 0 if there is no result  */
+int libfive_tetfea_pieces(libfive_tetfea* f, double threshold, double margin);
 int libfive_tetfea_modal(libfive_tetfea* f, int count, float density, int max_iterations, float tolerance);
 int libfive_tetfea_mode_count(libfive_tetfea* f);
 double libfive_tetfea_mode_frequency(libfive_tetfea* f, int i);
@@ -495,6 +513,12 @@ void libfive_tetthermal_add_generation(libfive_tetthermal* f, libfive_tree regio
 void libfive_tetthermal_add_convection(libfive_tetthermal* f, libfive_tree region, float coefficient, float ambient);
 int libfive_tetthermal_prepare(libfive_tetthermal* f);
 uint64_t libfive_tetthermal_hash(libfive_tetthermal* f);
+/*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
+ *  as the solved one did; set_salt before solving makes the results' field keys a function of the salt (the
+ *  whole problem as asked), the same in every session.  save: 1 on success; load: NULL when the file is not one  */
+int libfive_tetthermal_save(libfive_tetthermal* f, const char* path);
+libfive_tetthermal* libfive_tetthermal_load(const char* path);
+void libfive_tetthermal_set_salt(libfive_tetthermal* f, uint64_t salt);
 int libfive_tetthermal_solve(libfive_tetthermal* f, int max_iterations, float tolerance);
 const char* libfive_tetthermal_message(libfive_tetthermal* f);
 libfive_tree libfive_tetthermal_field(libfive_tetthermal* f, int field);
@@ -502,6 +526,89 @@ float libfive_tetthermal_field_min(libfive_tetthermal* f, int field);
 float libfive_tetthermal_field_max(libfive_tetthermal* f, int field);
 double libfive_tetthermal_stat(libfive_tetthermal* f, int which);
 void libfive_tetthermal_delete(libfive_tetthermal* f);
+
+/*
+ *  Steady incompressible laminar flow on a body-fitted tetrahedral mesh of the fluid domain (see
+ *  tetflow.hpp): inlets, outlets, walls and slip planes given as regions.  Fields: 0 speed,
+ *  1-3 vx vy vz, 4 pressure, 5 total pressure, 6 shear rate, 7 vorticity.  Stats: 0 elements,
+ *  1 nodes, 2 unknowns, 3 nonlinear iterations, 4 residual, 5 seconds, 6 inlet flow, 7 outlet
+ *  flow, 8 imbalance, 9 pressure drop, 10 max speed, 11 dissipation (N mm / s), 12 Reynolds
+ *  number, 13 cell Reynolds number, 14 hydraulic diameter, 15 elements across it, 16-18 wall
+ *  force xyz, 19 converged, 20 the linear solver (0 direct, 1 iterative), 21 net flow in through the walls.
+ */
+typedef struct libfive_tetflow_ libfive_tetflow;
+libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 region, float element_size,
+                                     float density, float viscosity);
+/*  direction (zero: along the inward normal), the mean speed (<= 0: the direction's length), a flow
+ *  rate (> 0 overrides the speed), profile 0 uniform / 1 developed  */
+void libfive_tetflow_add_inlet(libfive_tetflow* f, libfive_tree region, float dx, float dy, float dz, float speed,
+                               float flow_rate, int profile);
+void libfive_tetflow_add_outlet(libfive_tetflow* f, libfive_tree region, float pressure);
+void libfive_tetflow_add_wall(libfive_tetflow* f, libfive_tree region, float vx, float vy, float vz);
+void libfive_tetflow_add_slip(libfive_tetflow* f, libfive_tree region);
+void libfive_tetflow_set_gravity(libfive_tetflow* f, float gx, float gy, float gz);
+void libfive_tetflow_set_options(libfive_tetflow* f, int stokes, int nonlinear_iterations, float relaxation,
+                                 int direct_limit, int linear_iterations, float linear_tolerance, int newton);
+int libfive_tetflow_prepare(libfive_tetflow* f);
+uint64_t libfive_tetflow_hash(libfive_tetflow* f);
+/*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
+ *  as the solved one did; set_salt before solving makes the results' field keys a function of the salt (the
+ *  whole problem as asked), the same in every session.  save: 1 on success; load: NULL when the file is not one  */
+int libfive_tetflow_save(libfive_tetflow* f, const char* path);
+libfive_tetflow* libfive_tetflow_load(const char* path);
+void libfive_tetflow_set_salt(libfive_tetflow* f, uint64_t salt);
+int libfive_tetflow_solve(libfive_tetflow* f, float tolerance);
+const char* libfive_tetflow_message(libfive_tetflow* f);
+const char* libfive_tetflow_warning(libfive_tetflow* f);
+libfive_tree libfive_tetflow_field(libfive_tetflow* f, int field);
+float libfive_tetflow_field_min(libfive_tetflow* f, int field);
+float libfive_tetflow_field_max(libfive_tetflow* f, int field);
+double libfive_tetflow_stat(libfive_tetflow* f, int which);
+/*  kind 0: the flow through each inlet, 1: through each outlet, 2: the force on each wall item
+ *  (3 values each); fills up to max values, returns how many there are  */
+int libfive_tetflow_items(libfive_tetflow* f, int kind, double* out, int max);
+/*  The flow in time (see tetflow.hpp): from the Stokes flow at t = 0, `steps` steps of dt seconds, every
+ *  store_every-th kept (and the last).  Then libfive_tetflow_step_count, _step_time, _step_field (as
+ *  libfive_tetflow_field, for step k), _step_field_min / _max, _step_stat (as libfive_tetflow_stat).  The
+ *  flow of the last step is also libfive_tetflow_field / _stat.  */
+int libfive_tetflow_solve_transient(libfive_tetflow* f, float dt, int steps, int store_every, float tolerance);
+int libfive_tetflow_step_count(libfive_tetflow* f);
+double libfive_tetflow_step_time(libfive_tetflow* f, int k);
+/*  The solver iteration a step is of (0 = the Stokes start; a steady solve keeps every iteration as a step), or
+ *  -1 for a stored time of a flow in time  */
+int libfive_tetflow_step_iteration(libfive_tetflow* f, int k);
+libfive_tree libfive_tetflow_step_field(libfive_tetflow* f, int k, int field);
+float libfive_tetflow_step_field_min(libfive_tetflow* f, int k, int field);
+float libfive_tetflow_step_field_max(libfive_tetflow* f, int k, int field);
+double libfive_tetflow_step_stat(libfive_tetflow* f, int k, int which);
+/*  Streamlines of the flow (step k, or the last / the steady flow for k < 0) from `n` seed points (3 doubles
+ *  each): each line's points as x y z speed time (5 doubles) written one line after another into `out` (up to
+ *  `capacity` doubles), `counts[i]` the number of points of line i; returns the number of doubles the lines
+ *  need (call again with a larger buffer when it is more than the capacity).  */
+int libfive_tetflow_streamlines(libfive_tetflow* f, int k, const double* seeds, int n, double max_time, int max_points,
+                                int backward, double* out, int capacity, int* counts);
+/*  Up to n points over the inlets to seed streamlines from (3 doubles each); returns how many  */
+int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out);
+/*  Shape optimisation of a body in the flow (see tetflow.hpp): `body` (solid where negative) is optimised
+ *  inside `region` (NULL: anywhere in the fluid domain) for the objective w_drag * drag - w_lift * lift, minimised
+ *  (drag along the flow direction d -- zero: the inlets' mean -- lift along l -- zero: perpendicular to d in the
+ *  domain's long plane), with the solid volume between v_min and v_max times the body's own; elements in `keep`
+ *  stay solid, in `avoid` fluid; extrude -1, or 0 / 1 / 2 for a design constant along x / y / z; darcy sets the
+ *  solid's friction (mu / (darcy D^2)).  1 on success; then libfive_tetflow_level is the body as a level set (mm, > 0
+ *  inside it, its boundary the zero level), libfive_tetflow_level_at the same after iteration k, libfive_tetflow_history fills up to max
+ *  values of the drag (kind 0) or the lift (kind 1, N), one per iteration and the final body's last; the flow of
+ *  every iteration is a step (libfive_tetflow_step_*, its iteration the step's), the last around the final body,
+ *  which is also libfive_tetflow_field.  libfive_tetflow_direction gives d (kind 0) or l (kind 1).  */
+int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree region, float w_drag, float w_lift,
+                             float dx, float dy, float dz, float lx, float ly, float lz, float v_min, float v_max,
+                             float filter_radius, int iterations, float move, const libfive_tree* keep, int keep_count,
+                             const libfive_tree* avoid, int avoid_count, int extrude, float darcy);
+libfive_tree libfive_tetflow_level(libfive_tetflow* f);
+int libfive_tetflow_history(libfive_tetflow* f, int kind, double* out, int max);
+void libfive_tetflow_direction(libfive_tetflow* f, int kind, double* out3);
+/*  The design field after iteration k (0-based, one per power value; NULL past the end)  */
+libfive_tree libfive_tetflow_level_at(libfive_tetflow* f, int k);
+void libfive_tetflow_delete(libfive_tetflow* f);
 
 /*
  *  Steady-state heat conduction on the same voxel grid (see thermal.hpp):
@@ -528,6 +635,12 @@ int libfive_thermal_solve(libfive_thermal* t, int max_iterations, float toleranc
  *  of the prepared problem, for caching  */
 int libfive_thermal_prepare(libfive_thermal* t);
 uint64_t libfive_thermal_hash(libfive_thermal* t);
+/*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
+ *  as the solved one did; set_salt before solving makes the results' field keys a function of the salt (the
+ *  whole problem as asked), the same in every session.  save: 1 on success; load: NULL when the file is not one  */
+int libfive_thermal_save(libfive_thermal* f, const char* path);
+libfive_thermal* libfive_thermal_load(const char* path);
+void libfive_thermal_set_salt(libfive_thermal* f, uint64_t salt);
 /*  Thermal topology optimization (see thermal.hpp; extrude: -1, or 0 / 1 / 2
  *  for a design constant along x / y / z): 1 on success;
  *  libfive_thermal_density is then the density field (0..1) and
@@ -666,7 +779,7 @@ typedef struct libfive_step_part {
      *  the caller, like `tree`.  */
     libfive_tree marker;
     /*  Which solid of the file and which of its instances this part is
-     *  (for libfive_step_exact_clipped)  */
+     *  (for libfive_step_exact_surface)  */
     int32_t solid;
     int32_t instance;
     /*  Hints for choosing a render resolution, in the delivered units: the
@@ -704,18 +817,13 @@ const char* libfive_import_step_last_message(void);
  *  line per part that has any, "part faces worst_mm worst_face"  */
 const char* libfive_import_step_fit_report(void);
 
-/*  An imported part's exact surface inside a region, meshed directly from
- *  the STEP file (for exact regions: fieldes.stdlib.cad_import.exclude): the
- *  part's `solid` / `instance`, placed by the row-major 4x4 matrix `m` (NULL:
- *  none) after its own placement, then cut to the region `field` (a tree,
- *  negative inside; NULL: all of the surface): the triangles inside it, the
- *  ones its surface crosses split down to `cell` long.
- *  `turn_samples`: points per full turn of a circle (the quality).  NULL on
- *  failure; libfive_import_step_last_message() then says why.  Free with
- *  libfive_mesh_delete.  */
-libfive_mesh* libfive_step_exact_clipped(const char* filename, int solid, int instance,
-                                         const double* m, libfive_tree field, double cell,
-                                         int turn_samples);
+/*  An imported part's exact surface, meshed directly from the STEP file (for the exact regions of
+ *  fieldes.stdlib.cad_import.exclude, which makes it a distance field with libfive_mesh_from_arrays): the part's
+ *  `solid` / `instance`, placed by the row-major 4x4 matrix `m` (NULL: none) after its own placement.
+ *  `turn_samples`: points per full turn of a circle (the quality).  NULL on failure;
+ *  libfive_import_step_last_message() then says why.  Free with libfive_mesh_delete.  */
+libfive_mesh* libfive_step_exact_surface(const char* filename, int solid, int instance,
+                                         const double* m, int turn_samples);
 
 /*  The tessellated import: a STEP file as the exact surface itself, nothing reconstructed or fitted.
  *  Every solid is tessellated once, in its own coordinates (the file's units), directly from its trimmed

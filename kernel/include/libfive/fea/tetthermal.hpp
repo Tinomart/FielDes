@@ -56,6 +56,7 @@ public:
     std::shared_ptr<const TetMesh> mesh() const { return m_mesh; }
 
 private:
+    friend struct ResultIO;
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_k;

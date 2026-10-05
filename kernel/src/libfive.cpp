@@ -50,6 +50,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/fea/tetmesh.hpp"
 #include "libfive/fea/tetfea.hpp"
 #include "libfive/fea/tetthermal.hpp"
+#include "libfive/fea/tetflow.hpp"
+#include "libfive/fea/result_io.hpp"
 #include "libfive/step/step_reconstruct.hpp"
 #include "libfive/run_progress.hpp"
 #include "libfive/fea/thermal.hpp"
@@ -202,7 +204,6 @@ bool libfive_tree_can_save(libfive_tree ptr)
 {
     return canKeep(Tree(ptr));
 }
-
 bool libfive_tree_save(libfive_tree ptr, const char* filename)
 {
     if (!canKeep(Tree(ptr)))
@@ -445,9 +446,8 @@ libfive_step_parts* libfive_import_step_parts_reconstructed(const char* filename
     return out;
 }
 
-libfive_mesh* libfive_step_exact_clipped(const char* filename, int solid, int instance,
-                                         const double* m, libfive_tree field, double cell,
-                                         int turn_samples)
+libfive_mesh* libfive_step_exact_surface(const char* filename, int solid, int instance,
+                                         const double* m, int turn_samples)
 {
     step::ExactSpec spec;
     spec.path = filename;
@@ -458,15 +458,12 @@ libfive_mesh* libfive_step_exact_clipped(const char* filename, int solid, int in
             for (int c = 0; c < 4; c++) spec.transform(r, c) = m[r * 4 + c];
     }
     spec.turnSamples = turn_samples > 0 ? turn_samples : 64;
-    const step::ExactPiece surface = step::exactSurface(spec);
-    if (!surface.error.empty()) {
-        g_step_last_message = surface.error;
+    const step::ExactPiece piece = step::exactSurface(spec);
+    if (!piece.error.empty()) {
+        g_step_last_message = piece.error;
         return nullptr;
     }
-    const step::ExactPiece piece = field
-        ? step::clipToRegion(surface, Tree(field), {}, cell > 0 ? cell : 1.0)
-        : surface;
-    g_step_last_message = "exact region: " + std::to_string(piece.tris.size()) + " triangles";
+    g_step_last_message = "exact surface: " + std::to_string(piece.tris.size()) + " triangles";
     auto out = new libfive_mesh;
     out->vert_count = uint32_t(piece.verts.size());
     out->tri_count = uint32_t(piece.tris.size());
@@ -848,7 +845,7 @@ struct libfive_fea_
 {
     std::unique_ptr<fea::StaticProblem> problem;
     std::string message;
-    bool prepared = false, solved = false;
+    bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
 };
 
 libfive_fea* libfive_fea_new(libfive_tree shape, libfive_region3 r,
@@ -897,7 +894,9 @@ void libfive_fea_set_thermal(libfive_fea* f, libfive_tree temperature, float alp
 int libfive_fea_modal(libfive_fea* f, int count, float density, int max_iterations, float tolerance)
 {
     f->message.clear();
-    return f->problem->modal(count, density, max_iterations, tolerance, f->message) ? 1 : 0;
+    const bool ok = f->problem->modal(count, density, max_iterations, tolerance, f->message);
+    if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return ok ? 1 : 0;
 }
 
 int libfive_fea_mode_count(libfive_fea* f)
@@ -977,10 +976,33 @@ uint64_t libfive_fea_hash(libfive_fea* f)
     return f->prepared ? f->problem->hash() : 0;
 }
 
+int libfive_fea_save(libfive_fea* f, const char* path)
+{
+    if (!f || !path || !f->problem) return 0;
+    return fea::ResultIO::save(*f->problem, path) ? 1 : 0;
+}
+
+libfive_fea* libfive_fea_load(const char* path)
+{
+    if (!path) return nullptr;
+    auto p = fea::ResultIO::loadStatic(path);
+    if (!p) return nullptr;
+    auto f = new libfive_fea_;
+    f->problem = std::move(p);
+    f->prepared = f->solved = true;
+    return f;
+}
+
+void libfive_fea_set_salt(libfive_fea* f, uint64_t salt)
+{
+    if (f) f->salt = salt;
+}
+
 int libfive_fea_solve(libfive_fea* f, int max_iterations, float tolerance)
 {
     f->message.clear();
     f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     if (f->solved)
     {
         const auto r = f->problem->result();
@@ -1122,6 +1144,7 @@ int libfive_fea_optimize(libfive_fea* f, float volume_fraction, float penalty,
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
     f->message.clear();
     const bool ok = f->problem->optimize(s, f->message);
+    if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return ok ? 1 : 0;
 }
 
@@ -1218,7 +1241,7 @@ struct libfive_tetfea_
 {
     std::unique_ptr<fea::TetProblem> problem;
     std::string message;
-    bool prepared = false, solved = false;
+    bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
 };
 
 libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 r, float h, float E, float nu)
@@ -1273,10 +1296,33 @@ uint64_t libfive_tetfea_hash(libfive_tetfea* f)
     return f->prepared ? f->problem->hash() : 0;
 }
 
+int libfive_tetfea_save(libfive_tetfea* f, const char* path)
+{
+    if (!f || !path || !f->problem) return 0;
+    return fea::ResultIO::save(*f->problem, path) ? 1 : 0;
+}
+
+libfive_tetfea* libfive_tetfea_load(const char* path)
+{
+    if (!path) return nullptr;
+    auto p = fea::ResultIO::loadTet(path);
+    if (!p) return nullptr;
+    auto f = new libfive_tetfea_;
+    f->problem = std::move(p);
+    f->prepared = f->solved = true;
+    return f;
+}
+
+void libfive_tetfea_set_salt(libfive_tetfea* f, uint64_t salt)
+{
+    if (f) f->salt = salt;
+}
+
 int libfive_tetfea_solve(libfive_tetfea* f, int max_iterations, float tolerance)
 {
     f->message.clear();
     f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
 
@@ -1408,7 +1454,9 @@ int libfive_tetfea_optimize(libfive_tetfea* f, float volume_fraction, float pena
     for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
     f->message.clear();
-    return f->problem->optimize(s, f->message) ? 1 : 0;
+    const bool ok = f->problem->optimize(s, f->message);
+    if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return ok ? 1 : 0;
 }
 
 libfive_tree libfive_tetfea_density(libfive_tetfea* f)
@@ -1428,10 +1476,28 @@ int libfive_tetfea_history(libfive_tetfea* f, double* out, int max)
     return n;
 }
 
+
+int libfive_tetfea_pieces(libfive_tetfea* f, double threshold, double margin)
+{
+    return f->problem->pieces(threshold, margin);
+}
+
+libfive_tree libfive_tetfea_density_at(libfive_tetfea* f, int k)
+{
+    if (k < 0) return nullptr;
+    auto r = f->problem->densityResultAt(size_t(k));
+    if (!r) return nullptr;
+    Tree t = fea::meshFieldTree(r, 0);
+    if (!t.is_valid()) return nullptr;
+    return t.release();
+}
+
 int libfive_tetfea_modal(libfive_tetfea* f, int count, float density, int max_iterations, float tolerance)
 {
     f->message.clear();
-    return f->problem->modal(count, density, max_iterations, tolerance, f->message) ? 1 : 0;
+    const bool ok = f->problem->modal(count, density, max_iterations, tolerance, f->message);
+    if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return ok ? 1 : 0;
 }
 
 int libfive_tetfea_mode_count(libfive_tetfea* f)
@@ -1477,7 +1543,7 @@ struct libfive_tetthermal_
 {
     std::unique_ptr<fea::TetThermalProblem> problem;
     std::string message;
-    bool prepared = false, solved = false;
+    bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
 };
 
 libfive_tetthermal* libfive_tetthermal_new(libfive_tree shape, libfive_region3 r, float h, float conductivity)
@@ -1525,10 +1591,33 @@ uint64_t libfive_tetthermal_hash(libfive_tetthermal* f)
     return f->prepared ? f->problem->hash() : 0;
 }
 
+int libfive_tetthermal_save(libfive_tetthermal* f, const char* path)
+{
+    if (!f || !path || !f->problem) return 0;
+    return fea::ResultIO::save(*f->problem, path) ? 1 : 0;
+}
+
+libfive_tetthermal* libfive_tetthermal_load(const char* path)
+{
+    if (!path) return nullptr;
+    auto p = fea::ResultIO::loadTetThermal(path);
+    if (!p) return nullptr;
+    auto f = new libfive_tetthermal_;
+    f->problem = std::move(p);
+    f->prepared = f->solved = true;
+    return f;
+}
+
+void libfive_tetthermal_set_salt(libfive_tetthermal* f, uint64_t salt)
+{
+    if (f) f->salt = salt;
+}
+
 int libfive_tetthermal_solve(libfive_tetthermal* f, int max_iterations, float tolerance)
 {
     f->message.clear();
     f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
 
@@ -1580,6 +1669,374 @@ void libfive_tetthermal_delete(libfive_tetthermal* f)
     delete f;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Flow on the tetrahedral mesh
+
+struct libfive_tetflow_
+{
+    std::unique_ptr<fea::TetFlowProblem> problem;
+    std::string message;
+    bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
+};
+
+libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 r, float h, float density, float viscosity)
+{
+    auto f = new libfive_tetflow_;
+    f->problem.reset(new fea::TetFlowProblem(
+        Tree(domain), Eigen::Vector3d(r.X.lower, r.Y.lower, r.Z.lower),
+        Eigen::Vector3d(r.X.upper, r.Y.upper, r.Z.upper), h, density, viscosity));
+    return f;
+}
+
+void libfive_tetflow_add_inlet(libfive_tetflow* f, libfive_tree region, float dx, float dy, float dz, float speed,
+                               float flow_rate, int profile)
+{
+    f->problem->addInlet(Tree(region), Eigen::Vector3d(dx, dy, dz), speed, flow_rate, profile);
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetflow_add_outlet(libfive_tetflow* f, libfive_tree region, float pressure)
+{
+    f->problem->addOutlet(Tree(region), pressure);
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetflow_add_wall(libfive_tetflow* f, libfive_tree region, float vx, float vy, float vz)
+{
+    f->problem->addWall(Tree(region), Eigen::Vector3d(vx, vy, vz));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetflow_add_slip(libfive_tetflow* f, libfive_tree region)
+{
+    f->problem->addSlip(Tree(region));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetflow_set_gravity(libfive_tetflow* f, float gx, float gy, float gz)
+{
+    f->problem->setBodyForce(Eigen::Vector3d(gx, gy, gz));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetflow_set_options(libfive_tetflow* f, int stokes, int nonlinear_iterations, float relaxation,
+                                 int direct_limit, int linear_iterations, float linear_tolerance, int newton)
+{
+    fea::TetFlowProblem::Options o;
+    o.stokes = stokes != 0;
+    if (nonlinear_iterations > 0) o.nonlinearIterations = nonlinear_iterations;
+    if (relaxation > 0) o.relaxation = relaxation;
+    if (direct_limit > 0) o.directLimit = direct_limit;
+    if (linear_iterations > 0) o.linearIterations = linear_iterations;
+    if (linear_tolerance > 0) o.linearTolerance = linear_tolerance;
+    o.newton = newton != 0;
+    f->problem->setOptions(o);
+    f->prepared = f->solved = false;
+}
+
+int libfive_tetflow_prepare(libfive_tetflow* f)
+{
+    f->message.clear();
+    f->prepared = f->problem->prepare(f->message);
+    return f->prepared ? 1 : 0;
+}
+
+uint64_t libfive_tetflow_hash(libfive_tetflow* f)
+{
+    return f->prepared ? f->problem->hash() : 0;
+}
+
+int libfive_tetflow_save(libfive_tetflow* f, const char* path)
+{
+    if (!f || !path || !f->problem) return 0;
+    return fea::ResultIO::save(*f->problem, path) ? 1 : 0;
+}
+
+libfive_tetflow* libfive_tetflow_load(const char* path)
+{
+    if (!path) return nullptr;
+    auto p = fea::ResultIO::loadTetFlow(path);
+    if (!p) return nullptr;
+    auto f = new libfive_tetflow_;
+    f->problem = std::move(p);
+    f->prepared = f->solved = true;
+    return f;
+}
+
+void libfive_tetflow_set_salt(libfive_tetflow* f, uint64_t salt)
+{
+    if (f) f->salt = salt;
+}
+
+int libfive_tetflow_solve(libfive_tetflow* f, float tolerance)
+{
+    f->message.clear();
+    f->solved = f->problem->solve(tolerance, f->message);
+    if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return f->solved ? 1 : 0;
+}
+
+const char* libfive_tetflow_message(libfive_tetflow* f)
+{
+    return f->message.c_str();
+}
+
+const char* libfive_tetflow_warning(libfive_tetflow* f)
+{
+    return f->problem->warning().c_str();
+}
+
+libfive_tree libfive_tetflow_field(libfive_tetflow* f, int field)
+{
+    if (!f->solved || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return nullptr;
+    Tree t = fea::meshFieldTree(f->problem->result(), field);
+    if (!t.is_valid()) return nullptr;
+    return t.release();
+}
+
+float libfive_tetflow_field_min(libfive_tetflow* f, int field)
+{
+    if (!f->solved || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return 0;
+    return f->problem->result()->minValue[field];
+}
+
+float libfive_tetflow_field_max(libfive_tetflow* f, int field)
+{
+    if (!f->solved || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return 0;
+    return f->problem->result()->maxValue[field];
+}
+
+double libfive_tetflow_stat(libfive_tetflow* f, int which)
+{
+    if (!f->solved) return 0;
+    const auto& s = f->problem->stats();
+    switch (which)
+    {
+        case 0: return s.elements;
+        case 1: return s.nodes;
+        case 2: return s.unknowns;
+        case 3: return s.nonlinearIterations;
+        case 4: return s.residual;
+        case 5: return s.seconds;
+        case 6: return s.inletFlow;
+        case 7: return s.outletFlow;
+        case 8: return s.imbalance;
+        case 9: return s.pressureDrop;
+        case 10: return s.maxSpeed;
+        case 11: return s.dissipation;
+        case 12: return s.reynolds;
+        case 13: return s.cellReynolds;
+        case 14: return s.hydraulicDiameter;
+        case 15: return s.elementsAcross;
+        case 16: return s.wallForce.x();
+        case 17: return s.wallForce.y();
+        case 18: return s.wallForce.z();
+        case 19: return s.converged ? 1 : 0;
+        case 20: return s.linearSolver;
+        case 21: return s.wallFlow;
+        case 22: { auto r = f->problem->densityResult(); return r ? r->volume : 0; }
+        case 23: return f->problem->optStepsBack();
+        case 24: return f->problem->optStop();
+        default: return 0;
+    }
+}
+
+int libfive_tetflow_items(libfive_tetflow* f, int kind, double* out, int max)
+{
+    if (!f->solved) return 0;
+    if (kind == 2)
+    {
+        const auto& w = f->problem->wallForces();
+        for (int i = 0; i < int(w.size()) && 3 * i + 2 < max; ++i)
+            for (int a = 0; a < 3; ++a) out[3 * i + a] = w[size_t(i)][a];
+        return int(w.size());
+    }
+    const auto& v = kind == 0 ? f->problem->inletFlows() : f->problem->outletFlows();
+    for (int i = 0; i < int(v.size()) && i < max; ++i) out[i] = v[size_t(i)];
+    return int(v.size());
+}
+
+int libfive_tetflow_solve_transient(libfive_tetflow* f, float dt, int steps, int store_every, float tolerance)
+{
+    f->message.clear();
+    f->solved = f->problem->solveTransient(dt, steps, store_every, tolerance, f->message);
+    if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return f->solved ? 1 : 0;
+}
+
+int libfive_tetflow_step_count(libfive_tetflow* f)
+{
+    return f->solved ? int(f->problem->stepCount()) : 0;
+}
+
+double libfive_tetflow_step_time(libfive_tetflow* f, int k)
+{
+    return (f->solved && k >= 0) ? f->problem->stepTime(size_t(k)) : 0.0;
+}
+
+int libfive_tetflow_step_iteration(libfive_tetflow* f, int k)
+{
+    return (f->solved && k >= 0) ? f->problem->stepIteration(size_t(k)) : -1;
+}
+
+libfive_tree libfive_tetflow_step_field(libfive_tetflow* f, int k, int field)
+{
+    if (!f->solved || k < 0 || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return nullptr;
+    auto r = f->problem->stepResult(size_t(k));
+    if (!r) return nullptr;
+    Tree t = fea::meshFieldTree(r, field);
+    if (!t.is_valid()) return nullptr;
+    return t.release();
+}
+
+float libfive_tetflow_step_field_min(libfive_tetflow* f, int k, int field)
+{
+    if (!f->solved || k < 0 || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return 0;
+    auto r = f->problem->stepResult(size_t(k));
+    return r ? r->minValue[field] : 0.0f;
+}
+
+float libfive_tetflow_step_field_max(libfive_tetflow* f, int k, int field)
+{
+    if (!f->solved || k < 0 || field < 0 || field >= fea::TetFlowProblem::FLOW_FIELD_COUNT) return 0;
+    auto r = f->problem->stepResult(size_t(k));
+    return r ? r->maxValue[field] : 0.0f;
+}
+
+double libfive_tetflow_step_stat(libfive_tetflow* f, int k, int which)
+{
+    if (!f->solved || k < 0 || size_t(k) >= f->problem->stepCount()) return 0;
+    const auto& s = f->problem->stepStats(size_t(k));
+    switch (which)
+    {
+        case 0: return s.elements;
+        case 1: return s.nodes;
+        case 2: return s.unknowns;
+        case 3: return s.nonlinearIterations;
+        case 4: return s.residual;
+        case 5: return s.seconds;
+        case 6: return s.inletFlow;
+        case 7: return s.outletFlow;
+        case 8: return s.imbalance;
+        case 9: return s.pressureDrop;
+        case 10: return s.maxSpeed;
+        case 11: return s.dissipation;
+        case 12: return s.reynolds;
+        case 13: return s.cellReynolds;
+        case 14: return s.hydraulicDiameter;
+        case 15: return s.elementsAcross;
+        case 16: return s.wallForce.x();
+        case 17: return s.wallForce.y();
+        case 18: return s.wallForce.z();
+        case 19: return s.converged ? 1 : 0;
+        case 20: return s.linearSolver;
+        case 21: return s.wallFlow;
+        default: return 0;
+    }
+}
+
+int libfive_tetflow_streamlines(libfive_tetflow* f, int k, const double* seeds, int n, double max_time, int max_points,
+                                int backward, double* out, int capacity, int* counts)
+{
+    if (!f->solved) return 0;
+    auto r = k < 0 ? f->problem->result() : f->problem->stepResult(size_t(k));
+    if (!r) return 0;
+    std::vector<Eigen::Vector3d> pts;
+    for (int i = 0; i < n; ++i) pts.emplace_back(seeds[3 * i], seeds[3 * i + 1], seeds[3 * i + 2]);
+    std::vector<std::vector<std::array<double, 5>>> lines;
+    f->problem->streamlines(r, pts, max_time, std::max(2, max_points), backward != 0, lines);
+    int need = 0;
+    for (const auto& l : lines) need += int(l.size()) * 5;
+    int pos = 0;
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
+        if (counts && int(i) < n) counts[i] = int(lines[i].size());
+        for (const auto& p : lines[i])
+            for (int c = 0; c < 5; ++c)
+            {
+                if (pos < capacity) out[pos] = p[size_t(c)];
+                ++pos;
+            }
+    }
+    if (counts)
+        for (int i = int(lines.size()); i < n; ++i) counts[i] = 0;
+    return need;
+}
+
+int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out)
+{
+    if (!f->prepared) return 0;
+    const auto pts = f->problem->inletSeeds(n);
+    for (size_t i = 0; i < pts.size(); ++i)
+        for (int c = 0; c < 3; ++c) out[3 * i + size_t(c)] = pts[i][c];
+    return int(pts.size());
+}
+
+int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree region, float w_drag, float w_lift,
+                             float dx, float dy, float dz, float lx, float ly, float lz, float v_min, float v_max,
+                             float filter_radius, int iterations, float move, const libfive_tree* keep, int keep_count,
+                             const libfive_tree* avoid, int avoid_count, int extrude, float darcy)
+{
+    f->message.clear();
+    fea::TetFlowProblem::FlowOpt s;
+    if (body) s.body = Tree(body);
+    if (region) s.region = Tree(region);
+    s.wDrag = w_drag;
+    s.wLift = w_lift;
+    s.flowDir = Eigen::Vector3d(dx, dy, dz);
+    s.liftDir = Eigen::Vector3d(lx, ly, lz);
+    s.volumeMin = v_min;
+    s.volumeMax = v_max;
+    s.filterRadius = filter_radius;
+    s.iterations = iterations;
+    s.move = move;
+    s.extrude = extrude;
+    if (darcy > 0) s.darcy = darcy;
+    for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
+    for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
+    const bool ok = f->problem->optimize(s, f->message);
+    f->solved = ok;
+    if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
+    return ok ? 1 : 0;
+}
+
+void libfive_tetflow_direction(libfive_tetflow* f, int kind, double* out3)
+{
+    const Eigen::Vector3d d = kind == 1 ? f->problem->liftDirection() : f->problem->flowDirection();
+    for (int c = 0; c < 3; ++c) out3[c] = d[c];
+}
+
+libfive_tree libfive_tetflow_level(libfive_tetflow* f)
+{
+    auto r = f->problem->densityResult();
+    if (!r) return nullptr;
+    Tree t = fea::meshFieldTree(r, 0);
+    if (!t.is_valid()) return nullptr;
+    return t.release();
+}
+
+int libfive_tetflow_history(libfive_tetflow* f, int kind, double* out, int max)
+{
+    const auto& h = kind == 1 ? f->problem->liftHistory() : f->problem->dragHistory();
+    for (int i = 0; i < int(h.size()) && i < max; ++i) out[i] = h[size_t(i)];
+    return int(h.size());
+}
+
+libfive_tree libfive_tetflow_level_at(libfive_tetflow* f, int k)
+{
+    if (k < 0) return nullptr;
+    auto r = f->problem->densityResultAt(size_t(k));
+    if (!r) return nullptr;
+    Tree t = fea::meshFieldTree(r, 0);
+    if (!t.is_valid()) return nullptr;
+    return t.release();
+}
+
+void libfive_tetflow_delete(libfive_tetflow* f)
+{
+    delete f;
+}
+
 void libfive_fea_delete(libfive_fea* f)
 {
     delete f;
@@ -1589,7 +2046,7 @@ struct libfive_thermal_
 {
     std::unique_ptr<fea::ThermalProblem> problem;
     std::string message;
-    bool solved = false;
+    bool solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
 };
 
 libfive_thermal* libfive_thermal_new(libfive_tree shape, libfive_region3 r,
@@ -1639,6 +2096,28 @@ uint64_t libfive_thermal_hash(libfive_thermal* t)
     return t->problem->hash();
 }
 
+int libfive_thermal_save(libfive_thermal* f, const char* path)
+{
+    if (!f || !path || !f->problem) return 0;
+    return fea::ResultIO::save(*f->problem, path) ? 1 : 0;
+}
+
+libfive_thermal* libfive_thermal_load(const char* path)
+{
+    if (!path) return nullptr;
+    auto p = fea::ResultIO::loadThermal(path);
+    if (!p) return nullptr;
+    auto f = new libfive_thermal_;
+    f->problem = std::move(p);
+    f->solved = true;
+    return f;
+}
+
+void libfive_thermal_set_salt(libfive_thermal* f, uint64_t salt)
+{
+    if (f) f->salt = salt;
+}
+
 int libfive_thermal_optimize(libfive_thermal* t, float volume_fraction, float penalty,
                              float filter_radius, int iterations, float move,
                              const libfive_tree* keep, int keep_count,
@@ -1657,7 +2136,9 @@ int libfive_thermal_optimize(libfive_thermal* t, float volume_fraction, float pe
     for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
     t->message.clear();
-    return t->problem->optimize(s, t->message) ? 1 : 0;
+    const bool ok = t->problem->optimize(s, t->message);
+    if (ok) fea::ResultIO::assignSerials(*t->problem, t->salt);
+    return ok ? 1 : 0;
 }
 
 libfive_tree libfive_thermal_density(libfive_thermal* t)
@@ -1678,6 +2159,7 @@ int libfive_thermal_solve(libfive_thermal* t, int max_iterations, float toleranc
 {
     t->message.clear();
     t->solved = t->problem->solve(max_iterations, tolerance, t->message);
+    if (t->solved) fea::ResultIO::assignSerials(*t->problem, t->salt);
     return t->solved ? 1 : 0;
 }
 

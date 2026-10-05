@@ -1,33 +1,40 @@
 ''' Handles: edit a shape -- an imported part too -- by dragging in FielDes's viewport.
 
-    FielDes's model tree has a handles button on every shape and part.  It cycles
-    three modes, so the ways of editing never get in each other's way:
+    Two ways of editing by dragging work together, and the first has priority where they meet:
 
-      gizmo    the part's own move arrows, rotation rings and scale knobs:
-               `handles()` writes, under the shape's definition,
+      the gizmo    the part's own move arrows, rotation rings and scale knobs: `handles()` writes, under the shape's
+                   definition,
 
-                   part = handles(part, move=(var(0), var(0), var(0)),
-                                  rotate=(var(0), var(0), var(0)),
-                                  scale=(var(1), var(1), var(1)), mode='gizmo')
+                       part = handles(part, move=(var(0), var(0), var(0)),
+                                      rotate=(var(0), var(0), var(0)),
+                                      scale=(var(1), var(1), var(1)))
 
-               so what the gizmo does is ordinary script text, like any dragged
-               var().  The shape is `part` scaled about its centre, rotated (x,
-               then y, then z; degrees) and moved.
-      handles  FielDes's own handles: hover a surface of the shape and drag it.
-               Any shape with `var()` numbers has them; for a shape written with
-               plain numbers -- a primitive, or a part imported from a STEP file,
-               which is made of primitives -- `expose()` makes the numbers that
-               place its surfaces variables:
+                   so what the gizmo does is ordinary script text, like any dragged var().  The shape is `part`
+                   scaled about its centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown
+                   is the `mode` of that line (the model tree's gizmo button, key E, goes through them):
 
-                   part = expose(part, [var(6), var(40), ...])
+                       'click'   (the default) the gizmo is shown while the shape is selected, i.e. after you click it
+                       'never'   it is never shown, so that it cannot get in the way
+                       'always'  it is shown on the shape whether it is selected or not
 
-               Dragging a face changes the number of that face (a plane's
-               position, a radius) in the script text.
-      lock     nothing is draggable: neither the gizmo nor the surface
+      handles      FielDes's own handles: hover a surface of the shape and drag it.  This is always there, whatever
+                   the mode of the gizmo.  Any shape with `var()` numbers has them; for a shape written with plain
+                   numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
+                   `expose()` makes the numbers that place its surfaces variables:
 
-    Nothing is stored anywhere but in the script: delete the `expose(...)` and
-    `handles(...)` lines of a part (FielDes's Reimport does) and it is the file's
-    version again. '''
+                       part = expose(part, [var(6), var(40), ...])
+
+                   Dragging a face changes the number of that face (a plane's position, a radius) in the script
+                   text.  FielDes writes the line itself when you select the shape.
+
+    A lock button beside it (key R) is a separate switch: a locked shape cannot be dragged at all, neither by the
+    gizmo nor by its surfaces, and keeps its gizmo mode, which comes back when it is unlocked:
+
+                   part = lock(part)
+
+    Nothing is stored anywhere but in the script: delete the `expose(...)` and `handles(...)` lines of a part
+    (FielDes's Reimport does) and it is the file's version again; the `lock(...)` line only keeps it from being
+    dragged. '''
 import ctypes
 import math
 import struct
@@ -36,9 +43,9 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.transforms import move as _move, rotate_x, rotate_y, rotate_z, scale_xyz, _lazy_once
 
-__all__ = ['handles', 'expose']
+__all__ = ['handles', 'expose', 'lock']
 
-MODES = ('gizmo', 'handles', 'lock')
+MODES = ('click', 'never', 'always')
 
 # What an imported part carries that a transformed copy must keep: its
 # features and name (roi_resolution, the model tree).  (Its own resolution is
@@ -79,8 +86,7 @@ def _carry(out, shape):
     out._placed_from = shape
 
 
-def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None,
-            show=None):
+def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
         scale: (x, y, z) factors about the shape's centre, `rotate`: (x, y, z)
@@ -88,14 +94,17 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
         `move`: (x, y, z) translation.  Write the numbers as var(...) to drag
         them: FielDes's model tree does that for you.
         about: the centre (default: the middle of the shape's box)
-        mode: 'gizmo' (the default) shows the gizmo, 'handles' lets the shape's own
-        surfaces be dragged instead (see expose()), 'lock' makes it undraggable;
-        the placement stays in every mode.  (show=True / False, as older scripts
-        wrote it, is 'gizmo' / 'lock'; mode= wins.) '''
+        mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
+        'always'.  The shape's own surfaces (see expose()) can be dragged whatever the mode, and the gizmo has
+        priority where it is shown.
+        To make a shape undraggable, lock it: `shape = lock(shape)`. '''
     if mode is None:
-        mode = 'lock' if show is not None and not show else 'gizmo'
+        mode = 'click'
+    if mode in ('gizmo', 'handles'):
+        raise ValueError("handles(): mode='%s' is gone: a shape's surfaces can always be dragged now, and the gizmo's "
+                         "mode is 'click' (shown while the shape is selected: the default), 'never' or 'always'" % mode)
     if mode not in MODES:
-        raise ValueError("handles(): mode is 'gizmo', 'handles' or 'lock'")
+        raise ValueError("handles(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
         raise ValueError('handles(): move=, rotate= and scale= take three numbers each')
     c = tuple(about) if about is not None else _centre_of(shape)
@@ -118,6 +127,30 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
     out._handles = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
+    return out
+
+
+def lock(shape):
+    ''' `shape`, locked: FielDes does not let it be dragged -- neither by the gizmo nor by its surfaces -- until the
+        line is deleted.  It is the shape itself in every other way (its bounds, handles, colours and exact regions
+        stay), and the way of editing it had (gizmo or handles) comes back when it is unlocked.
+
+        Write it under a shape's definition, with its handles() and expose() lines:
+
+            part = lock(part)
+
+        (FielDes's model tree has a lock button on every shape, and the key R toggles it.) '''
+    if not isinstance(shape, Shape):
+        raise TypeError('lock(shape): shape must be a Shape, not {}'.format(type(shape).__name__))
+    ptr = lib.libfive_tree_copy(shape.ptr)
+    try:
+        out = type(shape)(ptr)
+    except TypeError:
+        out = Shape(ptr)
+    for name, value in shape.__dict__.items():
+        if name != 'ptr':
+            out.__dict__[name] = value
+    out._locked = True
     return out
 
 

@@ -7,6 +7,7 @@ modify it under the terms of the GNU General Public License
 as published by the Free Software Foundation; either version 2
 of the License, or (at your option) any later version.
 */
+#include <algorithm>
 #include <cmath>
 
 #include <QComboBox>
@@ -67,7 +68,11 @@ void ColorBar::paintEvent(QPaintEvent*)
 ResultPanel::ResultPanel(QWidget* parent)
     : QFrame(parent), m_fields(new QComboBox), m_bar(new ColorBar),
       m_deformRow(new QWidget), m_deform(new QSlider(Qt::Horizontal)), m_scaleLabel(new QLabel),
-      m_trueScale(new QToolButton), m_elements(new QToolButton), m_note(new QLabel), m_info(new QLabel)
+      m_trueScale(new QToolButton), m_elements(new QToolButton), m_flow(new QToolButton),
+      m_stepRow(new QWidget), m_play(new QToolButton), m_stepBack(new QToolButton), m_stepForward(new QToolButton),
+      m_playMode(new QToolButton), m_speed(new QComboBox),
+      m_step(new QSlider(Qt::Horizontal)),
+      m_stepLabel(new QLabel), m_note(new QLabel), m_info(new QLabel)
 {
     setObjectName("ResultPanel");
     setAttribute(Qt::WA_StyledBackground, true);
@@ -105,6 +110,53 @@ ResultPanel::ResultPanel(QWidget* parent)
     m_elements->setCheckable(true);
     m_elements->setText("Elements");
     m_elements->setToolTip("Show the solver's elements, each with its own value");
+    m_flow->setObjectName("resultFlow");
+    m_flow->setCheckable(true);
+    m_flow->setText("Flow");
+    m_flow->setToolTip("Streamlines from the inlets with particles moving along them, drawn over the fluid");
+    m_play->setObjectName("resultPlay");
+    m_play->setCheckable(true);
+    m_play->setText(QString(QChar(0x25B6)));
+    m_play->setToolTip("Play / pause the steps");
+    m_stepBack->setObjectName("resultStepBack");
+    m_stepBack->setText(QString(QChar(0x25C2)));
+    m_stepBack->setToolTip("One step back");
+    m_stepForward->setObjectName("resultStepForward");
+    m_stepForward->setText(QString(QChar(0x25B8)));
+    m_stepForward->setToolTip("One step forward");
+    m_playMode->setObjectName("resultPlayMode");
+    m_playMode->setText(QString(QChar(0x21BB)));
+    m_playMode->setToolTip("How play runs: round and round, back and forth, or once to the end (click to change)");
+    m_speed->setObjectName("resultPlaySpeed");
+    m_speed->setToolTip("Play speed: x1 is ten steps a second");
+    {
+        static const float speeds[] = {0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+        static const ushort glyphs[] = {0x215B, 0x00BC, 0x00BD, '1', '2', '4'};
+        for (int i = 0; i < 6; ++i)
+            m_speed->addItem(QString::fromUtf8("\xC3\x97") + QString(QChar(glyphs[i])), speeds[i]);
+        m_speed->setCurrentIndex(3);
+    }
+    m_step->setObjectName("resultStep");
+    m_step->setRange(0, 0);
+    m_step->setToolTip("Step shown");
+    m_stepLabel->setObjectName("resultStepLabel");
+    m_stepLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // play, how it runs, how fast, the step's name; the slider below, the card's whole width
+    auto stepLayout = new QVBoxLayout(m_stepRow);
+    stepLayout->setContentsMargins(0, 0, 0, 0);
+    stepLayout->setSpacing(2);
+    auto stepHead = new QHBoxLayout;
+    stepHead->setSpacing(4);
+    // three rows: the buttons (back, play, forward; how it runs, how fast), the step's name, the slider
+    stepHead->addWidget(m_stepBack);
+    stepHead->addWidget(m_play);
+    stepHead->addWidget(m_stepForward);
+    stepHead->addStretch();
+    stepHead->addWidget(m_playMode);
+    stepHead->addWidget(m_speed);
+    stepLayout->addLayout(stepHead);
+    stepLayout->addWidget(m_stepLabel);
+    stepLayout->addWidget(m_step);
     m_note->setObjectName("resultNote");
     m_note->setWordWrap(true);
     m_info->setObjectName("resultElementInfo");
@@ -129,9 +181,11 @@ ResultPanel::ResultPanel(QWidget* parent)
     layout->addWidget(m_fields);
     layout->addWidget(m_bar, 1);
     layout->addWidget(m_note);
+    layout->addWidget(m_stepRow);
     layout->addWidget(m_deformRow);
     auto bottom = new QHBoxLayout;
     bottom->addWidget(m_elements);
+    bottom->addWidget(m_flow);
     bottom->addStretch();
     layout->addLayout(bottom);
     layout->addWidget(m_info);
@@ -156,6 +210,47 @@ ResultPanel::ResultPanel(QWidget* parent)
     connect(m_elements, &QToolButton::toggled, this, [this](bool on) {
         if (!m_updating) emit(elementsToggled(on));
     });
+    connect(m_flow, &QToolButton::toggled, this, [this](bool on) {
+        if (!m_updating) emit(flowToggled(on));
+    });
+    connect(m_step, &QSlider::valueChanged, this, [this](int v) {
+        if (!m_updating) emit(stepChanged(v));
+    });
+    connect(m_play, &QToolButton::toggled, this, [this](bool on) {
+        m_play->setText(on ? QString("II") : QString(QChar(0x25B6)));
+        if (!m_updating) emit(playToggled(on));
+    });
+    // one step either way: the slider moves, and says so
+    connect(m_stepBack, &QToolButton::clicked, this, [this]() {
+        if (m_step->value() > m_step->minimum()) m_step->setValue(m_step->value() - 1);
+    });
+    connect(m_stepForward, &QToolButton::clicked, this, [this]() {
+        if (m_step->value() < m_step->maximum()) m_step->setValue(m_step->value() + 1);
+    });
+    connect(m_playMode, &QToolButton::clicked, this, [this]() {
+        m_state.playMode = (m_state.playMode + 1) % 3;
+        updatePlayButtons();
+        emit(playModeChanged(m_state.playMode));
+    });
+    connect(m_speed, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
+        if (m_updating || i < 0) return;
+        m_state.playSpeed = m_speed->itemData(i).toFloat();
+        emit(playSpeedChanged(m_state.playSpeed));
+    });
+}
+
+void ResultPanel::updatePlayButtons()
+{
+    // round and round, back and forth, once
+    static const ushort glyphs[3] = {0x21BB, 0x21C4, 0x2192};
+    m_playMode->setText(QString(QChar(glyphs[std::max(0, std::min(2, m_state.playMode))])));
+    int best = 3;
+    for (int i = 0; i < m_speed->count(); ++i)
+        if (std::abs(m_speed->itemData(i).toFloat() - m_state.playSpeed) < 1e-3f) best = i;
+    const bool was = m_updating;
+    m_updating = true;
+    m_speed->setCurrentIndex(best);
+    m_updating = was;
 }
 
 float ResultPanel::scaleFor(int slider, float autoScale)
@@ -193,6 +288,15 @@ void ResultPanel::setState(const State& s)
     updateScaleLabel(s.scale);
     m_elements->setVisible(s.hasElements);
     m_elements->setChecked(s.showElements);
+    m_flow->setVisible(s.hasFlow);
+    m_flow->setChecked(s.showFlow);
+    m_stepRow->setVisible(s.steps > 0);
+    m_step->setRange(0, std::max(0, s.steps - 1));
+    m_step->setValue(s.step);
+    m_stepLabel->setText(s.stepLabel);
+    m_play->setChecked(s.playing);
+    m_play->setText(s.playing ? QString("II") : QString(QChar(0x25B6)));
+    updatePlayButtons();
     m_note->setText(s.note);
     m_note->setToolTip(s.noteHelp);
     m_note->setVisible(!s.note.isEmpty());

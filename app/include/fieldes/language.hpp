@@ -61,6 +61,7 @@ signals:
     /*  Emits the result of an interpreter evaluation */
     void interpreterDone(Result);
     void interpreterBusy();
+    void interpreterPartialScene(QString json);
 
     void syntaxReady();
 

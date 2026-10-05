@@ -53,12 +53,13 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `shape.py` | `Shape`: the wrapper of a tree, operators, evaluation, `save_stl`, `get_mesh` |
 | `view.py` | `view.set_bounds / set_resolution / set_quality` |
 | `stdlib/shapes.py`, `csg.py`, `transforms.py`, `text.py`, `surfaces.py` | Primitives, booleans, transforms, lettering, closed-form surfaces |
-| `stdlib/cad_import.py` | STEP import, `roi`, `roi_resolution`, `exclude`, `auto_exclude`, the import cache |
+| `stdlib/cad_import.py` | STEP import, `roi`, `roi_resolution`, `poor_fit_region`, the exact surface of a part as a field, `auto_exclude`, the import cache |
+| `stdlib/excluded.py` | `exclude()` and the lock mechanism: what every function of the library does with an excluded shape |
 | `stdlib/mesh_import.py` | Mesh import |
 | `stdlib/fields.py`, `regression.py` | Fields, regressions |
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
-| `stdlib/handles.py` | `handles()`, `expose()` |
+| `stdlib/handles.py` | `handles()`, `expose()`, `lock()` |
 | `stdlib/content_cache.py` | Content-keyed caches |
 | `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement, evaluating displays, reporting progress |
 
@@ -92,9 +93,10 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
 3. The viewport compares the new shapes with the ones it already has by **structural identity** of their
    expressions. Unchanged shapes keep their mesh; new ones are meshed on worker threads (progress is shown),
    each import part in its own cube at its own resolution.
-4. Shapes that have exact STEP regions (`exclude()`) are additionally tessellated from the B-rep: the shape's
-   mesh loses its triangles inside each region (a field) and the exact surface, cut by evaluating that field on
-   its triangles, is put in.
+4. An excluded shape (`exclude()`) needs nothing more at render time: its expression is already the united field
+   `min(max(free, -region), locked)`. For a STEP part the locked field was made when the script ran, from the
+   B-rep's own tessellation and the mesh importer's distance structure (`libfive_step_exact_surface`, then
+   `libfive_mesh_from_arrays`), and is kept for the session.
 5. Hover, drag and probing evaluate the **field itself** (not a mesh) at the point under the cursor; a drag
    is turned into changes of `var()` numbers by the solver and written back into the text.
 
@@ -404,8 +406,54 @@ The model tree's cache button writes and deletes the opt-out line `x = render_ca
 (under its `expose()` and `handles()` lines) like every other button of the tree (`ScenePanel::toggleCache`; the script
 parser records the line as `cache_off`, an explicit `render_cache(x)` as `cache`).
 
-The right-click in the viewport (`View::showSelectMenu`) emits `surfaceSelectRequested`; `ScenePanel::addSurfaceSelection`
-writes the call into the script as an edit, so the selection is code like everything else. The boundary conditions
+**Selecting several models.** The tree selects whole rows (`ExtendedSelection`: the view does Ctrl and Shift itself; an event
+filter on its viewport notes the modifiers of a click for `onItemClicked`, which then leaves the editor and the camera alone).
+`ScenePanel` keeps the order the rows were selected in (`m_selectOrder`, kept across `rebuild()`, which restores every selected
+row): the first selected model is what a *difference* subtracts from. `selectedModels()` turns the rows into models (a variable
+or an expression displayed on its own, with the text that names it and the line after which a statement using it goes) and
+`operandsFor(line)` says what a menu works on: the selected models when the one right-clicked is among two or more, else that
+one; `createFromMenu` writes `union(a, b, c)`, `difference(a, b, c)` or `intersection(a, b, c)` (the library's variadic functions;
+`other` is the list joined by commas) under the model defined last, and `combines(name)` asks the catalogue which operations
+combine. In the viewport a Ctrl+click emits `shapeToggled`; a left press that pulls nothing starts a mouse state (`DRAG_RECT`; a click that does not move is a selection click, as before, a drag with Ctrl held adds) drawn by `paintOverlay` as a
+thin outlined rectangle (Shift+left and the middle button start `DRAG_ROT`, the turntable), and on release `View::linesInside` projects every vertex of every displayed mesh with the camera and
+keeps the shapes whose vertices all lie inside (`shapesRectSelected`). `View::mousePressEvent` takes the keyboard for the viewport
+and the window gives it back to the viewport after every selection; `Editor::showScriptTab` switches tabs without taking the
+keyboard and `Editor::onDragEnd` returns it to the script only if the script had it, so a click on a model never types the next key
+into the code.
+
+**The keys on a selection** (`ScenePanel::toggleSelected*`): each reads the state of every selected model and sets the target
+`!all_on`, so a mixed selection first goes to *on* (`toggleSelectedVisible` through `visibilityEdit`, `toggleSelectedLock`
+through `applyLock`, `toggleSelectedCache` through `applyCache`, `toggleSelectedEdit` through `applyModes`: the stored mode of
+each model, gizmo or handles, which with several selected the tree's buttons show and the viewport does not use).
+**The multi-select state** (two or more models selected) is not a mode: `View::mousePressEvent` starts no surface drag, and
+`View::groupHandles` finds the shared gizmo -- all the selected shapes that have move numbers (`Shape::hasMoveVars`, in any mode)
+-- at the middle of their pivots. `ScenePanel::prepareMultiSelect` (after the selection has settled, `m_prepareTimer`) writes
+`x = handles(x, ..., mode=<its mode>)` for a selected model that has no numbers to move it by, never twice (the scene may be a run
+behind the text: `m_editPending`, and a check of the text); `stripLocked` deselects the locked models of a selection of
+several (`warnLockedMultiSelect`: the warning with a *do not show again* box in QSettings `hidden-messages/`, silent in
+automation and after a run), `updateMultiNote` says what the state is under the tree. The shared gizmo's arrows and the centre dot (grip kind 3, also on every single gizmo) are `HandleGrip`s with `group` set,
+and a drag changes the move number of every member at once (`handle_vars`: the id, the axis and the value when the drag began; the
+dot adds the displacement of the cursor's ray on the plane through the pivot that faces the camera). A plain click on empty space
+calls `ScenePanel::clearSelection`. A primitive made from the menu is exposed once it exists (`m_handlesNew`, `applyModes(..., "handles",
+quiet)` from `setScene`).
+
+**Lock.** `lock(x)` (in `stdlib/handles.py`) returns a copy of `x` with `_locked = True`; the interpreter reads it into
+`Shape::setLocked`, which `hasHandles()` (the gizmo) and `nativeDragOk()` (dragging a surface) respect. It is a line of its own,
+recorded by the scene parser as `locked`, so toggling the way of editing (`handles()`'s mode, `gizmo` or `handles`) and the lock
+never write each other's lines. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
+
+The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Operation, and Select Surface, which opens
+`View::showSelectMenu`; `View::showEmptyMenu` on empty space: New primitive, Add operation). Select emits `surfaceSelectRequested`;
+`ScenePanel::addSurfaceSelection` writes the call into the script as an edit, so the selection is code like everything else (and selects the new model).
+A `SurfaceSelection` displays itself through `_display()`: the part it was picked on, coloured by `patch - whole - t/2`
+(zero or less where the vertex's nearest surface point is in the patch), with `_color_cutoff = 0`; the viewport gives `Shape` a
+per-vertex `patch_value` and its fragment shader discards what is above zero, so only the patch is drawn, a hair towards the eye. The
+other entries emit `createRequested`: `ScenePanel::createFromMenu` asks the interpreter for the call (`menu_call` in
+`app_support.py`, from `fieldes/menu_catalog.py`, the one list of what the menus offer: the primitives with their placement
+templates, the operations with the model passed in), writes `name = call` and a line showing it, and selects the new model once
+the script has run. A primitive's place is the point of the ray under the cursor closest to the origin (`View::placeOnRay`),
+its size about a hundred pixels (`View::scaleAt`). The `I` key (`ScenePanel::toggleIsolation`) hides all other models and shows
+the selected one with the same edits as the tree's eyes, and remembers what was shown. The boundary conditions
 (`stdlib/boundary_conditions.py`) are the part itself painted (colour field with the categories of the
 `bc` colour map in `colormap.hpp`) plus **symbols the viewport draws over it**: Python finds an even array of points on
 the surface inside each region (a grid of samples near the surface, one to a square of the spacing, projected onto the
@@ -414,6 +462,63 @@ surface by Newton steps on the field) and hands `_bc_glyphs` (kind, tip, point, 
 tested) and the texts (`drawBoundaryLabels`). They are not in the mesh, so the render region does not clip them and the
 render's resolution does not make them ragged. The symbols are part of `Shape::colorKey`, so a shape is only reused when
 they are the same.
+
+## Fluid flow
+
+`kernel/src/fea/tetflow.cpp` (`TetFlowProblem`, `include/libfive/fea/tetflow.hpp`) solves the steady incompressible
+laminar Navier-Stokes equations on the body-fitted tetrahedral mesh of `tetmesh.cpp` -- the fluid domain is a shape, meshed
+where its field is negative -- with linear velocity and pressure (P1/P1) stabilised by Tezduyar's SUPG / PSPG / LSIC terms
+and a backflow term on the outlets, all residual-based (`elementRows` has the closed-form element integrals; the assembly is
+row-gathered per vertex like the other solvers, into a scalar CSR of 4 x 4 blocks on the vertex adjacency). The viscous term
+is the Laplacian form, whose natural outlet condition a developed profile satisfies. Boundary conditions are regions on the
+boundary triangles (`resolveConditions`): a triangle belongs to a region when its three corners lie in it; a triangle of the
+rounded edge between two surfaces (one corner in a region, one out, facing within 75 degrees of that region's triangles)
+belongs to the region, else the inlet would leak through the free node; the velocity at a node comes from the triangles at
+it (explicit wall > wall at rest > inlet > slip; an outlet imposes nothing); the inlet's speed or flow rate is matched on
+the discrete flux, with a 'developed' profile from -laplace phi = 1 on the inlet patch. The nonlinearity: the Stokes
+solution, Picard, then Newton once the residual is below 1e-2; the linear systems: BiCGSTAB with Eigen's incomplete LU
+above 12,000 unknowns (tolerance 1e-3 of the nonlinear residual), Eigen's sparse LU below and when the iterative solve
+fails. Results are a `MeshResult` (fields 0..7: speed, vx, vy, vz, pressure, total pressure, shear rate, vorticity) read
+as Trees through `meshFieldTree`, so they are fields like any other; the flows, mean pressures and wall forces come from
+the boundary triangles (the force from the full stress of the adjacent element). `optimize` is the topology
+optimisation of a body in the flow: a level set phi at the nodes (mm, > 0 in the body; the given body's distance to
+start, smoothed by the structural solver's filter taken to the nodes), each tetrahedron's share of the body the exact
+fraction where the linear interpolant of phi is positive (the third divided difference of t_+^3 over its four values,
+with the derivative in each), a Brinkman friction alpha_max times that share, the Navier-Stokes flow solved once per
+iteration (warm-started), the objective the force on the body (w_drag F.d - w_lift F.l, F the momentum the flow loses
+in the friction), the sensitivity from the discrete adjoint (`solve` re-assembles the Newton Jacobian at convergence,
+builds its transpose on the same block pattern and solves it for lambda when `m_wantAdjoint` is set; `optimize` adds
+lambda . dR/d alpha_e by differencing `elementRows` in alpha_e, then chains through the fractions and the filter's
+transpose), phi rescaled to unit slope over the cut elements, a step of at most `move` elements down the gradient,
+and one offset of the whole level set found by bisection that brings the volume into [vMin, vMax]; every iteration's
+flow is kept as a step. A steady `solve` keeps its nonlinear iterations as steps too (the Stokes start, then each iteration). `FIELDES_FLOW_FDCHECK=1` (and `_FDCHECK_IT=k`) checks the
+sensitivities by finite differences, `FIELDES_FLOW_JSPLIT=1` prints where the friction dissipation sits. C API `libfive_tetflow_*`, Python `stdlib/fluid.py`
+(`fluid_analysis`, `flow_topology_optimization`); `FIELDES_FLOW_DEBUG=1` prints the iterations and the linear solves,
+`FIELDES_FLOW_DUMP=<file>` the boundary nodes with their conditions, `FIELDES_FLOW_DIRECT_LIMIT=n` overrides the limit.
+`solveTransient(dt, steps, storeEvery)` is the flow in time: backward Euler with the consistent mass matrix (the time
+terms are in the SUPG / PSPG residuals too; the stabilisation parameter has no time term, so a settled flow is the
+steady solver's flow), an impulsive start from the Stokes flow, every stored step a `MeshResult` of its own sharing the
+mesh and the locator (`stepResult(k)`, `stepStats(k)`). `streamlines` integrates particle paths through a result by
+fourth-order Runge-Kutta steps of half an element (`TetLocator::locateInside`), `inletSeeds` spreads seeds over the
+inlet triangles. Both optimisers (`TetProblem::optimize`, `TetFlowProblem::optimize`) keep the nodal density after
+every iteration (`densityResultAt(k)`, C API `*_density_at`).
+
+## Result steps and the flow view
+
+A result displayed in the app (the interpreter calls the object's `_display()`; see `python/fieldes/stdlib/fea.py`)
+carries `_color_fields` (its fields), and may carry `_color_steps`: a list of dicts `{label, channels, deform, lines,
+shape}`, each a step with its own fields (the same names), deformation, streamlines or geometry -- the load growing
+(`Result`), the phases of a mode (`Mode`), the stored times of a flow (`FluidResult`), the iterations of an
+optimisation (`TopologyResult`, with the part after each one as `shape`) -- and `_flow_lines` with `_flow_range`
+(streamlines as `(x, y, z, speed, time)` points, coloured by the speed). `Shape::setSteps` / `setStep` show a step: a
+step's own fields are evaluated at the mesh's vertices on the GUI thread when first shown and kept per (step, channel);
+a step's own geometry is meshed when first shown (`MESH_DIV_NEW_TREE` rebuilds the evaluators; the render thread works
+on a copy of the fields it evaluates) and its finished mesh kept in `step_meshes`. `Shape::drawFlowLines` draws the
+lines (`GL_LINES`, the basic shader unlit) and the particles (bright streaks released every tenth of the longest
+line's time); `View::paintGL` draws them after every shape with the depth test off, so they are seen through the fluid,
+which is drawn like any other result. The result card (`result_panel.cpp`) has the step row (play / pause, the play mode
+and speed buttons, slider, label) and the **Flow** toggle; `View::m_stepTimer` plays (round and round, back and forth or
+once; waiting for a geometry step to finish meshing), `View::m_flowTimer` moves the particles at 30 frames a second.
 
 ## The field cache
 
@@ -442,7 +547,7 @@ table, so a step can end earlier or later than its share.
 
 ## The exact tessellator
 
-`step_tessellate.cpp`, used by `exclude()`: each face is meshed in its own (u, v) parameter space and its
+`step_tessellate.cpp`, used by `exclude()` (for the locked field of a STEP part) and the tessellating importer: each face is meshed in its own (u, v) parameter space and its
 boundary edges are shared between neighbouring faces through an edge cache, so the pieces join into a
 watertight surface without a global weld.
 

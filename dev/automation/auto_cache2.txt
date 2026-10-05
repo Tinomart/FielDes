@@ -1,0 +1,5 @@
+wait 120000
+action view.std-top
+wait 6000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/cache_top2.png
+quit

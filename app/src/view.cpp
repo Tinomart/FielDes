@@ -22,6 +22,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QLabel>
+#include <QJsonDocument>
 #include <QMenu>
 #include <QPushButton>
 #include <QSettings>
@@ -108,7 +111,7 @@ View::View(QWidget* parent)
     m_resultPanel = new ResultPanel(this);
     m_resultPanel->hide();
     auto forResults = [this](auto fn, bool resample) {
-        for (auto s : shapes) if (s->hasResult()) fn(s);
+        for (auto s : shapes) if (s->hasResult() || s->stepCount() > 0) fn(s);
         updateResultPanel();
         if (resample && section.enabled) requestSlice();
         pick_timer.start();
@@ -122,6 +125,83 @@ View::View(QWidget* parent)
     });
     connect(m_resultPanel, &ResultPanel::elementsToggled, this, [=](bool on) {
         forResults([on](Shape* s) { s->setShowElements(on); }, false);
+    });
+    connect(m_resultPanel, &ResultPanel::stepChanged, this, [=](int k) {
+        forResults([k](Shape* s) { s->setStep(k); }, true);
+    });
+    connect(m_resultPanel, &ResultPanel::flowToggled, this, [=](bool on) {
+        forResults([on](Shape* s) { s->setShowFlowLines(on); }, false);
+    });
+    connect(m_resultPanel, &ResultPanel::playToggled, this, [=](bool on) {
+        if (on)
+        {
+            // (once: playing again from the end starts over)
+            Shape* r = nullptr;
+            for (auto s : shapes) if (s->hasResult() && s->stepCount() > 0) { r = s; break; }
+            if (r && m_playMode == 2 && r->step() >= r->stepCount() - 1)
+                forResults([](Shape* s) { s->setStep(0); }, true);
+            m_playDir = 1;
+            m_stepTimer.start();
+        }
+        else m_stepTimer.stop();
+        updateResultPanel();
+    });
+    connect(m_resultPanel, &ResultPanel::playModeChanged, this, [=](int mode) {
+        m_playMode = mode;
+        m_playDir = 1;
+        updateResultPanel();
+    });
+    connect(m_resultPanel, &ResultPanel::playSpeedChanged, this, [=](float speed) {
+        m_playSpeed = std::max(0.1f, speed);
+        m_stepTimer.setInterval(int(100.0f / m_playSpeed));
+        updateResultPanel();
+    });
+    // Play: the next step ten times a second at speed 1 (a step with its own geometry waits until it is meshed);
+    // round and round, back and forth, or once to the end
+    m_stepTimer.setInterval(100);
+    connect(&m_stepTimer, &QTimer::timeout, this, [=]() {
+        Shape* r = nullptr;
+        for (auto s : shapes) if (s->hasResult() && s->stepCount() > 0) { r = s; break; }
+        if (!r)
+        {
+            m_stepTimer.stop();
+            updateResultPanel();
+            return;
+        }
+        // (every stepped shape must have finished meshing its step: a body and the fluid around it step together)
+        for (auto s : shapes) if (s->stepCount() > 0 && !s->done()) return;
+        const int n = r->stepCount();
+        int k = r->step();
+        if (m_playMode == 0) k = (k + 1) % n;
+        else if (m_playMode == 1)
+        {
+            if (n < 2) return;
+            if (k + m_playDir < 0 || k + m_playDir >= n) m_playDir = -m_playDir;
+            k += m_playDir;
+        }
+        else
+        {
+            if (k >= n - 1)
+            {
+                m_stepTimer.stop();
+                updateResultPanel();
+                return;
+            }
+            k += 1;
+        }
+        forResults([k](Shape* s) { s->setStep(k); }, true);
+    });
+    // The particles on the streamlines move at thirty frames a second
+    m_flowTimer.setInterval(33);
+    connect(&m_flowTimer, &QTimer::timeout, this, [=]() {
+        bool any = false;
+        for (auto s : shapes)
+            if (s->showsFlowLines())
+            {
+                s->advanceFlow(0.033f);
+                any = true;
+            }
+        if (any) update(); else m_flowTimer.stop();
     });
 
     // Section field sampling: debounced, runs in a worker thread
@@ -287,6 +367,46 @@ void View::highlightLines(QList<int> lines0)
         s->setSelected(lines0.contains(s->sourceLine()));
     }
     update();
+}
+
+QList<int> View::highlightedLines() const
+{
+    QList<int> out;
+    for (const auto* s : shapes)
+    {
+        if (s->isSelected() && !out.contains(s->sourceLine())) out << s->sourceLine();
+    }
+    return out;
+}
+
+QList<int> View::linesInside(const QRect& r) const
+{
+    // A shape is inside when every vertex of its mesh -- as drawn from this camera -- is in the rectangle
+    QList<int> out;
+    const QMatrix4x4 M = camera.M();
+    const QRectF rect(r);
+    const float W = float(width()), H = float(height());
+    for (const auto* s : shapes)
+    {
+        if (!s->hasMesh() || s->sourceLine() < 0 || out.contains(s->sourceLine())) continue;
+        const libfive::Mesh* m = s->getMesh();
+        if (!m || m->verts.empty()) continue;
+        // (the vertices the triangles use: a mesh keeps a first vertex at the origin that nothing refers to, which
+        // would put the origin into every shape)
+        bool inside = !m->branes.empty();
+        for (const auto& t : m->branes)
+        {
+            for (int k = 0; k < 3 && inside; ++k)
+            {
+                const auto& v = m->verts[t[k]];
+                const QVector3D n = M.map(QVector3D(v.x(), v.y(), v.z()));
+                if (!rect.contains(QPointF((n.x() + 1) * 0.5f * W, (1 - n.y()) * 0.5f * H))) inside = false;
+            }
+            if (!inside) break;
+        }
+        if (inside) out << s->sourceLine();
+    }
+    return out;
 }
 
 void View::focusOn(QVector3D min, QVector3D max, QList<int> lines0)
@@ -503,7 +623,8 @@ void View::paintGL()
     for (auto& s : shapes)
     {
         // The boundary conditions are drawn on the part's own surface: pulled a hair towards the eye, they win over the part when both are shown
-        const bool onTheSurface = !s->boundaryGlyphs().empty();
+        // (a patch of a surface is on the part's surface too)
+        const bool onTheSurface = !s->boundaryGlyphs().empty() || s->isSurfacePatch();
         if (onTheSurface)
         {
             glEnable(GL_POLYGON_OFFSET_FILL);
@@ -520,6 +641,19 @@ void View::paintGL()
     if (section.enabled && section.field)
     {
         drawSlicePlane(m);
+    }
+
+    // The streamlines of a flow and the particles on them, over everything (seen through the fluid)
+    {
+        bool any = false;
+        for (auto& s : shapes) any = any || s->showsFlowLines();
+        if (any)
+        {
+            glDisable(GL_DEPTH_TEST);
+            for (auto& s : shapes)
+                if (s->showsFlowLines()) s->drawFlowLines(m);
+            glEnable(GL_DEPTH_TEST);
+        }
     }
 
     // The arrows and pads of boundary conditions, over the model they belong to
@@ -624,6 +758,17 @@ void View::paintOverlay(QPainter& painter)
     drawLegends(painter);
     drawScaleBar(painter);
     drawRenderProgress(painter);
+
+    if (mouse.state == mouse.DRAG_RECT && (rect_now - rect_start).manhattanLength() >= 4)
+    {
+        // The selection rectangle: a thin outline round a light fill, in the colour of the selection
+        const QRect r = QRect(rect_start, rect_now).normalized();
+        const QColor blue(0x26, 0x8b, 0xd2);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(QPen(blue, 1));
+        painter.setBrush(QColor(blue.red(), blue.green(), blue.blue(), 45));
+        painter.drawRect(r.adjusted(0, 0, -1, -1));
+    }
 
     if (probe_valid && cursor_pos_valid)
     {
@@ -858,7 +1003,8 @@ void View::drawLegends(QPainter& painter)
     const QFontMetrics fm(font);
     const int barH = std::min(220, std::max(90, height() / 3));
     const int barW = 14;
-    int right = width() - 14;
+    // (to the left of the result card, which has the bottom-right corner)
+    int right = (m_resultPanel && m_resultPanel->isVisible()) ? m_resultPanel->geometry().left() - 10 : width() - 14;
 
     // (only selected surfaces shown: the key is called so)
     const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";
@@ -977,6 +1123,8 @@ void View::updateResultPanel()
     if (!r)
     {
         m_resultPanel->hide();
+        m_stepTimer.stop();
+        m_flowTimer.stop();
         return;
     }
     ResultPanel::State st;
@@ -993,6 +1141,18 @@ void View::updateResultPanel()
     st.autoScale = r->deformAuto();
     st.hasElements = r->hasElements();
     st.showElements = r->showElements();
+    st.steps = r->stepCount();
+    st.step = r->step();
+    st.stepLabel = r->stepLabel();
+    st.playing = m_stepTimer.isActive();
+    st.playMode = m_playMode;
+    st.playSpeed = m_playSpeed;
+    st.hasFlow = r->hasFlowLines();
+    st.showFlow = r->showFlowLines();
+    bool flowing = false;
+    for (auto s : shapes) if (s->showsFlowLines()) flowing = true;
+    if (flowing && !m_flowTimer.isActive()) m_flowTimer.start();
+    if (!flowing) m_flowTimer.stop();
     m_resultPanel->setState(st);
     m_resultPanel->show();
     m_resultPanel->raise();
@@ -1077,6 +1237,14 @@ void View::mouseMoveEvent(QMouseEvent* event)
         mouse.pos = event->pos();
         return;
     }
+    if (mouse.state == mouse.DRAG_RECT)
+    {
+        // (the selection rectangle grows with the mouse)
+        rect_now = event->pos();
+        m_overlay->update();
+        mouse.pos = event->pos();
+        return;
+    }
     if (mouse.state == mouse.RELEASED)
     {
         const HandleGrip grip = handleAt(event->pos());
@@ -1158,7 +1326,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
         checkHoverTarget(event->pos());
         if (handle_hover.kind >= 0)
         {
-            setCursor(Qt::PointingHandCursor);
+            setCursor(handle_hover.kind == 3 ? Qt::SizeAllCursor : Qt::PointingHandCursor);
         }
     }
     mouse.pos = event->pos();
@@ -1187,6 +1355,9 @@ void View::mousePressEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mousePressEvent(event);
     event->accept();
+    // A click in the viewport puts the keyboard in the viewport (from the editor too): the keys that work on the
+    // selection (E, R, G, H, I) are not typed into the script
+    if (!hasFocus()) setFocus(Qt::MouseFocusReason);
 
     // A legend's close button
     if (event->button() == Qt::LeftButton)
@@ -1240,6 +1411,17 @@ void View::mousePressEvent(QMouseEvent* event)
             press_target = nullptr;
             return;
         }
+        if ((event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)) ||
+            event->button() == Qt::MiddleButton)
+        {
+            // Shift + left drag and the middle button's drag turn the view; such a press selects nothing
+            press_pos = QPoint(-100000, -100000);   // not a selection click
+            press_target = nullptr;
+            press_ctrl = false;
+            drag_target = nullptr;
+            mouse.state = mouse.DRAG_ROT;
+            return;
+        }
         if (event->button() == Qt::LeftButton)
         {
             syncPicker();
@@ -1249,9 +1431,12 @@ void View::mousePressEvent(QMouseEvent* event)
                 ? shapes.at(picked - 1) : nullptr;
             press_pos = event->pos();
             press_target = drag_target;
+            // (Ctrl + click selects: it never pulls the surface it is on)
+            press_ctrl = bool(event->modifiers() & Qt::ControlModifier);
             // (a part in the gizmo mode is moved by the gizmo and a locked one not at all: only its
             // own surfaces, made of numbers that can change, are pulled)
-            if (picked && drag_target->nativeDragOk())
+            // (and with several shapes selected nothing is pulled by its surface: they only have the gizmo)
+            if (picked && !press_ctrl && selectedShapeCount() < 2 && drag_target->nativeDragOk())
             {
                 this->setCursor(Qt::ClosedHandCursor);
                 emit(dragStart());
@@ -1272,8 +1457,12 @@ void View::mousePressEvent(QMouseEvent* event)
             }
             else
             {
+                // Nothing to pull: a drag draws the selection rectangle (with Ctrl held, the shapes inside join the
+                // selection), and a click that does not move selects what is under the cursor, as it always did
                 drag_target = nullptr;
-                mouse.state = mouse.DRAG_ROT;
+                rect_start = rect_now = event->pos();
+                rect_add = press_ctrl;
+                mouse.state = mouse.DRAG_RECT;
             }
         }
         else if (event->button() == Qt::RightButton)
@@ -1284,6 +1473,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
             right_press_pos = event->pos();
             right_press_target = (picked && int(picked) <= shapes.size()) ? shapes.at(picked - 1) : nullptr;
+            right_press_empty = !right_press_target;       // (empty space: its own menu, if the click does not drag)
             right_press_point = right_press_target ? toModelPos(event->pos()) : QVector3D();
             mouse.state = mouse.DRAG_PAN;
         }
@@ -1311,14 +1501,45 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
 
-    // A left click that didn't drag selects what was under the cursor
+    // The selection rectangle was let go: the shapes that lie wholly inside it are selected (a rectangle that holds
+    // none leaves the selection as it is, so that a slip of the mouse does not lose it).  A press that did not move
+    // was a click: it selects what was under the cursor (below)
+    if (mouse.state == mouse.DRAG_RECT && event->button() == Qt::LeftButton)
+    {
+        const QRect r = QRect(rect_start, event->pos()).normalized();
+        const bool dragged = (event->pos() - rect_start).manhattanLength() >= 4;
+        mouse.state = mouse.RELEASED;
+        m_overlay->update();
+        if (dragged)
+        {
+            if (r.width() >= 4 && r.height() >= 4)
+            {
+                const QList<int> lines = linesInside(r);
+                if (!lines.isEmpty()) emit(shapesRectSelected(lines, rect_add));
+            }
+            press_ctrl = false;
+            press_target = nullptr;
+            return;
+        }
+    }
+
+    // A left click that didn't drag selects what was under the cursor (with Ctrl: adds it to the selection, or
+    // takes it out when it is in)
     if (event->button() == Qt::LeftButton &&
         (event->pos() - press_pos).manhattanLength() < 4)
     {
         const int line = (press_target && shapes.contains(press_target))
             ? press_target->sourceLine() : -1;
-        emit(shapeClicked(line));
+        if (press_ctrl)
+        {
+            if (line >= 0) emit(shapeToggled(line));
+        }
+        else
+        {
+            emit(shapeClicked(line));
+        }
     }
+    if (event->button() == Qt::LeftButton) press_ctrl = false;
     press_target = nullptr;
 
     if (event->button() == Qt::RightButton && right_press_target &&
@@ -1326,10 +1547,22 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     {
         Shape* target = right_press_target;
         right_press_target = nullptr;
+        right_press_empty = false;
         mouse.state = mouse.RELEASED;
-        showSelectMenu(event->globalPos(), target, right_press_point);
+        const int line = target->sourceLine();
+        if (line >= 0) showSurfaceMenu(event->globalPos(), line, right_press_point,
+                                       scaleAt(event->pos(), right_press_point));
         return;
     }
+    if (event->button() == Qt::RightButton && right_press_empty &&
+        (event->pos() - right_press_pos).manhattanLength() < 4)
+    {
+        right_press_empty = false;
+        mouse.state = mouse.RELEASED;
+        showEmptyMenu(event->globalPos(), event->pos());
+        return;
+    }
+    right_press_empty = false;
     right_press_target = nullptr;
 
     if (mouse.state != mouse.RELEASED)
@@ -1357,18 +1590,163 @@ bool View::selectSurfaceAt(QPoint pos, const QString& mode, double angle, double
     return true;
 }
 
-void View::showSelectMenu(QPoint globalPos, Shape* target, const QVector3D& point)
+QVector3D View::placeOnRay(QPoint pos) const
 {
-    const int line = target->sourceLine();
+    // A cursor is two-dimensional, so the depth is chosen: the closest to the origin's, that is, the point of the ray
+    // under the cursor in the plane through the origin that faces the viewer (in a front view, y = 0)
+    const QVector3D a = toModelPos(pos, -1.0f), b = toModelPos(pos, 1.0f);
+    const QVector3D d = b - a;
+    const float len2 = d.lengthSquared();
+    if (!(len2 > 1e-12f)) return a;
+    const QVector3D n = camera.towardViewer().normalized();
+    const float dn = QVector3D::dotProduct(d, n);
+    if (n.lengthSquared() > 0.5f && std::abs(dn) > 1e-6f * std::sqrt(len2))
+        return a - QVector3D::dotProduct(a, n) / dn * d;
+    return a - QVector3D::dotProduct(a, d) / len2 * d;      // (looking along the plane: the point closest to the origin)
+}
+
+double View::scaleAt(QPoint pos, const QVector3D& point) const
+{
+    const float z = camera.M().map(point).z();
+    return double((toModelPos(pos + QPoint(100, 0), z) - toModelPos(pos, z)).length());
+}
+
+void View::loadMenuCatalog()
+{
+    if (!m_catalog.isEmpty() || !m_catalogSource) return;
+    m_catalog = QJsonDocument::fromJson(m_catalogSource().toUtf8()).object();
+}
+
+void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale)
+{
+    const QJsonArray ops = m_catalog["operations"].toArray();
+    if (ops.isEmpty())
+    {
+        menu->addAction("(not loaded yet: run the script first)")->setEnabled(false);
+        return;
+    }
+    const bool haveOther = m_scene && m_scene->hasOtherModel(line);
+    // (which run of the script the menu is of: the line it is opened on means that run's models only)
+    const int generation = m_scene ? m_scene->generation() : -1;
+    // (a submenu for each group: the whole list in one column would not fit the screen)
+    QString group;
+    QMenu* sub = nullptr;
+    for (const auto v : ops)
+    {
+        const auto o = v.toObject();
+        if (!sub || o["group"].toString() != group)
+        {
+            group = o["group"].toString();
+            sub = menu->addMenu(group);
+            sub->setToolTipsVisible(true);
+        }
+        const QString name = o["name"].toString();
+        auto action = sub->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
+        if (o["other"].toBool() && !haveOther)
+        {
+            action->setEnabled(false);
+            action->setToolTip("Needs a second model");
+        }
+    }
+}
+
+void View::showEmptyMenu(QPoint globalPos, QPoint pos)
+{
+    loadMenuCatalog();
+    QVector3D point = placeOnRay(pos);
+    const double scale = scaleAt(pos, point);
+    // Nothing outside the render region is drawn: a primitive whose place is outside it goes to the nearest place
+    // that is inside (half its size in from the edge), so it is always seen
+    {
+        const QVector3D lo = settings.min, hi = settings.max;
+        auto inside = [&](float v, float a, float b) {
+            const float m = float(std::min(0.5 * scale, 0.5 * double(b - a)));
+            return std::max(a + m, std::min(b - m, v));
+        };
+        if (hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z())
+            point = QVector3D(inside(point.x(), lo.x(), hi.x()), inside(point.y(), lo.y(), hi.y()),
+                              inside(point.z(), lo.z(), hi.z()));
+    }
+
+    auto menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setToolTipsVisible(true);
+    auto prims = menu->addMenu("New primitive");
+    const QJsonArray list = m_catalog["primitives"].toArray();
+    if (list.isEmpty()) prims->addAction("(not loaded yet: run the script first)")->setEnabled(false);
+    QString group;
+    QMenu* sub = nullptr;
+    for (const auto v : list)
+    {
+        const auto p = v.toObject();
+        if (!sub || p["group"].toString() != group)
+        {
+            group = p["group"].toString();
+            sub = prims->addMenu(group == "3D" ? QString("3D shapes") : group == "2D" ? QString("2D shapes") : group);
+        }
+        const QString name = p["name"].toString();
+        sub->addAction(name, this, [=]{ emit(createRequested("primitive", name, point, scale, -1, -1)); });
+    }
+    auto ops = menu->addMenu("Add operation");
+    if (m_scene && !m_scene->hasModel())
+    {
+        ops->menuAction()->setEnabled(false);
+        ops->menuAction()->setToolTip("There is no model to work on yet");
+    }
+    else fillOperations(ops, -1, point, scale);
+    menu->popup(globalPos);
+}
+
+void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale)
+{
+    loadMenuCatalog();
+    auto menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setToolTipsVisible(true);
+    fillOperations(menu->addMenu("Operation"), line, point, scale);
+    menu->addAction("Select Surface", this, [=]{
+        // (after this menu has closed: the menu of the surface selection takes its place)
+        QTimer::singleShot(0, this, [=]{ showSelectMenu(globalPos, line, point); });
+    });
+    if (m_scene)
+    {
+        menu->addSeparator();
+        menu->addAction("Delete", this, [=]{ m_scene->deleteByLine(line); });
+    }
+    menu->popup(globalPos);
+}
+
+void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
+{
     if (line < 0) return;
 
     QSettings store;
-    QMenu menu(this);
-    auto title = menu.addAction("Select surface (flood fill)");
-    title->setEnabled(false);
+    auto menuPtr = new QMenu(this);
+    menuPtr->setAttribute(Qt::WA_DeleteOnClose);
+    QMenu& menu = *menuPtr;
+
+    // (the title and the form are widgets in the menu: they are styled like the cards of the viewport, bright
+    // text on the dark menu -- they would otherwise take the default dark text)
+    auto titleLabel = new QLabel("Select surface (flood fill)");
+    titleLabel->setStyleSheet("QLabel { color: #eee8d5; font-weight: bold; padding: 6px 12px 2px 12px; }");
+    auto titleAction = new QWidgetAction(&menu);
+    titleAction->setDefaultWidget(titleLabel);
+    menu.addAction(titleAction);
     menu.addSeparator();
 
     auto holder = new QWidget;
+    holder->setStyleSheet(
+        "QLabel { color: #eee8d5; }"
+        "QComboBox, QDoubleSpinBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
+        "  border: 1px solid rgba(147, 161, 161, 90); border-radius: 3px; padding: 2px 6px;"
+        "  selection-background-color: rgba(38, 139, 210, 200); }"
+        "QComboBox QAbstractItemView { color: #eee8d5; background: #25607a;"
+        "  selection-background-color: rgba(38, 139, 210, 200); }"
+        "QPushButton { color: #eee8d5; background: rgba(147, 161, 161, 28);"
+        "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 4px; padding: 4px 16px; }"
+        "QPushButton:hover { background: rgba(147, 161, 161, 60); }"
+        "QPushButton:default { background: rgba(38, 139, 210, 170); border-color: rgba(38, 139, 210, 230);"
+        "  color: white; }");
     auto form = new QFormLayout(holder);
     form->setContentsMargins(10, 4, 10, 6);
     auto mode = new QComboBox;
@@ -1409,28 +1787,33 @@ void View::showSelectMenu(QPoint globalPos, Shape* target, const QVector3D& poin
     form->addRow("Radius", radius);
     auto buttons = new QHBoxLayout;
     auto select = new QPushButton("Select");
+    select->setObjectName("selectSurfaceConfirm");
     select->setDefault(true);
     auto cancel = new QPushButton("Cancel");
+    cancel->setObjectName("selectSurfaceCancel");
     buttons->addStretch();
     buttons->addWidget(cancel);
     buttons->addWidget(select);
     form->addRow(buttons);
 
-    bool confirmed = false;
-    connect(select, &QPushButton::clicked, &menu, [&]{ confirmed = true; menu.close(); });
-    connect(cancel, &QPushButton::clicked, &menu, [&]{ menu.close(); });
+    // (the menu stays open until one of the buttons: Select remembers the values and asks for the selection)
+    connect(select, &QPushButton::clicked, menuPtr, [=]{
+        const QString m = mode->currentData().toString();
+        const double a = angle->value(), t = thickness->value(), r = radius->value();
+        QSettings s;
+        s.setValue("select/mode", m);
+        s.setValue("select/angle-" + m, a);
+        s.setValue("select/thickness", t);
+        s.setValue("select/radius", r);
+        menuPtr->close();
+        emit(surfaceSelectRequested(line, point, m, a, t, r));
+    });
+    connect(cancel, &QPushButton::clicked, menuPtr, &QMenu::close);
     auto action = new QWidgetAction(&menu);
     action->setDefaultWidget(holder);
     menu.addAction(action);
 
-    menu.exec(globalPos);
-    if (!confirmed) return;
-    const QString m = mode->currentData().toString();
-    store.setValue("select/mode", m);
-    store.setValue("select/angle-" + m, angle->value());
-    store.setValue("select/thickness", thickness->value());
-    store.setValue("select/radius", radius->value());
-    emit(surfaceSelectRequested(line, point, m, angle->value(), thickness->value(), radius->value()));
+    menu.popup(globalPos);
 }
 
 void View::mouseDoubleClickEvent(QMouseEvent* event)
@@ -1582,7 +1965,7 @@ void View::checkHoverTarget(QPoint pos)
 
     auto picked = pick_img.valid(pos) ? (pick_img.pixel(pos) & 0xFFFFFF) : 0;
     auto target = picked ? shapes.at(picked - 1) : nullptr;
-    if (target && target->nativeDragOk())
+    if (target && selectedShapeCount() < 2 && target->nativeDragOk())
     {
         if (hover_target)
         {
@@ -2088,20 +2471,104 @@ float View::handleLength(const QVector3D& pivot) const
     return best > 1e-6 ? float(eps * 80.0 / best) : 0.0f;
 }
 
+int View::selectedShapeCount() const
+{
+    int n = 0;
+    for (const auto* s : shapes) if (s->isSelected()) ++n;
+    return n;
+}
+
+bool View::groupHandles(QList<Shape*>& members, QVector3D& center) const
+{
+    // The multi-select state: two or more shapes selected.  The ones that can be moved (they have move numbers) share
+    // one gizmo, whatever gizmo mode each has when it is selected alone -- unless all of them say never
+    members.clear();
+    int selected = 0;
+    bool anyShown = false;
+    for (Shape* s : shapes)
+    {
+        if (!s->isSelected()) continue;
+        ++selected;
+        if (!s->hasMoveVars()) continue;
+        members << s;
+        anyShown |= s->handles().mode != Shape::Handles::NEVER;
+    }
+    if (selected < 2 || members.isEmpty() || !anyShown) return false;
+    QVector3D lo, hi;
+    bool first = true;
+    for (const Shape* s : members)
+    {
+        const QVector3D P = s->handlePivot();
+        lo = first ? P : QVector3D(std::min(lo.x(), P.x()), std::min(lo.y(), P.y()), std::min(lo.z(), P.z()));
+        hi = first ? P : QVector3D(std::max(hi.x(), P.x()), std::max(hi.y(), P.y()), std::max(hi.z(), P.z()));
+        first = false;
+    }
+    center = 0.5f * (lo + hi);
+    return true;
+}
+
+namespace {
+
+// Whether any of these shapes has a number that moves it along an axis
+bool anyMoveVar(const QList<Shape*>& shapes, int a)
+{
+    for (const Shape* s : shapes)
+    {
+        const auto& h = s->handles();
+        if (h.move[a] && s->getVars().count(h.move[a])) return true;
+    }
+    return false;
+}
+
+}   // anonymous namespace
+
 View::HandleGrip View::handleAt(QPoint pos) const
 {
     HandleGrip best;
     double bestDist = 9.0;
     const QPointF at(pos);
+    // Several shapes selected, all in the gizmo mode: one gizmo for them all (arrows and the dot in the middle)
+    QList<Shape*> members;
+    QVector3D groupCenter;
+    const bool group = groupHandles(members, groupCenter);
+    if (group)
+    {
+        const float L = handleLength(groupCenter);
+        if (L > 0)
+        {
+            const QPointF p0 = toScreen(groupCenter);
+            if (std::hypot(at.x() - p0.x(), at.y() - p0.y()) <= 8.0 &&
+                (anyMoveVar(members, 0) || anyMoveVar(members, 1) || anyMoveVar(members, 2)))
+            {
+                return HandleGrip{members[0], 3, 0, true};
+            }
+            for (int a = 0; a < 3; ++a)
+            {
+                if (!anyMoveVar(members, a)) continue;
+                QVector3D e;
+                e[a] = L;
+                const double d = distanceToSegment(at, p0, toScreen(groupCenter + e));
+                if (d < bestDist) { bestDist = d; best = HandleGrip{members[0], 0, a, true}; }
+            }
+        }
+    }
     for (Shape* s : shapes)
     {
-        if (!s->hasHandles()) continue;
+        if (!s->hasHandles() || (group && members.contains(s))) continue;
         const auto& h = s->handles();
         const auto& vars = s->getVars();
         const QVector3D P = s->handlePivot();
         const float L = handleLength(P);
         if (!(L > 0)) continue;
         const QPointF p0 = toScreen(P);
+        // (the dot in the middle drags the shape freely: it wins over everything near it)
+        if (std::hypot(at.x() - p0.x(), at.y() - p0.y()) <= 8.0 &&
+            (anyMoveVar({s}, 0) || anyMoveVar({s}, 1) || anyMoveVar({s}, 2)))
+        {
+            best = {s, 3, 0};
+            bestDist = -1.0;
+            continue;
+        }
         for (int a = 0; a < 3; ++a)
         {
             if (!h.move[a] || !vars.count(h.move[a])) continue;
@@ -2145,13 +2612,29 @@ View::HandleGrip View::handleAt(QPoint pos) const
 
 bool View::handleGripPoint(int kind, int axis, QPoint& pos) const
 {
+    QList<Shape*> members;
+    QVector3D groupCenter;
+    if (groupHandles(members, groupCenter))
+    {
+        // (the shared gizmo of several selected shapes has the arrows and the dot only)
+        const float L = handleLength(groupCenter);
+        if (!(L > 0) || (kind != 0 && kind != 3)) return false;
+        QVector3D e;
+        if (kind == 0) e[axis] = 0.6f * L;
+        pos = toScreen(groupCenter + e).toPoint();
+        return true;
+    }
     for (Shape* s : shapes)
     {
         if (!s->hasHandles()) continue;
         const QVector3D P = s->handlePivot();
         const float L = handleLength(P);
         if (!(L > 0)) continue;
-        if (kind == 0)
+        if (kind == 3)
+        {
+            pos = toScreen(P).toPoint();
+        }
+        else if (kind == 0)
         {
             QVector3D e;
             e[axis] = 0.6f * L;
@@ -2179,9 +2662,56 @@ void View::drawHandles(QPainter& painter)
 {
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
+    // The dot in the middle of a gizmo: it drags the shape freely (in the plane facing the camera)
+    auto dot = [&](const QPointF& p0, bool on) {
+        painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.5));
+        painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
+        painter.drawEllipse(p0, on ? 6.5 : 5.5, on ? 6.5 : 5.5);
+    };
+    // The gizmo shared by several selected shapes, all in the gizmo mode: the move arrows and the dot, at the middle
+    // of their pivots; they move them all
+    QList<Shape*> members;
+    QVector3D groupCenter;
+    const bool group = groupHandles(members, groupCenter);
+    if (group)
+    {
+        const float L = handleLength(groupCenter);
+        if (L > 0)
+        {
+            const QPointF p0 = toScreen(groupCenter);
+            auto hotG = [&](int kind, int a) {
+                const HandleGrip g{members[0], kind, a, true};
+                return g == handle_hover || (handle_drag && g == handle_active);
+            };
+            for (int a = 0; a < 3; ++a)
+            {
+                if (!anyMoveVar(members, a)) continue;
+                QVector3D e;
+                e[a] = L;
+                const QPointF q = toScreen(groupCenter + e);
+                const bool on = hotG(0, a);
+                QColor c = kHandleColor[a];
+                if (on) c = c.lighter(140);
+                painter.setPen(QPen(QColor(0, 0, 0, 90), on ? 6.5 : 5, Qt::SolidLine, Qt::RoundCap));
+                painter.drawLine(p0, q);
+                painter.setPen(QPen(c, on ? 3.5 : 2.5, Qt::SolidLine, Qt::RoundCap));
+                painter.drawLine(p0, q);
+                const QPointF dir = q - p0;
+                const double l = std::hypot(dir.x(), dir.y());
+                if (l < 1) continue;
+                const QPointF u = dir / l, w(-u.y(), u.x());
+                QPolygonF head;
+                head << q + u * 6 << q - u * 8 + w * 6 << q - u * 8 - w * 6;
+                painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
+                painter.setBrush(c);
+                painter.drawPolygon(head);
+            }
+            dot(p0, hotG(3, 0));
+        }
+    }
     for (Shape* s : shapes)
     {
-        if (!s->hasHandles()) continue;
+        if (!s->hasHandles() || (group && members.contains(s))) continue;
         const auto& h = s->handles();
         const auto& vars = s->getVars();
         const QVector3D P = s->handlePivot();
@@ -2252,9 +2782,7 @@ void View::drawHandles(QPainter& painter)
             painter.setBrush(c);
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
-        painter.setPen(QPen(QColor(0xee, 0xe8, 0xd5), 1.5));
-        painter.setBrush(QColor(38, 139, 210));
-        painter.drawEllipse(p0, 4.5, 4.5);
+        dot(p0, hot(3, 0));
     }
     painter.restore();
 }
@@ -2296,8 +2824,51 @@ void View::applyHandleNumbers(const std::map<libfive::Tree::Id, float>& m)
 
 void View::beginHandleDrag(const HandleGrip& g, QPoint pos)
 {
+    if (g.kind == 0 || g.kind == 3)
+    {
+        // The move arrow (one axis) and the dot (all three): the numbers that move the shape -- of every selected
+        // shape, for the gizmo they share -- are noted with the values they have now
+        QList<Shape*> members;
+        QVector3D groupCenter;
+        if (g.group) { if (!groupHandles(members, groupCenter)) return; }
+        else members << g.shape;
+        handle_vars.clear();
+        for (const Shape* s : members)
+        {
+            const auto& h = s->handles();
+            const auto& vars = s->getVars();
+            for (int a = 0; a < 3; ++a)
+            {
+                if (g.kind == 0 && a != g.axis) continue;
+                const auto it = h.move[a] ? vars.find(h.move[a]) : vars.end();
+                if (it != vars.end()) handle_vars.append({h.move[a], a, it->second});
+            }
+        }
+        if (handle_vars.isEmpty()) return;
+        handle_active = g;
+        handle_press = pos;
+        handle_pivot = g.group ? groupCenter : g.shape->handlePivot();
+        if (g.kind == 0)
+        {
+            handle_len = handleLength(handle_pivot);
+            // (a move arrow is along the world's axis)
+            handle_dir = toScreen(handle_pivot + unitAxis(g.axis) * handle_len) - toScreen(handle_pivot);
+            if (std::hypot(handle_dir.x(), handle_dir.y()) < 1.0) return;    // pointing at the camera
+        }
+        else
+        {
+            // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera
+            free_normal = camera.towardViewer().normalized();
+            if (!ringPoint(pos, handle_pivot, free_normal, free_hit0)) return;
+        }
+        handle_drag = true;
+        this->setCursor(g.kind == 3 ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
+        emit(dragStart());
+        m_overlay->update();
+        return;
+    }
     const auto& h = g.shape->handles();
-    handle_id = g.kind == 0 ? h.move[g.axis] : g.kind == 1 ? h.rotate[g.axis] : h.scale[g.axis];
+    handle_id = g.kind == 1 ? h.rotate[g.axis] : h.scale[g.axis];
     const auto& vars = g.shape->getVars();
     const auto it = vars.find(handle_id);
     if (it == vars.end()) return;
@@ -2311,13 +2882,11 @@ void View::beginHandleDrag(const HandleGrip& g, QPoint pos)
         const auto sv = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
         handle_scale0[a] = sv == vars.end() ? 1.0f : sv->second;
     }
-    if (g.kind == 0 || g.kind == 2)
+    if (g.kind == 2)
     {
         handle_len = handleLength(handle_pivot);
-        // (a move arrow is along the world's axis, a scale knob along the part's own)
-        const QVector3D e = (g.kind == 0 ? unitAxis(g.axis)
-                                         : Shape::handleRotation(g.shape->handleRotate()).mapVector(unitAxis(g.axis)))
-                            * handle_len;
+        // (a scale knob is along the part's own axis)
+        const QVector3D e = Shape::handleRotation(g.shape->handleRotate()).mapVector(unitAxis(g.axis)) * handle_len;
         handle_dir = toScreen(handle_pivot + e) - toScreen(handle_pivot);
         if (std::hypot(handle_dir.x(), handle_dir.y()) < 1.0) return;    // pointing at the camera
     }
@@ -2344,7 +2913,19 @@ void View::dragHandle(QPoint pos)
         const double l2 = QPointF::dotProduct(handle_dir, handle_dir);
         if (l2 < 1) return;
         const double t = QPointF::dotProduct(QPointF(pos - handle_press), handle_dir) / l2;
-        applyHandleNumber(handle_id, handle_value0 + float(t * handle_len));
+        std::map<libfive::Tree::Id, float> numbers;          // (every shape that moves with the arrow)
+        for (const auto& v : handle_vars) numbers[v.id] = v.value0 + float(t * handle_len);
+        applyHandleNumbers(numbers);
+    }
+    else if (handle_active.kind == 3)
+    {
+        // The dot: where the cursor's ray meets the plane facing the camera, against where it met it at the start
+        QVector3D at;
+        if (!ringPoint(pos, handle_pivot, free_normal, at)) return;
+        const QVector3D d = at - free_hit0;
+        std::map<libfive::Tree::Id, float> numbers;
+        for (const auto& v : handle_vars) numbers[v.id] = v.value0 + d[v.axis];
+        applyHandleNumbers(numbers);
     }
     else if (handle_active.kind == 2)
     {

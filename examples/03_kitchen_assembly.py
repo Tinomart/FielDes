@@ -6,13 +6,13 @@
 # the fit is from the CAD face, in mm and as a percentage of the face's size.  The model is shaded
 # where the fit is worse than 0.5 % of the face (grey), fully red at 10 %.
 #
-# Where a fit is not good enough, FielDes can draw the STEP file's own surface instead:
+# Where a fit is not good enough, FielDes can use the STEP file's own surface instead:
 #
 #   kitchen = exclude(kitchen, region)
 #       the region is a FIELD OBJECT, any shape: inside it, in every part of the import it
-#       reaches, FielDes draws the STEP file's surface; outside, the fitted one.  The edge
-#       between them is jagged by one cell; a region that encloses a badly fitted face whole
-#       leaves no seam.  The field itself, what analysis and lattices would see, is not changed.
+#       reaches, the part is the STEP file's own surface -- meshed straight from the file and made a
+#       field, LOCKED: nothing done to the part afterwards changes it; outside, the fitted field.
+#       A region that encloses a badly fitted face whole leaves no seam.
 #
 #   kitchen = exclude(kitchen)
 #       no region: the places where a part's fit is worse than `threshold` percent, found

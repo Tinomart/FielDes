@@ -1,9 +1,9 @@
 # Modal analysis: how a part vibrates.
 #
 # The shaft support is bolted down at its base plate.  Its natural frequencies and mode shapes
-# are computed; every mode is a field like any other (displacement, ux, uy, uz), and the result
-# card shows the part moving in the mode.  Stiffen it (a gusset, a thicker web) and run again
-# to see how far each frequency moves.
+# are computed; every mode is a field like any other (displacement, ux, uy, uz), and a mode stated
+# on its own shows the part deformed by it -- play on the result card to see it vibrate.  Stiffen
+# it (a gusset, a thicker web) and run again to see how far each frequency moves.
 #
 from fieldes import *
 
@@ -23,4 +23,4 @@ print(result)
 for i, f in enumerate(result.frequencies):
     print("mode %d: %.0f Hz" % (i + 1, f))
 
-result.modes[0].show()            # the first mode; .modes[1].show() for the second ...
+result.modes[0]                   # the first mode (result.modes[1] for the second ...); play: it vibrates

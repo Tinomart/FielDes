@@ -1,0 +1,21 @@
+wait 7000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+viewmouse click 506 524
+wait 3500
+waitrender 60 10
+wait 800
+focuswho
+log --- key E
+key E
+wait 2500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/dbg_a_keyE.txt
+focuswho
+log --- the action itself
+action view.edit-toggle
+wait 2500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/dbg_b_action.txt
+focuswho
+quit

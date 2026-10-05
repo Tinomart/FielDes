@@ -3,8 +3,10 @@ FielDes: field-driven design
 Derived from Studio, a simple GUI for the libfive CAD kernel
 
 The card that controls how an analysis result is shown on the model: which
-field colours it, its colour bar, how much the displacements are
-magnified, and whether the analysis elements are drawn.
+field colours it, its colour bar, the step shown (a slider with play /
+pause: a flow in time, the load growing, the iterations of an
+optimisation), how much the displacements are magnified, and whether the
+analysis elements, or the streamlines of a flow, are drawn.
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
@@ -57,6 +59,13 @@ public:
         QString note;                // what the shown values are (a few words)
         QString noteHelp;            // ... and why (the note's tooltip)
         QString elementInfo;         // what the elements are, and how many
+        int steps = 0, step = 0;     // the steps of the result (0: none), and the one shown
+        QString stepLabel;           // what the shown step is ("t = 0.25 s", "load 35 %", "iteration 12 of 60")
+        bool playing = false;
+        int playMode = 0;            // 0 round and round, 1 back and forth, 2 once to the end
+        float playSpeed = 1;         // 1 = ten steps a second
+        bool hasFlow = false;        // a flow with streamlines...
+        bool showFlow = true;        // ...drawn over it
     };
     void setState(const State& s);
 
@@ -69,9 +78,15 @@ signals:
     void channelChanged(int index);
     void deformChanged(float scale);
     void elementsToggled(bool on);
+    void stepChanged(int index);
+    void playToggled(bool on);
+    void playModeChanged(int mode);
+    void playSpeedChanged(float speed);
+    void flowToggled(bool on);
 
 protected:
     void updateScaleLabel(float scale);
+    void updatePlayButtons();
 
     QComboBox* m_fields;
     ColorBar* m_bar;
@@ -80,6 +95,15 @@ protected:
     QLabel* m_scaleLabel;
     QToolButton* m_trueScale;
     QToolButton* m_elements;
+    QToolButton* m_flow;
+    QWidget* m_stepRow;
+    QToolButton* m_play;
+    QToolButton* m_stepBack;
+    QToolButton* m_stepForward;
+    QToolButton* m_playMode;
+    QComboBox* m_speed;
+    QSlider* m_step;
+    QLabel* m_stepLabel;
     QLabel* m_note;
     QLabel* m_info;
     State m_state;

@@ -63,7 +63,7 @@ __all__ = [
     'repeat', 'repeat_polar', 'mirror_x', 'mirror_y', 'mirror_z',
     'twist_z', 'bend_z',
     'evaluate', 'sample_grid', 'field_range', 'volume_of', 'mass_properties',
-    'exact_distance', 'offset_exact', 'shell_exact', 'round_edges', 'fillet',
+    'exact_distance', 'offset_exact', 'shell_exact', 'round_edges', 'fillet', 'smooth',
     'gradient_field', 'gradient_magnitude', 'normal_field', 'overhang_angle',
     'overhang_mask', 'wall_thickness', 'curvature_field',
     'field_from_points', 'field_from_csv', 'noise_field',
@@ -93,7 +93,8 @@ def _dist(v):
         try:
             return get()
         except Exception as e:
-            sys.stderr.write("fieldes: the exact distance of this part could not be made (%s); its own field is used\n" % e)
+            from fieldes.stdlib.result_cache import _log
+            _log("fieldes: the exact distance of this part could not be made (%s); its own field is used\n" % e)
     return s
 
 
@@ -627,6 +628,30 @@ def mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None)
 ################################################################################
 # Exact distance fields (re-distancing) and what they make possible
 
+def find_extent(shape, budget=200000, resolution=2.0, half=1.0e6):
+    ''' The box ((x0, y0, z0), (x1, y1, z1)) round the inside of a shape, found by searching it with interval
+        arithmetic -- or None when it has no extent that can be found (it is empty, or open on a side, or the search
+        ran out of cells).  A shape with var() numbers is searched with the numbers they have in the script: inside
+        the application a var() is held by the program, and a search that did not know its number would read it as 0
+        (a box of size var(2) is no box at all) '''
+    from fieldes.ffi import libfive_region_t
+    search = libfive_region_t()
+    for axis in (search.X, search.Y, search.Z):
+        axis.lower, axis.upper = -half, half
+    out = libfive_region_t()
+    open_sides = ctypes.c_int(0)
+    known = _script_vars() if hasattr(lib, 'libfive_tree_bounds_vars') else None
+    if known is not None:
+        found = lib.libfive_tree_bounds_vars(shape.ptr, search, budget, resolution, ctypes.byref(out),
+                                             ctypes.byref(open_sides), known[0], known[1], known[2])
+    else:
+        found = lib.libfive_tree_bounds(shape.ptr, search, budget, resolution, ctypes.byref(out),
+                                        ctypes.byref(open_sides))
+    if not found or open_sides.value:
+        return None
+    return ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
+
+
 def _shape_bounds(shape, bounds):
     if bounds is not None:
         lo, hi = bounds
@@ -634,17 +659,11 @@ def _shape_bounds(shape, bounds):
     b = getattr(shape, '_bounds', None)
     if b:
         return tuple(b[0]), tuple(b[1])
-    from fieldes.ffi import libfive_region_t
-    search = libfive_region_t()
-    for axis in (search.X, search.Y, search.Z):
-        axis.lower, axis.upper = -1e6, 1e6
-    out = libfive_region_t()
-    open_sides = ctypes.c_int(0)
-    if not lib.libfive_tree_bounds(shape.ptr, search, 200000, 2.0, ctypes.byref(out),
-                                   ctypes.byref(open_sides)) or open_sides.value:
+    found = find_extent(shape)
+    if found is None:
         raise ValueError('could not find the extent of the shape: pass '
                          'bounds=((x0, y0, z0), (x1, y1, z1))')
-    return ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
+    return found
 
 
 def exact_distance(shape, bounds=None, resolution=None, margin=0.0):
@@ -660,6 +679,9 @@ def exact_distance(shape, bounds=None, resolution=None, margin=0.0):
     return _exact_distance(shape, bounds, resolution, margin, _vars_key())
 
 
+_EXACT_PAD = 0.03       # (the room exact_distance leaves round the bounds, as a share of their longest side)
+
+
 @content_cached('exact_distance', limit=8)
 def _exact_distance(shape, bounds=None, resolution=None, margin=0.0, script_vars=None):
     ''' The exact signed distance field of a shape (mm): the shape is meshed
@@ -672,7 +694,7 @@ def _exact_distance(shape, bounds=None, resolution=None, margin=0.0, script_vars
     shape = _s(shape)
     lo, hi = _shape_bounds(shape, bounds)
     size = max(hi[i] - lo[i] for i in range(3))
-    pad = 0.03 * size + float(margin)
+    pad = _EXACT_PAD * size + float(margin)
     res = float(resolution) if resolution else 150.0 / size
     from fieldes.ffi import libfive_region_t, libfive_interval_t, libfive_mesh_import_info_t
     region = libfive_region_t(*[libfive_interval_t(a - pad, b + pad) for a, b in zip(lo, hi)])
@@ -755,6 +777,69 @@ def fillet(shape, radius, bounds=None, resolution=None):
     e1 = exact_distance(e0 - r, (tuple(v - r for v in lo), tuple(v + r for v in hi)), res)
     out = e1 + r
     out._bounds = (tuple(lo), tuple(hi))
+    return out
+
+
+_SIX_NEIGHBOURS = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+_SMOOTH_MAX_STEPS = 4       # (more steps are one of these at a larger radius: the sum has a term for every point reached)
+
+
+def _stencil(steps):
+    ''' The points (in units of the radius) and weights that `steps` averages over the six neighbours make together:
+        the first step's six points weigh 1/6 each, the second's average those again, and so on.  Every step
+        makes the same moves in any order, so the terms add up: 6 points for one step, 19 for two, 44 for three. '''
+    weights = {(0, 0, 0): 1.0}
+    for _ in range(steps):
+        out = {}
+        for (i, j, k), w in weights.items():
+            for a, b, c in _SIX_NEIGHBOURS:
+                key = (i + a, j + b, k + c)
+                out[key] = out.get(key, 0.0) + w / 6.0
+        weights = out
+    return weights
+
+
+def smooth(shape, radius, steps=1):
+    ''' Smooths the surface of a body without thickening it: bumps, dents, ridges and stair-steps smaller than
+        about `radius` mm are smoothed away, edges and corners are eased, and a flat or gently curved face stays
+        where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
+        averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
+        field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
+        grows as the square root of the number of steps).  Like any smoothing it eases convex features slightly
+        inwards and concave ones slightly outwards; the body as a whole does not grow.
+
+        The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
+        radii (6 copies for one step, 19 for two, 44 for three, 85 for four; more steps than four are four at a
+        larger radius, which smooths as far), so nothing is measured or meshed here: the surface is found when it
+        is drawn, and the cost is that of the field times the copies.  The body's field should be about a
+        distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
+        distance, as offset() does), because a field that rises faster smooths by as much more. '''
+    r = float(radius)
+    n = int(steps)
+    if not r > 0:
+        raise ValueError('smooth: the radius must be positive (mm)')
+    if n < 1:
+        raise ValueError('smooth: steps is at least 1')
+    if n > _SMOOTH_MAX_STEPS:
+        r *= math.sqrt(n / float(_SMOOTH_MAX_STEPS))
+        n = _SMOOTH_MAX_STEPS
+    from fieldes.stdlib.transforms import move
+    field = _dist(shape)
+    terms = []
+    for index, ((i, j, k), w) in enumerate(sorted(_stencil(n).items())):
+        # Each copy sits a ten-thousandth of the radius off its whole-radius point, differently for every copy: a field
+        # made of max() and min() (a box) ties with itself along its diagonals, and the mesher's grid of sample points
+        # lands on those ties -- the very points it takes the slow way round.  (The weights are symmetric: the surface
+        # does not move by more than that, a tenth of a micron for a radius of a millimetre.)
+        jitter = [1e-4 * r * (((index + 1) * c) % 1.0 - 0.5) for c in (0.6180339887, 0.7548776662, 0.5698402910)]
+        moved = move(field, (i * r + jitter[0], j * r + jitter[1], k * r + jitter[2]))
+        terms.append(moved * w)
+    while len(terms) > 1:           # (a balanced sum: a shallow tree)
+        terms = [terms[a] + terms[a + 1] if a + 1 < len(terms) else terms[a] for a in range(0, len(terms), 2)]
+    out = terms[0]
+    b = getattr(_s(shape), '_bounds', None)
+    if b:
+        out._bounds = (tuple(b[0]), tuple(b[1]))
     return out
 
 

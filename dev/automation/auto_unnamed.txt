@@ -1,0 +1,24 @@
+# an expression displayed on its own joins a selection of two: it is named, gets its gizmo line, and moves with the other
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+viewmouse click 507 524
+viewmouse click 812 524 ctrl
+wait 800
+selected
+wait 5000
+waitrender 90 40
+wait 4000
+waitrender 90 40
+wait 2000
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/unnamed_a.txt
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/unnamed_multi.png
+handledrag 0 0 60 0
+wait 4000
+waitrender 90 40
+wait 2000
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/unnamed_b_moved.txt
+quit

@@ -1,0 +1,123 @@
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+log --- V on all three: all shown -> all hidden; V again: all shown
+treeclick none block
+treeclick shift top
+selected
+action view.visible
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_v1.txt
+action view.visible
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_v2.txt
+log --- one hidden with its eye, all selected: V shows all
+tree 1 ball
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_v3_ballhidden.txt
+treeclick none block
+treeclick shift top
+action view.visible
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_v4_all_shown.txt
+log --- ball locked with its button; selecting all three leaves the locked ball out
+tree 3 ball
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_r1_ballLocked.txt
+treeclick none block
+treeclick shift top
+selected
+log --- R on the two: they are locked and leave the selection
+action view.edit-lock
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_r2_two_locked.txt
+selected
+log --- a locked model alone: R unlocks it
+treeclick none block
+action view.edit-lock
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_r3_block_unlocked.txt
+log --- unlock the others with their buttons
+tree 3 ball
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_r4_ball_unlocked.txt
+tree 3 top
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_r5_all_unlocked.txt
+log --- ball to the gizmo with its button, all selected: E puts all in the gizmo (stored), E again all in the handles
+tree 2 ball
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_e1_ball_gizmo.txt
+treeclick none block
+treeclick shift top
+action view.edit-toggle
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_e2_all_gizmo.txt
+action view.edit-toggle
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_e3_all_handles.txt
+log --- block cache off with its button, all selected: C turns all on, C again all off, C again all on
+tree 4 block
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_c1_block_off.txt
+treeclick none block
+treeclick shift top
+action view.cache
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_c2_all_on.txt
+action view.cache
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_c3_all_off.txt
+action view.cache
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_c4_all_on.txt
+log --- isolate with a hidden one selected: it is shown, the unselected one hidden
+treeclick none block
+action view.visible
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_i1_block_hidden.txt
+treeclick none block
+treeclick ctrl ball
+selected
+action view.isolate
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/toggles_i2_isolated.txt
+quit

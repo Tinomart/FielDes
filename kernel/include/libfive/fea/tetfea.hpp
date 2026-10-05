@@ -51,6 +51,8 @@ public:
      *  coordinates clamped inside it (so a field is continued as its nearest
      *  value); -1 if the mesh has nothing near p.  */
     int locate(const Eigen::Vector3d& p, double lambda[4]) const;
+    /*  The tetrahedron that holds p, or -1 when none does (a point outside the mesh): no nearest one  */
+    int locateInside(const Eigen::Vector3d& p, double lambda[4]) const;
 
     /*  The gradients of tetrahedron t's four barycentric coordinates (rows)  */
     void gradients(int t, Eigen::Matrix<double, 4, 3>& g) const;
@@ -152,6 +154,15 @@ public:
      *  mesh (each tetrahedron's density averaged at the nodes by volume) for meshFieldTree(., 0)  */
     const std::vector<double>& complianceHistory() const { return m_history; }
     std::shared_ptr<const MeshResult> densityResult() const { return m_densityResult; }
+    /*  The density as a field after iteration k (0-based; one per compliance value): how the design was found,
+     *  step by step  */
+    size_t densityHistoryCount() const { return m_densityHistory.size(); }
+    std::shared_ptr<const MeshResult> densityResultAt(size_t k) const;
+    /*  How many separate pieces the optimised design is in when it is cut at the density `threshold` (the density at
+     *  the nodes, as the optimised part is cut from it): the part is where it is above the level, and a link that is only
+     *  just there -- less than `margin` above it -- is too thin to count.  Specks under 2 % of the body are not
+     *  counted (0 when there is no result)  */
+    int pieces(double threshold, double margin = 0.0) const;
     std::shared_ptr<const MeshResult> mode(int i) const
     {
         return (i >= 0 && size_t(i) < m_modes.size()) ? m_modes[size_t(i)] : nullptr;
@@ -164,6 +175,7 @@ public:
     std::shared_ptr<const TetMesh> mesh() const { return m_mesh; }
 
 private:
+    friend struct ResultIO;
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_E, m_nu;
@@ -193,6 +205,7 @@ private:
     std::vector<float> m_topDensity;            // per tetrahedron
     std::vector<double> m_history;
     std::shared_ptr<MeshResult> m_densityResult;
+    std::vector<std::vector<float>> m_densityHistory;   // per iteration: the density at the nodes
     std::vector<double> m_frequencies;
     std::vector<std::shared_ptr<MeshResult>> m_modes;
 };

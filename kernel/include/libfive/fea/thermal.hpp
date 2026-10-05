@@ -114,6 +114,7 @@ public:
     double heatOutConvection = 0;   // to the ambient
 
 private:
+    friend struct ResultIO;
     struct Prepared;
     /*  Solves K(mult, conv) x = b for the free nodes (x: the start, and
      *  the solution); the elements' conductivities are scaled by mult, conv

@@ -84,6 +84,36 @@ and the arithmetic of [Scripting](scripting.md#arithmetic-on-fields) (`+ - * /`,
 | `mirror_x / _y / _z(shape, x)` | mirror-symmetric copy |
 | `twist_z(shape, degrees_per_mm, center)`, `bend_z(shape, radius, center)` | deformations (the rate may be a field) |
 
+## Excluded regions: exclude()
+
+`exclude(shape, region, ...)` locks the places of a shape that lie inside the regions (any shapes: where their field is
+negative). It cuts the shape into **two fields that are always united again**: the *free field*, the shape outside the
+region, which every later operation reshapes, and the *locked field*, the shape inside the region, which none of them
+touches. It works on **every shape and every field** — a box, a lattice, a result of other operations. For a part
+imported from a STEP file the locked field is the part's own exact surface, meshed directly from the file and made a
+field, instead of the import's fit; see [STEP import](step-import.md#putting-the-exact-surface-back-exclude).
+
+```python
+part = exclude(part, sphere(12, (0, 0, 6)))       # inside the sphere the part is locked
+light = shell(part, 2)                            # shelled everywhere else; the sphere's part is as it was
+final = union(light, bracket)                     # the bracket is not added inside the sphere either
+```
+
+What an excluded shape does with the rest of the library:
+
+| Operation | What happens |
+|---|---|
+| `offset`, `shell`, `thicken`, `shell_*`, `offset_by`, `offset_exact`, `shell_exact`, `round_edges`, `fillet`, `smooth`, `inverse`, `lattice`, `fill`, `topology_optimization` and the other topology optimisations | works on the whole shape, then the locked field is put back: inside the region the shape is as it was |
+| `union`, `intersection`, `blend*`, `morph`, `smooth_*`, `chamfer_union`, `union_all`, `intersection_all` | the same, for the locked fields of every excluded shape given |
+| `difference(a, b)`, `clearance`, `blend_difference`, `smooth_difference` | the locked fields of `a` (a tool that is excluded is only subtracted) |
+| `move`, `rotate*`, `scale_*`, `reflect_*`, `handles()` | the whole thing moves: the locked field and its region go with the shape |
+| `array_*`, `symmetric_*`, `repeat*`, `mirror_*`, `loft*`, `extrude_z`, `twist_z`, `bend_z`, `taper_*`, `shear_x_y`, `attract_*`, `repel_*`, `twirl_*`, `revolve_y`, `expose` | would separate the two fields (copy or deform them differently), so they raise an `ExcludedError` — do them first and `exclude()` the result |
+| analyses, `colored`, `render_cache`, `lock`, queries (`volume_of`, `evaluate`, ...) | see the whole shape; `colored` and `lock` keep it excluded |
+
+Raw field arithmetic (`a + b`, `a.min(b)`, `a.max(b)`) is not an operation of the library: it works on the whole field
+and gives a plain shape. The table lives in `fieldes/stdlib/excluded.py`, and `dev/tests/t_excluded.py` checks that every
+function of the library is in it.
+
 ## Exact distances
 
 Offsets, shells and fillets of a shape with only a *rough* field (booleans, blends, deformations) come
@@ -97,6 +127,7 @@ surface:
 | `shell_exact(shape, thickness, side='inside'\|'outside'\|'center')` | uniform hollow shell |
 | `round_edges(shape, radius)` | rounds every convex edge and corner |
 | `fillet(shape, radius)` | fills every concave edge and corner |
+| `smooth(shape, radius, steps=1)` | smooths the surface without thickening the body: features smaller than about `radius` go, flat faces stay; more `steps` smooth further. A field like any other (a weighted sum of the body's field moved by whole radii: 6 copies for one step, 19 for two, 44 for three, 85 for four), so nothing is measured or meshed in it |
 
 `resolution` (samples per mm; about 4 / radius or finer for `round_edges`) sets how finely the surface
 is followed. The expensive part (the mesh and its distance structure) is [cached](caching-and-performance.md).

@@ -1,0 +1,25 @@
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+log --- a new sphere from the menu is draggable by its surface at once
+viewmouse rclick 400 700
+wait 800
+popup pick New primitive/3D shapes/sphere
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/newprim_1_created.txt
+wait 3000
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/newprim_2_exposed.txt
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/newprim_sphere.png
+viewmouse dragto 400 700 440 700
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/newprim_3_dragged.txt
+quit

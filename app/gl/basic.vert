@@ -7,6 +7,9 @@ layout(location=2) in vec3 vertex_norm;
 // A deformed model's undeformed position: the section cuts the material
 // there, so the cut moves with the deformation (use_rest != 0)
 layout(location=3) in vec3 rest_position;
+// A patch of a surface (patch_mode != 0 in the fragment shader): above zero, the vertex is not part of it and the
+// part is not drawn there
+layout(location=4) in float patch_value;
 uniform int use_rest;
 
 uniform mat4 M;
@@ -20,10 +23,12 @@ out vec4 frag_color;
 out vec3 base_pos;
 out vec3 frag_pos;
 out vec3 frag_norm;
+out float frag_patch;
 
 void main()
 {
     base_pos = vertex_position;
+    frag_patch = patch_value;
 
     gl_Position = M * vec4(vertex_position, 1.0f);
     vec3 clip_pos = use_rest != 0 ? rest_position : vertex_position;

@@ -177,6 +177,63 @@ def resume(breakpoints=None):
     return _continue(_paused, breakpoints, skip_first=True)
 
 
+class _PartialScenes:
+    ''' The model tree while the script is still running.  A statement that takes a while (an import, a smoothing, an
+        analysis) used to leave the tree as it was until the whole script was done; now, once a statement has been
+        running for DELAY seconds, the tree is given the variables of the statements that are done (host.partial_scene).
+        It runs beside the script, in a thread of its own, and only looks at what is done: the script is not slowed by
+        it, and a script whose statements are all quick never makes one. '''
+    DELAY = 0.15
+
+    def __init__(self, state, host):
+        import threading
+        self.state, self.host = state, host
+        self.sent = 0
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, name='fieldes-partial-scenes', daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        import time
+        st = self.state
+        while not self.stop.wait(0.05):
+            n = st['i']
+            if self.sent < n < len(st['body']) and time.time() - st['t0'] >= self.DELAY:
+                self.sent = n
+                try:
+                    from fieldes.app_support import scene_json
+                    text = scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n, partial=True)
+                    if not self.stop.is_set():
+                        self.host.partial_scene(text)
+                except Exception:       # (the model tree is a convenience only)
+                    pass
+
+    def close(self):
+        ''' Ends it, after a tree it is making at this moment (the finished script's tree is made after that) '''
+        self.stop.set()
+        if self.thread.is_alive():
+            self.thread.join()
+
+    def error_scene(self):
+        ''' The script stopped with an error: the tree lists what the statements before it made (there is no finished
+            script's tree to follow) '''
+        st = self.state
+        try:
+            from fieldes.app_support import scene_json
+            n = st['i']
+            self.host.partial_scene(scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n))
+        except Exception:
+            pass
+
+
+def _partial_scenes(state):
+    try:
+        import _fieldes_host as host
+        return _PartialScenes(state, host) if hasattr(host, 'partial_scene') else None
+    except ImportError:         # (not inside the application)
+        return None
+
+
 def _continue(state, breakpoints, skip_first):
     global last_lines, last_scene, last_output, last_paused, _paused, last_globals
     import contextlib
@@ -190,11 +247,14 @@ def _continue(state, breakpoints, skip_first):
     progress_lib = run_progress._lib
     if progress_lib:
         progress_lib.libfive_run_begin(len(body))
+    state['t0'] = time.time()
+    watcher = _partial_scenes(state)
     try:
         with contextlib.redirect_stdout(state['printed']):
             while state['i'] < len(body):
                 i = state['i']
                 p = body[i]
+                state['t0'] = time.time()
                 b = 0 if (skip_first and state.get('skip') == i) else _hit(
                     breakpoints, p, body[i - 1].end_lineno if i else 0)
                 if b:
@@ -232,7 +292,16 @@ def _continue(state, breakpoints, skip_first):
                 out.append(r)
                 lines.append((p.lineno, p.end_lineno))
                 state['i'] = i + 1
+    except BaseException as e:
+        # The script stopped with an error: its model tree lists what the statements before it made.  (Not when it
+        # was stopped by the application, for a newer edit: that is not an error of the script's)
+        if watcher and not (type(e) is Exception and not e.args):
+            watcher.close()
+            watcher.error_scene()
+        raise
     finally:
+        if watcher:
+            watcher.close()
         last_output = state['printed'].getvalue()
         run_progress.end_to(0)
         if progress_lib:

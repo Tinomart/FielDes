@@ -1,0 +1,19 @@
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+ctrlclick 8 8
+wait 1500
+tabdump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/focus_b_tab_before.txt
+focus view
+viewmouse click 807 524
+wait 1000
+key I
+wait 1500
+tabdump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/focus_b_tab_after.txt
+tabselect 0
+wait 300
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/focus_b_script.txt
+log done-b
+quit

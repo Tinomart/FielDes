@@ -23,7 +23,6 @@ result = thermal_analysis(stand,
                            fixed_temperature(cold_plate, 25.0),
                            convection(air, 10e-6, ambient=25.0)],            # W / (mm2 K): natural convection
                           material=aluminium, element_size=3)
-print(result)
 print("bearing: %.1f C" % result.temperature(0, 92, 44))
 
-result.show("temperature")
+result                                                      # shown: the part coloured by the temperature

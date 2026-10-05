@@ -84,7 +84,7 @@ After the import, the output pane lists what was approximated:
 Keukencombinatie.stp: 212 free-form faces fitted by closed-form surfaces
   part 14: 3 faces, worst 0.41 mm (2.6 % of the face)
   …
-  Shaded 0.5 % (grey) to 10 % (red). exclude() or auto_exclude=True draws the exact surface.
+  Shaded 0.5 % (grey) to 10 % (red). exclude() or auto_exclude=True puts the exact surface there.
 ```
 
 - The deviation is given in mm and as a percentage of the **face's own size**.
@@ -108,6 +108,14 @@ kitchen = exclude(kitchen)                                   # no region: where 
 kitchen = exclude(kitchen, offset(union(kitchen[59][0], kitchen[60][0]), 90))   # your own: any shape
 ```
 
+`exclude()` is not specific to imports — it works on every shape and every field, see
+[Excluded regions](fields.md#excluded-regions-exclude). What it does for a part imported from a STEP file is this:
+it cuts the part into **two fields that are always united again**. The *free field* is the import outside the
+region; every later operation reshapes that. The *locked field* is the part inside the region: **the part's own
+surface, meshed directly from the STEP file** — not the import's fit, not the tessellating importer — and made
+into a field (a signed distance field, [like an imported mesh](meshes.md)). No operation done to the part afterwards
+changes it.
+
 **Without a region**, `exclude()` works on the places where a part's fit is worse than `threshold` percent of
 its face's size (1 by default; 0.5 is the lowest): `poor_fit_region(part, threshold)` is the field that
 says where — negative there, positive away from it — made from the part's fit marker, the field that
@@ -115,10 +123,10 @@ shades the poor fits grey to red. Nothing is sampled, and the region wraps the w
 so the seam between the exact surface and the fitted one lies where the fit is good.
 
 **With a region**, it is yours: a sphere, a box, a part, a part offset by a distance, a union or
-intersection of those, made of fields of the model itself. Make it enclose the badly fitted faces whole:
-where the fit is off and the region's surface cuts through a bad face, the exact surface and the fitted one
-do not meet there and the seam shows as a step. A fitted face is off by up to a tenth of its size, so an
-offset round the fitted parts has to be that large.
+intersection of those, made of fields of the model itself; several regions given at once are their union.
+Make it enclose the badly fitted faces whole: where the fit is off and the region's surface cuts through a bad
+face, the exact surface and the fitted one do not meet there and the seam shows as a step. A fitted face is off by
+up to a tenth of its size, so an offset round the fitted parts has to be that large.
 
 What you give `exclude()` decides how much of the model it works on:
 
@@ -133,20 +141,26 @@ kitchen[19] = exclude(kitchen[19])                  # one part: where its own fi
 kitchen[19] = exclude(kitchen[19], region)          # one part, a region of your own
 ```
 
-FielDes meshes the solid **directly from the STEP B-rep** (an exact tessellation: every face triangulated in
-its own parameter space, edges shared so the pieces are watertight, free-form faces sampled from the exact
-spline with an error bound). The region itself is never meshed: the exact surface's triangles are cut by
-evaluating the region's field on them (the ones its surface crosses are split down to one cell of the render),
-the shape's mesh loses its triangles inside the region, and the two are put together — in the viewport and in
-STL export alike. The edge between them is jagged, one cell wide; where the fit is good there the two
-surfaces coincide and it does not show.
+The STEP file is meshed **directly from its B-rep** (an exact tessellation: every face triangulated in its own
+parameter space, edges shared so the pieces are watertight, free-form faces sampled from the exact spline with an
+error bound) and the triangles are made the field with the [mesh importer](meshes.md)'s method: the distance to the
+nearest triangle, signed by the closest feature's normal (the winding number where the mesh is not closed).
+The mesh and its field are made **once per part** and kept while the script is run again; the part's moves, turns,
+scales and mirrors since the import are done to the field again, with the same numbers (they may be `var()`s).
+`quality` sets the points per full turn of a circle in the mesh (default 64).
 
-What the rest of the program sees:
+What the rest of the program sees: the excluded part **is** the united field, so the viewport, STL export,
+analyses, lattices and further CSG all see the exact surface inside the region and the import's field outside
+it. Only the mesh for the locked field is made from the file; it costs the tessellation of the part (and the
+distance structure of its triangles), once, and the render then evaluates it only inside the region.
 
-- The **viewport and STL export** see the exact surface inside the region.
-- The **field** — what analyses, lattices and further CSG see — is not changed; it stays the fitted one.
-  The exact surface replaces what is drawn, so apply `exclude()` *last*, to the finished shape, with
-  `source=` the imported part:
+- **Operations** on an excluded part work on the whole part and then put the locked field back: an offset, a
+  shell, a cut, a lattice, a union — anything done to the part afterwards does not change what is inside the
+  region. Moving, turning, scaling and mirroring carry both fields along. Copying (`array_*`, `symmetric_*`,
+  `repeat`, `mirror_*`) or deforming (`twist_z`, `bend_z`, `taper_*`, `attract_*`, `repel_*`, `twirl_*`) would
+  tear the two apart, so they raise an error: do them before `exclude()`, and `exclude()` the result.
+- For a shape made from a part (cut, filled with a lattice ...) say which imported part the locked geometry
+  comes from with `source=`, and exclude last, to the finished shape:
 
 ```python
 part  = import_step_parts("step/panel.step")[0][0]
@@ -154,18 +168,17 @@ light = offset(part, -1.0)                          # anything made from the par
 final = exclude(light, sphere(12, center=(0, 0, 6)), source=part)
 ```
 
-- The part may be moved, rotated, scaled or mirrored after the import; the region and the exact piece
-  follow. The region may use `var()` numbers (they are draggable).
-- `quality` sets the points per full turn of a circle in the exact mesh (default 64).
-- Several regions can be excluded one after the other.
+- The part may be moved, rotated, scaled or mirrored after the import; the locked field follows. Dragging a
+  `var()` that the region or the placement uses updates the exact surface when the drag ends (the script
+  runs again then).
+- Several exclusions can be made one after the other; each adds its own locked field.
+- In the viewport, select the part first and the regions after it (Ctrl+click), right-click and choose
+  **Combining → exclude**.
 
 A note on the exact mesh: the tessellation is verified watertight and matches OpenCascade on the test set
 (face areas to 0.1 %, see [the tessellating importer](#parts-that-are-almost-all-free-form-import_step_tessellated_parts),
 which is made of the same tessellation). Tori are refined like the other curved faces, and a refinement is kept only if the
 mesh's area comes closer to the torus patch's own.
-
-`exact_region_mesh(shape, cell=1.0)` returns the exact pieces as vertex and triangle lists, for scripts that
-work outside the application.
 
 `examples/03_kitchen_assembly.py` excludes the poor fits of the whole kitchen with one region, a union of the
 parts' `poor_fit_region` fields.
@@ -175,7 +188,7 @@ parts' `poor_fit_region` fields.
 The fitted surfaces above are the right trade for a part that is mostly planes, cylinders and fillets with a
 few free-form faces. A part that is *almost all* free-form — a sculpted or organic body, a gear, a worm, a
 thread, an impeller — does not survive them: the faces fit poorly, the poor fits get painted red, and
-`exclude()` only draws the exact surface, it does not give the field. For those there is a separate importer
+`exclude()` only makes the part exact inside a region, the rest stays the fit. For those there is a separate importer
 that **does not reconstruct or fit anything**:
 
 ```python
@@ -237,8 +250,8 @@ kitchen = import_step_parts("step/Keukencombinatie.stp",
 
 It is `exclude(parts, threshold=exclude_threshold)` on the whole import: for every part, the places fitted
 worse than `exclude_threshold` (percent of the face's size) are excluded. The print-out says how many parts
-were affected. `exclude_quality` is `exclude()`'s `quality`. It is **off by default**: the exact pieces cost
-meshing time, and a model whose fits are all good does not need it.
+were affected. `exclude_quality` is `exclude()`'s `quality`. It is **off by default**: the exact surfaces cost
+tessellation time, and a model whose fits are all good does not need it.
 
 ## Parts, assemblies and names
 

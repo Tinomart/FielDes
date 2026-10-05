@@ -199,6 +199,7 @@ public:
     const std::vector<float>& elementFractions() const { return m_fraction; }
 
 protected:
+    friend struct ResultIO;
     Tree m_shape;
     Eigen::Vector3d m_lo;
     double m_h, m_E, m_nu;

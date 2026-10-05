@@ -1,0 +1,15 @@
+# the starting sphere of a new file: handles work at once
+wait 6000
+waitrender 120 30
+wait 1000
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/default_a_start.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/default_a_start.png
+viewmouse click 671 524
+wait 600
+selected
+viewmouse dragto 671 524 720 524
+wait 3000
+waitrender 60 10
+wait 1500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/default_b_dragged.txt
+quit

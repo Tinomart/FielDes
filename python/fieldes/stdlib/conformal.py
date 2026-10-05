@@ -163,7 +163,7 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
                         out, not told
         cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
                         TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
-                        surface, or cell_custom(nodes, beams).  Default: cell_periodic('octet')
+                        surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
         depth           how deep the layers are together (mm).  Default: as deep as the body is under each cell (a thin
                         shell: its thickness; at most three cells) for side='inside', one cell for 'outside'
         within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
@@ -206,9 +206,14 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
         body = Shape.wrap(surface_field)
     surface = region
     cellobj = _L._need_cell(cell, 'lattice_surface_conform', default=lambda: _L.cell_periodic('octet'))
-    if cellobj.family in ('shape', 'planar'):
-        raise ValueError("lattice_surface_conform: a {} cell is not made of cells that can follow a surface: use "
-                         "cell_periodic() with a strut cell or a TPMS, or cell_non_periodic()".format(cellobj.family))
+    if cellobj.family == 'shape':
+        raise ValueError("lattice_surface_conform: a cell_custom(region, geometry) cell is a box of geometry: it repeats on "
+                         "a straight, cylindrical or spherical grid (lattice(..., cell_map=...)), it cannot follow a "
+                         "surface.  Use cell_periodic() with a strut cell or a TPMS, cell_custom_truss(), or "
+                         "cell_non_periodic()")
+    if cellobj.family == 'planar':
+        raise ValueError("lattice_surface_conform: a planar cell is not made of cells that can follow a surface: use "
+                         "cell_periodic() with a strut cell or a TPMS, or cell_non_periodic()")
     if depth is not None and not float(depth) > 0:
         raise ValueError('lattice_surface_conform: depth must be positive')
     if side not in ('inside', 'outside'):

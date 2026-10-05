@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
 
 ## Primitive shapes
 
@@ -505,68 +505,10 @@ Shape (meshing it, combining it with other shapes, even just
 printing its value) raises immediately with the specific reason,
 instead of silently substituting Oracle or approximate geometry.
 
-### `exact_region_mesh(shape, cell=1.0)`
+### `exact_field(sources, quality=64)`
 
-The exact pieces of the regions excluded from `shape` (see exclude)
-as (vertices, triangles) lists -- outside FielDes, e.g. to check
-them: the STEP file's surface inside each region, the triangles the
-region's surface crosses cut down to `cell` long.  Every number must
-be a plain number (no FielDes variables), and no region may have been
-moved after exclude().
-
-### `exclude(shape, region=None, source=None, quality=64, threshold=1.0)`
-
-Draws the EXACT surface of the imported part(s) `shape`, meshed straight
-from the STEP file, inside a region -- for places the import only
-approximates (B-spline faces fitted by simple surfaces, which the import
-marks in red; threads; ...) that have to stay exact.
-
-The region is a FIELD OBJECT: any shape -- a sphere, a box, a part, a
-part offset by some distance, a union of those -- is a region, the
-inside of the shape (where its field is negative):
-
-    rails = union(kitchen[59][0], kitchen[60][0])   # the parts' own fields
-    kitchen = exclude(kitchen, offset(rails, 90))   # everything within 90 mm of them
-
-Without a region, it is the places where the fit is worse than
-`threshold` percent of the face's size (poor_fit_region), in every part
-that has any:
-
-    kitchen = import_step_parts('step/kitchen.stp')
-    kitchen = exclude(kitchen)
-
-What you give it decides how much it works on.  The WHOLE IMPORT (what
-import_step_parts returns): the region goes into every part it
-touches, and the same list comes back, the parts in the same places.
-One entry of the import, kitchen[19], or one part, kitchen[19][0]:
-that part only.
-
-    kitchen[19] = exclude(kitchen[19], region)
-
-Inside the region FielDes draws the exact surface instead of the shape's
-own (in the view and in the exported STL): the shape's mesh loses its
-triangles there and the STEP file's surface is cut by the region's field
-and put in, the edge between them jagged by one cell.  The field itself
--- what further modelling, FEA or lattices see -- is not changed.  The
-region's surface should cross no badly fitted face (the red one): where
-the fit is off, the exact surface and the fitted one do not meet at the
-region's surface and the seam shows as a step.  A region that encloses
-the whole bad face has no such seam.
-
-For a shape made from a part (moved, mirrored, cut, filled with a
-lattice ...) say which imported part its exact geometry comes from,
-and apply exclude() last, to the finished shape:
-
-    part = import_step_parts('bracket.step')[0][0]
-    light = ...                  # anything made from part
-    final = exclude(light, region, source=part)
-
-The part may have been moved, rotated, scaled or mirrored with the
-fieldes.stdlib transforms since the import (the exact piece follows);
-several regions can be excluded one after the other.
-
-quality: points per full turn of a circle in the exact mesh.
-threshold: for the default region, in percent of the face's size.
+The exact surface of the parts `sources` (_ExactSource) as a field: meshed straight from the STEP file, made
+a signed distance field (negative inside the solid), the parts united
 
 ### `import_step(path, cache=True, units='mm', rev=None)`
 
@@ -653,11 +595,11 @@ around them -- that uses the STEP geometry itself.
 auto_exclude=True does that for every poorly fitted place by itself: each
 part's fit marker is read, the places where the fit is off by more than
 `exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the
-lowest) are excluded from the part (the region is the field poor_fit_region),
-so the FielDes viewport draws the STEP file's own surface there and the fitted
-field everywhere else.  The region is cut out of the part's field, which is
-what further modelling sees.  `exclude_quality` is exclude()'s `quality`.
-Off by default: the exact pieces cost meshing time.
+lowest) are excluded from the part (the region is the field poor_fit_region):
+there the part is its exact surface, meshed from the STEP file and made a
+field, locked against every later operation; the fitted field is the
+part everywhere else.  `exclude_quality` is exclude()'s `quality`.
+Off by default: the exact surfaces cost tessellation time.
 
 ### `import_step_parts_reconstructed(path, cache=True, units='mm', rev=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64)`
 
@@ -724,11 +666,11 @@ around them -- that uses the STEP geometry itself.
 auto_exclude=True does that for every poorly fitted place by itself: each
 part's fit marker is read, the places where the fit is off by more than
 `exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the
-lowest) are excluded from the part (the region is the field poor_fit_region),
-so the FielDes viewport draws the STEP file's own surface there and the fitted
-field everywhere else.  The region is cut out of the part's field, which is
-what further modelling sees.  `exclude_quality` is exclude()'s `quality`.
-Off by default: the exact pieces cost meshing time.
+lowest) are excluded from the part (the region is the field poor_fit_region):
+there the part is its exact surface, meshed from the STEP file and made a
+field, locked against every later operation; the fitted field is the
+part everywhere else.  `exclude_quality` is exclude()'s `quality`.
+Off by default: the exact surfaces cost tessellation time.
 
 ### `poor_fit_region(part, threshold=1.0)`
 
@@ -902,34 +844,41 @@ count, whether it is watertight, ...) as a dict, or None.
 
 Handles: edit a shape -- an imported part too -- by dragging in FielDes's viewport.
 
-FielDes's model tree has a handles button on every shape and part.  It cycles
-three modes, so the ways of editing never get in each other's way:
+Two ways of editing by dragging work together, and the first has priority where they meet:
 
-  gizmo    the part's own move arrows, rotation rings and scale knobs:
-           `handles()` writes, under the shape's definition,
+  the gizmo    the part's own move arrows, rotation rings and scale knobs: `handles()` writes, under the shape's
+               definition,
 
-               part = handles(part, move=(var(0), var(0), var(0)),
-                              rotate=(var(0), var(0), var(0)),
-                              scale=(var(1), var(1), var(1)), mode='gizmo')
+                   part = handles(part, move=(var(0), var(0), var(0)),
+                                  rotate=(var(0), var(0), var(0)),
+                                  scale=(var(1), var(1), var(1)))
 
-           so what the gizmo does is ordinary script text, like any dragged
-           var().  The shape is `part` scaled about its centre, rotated (x,
-           then y, then z; degrees) and moved.
-  handles  FielDes's own handles: hover a surface of the shape and drag it.
-           Any shape with `var()` numbers has them; for a shape written with
-           plain numbers -- a primitive, or a part imported from a STEP file,
-           which is made of primitives -- `expose()` makes the numbers that
-           place its surfaces variables:
+               so what the gizmo does is ordinary script text, like any dragged var().  The shape is `part`
+               scaled about its centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown
+               is the `mode` of that line (the model tree's gizmo button, key E, goes through them):
 
-               part = expose(part, [var(6), var(40), ...])
+                   'click'   (the default) the gizmo is shown while the shape is selected, i.e. after you click it
+                   'never'   it is never shown, so that it cannot get in the way
+                   'always'  it is shown on the shape whether it is selected or not
 
-           Dragging a face changes the number of that face (a plane's
-           position, a radius) in the script text.
-  lock     nothing is draggable: neither the gizmo nor the surface
+  handles      FielDes's own handles: hover a surface of the shape and drag it.  This is always there, whatever
+               the mode of the gizmo.  Any shape with `var()` numbers has them; for a shape written with plain
+               numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
+               `expose()` makes the numbers that place its surfaces variables:
 
-Nothing is stored anywhere but in the script: delete the `expose(...)` and
-`handles(...)` lines of a part (FielDes's Reimport does) and it is the file's
-version again. 
+                   part = expose(part, [var(6), var(40), ...])
+
+               Dragging a face changes the number of that face (a plane's position, a radius) in the script
+               text.  FielDes writes the line itself when you select the shape.
+
+A lock button beside it (key R) is a separate switch: a locked shape cannot be dragged at all, neither by the
+gizmo nor by its surfaces, and keeps its gizmo mode, which comes back when it is unlocked:
+
+               part = lock(part)
+
+Nothing is stored anywhere but in the script: delete the `expose(...)` and `handles(...)` lines of a part
+(FielDes's Reimport does) and it is the file's version again; the `lock(...)` line only keeps it from being
+dragged. 
 
 ### `expose(shape, values)`
 
@@ -949,7 +898,7 @@ file) it raises ValueError: reimport the part.
 
 The numbers expose() makes variables, in its order, as the text to write them as
 
-### `handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None, show=None)`
+### `handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None)`
 
 Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
@@ -958,10 +907,22 @@ rotations in degrees about the same centre (x first, then y, then z),
 `move`: (x, y, z) translation.  Write the numbers as var(...) to drag
 them: FielDes's model tree does that for you.
 about: the centre (default: the middle of the shape's box)
-mode: 'gizmo' (the default) shows the gizmo, 'handles' lets the shape's own
-surfaces be dragged instead (see expose()), 'lock' makes it undraggable;
-the placement stays in every mode.  (show=True / False, as older scripts
-wrote it, is 'gizmo' / 'lock'; mode= wins.)
+mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
+'always'.  The shape's own surfaces (see expose()) can be dragged whatever the mode, and the gizmo has
+priority where it is shown.
+To make a shape undraggable, lock it: `shape = lock(shape)`.
+
+### `lock(shape)`
+
+`shape`, locked: FielDes does not let it be dragged -- neither by the gizmo nor by its surfaces -- until the
+line is deleted.  It is the shape itself in every other way (its bounds, handles, colours and exact regions
+stay), and the way of editing it had (gizmo or handles) comes back when it is unlocked.
+
+Write it under a shape's definition, with its handles() and expose() lines:
+
+    part = lock(part)
+
+(FielDes's model tree has a lock button on every shape, and the key R toggles it.)
 
 ## Fields
 
@@ -1110,6 +1071,14 @@ samples.  points: [(x, y, z), ...] with values [v, ...], or
 Fills every concave (inside) edge and corner of a shape with a
 fillet of the given radius: the shape is grown by the radius and
 shrunk back, with exact distances both times
+
+### `find_extent(shape, budget=200000, resolution=2.0, half=1000000.0)`
+
+The box ((x0, y0, z0), (x1, y1, z1)) round the inside of a shape, found by searching it with interval
+arithmetic -- or None when it has no extent that can be found (it is empty, or open on a side, or the search
+ran out of cells).  A shape with var() numbers is searched with the numbers they have in the script: inside
+the application a var() is held by the program, and a search that did not know its number would read it as 0
+(a box of size var(2) is no box at all)
 
 ### `gradient_field(shape)`
 
@@ -1261,6 +1230,23 @@ A skin grown outwards from the surface by `thickness`
 
 A shape's signed distance field (negative inside) -- the shape
 itself, named for readability
+
+### `smooth(shape, radius, steps=1)`
+
+Smooths the surface of a body without thickening it: bumps, dents, ridges and stair-steps smaller than
+about `radius` mm are smoothed away, edges and corners are eased, and a flat or gently curved face stays
+where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
+averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
+field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
+grows as the square root of the number of steps).  Like any smoothing it eases convex features slightly
+inwards and concave ones slightly outwards; the body as a whole does not grow.
+
+The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
+radii (6 copies for one step, 19 for two, 44 for three, 85 for four; more steps than four are four at a
+larger radius, which smooths as far), so nothing is measured or meshed here: the surface is found when it
+is drawn, and the cost is that of the field times the copies.  The body's field should be about a
+distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
+distance, as offset() does), because a field that rises faster smooths by as much more.
 
 ### `smooth_difference(a, b, radius)`
 
@@ -1538,12 +1524,15 @@ z_top = sz / 2 + amplitude sin(2 pi x / period) sin(2 pi y / period)
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
-Every lattice operation takes a CELL: the thing the lattice is made of.  Three functions make one --
+Every lattice operation takes a CELL: the thing the lattice is made of.  Five functions make one --
 
-    cell_periodic(kind)          a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS (gyroid,
-                                 schwarz_p ...) or a planar pattern (hexagon ...)
-    cell_non_periodic(kind)      cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
-    cell_custom(...)             your own: nodes and beams, a TPMS equation, or any shape that tiles
+    cell_periodic(kind)              a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS
+                                     (gyroid, schwarz_p ...) or a planar pattern (hexagon ...)
+    cell_non_periodic(kind)          cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
+    cell_custom(region, geometry)    your own cell of ANY geometry: a box for the extent of the cell and a field for
+                                     what is in it -- the cell is their intersection, and repeats on any cell map
+    cell_custom_truss(nodes, beams)  your own strut cell: beams between nodes in the unit cube
+    cell_custom_tpms(equation)       your own triply periodic surface, from its equation
 
 -- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
 name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
@@ -1617,10 +1606,10 @@ Cells that do not repeat (see cell_non_periodic)
 
 ### `LatticeCell`
 
-What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic() or cell_custom(),
-taken by every lattice operation as its `cell`.
+What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic(), cell_custom(),
+cell_custom_truss() or cell_custom_tpms(), taken by every lattice operation as its `cell`.
 .family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
-             (a shape that tiles) or 'foam' (cells that do not repeat)
+             (any geometry in a box, see cell_custom) or 'foam' (cells that do not repeat)
 .periodic    whether the cell repeats on a grid (so can follow a cell map or a surface)
 
 ### `LatticeGraph`
@@ -1643,8 +1632,14 @@ A standard planar (2.5D) pattern (see cell_periodic)
 
 ### `ShapeCell`
 
-Any shape that tiles, as a cell (see cell_custom): the shape is modelled in the box from (0, 0, 0) to the
-cell size the lattice is made with
+A cell of any geometry (see cell_custom): a box and a field, the cell is their intersection.
+.region, .geometry   what it was made from
+.lo, .hi, .size      the box the region is, per axis (mm)
+.solid()             the cell on its own, as a shape you can look at
+
+#### `ShapeCell.solid(self)`
+
+The cell on its own: the geometry cut off by the region (their intersection)
 
 ### `StrutCell`
 
@@ -1660,8 +1655,7 @@ Your own TPMS (or any triply periodic) equation, for tpms() and
 lattice(): f(a, b, c) -> value, where a, b, c are the position in the
 cell as phases (2 pi per cell).  Write it with + - * / and the
 methods .sin() .cos() .sqrt() .square() of a, b, c, e.g. a gyroid:
-    cell_custom(equation=lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
-                                         + c.sin() * a.cos())
+    cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())
 Its value is turned into a distance in mm (its gradient is followed),
 so thickness= is a real wall thickness.
 
@@ -1669,7 +1663,7 @@ so thickness= is a real wall thickness.
 
 A strut unit cell of your own: beams between nodes in the unit cube
 (coordinates 0..1 across the cell, scaled by cell_size when used).
-What cell_custom(nodes, beams, mirror) makes; use it wherever a cell is
+What cell_custom_truss(nodes, beams, mirror) makes; use it wherever a cell is
 taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
 
 nodes: {name: (x, y, z)} or a list of (x, y, z) (then names are the
@@ -1699,21 +1693,59 @@ The beams that carry their own radius: {beam: radius in mm}
 Straight cells, optionally shifted (origin) and turned (rotation =
 (rx, ry, rz) degrees)
 
-### `cell_custom(nodes=None, beams=None, mirror='', equation=None, shape=None, name='custom', check=True)`
+### `cell_custom(region=None, geometry=None, check=True, **removed)`
 
-A cell of your own -- one of three kinds:
+A cell of ANY geometry of your own -- a box for the extent of the cell and a field for what is in it.  The cell
+is the intersection of the two, and it repeats like any periodic cell: on a straight grid, or on a
+cylindrical or spherical cell map.
 
-struts      cell_custom(nodes, beams, mirror='')   beams between nodes in the unit cube (see UnitCell: the
-            nodes {name: (x, y, z)} or a list, the beams pairs of nodes, optionally with a radius of their own,
-            `mirror` 'x', 'xy', 'xyz' to draw one part of a symmetric cell)
-a surface   cell_custom(equation=f)                f(a, b, c) of the position in the cell as phases (2 pi per
-            cell), written with + - * / and .sin() .cos() .sqrt() .square(); its value becomes a distance in
-            mm, so thickness= is a real wall (see TPMSEquation)
-a shape     cell_custom(shape=s)                   the shape you model in one cell, the box from (0, 0, 0) to
-            the cell size, repeated; model it so that it tiles (check=True warns where the faces do not match)
+region      the box the cell is: box(...), box_exact(...), cube(...) -- any box, its faces are the cell's
+            faces and its size the cell's size
+geometry    the field in it: any shape -- spheres, rods, a TPMS, a boolean of those ... -- that may reach
+            out of the box (only what is inside is the cell)
+check       warn when the cell does not tile: what the geometry does on a face of the region has to be what
+            it does on the opposite face (a rod that leaves through one face must come in through the other,
+            a sphere on a corner must be on all eight)
 
-    cell = cell_custom({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
+    cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
+                       union(sphere(3, (5, 5, 5)), cylinder_z(1.0, 20, (5, 5, -5))))
+    lattice(part, cell)                                    # cells of 10 mm, as modelled
+    lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
+    lattice(part, cell, cell_map=cylindrical(cells_around=12))
+
+The cell is yours as modelled: thickness=, radius= or density= do not apply (put the thickness in the
+geometry).  cell.solid() is the cell on its own, to look at it.  (Beams between nodes: cell_custom_truss().
+A triply periodic surface from its equation: cell_custom_tpms().  The arguments nodes, beams, mirror, equation
+and shape of the old cell_custom are gone: `**removed` is only there to say so, and what to write instead.)
+
+### `cell_custom_tpms(equation, name='custom')`
+
+A triply periodic surface of your own, from its equation f(a, b, c): a, b, c are the position in the cell as
+phases (2 pi per cell).  Write it with + - * / and the methods .sin() .cos() .sqrt() .square() of a, b, c, e.g.
+a gyroid:
+
+    cell = cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())
+    lattice(part, cell, cell_size=8, thickness=0.8)
+
+Its value is turned into a distance in mm (its gradient is followed), so thickness= is a real wall thickness.
+(Any other geometry as a cell: cell_custom(region, geometry).)
+
+### `cell_custom_truss(nodes, beams, mirror='')`
+
+A strut cell of your own: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
+cell_size when used).
+
+nodes   {name: (x, y, z)} or a list of (x, y, z) (then the names are the indices)
+beams   pairs of node names (or indices); a third entry gives that beam a radius of its own in mm, e.g.
+        ('c', 'v0', 1.2) -- beams without one take the lattice's radius
+mirror  'x', 'xy', 'xyz' ... copies the beams mirrored across the cell's mid-planes (x -> 1 - x ...), so you
+        only draw one part of a symmetric cell
+
+    cell = cell_custom_truss({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
     lattice(part, cell, cell_size=8, radius=0.6)
+
+(Any other geometry as a cell: cell_custom(region, geometry).)  See UnitCell: .check() lists what would make
+the lattice fall apart or not tile.
 
 ### `cell_non_periodic(kind='voronoi', relax=2, seed=1)`
 
@@ -1739,7 +1771,8 @@ kind    a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin (= 
 Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
     lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
     lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
-(Your own cell: cell_custom().  Cells that do not repeat: cell_non_periodic().)
+(Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
+repeat: cell_non_periodic().)
 
 ### `cylindrical(origin=(0, 0, 0), axis='z', cells_around=None, radius=None, rotation=None)`
 
@@ -1762,15 +1795,17 @@ beams [(i, j), ...] (node indices).  radius: a number, one per node,
 or a field (evaluated at the nodes; each beam tapers linearly
 between its ends).  blend rounds the joints.
 
-### `lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z')`
+### `lattice(body, cell=None, cell_size=None, thickness=None, radius=None, density=None, style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z')`
 
 A body filled with a lattice, in one call.
 
 cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
     iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
     diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
-    cell_non_periodic('voronoi' | 'delaunay') or cell_custom(...).  Default: cell_periodic('gyroid')
-cell_size: mm, or (sx, sy, sz)
+    cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
+    or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
+cell_size: mm, or (sx, sy, sz).  (Default 10 mm; for a cell_custom(region, geometry) cell the size of its
+    region, so that it comes out as you modelled it -- a larger or smaller size scales the cell)
 thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
     or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
     (planar).  Numbers or fields
@@ -1818,7 +1853,7 @@ or `radius` mm, which is half of it: give one of the two, default radius 0.8)
 along the edges of a unit cell, repeated every cell_size.
 cell: a strut cell -- cell_periodic('cubic' | 'bcc' | 'bccz' | 'fcc' | 'fccz' | 'octet' | 'octahedron' |
     'kelvin' | 'diamond_struts' | 'cross' | 'tesseract' | 'cuboctahedron'), or your own:
-    cell_custom(nodes, beams) (beams may have their own radius)
+    cell_custom_truss(nodes, beams) (beams may have their own radius)
 node_radius: spheres at the joints (defaults to none)
 blend: rounds the joints with a smooth blend of this radius
 thickness / radius / node_radius may be fields.
@@ -1834,7 +1869,7 @@ mostly hexagons)
 An infinite TPMS lattice (a field; trim it with fill() or use
 lattice()).
 cell: a TPMS cell -- cell_periodic('gyroid' | 'schwarz_p' | 'diamond' | 'neovius' | 'lidinoid' |
-    'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom(equation=f)
+    'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom_tpms(f)
 style='sheet': walls of `thickness` mm centred on the surface
 style='network': the solid on one side of the surface, grown by
     `offset` mm (0 = half the volume for gyroid / diamond / P);
@@ -1984,7 +2019,7 @@ surface_field   the surface, as ONE argument whatever it is: a body (a closed so
                 out, not told
 cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
                 TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
-                surface, or cell_custom(nodes, beams).  Default: cell_periodic('octet')
+                surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
 depth           how deep the layers are together (mm).  Default: as deep as the body is under each cell (a thin
                 shell: its thickness; at most three cells) for side='inside', one cell for 'outside'
 within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
@@ -2024,7 +2059,7 @@ Selecting a surface: the flood fill of a CAD program, as a field.
     from fieldes import *
 
     top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
-    top                                       # displayed: the patch, lit up on the part
+    top                                       # displayed: the part's surface, only the patch of it, lit up
 
 `select_surface` picks the patch of the part's surface around `seed` (a point on or near it) by spreading over
 the neighbouring triangles of the surface mesh: with mode='flat' (the default) as long as the surface stays
@@ -2086,7 +2121,7 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
         loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))])   # 200 N down
     conditions                                           # shown on the part: held (blue), pushed (red)
     result = static_analysis(bracket, conditions, material=aluminium, element_size=1.0)
-    colored(bracket, result.von_mises)       # show the stress on the part (FielDes)
+    result                                   # the stress on the deformed part (FielDes: the result card)
     stiffer = bracket - 0.002 * result.von_mises   # results are fields like any other
 
 Supports and loads are regions -- ordinary shapes: a support fixes the part
@@ -2136,19 +2171,16 @@ coefficient (1/K, for thermal_expansion)
 ### `ModalResult`
 
 The result of modal_analysis(): .frequencies (Hz, lowest first),
-.modes (a Mode each: its shape as fields, .show()), .seconds
+.modes (a Mode each: its shape as fields), .seconds.  Stated on its
+own it shows the first mode (result.modes[1] the second, ...).
 
 ### `Mode`
 
 One natural mode of vibration: .frequency (Hz), and its shape as
 fields (Shapes usable in any expression): displacement, ux, uy, uz
 -- scaled so the largest movement is 1 (a shape, not an amplitude).
-.show() colours the part by it, deformed by it in FielDes.
-
-#### `Mode.show(self, field='displacement', deformation='auto')`
-
-The part coloured by the mode shape, shown deformed by it in
-FielDes ('auto': the largest movement 5 % of the part's size)
+Stated on its own, FielDes shows the part coloured by it and deformed by it, and the
+result card plays the vibration (the deformation through a cycle).
 
 ### `Result`
 
@@ -2180,15 +2212,6 @@ What the analysis is made of, and how many of them
 (min, max) of a field over the part: of the smooth field (the nodal values;
 stresses are averages of the elements at each node)
 
-#### `Result.show(self, field='von_mises', range=None, deformation='auto')`
-
-The part coloured by a result field, for display in FielDes.
-FielDes shows the part deformed and lets you switch the field
-and scale the deformation next to the colour bar (and show
-the elements).  deformation: 'auto' (the largest movement
-shown as 5 % of the part's size), a number (scale factor, 1 =
-true size) or 0 (undeformed).
-
 ### `TetMode`
 
 One natural mode of a part on a body-fitted tetrahedral mesh (see Mode)
@@ -2198,20 +2221,11 @@ One natural mode of a part on a body-fitted tetrahedral mesh (see Mode)
 A static analysis on a body-fitted tetrahedral mesh: its elements are tetrahedra
 that follow the part's surface (not a voxelization), the stress in each is its
 own (constant in it), and the fields are read anywhere in the mesh.  Everything
-of Result: fields as shapes, .show(), .range(), .element_range(), ...
+of Result: fields as shapes, .range(), .element_range(), ...
 
 #### `TetResult.element_text(self)`
 
 What the analysis is made of, and how many of them
-
-#### `TetResult.show(self, field='von_mises', range=None, deformation='auto')`
-
-The part coloured by a result field, for display in FielDes.
-FielDes shows the part deformed and lets you switch the field
-and scale the deformation next to the colour bar (and show
-the elements).  deformation: 'auto' (the largest movement
-shown as 5 % of the part's size), a number (scale factor, 1 =
-true size) or 0 (undeformed).
 
 ### `TopologyResult`
 
@@ -2220,9 +2234,16 @@ The result of topology_optimization():
 .shape()     the optimized part, keeping the volume fraction asked
              for (shape(threshold=0.5): where density > 0.5)
 .compliance  compliance (N mm) at each iteration -- lower is stiffer
+.densities   the density field after each iteration (tetrahedral
+             optimizations)
 .volume_fraction, .iterations, .seconds
+.pieces      how many separate pieces the optimized part is in (tetrahedral optimizations; more than
+             one is warned about when the result is made: try a higher volume_fraction)
 .verify()    a static analysis of the optimized part (stresses) --
              a list, one per load case, when there are several
+Stated on its own, FielDes shows the optimized part coloured by the
+density, and the result card steps through the iterations: the part
+as it was after each one (slider, play / pause).
 
 #### `TopologyResult.keep_threshold(self, samples=40)`
 
@@ -2282,9 +2303,9 @@ element      'tet' (default), 'hex' or 'hex_basic': see the module
              documentation
 
 Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
-fields -- displacement, ux, uy, uz -- and .show()).  The shapes are
-fields like any other: e.g. stiffen the part where the first mode
-moves most.  An unchanged problem is cached.
+fields -- displacement, ux, uy, uz).  The shapes are fields like any
+other: e.g. stiffen the part where the first mode moves most.  An
+unchanged problem is cached.
 
 ### `static_analysis(shape, conditions, material=Material('steel', E=200000 MPa, nu=0.3), element_size=None, bounds=None, max_iterations=20000, tolerance=1e-06, cache=True, element='tet')`
 
@@ -2417,7 +2438,7 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
         heat_input(chip_region, 5.0),                   # 5 W into the part here
         convection(fins_region, 25e-6, ambient=20)],    # air cooling
         material=aluminium, element_size=1.0)
-    result.show()                        # the part coloured by temperature (FielDes)
+    result                               # the part coloured by temperature (FielDes)
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
     # the material layout (30 % of the part) that keeps the heat input coolest
@@ -2462,11 +2483,6 @@ iterations, seconds.
 #### `ThermalResult.range(self, field='temperature')`
 
 (min, max) of a field over the part
-
-#### `ThermalResult.show(self, field='temperature', range=None)`
-
-The part coloured by a result field, for display in FielDes (the
-card next to the colour bar switches between the fields)
 
 ### `ThermalTopologyResult`
 
@@ -2519,7 +2535,7 @@ element_size: mm (default: 40 elements along the longest side)
 element:  'tet' (default: tetrahedra that follow the part's surface) or
           'hex' (voxel hexahedra)
 
-Returns a ThermalResult: .temperature and .heat_flux fields, .show(),
+Returns a ThermalResult: .temperature and .heat_flux fields and
 the heat balance.  An unchanged problem is cached (as a static analysis
 is): running the script again, or a section moving over its fields, does
 not solve it again; a change to the part, the boundary conditions, the
@@ -2560,6 +2576,231 @@ filter_radius: the smallest member size scale, mm (default 1.5
 Returns a ThermalTopologyResult: .density (a field), .shape() (the
 optimized part), .temperature (per iteration), .verify().  An
 unchanged problem is cached, so re-running a script is instant.
+
+## Fluid flow analysis
+
+Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in time.
+
+    from fieldes import *
+
+    pipe = cylinder_z(5, 60)                             # the FLUID domain: a shape whose inside is the fluid
+    result = fluid_analysis(pipe, [
+        inlet(box_exact((-6, -6, -1), (6, 6, 0.5)), flow_rate=2000, profile='developed'),   # mm^3/s, in
+        outlet(box_exact((-6, -6, 59.5), (6, 6, 61)), pressure=0)],                           # MPa
+        fluid=water, element_size=0.8)
+    result                                               # the flow (FielDes: the fluid coloured by the speed,
+                                                         # streamlines with moving particles; the result card)
+    print(result.pressure_drop * 1e6, 'Pa')
+    thicker = part + 0.02 * result.pressure              # results are fields like any other
+
+The fluid domain is a shape, the fluid where its field is negative: the inside of a pipe or a
+duct, a box with a part cut out of it (difference(box, part)).  The boundary conditions are regions
+(shapes), on the surface of the fluid:
+  inlet(region, velocity= | speed= | flow_rate=, profile='uniform' | 'developed')
+                            the fluid comes in: a velocity vector (mm/s), or a mean speed along the
+                            inward normal, or a flow rate (mm^3/s).  The speed is the MEAN over the
+                            inlet, matched exactly on the mesh.  'developed': the fully developed
+                            profile of that cross-section (parabolic in a pipe); 'uniform': a plug
+                            with the no-slip rim
+  outlet(region, pressure)  the fluid leaves at that pressure (MPa); the "do-nothing" condition,
+                            so put an outlet where the flow leaves parallel to the walls
+  wall(region, velocity)    a moving wall (no-slip at that velocity); every surface that is in no
+                            region is a wall at rest
+  slip(region)              a symmetry plane or a frictionless wall: no flow through it
+The fluid: Fluid(name, density, viscosity) in t/mm^3 and MPa s (= N s / mm^2); water, air and oil are
+predefined.  Gravity (mm/s^2) is a body force.
+
+The equations are the steady Navier-Stokes equations (rho (u.grad) u - mu laplace u + grad p = rho g,
+div u = 0) on the same tetrahedra that follow the fluid's surface as the structural analyses use,
+linear in the velocity and the pressure and stabilised (SUPG / PSPG); the nonlinearity is solved by
+Picard then Newton iterations from the Stokes solution; stokes=True leaves the convection out
+(creeping flow: Reynolds numbers well below 1).  The results are fields: speed, vx, vy, vz,
+pressure, total_pressure, shear_rate, vorticity; and numbers: the flows, the pressure drop, the
+force on the walls, the dissipation, the Reynolds number.
+
+Limits, plainly: laminar and steady only -- no turbulence model, nothing time-dependent; a flow
+whose Reynolds number is beyond the laminar range (about 2000 in a pipe) is not described by this;
+no boundary-layer (inflation) elements: the mesh must be fine enough across the passages (the
+result says how many elements lie across); the pressure is linear in each element, so its peak at
+a corner is smeared over an element; no free surfaces, no heat transfer with the flow (yet).
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `FlowTopologyResult`
+
+The result of flow_topology_optimization(): the body made best in the flow.
+.level          a field (mm, positive inside the body, its boundary the zero level: a smooth
+                level set on the flow's mesh); .levels the same after each iteration (the first
+                the body as given, the last the final body)
+.shape(iteration=None)  the optimised body, or the body after an iteration
+.fluid_shape(iteration=None)  the fluid around it (the domain with the body taken out)
+.drag, .lift    N, per iteration, as the optimiser's model sees them (the body a friction in the
+                flow), the last the final body's; .flow_direction, .lift_direction
+.flow           the REAL flow around the final body (a fluid_analysis of fluid_shape() with the
+                same conditions, the body a wall at rest): fields, numbers, streamlines();
+                .real_drag, .real_lift its force on the walls along the two directions
+.model_flow     the optimiser's own flow (the body as a friction), .model_flow.steps[k] the flow
+                around the body of iteration k
+.body, .domain, .region, .volume (mm^3 of the final body), .iterations (accepted), .seconds,
+.steps_back (steps undone because they raised the objective), .stopped (why the run ended)
+Stated on its own, FielDes shows the body in the flow: the fluid coloured by the speed with
+streamlines and particles, the body solid; the result card steps through the iterations (the
+body as it was after each one, and the flow around it).
+
+#### `FlowTopologyResult.fluid_shape(self, iteration=None)`
+
+The fluid around the body: the domain with the body taken out
+
+#### `FlowTopologyResult.shape(self, iteration=None)`
+
+The body: where the level set is positive (its boundary the zero level, a fraction of an element
+exact); iteration=k the body after iteration k (0 the body as given)
+
+### `Fluid`
+
+A Newtonian fluid: density (t/mm^3) and dynamic viscosity (MPa s = N s / mm^2).
+Water: 1.0e-9 t/mm^3, 1.0e-9 MPa s (kinematic viscosity 1 mm^2/s).
+
+### `FluidResult`
+
+The solved flow.  Fields (Shapes whose value is the result at each point, usable in any
+expression): speed, vx, vy, vz (mm/s), pressure, total_pressure (MPa), shear_rate,
+vorticity (1/s).  Numbers: inlet_flow, outlet_flow (mm^3/s; inlet_flows / outlet_flows per
+item), wall_flow (net flow in through the walls: a moving wall, the rounded rim of an inlet),
+mass_imbalance (|in + wall_flow - out| / in), pressure_drop (MPa, mean inlet minus mean outlet), max_speed,
+wall_force (N, on all the walls; wall_forces per wall(...) item), dissipation (W),
+reynolds (rho U D_h / mu of the inlet), cell_reynolds, hydraulic_diameter,
+elements_across (how many elements lie across the passages), elements, nodes, iterations,
+residual, converged, seconds, warning.  .steps (a FluidStep each): the flow after every solver
+iteration of a steady solve (the Stokes start first, the converged flow last), or every stored
+time of a flow in time (fluid_analysis(..., time=); .times); the result's own fields are the
+last step's.  streamlines() gives the paths of particles through the flow.
+Stated on its own, FielDes shows the fluid coloured by the speed, as the other analyses are shown,
+with streamlines from the inlets and particles moving along them drawn over it; the result card
+switches the field and steps through the iterations or the times (slider, play / pause).
+
+#### `FluidResult.range(self, field='speed')`
+
+(min, max) of a field over the fluid
+
+#### `FluidResult.streamlines(self, seeds=None, count=40, max_time=None, max_points=4000, backward=False, step=None)`
+
+The paths of particles carried by the flow: a list of lines, each a list of (x, y, z, speed, time)
+points, from `seeds` (a list of (x, y, z); by default `count` points spread over the inlets), by
+Runge-Kutta steps of half an element, for up to `max_time` seconds (by default the time it takes to
+cross the fluid three times) or `max_points` points, until the particle leaves the fluid.  backward=True
+follows the flow upstream; step= picks a step of a flow in time (the last one by default).
+
+### `FluidStep`
+
+One step of a flow: after a solver iteration of a steady solve (.iteration, 0 the Stokes start; .time
+None), or at a stored time of a flow in time (.time in s; .iteration None).  The fields (speed, vx, vy,
+vz, pressure, total_pressure, shear_rate, vorticity) and the numbers (inlet_flow, outlet_flow,
+pressure_drop, max_speed, wall_force, dissipation, residual, converged) at that step; streamlines().
+Stated on its own, FielDes shows it as it shows the result.
+
+#### `FluidStep.range(self, field='speed')`
+
+*(no description yet)*
+
+#### `FluidStep.streamlines(self, seeds=None, count=40, max_time=None, max_points=4000, backward=False)`
+
+The streamlines of the flow at this time (see FluidResult.streamlines)
+
+### `flow_topology_optimization(body, domain, conditions, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), objective='drag', volume=1.0, region=None, keep=None, avoid=None, element_size=None, iterations=40, filter_radius=None, move=0.5, darcy=0.1, extrude=None, flow_direction=None, lift_direction=None, bounds=None, cache=True)`
+
+Shape optimisation of a body in a flow: `body` (a Shape, the solid) sits in `domain` (the fluid domain
+it is in, a Shape that holds the body's place too) with the flow's `conditions` (inlet(...),
+outlet(...), slip(...), wall(...) as for fluid_analysis); the optimiser changes the body's shape, and
+topology, to make it best in the stream.
+
+objective   'drag' (the least force along the flow), 'lift' (the most force across it), or
+            (w_drag, w_lift): w_drag * drag - w_lift * lift is minimised
+volume      what the body may use of its own volume: a number keeps it (1.0: the same volume), a pair
+            (least, most) bounds it (0.5, 1.5); None for no bound on that side
+region      where material may be (a Shape; default: anywhere in the domain); the body only shrinks,
+            grows and moves inside it
+keep        regions that stay solid (a Shape, or a list) -- a mounting, a shaft
+avoid       regions that stay fluid
+element_size  mm (default 40 elements along the longest side); the flow is solved once per iteration,
+            with its adjoint, so it costs about two flow analyses per iteration
+iterations  at most (it stops when the design stops moving)
+filter_radius  the level set's smoothing radius, mm (default 1.5 elements): the smallest feature
+move        the most the boundary moves in one iteration, in elements (0.5 by default; a step that
+            raises the objective is taken back and halved)
+darcy       the solid's permeability relative to the element: its friction is mu / (darcy h^2), the
+            flow penetrates it by about sqrt(darcy) elements (0.1 by default: a third of an element)
+extrude     'x', 'y' or 'z': the body is the same all along that axis (a 2D shape through a slab)
+flow_direction, lift_direction  (dx, dy, dz): the drag and lift directions (default: the inlets' mean
+            direction, and perpendicular to it in the plane of the domain's two long axes)
+
+The body is a level set at the mesh's nodes (a smooth field whose zero level is the boundary, so
+the body's edge is placed to a fraction of an element and stays smooth); each element's share of
+the body is the exact fraction of it inside that boundary and sets its friction in the
+Navier-Stokes flow (Borrvall & Petersson's penalised solid); the force on the body is the momentum
+the flow loses in it; the sensitivities are the exact discrete adjoint's; the boundary moves down
+them, and the volume is held by offsetting the whole level.  The boundary splits and merges as it
+moves (the topology changes that way); a hole does not open in the middle of solid.  Returns a
+FlowTopologyResult (the body, the drag and lift per iteration, the flow around it).  An unchanged
+problem is cached.
+
+### `fluid_analysis(shape, conditions, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, max_iterations=60, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1)`
+
+Laminar flow of `fluid` through `shape` (the fluid domain: a Shape whose inside is the
+fluid) with the boundary conditions: inlet(...), outlet(...), wall(...), slip(...) items
+(see the module's description) -- the steady flow, or the flow in time (time=).
+
+element_size   mm (default: 40 elements along the longest side); the passages should be
+               four elements across or more
+gravity        (gx, gy, gz) in mm/s^2, a body force on the fluid (none by default)
+stokes         True: creeping flow, the convection left out (linear: one solve)
+time           (duration, step) in seconds: the flow in TIME instead of the steady flow -- from
+               the Stokes flow at t = 0 (an impulsive start) by steps of `step` seconds to
+               `duration` (backward Euler; a step of about an element crossing, element_size /
+               speed, keeps it accurate).  The result's .steps hold every store_every-th step
+               (its time, fields and numbers) instead of the steady solve's iterations, the
+               result's own fields are the last step's, and the result card steps through them.
+               A wake that sheds vortices needs this: it has no steady state
+max_iterations the nonlinear (Picard / Newton) iterations at most
+tolerance      the relative residual of the discrete equations at which to stop
+bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
+
+Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
+the wall force, streamlines().  An unchanged problem is cached (as a static analysis is).
+Raises FeaError when the problem cannot be solved as given (a region that touches no
+surface, no outlet and no moving wall, a flow that does not converge).
+
+### `inlet(region, velocity=None, speed=None, flow_rate=None, profile='uniform')`
+
+The fluid comes in through the surface inside `region` (a Shape).  One of:
+velocity   a vector (mm/s): the direction, and the mean speed over the inlet
+speed      a mean speed (mm/s) along the inlet's inward normal
+flow_rate  a flow rate (mm^3/s) along the inward normal
+profile    'uniform' (a plug, zero on the no-slip rim) or 'developed' (the fully developed
+           profile of the inlet's cross-section: parabolic in a round pipe)
+The speed or flow rate is matched exactly on the mesh (the flux through the inlet's triangles).
+
+### `outlet(region, pressure=0.0)`
+
+The fluid leaves through the surface inside `region` at `pressure` (MPa, 0 by default; the
+pressure field is relative to it).  Put it where the flow leaves parallel to the walls.
+
+### `slip(region)`
+
+A symmetry plane or frictionless wall inside `region`: nothing flows through it, the fluid
+slides along it
+
+### `symmetry(region)`
+
+A symmetry plane or frictionless wall inside `region`: nothing flows through it, the fluid
+slides along it
+
+### `wall(region, velocity=(0.0, 0.0, 0.0))`
+
+A wall moving with `velocity` (mm/s; no-slip).  Surfaces in no region are walls at rest, so
+this is for moving walls, and for naming a wall whose force is wanted (wall_forces).
 
 ## Caching
 

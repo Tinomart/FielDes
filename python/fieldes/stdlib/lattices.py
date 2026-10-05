@@ -2,12 +2,15 @@
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
-Every lattice operation takes a CELL: the thing the lattice is made of.  Three functions make one --
+Every lattice operation takes a CELL: the thing the lattice is made of.  Five functions make one --
 
-    cell_periodic(kind)          a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS (gyroid,
-                                 schwarz_p ...) or a planar pattern (hexagon ...)
-    cell_non_periodic(kind)      cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
-    cell_custom(...)             your own: nodes and beams, a TPMS equation, or any shape that tiles
+    cell_periodic(kind)              a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS
+                                     (gyroid, schwarz_p ...) or a planar pattern (hexagon ...)
+    cell_non_periodic(kind)          cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
+    cell_custom(region, geometry)    your own cell of ANY geometry: a box for the extent of the cell and a field for
+                                     what is in it -- the cell is their intersection, and repeats on any cell map
+    cell_custom_truss(nodes, beams)  your own strut cell: beams between nodes in the unit cube
+    cell_custom_tpms(equation)       your own triply periodic surface, from its equation
 
 -- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
 name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
@@ -72,7 +75,7 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
 
-__all__ = ['cell_periodic', 'cell_non_periodic', 'cell_custom', 'LatticeCell',
+__all__ = ['cell_periodic', 'cell_non_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
            'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
            'graph_lattice', 'voronoi_graph',
            'surface_graph', 'points_graph', 'LatticeGraph',
@@ -223,10 +226,10 @@ def _rotation(rot):
 
 
 class LatticeCell:
-    ''' What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic() or cell_custom(),
-        taken by every lattice operation as its `cell`.
+    ''' What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic(), cell_custom(),
+        cell_custom_truss() or cell_custom_tpms(), taken by every lattice operation as its `cell`.
         .family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
-                     (a shape that tiles) or 'foam' (cells that do not repeat)
+                     (any geometry in a box, see cell_custom) or 'foam' (cells that do not repeat)
         .periodic    whether the cell repeats on a grid (so can follow a cell map or a surface) '''
     family = ''
     periodic = True
@@ -458,7 +461,7 @@ def tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0,
     ''' An infinite TPMS lattice (a field; trim it with fill() or use
         lattice()).
         cell: a TPMS cell -- cell_periodic('gyroid' | 'schwarz_p' | 'diamond' | 'neovius' | 'lidinoid' |
-            'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom(equation=f)
+            'split_p' | 'iwp' | 'frd' | 'fischer_koch_s'), or your own: cell_custom_tpms(f)
         style='sheet': walls of `thickness` mm centred on the surface
         style='network': the solid on one side of the surface, grown by
             `offset` mm (0 = half the volume for gyroid / diamond / P);
@@ -701,7 +704,7 @@ def strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0
         along the edges of a unit cell, repeated every cell_size.
         cell: a strut cell -- cell_periodic('cubic' | 'bcc' | 'bccz' | 'fcc' | 'fccz' | 'octet' | 'octahedron' |
             'kelvin' | 'diamond_struts' | 'cross' | 'tesseract' | 'cuboctahedron'), or your own:
-            cell_custom(nodes, beams) (beams may have their own radius)
+            cell_custom_truss(nodes, beams) (beams may have their own radius)
         node_radius: spheres at the joints (defaults to none)
         blend: rounds the joints with a smooth blend of this radius
         thickness / radius / node_radius may be fields. '''
@@ -923,7 +926,7 @@ def fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0):
     return out
 
 
-def lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, density=None,
+def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, density=None,
             style='sheet', offset=None, skin=0.0, region='volume', depth=None, cell_map=None,
             node_radius=None, blend=0.0, skin_blend=0.0, wall=None, axis='z'):
     ''' A body filled with a lattice, in one call.
@@ -931,8 +934,10 @@ def lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, densit
         cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
             iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
             diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
-            cell_non_periodic('voronoi' | 'delaunay') or cell_custom(...).  Default: cell_periodic('gyroid')
-        cell_size: mm, or (sx, sy, sz)
+            cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
+            or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
+        cell_size: mm, or (sx, sy, sz).  (Default 10 mm; for a cell_custom(region, geometry) cell the size of its
+            region, so that it comes out as you modelled it -- a larger or smaller size scales the cell)
         thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
             or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
             (planar).  Numbers or fields
@@ -945,16 +950,21 @@ def lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, densit
         node_radius, blend: joint spheres and joint rounding (struts)
         skin_blend: rounds the lattice-to-skin joints '''
     cellobj = _need_cell(cell, 'lattice', default=lambda: cell_periodic('gyroid'))
-    cell = _cell3(cell_size)
+    if cellobj.family == 'shape':
+        given = [n for n, v in (('thickness', thickness), ('radius', radius), ('density', density), ('offset', offset),
+                                ('wall', wall), ('node_radius', node_radius)) if v is not None]
+        if given:
+            raise ValueError('lattice: a cell_custom(region, geometry) cell is the geometry you modelled, so {} does not '
+                             'apply: give the geometry the thickness you want'.format(', '.join(given)))
+        lat = _periodic(cellobj, cell_size, cell_map)
+        return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
+    cell = _cell3(10.0 if cell_size is None else cell_size)
     if cellobj.family == 'foam':
         r = _beam_radius('lattice', thickness, radius, None)
         if r is None and density is None:
             r = 0.08 * min(cell)
         return _voronoi_lattice(body, min(cell), radius=r, style=cellobj.style, relax=cellobj.relax, seed=cellobj.seed,
                                 skin=skin, blend=blend, skin_blend=skin_blend, density=density)
-    if cellobj.family == 'shape':
-        lat = _periodic(cellobj.shape, cell_size, cell_map, check=cellobj.check)
-        return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
     is_tpms = cellobj.family == 'tpms'
     is_planar = cellobj.family == 'planar'
 
@@ -990,13 +1000,14 @@ def lattice(body, cell=None, cell_size=10.0, thickness=None, radius=None, densit
 
 
 ################################################################################
-# Custom cells (like nTop's custom unit cells), made by cell_custom(): your own strut
-# cell from nodes and beams, any shape as a periodic cell, your own TPMS equation
+# Custom cells (like nTop's custom unit cells): any geometry in a box, made by cell_custom(region, geometry);
+# your own strut cell from nodes and beams, made by cell_custom_truss(); your own TPMS equation, made by
+# cell_custom_tpms()
 
 class UnitCell(LatticeCell):
     ''' A strut unit cell of your own: beams between nodes in the unit cube
         (coordinates 0..1 across the cell, scaled by cell_size when used).
-        What cell_custom(nodes, beams, mirror) makes; use it wherever a cell is
+        What cell_custom_truss(nodes, beams, mirror) makes; use it wherever a cell is
         taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
 
         nodes: {name: (x, y, z)} or a list of (x, y, z) (then names are the
@@ -1077,48 +1088,108 @@ class UnitCell(LatticeCell):
         return 'UnitCell({} beams)'.format(len(self.segments))
 
 
-def _periodic(shape, cell_size=10.0, cell_map=None, check=True):
-    ''' Any shape as a unit cell: the shape you model in one cell -- the box
-        from (0, 0, 0) to cell_size -- repeated through space (along a cell
-        map too: cylindrical, spherical ...).  Model the cell so that it
-        tiles: what leaves one face must come in on the opposite face (a
-        solid that touches a face must touch it the same way on the other
-        side).  check=True samples the faces and warns where they don't
-        match (the lattice would have steps or holes at every cell
-        boundary). '''
-    c = _cell3(cell_size)
-    shape = Shape.wrap(shape)
-    if check:
-        mism = _periodic_mismatch(shape, c)
+def _periodic(cell, cell_size=None, cell_map=None):
+    ''' A cell_custom(region, geometry) cell repeated through space: the cell (the geometry cut off by the region) is
+        scaled to cell_size (the size of the region when None) and repeated on the cell map -- cartesian, cylindrical,
+        spherical -- by folding the lattice coordinates (u, v, w) back into the region. '''
+    c = cell.size if cell_size is None else _cell3(cell_size)
+    if cell.check:
+        mism = _periodic_mismatch(cell)
         if mism:
             import warnings
-            warnings.warn('cell_custom(shape=): the cell does not tile -- {}'.format(mism), stacklevel=2)
+            warnings.warn('cell_custom: the cell does not tile -- {}'.format(mism), stacklevel=3)
     m = cell_map or CellMap()
     u = m.map((X(), Y(), Z()), c)
-    q = [u[i] % c[i] for i in range(3)]
-    return shape.remap(q[0], q[1], q[2])
+    # (u % c is the position in the cell in mm; the region's extent per mm of cell is how far into the region that is)
+    q = [cell.lo[i] + (u[i] % c[i]) * (cell.size[i] / c[i]) for i in range(3)]
+    return cell.solid().remap(q[0], q[1], q[2])
 
 
-def _periodic_mismatch(shape, c, n=9):
-    ''' Where the shape's inside/outside differs between opposite cell faces
-        (sampled on an n x n grid); '' if it tiles '''
+def _periodic_mismatch(cell, n=9):
+    ''' Where the geometry's inside/outside differs between opposite faces of the region (sampled on an n x n grid);
+        '' if it tiles '''
+    from fieldes.stdlib.fields import evaluate
     bad = []
     for axis in range(3):
         o = [k for k in range(3) if k != axis]
-        wrong = 0
+        lo_face, hi_face = [], []
         for i in range(n):
             for j in range(n):
                 p0 = [0.0, 0.0, 0.0]
-                p0[o[0]] = (i + 0.5) / n * c[o[0]]
-                p0[o[1]] = (j + 0.5) / n * c[o[1]]
+                p0[o[0]] = cell.lo[o[0]] + (i + 0.5) / n * cell.size[o[0]]
+                p0[o[1]] = cell.lo[o[1]] + (j + 0.5) / n * cell.size[o[1]]
                 p1 = list(p0)
-                p1[axis] = c[axis]
-                if (shape(*p0) < 0) != (shape(*p1) < 0):
-                    wrong += 1
+                p0[axis], p1[axis] = cell.lo[axis], cell.hi[axis]
+                lo_face.append(tuple(p0))
+                hi_face.append(tuple(p1))
+        a = evaluate(cell.geometry, lo_face)
+        b = evaluate(cell.geometry, hi_face)
+        wrong = sum(1 for u, v in zip(a, b) if (u < 0) != (v < 0))
         if wrong:
-            bad.append('{} of {} points differ between the {} = 0 and {} = {} faces'.format(
-                wrong, n * n, 'xyz'[axis], 'xyz'[axis], c[axis]))
+            bad.append('{} of {} points differ between the {} = {:g} and {} = {:g} faces'.format(
+                wrong, n * n, 'xyz'[axis], cell.lo[axis], 'xyz'[axis], cell.hi[axis]))
     return '; '.join(bad)
+
+
+def _region_box(region, who='cell_custom'):
+    ''' The box a region is: ((x0, y0, z0), (x1, y1, z1)), found from its field and made exact -- or an error that says
+        what a region must be.  A cell tiles space only as a box. '''
+    from fieldes.stdlib.fields import evaluate, find_extent
+    found = find_extent(region)
+    if found is None:
+        raise ValueError('{}: the region must be a box (box(...), box_exact(...), cube(...)): the extent of this shape '
+                         'could not be found, it is empty or not closed'.format(who))
+    lo0, hi0 = found
+    size0 = max(hi0[i] - lo0[i] for i in range(3))
+    if not size0 > 0:
+        raise ValueError('{}: the region has no volume'.format(who))
+    mid = [(lo0[i] + hi0[i]) / 2 for i in range(3)]
+    # the faces: along each axis through the middle, between the middle (inside) and a little beyond the box found
+    # (outside), halve until the field changes sign
+    out = 0.01 * size0
+    ends = []
+    for axis in range(3):
+        for side in (-1, 1):
+            far = list(mid)
+            far[axis] = (lo0[axis] - out) if side < 0 else (hi0[axis] + out)
+            ends.append((axis, side, far))
+    if evaluate(region, [mid])[0] >= 0:
+        raise ValueError('{}: the region must be a box (its middle is not inside it)'.format(who))
+    if any(v <= 0 for v in evaluate(region, [e[2] for e in ends])):
+        raise ValueError('{}: the region must be a closed box (it is open on a side)'.format(who))
+    near = [list(mid) for _ in ends]
+    far = [list(e[2]) for e in ends]
+    for _ in range(40):
+        test = [[(n[k] + f[k]) / 2 for k in range(3)] for n, f in zip(near, far)]
+        vals = evaluate(region, test)
+        for i, (t, v) in enumerate(zip(test, vals)):
+            if v < 0:
+                near[i] = t
+            else:
+                far[i] = t
+    lo, hi = list(mid), list(mid)
+    for (axis, side, _), n, f in zip(ends, near, far):
+        edge = (n[axis] + f[axis]) / 2
+        if side < 0:
+            lo[axis] = edge
+        else:
+            hi[axis] = edge
+    lo, hi = tuple(lo), tuple(hi)
+    # a box: its whole inside is inside the region, and nothing is outside it at the corners
+    size = [hi[i] - lo[i] for i in range(3)]
+    inside, outside = [], []
+    for i in range(4):
+        for j in range(4):
+            for k in range(4):
+                inside.append(tuple(lo[a] + (f + 0.5) / 4 * size[a] for a, f in enumerate((i, j, k))))
+    for corner in itertools.product((0.01, 0.99), repeat=3):
+        inside.append(tuple(lo[a] + corner[a] * size[a] for a in range(3)))
+    for corner in itertools.product((-0.01, 1.01), repeat=3):
+        outside.append(tuple(lo[a] + corner[a] * size[a] for a in range(3)))
+    if any(v >= 0 for v in evaluate(region, inside)) or any(v <= 0 for v in evaluate(region, outside)):
+        raise ValueError('{}: the region must be a box -- a cell that tiles fills the box it is made in; this shape is '
+                         'not one (rounded corners, a hole, another shape?)'.format(who))
+    return lo, hi
 
 
 class TPMSEquation(LatticeCell):
@@ -1126,8 +1197,7 @@ class TPMSEquation(LatticeCell):
         lattice(): f(a, b, c) -> value, where a, b, c are the position in the
         cell as phases (2 pi per cell).  Write it with + - * / and the
         methods .sin() .cos() .sqrt() .square() of a, b, c, e.g. a gyroid:
-            cell_custom(equation=lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos()
-                                                 + c.sin() * a.cos())
+            cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())
         Its value is turned into a distance in mm (its gradient is followed),
         so thickness= is a real wall thickness. '''
 
@@ -1174,14 +1244,31 @@ class PlanarCell(LatticeCell):
 
 
 class ShapeCell(LatticeCell):
-    ''' Any shape that tiles, as a cell (see cell_custom): the shape is modelled in the box from (0, 0, 0) to the
-        cell size the lattice is made with '''
+    ''' A cell of any geometry (see cell_custom): a box and a field, the cell is their intersection.
+        .region, .geometry   what it was made from
+        .lo, .hi, .size      the box the region is, per axis (mm)
+        .solid()             the cell on its own, as a shape you can look at '''
     family = 'shape'
 
-    def __init__(self, shape, check=True):
-        self.shape = Shape.wrap(shape)
+    def __init__(self, region, geometry, check=True):
+        for what, v in (('the region', region), ('the geometry', geometry)):
+            if not isinstance(v, Shape):
+                raise TypeError('cell_custom: {} is a shape (a field), not a {}'.format(what, type(v).__name__))
+        self.region = region
+        self.geometry = geometry
+        self.lo, self.hi = _region_box(region)
+        self.size = tuple(h - l for l, h in zip(self.lo, self.hi))
         self.check = check
-        self.name = 'shape'
+        self.name = 'custom'
+
+    def solid(self):
+        ''' The cell on its own: the geometry cut off by the region (their intersection) '''
+        s = self.geometry.max(self.region)
+        s._bounds = (self.lo, self.hi)
+        return s
+
+    def __repr__(self):
+        return 'ShapeCell(region {:g} x {:g} x {:g} mm)'.format(*self.size)
 
 
 class FoamCell(LatticeCell):
@@ -1212,7 +1299,8 @@ def cell_periodic(kind='octet'):
         Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
             lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
             lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
-        (Your own cell: cell_custom().  Cells that do not repeat: cell_non_periodic().) '''
+        (Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
+        repeat: cell_non_periodic().) '''
     if not isinstance(kind, str):
         raise TypeError('cell_periodic(kind): kind is the name of a standard cell, e.g. cell_periodic(\'gyroid\')')
     key = _norm(kind)
@@ -1247,30 +1335,77 @@ def cell_non_periodic(kind='voronoi', relax=2, seed=1):
     raise ValueError("cell_non_periodic: kind is 'voronoi' or 'delaunay'")
 
 
-def cell_custom(nodes=None, beams=None, mirror='', equation=None, shape=None, name='custom', check=True):
-    ''' A cell of your own -- one of three kinds:
+def cell_custom(region=None, geometry=None, check=True, **removed):
+    ''' A cell of ANY geometry of your own -- a box for the extent of the cell and a field for what is in it.  The cell
+        is the intersection of the two, and it repeats like any periodic cell: on a straight grid, or on a
+        cylindrical or spherical cell map.
 
-        struts      cell_custom(nodes, beams, mirror='')   beams between nodes in the unit cube (see UnitCell: the
-                    nodes {name: (x, y, z)} or a list, the beams pairs of nodes, optionally with a radius of their own,
-                    `mirror` 'x', 'xy', 'xyz' to draw one part of a symmetric cell)
-        a surface   cell_custom(equation=f)                f(a, b, c) of the position in the cell as phases (2 pi per
-                    cell), written with + - * / and .sin() .cos() .sqrt() .square(); its value becomes a distance in
-                    mm, so thickness= is a real wall (see TPMSEquation)
-        a shape     cell_custom(shape=s)                   the shape you model in one cell, the box from (0, 0, 0) to
-                    the cell size, repeated; model it so that it tiles (check=True warns where the faces do not match)
+        region      the box the cell is: box(...), box_exact(...), cube(...) -- any box, its faces are the cell's
+                    faces and its size the cell's size
+        geometry    the field in it: any shape -- spheres, rods, a TPMS, a boolean of those ... -- that may reach
+                    out of the box (only what is inside is the cell)
+        check       warn when the cell does not tile: what the geometry does on a face of the region has to be what
+                    it does on the opposite face (a rod that leaves through one face must come in through the other,
+                    a sphere on a corner must be on all eight)
 
-            cell = cell_custom({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
-            lattice(part, cell, cell_size=8, radius=0.6) '''
-    given = [nodes is not None or beams is not None, equation is not None, shape is not None]
-    if sum(given) != 1:
-        raise ValueError('cell_custom: give nodes and beams, or equation=, or shape= (one of the three)')
-    if equation is not None:
-        return TPMSEquation(equation, name)
-    if shape is not None:
-        return ShapeCell(shape, check)
-    if nodes is None or beams is None:
-        raise ValueError('cell_custom: struts need both nodes and beams')
+            cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
+                               union(sphere(3, (5, 5, 5)), cylinder_z(1.0, 20, (5, 5, -5))))
+            lattice(part, cell)                                    # cells of 10 mm, as modelled
+            lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
+            lattice(part, cell, cell_map=cylindrical(cells_around=12))
+
+        The cell is yours as modelled: thickness=, radius= or density= do not apply (put the thickness in the
+        geometry).  cell.solid() is the cell on its own, to look at it.  (Beams between nodes: cell_custom_truss().
+        A triply periodic surface from its equation: cell_custom_tpms().  The arguments nodes, beams, mirror, equation
+        and shape of the old cell_custom are gone: `**removed` is only there to say so, and what to write instead.) '''
+    if removed:
+        old = {'nodes': 'cell_custom_truss(nodes, beams, mirror)', 'beams': 'cell_custom_truss(nodes, beams, mirror)',
+               'mirror': 'cell_custom_truss(nodes, beams, mirror)', 'equation': 'cell_custom_tpms(equation)',
+               'shape': 'cell_custom(region, geometry): the shape is the geometry, and the box it is modelled in '
+                        'the region'}
+        hint = '; '.join('{}= is now {}'.format(k, old[k]) for k in removed if k in old)
+        raise TypeError('cell_custom(region, geometry) makes a cell of any geometry{}'.format(
+            ': ' + hint if hint else ' (it has no argument {})'.format(', '.join(removed))))
+    if isinstance(region, (dict, list, tuple)) and geometry is not None and not isinstance(geometry, Shape):
+        raise TypeError('cell_custom(region, geometry) makes a cell of any geometry: a box and a field. Beams between '
+                        'nodes are cell_custom_truss(nodes, beams)')
+    if region is None or geometry is None:
+        raise TypeError('cell_custom(region, geometry): a box for the extent of the cell and a field for what is in it')
+    return ShapeCell(region, geometry, check)
+
+
+def cell_custom_truss(nodes, beams, mirror=''):
+    ''' A strut cell of your own: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
+        cell_size when used).
+
+        nodes   {name: (x, y, z)} or a list of (x, y, z) (then the names are the indices)
+        beams   pairs of node names (or indices); a third entry gives that beam a radius of its own in mm, e.g.
+                ('c', 'v0', 1.2) -- beams without one take the lattice's radius
+        mirror  'x', 'xy', 'xyz' ... copies the beams mirrored across the cell's mid-planes (x -> 1 - x ...), so you
+                only draw one part of a symmetric cell
+
+            cell = cell_custom_truss({'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}, [('c', 'o')], mirror='xyz')
+            lattice(part, cell, cell_size=8, radius=0.6)
+
+        (Any other geometry as a cell: cell_custom(region, geometry).)  See UnitCell: .check() lists what would make
+        the lattice fall apart or not tile. '''
+    if isinstance(nodes, Shape) or beams is None:
+        raise TypeError('cell_custom_truss(nodes, beams): beams between nodes in the unit cube. (A cell of any other '
+                        'geometry: cell_custom(region, geometry))')
     return UnitCell(nodes, beams, mirror)
+
+
+def cell_custom_tpms(equation, name='custom'):
+    ''' A triply periodic surface of your own, from its equation f(a, b, c): a, b, c are the position in the cell as
+        phases (2 pi per cell).  Write it with + - * / and the methods .sin() .cos() .sqrt() .square() of a, b, c, e.g.
+        a gyroid:
+
+            cell = cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())
+            lattice(part, cell, cell_size=8, thickness=0.8)
+
+        Its value is turned into a distance in mm (its gradient is followed), so thickness= is a real wall thickness.
+        (Any other geometry as a cell: cell_custom(region, geometry).) '''
+    return TPMSEquation(equation, name)
 
 
 def _need_cell(cell, who, family=None, default=None):
@@ -1282,7 +1417,8 @@ def _need_cell(cell, who, family=None, default=None):
         hint = ''
         if isinstance(cell, str):
             hint = ': write cell_periodic({!r}) (a standard cell), cell_non_periodic(...) or cell_custom(...)'.format(cell)
-        raise TypeError('{}: the cell is made by cell_periodic(...), cell_non_periodic(...) or cell_custom(...), not {}{}'
+        raise TypeError('{}: the cell is made by cell_periodic(...), cell_non_periodic(...), cell_custom(region, geometry), '
+                        'cell_custom_truss(...) or cell_custom_tpms(...), not {}{}'
                         .format(who, repr(cell) if isinstance(cell, str) else 'a ' + type(cell).__name__, hint))
     if family is not None and cell.family != family:
         raise ValueError('{}: needs a {} cell, and {!r} is a {} cell'.format(who, family, cell, cell.family))
@@ -1348,16 +1484,12 @@ def _region_of(body, bounds):
     if bounds is None:
         bounds = getattr(body, '_bounds', None)
     if bounds is None:
-        search = libfive_region_t()
-        for axis in (search.X, search.Y, search.Z):
-            axis.lower, axis.upper = -1e6, 1e6
-        out = libfive_region_t()
-        open_sides = ctypes.c_int(0)
-        if not lib.libfive_tree_bounds(body.ptr, search, 200000, 2.0, ctypes.byref(out),
-                                       ctypes.byref(open_sides)) or open_sides.value:
+        from fieldes.stdlib.fields import find_extent       # (searched with the script's var() numbers)
+        found = find_extent(body)
+        if found is None:
             raise ValueError('could not find the extent of the body: pass '
                              'bounds=((x0, y0, z0), (x1, y1, z1))')
-        return out
+        bounds = found
     lo, hi = bounds
     r = libfive_region_t()
     for axis, a, b in zip((r.X, r.Y, r.Z), lo, hi):

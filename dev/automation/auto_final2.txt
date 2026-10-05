@@ -1,0 +1,5 @@
+wait 12000
+action view.std-iso
+wait 5000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/final2_iso.png
+quit

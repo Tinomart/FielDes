@@ -46,8 +46,7 @@ makes the script re-read a file that changed on disk.
 
 ## Exporting STL
 
-- **File → Export STL…** (`Ctrl+E`, `F7`) writes the shapes shown in the viewport. Regions made exact with
-  `exclude()` are included (the exact surface put into the field's mesh).
+- **File → Export STL…** (`Ctrl+E`, `F7`) writes the shapes shown in the viewport.
 - From a script:
 
 ```python
@@ -64,8 +63,7 @@ STL carries no units: it is written in millimetres.
 
 `verts, tris = shape.get_mesh(lo, hi, resolution)` returns the vertices (`(x, y, z)`) and triangles (index
 triples) of a shape as lists, for scripts that post-process the geometry (`algorithm='simplex'` or `'hybrid'`
-are slower but more robust on awkward fields). `exact_region_mesh(shape)` returns the exact pieces of the regions excluded
-from a shape (see [STEP import](step-import.md#putting-the-exact-surface-back-exclude)).
+are slower but more robust on awkward fields).
 
 ## Round trip
 

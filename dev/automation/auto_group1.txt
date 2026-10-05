@@ -1,0 +1,69 @@
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+log --- three bodies selected with Ctrl+click: they get gizmo lines (in their mode, handles) and ONE gizmo at once
+viewmouse click 507 524
+viewmouse click 812 524 ctrl
+viewmouse click 653 337 ctrl
+wait 500
+selected
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_a_auto.txt
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/group2_a_shared_gizmo.png
+log --- the shared gizmo's x arrow moves all three
+handledrag 0 0 80 0
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_b_arrow.txt
+log --- the dot moves them freely
+handledrag 3 0 -50 -60
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_c_dot.txt
+log --- E in the multi-select state: the stored mode of all goes to gizmo (not all gizmo -> all gizmo); the viewport is unchanged
+action view.edit-toggle
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_d_E1.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/group2_d_after_E1.png
+log --- E again: all gizmo -> all handles (stored), still ONE gizmo in the viewport
+action view.edit-toggle
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_e_E2.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/group2_e_after_E2.png
+log --- block alone to the gizmo (stored): click it, E; then select two again: their own modes are kept
+viewmouse click 507 524
+wait 300
+action view.edit-toggle
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_f_block_gizmo.txt
+viewmouse click 812 524 ctrl
+wait 500
+selected
+wait 2500
+waitrender 60 10
+wait 700
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/group2_g_two.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/group2_g_two_selected.png
+log --- leave the multi-select state: select the ball alone, its own handles mode is back (no gizmo on it), the block shows its gizmo
+viewmouse click 812 524
+wait 500
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/group2_h_ball_alone.png
+log --- click empty space: deselect all
+viewmouse click 150 900
+wait 300
+selected
+quit

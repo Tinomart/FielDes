@@ -111,16 +111,33 @@ static QString guideHtml()
 
     h += "<h2>Model tree</h2><ul>"
          "<li><b>Click</b> a row to select it and see its code. <b>Eye</b>: show or hide.</li>"
-         "<li><b>Handles button</b>: gizmo, then handles, then lock. The <b>gizmo</b> moves, rotates and scales; "
-         "<b>handles</b> drag a surface; <b>lock</b> freezes it.</li>"
-         "<li>Keys (viewport focused): " + keys("view.edit-next") + " next mode, " + keys("view.edit-gizmo") + " gizmo, "
-         + keys("view.edit-handles") + " handles, " + keys("view.edit-lock") + " lock.</li>"
+         "<li><b>Several rows</b>: Ctrl+click adds one or takes it out, Shift+click selects from the last one clicked, "
+         "as in a file list. In the viewport Ctrl+click does the same, and dragging draws a rectangle that selects "
+         "every body lying wholly inside it (with Ctrl too: added to the selection). A click on empty space "
+         "deselects all.</li>"
+         "<li><b>Dragging a surface</b> of a model is always possible (selecting it gives it the numbers). The "
+         "<b>gizmo button</b> (moves, rotates and scales) sets when the <b>gizmo</b> is shown: <b>click</b> (the "
+         "default: while the model is selected), <b>never</b> or <b>always</b>; it has priority over a surface "
+         "under it. <b>Lock button</b>: a locked model cannot be dragged at all; unlocked, it has the gizmo mode "
+         "it had. The <b>dot</b> in the middle of a gizmo moves the model freely, in the plane facing the "
+         "camera.</li>"
+         "<li><b>Several models selected</b> are moved by one gizmo, at the middle of them, whatever gizmo mode "
+         "each has when selected alone (a model with no numbers to move it by gets a gizmo line, in the mode it is "
+         "in). The key <b>E</b> changes each one's own gizmo mode for when it is selected alone. A "
+         "<b>locked</b> model cannot be in a selection of several: select it on its own to unlock it.</li>"
+         "<li>Keys (viewport focused; they work on all selected models): " + keys("view.edit-toggle") +
+         " goes round the gizmo modes (click, never, always), " + keys("view.edit-lock") + " lock / unlock, " +
+         keys("view.visible") + " show / hide, " +
+         keys("view.cache") + " render cache on / off, " + keys("view.isolate") + " shows only the selected, " +
+         keys("view.delete") + " deletes the selected models from the script. "
+         "A toggle first puts all the selected models in its on state (shown, locked, cached) if they are "
+         "not all in it; only then does it turn them all off.</li>"
          "<li>A displayed expression gets a name first: <code>sphere(3)</code> becomes <code>sphere_1 = sphere(3)</code>.</li>"
          "<li><b>Reimport</b> reads a file again; the <b>bin</b> also clears its cache and handle edits.</li>"
          "<li>Grey: hidden, or outside the render region.</li></ul>";
 
     h += "<h2>Viewport</h2><ul>"
-         "<li>Left-drag rotates, right-drag pans, the wheel zooms. Double-click frames a model or everything ("
+         "<li>Left-drag draws a selection rectangle, Shift+left-drag or middle-drag rotates, right-drag pans, the wheel zooms. Double-click frames a model or everything ("
          + keys("view.frame-all") + ").</li>"
          "<li>Standard views (click the viewport first): front " + keys("view.std-front") +
          ", right " + keys("view.std-right") + ", top " + keys("view.std-top") +
@@ -141,12 +158,12 @@ static QString guideHtml()
          "<li>" + keys("file.import-model") + " or drop a file on the window.</li>"
          "<li><b>STEP</b>: every solid becomes a field, one part each; assemblies arrive assembled. Free-form faces "
          "are fitted and shaded by their deviation.</li>"
-         "<li><code>exclude()</code> or <code>auto_exclude=True</code> draws the file's exact surface where the fit is poor.</li>"
+         "<li><code>exclude()</code> or <code>auto_exclude=True</code> locks the file's own exact surface (made a field) where the fit is poor.</li>"
          "<li><b>STL, OBJ, PLY, 3MF, GLB</b>: an exact distance field. Pass <code>file_units=</code> if the file is not in mm.</li></ul>";
 
     h += "<h2>Analysis</h2><ul>"
-         "<li><code>static_analysis</code>, <code>modal_analysis</code>, <code>thermal_analysis</code> and "
-         "<code>topology_optimization</code> work on any shape (mm, N, MPa).</li>"
+         "<li><code>static_analysis</code>, <code>modal_analysis</code>, <code>thermal_analysis</code>, "
+         "<code>topology_optimization</code> and <code>fluid_analysis</code> work on any shape (mm, N, MPa).</li>"
          "<li>Supports and loads are shapes: <code>fixed(region)</code>, <code>force(region, (fx, fy, fz))</code>, "
          "<code>gravity()</code>.</li>"
          "<li>Results are fields: <code>result.show('von_mises')</code>, or <code>part - 0.02 * result.von_mises</code>.</li>"
@@ -157,7 +174,8 @@ static QString guideHtml()
          "analysis results can drive offsets, thicknesses and lattices.</li>"
          "<li><code>lattice(body, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)</code> fills a body; "
          "<code>density=</code> sets the share of material instead. A cell is <code>cell_periodic(kind)</code>, "
-         "<code>cell_non_periodic(kind)</code> or <code>cell_custom(...)</code>.</li>"
+         "<code>cell_non_periodic(kind)</code>, <code>cell_custom(region, geometry)</code> (any geometry in a box), "
+         "<code>cell_custom_truss(nodes, beams)</code> or <code>cell_custom_tpms(equation)</code>.</li>"
          "<li><code>colored(part, field)</code> paints a part by a field.</li></ul>";
 
     h += "<h2>Editor</h2><ul>"
@@ -714,15 +732,16 @@ Window::Window(Arguments args)
         }
     }
 
-    {   // How the selected model is edited by dragging: single keys, active while the viewport (or the
-        // model tree) has the keyboard focus, so they never eat typing
+    {   // How the selected models are edited by dragging: single keys, active while the viewport (or the
+        // model tree) has the keyboard focus, so they never eat typing.  E goes round when the gizmo is shown (click,
+        // never, always); R locks or unlocks, a switch of its own that leaves the gizmo mode alone
         auto mode_menu = view_menu->addMenu("Edit mode");
         struct E { const char* id; const char* name; const char* mode; Qt::Key key; };
         const QList<E> modes = {
-            {"view.edit-next",    "Next mode",         "",        Qt::Key_M},
-            {"view.edit-gizmo",   "Gizmo",             "gizmo",   Qt::Key_G},
-            {"view.edit-handles", "Handles",           "handles", Qt::Key_H},
-            {"view.edit-lock",    "Lock",              "lock",    Qt::Key_L},
+            {"view.edit-toggle",  "Gizmo: click / never / always", "toggle", Qt::Key_E},
+            {"view.edit-lock",    "Lock / unlock",          "lock",    Qt::Key_R},
+            {"view.visible",      "Show / hide",            "visible", Qt::Key_V},
+            {"view.cache",        "Render cache on / off",  "cache",   Qt::Key_C},
         };
         for (const auto& m : modes)
         {
@@ -732,9 +751,29 @@ Window::Window(Arguments args)
             view->addAction(a);
             const QString mode = m.mode;
             auto scene = view->scenePanel();
-            if (mode.isEmpty()) connect(a, &QAction::triggered, scene, [=]{ scene->cycleSelectedMode(); });
-            else connect(a, &QAction::triggered, scene, [=]{ scene->setSelectedMode(mode); });
+            if (mode == "toggle") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedEdit(); });
+            else if (mode == "lock") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedLock(); });
+            else if (mode == "visible") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedVisible(); });
+            else if (mode == "cache") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedCache(); });
         }
+    }
+
+    {   // Isolation: a single key like the edit modes, so it never eats typing in the editor
+        auto isolate = view_menu->addAction("Isolate the selected model");
+        Shortcuts::add(isolate, "view.isolate", {QKeySequence(Qt::Key_I)});
+        isolate->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(isolate);
+        auto scene = view->scenePanel();
+        connect(isolate, &QAction::triggered, scene, &ScenePanel::toggleIsolation);
+    }
+
+    {   // Delete: D, a single key like the others (the viewport or the model tree has the focus, so it never eats typing)
+        auto del = view_menu->addAction("Delete the selected models");
+        Shortcuts::add(del, "view.delete", {QKeySequence(Qt::Key_D)});
+        del->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(del);
+        auto scene = view->scenePanel();
+        connect(del, &QAction::triggered, scene, &ScenePanel::deleteSelected);
     }
 
     auto frame_all = view_menu->addAction("Frame all shapes");
@@ -804,6 +843,15 @@ Window::Window(Arguments args)
         }
         statusBar()->showMessage(QString("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
                                      .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);
+    });
+
+    // The messages that were hidden with "Do not show this again" come back
+    settings_menu->addSeparator();
+    auto show_messages = settings_menu->addAction("Show hidden messages again");
+    show_messages->setToolTip("The messages you turned off with \"Do not show this message again\" are shown again");
+    connect(show_messages, &QAction::triggered, this, [this]{
+        QSettings().remove("hidden-messages");
+        statusBar()->showMessage("Hidden messages will be shown again", 6000);
     });
 
     menuBar()->addMenu(settings_menu);
@@ -885,17 +933,39 @@ Window::Window(Arguments args)
             return editor->callSupport("expose_text", var, error);
         });
         connect(editor, &Editor::sceneChanged, scene, &ScenePanel::setScene);
+        connect(editor, &Editor::partialSceneChanged, scene, &ScenePanel::setPartialScene);
+        connect(editor, &Editor::documentReplaced, scene, &ScenePanel::clearScene);
         connect(editor, &Editor::sceneChanged, this, &Window::onSceneChanged);
         connect(scene, &ScenePanel::goToLine, editor, &Editor::goToLine);
         connect(scene, &ScenePanel::editScript, editor, &Editor::applyEdits);
         connect(scene, &ScenePanel::rerunRequested, editor, &Editor::onTextChangedDebounce);
         connect(scene, &ScenePanel::highlightLines, view, &View::highlightLines);
         connect(scene, &ScenePanel::focusRequested, view, &View::focusOn);
+        // Selecting in the viewport leaves the keyboard where it is: in the viewport, so that the keys that work on
+        // the selection (E, R, G, H, I) go on working, and never in the editor
         connect(view, &View::shapeClicked, this, [=](int line) {
+            // (a click on a model selects it alone; a click on empty space, without Shift or Ctrl, deselects all)
             if (line >= 0) scene->selectByLine(line);
-            else view->highlightLines({});
+            else scene->clearSelection();
+            view->setFocus(Qt::MouseFocusReason);
+        });
+        connect(view, &View::shapeToggled, this, [=](int line) {
+            scene->toggleByLine(line);
+            view->setFocus(Qt::MouseFocusReason);
+        });
+        connect(view, &View::shapesRectSelected, this, [=](QList<int> lines, bool add) {
+            scene->selectLines(lines, add);
+            view->setFocus(Qt::MouseFocusReason);
         });
         connect(view, &View::surfaceSelectRequested, scene, &ScenePanel::addSurfaceSelection);
+        // The context menus create primitives and operations: the interpreter lists them and writes the calls
+        scene->setSupport([this](const QString& function, const QString& arg, QString* error) {
+            return editor->callSupport(function, arg, error);
+        });
+        view->setMenuCatalogSource([this]{ return editor->callSupport("menu_catalog", QString(), nullptr); });
+        connect(view, &View::createRequested, scene, &ScenePanel::createFromMenu);
+        // (the list is asked for once, after a script has run, so that a right-click never waits for Python)
+        connect(editor, &Editor::sceneChanged, view, [=]{ view->loadMenuCatalog(); });
         // (what the render cache did, on the cache buttons of the shapes that have it on)
         connect(view, &View::cacheStatesChanged, scene, [=]{ scene->setCacheStates(view->cacheStates()); });
     }
@@ -1068,6 +1138,12 @@ Window::Window(Arguments args)
             if (auto b = findChild<QAbstractButton*>(name.trimmed())) b->click();
             else std::cerr << "automation: no button " << name.toStdString() << std::endl;
         });
+        // slider <object name> <value>: set a slider (the result card's step: resultStep)
+        a->add("slider", [=](const QString& args){
+            const QString name = args.section(' ', 0, 0);
+            if (auto s = findChild<QSlider*>(name)) s->setValue(args.section(' ', 1).toInt());
+            else std::cerr << "automation: no slider " << name.toStdString() << std::endl;
+        });
         a->add("sectionaxis", [=](const QString& axis){
             if (auto b = findChild<QAbstractButton*>("sectionAxis" + axis.trimmed().toUpper())) b->click();
         });
@@ -1107,23 +1183,148 @@ Window::Window(Arguments args)
         a->add("sectionpos", [=](const QString& v){
             if (auto s = findChild<QSlider*>("sectionOffset")) s->setValue(v.toInt());
         });
-        // viewmouse move|click|dbl <x> <y>: mouse event in the viewport
+        // viewmouse <move|click|dbl|rclick|press|drag|release> <x> <y> [mods]: mouse event in the viewport
+        // (press, drag and release are one drag in pieces, so that a picture can be taken in the middle of it);
+        // viewmouse dragto <x> <y> <x2> <y2> [mods]: a whole drag.  mods: ctrl, shift, ctrl+shift, and middle (the
+        // middle button instead of the left one: press, drag, release and dragto).
+        // A click gives the viewport the keyboard first, as a real one does (events sent from here do not)
         a->add("viewmouse", [=](const QString& args){
-            const auto p = args.split(' ');
+            auto p = args.split(' ', Qt::SkipEmptyParts);
+            Qt::KeyboardModifiers mods = Qt::NoModifier;
+            Qt::MouseButton btn = Qt::LeftButton;
+            if (!p.isEmpty() && !p.last().isEmpty() && !p.last()[0].isDigit() && p.last()[0] != '-' && p.size() > 3)
+            {
+                const QString m = p.takeLast().toLower();
+                if (m.contains("ctrl")) mods |= Qt::ControlModifier;
+                if (m.contains("shift")) mods |= Qt::ShiftModifier;
+                if (m.contains("middle")) btn = Qt::MiddleButton;
+            }
             if (p.size() < 3) return;
             const QPoint pos(p[1].toInt(), p[2].toInt());
-            const QPoint g = view->mapToGlobal(pos);
+            auto send = [&](QEvent::Type t, QPoint at, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, view->mapToGlobal(at), b, bs, mods);
+                QApplication::sendEvent(view, &e);
+            };
+            auto takeFocus = [&]{ if (view->focusPolicy() & Qt::ClickFocus) view->setFocus(Qt::MouseFocusReason); };
             if (p[0] == "move")
             {
-                QMouseEvent e(QEvent::MouseMove, pos, g, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
-                QApplication::sendEvent(view, &e);
+                send(QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton);
                 return;
             }
-            QMouseEvent press(p[0] == "dbl" ? QEvent::MouseButtonDblClick : QEvent::MouseButtonPress,
-                              pos, g, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(view, &press);
-            QMouseEvent release(QEvent::MouseButtonRelease, pos, g, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-            QApplication::sendEvent(view, &release);
+            if (p[0] == "rclick")
+            {
+                // (a right-click that does not move opens a context menu: on a shape, or on empty space)
+                send(QEvent::MouseMove, pos, Qt::NoButton, Qt::NoButton);
+                takeFocus();
+                send(QEvent::MouseButtonPress, pos, Qt::RightButton, Qt::RightButton);
+                send(QEvent::MouseButtonRelease, pos, Qt::RightButton, Qt::NoButton);
+                return;
+            }
+            if (p[0] == "press") { takeFocus(); send(QEvent::MouseButtonPress, pos, btn, btn); return; }
+            if (p[0] == "drag") { send(QEvent::MouseMove, pos, Qt::NoButton, btn); return; }
+            if (p[0] == "release") { send(QEvent::MouseButtonRelease, pos, btn, Qt::NoButton); return; }
+            if (p[0] == "dragto" && p.size() >= 5)
+            {
+                const QPoint to(p[3].toInt(), p[4].toInt());
+                takeFocus();
+                send(QEvent::MouseButtonPress, pos, btn, btn);
+                for (int k = 1; k <= 8; ++k)
+                    send(QEvent::MouseMove, pos + (to - pos) * k / 8, Qt::NoButton, btn);
+                send(QEvent::MouseButtonRelease, to, btn, Qt::NoButton);
+                return;
+            }
+            takeFocus();
+            send(p[0] == "dbl" ? QEvent::MouseButtonDblClick : QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
+        });
+        // treeclick <none|ctrl|shift> <text prefix>: a real click (mouse events, with the modifier held) on the name of a
+        // model-tree row, so that Ctrl and Shift select several rows as they do for a user
+        a->add("treeclick", [=](const QString& args){
+            const QString m = args.section(' ', 0, 0).toLower();
+            Qt::KeyboardModifiers mods = Qt::NoModifier;
+            if (m.contains("ctrl")) mods |= Qt::ControlModifier;
+            if (m.contains("shift")) mods |= Qt::ShiftModifier;
+            auto row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            const QPoint pos = tree->visualItemRect(row).center();
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, tree->viewport()->mapToGlobal(pos), b, bs, mods);
+                QApplication::sendEvent(tree->viewport(), &e);
+            };
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+        });
+        // selected: what is selected in the model tree (in the order it was selected) and lit up in the viewport
+        a->add("selected", [=](const QString&){
+            QStringList lines;
+            for (int l : view->highlightedLines()) lines << QString::number(l);
+            std::cerr << "automation: selected [" << view->scenePanel()->selectionKeys().join(", ").toStdString()
+                      << "]  highlighted lines [" << lines.join(", ").toStdString() << "]\n";
+        });
+        // focuswho: which widget has the keyboard
+        a->add("focuswho", [=](const QString&){
+            QWidget* w = QApplication::focusWidget();
+            std::cerr << "automation: focus is " << (w ? w->metaObject()->className() : "nothing") << " "
+                      << (w ? w->objectName().toStdString() : std::string()) << "\n";
+        });
+        // popup open <path>: hover an entry of the open context menu, so that its submenu opens; popup pick <path>:
+        // choose an entry; popup grab <file>: a picture of the window with the menus open.  A path is entry names
+        // through the submenus, as "New primitive/sphere"
+        a->add("popup", [=](const QString& args){
+            const QString cmd = args.section(' ', 0, 0), rest = args.section(' ', 1).trimmed();
+            QMenu* root = nullptr;
+            for (QWidget* w : QApplication::topLevelWidgets())
+            {
+                auto m = qobject_cast<QMenu*>(w);
+                if (m && m->isVisible() && !qobject_cast<QMenu*>(m->parentWidget())) root = m;
+            }
+            if (cmd == "grab")
+            {
+                QPixmap shot = this->grab();
+                QPainter painter(&shot);
+                for (QWidget* w : QApplication::topLevelWidgets())
+                {
+                    if (qobject_cast<QMenu*>(w) && w->isVisible())
+                        painter.drawPixmap(this->mapFromGlobal(w->pos()), w->grab());
+                }
+                painter.end();
+                shot.save(rest);
+                return;
+            }
+            if (!root)
+            {
+                std::cerr << "automation: no context menu is open" << std::endl;
+                return;
+            }
+            QMenu* menu = root;
+            const QStringList path = rest.split('/');
+            for (int k = 0; k < path.size(); ++k)
+            {
+                QAction* found = nullptr;
+                for (QAction* act : menu->actions())
+                    if (act->text().remove('&') == path[k]) found = act;
+                if (!found)
+                {
+                    std::cerr << "automation: no menu entry " << path[k].toStdString() << " in " << rest.toStdString() << std::endl;
+                    return;
+                }
+                if (k + 1 == path.size() && cmd == "pick")
+                {
+                    if (!found->isEnabled()) std::cerr << "automation: the entry " << rest.toStdString() << " is disabled" << std::endl;
+                    else found->trigger();
+                    root->close();
+                    return;
+                }
+                menu->setActiveAction(found);
+                if (!found->menu()) return;
+                QMenu* parentMenu = menu;
+                menu = found->menu();
+                if (!menu->isVisible())
+                    menu->popup(parentMenu->mapToGlobal(parentMenu->actionGeometry(found).topRight()));
+            }
         });
         // viewzoom <x> <y> <steps>: turn the mouse wheel over a point of the viewport (positive: in)
         a->add("viewzoom", [=](const QString& args){
@@ -1218,6 +1419,20 @@ Window::Window(Arguments args)
         a->add("new", [=](const QString&){
             editor->setScript(QString());
             editor->setModified(false);
+        });
+        // treedump <file>: appends the model tree's top-level rows (their names) and the number of shapes the viewport
+        // holds; open <file>: opens a script as the Open menu does
+        a->add("treedump", [=](const QString& path){
+            QFile f(path);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Append)) return;
+            QString text = QString("-- viewport shapes: %1\n").arg(view->shapeCount());
+            if (auto tree = view->scenePanel()->findChild<QTreeWidget*>())
+                for (int i = 0; i < tree->topLevelItemCount(); ++i)
+                    text += tree->topLevelItem(i)->text(0) + "\n";
+            f.write(text.toUtf8());
+        });
+        a->add("open", [=](const QString& path){
+            if (loadFile(path)) setFilename(path);
         });
         a->add("treedbl", [=](const QString& args){
             auto row = findRow(args);

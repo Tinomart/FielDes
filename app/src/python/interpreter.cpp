@@ -114,11 +114,27 @@ static PyObject* var_func(PyObject* host_mod, PyObject* args) {
     return v;
 }
 
+// The interpreter a run's helper thread (fieldes.runner) reports to
+static FielDes::Python::Interpreter* g_interpreter = nullptr;
+
+static PyObject* partial_scene(PyObject*, PyObject* args) {
+    const char* json;
+    if (!PyArg_ParseTuple(args, "s", &json)) {
+        return NULL;
+    }
+    if (g_interpreter) {
+        // (from this thread to the window's: a queued signal)
+        emit g_interpreter->partialScene(QString::fromUtf8(json));
+    }
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef host_methods[] = {
     {"set_resolution", set_resolution, METH_VARARGS, "Sets render resolution"},
     {"set_quality", set_quality, METH_VARARGS, "Sets render quality"},
     {"set_bounds", set_bounds, METH_VARARGS, "Sets render bounds"},
     {"__var", var_func, METH_VARARGS, "Constructs a free variable"},
+    {"partial_scene", partial_scene, METH_VARARGS, "Gives the model tree what a running script has made so far"},
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
@@ -157,6 +173,7 @@ Interpreter::~Interpreter() {
     // thread has finished.  We reclaim the thread state, so the GIL lives
     // in the main thread until another Interpreter is created.
     PyEval_RestoreThread(m_threadState);
+    if (g_interpreter == this) g_interpreter = nullptr;
 
     Py_XDECREF(m_runFunc);
     Py_XDECREF(m_resumeFunc);
@@ -175,7 +192,13 @@ QString Interpreter::defaultScript() {
                       .arg(default_settings.max.z()) +
         SET_QUALITY_STR.arg(default_settings.quality) +
         SET_RESOLUTION_STR.arg(default_settings.res) +
-        "\nsphere(1)";
+        // (the starting sphere is what the viewport's "New primitive" makes: named, and with its numbers exposed, so
+        // that its handles work at once and it is a model of its own in a selection of several)
+        "\nsphere_1 = sphere(1)\n"
+        "sphere_1 = expose(sphere_1, [\n"
+        "    var(0.0), var(0.0), var(0.0), var(1.0),\n"
+        "])\n"
+        "sphere_1";
 }
 
 void Interpreter::halt() {
@@ -252,6 +275,7 @@ void Interpreter::preinit() {
 
 void Interpreter::init() {
     PyGILState_STATE gstate = PyGILState_Ensure();
+    g_interpreter = this;
 
     // TODO: do a first import check and raise a reasonable error instead of
     // crashing if the module isn't available? (it *should* always be available)
@@ -690,16 +714,37 @@ void Interpreter::evaluate(QString script, bool resuming)
             PyErr_Clear();
         }
 
+        // What an object displays: the value of its _display() -- an analysis result stated on its
+        // own shows itself coloured by its fields, as any shape shows itself -- or the object itself
+        auto displayOf = [](PyObject* obj) -> PyObject* {
+            if (!obj || !PyObject_HasAttrString(obj, "_display")) return nullptr;
+            PyObject* fn = PyObject_GetAttrString(obj, "_display");
+            PyObject* res = (fn && PyCallable_Check(fn)) ? PyObject_CallObject(fn, nullptr) : nullptr;
+            Py_XDECREF(fn);
+            return res;
+        };
         for (unsigned i=0; reprOk && i < ret_size; ++i) {
             const auto s = PyList_GetItem(ret, i);
             const int line = (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1;
-            recordShape(s, out, vars, line);
+            PyObject* shown = displayOf(s);
+            if (!shown && PyErr_Occurred()) {
+                // (a result that cannot be displayed: its error, as any other)
+                out.okay = false;
+                const auto tb = capturePythonTraceback();
+                out.error = {tb, errorRangeFromTraceback(tb)};
+                break;
+            }
+            PyObject* obj = shown ? shown : s;
+            recordShape(obj, out, vars, line);
 
-            const auto iter = PyObject_GetIter(s);
+            const auto iter = PyObject_GetIter(obj);
             if (iter) {
                 PyObject* item = NULL;
                 while ((item = PyIter_Next(iter))) {
-                    recordShape(item, out, vars, line);
+                    PyObject* d = displayOf(item);
+                    if (!d) PyErr_Clear();
+                    recordShape(d ? d : item, out, vars, line);
+                    Py_XDECREF(d);
                     Py_DECREF(item);
                 }
                 Py_DECREF(iter);
@@ -707,6 +752,7 @@ void Interpreter::evaluate(QString script, bool resuming)
                 // PyObject_GetIter sets an error
                 PyErr_Clear();
             }
+            Py_XDECREF(shown);
         }
 
       if (reprOk) {
@@ -904,12 +950,11 @@ void Interpreter::recordShape(
 
         // Handles of a placed part (fieldes.stdlib.handles): (mode, about (3),
         // move (3), rotate (3), scale (3)), each number a var Shape or a plain float
-        // (the mode is 'gizmo', 'handles' or 'lock'; an older script's first item
-        // was show, a boolean, and it had no scale)
+        // (the mode is when the gizmo is shown: 'click', 'never' or 'always')
         if (PyObject_HasAttrString(obj, "_handles"))
         {
             PyObject* h = PyObject_GetAttrString(obj, "_handles");
-            if (h && PyTuple_Check(h) && (PyTuple_Size(h) == 4 || PyTuple_Size(h) == 5))
+            if (h && PyTuple_Check(h) && PyTuple_Size(h) == 5)
             {
                 Shape::Handles hd;
                 hd.present = true;
@@ -917,12 +962,8 @@ void Interpreter::recordShape(
                 if (PyUnicode_Check(m))
                 {
                     const QString name = QString::fromUtf8(PyUnicode_AsUTF8(m));
-                    hd.mode = name == "lock" ? Shape::Handles::LOCK
-                            : name == "handles" ? Shape::Handles::NATIVE : Shape::Handles::GIZMO;
-                }
-                else
-                {
-                    hd.mode = PyObject_IsTrue(m) == 1 ? Shape::Handles::GIZMO : Shape::Handles::LOCK;
+                    hd.mode = name == "never" ? Shape::Handles::NEVER
+                            : name == "always" ? Shape::Handles::ALWAYS : Shape::Handles::CLICK;
                 }
                 PyObject* about = PyTuple_GetItem(h, 1);
                 if (PyTuple_Check(about) && PyTuple_Size(about) == 3)
@@ -941,7 +982,7 @@ void Interpreter::recordShape(
                 };
                 PyObject* mv = PyTuple_GetItem(h, 2);
                 PyObject* rt = PyTuple_GetItem(h, 3);
-                PyObject* sc = PyTuple_Size(h) == 5 ? PyTuple_GetItem(h, 4) : nullptr;
+                PyObject* sc = PyTuple_GetItem(h, 4);
                 for (int a = 0; a < 3; ++a)
                 {
                     if (PyTuple_Check(mv) && PyTuple_Size(mv) == 3) hd.move[a] = idOf(PyTuple_GetItem(mv, a));
@@ -951,6 +992,15 @@ void Interpreter::recordShape(
                 shape->setHandles(hd);
             }
             Py_XDECREF(h);
+            PyErr_Clear();
+        }
+
+        // Locked by a line `x = lock(x)` (fieldes.stdlib.handles.lock): it cannot be dragged, by gizmo or surface
+        if (PyObject_HasAttrString(obj, "_locked"))
+        {
+            PyObject* v = PyObject_GetAttrString(obj, "_locked");
+            shape->setLocked(v && PyObject_IsTrue(v) == 1);
+            Py_XDECREF(v);
             PyErr_Clear();
         }
 
@@ -968,59 +1018,6 @@ void Interpreter::recordShape(
         else
         {
             shape->setRenderCache(true, false);
-        }
-
-        // Exact regions (fieldes.stdlib.cad_import.exclude): each one's
-        // _flat() is (path, solid, instance, matrix (16), region (16),
-        // lo (3), hi (3), quality), every number a float or a Shape
-        if (PyObject_HasAttrString(obj, "_exact"))
-        {
-            auto toTree = [](PyObject* v) {
-                if (v && PyNumber_Check(v) && !PyObject_HasAttrString(v, "ptr"))
-                    return libfive::Tree(float(PyFloat_AsDouble(v)));
-                PyObject* p = v ? PyObject_GetAttrString(v, "ptr") : nullptr;
-                libfive::Tree t = libfive::Tree(0.0f);
-                if (p && PyLong_Check(p)) t = libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(p)));
-                Py_XDECREF(p);
-                return t;
-            };
-            auto trees = [&](PyObject* tuple, size_t n) {
-                std::vector<libfive::Tree> out;
-                for (size_t k = 0; k < n; k++)
-                    out.push_back(toTree(tuple && PyTuple_Check(tuple) && size_t(PyTuple_Size(tuple)) > k
-                                             ? PyTuple_GetItem(tuple, Py_ssize_t(k)) : nullptr));
-                return out;
-            };
-            std::vector<Shape::ExactRegion> regions;
-            PyObject* list = PyObject_GetAttrString(obj, "_exact");
-            if (list && PyList_Check(list))
-            {
-                for (Py_ssize_t k = 0; k < PyList_Size(list); k++)
-                {
-                    PyObject* flat = PyObject_CallMethod(PyList_GetItem(list, k), "_flat", NULL);
-                    if (flat && PyTuple_Check(flat) && PyTuple_Size(flat) == 7)
-                    {
-                        Shape::ExactRegion r;
-                        PyObject* path = PyTuple_GetItem(flat, 0);
-                        r.path = path && PyUnicode_Check(path) ? PyUnicode_AsUTF8(path) : "";
-                        r.solid = int(PyLong_AsLong(PyTuple_GetItem(flat, 1)));
-                        r.instance = int(PyLong_AsLong(PyTuple_GetItem(flat, 2)));
-                        r.matrix = trees(PyTuple_GetItem(flat, 3), 16);
-                        r.region = trees(PyTuple_GetItem(flat, 4), 16);
-                        PyObject* fieldObj = PyTuple_GetItem(flat, 5);
-                        r.field = fieldObj && fieldObj != Py_None ? toTree(fieldObj) : libfive::Tree::invalid();
-                        r.quality = toTree(PyTuple_GetItem(flat, 6));
-                        regions.push_back(r);
-                    }
-                    else
-                    {
-                        PyErr_Print();
-                    }
-                    Py_XDECREF(flat);
-                }
-            }
-            Py_XDECREF(list);
-            shape->setExactRegions(regions);
         }
 
         // The symbols of boundary conditions the viewport draws over it (fieldes.stdlib.boundary_conditions):
@@ -1091,7 +1088,51 @@ void Interpreter::recordShape(
                 shape->setColorField(libfive::Tree(ft), lo, hi, autoRange,
                                      str("_color_label"), str("_color_map"));
 
-                // A structural result (Result.show): every field, the
+                // A patch of a surface (fieldes.stdlib.selection): the part is drawn only where the field is at
+                // most this value, in the colour of the map's top
+                PyObject* cutoff = PyObject_GetAttrString(obj, "_color_cutoff");
+                if (cutoff && PyFloat_Check(cutoff)) shape->setColorCutoff(float(PyFloat_AsDouble(cutoff)));
+                Py_XDECREF(cutoff);
+                PyErr_Clear();
+
+                // Streamlines through a flow (fieldes.stdlib.fluid): lists of (x, y, z, speed, time) points
+                auto linesOf = [](PyObject* list, std::vector<Shape::FlowLine>& lines) {
+                    if (!list || !PyList_Check(list)) return;
+                    for (Py_ssize_t k = 0; k < PyList_Size(list); k++)
+                    {
+                        PyObject* l = PyList_GetItem(list, k);
+                        if (!l || !PyList_Check(l)) continue;
+                        Shape::FlowLine line;
+                        for (Py_ssize_t j = 0; j < PyList_Size(l); j++)
+                        {
+                            PyObject* p = PyList_GetItem(l, j);
+                            if (!p || !PyTuple_Check(p) || PyTuple_Size(p) != 5) continue;
+                            std::array<float, 5> q;
+                            for (int c = 0; c < 5; c++) q[size_t(c)] = float(PyFloat_AsDouble(PyTuple_GetItem(p, c)));
+                            line.push_back(q);
+                        }
+                        if (line.size() >= 2) lines.push_back(std::move(line));
+                    }
+                };
+                PyObject* fl = PyObject_GetAttrString(obj, "_flow_lines");
+                if (fl)
+                {
+                    std::vector<Shape::FlowLine> lines;
+                    linesOf(fl, lines);
+                    float flo = 0, fhi = 1;
+                    PyObject* fr = PyObject_GetAttrString(obj, "_flow_range");
+                    if (fr && PyTuple_Check(fr) && PyTuple_Size(fr) == 2)
+                    {
+                        flo = float(PyFloat_AsDouble(PyTuple_GetItem(fr, 0)));
+                        fhi = float(PyFloat_AsDouble(PyTuple_GetItem(fr, 1)));
+                    }
+                    Py_XDECREF(fr);
+                    shape->setFlowLines(std::move(lines), flo, fhi);
+                }
+                Py_XDECREF(fl);
+                PyErr_Clear();
+
+                // An analysis result (Result._display): every field, the
                 // displacements and the elements
                 PyObject* fields = PyObject_GetAttrString(obj, "_color_fields");
                 if (fields && PyList_Check(fields) && PyList_Size(fields) > 0)
@@ -1229,6 +1270,7 @@ void Interpreter::recordShape(
                         shape->setResult(channels, current, u[0], u[1], u[2],
                                          float(num("_deform_scale", 0)), float(num("_deform_auto", 1)),
                                          grid);
+                        shape->setColorDetail(float(num("_color_detail", 0)));
                     }
                 }
                 Py_XDECREF(fields);
@@ -1236,6 +1278,99 @@ void Interpreter::recordShape(
             Py_XDECREF(fptr);
             Py_XDECREF(field);
             PyErr_Clear();
+        }
+        // The steps of a result, or of a plain shape that changes (the iterations of an optimisation, a flow in
+        // time, the load growing): dicts with label, and any of channels (as _color_fields, by name), deform,
+        // lines, shape
+        {
+            auto treeOf = [](PyObject* shapeObj) {
+                PyObject* p = shapeObj ? PyObject_GetAttrString(shapeObj, "ptr") : nullptr;
+                libfive::Tree t = libfive::Tree::invalid();
+                if (p && PyLong_Check(p)) t = libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(p)));
+                Py_XDECREF(p);
+                return t;
+            };
+            auto linesOf = [](PyObject* list, std::vector<Shape::FlowLine>& lines) {
+                if (!list || !PyList_Check(list)) return;
+                for (Py_ssize_t k = 0; k < PyList_Size(list); k++)
+                {
+                    PyObject* l = PyList_GetItem(list, k);
+                    if (!l || !PyList_Check(l)) continue;
+                    Shape::FlowLine line;
+                    for (Py_ssize_t j = 0; j < PyList_Size(l); j++)
+                    {
+                        PyObject* p = PyList_GetItem(l, j);
+                        if (!p || !PyTuple_Check(p) || PyTuple_Size(p) != 5) continue;
+                        std::array<float, 5> q;
+                        for (int c = 0; c < 5; c++) q[size_t(c)] = float(PyFloat_AsDouble(PyTuple_GetItem(p, c)));
+                        line.push_back(q);
+                    }
+                    if (line.size() >= 2) lines.push_back(std::move(line));
+                }
+            };
+            const std::vector<Shape::FieldChannel> channels = shape->channels();
+            {
+                        PyObject* stepsObj = PyObject_GetAttrString(obj, "_color_steps");
+                        if (stepsObj && PyList_Check(stepsObj) && PyList_Size(stepsObj) > 0)
+                        {
+                            std::vector<Shape::Step> steps;
+                            for (Py_ssize_t k = 0; k < PyList_Size(stepsObj); k++)
+                            {
+                                PyObject* d = PyList_GetItem(stepsObj, k);
+                                if (!d || !PyDict_Check(d)) continue;
+                                Shape::Step st;
+                                PyObject* label = PyDict_GetItemString(d, "label");
+                                if (label && PyUnicode_Check(label)) st.label = QString::fromUtf8(PyUnicode_AsUTF8(label));
+                                PyObject* ch = PyDict_GetItemString(d, "channels");
+                                if (ch && PyList_Check(ch) && PyList_Size(ch) > 0)
+                                {
+                                    // (the result's channels, in order, with the step's values where it gives them)
+                                    st.channels = channels;
+                                    for (Py_ssize_t j = 0; j < PyList_Size(ch); j++)
+                                    {
+                                        PyObject* item = PyList_GetItem(ch, j);
+                                        if (!PyTuple_Check(item) || PyTuple_Size(item) < 5) continue;
+                                        const QString name = QString::fromUtf8(PyUnicode_AsUTF8(PyTuple_GetItem(item, 0)));
+                                        const libfive::Tree t = treeOf(PyTuple_GetItem(item, 2));
+                                        if (!t.is_valid()) continue;
+                                        for (auto& c : st.channels)
+                                            if (c.name == name)
+                                            {
+                                                c.label = QString::fromUtf8(PyUnicode_AsUTF8(PyTuple_GetItem(item, 1)));
+                                                c.tree = t;
+                                                c.lo = float(PyFloat_AsDouble(PyTuple_GetItem(item, 3)));
+                                                c.hi = float(PyFloat_AsDouble(PyTuple_GetItem(item, 4)));
+                                            }
+                                    }
+                                }
+                                PyObject* df = PyDict_GetItemString(d, "deform");
+                                if (df && PyTuple_Check(df) && PyTuple_Size(df) == 3)
+                                {
+                                    st.hasDeform = true;
+                                    for (int a = 0; a < 3; a++)
+                                    {
+                                        st.deform[a] = treeOf(PyTuple_GetItem(df, a));
+                                        if (!st.deform[a].is_valid()) st.hasDeform = false;
+                                    }
+                                }
+                                PyObject* ln = PyDict_GetItemString(d, "lines");
+                                if (ln && PyList_Check(ln))
+                                {
+                                    st.hasLines = true;
+                                    linesOf(ln, st.lines);
+                                }
+                                PyObject* sh = PyDict_GetItemString(d, "shape");
+                                if (sh && sh != Py_None) st.tree = treeOf(sh);
+                                steps.push_back(std::move(st));
+                            }
+                            PyObject* cur = PyObject_GetAttrString(obj, "_color_step");
+                            const int currentStep = (cur && PyLong_Check(cur)) ? int(PyLong_AsLong(cur)) : int(steps.size()) - 1;
+                            Py_XDECREF(cur);
+                            shape->setSteps(std::move(steps), currentStep);
+                        }
+                        Py_XDECREF(stepsObj);
+                        PyErr_Clear();
+            }
         }
         shape->moveToThread(QApplication::instance()->thread());
         out.shapes.push_back(shape);

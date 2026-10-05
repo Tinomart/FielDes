@@ -7,27 +7,18 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #pragma once
 
-#include <map>
-#include <memory>
 #include <string>
 #include <vector>
 
 #include <Eigen/Eigen>
 
-#include "libfive/render/brep/mesh.hpp"
-#include "libfive/tree/tree.hpp"
-
 namespace libfive {
 namespace step {
 
-/*  Exact regions: where an imported part's field is only approximate (a
- *  B-spline face fitted by a simple surface, a thread), the user names a
- *  region -- any field, negative inside -- and the part's real surface,
- *  meshed directly from the STEP file (step_tessellate.cpp), replaces the
- *  field's mesh inside it.  Nothing is meshed or intersected for the region
- *  itself: the exact surface's triangles are cut by evaluating the region's
- *  field on them, and the field mesh loses the triangles inside the region.
- *  The edge between the two is jagged, one cell wide.  */
+/*  The exact surface of an imported part, meshed directly from its STEP file (step_tessellate.cpp): where the
+ *  import's field is only approximate (a B-spline face fitted by a simple surface, a thread), the user
+ *  excludes a region (fieldes.stdlib.cad_import.exclude) and this mesh -- made into a distance field by the
+ *  caller (mesh_import) -- is the part inside it.  Nothing is fitted or reconstructed.  */
 struct ExactPiece
 {
     std::vector<Eigen::Vector3f> verts;
@@ -88,27 +79,6 @@ struct BrepParts
 };
 
 BrepParts brepParts(const std::string& path, int turnSamples);
-
-/*  Whether a region (a field, with the numbers `vars` for its variables) can
- *  reach the part at all, judged by the part's own bounds in the STEP file --
- *  without tessellating it.  False means the region is nowhere near.  */
-bool exactReaches(const ExactSpec& spec, const Tree& field, const std::map<Tree::Id, float>& vars);
-
-/*  The part of a surface inside a region (a field, negative inside it, with
- *  the numbers `vars` for its variables): the triangles that lie inside are
- *  kept, the ones the region's surface crosses are split until they are no
- *  longer than `cell` and kept where their middle is inside.  */
-ExactPiece clipToRegion(const ExactPiece& surface, const Tree& field,
-                        const std::map<Tree::Id, float>& vars, double cell);
-
-/*  A mesh without the triangles inside a region (most of a triangle's
- *  corners inside it); nullptr if none is, which leaves the mesh as it is.  */
-std::unique_ptr<Mesh> removeInside(const Mesh& m, const Tree& field,
-                                   const std::map<Tree::Id, float>& vars);
-
-/*  A mesh with pieces put into it, as one mesh (the triangles are only put
- *  together: the pieces overlap the mesh by up to a cell at the edge).  */
-std::unique_ptr<Mesh> joinExact(const Mesh& field, const std::vector<ExactPiece>& pieces);
 
 }   // namespace step
 }   // namespace libfive

@@ -73,7 +73,7 @@ The argument must be a constant (`var(3)`, `var(-2.5)`). Shapes made from `var()
 the viewport finds the `var` numbers that place the surface under the cursor. For everything else —
 a part imported from STEP, a shape written with plain numbers — use [handles](handles.md):
 `handles(part, …)` (a gizmo) and `expose(part, [var(..), …])` (the surfaces of the part as draggable
-numbers), which the model tree writes for you.
+numbers), which the model tree writes for you; `lock(part)` makes a shape undraggable again.
 
 ## Viewport settings
 
@@ -113,7 +113,7 @@ loft(a, b, z0, z1)        morph(a, b, t)
 
 and the field-based ones in [Fields](fields.md): `smooth_union`, `smooth_difference`,
 `smooth_intersection`, `chamfer_union`, `offset_by(part, field)` (an offset that varies in space),
-`thicken`, `shell_inside`, `round_edges`, `fillet`, `repeat`, `twist_z`, `bend_z`, `mirror_x/y/z`.
+`thicken`, `shell_inside`, `round_edges`, `fillet`, `smooth`, `repeat`, `twist_z`, `bend_z`, `mirror_x/y/z`.
 
 ## Moving, rotating, scaling, deforming
 

@@ -28,7 +28,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QVector3D>
 #include <QVector4D>
 
+#include <array>
 #include <chrono>
+#include <map>
 #include <memory>
 #include <set>
 #include <unordered_set>
@@ -37,7 +39,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "libfive/eval/evaluator.hpp"
 #include "libfive/eval/eval_array.hpp"
-#include "libfive/step/step_exact.hpp"
 #include "libfive/tree/tree.hpp"
 
 #include "libfive/render/brep/mesh.hpp"
@@ -87,12 +88,13 @@ public:
     /*
      *  Returns the raw mesh object pointer
      */
-    const libfive::Mesh* getMesh() const { return mesh.data(); }
+    const libfive::Mesh* getMesh() const { return mesh.get(); }
 
     /*
      *  Looks up the tree's ID
      */
-    libfive::Tree::Id id() const { return tree.id(); }
+    /*  (of the shape as the script made it: a step of a result may show another geometry)  */
+    libfive::Tree::Id id() const { return base_tree.id(); }
 
     /*
      *  0-based line of the script statement that displayed this shape
@@ -147,35 +149,19 @@ public:
     const std::vector<BcLabel>& boundaryLabels() const { return bc_labels; }
 
     bool hasColorField() const { return has_color; }
+
+    /*  A patch of a surface (fieldes.stdlib.selection): the shape is drawn only where its colour field is at
+     *  most `cutoff` -- the surface beyond is not drawn -- in the colour at the top of the colour map, and a hair
+     *  towards the eye so that it wins over the part it lies on  */
+    void setColorCutoff(float cutoff) { has_cutoff = true; color_cutoff = cutoff; }
+    bool isSurfacePatch() const { return has_cutoff; }
     const libfive::Tree& colorFieldTree() const { return color_field; }
     QString colorLabel() const { return color_label; }
     QString colorMap() const { return color_map; }
     float colorLo() const { return color_lo; }
     float colorHi() const { return color_hi; }
-    /*  Identifies the colouring and the exact regions (shapes are only
-     *  reused when it matches)  */
+    /*  Identifies the colouring (shapes are only reused when it matches)  */
     QString colorKey() const;
-
-    /*
-     *  Exact regions (fieldes.stdlib.cad_import.exclude): inside a region --
-     *  a field, negative inside it -- an imported part's surface, meshed
-     *  straight from its STEP file, replaces this shape's mesh whenever it
-     *  is rendered: the shape's triangles inside the region go, the exact
-     *  surface's triangles inside it (cut by evaluating the region's field,
-     *  to the cell of the render) are put in.  Every number is a tree -- a
-     *  constant or an expression of the script's variables -- evaluated with
-     *  the current variables at render time, so dragging updates the exact
-     *  piece too.
-     */
-    struct ExactRegion
-    {
-        std::string path;
-        int solid = 0, instance = 0;
-        std::vector<libfive::Tree> matrix, region;   // 16 each, row-major
-        libfive::Tree field = libfive::Tree::invalid();   // the region (invalid: everywhere), placed by `region`
-        libfive::Tree quality = libfive::Tree::invalid();
-    };
-    void setExactRegions(std::vector<ExactRegion> regions);
 
     /*  A part meshed on its own (an imported part, fieldes.stdlib.cad_import.
      *  roi_resolution): over a cube of `side` around its box, at its own
@@ -189,7 +175,7 @@ public:
 
     /*  The render cache (fieldes.stdlib.render_cache.render_cache): when it is on, the finished mesh of
      *  the shape is kept on disk -- by what the shape is: its expression with the numbers it is drawn
-     *  with, its colours and exact regions, the region and resolution it is meshed at -- and read from
+     *  with, its colours, the region and resolution it is meshed at -- and read from
      *  there when the same shape is rendered again: in another run of the program, or after the script
      *  was changed and changed back.  Whatever changes about the math is another key: the shape is
      *  meshed again, shown, and kept again.  A shape that depends on something no other run can
@@ -211,17 +197,19 @@ public:
 
     /*  Handles (fieldes.stdlib.handles): a placed part is the shape scaled about
      *  `about`, rotated by three angles (degrees; x, then y, then z) and moved,
-     *  by numbers that are var()s of the script.  The mode says what can be
-     *  dragged: GIZMO draws move arrows, rotation rings and scale knobs at its
-     *  pivot and dragging them changes those vars (and so the script text);
-     *  NATIVE lets its own surfaces be dragged instead (Studio's own handles, see
-     *  nativeDragOk); LOCK lets nothing be.  An id is null where the number is a
-     *  plain constant.  */
+     *  by numbers that are var()s of the script.  The gizmo draws move arrows,
+     *  rotation rings and scale knobs at its pivot and dragging them changes those
+     *  vars (and so the script text); the mode says when it is shown: CLICK (the
+     *  default) while the shape is selected, NEVER, ALWAYS.  Dragging the shape's own
+     *  surfaces (Studio's own handles, see nativeDragOk) is always possible, whatever
+     *  the mode; the gizmo has priority where it is shown.  A locked shape
+     *  (fieldes.stdlib.handles.lock, a switch of its own that keeps the mode) lets
+     *  neither be dragged.  An id is null where the number is a plain constant.  */
     struct Handles
     {
-        enum Mode { LOCK, GIZMO, NATIVE };
+        enum Mode { CLICK, NEVER, ALWAYS };
         bool present = false;
-        Mode mode = GIZMO;
+        Mode mode = CLICK;
         QVector3D about;
         libfive::Tree::Id move[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id rotate[3] = {nullptr, nullptr, nullptr};
@@ -229,8 +217,15 @@ public:
     };
     void setHandles(const Handles& h) { m_handles = h; }
     const Handles& handles() const { return m_handles; }
-    /*  In the gizmo mode, and with at least one number to drag  */
+    /*  A locked shape (`x = lock(x)` in the script) cannot be dragged at all  */
+    void setLocked(bool l) { m_locked = l; }
+    bool isLocked() const { return m_locked; }
+    /*  The gizmo is shown now: with at least one number to drag, not locked, and its mode says so (ALWAYS, or CLICK while
+     *  the shape is selected)  */
     bool hasHandles() const;
+    /*  Has a number that moves it (`handles(x, move=(var, ...))`), in whatever mode, and is not locked: the shared
+     *  gizmo of a multi-selection can move it, whatever its own gizmo mode is  */
+    bool hasMoveVars() const;
     /*  The numbers now (constants and unknown ones as 0; a scale as 1)  */
     QVector3D handleMove() const;
     QVector3D handleRotate() const;
@@ -238,7 +233,7 @@ public:
     /*
      *  Studio's own handles: hover a surface and drag it, which changes the numbers (the
      *  script's var()s, or those expose() made) that place that surface.  Available when
-     *  the shape has such numbers and its mode is not the gizmo or the lock.
+     *  the shape has such numbers and is not locked, whatever the gizmo's mode.
      */
     bool nativeDragOk() const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
@@ -263,7 +258,6 @@ public:
     double renderWeight() const;
     // (for the bar's log, FIELDES_TIMING)
     QString renderDebug() const;
-    bool hasExactRegions() const { return !exact_regions.empty(); }
     /*  The field's value at p (a point of the displayed, possibly
      *  deformed, model); false without a colour field  */
     bool probe(const QVector3D& p, float& value);
@@ -304,6 +298,9 @@ public:
     void setResult(std::vector<FieldChannel> channels, int current,
                    const libfive::Tree& ux, const libfive::Tree& uy, const libfive::Tree& uz,
                    float deformScale, float deformAuto, ElementGrid grid);
+    /*  How finely a result's colours are read: the render's triangles are split until no edge is longer
+     *  than this (mm, the solver's element; 0: as meshed)  */
+    void setColorDetail(float d) { color_detail = d; }
     bool hasResult() const { return has_result; }
     const std::vector<FieldChannel>& channels() const { return m_channels; }
     int channel() const { return m_channel; }
@@ -315,7 +312,7 @@ public:
     float deformScale() const { return m_deform; }
     float deformAuto() const { return m_deform_auto; }
     void setDeformScale(float s);
-    bool hasElements() const { return m_grid.isMesh ? !m_grid.mtets.empty() : !m_grid.fraction.empty(); }
+    bool hasElements() const;
     bool showElements() const { return m_show_elements; }
     void setShowElements(bool b);
     QString elementText() const { return m_grid.text; }
@@ -335,6 +332,45 @@ public:
      *  instead of being cut by the plane  */
     void setElementSection(bool enabled, const QVector4D& plane, bool whole);
     bool wholeElements() const { return m_show_elements && m_sec_enabled && m_sec_whole; }
+
+    /*
+     *  The steps of a result (fieldes: _color_steps): the slider of the result card walks through them,
+     *  play runs them in turn.  A step brings its own fields (the same names, other values: the flow at
+     *  another time, a fraction of the load), its own deformation, its own streamlines, or its own
+     *  geometry (the part after an iteration of an optimisation: meshed when the step is first shown,
+     *  then kept) -- what it does not bring is the result's own.
+     */
+    using FlowLine = std::vector<std::array<float, 5>>;     // x y z speed time, along the line
+    struct Step
+    {
+        QString label;
+        std::vector<FieldChannel> channels;                 // empty: the result's own
+        bool hasDeform = false;
+        libfive::Tree deform[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+        bool hasLines = false;
+        std::vector<FlowLine> lines;
+        libfive::Tree tree = libfive::Tree::invalid();      // valid: the step's own geometry
+    };
+    void setSteps(std::vector<Step> steps, int current);
+    int stepCount() const { return int(m_steps.size()); }
+    int step() const { return m_step; }
+    QString stepLabel() const;
+    void setStep(int k);
+
+    /*
+     *  Streamlines through a flow (fieldes.stdlib.fluid): coloured by the speed over [lo, hi] (the speed
+     *  field's colour range), with particles moving along them.  The viewport draws them over every shape
+     *  (drawFlowLines, with the depth test off) once the shapes are drawn, so they are seen through the
+     *  fluid, which is drawn like any other result.
+     */
+    void setFlowLines(std::vector<FlowLine> lines, float lo, float hi);
+    bool hasFlowLines() const;
+    bool showFlowLines() const { return m_show_lines; }
+    void setShowFlowLines(bool b);
+    bool showsFlowLines() const { return hasFlowLines() && m_show_lines; }
+    void drawFlowLines(const QMatrix4x4& M);
+    /*  Moves the particles on by dt seconds of wall-clock time  */
+    void advanceFlow(float dt);
 
     /*
      *  Updates variables from another Shape
@@ -360,7 +396,7 @@ public:
 
     /*
      *  Whether this shape depends on the variable: its tree, its colouring, its
-     *  deformation, its exact regions or its handles use it.  (Every shape is
+     *  deformation or its handles use it.  (Every shape is
      *  given all of the script's variables, so a changed number only makes a
      *  shape render again when it is one this shape uses.)
      */
@@ -449,7 +485,8 @@ protected:
     QFutureWatcher<BoundedMesh> mesh_watcher;
     libfive::BRepSettings mesh_settings;
 
-    libfive::Tree tree;
+    libfive::Tree tree;                 // (what is meshed: the shown step's geometry, usually base_tree)
+    libfive::Tree base_tree = libfive::Tree::invalid();     // the shape as the script made it (optimized)
     // (the tree as the script built it: the render cache's key is made of it -- the optimizer's output differs
     // from run to run in the order of operands)
     libfive::Tree built_tree;
@@ -457,7 +494,7 @@ protected:
     std::vector<libfive::Evaluator,
                 Eigen::aligned_allocator<libfive::Evaluator>> es;
 
-    QScopedPointer<libfive::Mesh> mesh;
+    std::shared_ptr<libfive::Mesh> mesh;
     libfive::Region<3> render_bounds;
     libfive::Region<3> mesh_bounds;
     RenderSettings next;
@@ -508,7 +545,7 @@ protected:
     // (building the octree took 65-100 %): the shares the previous level of
     // this render measured (the first level: a third each, as counted)
     std::atomic<double> share_build{1.0 / 3}, share_walk{1.0 / 3};
-    // After meshing, a level joins exact regions and colours its vertices
+    // After meshing, a level colours its vertices
     // (by a colour field or a result's fields): how far the colouring is
     // (0..1), and that stage's share of a level's time as the previous
     // level of this render measured it (0 on the first level)
@@ -527,19 +564,12 @@ protected:
     const static int MESH_DIV_ABORT=-2;
     const static int MESH_DIV_NEW_VARS=-3;
     const static int MESH_DIV_NEW_VARS_SMALL=-4;
+    const static int MESH_DIV_NEW_TREE=-5;      // the shown step's geometry changed: the evaluators are rebuilt
 
     int default_div=MESH_DIV_EMPTY;
     int target_div=MESH_DIV_EMPTY;
 
     QString colorKeyBase() const;
-
-    // Exact regions (see setExactRegions)
-    std::vector<ExactRegion> exact_regions;
-    std::vector<libfive::step::ExactSpec> exact_done;      // render thread: what
-    std::vector<libfive::step::ExactPiece> exact_surfaces; // the surfaces are of
-    std::vector<char> exact_have;                          // (made yet, only for parts a region reaches)
-    std::vector<double> exact_clip_key;                    // ...and what the clipped pieces are of
-    std::vector<libfive::step::ExactPiece> exact_pieces;   // (the part's surface cut by each region)
 
     // Own render (see setRenderHint)
     bool has_hint=false;
@@ -552,6 +582,7 @@ protected:
     void placeHint();
 
     Handles m_handles;
+    bool m_locked = false;
 
     // The render cache (see setRenderCache)
     enum CacheState { CACHE_OFF = 0, CACHE_KEPT, CACHE_READ, CACHE_NO_KEY, CACHE_RESULT, CACHE_FAILED };
@@ -565,7 +596,7 @@ protected:
     // The numbers the evaluators hold: a snapshot of `vars` made where they are given them (the keys are of those)
     std::map<libfive::Tree::Id, float> cache_vars;
     unsigned long cache_vars_gen = 1, cache_tree_gen = 0;
-    std::string cache_tree_key;                 // (of the expression, the colours and the exact regions: made once per snapshot)
+    std::string cache_tree_key;                 // (of the expression and the colours: made once per snapshot)
     std::string cache_miss_key;                 // the last key that was looked for and not found
     std::string renderCacheTreeKey() const;
     std::string renderCacheKey(const RenderSettings& s, const libfive::Region<3>& region, double res);
@@ -585,6 +616,8 @@ protected:
 
     // Colouring by a field (see setColorField)
     bool has_color=false;
+    bool has_cutoff=false;                                 // (a patch of a surface: see setColorCutoff)
+    float color_cutoff=0;
     libfive::Tree color_field = libfive::Tree::invalid();
     bool color_auto=true;
     float color_lo=0, color_hi=1;
@@ -603,6 +636,7 @@ protected:
     libfive::Tree deform_tree[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(),
                                     libfive::Tree::invalid()};
     float m_deform=0, m_deform_auto=1;
+    float color_detail = 0;                                // (see setColorDetail)
     std::vector<Eigen::Vector3f> disp;                     // displacement at the vertices
     std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_evals;   // render thread
     std::unique_ptr<libfive::ArrayEvaluator> probe_disp[3];              // GUI thread
@@ -626,6 +660,53 @@ protected:
     void buildElements();
     void buildMeshElements();
     void drawElements(const QMatrix4x4& M, bool monochrome, QColor color);
+
+    // Steps (see setSteps).  The result's own fields and deformation are kept apart from the shown
+    // step's (m_channels, deform_tree, has_deform are the shown step's); the render thread works on
+    // a copy taken when the render starts.
+    std::vector<Step> m_steps;
+    int m_step = -1;
+    const Step* currentStep() const
+    { return (m_step >= 0 && size_t(m_step) < m_steps.size()) ? &m_steps[size_t(m_step)] : nullptr; }
+    int geometryKey() const
+    { const Step* st = currentStep(); return (st && st->tree.is_valid()) ? m_step : -1; }
+    std::vector<FieldChannel> base_channels;
+    libfive::Tree base_deform[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+    bool base_has_deform = false;
+    std::vector<FieldChannel> run_channels;                // what the render in progress evaluates
+    libfive::Tree run_deform[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+    bool run_has_deform = false;
+    float run_color_detail = 0;
+    QString run_key;
+    int step_rendering = -1;                               // the geometry step the render in progress is of (-1: the result's own)
+    bool es_stale = false;                                 // the evaluators are of another geometry than `tree`
+    struct StepMesh
+    {
+        std::shared_ptr<libfive::Mesh> mesh;
+        libfive::Region<3> region;
+        std::vector<std::vector<float>> channels;
+        std::vector<Eigen::Vector3f> disp;
+    };
+    std::map<int, StepMesh> step_meshes;                   // geometry steps meshed so far (their finished mesh)
+    std::map<std::pair<int, int>, std::vector<float>> step_values;   // (step, channel): a step's own field at the vertices
+    std::map<int, std::vector<Eigen::Vector3f>> step_disp;            // step: a step's own displacement at the vertices
+    void applyStepState();
+    void rebuildEvaluators();
+    void stashStepMesh();
+    const std::vector<Eigen::Vector3f>& dispNow();
+    const std::vector<FlowLine>* currentLines() const;
+
+    // Flow lines (see setFlowLines)
+    std::vector<FlowLine> flow_lines;
+    float flow_lo = 0, flow_hi = 1;
+    bool m_show_lines = true;
+    float flow_time = 0;                                   // where the particles are (seconds of flow)
+    float flow_period = 0;                                 // the longest line's time
+    bool lines_dirty = true;
+    QOpenGLVertexArrayObject line_vao, streak_vao;
+    QOpenGLBuffer line_vbo, streak_vbo;
+    int line_verts = 0;
+    void buildFlowLines();
 };
 
 } // namespace FielDes

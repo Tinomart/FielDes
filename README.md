@@ -27,9 +27,9 @@ the viewport.
 | **Model with fields** | Primitives, CSG, smooth and chamfered booleans, offsets, shells, twists, bends, repeats, extrusions, revolves, helical and free-form surfaces — all of them fields, composable with ordinary arithmetic. |
 | **Import STEP** | Every solid is rebuilt from its faces as a field: planes, cylinders, cones, spheres and tori exactly, **free-form (B-spline) faces by fitted closed-form surfaces**, with the deviation from the CAD reported and painted on the model. Assemblies arrive assembled, each part in its own units. |
 | **Parts that are all free-form** | `import_step_tessellated_parts()` fits nothing: every solid is tessellated straight from its faces (on all threads, kept next to the file) and the triangles are made the exact signed distance field — for gears, worms, threads and sculpted bodies the fitted surfaces do not follow. Meshing it takes 0.5 to 2.8 times as long as the main importer's formulas. |
-| **Exact where it matters** | `exclude()` (or `auto_exclude=True` on the import) puts the STEP file's *own* surface back wherever the fit is poor: inside the region (any field object) the surface is meshed straight from the B-rep. |
+| **Exact where it matters** | `exclude()` (or `auto_exclude=True` on the import) locks a region of a shape against everything done to it afterwards; for a STEP part the locked field is the file's *own* surface, meshed straight from the B-rep and made a field, wherever the fit is poor. It works on every shape and every field. |
 | **Edit by dragging** | A gizmo (move, rotate, scale), native handles on any surface of a shape or imported part, and `var()` numbers — what you drag is written back into the script. |
-| **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface; structural and thermal topology optimization; load cases; materials. |
+| **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface; structural and thermal topology optimization; load cases; materials. **Fluid flow**: laminar flow through or around any shape, steady or in time (inlets, outlets, moving walls, symmetry planes), with the velocity field, the pressure, the wake, flows and wall forces as results, shown with streamlines and moving particles; flow topology optimization (a body in the stream reshaped for the least drag or the most lift under a volume bound). Every result is stated like a shape to show it, and the result card steps through it: the load, a mode's vibration, the flow in time, the iterations of an optimization. |
 | **Drive design with results** | `colored(part, field)`, `ramp(result.von_mises, …)`, `fit(data)(depth_below(part))` — results and data are fields that feed lattices, offsets and thicknesses. |
 | **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, surface and graph lattices, custom unit cells and equations, conformal cell maps (struts or a periodic surface that follows the part); any size or density can be a field. |
 | **Inspect** | A section card that cuts the model and paints the field on the plane (distance, or an analysis result with its elements); wall thickness, overhang, curvature and depth fields; hover probing; legends. |
@@ -71,18 +71,20 @@ in a script. The first import of a file takes a few seconds and is cached next t
 | [`01_import_a_part.py`](examples/01_import_a_part.py) | Importing, the view settings, mass properties |
 | [`02_inspect_a_part.py`](examples/02_inspect_a_part.py) | Wall thickness, overhang, curvature and depth fields; probing; sections |
 | [`03_kitchen_assembly.py`](examples/03_kitchen_assembly.py) | A 90-part assembly with free-form surfaces; fit deviation; `exclude()` with a field object as the region, on the whole import |
-| [`04_handles.py`](examples/04_handles.py) | The gizmo, handles and lock modes |
+| [`04_handles.py`](examples/04_handles.py) | The gizmo (its click / never / always modes), dragging surfaces, and the lock |
 | [`05_static_analysis.py`](examples/05_static_analysis.py) | Static FEA: supports, loads, results card |
 | [`06_modal_analysis.py`](examples/06_modal_analysis.py) | Natural frequencies and mode shapes |
 | [`07_thermal_analysis.py`](examples/07_thermal_analysis.py) | Conduction and convection |
-| [`08_topology_optimization.py`](examples/08_topology_optimization.py) | The stiffest part in 45 % of the material |
+| [`08_topology_optimization.py`](examples/08_topology_optimization.py) | The stiffest part in 50 % of the material, with the lug holes excluded so that they stay |
 | [`09_lattice.py`](examples/09_lattice.py) | A gyroid graded by a regression over depth |
 | [`10_field_driven_design.py`](examples/10_field_driven_design.py) | Stress field → lattice density |
 | [`11_custom_lattice.py`](examples/11_custom_lattice.py) | Your own strut cell and TPMS equation |
 | [`12_mesh_export_and_import.py`](examples/12_mesh_export_and_import.py) | STL out and back in |
 | [`13_tessellated_import.py`](examples/13_tessellated_import.py) | The kitchen imported exactly, nothing fitted |
-| [`14_conformal_lattice.py`](examples/14_conformal_lattice.py) | A lattice of a cell of your own (`cell_custom`) that follows an open surface |
+| [`14_conformal_lattice.py`](examples/14_conformal_lattice.py) | A lattice of a cell of your own (`cell_custom_truss`) that follows an open surface |
 | [`15_conformal_closed_body.py`](examples/15_conformal_closed_body.py) | A conformal strut lattice filling the wall of a whole bracket: faces, fillets, bores, edges followed |
+| [`16_fluid_flow.py`](examples/16_fluid_flow.py) | Water past a round post in a channel: the velocity field and the wake, streamlines with moving particles, the drag; the flow in time as an option |
+| [`17_flow_topology_optimization.py`](examples/17_flow_topology_optimization.py) | The channel through a block with the least pressure drop |
 
 <p align="center">
   <img src="docs/images/inspect.png" width="900" alt="The wall thickness of an imported part painted on it; hovering reads the value under the cursor">
@@ -114,10 +116,13 @@ in a script. The first import of a file takes a few seconds and is cached next t
 
 - **Free-form faces are fitted, not exact, in the field.** The importer rebuilds B-spline faces as
   closed-form surfaces (planes, quadrics, extrusions, revolutions, helices, fillets); where that is poor
-  the import says so and colours it, and `exclude()` / `auto_exclude` draw the real surface there. The
-  field itself — what analysis and lattices see — stays the fitted one.
+  the import says so and colours it, and `exclude()` / `auto_exclude` put the real surface there as a locked
+  field (made from a mesh of the STEP file). Outside the region the field stays the fitted one.
 - **Tori are not refined in the exact mesh:** a large torus face can come out a few percent small in the
   `exclude()` / `auto_exclude` surface (up to −8 % volume on the worst test part). The field has tori exact.
+- **An excluded STEP part's locked field is a mesh's distance**, made when the script runs (the tessellation of the
+  part, once; kept while the script is run again). Dragging a `var()` that its region or placement uses updates it
+  when the drag ends.
 - Linux and macOS are not tested; the build files are CMake and the code is portable Qt/C++, but the
   application has only been built and used on Windows.
 - Units: STEP units are read and converted; STL/OBJ/PLY carry none and are assumed to be millimetres

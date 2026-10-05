@@ -43,6 +43,8 @@ Language::Language(Interpreter* interpreter,
             this, &Language::interpreterDone);
     connect(m_interpreter.data(), &Interpreter::busy,
             this, &Language::interpreterBusy);
+    connect(m_interpreter.data(), &Interpreter::partialScene,
+            this, &Language::interpreterPartialScene);
 
     connect(this, &Language::onCursorMoved,
             m_syntax.data(), &Syntax::onCursorMoved);

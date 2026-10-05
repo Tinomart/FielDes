@@ -1,0 +1,8 @@
+wait 60000
+action view.std-iso
+wait 6000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/bc_iso.png
+action view.std-front
+wait 5000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/bc_front.png
+quit

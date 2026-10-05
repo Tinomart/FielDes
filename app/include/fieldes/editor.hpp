@@ -183,6 +183,17 @@ signals:
      */
     void sceneChanged(QString json);
 
+    /*
+     *  The model-tree description of what the statements of a script that is still running have made so far
+     */
+    void partialSceneChanged(QString json);
+
+    /*
+     *  Another script (a file opened, a new one) has taken the place of the one that was shown: what the old one
+     *  rendered and listed is to go at once, not when the new one has run
+     */
+    void documentReplaced();
+
     /*  A short message for the status bar  */
     void notice(QString text);
 
@@ -198,6 +209,9 @@ protected slots:
 
     /*  Marks the whole script as changed, which triggers re-highlighting */
     void onSyntaxReady();
+
+    /*  What a run in progress has made so far, for the model tree (see Interpreter::partialScene)  */
+    void onInterpreterPartialScene(QString json);
 
 protected:
     void setResult(QColor color, QString result);
@@ -262,6 +276,10 @@ protected:
     QTimer m_interpreterBusyDebounce;
     bool m_scriptRunning = false;
 
+    // Another script has taken the place of the one that a run in flight is of: what that run delivers is not shown
+    // (until the next run begins)
+    bool m_discardResults = false;
+
     // The script's progress while it runs, small, in place of the result
     // line (see onSpinner)
     QWidget* m_runRow = nullptr;
@@ -281,6 +299,11 @@ protected:
 
     bool drag_should_join=false;
     bool first_change=false;
+    /*  Whether the script had the keyboard when a drag in the viewport began (it gets it back after: a click on a
+     *  shape in the viewport must not take it away from the viewport)  */
+    bool m_scriptHadFocus=false;
+    /*  Set while the program, not the user, changes the tab (showScriptTab): the editor does not take the keyboard  */
+    bool m_quietTab=false;
 
     QMap<libfive::Tree::Id, QRect> vars;
 };

@@ -199,10 +199,9 @@ lib.libfive_import_step_parts_reconstructed.argtypes = [ctypes.c_char_p]
 lib.libfive_import_step_parts_reconstructed.restype = ctypes.POINTER(libfive_step_parts_t)
 
 try:
-    lib.libfive_step_exact_clipped.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int,
-                                               ctypes.POINTER(ctypes.c_double), libfive_tree,
-                                               ctypes.c_double, ctypes.c_int]
-    lib.libfive_step_exact_clipped.restype = ctypes.POINTER(libfive_mesh_t)
+    lib.libfive_step_exact_surface.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int,
+                                               ctypes.POINTER(ctypes.c_double), ctypes.c_int]
+    lib.libfive_step_exact_surface.restype = ctypes.POINTER(libfive_mesh_t)
     lib.libfive_tree_interval_lower.argtypes = [libfive_tree, libfive_region_t,
                                                 ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float),
                                                 ctypes.c_int]
@@ -366,6 +365,12 @@ lib.libfive_fea_prepare.argtypes = [libfive_fea_p]
 lib.libfive_fea_prepare.restype = ctypes.c_int
 lib.libfive_fea_hash.argtypes = [libfive_fea_p]
 lib.libfive_fea_hash.restype = ctypes.c_uint64
+lib.libfive_fea_save.argtypes = [libfive_fea_p, ctypes.c_char_p]
+lib.libfive_fea_save.restype = ctypes.c_int
+lib.libfive_fea_load.argtypes = [ctypes.c_char_p]
+lib.libfive_fea_load.restype = libfive_fea_p
+lib.libfive_fea_set_salt.argtypes = [libfive_fea_p, ctypes.c_uint64]
+lib.libfive_fea_set_salt.restype = None
 lib.libfive_fea_solve.argtypes = [libfive_fea_p, ctypes.c_int, ctypes.c_float]
 lib.libfive_fea_solve.restype = ctypes.c_int
 lib.libfive_fea_message.argtypes = [libfive_fea_p]
@@ -434,6 +439,12 @@ try:
     lib.libfive_tetfea_prepare.restype = ctypes.c_int
     lib.libfive_tetfea_hash.argtypes = [libfive_tetfea_p]
     lib.libfive_tetfea_hash.restype = ctypes.c_uint64
+    lib.libfive_tetfea_save.argtypes = [libfive_tetfea_p, ctypes.c_char_p]
+    lib.libfive_tetfea_save.restype = ctypes.c_int
+    lib.libfive_tetfea_load.argtypes = [ctypes.c_char_p]
+    lib.libfive_tetfea_load.restype = libfive_tetfea_p
+    lib.libfive_tetfea_set_salt.argtypes = [libfive_tetfea_p, ctypes.c_uint64]
+    lib.libfive_tetfea_set_salt.restype = None
     lib.libfive_tetfea_solve.argtypes = [libfive_tetfea_p, ctypes.c_int, ctypes.c_float]
     lib.libfive_tetfea_solve.restype = ctypes.c_int
     lib.libfive_tetfea_message.argtypes = [libfive_tetfea_p]
@@ -473,6 +484,10 @@ try:
     lib.libfive_tetfea_density.restype = libfive_tree
     lib.libfive_tetfea_history.argtypes = [libfive_tetfea_p, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
     lib.libfive_tetfea_history.restype = ctypes.c_int
+    lib.libfive_tetfea_density_at.argtypes = [libfive_tetfea_p, ctypes.c_int]
+    lib.libfive_tetfea_density_at.restype = libfive_tree
+    lib.libfive_tetfea_pieces.argtypes = [libfive_tetfea_p, ctypes.c_double, ctypes.c_double]
+    lib.libfive_tetfea_pieces.restype = ctypes.c_int
     lib.libfive_tetfea_modal.argtypes = [libfive_tetfea_p, ctypes.c_int, ctypes.c_float, ctypes.c_int, ctypes.c_float]
     lib.libfive_tetfea_modal.restype = ctypes.c_int
     lib.libfive_tetfea_mode_count.argtypes = [libfive_tetfea_p]
@@ -501,6 +516,12 @@ try:
     lib.libfive_tetthermal_prepare.restype = ctypes.c_int
     lib.libfive_tetthermal_hash.argtypes = [libfive_tetthermal_p]
     lib.libfive_tetthermal_hash.restype = ctypes.c_uint64
+    lib.libfive_tetthermal_save.argtypes = [libfive_tetthermal_p, ctypes.c_char_p]
+    lib.libfive_tetthermal_save.restype = ctypes.c_int
+    lib.libfive_tetthermal_load.argtypes = [ctypes.c_char_p]
+    lib.libfive_tetthermal_load.restype = libfive_tetthermal_p
+    lib.libfive_tetthermal_set_salt.argtypes = [libfive_tetthermal_p, ctypes.c_uint64]
+    lib.libfive_tetthermal_set_salt.restype = None
     lib.libfive_tetthermal_solve.argtypes = [libfive_tetthermal_p, ctypes.c_int, ctypes.c_float]
     lib.libfive_tetthermal_solve.restype = ctypes.c_int
     lib.libfive_tetthermal_message.argtypes = [libfive_tetthermal_p]
@@ -517,6 +538,92 @@ try:
     lib.libfive_tetthermal_delete.restype = None
 except AttributeError:
     pass    # an older library: no tetrahedral meshing
+
+# Flow on the tetrahedral mesh (stdlib/fluid.py)
+libfive_tetflow_p = ctypes.c_void_p
+try:
+    lib.libfive_tetflow_new.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    lib.libfive_tetflow_new.restype = libfive_tetflow_p
+    lib.libfive_tetflow_add_inlet.argtypes = [libfive_tetflow_p, libfive_tree, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                                              ctypes.c_float, ctypes.c_float, ctypes.c_int]
+    lib.libfive_tetflow_add_inlet.restype = None
+    lib.libfive_tetflow_add_outlet.argtypes = [libfive_tetflow_p, libfive_tree, ctypes.c_float]
+    lib.libfive_tetflow_add_outlet.restype = None
+    lib.libfive_tetflow_add_wall.argtypes = [libfive_tetflow_p, libfive_tree, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    lib.libfive_tetflow_add_wall.restype = None
+    lib.libfive_tetflow_add_slip.argtypes = [libfive_tetflow_p, libfive_tree]
+    lib.libfive_tetflow_add_slip.restype = None
+    lib.libfive_tetflow_set_gravity.argtypes = [libfive_tetflow_p, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+    lib.libfive_tetflow_set_gravity.restype = None
+    lib.libfive_tetflow_set_options.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_int,
+                                                ctypes.c_int, ctypes.c_float, ctypes.c_int]
+    lib.libfive_tetflow_set_options.restype = None
+    lib.libfive_tetflow_prepare.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_prepare.restype = ctypes.c_int
+    lib.libfive_tetflow_hash.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_hash.restype = ctypes.c_uint64
+    lib.libfive_tetflow_save.argtypes = [libfive_tetflow_p, ctypes.c_char_p]
+    lib.libfive_tetflow_save.restype = ctypes.c_int
+    lib.libfive_tetflow_load.argtypes = [ctypes.c_char_p]
+    lib.libfive_tetflow_load.restype = libfive_tetflow_p
+    lib.libfive_tetflow_set_salt.argtypes = [libfive_tetflow_p, ctypes.c_uint64]
+    lib.libfive_tetflow_set_salt.restype = None
+    lib.libfive_tetflow_solve.argtypes = [libfive_tetflow_p, ctypes.c_float]
+    lib.libfive_tetflow_solve.restype = ctypes.c_int
+    lib.libfive_tetflow_message.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_message.restype = ctypes.c_char_p
+    lib.libfive_tetflow_warning.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_warning.restype = ctypes.c_char_p
+    lib.libfive_tetflow_field.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_field.restype = libfive_tree
+    lib.libfive_tetflow_field_min.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_field_min.restype = ctypes.c_float
+    lib.libfive_tetflow_field_max.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_field_max.restype = ctypes.c_float
+    lib.libfive_tetflow_stat.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_stat.restype = ctypes.c_double
+    lib.libfive_tetflow_items.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
+    lib.libfive_tetflow_items.restype = ctypes.c_int
+    lib.libfive_tetflow_delete.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_delete.restype = None
+    lib.libfive_tetflow_solve_transient.argtypes = [libfive_tetflow_p, ctypes.c_float, ctypes.c_int, ctypes.c_int, ctypes.c_float]
+    lib.libfive_tetflow_solve_transient.restype = ctypes.c_int
+    lib.libfive_tetflow_step_count.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_step_count.restype = ctypes.c_int
+    lib.libfive_tetflow_step_time.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_step_time.restype = ctypes.c_double
+    lib.libfive_tetflow_step_iteration.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_step_iteration.restype = ctypes.c_int
+    lib.libfive_tetflow_step_field.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_int]
+    lib.libfive_tetflow_step_field.restype = libfive_tree
+    lib.libfive_tetflow_step_field_min.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_int]
+    lib.libfive_tetflow_step_field_min.restype = ctypes.c_float
+    lib.libfive_tetflow_step_field_max.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_int]
+    lib.libfive_tetflow_step_field_max.restype = ctypes.c_float
+    lib.libfive_tetflow_step_stat.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_int]
+    lib.libfive_tetflow_step_stat.restype = ctypes.c_double
+    lib.libfive_tetflow_streamlines.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+                                                ctypes.c_double, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double),
+                                                ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+    lib.libfive_tetflow_streamlines.restype = ctypes.c_int
+    lib.libfive_tetflow_inlet_seeds.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+    lib.libfive_tetflow_inlet_seeds.restype = ctypes.c_int
+    lib.libfive_tetflow_optimize.argtypes = [libfive_tetflow_p, libfive_tree, libfive_tree, ctypes.c_float, ctypes.c_float,
+                                             ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                                             ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_int, ctypes.c_float,
+                                             ctypes.POINTER(ctypes.c_void_p), ctypes.c_int, ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
+                                             ctypes.c_int, ctypes.c_float]
+    lib.libfive_tetflow_optimize.restype = ctypes.c_int
+    lib.libfive_tetflow_direction.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+    lib.libfive_tetflow_direction.restype = None
+    lib.libfive_tetflow_level.argtypes = [libfive_tetflow_p]
+    lib.libfive_tetflow_level.restype = libfive_tree
+    lib.libfive_tetflow_history.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.c_int]
+    lib.libfive_tetflow_history.restype = ctypes.c_int
+    lib.libfive_tetflow_level_at.argtypes = [libfive_tetflow_p, ctypes.c_int]
+    lib.libfive_tetflow_level_at.restype = libfive_tree
+except AttributeError:
+    pass    # an older library: no flow analysis (or none of its optimisation)
 
 libfive_thermal_p = ctypes.c_void_p
 try:
@@ -552,6 +659,12 @@ lib.libfive_thermal_prepare.argtypes = [libfive_thermal_p]
 lib.libfive_thermal_prepare.restype = ctypes.c_int
 lib.libfive_thermal_hash.argtypes = [libfive_thermal_p]
 lib.libfive_thermal_hash.restype = ctypes.c_uint64
+lib.libfive_thermal_save.argtypes = [libfive_thermal_p, ctypes.c_char_p]
+lib.libfive_thermal_save.restype = ctypes.c_int
+lib.libfive_thermal_load.argtypes = [ctypes.c_char_p]
+lib.libfive_thermal_load.restype = libfive_thermal_p
+lib.libfive_thermal_set_salt.argtypes = [libfive_thermal_p, ctypes.c_uint64]
+lib.libfive_thermal_set_salt.restype = None
 lib.libfive_thermal_optimize.argtypes = [libfive_thermal_p, ctypes.c_float, ctypes.c_float,
                                          ctypes.c_float, ctypes.c_int, ctypes.c_float,
                                          ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
@@ -571,6 +684,14 @@ lib.libfive_tree_optimized.restype = libfive_tree
 
 lib.libfive_tree_render_mesh.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float]
 lib.libfive_tree_render_mesh.restype = ctypes.POINTER(libfive_mesh_t)
+try:
+    # the same for a shape with var()s: the trees of the variables and the numbers they stand for (inside the application)
+    lib.libfive_tree_render_mesh_vars.argtypes = [libfive_tree, libfive_region_t, ctypes.c_float,
+                                                  ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float),
+                                                  ctypes.c_int]
+    lib.libfive_tree_render_mesh_vars.restype = ctypes.POINTER(libfive_mesh_t)
+except AttributeError:
+    pass    # an older library: the numbers of var()s are read as 0
 
 # algo: 0=dual contouring (default/fastest), 1=iso simplex, 2=hybrid.
 # hybrid/simplex are slower but measurably more robust for STEP-imported

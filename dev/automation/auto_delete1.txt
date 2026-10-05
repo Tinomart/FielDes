@@ -1,0 +1,25 @@
+# D deletes the selected models: one, then several
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+log --- select the ball, D
+viewmouse click 807 524
+wait 1500
+action view.delete
+wait 2500
+waitrender 60 10
+wait 800
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/delete_a_ball.txt
+log --- select block and top, D: one step for both
+treeclick none block
+treeclick shift top
+wait 800
+selected
+action view.delete
+wait 2500
+waitrender 60 10
+wait 800
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/delete_b_rest.txt
+quit

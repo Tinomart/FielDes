@@ -31,7 +31,7 @@ App::App(int& argc, char** argv)
 {
     // The Python package loads the kernel's libraries itself: point it at the ones
     // this program already uses, so both share their state (an import's progress,
-    // the exact-region cache)
+    // the tessellation cache)
     if (!qEnvironmentVariableIsSet("FIELDES_DIR"))
         qputenv("FIELDES_DIR", QCoreApplication::applicationDirPath().toLocal8Bit());
 

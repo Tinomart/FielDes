@@ -10,7 +10,7 @@ loads, for a lattice that follows it, for colouring — without leaving the idea
 
 ## In the viewport
 
-**Right-click a model.** A menu offers the variables of the flood fill:
+**Right-click a model**, then **Select Surface** (the other entry, **Operation**, writes an operation on the model: see [the interface](interface.md#the-viewport)). A menu offers the variables of the flood fill:
 
 | | |
 |---|---|
@@ -27,8 +27,12 @@ selection_1
 ```
 
 Nothing else is stored: the script is the selection. Change the angle in the text and it runs again; delete
-the two lines (or use the bin in the model tree) and it is gone. The patch is lit up in magenta on the model; the
-row in the model tree has an eye like any other.
+the two lines (or use the bin in the model tree) and it is gone. The new selection is the selected model in the tree, and it
+is shown as the **patch lit up in magenta on the model**: the vertices of the model's surface mesh that belong to the patch
+are coloured, every other part of the surface is not drawn at all (the edge of the patch runs between the vertices, as
+fine as the viewport's mesh). The field itself is a thin layer across the patch, which is what `fixed()`, `force()` and
+`lattice_surface_conform()` use; the viewport draws the surface instead, because that thin layer comes out as a few
+disconnected fragments at the resolution of the viewport. The row in the model tree has an eye like any other.
 
 ## In a script
 

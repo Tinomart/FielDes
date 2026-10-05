@@ -20,6 +20,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <boost/container/small_vector.hpp>
 
 #include "libfive/fea/tetfea.hpp"
+#include "libfive/tree/content_key.hpp"
 #include "tet_common.hpp"
 #include "libfive/eval/eval_array.hpp"
 #include "libfive/eval/feature.hpp"
@@ -196,6 +197,43 @@ int TetLocator::locate(const Vec3& p, double lambda[4]) const
     if (!(sum > 0)) return -1;
     for (int q = 0; q < 4; ++q) lambda[q] /= sum;
     return bestTet;
+}
+
+int TetLocator::locateInside(const Vec3& p, double lambda[4]) const
+{
+    if (m_list.empty()) return -1;
+    int ci[3];
+    for (int a = 0; a < 3; ++a)
+    {
+        const double c = (p[a] - m_lo[a]) / m_cell;
+        if (c < -1e-9 || c > m_n[a] + 1e-9) return -1;
+        ci[a] = std::max(0, std::min(m_n[a] - 1, int(std::floor(c))));
+    }
+    // (the cell, then its neighbours: a point on a cell's face may belong to a tetrahedron listed next door)
+    for (int r = 0; r <= 1; ++r)
+        for (int k = std::max(0, ci[2] - r); k <= std::min(m_n[2] - 1, ci[2] + r); ++k)
+            for (int j = std::max(0, ci[1] - r); j <= std::min(m_n[1] - 1, ci[1] + r); ++j)
+                for (int i = std::max(0, ci[0] - r); i <= std::min(m_n[0] - 1, ci[0] + r); ++i)
+                {
+                    if (std::max(std::abs(i - ci[0]), std::max(std::abs(j - ci[1]), std::abs(k - ci[2]))) != r) continue;
+                    const size_t c = cellIndex(i, j, k);
+                    for (uint32_t e = m_start[c]; e < m_start[c + 1]; ++e)
+                    {
+                        const Inv& iv = m_inv[m_list[e]];
+                        const double d0 = p.x() - iv.p0[0], d1 = p.y() - iv.p0[1], d2 = p.z() - iv.p0[2];
+                        double l[4];
+                        l[1] = iv.m[0] * d0 + iv.m[1] * d1 + iv.m[2] * d2;
+                        l[2] = iv.m[3] * d0 + iv.m[4] * d1 + iv.m[5] * d2;
+                        l[3] = iv.m[6] * d0 + iv.m[7] * d1 + iv.m[8] * d2;
+                        l[0] = 1.0 - l[1] - l[2] - l[3];
+                        if (std::min(std::min(l[0], l[1]), std::min(l[2], l[3])) >= -1e-7)
+                        {
+                            std::copy(l, l + 4, lambda);
+                            return int(m_list[e]);
+                        }
+                    }
+                }
+    return -1;
 }
 
 void TetLocator::gradients(int t, Eigen::Matrix<double, 4, 3>& g) const
@@ -1077,6 +1115,24 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         }
     };
     m_history.clear();
+    m_densityHistory.clear();
+    // The density at the nodes (each tetrahedron's averaged at its nodes by volume): the field of an iteration
+    auto nodal = [&](const std::vector<double>& xs, std::vector<float>& out) {
+        out.assign(nv, 0.0f);
+        parallelRange(nv, [&](size_t b0, size_t b1) {
+            for (size_t i = b0; i < b1; ++i)
+            {
+                double sum = 0, w = 0;
+                for (uint32_t e = A.vtStart[i]; e < A.vtStart[i + 1]; ++e)
+                {
+                    const size_t t = A.vtList[e];
+                    sum += vol[t] * xs[t];
+                    w += vol[t];
+                }
+                out[i] = w > 0 ? float(sum / w) : 0.0f;
+            }
+        }, 256);
+    };
     // Load cases: each solved on its own (its own warm start), the sensitivities summed -- the part
     // stiff for all of them
     const int nc = std::max<int>(1, int(m_caseForce.size()));
@@ -1130,6 +1186,8 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
             }, 512);
         }
         m_history.push_back(compliance);
+        m_densityHistory.emplace_back();
+        nodal(xPhys, m_densityHistory.back());
         filterT(dc, dcF);
         filterT(dv, dvF);
         if (nCol)
@@ -1190,19 +1248,7 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     R2->mesh = m_mesh;
     R2->locator = std::make_shared<TetLocator>(mesh);
     for (auto& f : R2->fields) f.assign(nv, 0.0f);
-    parallelRange(nv, [&](size_t b0, size_t b1) {
-        for (size_t i = b0; i < b1; ++i)
-        {
-            double sum = 0, w = 0;
-            for (uint32_t e = A.vtStart[i]; e < A.vtStart[i + 1]; ++e)
-            {
-                const size_t t = A.vtList[e];
-                sum += vol[t] * xPhys[t];
-                w += vol[t];
-            }
-            R2->fields[0][i] = w > 0 ? float(sum / w) : 0.0f;
-        }
-    }, 256);
+    nodal(xPhys, R2->fields[0]);
     R2->minValue[0] = 0;
     R2->maxValue[0] = 1;
     R2->iterations = it;
@@ -1214,6 +1260,71 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     R2->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     m_densityResult = R2;
     return true;
+}
+
+std::shared_ptr<const MeshResult> TetProblem::densityResultAt(size_t k) const
+{
+    if (k >= m_densityHistory.size() || !m_densityResult) return nullptr;
+    auto R = std::make_shared<MeshResult>();
+    R->serial = derivedContentSerial(m_densityResult->serial, 7, k + 1);
+    R->mesh = m_densityResult->mesh;
+    R->locator = m_densityResult->locator;
+    for (auto& f : R->fields) f.assign(m_densityHistory[k].size(), 0.0f);
+    R->fields[0] = m_densityHistory[k];
+    R->minValue[0] = 0;
+    R->maxValue[0] = 1;
+    R->iterations = int(k) + 1;
+    R->compliance = k < m_history.size() ? m_history[k] : 0;
+    R->elements = m_densityResult->elements;
+    return R;
+}
+
+int TetProblem::pieces(double threshold, double margin) const
+{
+    // The part is where the density at the nodes -- the field the optimised part is cut from, linear in each
+    // tetrahedron -- is above the level.  In a tetrahedron that is a convex piece holding its nodes above the level, so
+    // two such nodes of one tetrahedron are in the same piece, and the pieces are the groups these links make.  A node
+    // only just above the level makes a hair-thin link that no picture shows: it counts when it is above by `margin`
+    if (!m_mesh || !m_densityResult || m_densityResult->fields[0].size() != m_mesh->pos.size()) return 0;
+    const TetMesh& mesh = *m_mesh;
+    const std::vector<float>& dens = m_densityResult->fields[0];
+    const size_t nv = mesh.pos.size();
+    std::vector<int> parent(nv);
+    std::iota(parent.begin(), parent.end(), 0);
+    auto find = [&](int a) {
+        while (parent[size_t(a)] != a)
+        {
+            parent[size_t(a)] = parent[size_t(parent[size_t(a)])];
+            a = parent[size_t(a)];
+        }
+        return a;
+    };
+    std::vector<double> weight(nv, 0.0);       // each node's share of the volume around it
+    for (const auto& t : mesh.tets)
+    {
+        const Vec3 p0 = mesh.pos[size_t(t[0])];
+        const double v = std::abs((mesh.pos[size_t(t[1])] - p0).dot((mesh.pos[size_t(t[2])] - p0).cross(mesh.pos[size_t(t[3])] - p0))) / 24.0;
+        int first = -1;
+        for (int p = 0; p < 4; ++p)
+        {
+            const int i = t[size_t(p)];
+            if (!(double(dens[size_t(i)]) > threshold + margin)) continue;
+            weight[size_t(i)] += v;
+            if (first < 0) first = i;
+            else parent[size_t(find(i))] = find(first);
+        }
+    }
+    std::vector<double> size(nv, 0.0);
+    double all = 0;
+    for (size_t i = 0; i < nv; ++i)
+        if (weight[i] > 0)
+        {
+            size[size_t(find(int(i)))] += weight[i];
+            all += weight[i];
+        }
+    int count = 0;
+    for (size_t i = 0; i < nv; ++i) if (size[i] >= 0.02 * all && size[i] > 0) ++count;
+    return count;
 }
 
 bool TetProblem::modal(int count, double density, int maxIterations, double tolerance, std::string& error)

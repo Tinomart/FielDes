@@ -1,0 +1,19 @@
+wait 6000
+waitrender 300 30
+action view.std-iso
+waitrender 120 10
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08v_iso.png
+action view.std-front
+waitrender 120 10
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08v_front.png
+action view.std-top
+waitrender 120 10
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08v_top.png
+action view.std-right
+waitrender 120 10
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08v_right.png
+quit

@@ -13,7 +13,7 @@ parts = import_step_parts("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))
-view.set_resolution(1.5)
+view.set_resolution(4)
 view.set_quality(8)
 
 plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),

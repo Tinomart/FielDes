@@ -513,9 +513,9 @@ def move(shape, v):
 move.__doc__ = _move_prev.__doc__
 
 ################################################################################
-# Hand-written: an imported STEP part's exact-geometry information (see
-# fieldes.stdlib.cad_import.exclude) follows it through the rigid and
-# scaling transforms, as the 4x4 matrix each one applies
+# Hand-written: what a shape carries that the rigid and scaling transforms take along: an imported STEP part's exact
+# distance and its STEP source (see fieldes.stdlib.cad_import.exclude's exact surface), and the locked fields and regions
+# of an excluded shape (fieldes.stdlib.excluded), which move with it so that it is never torn apart
 def _lazy_once(fn):
     ''' A function that works its result out on the first call only '''
     cell = []
@@ -526,93 +526,37 @@ def _lazy_once(fn):
     return get
 
 
-def _exact_follows(name, matrix):
+# The transforms as they were made, by name: a STEP part's source replays them on its exact surface
+RAW = {}
+
+
+def _exact_follows(name):
     prev = globals()[name]
+    RAW[name] = prev
     def f(t, *args, **kwargs):
         out = prev(t, *args, **kwargs)
+        if not isinstance(t, Shape):
+            return out
         # the exact distance of an imported part (fields._dist) is moved, turned and scaled with it, with the
         # same numbers: a part placed with handles() (var()s and all) or in the script still has it
-        get = getattr(t, '_distance_of', None) if isinstance(t, Shape) else None
+        get = getattr(t, '_distance_of', None)
         if get is not None:
             out._distance_of = _lazy_once(lambda: prev(get(), *args, **kwargs))
-        if isinstance(t, Shape) and (hasattr(t, '_exact') or hasattr(t, '_exact_source') or
-                                     hasattr(t, '_exact_sources')):
+        if hasattr(t, '_exact_source') or hasattr(t, '_exact_sources'):
             from fieldes.stdlib import cad_import
-            cad_import._carry_exact(out, t, matrix(cad_import, *args, **kwargs))
+            cad_import._carry_exact(out, t, (name, args, kwargs))
+        if getattr(t, '_locks', None):
+            from fieldes.stdlib import excluded
+            out._locks = excluded.moved(prev, t, args, kwargs)
+            if getattr(t, '_free', None) is not None:
+                out._free = prev(t._free, *args, **kwargs)
         return out
     f.__doc__ = prev.__doc__
     f.__name__ = name
     globals()[name] = f
 
 
-def _cos(v):
-    import math
-    return math.cos(v) if isinstance(v, (int, float)) else Shape.wrap(v).cos()
-
-
-def _sin(v):
-    import math
-    return math.sin(v) if isinstance(v, (int, float)) else Shape.wrap(v).sin()
-
-
-def _m_move(ci, v):
-    return ci._translation([v[0], v[1], v[2] if len(v) > 2 else 0.0])
-
-
-def _m_rotate(axis):
-    def m(ci, angle, center=(0, 0, 0)):
-        c, s = _cos(angle), _sin(angle)
-        r = ci._identity()
-        i, j = [(1, 2), (0, 2), (0, 1)][axis]   # rotation in the (i, j) plane
-        r[i][i], r[i][j], r[j][i], r[j][j] = c, ci._neg(s), s, c
-        return ci._about(center, r)
-    return m
-
-
-def _m_scale(axis):
-    def m(ci, s, origin=0):
-        r = ci._identity()
-        r[axis][axis] = s
-        center = [0.0, 0.0, 0.0]
-        center[axis] = origin
-        return ci._about(center, r)
-    return m
-
-
-def _m_scale_xyz(ci, s, center=(0, 0, 0)):
-    r = ci._identity()
-    for a in range(3):
-        r[a][a] = s[a]
-    return ci._about(center, r)
-
-
-def _m_reflect(axis):
-    def m(ci, origin=0):
-        r = ci._identity()
-        r[axis][axis] = -1.0
-        center = [0.0, 0.0, 0.0]
-        center[axis] = origin
-        return ci._about(center, r)
-    return m
-
-
-def _m_swap(i, j):
-    def m(ci):
-        r = ci._identity()
-        r[i][i] = r[j][j] = 0.0
-        r[i][j] = r[j][i] = 1.0
-        return r
-    return m
-
-
-for _name, _matrix in [('move', _m_move),
-                       ('rotate_x', _m_rotate(0)), ('rotate_y', _m_rotate(1)),
-                       ('rotate_z', _m_rotate(2)),
-                       ('scale_x', _m_scale(0)), ('scale_y', _m_scale(1)),
-                       ('scale_z', _m_scale(2)), ('scale_xyz', _m_scale_xyz),
-                       ('reflect_x', _m_reflect(0)), ('reflect_y', _m_reflect(1)),
-                       ('reflect_z', _m_reflect(2)),
-                       ('reflect_xy', _m_swap(0, 1)), ('reflect_yz', _m_swap(1, 2)),
-                       ('reflect_xz', _m_swap(0, 2))]:
-    _exact_follows(_name, _matrix)
+for _name in ('move', 'rotate_x', 'rotate_y', 'rotate_z', 'scale_x', 'scale_y', 'scale_z', 'scale_xyz',
+              'reflect_x', 'reflect_y', 'reflect_z', 'reflect_xy', 'reflect_yz', 'reflect_xz'):
+    _exact_follows(_name)
 rotate = rotate_z

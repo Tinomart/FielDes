@@ -9,7 +9,7 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
         heat_input(chip_region, 5.0),                   # 5 W into the part here
         convection(fins_region, 25e-6, ambient=20)],    # air cooling
         material=aluminium, element_size=1.0)
-    result.show()                        # the part coloured by temperature (FielDes)
+    result                               # the part coloured by temperature (FielDes)
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
     # the material layout (30 % of the part) that keeps the heat input coolest
@@ -48,8 +48,10 @@ from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.shape import Shape
+from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import FeaError, TopologyResult, aluminium, colored, _bounds, _shape
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key
+from fieldes.stdlib import result_cache
 
 __all__ = ['fixed_temperature', 'heat_input', 'heat_generation', 'convection',
            'thermal_analysis', 'ThermalResult', 'thermal_topology_optimization',
@@ -153,14 +155,15 @@ class ThermalResult:
         ''' (min, max) of a field over the part '''
         return self._ranges[field]
 
-    def show(self, field='temperature', range=None):
-        ''' The part coloured by a result field, for display in FielDes (the
-            card next to the colour bar switches between the fields) '''
-        out = colored(self.shape, getattr(self, field), range=range or self._ranges[field],
-                      label=_LABELS[field], colormap='turbo')
+    def _display(self):
+        ''' What FielDes shows for the result stated on its own: the part coloured by the temperature
+            (the result card switches to the heat flux and its components) '''
+        out = colored(self.shape, self.temperature, range=self._ranges['temperature'],
+                      label=_LABELS['temperature'], colormap='turbo')
         out._color_fields = [(name, _LABELS[name], getattr(self, name)) + tuple(self._ranges[name])
                              for name in _FIELDS]
-        out._color_field_name = field
+        out._color_field_name = 'temperature'
+        out._color_detail = float(getattr(self, 'element_size', 0) or 0)
         return out
 
     def __repr__(self):
@@ -241,7 +244,7 @@ def thermal_analysis(shape, boundary, material=aluminium, element_size=None, bou
         element:  'tet' (default: tetrahedra that follow the part's surface) or
                   'hex' (voxel hexahedra)
 
-        Returns a ThermalResult: .temperature and .heat_flux fields, .show(),
+        Returns a ThermalResult: .temperature and .heat_flux fields and
         the heat balance.  An unchanged problem is cached (as a static analysis
         is): running the script again, or a section moving over its fields, does
         not solve it again; a change to the part, the boundary conditions, the
@@ -263,7 +266,15 @@ def thermal_analysis(shape, boundary, material=aluminium, element_size=None, bou
         r.__dict__.update(cached.__dict__)
         r.shape = shape
         return r
-    handle, _, _ = _problem(shape, boundary, k, element_size, bounds, 'thermal_analysis', element)
+    handle, element_size, _ = _problem(shape, boundary, k, element_size, bounds, 'thermal_analysis', element)
+    kind = 'tetthermal' if handle.tet else 'thermal'
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load(kind, ekey, 'thermal analysis')
+    if loaded is not None:
+        result = ThermalResult(_Handle(loaded[0], handle.tet), shape, material)
+        result.element_size = element_size
+        _cache[ekey] = result
+        return result
     ptr = handle.ptr
     key = None
     if cache and handle.fn('prepare')(ptr):
@@ -286,9 +297,13 @@ def thermal_analysis(shape, boundary, material=aluminium, element_size=None, bou
             r.__dict__.update(cached.__dict__)
             r.shape = shape
             return r
+    if ekey is not None:
+        handle.fn('set_salt')(ptr, result_cache.salt(kind, ekey))
     if not handle.fn('solve')(ptr, int(max_iterations), float(tolerance)):
         raise FeaError(handle.fn('message')(ptr).decode('utf-8', 'replace'))
     result = ThermalResult(handle, shape, material)
+    result.element_size = element_size
+    result_cache.save(kind, ekey, ptr, 'thermal analysis')
     if key is not None:
         _cache[key] = result
     if ekey is not None:
@@ -381,6 +396,8 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
     k = _conductivity(material, conductivity, 'thermal_topology_optimization')
     keep = [] if keep is None else list(keep if isinstance(keep, (list, tuple)) else [keep])
     avoid = [] if avoid is None else list(avoid if isinstance(avoid, (list, tuple)) else [avoid])
+    # (what the part has excluded stays as it is: its locked fields are regions to keep)
+    keep = keep + keep_regions(part)
     # The whole problem by its content, before anything is built (see static_analysis)
     ekey = problem_key('thermal_topology', part=part, part_bounds=getattr(part, '_bounds', None),
                        boundary=boundary, material=material, conductivity=conductivity,
@@ -400,15 +417,34 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
         return r
     handle, element_size, (lo, hi) = _problem(part, boundary, k, element_size, bounds,
                                               'thermal_topology_optimization', element)
-    ptr = handle.ptr
-    if not lib.libfive_thermal_prepare(ptr):
-        raise FeaError(lib.libfive_thermal_message(ptr).decode('utf-8', 'replace'))
     axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
     if extrude not in axes:
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
     settings = {'volume_fraction': float(volume_fraction), 'penalty': float(penalty),
                 'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
                 'move': float(move), 'extrude': axes[extrude], 'element': element}
+    blist = list(boundary if isinstance(boundary, (list, tuple)) else [boundary])
+    kind = 'tetthermal' if handle.tet else 'thermal'
+
+    def finish(handle, ptr, seconds):
+        ''' The result from a solved problem (just optimised, or read back from its file) '''
+        density = Shape(lib.libfive_thermal_density(ptr))
+        hist = (ctypes.c_double * 1000)()
+        m = lib.libfive_thermal_history(ptr, hist, 1000)
+        history = [hist[i] for i in range(min(m, 1000))]
+        stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history), 'seconds': seconds}
+        return ThermalTopologyResult(handle, part, density, history, settings, element_size,
+                                     (lo, hi), blist, material, conductivity, stats)
+
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load(kind, ekey, 'thermal topology optimization')
+    if loaded is not None:
+        result = finish(_Handle(loaded[0], handle.tet), loaded[0], float(loaded[1].get('seconds', 0)))
+        _topo_cache[ekey] = result
+        return result
+    ptr = handle.ptr
+    if not lib.libfive_thermal_prepare(ptr):
+        raise FeaError(lib.libfive_thermal_message(ptr).decode('utf-8', 'replace'))
     # cache key: the prepared problem, the settings, the keep / avoid regions
     # and the boundary conditions' regions (by their expressions: convection
     # reaches inside the design space, where the prepared problem doesn't
@@ -435,6 +471,8 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
 
     keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[r.ptr for r in keep])
     avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[r.ptr for r in avoid])
+    if ekey is not None:
+        lib.libfive_thermal_set_salt(ptr, result_cache.salt(kind, ekey))
     t0 = time.time()
     ok = lib.libfive_thermal_optimize(ptr, settings['volume_fraction'], settings['penalty'],
                                       settings['filter_radius'], settings['iterations'],
@@ -443,15 +481,8 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
                                       settings['extrude'])
     if not ok:
         raise FeaError(lib.libfive_thermal_message(ptr).decode('utf-8', 'replace'))
-    density = Shape(lib.libfive_thermal_density(ptr))
-    hist = (ctypes.c_double * 1000)()
-    m = lib.libfive_thermal_history(ptr, hist, 1000)
-    history = [hist[i] for i in range(min(m, 1000))]
-    stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history),
-             'seconds': time.time() - t0}
-    boundary = list(boundary if isinstance(boundary, (list, tuple)) else [boundary])
-    result = ThermalTopologyResult(handle, part, density, history, settings, element_size,
-                                   (lo, hi), boundary, material, conductivity, stats)
+    result = finish(handle, ptr, time.time() - t0)
+    result_cache.save(kind, ekey, ptr, 'thermal topology optimization', {'seconds': result.seconds})
     if cache and key is not None:
         _topo_cache[key] = result
     if ekey is not None:

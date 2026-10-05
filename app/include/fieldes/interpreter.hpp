@@ -73,6 +73,10 @@ signals:
     void ready(QStringList keywords, Documentation docs);
     void busy();
     void done(Result);
+
+    /*  While a run goes on: the model tree's description of what its finished statements have made so far
+     *  (emitted from the run's own helper thread; the run's done() follows with the whole) */
+    void partialScene(QString json);
 };
 
 } // namespace FielDes

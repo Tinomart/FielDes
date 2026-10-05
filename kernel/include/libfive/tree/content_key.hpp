@@ -61,4 +61,9 @@ std::string meshContentKey(const std::vector<Eigen::Vector3d>& verts,
  */
 uint64_t nextContentSerial();
 
+/*  A serial that is a function of what it is for -- a solved problem's hash, a salt from the whole problem as
+ *  asked, which result of it -- so the same problem solved again, or read back from a file, gives its fields
+ *  the same keys (the renders of them are found again).  Never one that nextContentSerial() gives out.  */
+uint64_t derivedContentSerial(uint64_t a, uint64_t b, uint64_t c);
+
 }   // namespace libfive

@@ -1,0 +1,5 @@
+wait 25000
+action view.std-iso
+wait 6000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex14_iso.png
+quit

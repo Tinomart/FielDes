@@ -1,0 +1,17 @@
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+viewmouse rclick 506 524
+wait 800
+popup grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/select_a_surfacemenu.png
+popup pick Select Surface
+log picked
+wait 700
+popup grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/select_b_after_pick.png
+log grabbed
+key Escape
+wait 300
+log escaped
+quit

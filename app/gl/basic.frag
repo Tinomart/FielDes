@@ -10,13 +10,23 @@ uniform int shading;
 uniform int cut_mode;
 uniform vec4 cut_color;
 
+// A patch of a surface: where the value, interpolated from the vertices, is above zero the part is not drawn
+// (the vertices that are not in the patch are the ones above zero: the edge of the patch runs through the
+// triangles between them where the value crosses zero)
+uniform int patch_mode;
+
 in vec3 frag_norm;
 in vec3 frag_pos;
 in vec4 frag_color;
+in float frag_patch;
 
 out vec4 fragColor;
 
 void main() {
+    if (patch_mode != 0 && frag_patch > 0.0)
+    {
+        discard;
+    }
     if (cut_mode != 0 && (gl_FrontFacing == (cut_mode > 0)))
     {
         fragColor = cut_color;

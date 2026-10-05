@@ -9,6 +9,7 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 - [How keys work](#how-keys-work)
 - [Controlling the caches](#controlling-the-caches)
 - [The field cache](#the-field-cache)
+- [The result cache](#the-result-cache)
 - [The render cache](#the-render-cache)
 - [Resolution and quality](#resolution-and-quality)
 - [Long renders](#long-renders)
@@ -22,7 +23,7 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | **Any field a script builds** (`name = <expression>`: a lattice laid out on a part, an offset, a thickness field — [the field cache](#the-field-cache)) | in memory, and on disk when every part of the field can be saved | the statement's text, the exact content of every name it reads, the `var()` numbers, the code that builds it |
 | **Shapes already meshed in the viewport** | in memory, for the session | the shape's expression (structural identity) and its colouring |
 | **The finished mesh of a shape you asked for** ([render cache](#the-render-cache)) | on disk, in FielDes's cache folder | the shape's expression with the numbers it is drawn with, its colours, the render region, resolution and quality |
-| **Analyses** (static, modal, thermal, all optimisations) | in memory | the whole problem: part, supports, loads, material, element size |
+| **Analyses** (static, modal, thermal, flow, all optimisations — [the result cache](#the-result-cache)) | in memory, and on disk: the solved problem with its mesh, fields, modes, iterations and steps | the whole problem as asked: the part by its expression, every condition, the material, the fluid, the element size, every setting |
 | **`exact_distance`** (and so `offset_exact`, `shell_exact`, `round_edges`, `fillet`) | in memory | the shape's expression and the bounds/resolution |
 | **Mesh imports** | in memory | path, size, modification time, units |
 | **Graph lattices** (`voronoi_graph`, `surface_graph`, `points_graph`) | in memory | their inputs |
@@ -103,6 +104,29 @@ it), so on another body a step can end earlier or later than its share says: the
 call is over. When the layout has to be made again (a second attempt, text `attempt 2, ...`), it goes on from where the
 first one left the bar and takes the rest.
 
+## The result cache
+
+An analysis is the slowest line of a script, and it is asked again every time the script runs. So **every analysis and
+optimisation is kept**: `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis` (steady and in time),
+`topology_optimization`, `thermal_topology_optimization` and `flow_topology_optimization`. The key is the whole problem
+as asked — the part by the content of its expression, every support, load, condition and region, the material or the
+fluid, the element size and every setting — before anything is built. In the same session the problem asked again is
+handed back from memory; in a later session its solved form is read back from a file the kernel wrote: the mesh, every
+field at the nodes, the elements' own values, the modes, the density after every iteration of an optimisation, the steps
+of a flow and all the numbers. Nothing is meshed or solved again, and the result answers every question as the solved one
+did (fields, `.verify()`, `streamlines()`, the Elements view). The log says `[result cache] read the static analysis
+back (12.4 MB, 0.3 s)` when it did, `kept` when it wrote one. A change to any argument is a new problem — solved and kept
+beside the old one, so going back to the old values costs nothing either. `cache=False` solves every time and keeps
+nothing.
+
+The keys of a result's fields (what the render cache and the field cache know them by) are made from the same problem
+key, so a result read back has the same keys it had when it was solved: **the renders of it are found again too**, and a
+field made from a result (`result.von_mises > 100`) is the same field in every session.
+
+The files are in `result-cache` beside the field cache (`FIELDES_RESULT_CACHE_DIR` moves them); the folder holds at most
+4 GB, oldest first out. A file that cannot be read as written is refused and the problem is solved. **Settings → Clear the
+caches** deletes them with the rest.
+
 ## The render cache
 
 Meshing is the slow part of showing a big shape, and the viewport's memory of it ends with the session. So **every
@@ -144,7 +168,9 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
   [Region and resolution](step-import.md#region-and-resolution).
 - `view.set_quality(8)` is a good default; lower numbers are faster and rougher.
 - **Quality of the exact STEP surface** is separate: `exclude(..., quality=64)` (points per full turn of a
-  circle).
+  circle). The locked field of an excluded STEP part (its tessellation and the distance structure of the
+  triangles) is made once per part and kept in memory while the script is run again; the kernel keeps the
+  tessellation per file version.
 
 ## Long renders
 

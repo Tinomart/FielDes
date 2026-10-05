@@ -25,9 +25,8 @@ lugs = box_exact((-60, -90, -61), (60, -60, 29))
 conditions = static_boundary_conditions(bracket,
                                         supports=[fixed(plates)],
                                         loads=[force(lugs, (0, -2000, 0))])      # N, pulling away from the wall
-conditions            # the problem, drawn on the part: blue pads where it is held, red arrows (2000 N) where it is pulled
+# hidden: conditions            # the problem, drawn on the part: blue pads where it is held, red arrows (2000 N) where it is pulled
 result = static_analysis(bracket, conditions, material=aluminium, element_size=2)
-print(result)
 print("safety factor: %.1f" % result.safety_factor)
 
-# hidden: result.show("von_mises")
+result                # shown: the stress on the deformed part (the result card steps the load)

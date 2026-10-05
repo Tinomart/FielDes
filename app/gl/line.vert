@@ -12,6 +12,7 @@ uniform float aspect;
 out vec3 frag_norm;
 out vec3 frag_pos;
 out vec4 frag_color;
+out float frag_patch;
 
 void main()
 {
@@ -52,5 +53,6 @@ void main()
     frag_norm = vec3(0.0f);
     frag_pos = vec3(0.0f);
     frag_color = vec4(0.0f);
+    frag_patch = 0.0f;
 }
 

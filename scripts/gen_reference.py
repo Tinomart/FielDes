@@ -29,6 +29,7 @@ MODULES = [
     ('fea', 'Structural analysis and topology optimization', 'fieldes.stdlib.fea'),
     ('boundary_conditions', 'Seeing the boundary conditions', 'fieldes.stdlib.boundary_conditions'),
     ('thermal', 'Thermal analysis and thermal topology optimization', 'fieldes.stdlib.thermal'),
+    ('fluid', 'Fluid flow analysis', 'fieldes.stdlib.fluid'),
     ('content_cache', 'Caching', 'fieldes.stdlib.content_cache'),
     ('render_cache', 'Keeping rendered meshes (render cache)', 'fieldes.stdlib.render_cache'),
 ]

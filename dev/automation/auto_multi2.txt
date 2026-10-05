@@ -1,0 +1,48 @@
+# the model tree: Ctrl+click, Shift+click; then E (gizmo / handles) and R (lock) on all selected models
+wait 6000
+waitrender 120 30
+action view.std-front
+waitrender 60 10
+wait 1000
+treeclick none block
+treeclick ctrl top
+wait 300
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/multi2_tree_ctrl.png
+treeclick none block
+treeclick shift top
+wait 300
+selected
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/multi2_tree_shift.png
+focus view
+log --- E on three models
+key E
+wait 3000
+waitrender 60 10
+wait 500
+selected
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/multi2_after_E.txt
+log --- R locks all three
+key R
+wait 3000
+waitrender 60 10
+wait 500
+selected
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/multi2_after_R.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/multi2_locked.png
+log --- R again unlocks them
+key R
+wait 3000
+waitrender 60 10
+wait 500
+selected
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/multi2_after_R2.txt
+log --- E again: back to handles
+key E
+wait 3000
+waitrender 60 10
+wait 500
+selected
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/multi2_after_E2.txt
+focuswho
+quit

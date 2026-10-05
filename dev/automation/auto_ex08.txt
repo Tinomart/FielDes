@@ -1,0 +1,12 @@
+# example 08 with the lug ends excluded: the optimised bracket must still have its round holes
+wait 6000
+waitrender 300 30
+action view.std-iso
+waitrender 120 10
+wait 1500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08_iso.png
+action view.std-front
+waitrender 120 10
+wait 1500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex08_front.png
+quit

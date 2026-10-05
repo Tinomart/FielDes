@@ -1,0 +1,15 @@
+wait 45000
+waitrender 300
+action view.std-iso
+waitrender 300
+wait 2000
+slider resultStep 19
+wait 1500
+click resultStepBack
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_back.png
+click resultStepForward
+click resultStepForward
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_forward.png
+quit

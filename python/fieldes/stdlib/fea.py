@@ -10,7 +10,7 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
         loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))])   # 200 N down
     conditions                                           # shown on the part: held (blue), pushed (red)
     result = static_analysis(bracket, conditions, material=aluminium, element_size=1.0)
-    colored(bracket, result.von_mises)       # show the stress on the part (FielDes)
+    result                                   # the stress on the deformed part (FielDes: the result card)
     stiffer = bracket - 0.002 * result.von_mises   # results are fields like any other
 
 Supports and loads are regions -- ordinary shapes: a support fixes the part
@@ -47,12 +47,15 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import ctypes
+import math
 import time
 from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.shape import Shape
+from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
+from fieldes.stdlib import result_cache
 
 # The element a cell of the voxel grid is made of (Element in fea.hpp)
 ELEMENTS = {'tet': 0, 'hex': 1, 'hex_basic': 2}
@@ -292,25 +295,35 @@ class Result:
             is higher here than in range(), which averages the elements at each node. '''
         return self._element_ranges.get(field, self._ranges[field])
 
-    def show(self, field='von_mises', range=None, deformation='auto'):
-        ''' The part coloured by a result field, for display in FielDes.
-            FielDes shows the part deformed and lets you switch the field
-            and scale the deformation next to the colour bar (and show
-            the elements).  deformation: 'auto' (the largest movement
-            shown as 5 % of the part's size), a number (scale factor, 1 =
-            true size) or 0 (undeformed). '''
-        out = colored(self.shape, getattr(self, field),
-                      range=range or self._ranges[field], label=_LABELS[field])
-        out._color_fields = [(name, _LABELS[name], getattr(self, name)) + tuple(self._ranges[name])
-                             for name in _FIELDS]
-        out._color_field_name = field
-        out._deform = (self.ux, self.uy, self.uz)
-        size = self._model_size()
-        auto = 0.05 * size / self.max_displacement if self.max_displacement > 0 else 1.0
-        out._deform_auto = auto
-        out._deform_scale = auto if deformation == 'auto' else float(deformation)
-        out._fea_grid = self._element_grid()
-        out._fea_element_text = self.element_text()
+    def _display(self):
+        ''' What FielDes shows for the result stated on its own: the part coloured by the von Mises stress and
+            deformed (the largest movement 5 % of the part's size).  The result card switches the field, scales
+            the deformation, shows the elements, and steps the load from 5 % to 100 % (slider, play / pause):
+            the stresses and the deformation grow in proportion, as a linear analysis does. '''
+        shown = getattr(self, '_shown', None)
+        if shown is None:
+            size = self._model_size()
+            auto = 0.05 * size / self.max_displacement if self.max_displacement > 0 else 1.0
+            steps = []
+            for k in range(1, 21):
+                f = k / 20.0
+                if k == 20:
+                    steps.append({'label': 'load 100 %'})
+                else:
+                    steps.append({'label': 'load %d %%' % (5 * k),
+                                  'channels': [(name, _LABELS[name], f * getattr(self, name)) + tuple(self._ranges[name])
+                                               for name in _FIELDS],
+                                  'deform': (f * self.ux, f * self.uy, f * self.uz)})
+            shown = {'_color_fields': [(name, _LABELS[name], getattr(self, name)) + tuple(self._ranges[name])
+                                       for name in _FIELDS],
+                     '_color_field_name': 'von_mises', '_deform': (self.ux, self.uy, self.uz),
+                     '_deform_auto': auto, '_deform_scale': auto,
+                     '_fea_grid': self._element_grid(), '_fea_element_text': self.element_text(),
+                     '_color_steps': steps, '_color_step': len(steps) - 1}
+            self._shown = shown
+        out = colored(self.shape, self.von_mises, range=self._ranges['von_mises'], label=_LABELS['von_mises'])
+        out.__dict__.update(shown)
+        out._color_detail = float(getattr(self, 'element_size', 0) or 0)
         return out
 
     def element_text(self):
@@ -390,15 +403,10 @@ def _bounds(shape):
         hit, found = memory.get(key)
         if hit:
             return found
-    search = libfive_region_t()
-    for axis in (search.X, search.Y, search.Z):
-        axis.lower, axis.upper = -1e6, 1e6
-    out = libfive_region_t()
-    open_sides = ctypes.c_int(0)
-    if not lib.libfive_tree_bounds(shape.ptr, search, 200000, 2.0, ctypes.byref(out),
-                                   ctypes.byref(open_sides)) or open_sides.value:
+    from fieldes.stdlib.fields import find_extent       # (searched with the script's var() numbers)
+    found = find_extent(shape)
+    if found is None:
         raise FeaError('could not find the extent of the part: pass bounds=(xyz_min, xyz_max)')
-    found = ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
     if key is not None:
         memory.put(key, found)
     return found
@@ -441,7 +449,7 @@ def static_analysis(shape, conditions, material=steel, element_size=None,
         found = _early[ekey]
         return found if found.shape is shape else _copy_for(found, shape)
     result = _static_analysis_solve(shape, supports, loads, material, element_size, bounds,
-                                    max_iterations, tolerance, cache, element)
+                                    max_iterations, tolerance, cache, element, ekey)
     if ekey is not None:
         _early[ekey] = result
         while len(_early) > 8:
@@ -450,7 +458,7 @@ def static_analysis(shape, conditions, material=steel, element_size=None,
 
 
 def _static_analysis_solve(shape, supports, loads, material, element_size, bounds, max_iterations,
-                           tolerance, cache, element):
+                           tolerance, cache, element, ekey=None):
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
@@ -469,8 +477,12 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     if element == 'tet':
         return _static_analysis_tet(shape, supports, loads, material, element_size, region, max(size),
-                                    max_iterations, tolerance, cache)
+                                    max_iterations, tolerance, cache, ekey)
 
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load('fea', ekey, 'static analysis')
+    if loaded is not None:
+        return Result(_Handle(loaded[0]), shape, material, element_size, element)
     ptr = lib.libfive_fea_new(shape.ptr, region, element_size, material.E, material.nu)
     handle = _Handle(ptr)
     _set_element(ptr, element)
@@ -502,9 +514,12 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
             # Same problem from an identical part: same results, this part
             result = _copy_for(result, shape)
         return result
+    if ekey is not None:
+        lib.libfive_fea_set_salt(ptr, result_cache.salt('fea', ekey))
     if not lib.libfive_fea_solve(ptr, int(max_iterations), float(tolerance)):
         raise FeaError(lib.libfive_fea_message(ptr).decode('utf-8', 'replace'))
     result = Result(handle, shape, material, element_size, element)
+    result_cache.save('fea', ekey, ptr, 'static analysis')
     if cache:
         _cache[key] = result
         while len(_cache) > 8:
@@ -527,7 +542,7 @@ class TetResult(Result):
     ''' A static analysis on a body-fitted tetrahedral mesh: its elements are tetrahedra
         that follow the part's surface (not a voxelization), the stress in each is its
         own (constant in it), and the fields are read anywhere in the mesh.  Everything
-        of Result: fields as shapes, .show(), .range(), .element_range(), ... '''
+        of Result: fields as shapes, .range(), .element_range(), ... '''
 
     def __init__(self, handle, shape, material, element_size, size):
         self._handle = handle
@@ -606,17 +621,21 @@ class TetResult(Result):
         self._mesh_full = full
         return full
 
-    def show(self, field='von_mises', range=None, deformation='auto'):
-        out = Result.show(self, field, range, deformation)
+    def _display(self):
+        out = Result._display(self)
         out._fea_mesh = self._mesh_data()
         return out
 
 
 def _static_analysis_tet(shape, supports, loads, material, element_size, region, size, max_iterations,
-                         tolerance, cache):
+                         tolerance, cache, ekey=None):
     ''' static_analysis on a body-fitted tetrahedral mesh '''
     if getattr(lib, 'libfive_tetfea_new', None) is None:
         raise FeaError("this FielDes library is too old for tetrahedral meshing")
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load('tetfea', ekey, 'static analysis')
+    if loaded is not None:
+        return TetResult(_TetHandle(loaded[0]), shape, material, element_size, size)
     ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, material.E, material.nu)
     handle = _TetHandle(ptr)
     for s in supports:
@@ -645,9 +664,12 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
         if result.shape is not shape:
             result = _copy_for(result, shape)
         return result
+    if ekey is not None:
+        lib.libfive_tetfea_set_salt(ptr, result_cache.salt('tetfea', ekey))
     if not lib.libfive_tetfea_solve(ptr, int(max_iterations), float(tolerance)):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
     result = TetResult(handle, shape, material, element_size, size)
+    result_cache.save('tetfea', ekey, ptr, 'static analysis')
     if cache:
         _cache[key] = result
         while len(_cache) > 8:
@@ -662,7 +684,8 @@ class Mode:
     ''' One natural mode of vibration: .frequency (Hz), and its shape as
         fields (Shapes usable in any expression): displacement, ux, uy, uz
         -- scaled so the largest movement is 1 (a shape, not an amplitude).
-        .show() colours the part by it, deformed by it in FielDes. '''
+        Stated on its own, FielDes shows the part coloured by it and deformed by it, and the
+        result card plays the vibration (the deformation through a cycle). '''
 
     def __init__(self, handle, index, frequency, shape, element_size, grid):
         self._handle = handle
@@ -681,19 +704,29 @@ class Mode:
     def _model_size(self):
         return max(self._grid) * self.element_size
 
-    def show(self, field='displacement', deformation='auto'):
-        ''' The part coloured by the mode shape, shown deformed by it in
-            FielDes ('auto': the largest movement 5 % of the part's size) '''
-        label = 'mode %d, %.4g Hz (%s)' % (self.index + 1, self.frequency, field)
-        out = colored(self.shape, getattr(self, field), range=self._ranges[field], label=label)
-        out._color_fields = [(name, 'mode %d %s' % (self.index + 1, name), getattr(self, name)) +
-                             tuple(self._ranges[name]) for name in ('displacement', 'ux', 'uy', 'uz')]
-        out._color_field_name = field
-        out._deform = (self.ux, self.uy, self.uz)
-        size = self._model_size()
-        auto = 0.05 * size
-        out._deform_auto = auto
-        out._deform_scale = auto if deformation == 'auto' else float(deformation)
+    def _display(self):
+        ''' What FielDes shows for the mode stated on its own: the part coloured by the mode shape and
+            deformed by it (the largest movement 5 % of the part's size).  The result card steps the
+            vibration through a cycle (24 phases; play to see it vibrate). '''
+        shown = getattr(self, '_shown', None)
+        if shown is None:
+            n = 24
+            steps = []
+            for k in range(n):
+                s = math.sin(2 * math.pi * k / n)
+                steps.append({'label': 'phase %d\u00b0' % (360 * k // n),
+                              'deform': (s * self.ux, s * self.uy, s * self.uz)})
+            auto = 0.05 * self._model_size()
+            shown = {'_color_fields': [(name, 'mode %d %s' % (self.index + 1, name), getattr(self, name)) +
+                                       tuple(self._ranges[name]) for name in ('displacement', 'ux', 'uy', 'uz')],
+                     '_color_field_name': 'displacement', '_deform': (self.ux, self.uy, self.uz),
+                     '_deform_auto': auto, '_deform_scale': auto,
+                     '_color_steps': steps, '_color_step': n // 4}
+            self._shown = shown
+        label = 'mode %d, %.4g Hz (displacement)' % (self.index + 1, self.frequency)
+        out = colored(self.shape, self.displacement, range=self._ranges['displacement'], label=label)
+        out.__dict__.update(shown)
+        out._color_detail = float(getattr(self, 'element_size', 0) or 0)
         return out
 
     def __repr__(self):
@@ -703,11 +736,12 @@ class Mode:
 class TetMode(Mode):
     ''' One natural mode of a part on a body-fitted tetrahedral mesh (see Mode) '''
 
-    def __init__(self, handle, index, frequency, shape, size):
+    def __init__(self, handle, index, frequency, shape, size, element_size=0):
         self._handle = handle
         self.index = index
         self.frequency = frequency
         self.shape = shape
+        self.element_size = element_size
         self._size = float(size)
         p = handle.ptr
         self._ranges = {}
@@ -722,7 +756,8 @@ class TetMode(Mode):
 
 class ModalResult:
     ''' The result of modal_analysis(): .frequencies (Hz, lowest first),
-        .modes (a Mode each: its shape as fields, .show()), .seconds '''
+        .modes (a Mode each: its shape as fields), .seconds.  Stated on its
+        own it shows the first mode (result.modes[1] the second, ...). '''
 
     def __init__(self, handle, shape, material, element_size, seconds, size=None):
         p = handle.ptr
@@ -731,7 +766,8 @@ class ModalResult:
         if size is not None:
             # (on a tetrahedral mesh)
             n = lib.libfive_tetfea_mode_count(p)
-            self.modes = [TetMode(handle, i, lib.libfive_tetfea_mode_frequency(p, i), shape, size) for i in range(n)]
+            self.modes = [TetMode(handle, i, lib.libfive_tetfea_mode_frequency(p, i), shape, size, element_size)
+                          for i in range(n)]
         else:
             grid = (int(lib.libfive_fea_stat(p, 16)), int(lib.libfive_fea_stat(p, 17)),
                     int(lib.libfive_fea_stat(p, 18)))
@@ -745,6 +781,9 @@ class ModalResult:
 
     def __len__(self):
         return len(self.modes)
+
+    def _display(self):
+        return self.modes[0]._display()
 
     def __repr__(self):
         return 'Modal analysis: %s Hz (%s, %.1f s)' % (
@@ -768,9 +807,9 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
                      documentation
 
         Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
-        fields -- displacement, ux, uy, uz -- and .show()).  The shapes are
-        fields like any other: e.g. stiffen the part where the first mode
-        moves most.  An unchanged problem is cached. '''
+        fields -- displacement, ux, uy, uz).  The shapes are fields like any
+        other: e.g. stiffen the part where the first mode moves most.  An
+        unchanged problem is cached. '''
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
     if not material.density > 0:
@@ -798,6 +837,16 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
     tet = element == 'tet'
     if tet and getattr(lib, 'libfive_tetfea_new', None) is None:
         raise FeaError("this FielDes library is too old for tetrahedral meshing")
+    kind = 'tetfea' if tet else 'fea'
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load(kind, key, 'modal analysis')
+    if loaded is not None:
+        handle = _TetHandle(loaded[0]) if tet else _Handle(loaded[0])
+        result = ModalResult(handle, shape, material, element_size, float(loaded[1].get('seconds', 0)),
+                             size=max(size) if tet else None)
+        if key is not None:
+            _modal_cache[key] = result
+        return result
     if tet:
         ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, material.E, material.nu)
         handle = _TetHandle(ptr)
@@ -810,6 +859,8 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
             raise TypeError('supports must be fixed(...) items')
         (lib.libfive_tetfea_add_support if tet else lib.libfive_fea_add_support)(
             ptr, s.region.ptr, *[int(a) for a in s.axes])
+    if key is not None:
+        (lib.libfive_tetfea_set_salt if tet else lib.libfive_fea_set_salt)(ptr, result_cache.salt(kind, key))
     t0 = time.time()
     if tet:
         if not lib.libfive_tetfea_modal(ptr, int(modes), float(material.density), int(max_iterations),
@@ -821,6 +872,7 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
                                      float(tolerance)):
             raise FeaError(lib.libfive_fea_message(ptr).decode('utf-8', 'replace'))
         result = ModalResult(handle, shape, material, element_size, time.time() - t0)
+    result_cache.save(kind, key, ptr, 'modal analysis', {'seconds': result.seconds})
     if key is not None:
         _modal_cache[key] = result
         while len(_modal_cache) > 4:
@@ -866,9 +918,16 @@ class TopologyResult:
         .shape()     the optimized part, keeping the volume fraction asked
                      for (shape(threshold=0.5): where density > 0.5)
         .compliance  compliance (N mm) at each iteration -- lower is stiffer
+        .densities   the density field after each iteration (tetrahedral
+                     optimizations)
         .volume_fraction, .iterations, .seconds
+        .pieces      how many separate pieces the optimized part is in (tetrahedral optimizations; more than
+                     one is warned about when the result is made: try a higher volume_fraction)
         .verify()    a static analysis of the optimized part (stresses) --
-                     a list, one per load case, when there are several '''
+                     a list, one per load case, when there are several
+        Stated on its own, FielDes shows the optimized part coloured by the
+        density, and the result card steps through the iterations: the part
+        as it was after each one (slider, play / pause). '''
 
     def __init__(self, handle, part, density, history, settings, element_size, bounds,
                  supports, loads, material, stats):
@@ -922,7 +981,7 @@ class TopologyResult:
         width = 2.0 * (self.settings['filter_radius'] or 1.5 * self.element_size)
         out = ((threshold - self.density) * width).max(self.part)
         out._bounds = self.bounds
-        return out
+        return carry_locks(out, self.part)
 
     def verify(self, threshold=None, element_size=None):
         ''' A static analysis of the optimized part with the same supports,
@@ -934,6 +993,34 @@ class TopologyResult:
                                element=self.settings.get('element', 'hex'))
                for case in cases]
         return out if len(out) > 1 else out[0]
+
+    def _display(self):
+        ''' What FielDes shows for the result stated on its own: the optimized part (see shape())
+            coloured by the density, with a step per iteration -- the part as it was then '''
+        shown = getattr(self, '_shown', None)
+        if shown is None:
+            threshold = self.keep_threshold()
+            width = 2.0 * (self.settings['filter_radius'] or 1.5 * self.element_size)
+            densities = getattr(self, 'densities', None) or []
+            steps = []
+            for k, d in enumerate(densities):
+                step = {'label': 'iteration %d of %d' % (k + 1, len(densities)),
+                        'channels': [('density', 'density', d, 0.0, 1.0)]}
+                if k + 1 < len(densities):
+                    body = ((threshold - d) * width).max(self.part)
+                    body._bounds = self.bounds
+                    step['shape'] = body
+                steps.append(step)
+            shown = {'_color_fields': [('density', 'density', self.density, 0.0, 1.0)],
+                     '_color_field_name': 'density', '_shape': self.shape(threshold)}
+            if steps:
+                shown['_color_steps'] = steps
+                shown['_color_step'] = len(steps) - 1
+            self._shown = shown
+        out = colored(shown['_shape'], self.density, range=(0.0, 1.0), label='density')
+        out.__dict__.update({k: v for k, v in shown.items() if k != '_shape'})
+        out._color_detail = float(getattr(self, 'element_size', 0) or 0)
+        return out
 
     def __repr__(self):
         c = self.compliance
@@ -999,6 +1086,8 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     loads = cases if len(cases) > 1 else cases[0]
     keep = [] if keep is None else list(keep if isinstance(keep, (list, tuple)) else [keep])
     avoid = [] if avoid is None else list(avoid if isinstance(avoid, (list, tuple)) else [avoid])
+    # (what the part has excluded stays as it is: its locked fields are regions to keep)
+    keep = keep + keep_regions(part)
     # The whole problem by its content, before anything is built (see static_analysis)
     ekey = problem_key('topology', part=part, part_bounds=getattr(part, '_bounds', None),
                        supports=supports, loads=loads, material=material,
@@ -1026,17 +1115,62 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     tet = element == 'tet'
+    api = 'libfive_tetfea_' if tet else 'libfive_fea_'
+    fn = lambda name: getattr(lib, api + name)
+    kind = 'tetfea' if tet else 'fea'
+    axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
+    if extrude not in axes:
+        raise ValueError("extrude is None, 'x', 'y' or 'z'")
+    settings = {'volume_fraction': float(volume_fraction), 'penalty': float(penalty),
+                'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
+                'move': float(move), 'extrude': axes[extrude], 'element': element}
+
+    def finish(handle, ptr, seconds):
+        ''' The result from a solved problem (just optimised, or read back from its file) '''
+        density = Shape(fn('density')(ptr))
+        hist = (ctypes.c_double * 1000)()
+        m = fn('history')(ptr, hist, 1000)
+        history = [hist[i] for i in range(min(m, 1000))]
+        # the density after every iteration (on the mesh; the voxel optimizer keeps only the last)
+        densities = []
+        at = getattr(lib, 'libfive_tetfea_density_at', None) if tet else None
+        for k in range(len(history)):
+            p = at(ptr, k) if at else None
+            if not p:
+                break
+            densities.append(Shape(p))
+        stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history), 'seconds': seconds}
+        result = TopologyResult(handle, part, density, history, settings, element_size, (lo, hi),
+                                supports, loads, material, stats)
+        result.densities = densities
+        # A part that falls into pieces cannot do what a part is for: say so, and what to try.  (The scraps are left
+        # in the result on purpose: they show what the part would become with more volume.)
+        count = getattr(lib, 'libfive_tetfea_pieces', None) if tet else None
+        if count is not None:
+            # (a link thinner than a millimetre of the cut surface is not one: see shape(), the density is scaled to mm)
+            width = 2.0 * (settings['filter_radius'] or 1.5 * element_size)
+            result.pieces = int(count(ptr, result.keep_threshold(), 1.0 / width))
+            if result.pieces > 1:
+                print('topology_optimization: the optimised part is in %d separate pieces (nothing joins them). '
+                      'Try a higher volume_fraction (it is %g now) -- the loose scraps show what the part would '
+                      'become -- or fewer or smaller keep regions.' % (result.pieces, settings['volume_fraction']))
+        return result
+
+    # solved in an earlier session: read back (see result_cache.py)
+    loaded = result_cache.load(kind, ekey, 'topology optimization')
+    if loaded is not None:
+        result = finish(_TetHandle(loaded[0]) if tet else _Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)))
+        _topo_cache[ekey] = result
+        return result
     if tet:
         if getattr(lib, 'libfive_tetfea_optimize', None) is None:
             raise FeaError('this FielDes library is too old for tetrahedral topology optimization')
         ptr = lib.libfive_tetfea_new(part.ptr, region, element_size, material.E, material.nu)
         handle = _TetHandle(ptr)
-        api = 'libfive_tetfea_'
     else:
         ptr = lib.libfive_fea_new(part.ptr, region, element_size, material.E, material.nu)
         handle = _Handle(ptr)
         _set_element(ptr, element)
-        api = 'libfive_fea_'
     fn = lambda name: getattr(lib, api + name)
     for s in supports:
         if not isinstance(s, _Support):
@@ -1065,12 +1199,6 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     if not fn('prepare')(ptr):
         raise FeaError(fn('message')(ptr).decode('utf-8', 'replace'))
 
-    axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
-    if extrude not in axes:
-        raise ValueError("extrude is None, 'x', 'y' or 'z'")
-    settings = {'volume_fraction': float(volume_fraction), 'penalty': float(penalty),
-                'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
-                'move': float(move), 'extrude': axes[extrude], 'element': element}
     # cache key: the prepared problem, the settings, and where the keep /
     # avoid regions are (sampled at the element centres)
     key = [fn('hash')(ptr), tuple(sorted(settings.items()))]
@@ -1118,6 +1246,8 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
 
     keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[_shape(r, 'keep').ptr for r in keep])
     avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[_shape(r, 'avoid').ptr for r in avoid])
+    if ekey is not None:
+        fn('set_salt')(ptr, result_cache.salt(kind, ekey))
     t0 = time.time()
     ok = fn('optimize')(ptr, settings['volume_fraction'], settings['penalty'],
                         settings['filter_radius'], settings['iterations'],
@@ -1125,17 +1255,8 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
                         int(max_iterations), float(tolerance), settings['extrude'])
     if not ok:
         raise FeaError(fn('message')(ptr).decode('utf-8', 'replace'))
-    dptr = fn('density')(ptr)
-    density = Shape(dptr)
-    hist = (ctypes.c_double * 1000)()
-    m = fn('history')(ptr, hist, 1000)
-    history = [hist[i] for i in range(min(m, 1000))]
-    # achieved volume fraction: from the density field over the part
-    vf = settings['volume_fraction']
-    stats = {'volume_fraction': vf, 'iterations': len(history),
-             'seconds': time.time() - t0}
-    result = TopologyResult(handle, part, density, history, settings, element_size, (lo, hi),
-                            supports, loads, material, stats)
+    result = finish(handle, ptr, time.time() - t0)
+    result_cache.save(kind, ekey, ptr, 'topology optimization', {'seconds': result.seconds})
     if cache:
         _topo_cache[key] = result
     if ekey is not None:

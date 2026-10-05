@@ -365,6 +365,13 @@ void Editor::onInterpreterDone(Result r)
     script->setErrorLine(-1);
 
     hidePause();
+    if (m_discardResults)
+    {
+        // The result of a run of the script that has been replaced since: none of it is shown
+        for (auto s : r.shapes) s->deleteLater();
+        script->setSelections(Script::SEL_ERROR, selections);
+        return;
+    }
     if (r.okay) {
         if (r.pausedLine > 0) {
             // Stopped at a breakpoint: what ran so far is shown as usual
@@ -501,9 +508,30 @@ void Editor::setResult(QColor color, QString result)
 void Editor::setScript(const QString& s, bool reload)
 {
     first_change = !reload;
-    if (!reload) closeAuxiliaryTabs();      // (the files opened from the old script)
+    if (!reload)
+    {
+        closeAuxiliaryTabs();      // (the files opened from the old script)
+        // Another script: what the old one made (its viewport shapes, its model tree, its output, its error) goes now,
+        // and what a run of it that is still going delivers is thrown away.  Left until the new script has run, a file
+        // that is slow, or does not run, would look as if opening it had done nothing
+        m_discardResults = true;
+        vars.clear();
+        setResult(Theme::text, QString());
+        script->setSelections(Script::SEL_ERROR, QList<QTextEdit::ExtraSelection>());
+        script->setErrorLine(-1);
+        emit(shapes(QList<Shape*>()));
+        emit(documentReplaced());
+    }
     script->clearBreakpoints();     // (their lines mean nothing in new text)
     script->setPlainText(s);
+}
+
+void Editor::onInterpreterPartialScene(QString json)
+{
+    if (m_scriptRunning && !m_discardResults)
+    {
+        emit(partialSceneChanged(json));
+    }
 }
 
 QString Editor::getScript() const
@@ -551,6 +579,8 @@ void Editor::continueRun()
 
 void Editor::onDragStart()
 {
+    // (a script that is disabled loses the keyboard: it is given back after the drag only if it had it)
+    m_scriptHadFocus = script->hasFocus();
     script->setEnabled(false);
     drag_should_join = false;
 }
@@ -558,7 +588,8 @@ void Editor::onDragStart()
 void Editor::onDragEnd()
 {
     script->setEnabled(true);
-    script->setFocus();
+    if (m_scriptHadFocus) script->setFocus();
+    m_scriptHadFocus = false;
 }
 
 void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
@@ -750,9 +781,11 @@ void Editor::setLanguage(Language::Type t) {
         connect(m_language.data(), &Language::interpreterBusy,
                 &m_interpreterBusyDebounce, QOverload<>::of(&QTimer::start));
         connect(m_language.data(), &Language::interpreterBusy,
-                this, [&]() { m_scriptRunning = true; hidePause(); });
+                this, [&]() { m_scriptRunning = true; m_discardResults = false; hidePause(); });
         connect(m_language.data(), &Language::interpreterDone,
                 this, &Editor::onInterpreterDone);
+        connect(m_language.data(), &Language::interpreterPartialScene,
+                this, &Editor::onInterpreterPartialScene);
         connect(m_language.data(), &Language::syntaxReady,
                 this, &Editor::onSyntaxReady);
 
@@ -879,7 +912,9 @@ void Editor::onTabChanged(int index)
     auto doc = scriptWidget()->document();
     emit undoAvailable(doc->isUndoAvailable());
     emit redoAvailable(doc->isRedoAvailable());
-    scriptWidget()->setFocus();
+    // (the user's own click on a tab or key moves the keyboard into it; the program's switch, to show where a
+    // selected model is defined, does not)
+    if (!m_quietTab) scriptWidget()->setFocus();
 }
 
 QString Editor::resolveDefinition(const QString& path, const QString& text,
@@ -983,7 +1018,12 @@ void Editor::openFile(const QString& file, int line0, const QString& name)
 
 void Editor::showScriptTab()
 {
-    if (m_tabs->currentIndex() != 0) m_tabs->setCurrentIndex(0);
+    if (m_tabs->currentIndex() != 0)
+    {
+        m_quietTab = true;
+        m_tabs->setCurrentIndex(0);
+        m_quietTab = false;
+    }
 }
 
 void Editor::nextTab()

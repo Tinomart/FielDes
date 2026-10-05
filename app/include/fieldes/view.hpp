@@ -20,9 +20,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QSet>
 #include <QPair>
 #include <atomic>
+#include <functional>
 
 #include <QFutureWatcher>
 #include <QOpenGLWidget>
@@ -40,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/result_panel.hpp"
 #include "fieldes/settings.hpp"
 
+class QMenu;
 namespace FielDes { class ScenePanel; }
 
 #include "libfive/eval/eval_jacobian.hpp"
@@ -74,6 +77,8 @@ public:
      *  seconds until all are (negative: no estimate yet); they render at
      *  the same time, so the longest one  */
     bool isRendering() const;
+    /*  How many shapes the viewport holds (for scripted tests)  */
+    int shapeCount() const { return shapes.size(); }
     double renderFraction() const;
 
     /*  The render's progress bar (in paintOverlay)  */
@@ -100,6 +105,9 @@ public slots:
 public:
     /*  Union of the displayed shapes' mesh bounds; false if none yet  */
     bool meshBounds(QVector3D& lo, QVector3D& hi) const;
+
+    /*  The 0-based lines of the shapes highlighted as the selection (for scripted tests)  */
+    QList<int> highlightedLines() const;
     QVector3D towardViewer() const { return camera.towardViewer(); }
 
     /*  The section handle's knob and arrow tip in widget coordinates
@@ -111,6 +119,11 @@ public:
     /*  Selects the surface under a widget position as the menu of a right-click does (for scripted
      *  tests); false if no shape with a line of the script is there  */
     bool selectSurfaceAt(QPoint pos, const QString& mode, double angle, double thickness, double radius);
+
+    /*  What the context menus create: the primitives and operations of the library, as the interpreter lists
+     *  them (fieldes.menu_catalog); asked once, when a script has run, so a right-click never waits for Python  */
+    void setMenuCatalogSource(std::function<QString()> f) { m_catalogSource = f; }
+    void loadMenuCatalog();
 
     bool sectionHandlePoints(QPointF& knob, QPointF& tip) const
     {
@@ -222,12 +235,32 @@ signals:
     void shapeClicked(int line0);
 
     /*
+     *  A Ctrl+click (no dragging) on a shape: the 0-based line of the statement displaying it joins the selection,
+     *  or leaves it
+     */
+    void shapeToggled(int line0);
+
+    /*
+     *  A selection rectangle was drawn (left drag) and let go: the 0-based lines of the statements displaying
+     *  the shapes that lie wholly inside it; with `add` (Ctrl held too) they join the selection instead of
+     *  replacing it
+     */
+    void shapesRectSelected(QList<int> lines0, bool add);
+
+    /*
      *  The menu of a right-click on a shape was confirmed: select the surface of the shape displayed by
      *  the (0-based) line `line0` around `point` (a flood fill: mode "flat" or "smooth", the angle in
      *  degrees, the thickness and the radius in mm, 0 = automatic / no limit)
      */
     void surfaceSelectRequested(int line0, QVector3D point, QString mode, double angle, double thickness,
                                 double radius);
+
+    /*
+     *  An entry of a context menu was chosen: a new primitive (kind "primitive") placed at `point`, or an
+     *  operation (kind "operation") on the model displayed by the (0-based) line `line0`, or, for -1, the
+     *  selected one; `scale` is how many mm about a hundred pixels span at that place
+     */
+    void createRequested(QString kind, QString name, QVector3D point, double scale, int line0, int generation);
 
 protected slots:
     void update() { QOpenGLWidget::update(); }
@@ -271,11 +304,24 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
 
-    /*  A right-click (not a pan) on a shape: the menu of the surface selection  */
-    void showSelectMenu(QPoint globalPos, Shape* target, const QVector3D& point);
+    /*  A right-click (not a pan) on a shape: first a menu with Operation (the operations, on that shape) and
+     *  Select Surface, which opens the menu of the surface selection  */
+    void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale);
+    void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
+    /*  A right-click (not a pan) on empty space: New primitive and Add operation  */
+    void showEmptyMenu(QPoint globalPos, QPoint pos);
+    /*  The operations as a menu's entries (the combining ones greyed when there is no second model)  */
+    void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale);
+    /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
+    QVector3D placeOnRay(QPoint pos) const;
+    /*  How many mm about a hundred pixels span, at the depth of a point  */
+    double scaleAt(QPoint pos, const QVector3D& point) const;
     QPoint right_press_pos = QPoint(-100000, -100000);
     Shape* right_press_target = nullptr;
+    bool right_press_empty = false;
     QVector3D right_press_point;
+    std::function<QString()> m_catalogSource;
+    QJsonObject m_catalog;
 
     void leaveEvent(QEvent* event) override
     {
@@ -309,9 +355,17 @@ protected:
     Camera camera;
 
     struct {
-        enum { RELEASED, DRAG_ROT, DRAG_PAN, DRAG_EVAL } state = RELEASED;
+        enum { RELEASED, DRAG_ROT, DRAG_PAN, DRAG_EVAL, DRAG_RECT } state = RELEASED;
         QPoint pos;
     } mouse;
+
+    /*  The selection rectangle (left drag; Shift + left drag and the middle button turn the view): where it began and where the mouse is now, in widget pixels  */
+    QPoint rect_start, rect_now;
+    bool rect_add = false;
+    /*  A Ctrl+click toggles the selection instead of replacing it  */
+    bool press_ctrl = false;
+    /*  The 0-based lines of the shapes whose whole mesh lies inside a rectangle of the widget  */
+    QList<int> linesInside(const QRect& r) const;
 
     QList<Shape*> shapes;
     bool settings_enabled=true;
@@ -369,6 +423,11 @@ protected:
     ResultPanel* m_resultPanel=nullptr;
     void updateResultPanel();
     void placeResultPanel();
+    QTimer m_stepTimer;                 // play: the next step of the results
+    QTimer m_flowTimer;                 // the particles on the streamlines of a flow move
+    int m_playMode = 0;                 // 0 loop, 1 back and forth, 2 once (stop at the end)
+    float m_playSpeed = 1.0f;           // steps per second = 10 x this
+    int m_playDir = 1;                  // (back and forth: which way)
     QScopedPointer<QOpenGLTexture> slice_color_tex;
     // The plane as a deformed vertex grid (for a model drawn deformed)
     int slice_grid_verts = 0;
@@ -428,11 +487,23 @@ protected:
     struct HandleGrip
     {
         Shape* shape = nullptr;
-        int kind = -1;
+        int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move)
         int axis = 0;
+        bool group = false;         // the gizmo shared by all the selected shapes (kinds 0 and 3 only)
         bool operator==(const HandleGrip& o) const
-        { return shape == o.shape && kind == o.kind && axis == o.axis; }
+        { return shape == o.shape && kind == o.kind && axis == o.axis && group == o.group; }
     };
+    /*  Two or more shapes are selected (the multi-select state): one gizmo, at the middle of the pivots of the ones that
+     *  have numbers to move them by, moves them all, whatever way of editing each of them is in when it is alone (its
+     *  arrows and its dot; turning and scaling are one shape at a time).  Gives them and the gizmo's place; false when
+     *  fewer than two are selected (every shape then has its own gizmo, as usual)  */
+    bool groupHandles(QList<Shape*>& members, QVector3D& center) const;
+    /*  How many shapes are selected (lit up as the model tree's selection)  */
+    int selectedShapeCount() const;
+    /*  The numbers a gizmo drag changes: each shape's move number for an axis, with its value when the drag began  */
+    struct HandleVar { libfive::Tree::Id id; int axis; float value0; };
+    QVector<HandleVar> handle_vars;
+    QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
     HandleGrip handle_hover;
     HandleGrip handle_active;
     bool handle_drag = false;

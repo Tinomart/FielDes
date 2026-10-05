@@ -468,6 +468,19 @@ def _estimate_bounds(shapes, deadline):
 _MAX_EXPOSED = 6000
 
 
+def menu_catalog(_arg=''):
+    ''' The primitives and operations the viewport's context menus offer, as JSON (see fieldes.menu_catalog) '''
+    from fieldes import menu_catalog as catalog
+    return catalog.catalog()
+
+
+def menu_call(request):
+    ''' The call a context-menu entry writes into the script: `request` is JSON (see fieldes.menu_catalog.call).
+        Raises ValueError with the reason when the entry cannot be made. '''
+    from fieldes import menu_catalog as catalog
+    return catalog.call(request)
+
+
 def expose_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
         draggable -- "name = expose(name, [var(...), ...])", one line per eight numbers -- for FielDes
@@ -482,6 +495,8 @@ def expose_text(name):
     # the shape it was made from, whose definition the exposed numbers go under)
     while getattr(shape, '_handles', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
         shape = shape._placed_from
+    if getattr(shape, '_locks', None):
+        raise ValueError('%s has an excluded part: dragging its surfaces would move that too (use the gizmo)' % name)
     values = exposed_values(shape)
     if not values:
         raise ValueError('%s has no numbers that place its surfaces to expose' % name)
@@ -494,18 +509,19 @@ def expose_text(name):
     return '%s = expose(%s, [\n%s\n])' % (name, name, '\n'.join(rows))
 
 
-def _can_expose(shape):
-    ''' Does the shape have numbers that place its surfaces, few enough to write into the script?
-        (a shape under a gizmo is asked about the shape it was made from, as expose_text does) '''
+def _expose_count(shape):
+    ''' How many numbers place the shape's surfaces (what expose() would write), 0 when there are none or it cannot be
+        done (a shape under a gizmo is asked about the shape it was made from, as expose_text does) '''
     try:
         from fieldes.shape import Shape
         from fieldes.stdlib.handles import _exposed_count
         while getattr(shape, '_handles', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
             shape = shape._placed_from
-        n = _exposed_count(shape)
+        if getattr(shape, '_locks', None):
+            return 0
+        return int(_exposed_count(shape))
     except Exception:
-        return False
-    return 0 < n <= _MAX_EXPOSED
+        return 0
 
 
 def _new_name(value, taken):
@@ -521,16 +537,39 @@ def _new_name(value, taken):
     return name
 
 
-def scene_json(source, gs, results):
+def scene_json(source, gs, results, upto=None, partial=False):
     ''' Describes the evaluated script for FielDes's model tree.  Returns a
-        JSON string; every position is 1-based lines / 0-based columns. '''
+        JSON string; every position is 1-based lines / 0-based columns.
+        While a script is still running the tree is given what has been made so far: upto is the number of
+        top-level statements that are done, and partial leaves out what takes a measurement of the shapes (their
+        extents, whether their surfaces can be dragged), which the finished script's tree has. '''
     Shape, FailedPart = _types()
     src = _Source(source)
     _SPAN_LINES[:] = src.lines
     tree = ast.parse(source)
+    if upto is not None:
+        tree.body = tree.body[:upto]
 
     def is_shape(v):
         return isinstance(v, Shape)
+
+    def is_result(v):
+        # (an analysis result: displayed through its _display(), listed like a shape)
+        return not isinstance(v, Shape) and callable(getattr(v, '_display', None))
+
+    def display_shapes(v):
+        ''' The shapes a value displays (a result's _display() may be one or several) '''
+        if is_shape(v):
+            return [v]
+        if is_result(v):
+            try:
+                d = v._display()
+            except Exception:
+                return []
+            return [s for s in (d if isinstance(d, (list, tuple)) else [d]) if is_shape(s)]
+        if isinstance(v, (list, tuple)):
+            return [s for s in v if is_shape(s)]
+        return []
 
     def is_failed(v):
         return bool(FailedPart) and isinstance(v, FailedPart)
@@ -635,11 +674,11 @@ def scene_json(source, gs, results):
             items.append(item)
             continue
 
-        # --- "x = handles(x, ...)" / "x = expose(x, [...])" / "x = render_cache(x)": what edits the shape x
-        # (not shapes of their own)
+        # --- "x = handles(x, ...)" / "x = expose(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the
+        # shape x (not shapes of their own)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and \
                 isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call) and \
-                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache') and stmt.value.args and \
+                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache', 'lock') and stmt.value.args and \
                 isinstance(stmt.value.args[0], ast.Name) and \
                 stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
             target = by_name[stmt.targets[0].id]
@@ -656,27 +695,29 @@ def scene_json(source, gs, results):
                 info = {'line': line, 'end_line': end, 'call': _span(stmt.value), 'text': _short(src.segment(stmt), 60)}
                 target['cache' if on else 'cache_off'] = info
                 continue
+            if _short_name(_call_name(stmt.value)) == 'lock':
+                # (a locked shape cannot be dragged; the way of editing it had stays, for when it is unlocked)
+                target['locked'] = {'line': line, 'end_line': end, 'call': _span(stmt.value),
+                                    'text': _short(src.segment(stmt), 60)}
+                continue
             if _short_name(_call_name(stmt.value)) == 'expose':
                 # (its numbers are var()s: the shape's surfaces can be dragged)
                 target['exposed'] = {'line': line, 'end_line': end, 'call': _span(stmt.value),
                                      'text': _short(src.segment(stmt), 60)}
                 target['has_var'] = True
                 continue
-            mode, mode_span, show_span, shown = None, None, None, True
+            mode, mode_span = None, None
             for kw in stmt.value.keywords:
                 if kw.arg == 'mode' and isinstance(kw.value, ast.Constant) and \
                         isinstance(kw.value.value, str):
                     mode, mode_span = kw.value.value, _span(kw.value)
-                if kw.arg == 'show' and isinstance(kw.value, ast.Constant):
-                    # (older scripts: show=False hid the gizmo; mode= wins)
-                    shown, show_span = bool(kw.value.value), _span(kw.value)
-            if mode is None:
-                mode = 'gizmo' if shown else 'lock'
+            if mode not in ('click', 'never', 'always'):
+                mode = 'click'
             target['handles'] = {
                 'line': line, 'end_line': end, 'mode': mode, 'mode_span': mode_span,
-                'show_span': show_span, 'call': _span(stmt.value), 'text': src.segment(stmt),
+                'call': _span(stmt.value), 'text': src.segment(stmt),
                 'has_scale': any(kw.arg == 'scale' for kw in stmt.value.keywords),
-                # (a bare handles(x, mode='lock') has no numbers to drag: no gizmo)
+                # (a bare handles(x, mode='never') has no numbers to drag: no gizmo)
                 'has_numbers': any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and
                                    n.func.id == 'var' for n in ast.walk(stmt.value))}
             continue
@@ -689,12 +730,13 @@ def scene_json(source, gs, results):
                     if not isinstance(t, ast.Name):
                         continue
                     v = gs.get(t.id)
-                    if not (is_shape(v) or is_failed(v)):
+                    if not (is_shape(v) or is_failed(v) or is_result(v)):
                         continue
                     item = {'kind': 'failed' if is_failed(v) else 'shape',
                             'line': line, 'end_line': end,
                             'var': t.id, 'label': t.id,
-                            'no_handles': bool(getattr(v, '_no_handles', False)),
+                            'result': is_result(v),
+                            'no_handles': bool(getattr(v, '_no_handles', False)) or is_result(v),
                             'text': _short(src.segment(stmt.value), 70),
                             'deps': sorted(n for n in _names_in(stmt.value)
                                            if n in by_name and n != t.id)}
@@ -736,8 +778,8 @@ def scene_json(source, gs, results):
 
         # --- displayed expressions
         if isinstance(stmt, ast.Expr):
-            shown = is_shape(value) or (isinstance(value, (list, tuple)) and value and
-                                        all(is_shape(v) for v in value))
+            shown = is_shape(value) or is_result(value) or (isinstance(value, (list, tuple)) and value and
+                                                            all(is_shape(v) for v in value))
             if isinstance(stmt.value, ast.Name) and stmt.value.id in by_name:
                 it = by_name[stmt.value.id]
                 it['display_line'] = line
@@ -787,7 +829,8 @@ def scene_json(source, gs, results):
         name = text.strip()
         if name in by_name:
             by_name[name]['hidden_line'] = start + 1
-        else:
+        elif not (partial and start + 1 > (tree.body[-1].end_lineno if tree.body else 0)):
+            # (a run in progress has not reached the lines after its last statement)
             items.append({'kind': 'display', 'line': start + 1, 'end_line': j + 1,
                           'label': _short(text, 50), 'text': _short(text, 90),
                           'hidden_line': start + 1})
@@ -796,32 +839,30 @@ def scene_json(source, gs, results):
     for it in items:
         if it['kind'] == 'display':
             it['visible'] = 'hidden_line' not in it
-            it['mode'], it['mode_explicit'] = ('handles' if it.get('has_var') else 'lock'), False
+            it['mode'], it['mode_explicit'] = 'click', False
         elif 'var' in it:
             it['visible'] = 'display_line' in it
-            # The mode of its handles button: written by a handles() line, else it is what the shape
-            # has -- FielDes's own handles when it is made with var()s, nothing to drag otherwise
+            # The gizmo mode of its button: written by a handles() line ('click', 'never' or 'always'), else the
+            # default, 'click'.  Whether it is locked is a line of its own
             h = it.get('handles')
             if h:
                 it['mode'], it['mode_explicit'] = h['mode'], True
-            elif it.get('exposed') or it.get('has_var'):
-                it['mode'], it['mode_explicit'] = 'handles', False
             else:
-                it['mode'], it['mode_explicit'] = 'lock', False
+                it['mode'], it['mode_explicit'] = 'click', False
 
     # Extents of displayed shapes whose bounds aren't known yet (plain CSG,
     # shapes built from imports): needed to frame them and to make them the
     # region of interest.  Visible ones first, within a time budget.
     import time
-    deadline = time.time() + _BOUNDS_SECONDS
+    deadline = time.time() + (0 if partial else _BOUNDS_SECONDS)
     for it in sorted(items, key=lambda i: not i.get('visible')):
-        if 'bounds' in it or it.get('failed'):
+        if 'bounds' in it or it.get('failed') or partial:
             continue
         if it['kind'] == 'display':
             v = it.get('_value')
             shapes = [v] if is_shape(v) else (list(v) if isinstance(v, (list, tuple)) else [])
         elif it['kind'] == 'shape' and 'var' in it:
-            shapes = [gs.get(it['var'])]
+            shapes = display_shapes(gs.get(it['var']))
         else:
             continue
         shapes = [s for s in shapes if is_shape(s)]
@@ -833,7 +874,7 @@ def scene_json(source, gs, results):
     # the handles button makes them so; when they cannot, it goes to the gizmo)
     deadline = time.time() + _BOUNDS_SECONDS
     for it in sorted(items, key=lambda i: not i.get('visible')):
-        if it.get('failed') or it.get('has_var') or it.get('exposed') \
+        if it.get('failed') or it.get('has_var') or it.get('exposed') or partial \
                 or it['kind'] not in ('shape', 'display', 'import') or time.time() > deadline:
             continue
         if it['kind'] == 'display':
@@ -841,7 +882,11 @@ def scene_json(source, gs, results):
         else:
             v = gs.get(it.get('var'))
         if is_shape(v):
-            it['can_expose'] = _can_expose(v)
+            n = _expose_count(v)
+            # (FielDes writes the numbers of a small shape itself when it is selected, and offers the others in the
+            # shape's menu: `expose_count` says how many there are)
+            it['can_expose'] = 0 < n <= _MAX_EXPOSED
+            it['expose_count'] = n
     for it in items:
         it.pop('_value', None)
 

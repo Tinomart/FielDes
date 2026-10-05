@@ -1,0 +1,17 @@
+wait 45000
+waitrender 300
+action view.std-iso
+waitrender 300
+wait 2000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_full.png
+slider resultStep 5
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_load30.png
+click resultPlay
+wait 1200
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_play.png
+click resultPlay
+click resultElements
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/s05_elements.png
+quit

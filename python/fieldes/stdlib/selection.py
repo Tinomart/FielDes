@@ -4,7 +4,7 @@ Selecting a surface: the flood fill of a CAD program, as a field.
     from fieldes import *
 
     top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
-    top                                       # displayed: the patch, lit up on the part
+    top                                       # displayed: the part's surface, only the patch of it, lit up
 
 `select_surface` picks the patch of the part's surface around `seed` (a point on or near it) by spreading over
 the neighbouring triangles of the surface mesh: with mode='flat' (the default) as long as the surface stays
@@ -49,6 +49,20 @@ class SurfaceSelection(Shape):
         .arrays (the patch's own triangles) '''
 
     _no_handles = True             # (not something to drag: FielDes hides the handles button)
+
+    def _display(self):
+        ''' What FielDes shows for the selection stated on its own: the part it was picked on, drawn only where the
+            patch is, in the selection's colour -- the vertices of the part's surface mesh that belong to the patch
+            are coloured, all the others are not drawn.  (The field itself is a layer a hundredth of the part thick:
+            drawn as it is, it comes out as a few disconnected fragments at the resolution of the viewport.)  A
+            vertex belongs to the patch when the nearest point of the surface is in it, that is, when its distance
+            to the patch equals its distance to the whole surface (to within half the layer's thickness). '''
+        from fieldes.stdlib.fea import colored
+        value = self.patch - self.whole - self.thickness / 2.0       # (<= 0 on the patch)
+        shown = colored(self.shape, value, range=(0.0, float(SELECTION_CATEGORY)),
+                        label='bc:{}'.format(SELECTION_CATEGORY), colormap='bc')
+        shown._color_cutoff = 0.0              # (where the value is above this, the surface is not drawn)
+        return shown
 
     def __repr__(self):
         return 'select_surface(seed={}, angle={:g}, mode={!r}): {} triangles, {:g} mm thick'.format(

@@ -25,13 +25,11 @@ import os
 import re
 import time
 
-from fieldes.ffi import lib
+from fieldes.ffi import lib, libfive_mesh_import_info_t
 from fieldes.shape import Shape
 from fieldes import run_progress
 
 __all__ = [
-    'exclude',
-    'exact_region_mesh',
     'poor_fit_region',
     'import_step',
     'import_step_parts',
@@ -957,11 +955,11 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
         auto_exclude=True does that for every poorly fitted place by itself: each
         part's fit marker is read, the places where the fit is off by more than
         `exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the
-        lowest) are excluded from the part (the region is the field poor_fit_region),
-        so the FielDes viewport draws the STEP file's own surface there and the fitted
-        field everywhere else.  The region is cut out of the part's field, which is
-        what further modelling sees.  `exclude_quality` is exclude()'s `quality`.
-        Off by default: the exact pieces cost meshing time.
+        lowest) are excluded from the part (the region is the field poor_fit_region):
+        there the part is its exact surface, meshed from the STEP file and made a
+        field, locked against every later operation; the fitted field is the
+        part everywhere else.  `exclude_quality` is exclude()'s `quality`.
+        Off by default: the exact surfaces cost tessellation time.
     '''
     step_path = os.path.abspath(path)
     factor, unit_mm = _output_factor(step_path, units)
@@ -1059,111 +1057,25 @@ import_step_parts_reconstructed = import_step_parts
 
 
 # ---------------------------------------------------------------------------
-# Exact regions: the part's real geometry, meshed straight from the STEP file
+# The exact surface of an imported part: where it came from, and its field
 # ---------------------------------------------------------------------------
 #
-# Where the imported field is only approximate (B-spline faces fitted by
-# simple surfaces -- shown in red --, threads, ...), exclude() cuts a box out
-# of the field and puts the part's exact geometry back inside it: FielDes
-# meshes the solid directly from the STEP file (no field), cuts it to the
-# box and joins it to the field's mesh with a mesh boolean, for display and
-# STL export alike.  The field itself (for further modelling) only has the
-# box cut out.
-#
-# A part remembers where it came from (_ExactSource: file, solid, instance
-# and its placement since the import, a 4x4 matrix); moving, rotating,
-# scaling or mirroring it with the fieldes.stdlib transforms carries that
-# along.  The numbers may be FielDes's draggable variables (Shapes): FielDes
-# evaluates them when it renders, so dragging a region's box updates the
-# exact piece too.
-
-def _num(v):
-    return isinstance(v, (int, float))
-
-
-def _mul(a, b):
-    if (_num(a) and a == 0) or (_num(b) and b == 0):
-        return 0.0
-    if _num(a) and a == 1:
-        return b
-    if _num(b) and b == 1:
-        return a
-    if _num(a) and _num(b):
-        return float(a * b)
-    return Shape.wrap(a) * Shape.wrap(b)
-
-
-def _add(a, b):
-    if _num(a) and a == 0:
-        return b
-    if _num(b) and b == 0:
-        return a
-    if _num(a) and _num(b):
-        return float(a + b)
-    return Shape.wrap(a) + Shape.wrap(b)
-
-
-def _matmul(A, B):
-    out = []
-    for r in range(4):
-        row = []
-        for c in range(4):
-            v = 0.0
-            for k in range(4):
-                v = _add(v, _mul(A[r][k], B[k][c]))
-            row.append(v)
-        out.append(row)
-    return out
-
-
-def _identity():
-    return [[1.0 if r == c else 0.0 for c in range(4)] for r in range(4)]
-
-
-def _translation(v):
-    m = _identity()
-    for i in range(3):
-        m[i][3] = v[i]
-    return m
-
-
-def _neg(v):
-    return -v if _num(v) else -Shape.wrap(v)
-
-
-def _about(center, m):
-    """ m applied about `center` instead of the origin """
-    return _matmul(_translation(center), _matmul(m, _translation([_neg(c) for c in center])))
-
+# Where the imported field is only approximate (B-spline faces fitted by simple surfaces -- shown in red --, threads,
+# ...), exclude() (fieldes.stdlib.excluded) locks a region of the part and puts the part's exact geometry there: FielDes
+# meshes the solid directly from the STEP file (no field is involved) and makes that mesh a distance field.  The
+# field is made once, with the part where the file has it; what has been done to the part since the import -- moves,
+# turns, scales, mirrors -- is done to the field again, with the same numbers (they may be FielDes's draggable
+# variables, which are then the field's too).
 
 class _ExactSource:
-    """ Where a part came from: solid `solid` (instance `instance`) of a STEP
-        file, placed by `matrix` since the import (4x4, numbers or Shapes) """
-    def __init__(self, path, solid, instance, matrix):
-        self.path, self.solid, self.instance, self.matrix = path, solid, instance, matrix
+    """ Where a part came from: solid `solid` (instance `instance`) of a STEP file, with the unit `scale` (4x4,
+        plain numbers), and what has been done to it since the import: `ops`, a tuple of (transform name, args,
+        kwargs) of the fieldes.stdlib transforms, in order """
+    def __init__(self, path, solid, instance, scale, ops=()):
+        self.path, self.solid, self.instance, self.scale, self.ops = path, solid, instance, scale, tuple(ops)
 
-    def transformed(self, m):
-        return _ExactSource(self.path, self.solid, self.instance, _matmul(m, self.matrix))
-
-
-class _ExactRegion:
-    """ The exact geometry of one source inside the region `field` (a Shape,
-        negative inside it; None: everywhere), the region placed by `region`
-        (4x4) -- what FielDes meshes and joins """
-    def __init__(self, source, field, region, quality):
-        self.source, self.field, self.region, self.quality = source, field, region, quality
-
-    def transformed(self, m):
-        return _ExactRegion(self.source.transformed(m), self.field, _matmul(m, self.region), self.quality)
-
-    def _flat(self):
-        """ For FielDes: (path, solid, instance, part matrix (16 entries),
-            region matrix (16), the region's field or None, quality) """
-        s = self.source
-        return (s.path, int(s.solid), int(s.instance),
-                tuple(v for row in s.matrix for v in row),
-                tuple(v for row in self.region for v in row),
-                self.field, self.quality)
+    def transformed(self, op):
+        return _ExactSource(self.path, self.solid, self.instance, self.scale, self.ops + (op,))
 
 
 def _sources_of(shape):
@@ -1177,19 +1089,15 @@ _CARRIED = ('_color_field', '_color_range', '_color_label', '_color_map', '_fit_
             '_part_name', '_step_ref', '_step_metrics', '_bounds')
 
 
-def _carry_exact(out, src, m=None):
-    """ Gives `out` (made from `src`) src's exact-geometry information,
-        moved by the 4x4 matrix m (None: not moved) """
+def _carry_exact(out, src, op=None):
+    """ Gives `out` (made from `src`) src's STEP sources, with the transform `op` (name, args, kwargs) done to
+        them (None: none) """
     try:
         sources = _sources_of(src)
-        regions = list(getattr(src, '_exact', None) or [])
-        if m is not None:
-            sources = [s.transformed(m) for s in sources]
-            regions = [r.transformed(m) for r in regions]
+        if op is not None:
+            sources = [s.transformed(op) for s in sources]
         if sources:
             out._exact_sources = sources
-        if regions:
-            out._exact = regions
     except AttributeError:
         pass
     return out
@@ -1232,148 +1140,57 @@ def poor_fit_region(part, threshold=1.0):
     return Shape.wrap(threshold / 100.0) - marker
 
 
-def exclude(shape, region=None, source=None, quality=64, threshold=1.0):
-    """ Draws the EXACT surface of the imported part(s) `shape`, meshed straight
-        from the STEP file, inside a region -- for places the import only
-        approximates (B-spline faces fitted by simple surfaces, which the import
-        marks in red; threads; ...) that have to stay exact.
+# (the fields of the exact surfaces made so far, for the rest of the session: making one is the tessellation of the
+# solid -- cached by the kernel per file -- and the distance structure of its triangles; a script is run many times)
+_surface_fields = {}
 
-        The region is a FIELD OBJECT: any shape -- a sphere, a box, a part, a
-        part offset by some distance, a union of those -- is a region, the
-        inside of the shape (where its field is negative):
 
-            rails = union(kitchen[59][0], kitchen[60][0])   # the parts' own fields
-            kitchen = exclude(kitchen, offset(rails, 90))   # everything within 90 mm of them
+def _surface_field(src, quality):
+    """ The exact surface of one source, meshed from the STEP file and made a field: the part where the import has
+        it, then what was done to it since (src.ops) """
+    from fieldes.stdlib import transforms
+    stat = os.stat(src.path)
+    key = (os.path.normcase(os.path.abspath(src.path)), stat.st_mtime_ns, stat.st_size, int(src.solid),
+           int(src.instance), tuple(float(v) for row in src.scale for v in row), int(quality))
+    field = _surface_fields.get(key)
+    if field is None:
+        mat = (ctypes.c_double * 16)(*key[5])
+        mesh = lib.libfive_step_exact_surface(src.path.encode('utf-8'), int(src.solid), int(src.instance), mat,
+                                              int(quality))
+        if not mesh:
+            raise RuntimeError('exclude(): ' + lib.libfive_import_step_last_message().decode('utf-8', 'replace'))
+        try:
+            mc = mesh.contents
+            info = libfive_mesh_import_info_t()
+            ptr = lib.libfive_mesh_from_arrays(ctypes.cast(mc.verts, ctypes.POINTER(ctypes.c_float)), mc.vert_count,
+                                               ctypes.cast(mc.tris, ctypes.POINTER(ctypes.c_uint32)), mc.tri_count,
+                                               1.0, ctypes.byref(info))
+        finally:
+            lib.libfive_mesh_delete(mesh)
+        if not ptr:
+            raise RuntimeError('exclude(): the exact surface of {} could not be made a field: {}'.format(
+                os.path.basename(src.path), lib.libfive_import_mesh_last_message().decode('utf-8', 'replace')))
+        field = _surface_fields[key] = Shape(ptr)
+    for name, args, kwargs in src.ops:
+        field = transforms.RAW[name](field, *args, **kwargs)
+    return field
 
-        Without a region, it is the places where the fit is worse than
-        `threshold` percent of the face's size (poor_fit_region), in every part
-        that has any:
 
-            kitchen = import_step_parts('step/kitchen.stp')
-            kitchen = exclude(kitchen)
-
-        What you give it decides how much it works on.  The WHOLE IMPORT (what
-        import_step_parts returns): the region goes into every part it
-        touches, and the same list comes back, the parts in the same places.
-        One entry of the import, kitchen[19], or one part, kitchen[19][0]:
-        that part only.
-
-            kitchen[19] = exclude(kitchen[19], region)
-
-        Inside the region FielDes draws the exact surface instead of the shape's
-        own (in the view and in the exported STL): the shape's mesh loses its
-        triangles there and the STEP file's surface is cut by the region's field
-        and put in, the edge between them jagged by one cell.  The field itself
-        -- what further modelling, FEA or lattices see -- is not changed.  The
-        region's surface should cross no badly fitted face (the red one): where
-        the fit is off, the exact surface and the fitted one do not meet at the
-        region's surface and the seam shows as a step.  A region that encloses
-        the whole bad face has no such seam.
-
-        For a shape made from a part (moved, mirrored, cut, filled with a
-        lattice ...) say which imported part its exact geometry comes from,
-        and apply exclude() last, to the finished shape:
-
-            part = import_step_parts('bracket.step')[0][0]
-            light = ...                  # anything made from part
-            final = exclude(light, region, source=part)
-
-        The part may have been moved, rotated, scaled or mirrored with the
-        fieldes.stdlib transforms since the import (the exact piece follows);
-        several regions can be excluded one after the other.
-
-        quality: points per full turn of a circle in the exact mesh.
-        threshold: for the default region, in percent of the face's size.
-    """
-    if isinstance(shape, (list, tuple)) and not _is_pair(shape):
-        if source is not None:
-            raise ValueError('exclude(): source= is for one part; the import\'s parts are their own sources')
-        field = None if region is None else Shape.wrap(region)
-        done = []
-        for item in shape:
-            part = item[0] if _is_pair(item) else item
-            if not isinstance(part, Shape) or not _sources_of(part):
-                done.append(item)               # (a part that failed to import, anything else: as it is)
-                continue
-            mine = field if field is not None else poor_fit_region(part, threshold)
-            if mine is None:
-                done.append(item)               # (fitted well everywhere: nothing to do)
-                continue
-            bounds = item[1] if _is_pair(item) else getattr(part, '_bounds', None)
-            if field is not None and bounds is not None and not _may_touch(mine, bounds):
-                done.append(item)               # (the region does not reach this part)
-                continue
-            done.append(exclude(item, mine, quality=quality))
-        return type(shape)(done)
-    if _is_pair(shape):
-        return (exclude(shape[0], region, source=source, quality=quality, threshold=threshold), shape[1])
-
-    of = source if source is not None else shape
-    sources = _sources_of(of)
-    if not sources:
-        raise ValueError('exclude(): the source must be a part imported from a STEP file '
-                         '(import_step_parts / import_step), or made from one by moving, '
-                         'rotating, scaling or mirroring it')
-    if region is None:
-        region = poor_fit_region(of, threshold)
-        if region is None:
-            return shape                        # (fitted well everywhere: nothing to do)
-    region = Shape.wrap(region)
-    # (a shape of its own with the same field: the original keeps no exact regions)
-    out = shape.max(Shape.wrap(-1.0e9))
-    for name in _CARRIED:
-        if hasattr(shape, name):
-            try:
-                setattr(out, name, getattr(shape, name))
-            except AttributeError:
-                pass
-    # (the part's own render resolution, set by roi_resolution on it or on this shape, whichever
-    # comes first: FielDes follows this link to the part)
-    out._placed_from = shape
-    # The red marking of poorly fitted B-spline faces doesn't apply where
-    # the geometry is now exact
-    if getattr(out, '_color_map', None) == 'fit' and getattr(out, '_color_field', None) is not None:
-        out._color_field = out._color_field.min((region * 1.0e6).max(0))
-    _carry_exact(out, shape)
-    out._exact = list(getattr(shape, '_exact', None) or []) + \
-        [_ExactRegion(s, region, _identity(), quality) for s in sources]
+def exact_field(sources, quality=64):
+    """ The exact surface of the parts `sources` (_ExactSource) as a field: meshed straight from the STEP file, made
+        a signed distance field (negative inside the solid), the parts united """
+    out = None
+    for s in sources:
+        f = _surface_field(s, quality)
+        out = f if out is None else out.min(f)
     return out
 
 
 def _auto_exclude(parts, threshold, quality):
     """ import_step_parts(auto_exclude=True): every part with poorly fitted places gets them excluded """
+    from fieldes.stdlib.excluded import exclude
     out = exclude(parts, quality=quality, threshold=threshold)
     changed = sum(1 for before, after in zip(parts, out) if after[0] is not before[0])
     print('auto_exclude: exact surface added to %d of %d parts (fit worse than %g %%)'
           % (changed, len(parts), threshold))
     return out
-
-
-def exact_region_mesh(shape, cell=1.0):
-    """ The exact pieces of the regions excluded from `shape` (see exclude)
-        as (vertices, triangles) lists -- outside FielDes, e.g. to check
-        them: the STEP file's surface inside each region, the triangles the
-        region's surface crosses cut down to `cell` long.  Every number must
-        be a plain number (no FielDes variables), and no region may have been
-        moved after exclude(). """
-    def val(v):
-        return float(v) if _num(v) else float(Shape.wrap(v)(0, 0, 0))
-
-    verts, tris = [], []
-    for r in getattr(shape, '_exact', None) or []:
-        path, solid, inst, m, region, field, quality = r._flat()
-        if any(abs(val(v) - (1.0 if i % 5 == 0 else 0.0)) > 1e-12 for i, v in enumerate(region)):
-            raise ValueError('exact_region_mesh: a region was moved after exclude() (FielDes only)')
-        mat = (ctypes.c_double * 16)(*[val(v) for v in m])
-        mesh = lib.libfive_step_exact_clipped(path.encode('utf-8'), solid, inst, mat,
-                                              None if field is None else field.ptr, float(cell),
-                                              int(val(quality)))
-        if not mesh:
-            raise RuntimeError(lib.libfive_import_step_last_message().decode('utf-8', 'replace'))
-        base = len(verts)
-        mc = mesh.contents
-        verts.extend((mc.verts[i].x, mc.verts[i].y, mc.verts[i].z) for i in range(mc.vert_count))
-        tris.extend((base + mc.tris[i].a, base + mc.tris[i].b, base + mc.tris[i].c)
-                    for i in range(mc.tri_count))
-        lib.libfive_mesh_delete(mesh)
-    return verts, tris

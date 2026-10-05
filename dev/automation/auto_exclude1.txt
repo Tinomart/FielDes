@@ -1,0 +1,9 @@
+# a STEP part with a sphere excluded, and an offset of it: the offset grows everywhere except inside the sphere
+wait 6000
+waitrender 240 30
+action view.std-iso
+waitrender 60 10
+wait 500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/exclude1_script.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/exclude1_iso_offset.png
+quit

@@ -5,7 +5,7 @@ wall thickness, strut radius, offset, relative density, cell size — can itself
 follow a regression, a distance, a stress result, a temperature.
 
 - [One call: lattice()](#one-call-lattice)
-- [Cells: cell_periodic, cell_non_periodic, cell_custom](#cells)
+- [Cells: cell_periodic, cell_non_periodic, cell_custom, cell_custom_truss, cell_custom_tpms](#cells)
 - [Sizing: thickness, radius, density](#sizing-thickness-radius-density)
 - [Skin, shell and fill()](#skin-shell-and-fill)
 - [Cell maps: cells that follow the body](#cell-maps-cells-that-follow-the-body)
@@ -24,15 +24,16 @@ part = sphere(30)
 lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0, skin=1.5)
 ```
 
-`lattice(body, cell='gyroid', cell_size=10, thickness=None, radius=None, density=None, style='sheet',
+`lattice(body, cell='gyroid', cell_size=None, thickness=None, radius=None, density=None, style='sheet',
 offset=None, skin=0, region='volume', depth=None, cell_map=None, node_radius=None, blend=0, skin_blend=0,
 wall=None, axis='z')` fills `body` with a lattice and returns a shape. `cell` is what the lattice is made of: see
-the next section.
+the next section. `cell_size` is 10 mm unless the cell is a `cell_custom(region, geometry)`, which is made in the
+size of its region.
 
 ## Cells
 
 Every lattice operation — `lattice()`, `lattice_surface_conform()`, `strut_lattice()`, `tpms()`, `planar_lattice()`,
-`lattice_parameter_for_density()` — takes a **cell**: the thing the lattice is made of. Three functions make one, and
+`lattice_parameter_for_density()` — takes a **cell**: the thing the lattice is made of. Five functions make one, and
 they all make the same kind of object, so any of them goes wherever a cell is taken — and nothing else does: a name
 such as `'gyroid'` is not a cell, `cell_periodic('gyroid')` is.
 
@@ -40,12 +41,15 @@ such as `'gyroid'` is not a cell, `cell_periodic('gyroid')` is.
 |---|---|---|
 | `cell_periodic(kind)` | a standard cell that repeats on a grid | `'octet'`, `'gyroid'`, `'hexagon'` |
 | `cell_non_periodic(kind, relax=2, seed=1)` | cells that do not repeat: a random graph | `'voronoi'`, `'delaunay'` |
-| `cell_custom(…)` | a cell of your own | nodes and beams, a TPMS equation, a shape that tiles |
+| `cell_custom(region, geometry)` | a cell of **any geometry** of your own: a box and a field | spheres, rods, a TPMS, any boolean of them |
+| `cell_custom_truss(nodes, beams, mirror='')` | a strut cell of your own: beams between nodes | a cube frame with a plus through its middle |
+| `cell_custom_tpms(equation)` | a triply periodic surface of your own, from its equation | a gyroid written out |
 
 ```python
 lattice(part, cell_periodic('octet'), cell_size=10, radius=0.6)
 lattice(part, cell_non_periodic('voronoi', seed=4), cell_size=8, radius=0.5)
-lattice(part, cell_custom(equation=my_equation), cell_size=8, thickness=0.8)
+lattice(part, cell_custom(box((0, 0, 0), (10, 10, 10)), my_geometry))
+lattice(part, cell_custom_tpms(my_equation), cell_size=8, thickness=0.8)
 lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
 ```
 
@@ -65,7 +69,8 @@ stochastic truss), about `cell_size` apart; `relax` makes the cells more even, `
 `thickness` is the beam thickness (diameter; `radius` is the same thing, half of it). In `lattice()` it fills a body; in `lattice_surface_conform()` it lays the graph on the
 surface (its beams centred on it).
 
-**`cell_custom(…)`** — see [Your own cells and equations](#your-own-cells-and-equations).
+**`cell_custom(region, geometry)`**, **`cell_custom_truss(nodes, beams)`** and **`cell_custom_tpms(equation)`** — see
+[Your own cells and equations](#your-own-cells-and-equations).
 
 TPMS `style`: `'sheet'` is a wall of `thickness` mm centred on the minimal surface ("walled TPMS");
 `'network'` is the solid on one side of it, grown by `offset` mm ("skeletal TPMS"; `invert=True` on `tpms()`
@@ -164,36 +169,65 @@ distance (`depth_below`, `distance_to_point`), a regression over measured data, 
 
 ## Your own cells and equations
 
-`cell_custom` makes a cell of your own, of three kinds, and every lattice operation takes it like a standard cell.
+Three functions make a cell of your own, and every lattice operation takes it like a standard cell.
 
-**A strut cell** — `cell_custom(nodes, beams, mirror='')` — from nodes and beams, coordinates 0–1 across the cell.
+**Any geometry** — `cell_custom(region, geometry)` — is the cell you model yourself: `region` is a **box** (`box(...)`,
+`box_exact(...)`, `cube(...)`) that gives the extent of the cell, and `geometry` is **any field** that says what is in
+it. The cell is the **intersection** of the two, so the geometry may reach out of the box (a rod longer than the cell, a
+sphere on a corner): only what is inside is the cell. The cell repeats on any cell map: a straight grid, a cylindrical
+or a spherical one.
+
+```python
+region = box((0, 0, 0), (10, 10, 10))
+ball = difference(sphere(3.8, (5, 5, 5)), sphere(2.6, (5, 5, 5)))                 # a hollow ball, 1.2 mm wall
+rods = union(box((-2, 4, 4), (12, 6, 6)), box((4, -2, 4), (6, 12, 6)), box((4, 4, -2), (6, 6, 12)))
+cell = cell_custom(region, union(ball, difference(rods, sphere(2.6, (5, 5, 5)))))
+
+lattice(part, cell)                                         # cells of 10 mm, as modelled
+lattice(part, cell, cell_size=6)                            # the cell scaled to 6 mm (or (sx, sy, sz): stretched)
+lattice(part, cell, cell_map=cylindrical(cells_around=12))  # the same cell round an axis
+cell.solid()                                                # the cell on its own, to look at it
+```
+
+- **The size.** The cell comes out in the size of its region. `cell_size=` scales it (every length in it, the thickness of
+  its walls too): the geometry is modelled once, in the region's own coordinates, and fitted to the cell size the lattice
+  is made with. On a cell map the size is measured the way it is for any cell (along the map's axes).
+- **The region** must be a box (its faces are the cell's faces); a sphere, a rounded box or two boxes is refused, and so
+  is a region that is open. Its numbers are read when the cell is made.
+- **It has to tile.** What the geometry does on a face of the box must be what it does on the opposite face: a rod that
+  leaves through one face comes in through the other, a sphere on a corner is on all eight. `check=True` (the default) looks
+  at the faces and warns where they do not match, which would leave steps or holes at every cell boundary.
+- **No thickness argument.** The geometry is the lattice, so `thickness=`, `radius=`, `density=`, `offset=`, `wall=` and
+  `node_radius=` do not apply to it (they are refused, not ignored): put the thickness you want in the geometry. `skin=`,
+  `region=`, `depth=` and `cell_map=` do.
+- **Not on a surface.** `lattice_surface_conform()` lays cells of struts and TPMS on a surface; a box of geometry is
+  refused there.
+
+**A strut cell** — `cell_custom_truss(nodes, beams, mirror='')` — from nodes and beams, coordinates 0–1 across the cell.
 Draw one part of a symmetric cell and mirror it:
 
 ```python
-star = cell_custom({'o': (0, 0, 0), 'c': (0.5, 0.5, 0.5), 'e': (0.5, 0, 0)},
-                   [('o', 'c', 1.0), ('o', 'e')],          # a beam may carry its own radius (mm)
-                   mirror='xyz')
+star = cell_custom_truss({'o': (0, 0, 0), 'c': (0.5, 0.5, 0.5), 'e': (0.5, 0, 0)},
+                         [('o', 'c', 1.0), ('o', 'e')],          # a beam may carry its own radius (mm)
+                         mirror='xyz')
 print(star.check() or 'tiles')       # lists what would make it fall apart or not tile
 lattice(body, star, cell_size=8, radius=0.6, skin=1.0)
 ```
 
 `mirror` copies the beams across the cell's mid-planes (`'x'`, `'xy'`, `'xyz'`). `check()` reports nodes
-outside the cell, zero-length beams, nodes on a face without a partner on the opposite face, and loose ends.
+outside the cell, zero-length beams, nodes on a face without a partner on the opposite face, and loose ends. (This was
+`cell_custom(nodes, beams)`; that call now says so.)
 
-**A TPMS equation** — `cell_custom(equation=f)` — of the three cell phases `a, b, c` (2π per cell), written with
+**A TPMS equation** — `cell_custom_tpms(equation)` — of the three cell phases `a, b, c` (2π per cell), written with
 `+ - * /` and the methods `.sin() .cos() .sqrt() .square()`:
 
 ```python
-my_tpms = cell_custom(equation=lambda a, b, c: a.cos()*b.cos()*c.cos() - a.sin()*b.sin()*c.sin(), name='D-like')
+my_tpms = cell_custom_tpms(lambda a, b, c: a.cos()*b.cos()*c.cos() - a.sin()*b.sin()*c.sin(), name='D-like')
 lattice(body, my_tpms, cell_size=8, thickness=0.8, skin=1.0)
 ```
 
 Its value is turned into a distance in mm by following its gradient, so `thickness=` is a real wall and
 `density=` calibrates it like the built-in ones. See `examples/11_custom_lattice.py`.
-
-**A shape that tiles** — `cell_custom(shape=s)` — the shape you model in one cell, the box from (0, 0, 0) to the
-`cell_size` the lattice is made with. It is repeated like a standard cell (and follows a `cell_map`); `check=True` warns
-where its faces do not match. Model it so it tiles: what leaves one face must come in on the opposite one.
 
 ## Lattices that follow a surface
 
@@ -245,7 +279,7 @@ invert=False, skin=0, within=None)`:
 | `surface_field` | the surface, as one argument: a body, a surface (a field that is zero on it), or a `select_surface()` selection (the lattice is laid on that patch only) |
 | `within` | where, besides: any shape; the lattice is kept inside it. Default: the whole surface |
 | `depth` | how deep the layers are together (mm). Default: as deep as the body is under each cell (a thin shell: its thickness; at most three cells) for `side='inside'`, one cell for `'outside'` |
-| `cell` | a **strut cell** (`cell_periodic('octet')`, `'bcc'`, `'cubic'`, `'kelvin'`, …; `radius` is the strut radius, by default 12 % of the smaller of `cell_size` and the layer's depth), a **periodic surface** (`cell_periodic('gyroid')`, `'schwarz_p'`, `'diamond'`, `'neovius'`, `'lidinoid'`, `'split_p'`, `'iwp'`, `'frd'`, `'fischer_koch_s'`; see below), `cell_custom(nodes, beams)`, or `cell_non_periodic(…)` (a random graph on the surface). Default `cell_periodic('octet')` |
+| `cell` | a **strut cell** (`cell_periodic('octet')`, `'bcc'`, `'cubic'`, `'kelvin'`, …; `radius` is the strut radius, by default 12 % of the smaller of `cell_size` and the layer's depth), a **periodic surface** (`cell_periodic('gyroid')`, `'schwarz_p'`, `'diamond'`, `'neovius'`, `'lidinoid'`, `'split_p'`, `'iwp'`, `'frd'`, `'fischer_koch_s'`; see below), `cell_custom_truss(nodes, beams)`, or `cell_non_periodic(…)` (a random graph on the surface). Default `cell_periodic('octet')` |
 | `thickness`, `style`, `offset`, `invert`, `skin` | for a periodic surface: the wall of a `'sheet'` in mm (default 15 % of `cell_size`), or `style='network'` (the solid on one side of the surface, grown by `offset` mm; `invert=True` takes the other side); `skin` mm of solid against the faces of the layers |
 | `cell_size`, `layers` | the cell along the surface; the number of cells through the depth (default: as many as fit, at least 1) |
 | `side` | `'inside'` (the lattice fills the body) or `'outside'` (it stands out of the surface) |
@@ -355,8 +389,8 @@ layers are all filled by other cells …` says how many were left out.
 - A quad mesh of a surface has nodes that are not on four cells (a node on three or five): about one in five here. Cells
   are less regular round those, round a narrow fillet or a small step (narrower than a cell) and where the rows of cells
   have to turn a corner; the nodes are evened out afterwards, but a node on a sharp edge can only slide along it.
-- Struts and the nine periodic surfaces (and a graph of random cells); your own TPMS equation (`cell_custom(equation=…)`),
-  a planar pattern, a shape that tiles and the trusses made on the nodes of a surface mesh (`prism`, `xbrace`, `zigzag`)
+- Struts and the nine periodic surfaces (and a graph of random cells); your own TPMS equation (`cell_custom_tpms(…)`),
+  a planar pattern, a geometry in a box (`cell_custom(region, geometry)`) and the trusses made on the nodes of a surface mesh (`prism`, `xbrace`, `zigzag`)
   are not available here (they need the surface's coordinates as a field, or a
   mesh of the surface, and a mesh is only the output).
 - Cells much bigger than the thickness of a thin shell (15 mm cells in a 4 mm skin) are flat slabs: struts lie at shallow

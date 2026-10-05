@@ -303,3 +303,7 @@ for (_name, _f) in _transforms.__dict__.items():
 import fieldes.stdlib.csg as _csg
 for _name in ['union', 'intersection', 'difference', 'offset']:
     setattr(Shape, _name, getattr(_csg, _name))
+
+# What those functions do with a shape that has an excluded region (see fieldes.stdlib.excluded)
+from fieldes.stdlib import excluded as _excluded
+_excluded.install_methods()
