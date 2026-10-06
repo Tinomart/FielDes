@@ -439,6 +439,14 @@ void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, i
 void libfive_tetfea_add_force(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz);
 void libfive_tetfea_set_gravity(libfive_tetfea* f, float gx, float gy, float gz, float density);
 void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, float alpha, float reference);
+/*  Material properties as fields (see TetProblem::setStiffnessField): Young's modulus in MPa (the E given to _new is then
+ *  only what the stiffness matrix is made with), the density, the thermal expansion coefficient; and a load whose total is
+ *  spread over its region by a profile (a field, not negative) instead of evenly  */
+void libfive_tetfea_set_stiffness_field(libfive_tetfea* f, libfive_tree E);
+void libfive_tetfea_set_density_field(libfive_tetfea* f, libfive_tree density);
+void libfive_tetfea_set_expansion_field(libfive_tetfea* f, libfive_tree alpha);
+void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
+                                      int load_case, libfive_tree profile);
 /*  Meshes the part and resolves supports and loads; 1 on success (else the message says why)  */
 int libfive_tetfea_prepare(libfive_tetfea* f);
 uint64_t libfive_tetfea_hash(libfive_tetfea* f);
@@ -511,6 +519,13 @@ void libfive_tetthermal_add_temperature(libfive_tetthermal* f, libfive_tree regi
 void libfive_tetthermal_add_heat(libfive_tetthermal* f, libfive_tree region, float watts);
 void libfive_tetthermal_add_generation(libfive_tetthermal* f, libfive_tree region, float watts);
 void libfive_tetthermal_add_convection(libfive_tetthermal* f, libfive_tree region, float coefficient, float ambient);
+/*  The same with fields (see TetThermalProblem::setConductivityField; a field that is NULL is the number)  */
+void libfive_tetthermal_set_conductivity_field(libfive_tetthermal* f, libfive_tree k);
+void libfive_tetthermal_add_temperature_field(libfive_tetthermal* f, libfive_tree region, float value, libfive_tree field);
+void libfive_tetthermal_add_heat_profile(libfive_tetthermal* f, libfive_tree region, float watts, libfive_tree profile);
+void libfive_tetthermal_add_generation_profile(libfive_tetthermal* f, libfive_tree region, float watts, libfive_tree profile);
+void libfive_tetthermal_add_convection_fields(libfive_tetthermal* f, libfive_tree region, float coefficient,
+                                              libfive_tree coefficient_field, float ambient, libfive_tree ambient_field);
 int libfive_tetthermal_prepare(libfive_tetthermal* f);
 uint64_t libfive_tetthermal_hash(libfive_tetthermal* f);
 /*  The solved problem kept in a file (the result cache), and read back into a handle that answers every query
@@ -754,6 +769,12 @@ bool libfive_tree_save(libfive_tree ptr, const char* filename);
 /*  Can the whole tree be kept in a file and read back?  (Every oracle in it knows how to save itself.)  libfive_tree_save
  *  refuses a tree that cannot.  */
 bool libfive_tree_can_save(libfive_tree ptr);
+
+/*
+ *  Which of the coordinates a tree depends on: bit 0 for x, bit 1 for y, bit 2 for z (a tree that holds an oracle,
+ *  which is a field of all of space, has all three).  A shape of no z is a 2D profile.
+ */
+int libfive_tree_axes(libfive_tree ptr);
 
 /*  Deserializes a tree from a file. */
 libfive_tree libfive_tree_load(const char* filename);

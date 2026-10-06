@@ -35,6 +35,7 @@ All three return scale * f(w): inside where negative.
 import math
 
 from fieldes.shape import Shape
+from fieldes.stdlib.fieldargs import lowest
 
 X, Y, Z = Shape.X, Shape.Y, Shape.Z
 
@@ -109,19 +110,19 @@ def revolved_curve(coefficients, axis=(0, 0, 1), origin=(0, 0, 0), scale=1):
 
 
 def ellipsoid(radii, center=(0, 0, 0)):
-    ''' An ellipsoid with semi-axes radii = (a, b, c) along x, y, z
+    ''' An ellipsoid with semi-axes radii = (a, b, c) along x, y, z, numbers or fields
         (distance-like near the surface; exact for a sphere)
     '''
     a, b, c = radii
     x, y, z = X() - center[0], Y() - center[1], Z() - center[2]
-    k = min(a, b, c)
+    k = lowest(a, b, c)
     return k * (((x / a).square() + (y / b).square() + (z / c).square()).sqrt() - 1)
 
 
 def elliptic_cylinder(a, b, center=(0, 0, 0)):
     ''' An infinite cylinder along z with an elliptic section (semi-axes a, b) '''
     x, y = X() - center[0], Y() - center[1]
-    return min(a, b) * (((x / a).square() + (y / b).square()).sqrt() - 1)
+    return lowest(a, b) * (((x / a).square() + (y / b).square()).sqrt() - 1)
 
 
 def paraboloid(k, center=(0, 0, 0)):

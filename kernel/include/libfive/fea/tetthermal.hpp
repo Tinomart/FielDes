@@ -45,6 +45,20 @@ public:
     void addGeneration(const Tree& region, double watts);
     void addConvection(const Tree& region, double coefficient, double ambient);
 
+    /*  The same with fields (a Tree that is not valid says: the number).  Each is taken where it acts:
+     *    the conductivity (W / (mm K)) at the centre of every tetrahedron -- the one given to the constructor is then only a
+     *      number to start from;
+     *    a held temperature at the nodes inside its region; the transfer coefficient h and the ambient temperature at the
+     *      centre of every boundary triangle of a convection;
+     *    a profile weights how a heat input or generation spreads over its region: by area times the profile (by volume times
+     *      it for a generation, by it alone over the nodes of a region that holds no surface), not evenly  */
+    void setConductivityField(const Tree& k);
+    void addTemperatureField(const Tree& region, double value, const Tree& field);
+    void addHeatProfile(const Tree& region, double watts, const Tree& profile);
+    void addGenerationProfile(const Tree& region, double watts, const Tree& profile);
+    void addConvectionFields(const Tree& region, double coefficient, const Tree& coefficientField, double ambient,
+                             const Tree& ambientField);
+
     /*  Meshes the part and resolves the boundary conditions; false with a message if
      *  the problem can't be solved as given  */
     bool prepare(std::string& error);
@@ -61,9 +75,11 @@ private:
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_k;
 
-    struct Temperature { Tree region; double value; };
-    struct Heat { Tree region; double watts; bool volume; };
-    struct Convection { Tree region; double coefficient, ambient; };
+    struct Temperature { Tree region; double value; Tree field = Tree::invalid(); };
+    struct Heat { Tree region; double watts; bool volume; Tree profile = Tree::invalid(); };
+    struct Convection { Tree region; double coefficient, ambient; Tree coefficientField = Tree::invalid(), ambientField = Tree::invalid(); };
+    Tree m_conductivityField = Tree::invalid();
+    std::vector<double> m_elementK;             // per tetrahedron: its conductivity (empty without a conductivity field)
     std::vector<Temperature> m_temperatures;
     std::vector<Heat> m_heats;
     std::vector<Convection> m_convections;

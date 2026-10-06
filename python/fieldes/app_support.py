@@ -63,6 +63,12 @@ def completion_info():
                 add_def(name, obj)
             add_tip(name, obj)
 
+    try:
+        from fieldes import blocks
+        out.extend(blocks.records())
+    except Exception:
+        pass
+
     for name in ('set_bounds', 'set_resolution', 'set_quality'):
         out.append('member\tview\t' + name)
     out.append('tip\tset_bounds\tview.set_bounds([xmin, ymin, zmin], [xmax, ymax, zmax])'
@@ -481,6 +487,246 @@ def menu_call(request):
     return catalog.call(request)
 
 
+def set_blocks_folder(path):
+    ''' The folder of the custom blocks (Settings > Blocks folder); an empty path is the default one next to FielDes.
+        Returns the folder in use '''
+    import os
+    from fieldes import blocks
+    if path:
+        os.environ['FIELDES_BLOCKS'] = path
+    else:
+        os.environ.pop('FIELDES_BLOCKS', None)
+    blocks.refresh()
+    return blocks.folder()
+
+
+def _bound_names(scope_node):
+    ''' The names a function (or a lambda) binds itself: its parameters and what it assigns, imports, defines or loops over,
+        less what it declares global or nonlocal (those are the outer scope's) -- not looking into the scopes inside it '''
+    names, outer = set(), set()
+    args = scope_node.args
+    for a in args.posonlyargs + args.args + args.kwonlyargs + ([args.vararg] if args.vararg else []) + \
+            ([args.kwarg] if args.kwarg else []):
+        names.add(a.arg)
+    body = scope_node.body if isinstance(scope_node.body, list) else [scope_node.body]
+    stack = list(body)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (ast.Global, ast.Nonlocal)):
+            outer.update(n.names)
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            names.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(n.name)
+            continue                # (what is inside is a scope of its own)
+        elif isinstance(n, ast.Lambda):
+            continue
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                names.add((a.asname or a.name).split('.')[0])
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            names.add(n.name)
+        stack.extend(ast.iter_child_nodes(n))
+    return names - outer
+
+
+def rename_edits(arg):
+    ''' Renaming a variable of the script (a double click on its name in the model tree).  `arg` is JSON {source, old, new};
+        the answer is JSON {"edits": [[line (0-based), first column, end column], ...]} -- every place the name is written as a
+        name (not in a string, not after a dot, not a keyword argument, not another variable of the same name in a function),
+        and in the `# hidden: name` lines the tree writes.  Raises ValueError with the reason when `new` cannot be the name '''
+    import builtins
+    import keyword
+    req = json.loads(arg)
+    source, old, new = req['source'], req['old'], req['new']
+    if new == old:
+        return json.dumps({'edits': []})
+    if not new.isidentifier() or keyword.iskeyword(new):
+        raise ValueError('%r is not a name a variable can have: letters, digits and _, not starting with a digit' % new)
+    tree = ast.parse(source)
+    taken = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    taken |= {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    taken |= {a.arg for n in ast.walk(tree) if isinstance(n, ast.arguments)
+              for a in n.posonlyargs + n.args + n.kwonlyargs}
+    if new in taken:
+        raise ValueError('%s is used in the script already' % new)
+    try:
+        import fieldes
+        if hasattr(fieldes, new) or hasattr(builtins, new):
+            raise ValueError('%s is the name of a function of the library: a variable of that name would hide it' % new)
+    except ImportError:
+        pass
+
+    found = []
+
+    class Finder(ast.NodeVisitor):
+        def visit_Name(self, n):
+            if n.id == old:
+                found.append(n)
+
+        def _function(self, n):
+            # (defaults, decorators and annotations belong to the outer scope; the body to the function's, unless it binds the name)
+            for d in n.args.defaults + [d for d in n.args.kw_defaults if d is not None]:
+                self.visit(d)
+            for d in getattr(n, 'decorator_list', []):
+                self.visit(d)
+            if old in _bound_names(n):
+                return
+            for b in (n.body if isinstance(n.body, list) else [n.body]):
+                self.visit(b)
+
+        visit_FunctionDef = visit_AsyncFunctionDef = visit_Lambda = _function
+
+        def _comprehension(self, n):
+            bound = {t.id for g in n.generators for t in ast.walk(g.target) if isinstance(t, ast.Name)}
+            if old in bound:
+                self.visit(n.generators[0].iter)        # (the first iterable is evaluated outside)
+                return
+            self.generic_visit(n)
+
+        visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    Finder().visit(tree)
+    lines = source.split('\n')
+
+    def char_col(line, byte_col):
+        return len(lines[line].encode('utf-8')[:byte_col].decode('utf-8', 'replace'))
+
+    edits = []
+    for n in found:
+        if n.lineno == n.end_lineno:
+            edits.append([n.lineno - 1, char_col(n.lineno - 1, n.col_offset), char_col(n.lineno - 1, n.end_col_offset)])
+    # the `# hidden: name` lines (a hidden display)
+    hidden = re.compile(r'^(\s*#\s*hidden:\s?)(.*)$')
+    word = re.compile(r'(?<![\w.])' + re.escape(old) + r'(?!\w)')
+    shadow = re.compile(r'#\s*shadow:\s*(.*)$')              # (the names a Ctrl+drag marked as references)
+    for i, line in enumerate(lines):
+        m = hidden.match(line)
+        if m:
+            for w in word.finditer(m.group(2)):
+                edits.append([i, m.start(2) + w.start(), m.start(2) + w.end()])
+        m = shadow.search(line)
+        if m:
+            for w in word.finditer(m.group(1)):
+                edits.append([i, m.start(1) + w.start(), m.start(1) + w.end()])
+    edits.sort()
+    return json.dumps({'edits': edits})
+
+
+def arg_edits(arg):
+    ''' Changing the models a call is given: the model tree's nesting, renesting and denesting are edits of the arguments.
+        `arg` is JSON {source, statements: [{var, line, remove: [name, ...], insert: [{name, relative, side}, ...]}]}: for each
+        statement (the `var = call(...)` on the 1-based `line`) the models taken out of the call and put into it -- `side` is
+        "before" or "after" the model `relative` (a model of the call), or "end" (after the last one).  A model is a plain name
+        written as an argument of the call, or in a list or tuple written in it.  The answer is JSON {"statements": [{line,
+        end_line, text}, ...]}: the new text of the lines the statement is on (0-based, inclusive).  Raises ValueError with the
+        reason when it cannot be done (the statement is not a call, a model is not one of its arguments, nothing would be left) '''
+    req = json.loads(arg)
+    source = req['source']
+    tree = ast.parse(source)
+    lines = source.split('\n')
+    starts = [0]
+    for text in lines[:-1]:
+        starts.append(starts[-1] + len(text) + 1)
+
+    def char_col(line, byte_col):
+        return len(lines[line - 1].encode('utf-8')[:byte_col].decode('utf-8', 'replace'))
+
+    def start_of(node):
+        return starts[node.lineno - 1] + char_col(node.lineno, node.col_offset)
+
+    def end_of(node):
+        return starts[node.end_lineno - 1] + char_col(node.end_lineno, node.end_col_offset)
+
+    out = []
+    for want in req['statements']:
+        var, line = want['var'], want['line']
+        stmt = None
+        for st in tree.body:
+            targets = getattr(st, 'targets', None) or ([st.target] if hasattr(st, 'target') else [])
+            if st.lineno == line and any(isinstance(t, ast.Name) and t.id == var for t in targets):
+                stmt = st
+                break
+        if stmt is None or not isinstance(getattr(stmt, 'value', None), ast.Call):
+            raise ValueError('%s is not written as a call: edit the script' % var)
+        call = stmt.value
+        # the places a model can stand: the call's own arguments, and the lists and tuples written in them
+        containers = [sorted(list(call.args) + list(call.keywords), key=lambda n: (n.lineno, n.col_offset))]
+        for a in call.args:
+            if isinstance(a, (ast.List, ast.Tuple)):
+                containers.append(list(a.elts))
+        elements = []                       # (node, the nodes of its container), in the order of the script
+        for nodes in containers:
+            for n in nodes:
+                if isinstance(n, ast.Name):
+                    elements.append((n, nodes))
+        elements.sort(key=lambda e: (e[0].lineno, e[0].col_offset))
+
+        def find(name):
+            for node, nodes in elements:
+                if node.id == name:
+                    return node, nodes
+            raise ValueError('%s is not one of the models %s is given' % (name, var))
+
+        edits = []                          # (start, end, text) in offsets of the whole source
+        for name in want.get('remove', []):
+            node, nodes = find(name)
+            i = next(k for k, n in enumerate(nodes) if n is node)
+            if i + 1 < len(nodes):
+                edits.append((start_of(node), start_of(nodes[i + 1]), ''))
+            elif i > 0:
+                edits.append((end_of(nodes[i - 1]), end_of(node), ''))
+            else:
+                raise ValueError('%s is given nothing else: it cannot lose %s' % (var, name))
+        for ins in want.get('insert', []):
+            name, side, relative = ins['name'], ins.get('side', 'end'), ins.get('relative')
+            if side == 'end' or not relative:
+                if not elements:
+                    raise ValueError('%s is given no model to put %s next to' % (var, name))
+                last = elements[-1][0]
+                edits.append((end_of(last), end_of(last), ', ' + name))
+            else:
+                node, _ = find(relative)
+                if side == 'before':
+                    edits.append((start_of(node), start_of(node), name + ', '))
+                else:
+                    edits.append((end_of(node), end_of(node), ', ' + name))
+        first, last = stmt.lineno, stmt.end_lineno
+        base = starts[first - 1]
+        stop = starts[last - 1] + len(lines[last - 1])
+        text = source[base:stop]
+        # (from the end of the text to its beginning, so that the offsets stay what they were; at the same place the
+        # removal first, then what is put in)
+        for a, b, new in sorted(edits, key=lambda e: (-e[0], 0 if e[1] > e[0] else 1)):
+            text = text[:a - base] + new + text[b - base:]
+        out.append({'line': first - 1, 'end_line': last - 1, 'text': text})
+    return json.dumps({'statements': out})
+
+
+def blocks_files(_arg=''):
+    ''' The blocks folder, then the block files in it, one per line: what the application watches for changes '''
+    import os
+    from fieldes import blocks
+    folder = blocks.folder()
+    out = [folder]
+    if os.path.isdir(folder):
+        out += [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.endswith('.py') and not n.startswith('_')]
+    return '\n'.join(out)
+
+
+def blocks_used(source):
+    ''' '1' when the script uses a custom block (one of the folder now, or one that was there: its file may be gone or
+        broken), else '': a script that does is run again when a block file changes '''
+    import ast
+    from fieldes import blocks
+    names = set(blocks.names()) | set(blocks._EVER)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ''
+    return '1' if any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(tree)) else ''
+
+
 def expose_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
         draggable -- "name = expose(name, [var(...), ...])", one line per eight numbers -- for FielDes
@@ -517,8 +763,9 @@ def _expose_count(shape):
         from fieldes.stdlib.handles import _exposed_count
         while getattr(shape, '_handles', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
             shape = shape._placed_from
-        if getattr(shape, '_locks', None):
-            return 0
+        if getattr(shape, '_locks', None) or getattr(shape, '_kind', None) in ('point', 'field', 'const'):
+            return 0                # (a point is moved by its gizmo, not by pulling the surface of its ball; a field has no
+                                    # surface to pull: its numbers are written in the script, or moved by its gizmo)
         return int(_exposed_count(shape))
     except Exception:
         return 0
@@ -537,15 +784,245 @@ def _new_name(value, taken):
     return name
 
 
-def scene_json(source, gs, results, upto=None, partial=False):
+def _is_number_node(node):
+    ''' A number written in the script: 5, -2.5, or var(5) '''
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return _is_number_node(node.operand)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'var' and len(node.args) == 1:
+        return _is_number_node(node.args[0])
+    return False
+
+
+_SHADOW_RE = re.compile(r'#\s*shadow:\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)')
+
+
+def shadow_names(lines):
+    ''' The names the `# shadow: a, b` comments of these lines of a statement list: models the statement holds a reference to
+        without being their first user (what a Ctrl+drag of a model that nothing else uses writes) '''
+    out = set()
+    for line in lines:
+        for m in _SHADOW_RE.finditer(line):
+            out.update(n.strip() for n in m.group(1).split(','))
+    return out
+
+
+# The fields of the last scene: [(key, Shape)] -- the variable's name, or 'line:N' for a field that is only displayed -- which the
+# application gives to the section viewer (a field is not drawn: it is shown there when it is selected)
+_FIELD_SOURCES = []
+
+
+def _origin_numbers(origin):
+    ''' Where a field is "about" as three numbers, or None: a position, a point (where it is now), or the middle of a body '''
+    import numbers
+    import time
+    try:
+        if origin is None:
+            return None
+        if hasattr(origin, 'xyz'):
+            origin = origin.xyz
+        if isinstance(origin, (tuple, list)):
+            if len(origin) == 3 and all(isinstance(c, numbers.Number) for c in origin):
+                return [float(c) for c in origin]
+            return None
+        box = _estimate_bounds([origin], time.time() + 0.4)
+        if box:
+            return [(box[0][i] + box[1][i]) / 2.0 for i in range(3)]
+    except Exception:
+        pass
+    return None
+
+
+def field_sources():
+    ''' The fields of the last scene, for the field viewer: [(key, Shape, origin)] -- origin is where the field is about, as three
+        numbers (the point or the middle of the body it was made from), or None (the viewer starts at the origin) '''
+    return [(key, shape, _origin_numbers(getattr(shape, '_field_origin', None))) for key, shape in _FIELD_SOURCES]
+
+
+# Parameters that are whole numbers (a count, a seed ...): a field cannot be one, so a dropped field never takes their place
+_DISCRETE = re.compile(r'^(n|nx|ny|nz|n_\w+|\w+_count|count|counts|num\w*|steps|seed|octaves|neighbou?rs|segments|sides|iterations|'
+                       r'index|samples|levels|resolution)$')
+
+# Tuples that are not positions (a size, a direction, a range ...): a dropped point never takes their place
+_NOT_POSITION = re.compile(r'^(size|sizes|scale|delta|spacing|period|dimensions|extent|direction|normal|norm|build_direction|axis|'
+                           r'offset|input_range|output_range|range|lo|hi|low|high|min|max|bounds|cell_size|thickness)$')
+
+
+def _base_label(label):
+    ''' `upper` for `upper[2]` '''
+    return label.split('[')[0]
+
+
+def _numbers_of(value, gs):
+    ''' The numbers a call is written with, for the model tree -- what dropping a FIELD on it can replace (anywhere a number
+        goes, a field goes): [{label, span, text}] -- the label is the parameter's name when it is known (`thickness`,
+        `upper[2]` for the third number of a point written as a tuple) '''
+    names = []
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    if callable(callee):
+        try:
+            names = [p.name for p in inspect.signature(callee).parameters.values()
+                     if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        except (TypeError, ValueError):
+            pass
+    out = []
+
+    def add(node, label):
+        if _is_number_node(node) and node.lineno == node.end_lineno and len(out) < 24:
+            span = _span(node)
+            lines = _SPAN_LINES
+            text = lines[node.lineno - 1][span[1]:span[3]] if 0 < node.lineno <= len(lines) else ''
+            entry = {'label': label, 'span': span, 'text': text}
+            if _DISCRETE.match(_base_label(label)):
+                entry['discrete'] = True            # (a count: a field cannot take its place)
+            out.append(entry)
+
+    for i, a in enumerate(value.args):
+        label = names[i] if i < len(names) else 'argument %d' % (i + 1)
+        if isinstance(a, (ast.List, ast.Tuple)):
+            for k, e in enumerate(a.elts):
+                add(e, '%s[%d]' % (label, k))
+        elif not isinstance(a, ast.Starred):
+            add(a, label)
+    for kw in value.keywords:
+        if kw.arg:
+            add(kw.value, kw.arg)
+    return out
+
+
+def _points_of(value, gs):
+    ''' The positions a call is written with as tuples of numbers -- `distance_to_point((0, 0, 0))`, `center=(5, 0, 0)` --
+        for the model tree: what dropping a POINT on the model can take the place of (a point reads as its coordinates
+        wherever a position goes): [{label, span, text}], the label is the parameter's name when it is known '''
+    names = []
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    if callable(callee):
+        try:
+            names = [p.name for p in inspect.signature(callee).parameters.values()
+                     if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        except (TypeError, ValueError):
+            pass
+    out = []
+
+    scaling = _callee_name(value).startswith(('scale', 'shear', 'taper'))
+
+    def add(node, label):
+        if (isinstance(node, ast.Tuple) and len(node.elts) in (2, 3) and all(_is_number_node(e) for e in node.elts)
+                and node.lineno == node.end_lineno and len(out) < 8
+                and not scaling and not _NOT_POSITION.match(_base_label(label))):
+            span = _span(node)
+            lines = _SPAN_LINES
+            text = lines[node.lineno - 1][span[1]:span[3]] if 0 < node.lineno <= len(lines) else ''
+            out.append({'label': label, 'span': span, 'text': text, 'dims': len(node.elts)})
+
+    for i, a in enumerate(value.args):
+        add(a, names[i] if i < len(names) else 'argument %d' % (i + 1))
+    for kw in value.keywords:
+        if kw.arg:
+            add(kw.value, kw.arg)
+    return out
+
+
+def _callee_name(value):
+    ''' The name of the function a call statement calls (`offset` in `x = offset(a, 1)`), for the model tree to say why '''
+    if isinstance(value, ast.Call):
+        f = value.func
+        if isinstance(f, ast.Name):
+            return f.id
+        if isinstance(f, ast.Attribute):
+            return f.attr
+    return ''
+
+
+def _inputs_of(value, gs, by_name, own=None):
+    ''' The models a call is given as its inputs, for the model tree -- what dropping a model on it can add or replace:
+        ([{name, span, index | keyword, in_list}], variadic, numbers).  An input is a plain name that is a model of the script
+        (a name inside a list written in the call counts, as in union_all([a, b])); `variadic` says that the function
+        takes any number of them (union, difference, ...), so another can be added; `numbers` are the numbers the call is
+        written with (see _numbers_of): a field dropped on the model can take the place of one '''
+    if not isinstance(value, ast.Call):
+        return [], False, []
+    found = []
+
+    def add(arg, index, keyword, in_list):
+        if isinstance(arg, ast.Name) and arg.id in by_name and arg.id != own:
+            d = {'name': arg.id, 'span': _span(arg)}
+            if keyword is not None:
+                d['keyword'] = keyword
+            else:
+                d['index'] = index
+            if in_list:
+                d['in_list'] = True
+            found.append(d)
+
+    for i, a in enumerate(value.args):
+        if isinstance(a, (ast.List, ast.Tuple)):
+            for e in a.elts:
+                add(e, i, None, True)
+        elif not isinstance(a, ast.Starred):
+            add(a, i, None, False)
+    for kw in value.keywords:
+        if kw.arg:
+            add(kw.value, None, kw.arg, False)
+    # A model used deeper in the call (`offset(move(c, (1, 0, 0)), 2)`) can be replaced too, though it is no argument of it
+    seen = {tuple(d['span']) for d in found}
+    for arg in list(value.args) + [kw.value for kw in value.keywords]:
+        for n in ast.walk(arg):
+            if isinstance(n, ast.Name) and n.id in by_name and n.id != own and isinstance(n.ctx, ast.Load):
+                span = _span(n)
+                if tuple(span) not in seen:
+                    seen.add(tuple(span))
+                    found.append({'name': n.id, 'span': span, 'deep': True})
+    variadic = False
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    if callable(callee):
+        try:
+            variadic = any(p.kind == p.VAR_POSITIONAL for p in inspect.signature(callee).parameters.values())
+        except (TypeError, ValueError):
+            pass
+    return found, variadic, _numbers_of(value, gs)
+
+
+def _block_names():
+    ''' The names of the custom blocks (see fieldes.blocks), or none '''
+    try:
+        from fieldes import blocks
+        return set(blocks.names())
+    except Exception:
+        return set()
+
+
+def _key_of(it):
+    ''' The key the model tree knows a row by (the same as ScenePanel's keyOf) '''
+    kind = it.get('kind', '')
+    if 'var' in it:
+        return kind + ':' + it['var']
+    if 'list_var' in it:
+        return kind + ':' + it['list_var']
+    return kind + ':' + it.get('label', '')
+
+
+def scene_json(source, gs, results, upto=None, partial=False, errored=False):
     ''' Describes the evaluated script for FielDes's model tree.  Returns a
         JSON string; every position is 1-based lines / 0-based columns.
         While a script is still running the tree is given what has been made so far: upto is the number of
         top-level statements that are done, and partial leaves out what takes a measurement of the shapes (their
         extents, whether their surfaces can be dragged), which the finished script's tree has. '''
     Shape, FailedPart = _types()
+    from fieldes.kinds import kind_of, describe as describe_kinds
+    blocks = _block_names()
+
+    def is_blocked(value):
+        ''' Whether a call is of one of the custom blocks (a function of the blocks folder) '''
+        return isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in blocks
+
     src = _Source(source)
     _SPAN_LINES[:] = src.lines
+    _FIELD_SOURCES[:] = []
     tree = ast.parse(source)
     if upto is not None:
         tree.body = tree.body[:upto]
@@ -730,16 +1207,32 @@ def scene_json(source, gs, results, upto=None, partial=False):
                     if not isinstance(t, ast.Name):
                         continue
                     v = gs.get(t.id)
-                    if not (is_shape(v) or is_failed(v) or is_result(v)):
+                    mkind = None if is_failed(v) else kind_of(v)
+                    if not (is_shape(v) or is_failed(v) or is_result(v) or mkind is not None):
                         continue
+                    shown = is_shape(v) or is_result(v)
                     item = {'kind': 'failed' if is_failed(v) else 'shape',
                             'line': line, 'end_line': end,
                             'var': t.id, 'label': t.id,
                             'result': is_result(v),
-                            'no_handles': bool(getattr(v, '_no_handles', False)) or is_result(v),
+                            'no_handles': bool(getattr(v, '_no_handles', False)) or is_result(v) or not shown,
                             'text': _short(src.segment(stmt.value), 70),
                             'deps': sorted(n for n in _names_in(stmt.value)
                                            if n in by_name and n != t.id)}
+                    if mkind:
+                        item['type'] = mkind        # (what it is: see fieldes.kinds)
+                    if mkind == 'field':
+                        # (not drawn: the section viewer shows it when it is selected)
+                        item['displayable'] = False
+                        _FIELD_SOURCES.append((t.id, v))
+                    if not shown:
+                        item['displayable'] = False     # (a material, a lattice cell ...: nothing to draw)
+                    item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name, t.id)
+                    item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
+                    item['callee'] = _callee_name(stmt.value)
+                    item['role'] = 'operation' if item['deps'] else 'primitive'
+                    if is_blocked(stmt.value):
+                        item['block'] = _call_name(stmt.value)
                     # A shape made with var() numbers (its own, or those of what it is made of) has
                     # FielDes's handles: hover a surface and drag it
                     item['has_var'] = any(
@@ -792,6 +1285,18 @@ def scene_json(source, gs, results, upto=None, partial=False):
                         'display_line': line,
                         'deps': deps,
                         '_value': value}
+                shown_value = value[0] if isinstance(value, (list, tuple)) and value else value
+                if kind_of(shown_value):
+                    item['type'] = kind_of(shown_value)
+                    if item['type'] == 'field' and is_shape(shown_value):
+                        item['displayable'] = False
+                        _FIELD_SOURCES.append(('line:%d' % line, shown_value))
+                item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name)
+                item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
+                item['callee'] = _callee_name(stmt.value)
+                item['role'] = 'operation' if deps else 'primitive'
+                if is_blocked(stmt.value):
+                    item['block'] = _call_name(stmt.value)
                 if is_shape(value) and not hasattr(value, '_color_field'):
                     # (a displayed expression can be given a name, to be edited by dragging: the model
                     # tree's handles button does that, then edits the new variable)
@@ -891,6 +1396,25 @@ def scene_json(source, gs, results, upto=None, partial=False):
         it.pop('_value', None)
 
     items.sort(key=lambda it: it['line'])
+    # The `# shadow: name` comments of the statements (written by a Ctrl+drag of a model that nothing else used): the statement
+    # holds a REFERENCE to those models, which does not make it their owner
+    for it in items:
+        names = shadow_names(src.lines[it['line'] - 1:it.get('end_line', it['line'])])
+        if names:
+            it['shadows'] = sorted(names)
+    # The model tree nests the models an operation takes under it: a model belongs to the first statement that uses it (a
+    # statement that only holds a reference, by its `# shadow:` comment, does not count: the model stays where it is)
+    versions = {}
+    for it in items:
+        if 'var' in it:
+            versions.setdefault(it['var'], []).append(it)
+    for it in items:
+        for d in it.get('deps', []):
+            if d in it.get('shadows', ()):
+                continue
+            earlier = [x for x in versions.get(d, []) if x['line'] < it['line']]
+            if earlier and 'owner' not in earlier[-1] and earlier[-1] is not it:
+                earlier[-1]['owner'] = _key_of(it)
     last_of = {}
     for it in items:
         if 'var' in it:
@@ -920,7 +1444,7 @@ def scene_json(source, gs, results, upto=None, partial=False):
         if v is not None:
             settings.setdefault(k, {})['value'] = v
 
-    return json.dumps({'items': items, 'settings': settings,
-                       'truncated': truncated,
+    return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(),
+                       'truncated': truncated, 'errored': bool(errored),
                        'has_roi': 'roi' in gs, 'has_roi_resolution': 'roi_resolution' in gs},
                       default=str)

@@ -20,6 +20,7 @@ MODULES = [
     ('tessellated_import', 'Importing STEP models exactly (almost all free-form)', 'fieldes.stdlib.tessellated_import'),
     ('mesh_import', 'Importing triangle meshes', 'fieldes.stdlib.mesh_import'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
+    ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
     ('fields', 'Fields', 'fieldes.stdlib.fields'),
     ('regression', 'Regressions and data', 'fieldes.stdlib.regression'),
     ('surfaces', 'Surfaces and offsets', 'fieldes.stdlib.surfaces'),

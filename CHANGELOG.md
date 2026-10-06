@@ -1,5 +1,160 @@
 # Changelog
 
+## Next — fields everywhere, custom blocks, a typed and nested model tree
+
+### Fields everywhere
+- **Wherever a number goes, a field goes.** A size, a radius, a thickness, a spacing, a blend, an offset, a scale ... of every
+  function of the library can be a field instead of a number (`offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))`), and is
+  evaluated where it is needed, exactly: nothing is sampled onto a grid. `dev/tests/t_field_slots.py` runs a constant field
+  through 98 numeric slots and checks it gives what the number gives. Added or fixed: `ramp` / `normalize` ranges, `attractor`
+  (the radius; a point or points as the centre), `smooth_union` / `smooth_intersection` / `smooth_difference`, `union_all`,
+  `repeat`, `noise_field`, `distance_to_point` / `_plane`, `radial_field`, `angle_field`, `polar_field` (centres; a point works),
+  `mass_properties` (a density field), `offset_exact`, `shell_exact`, `round_edges`, `fillet`, `smooth` (the radius),
+  `ellipsoid`, `elliptic_cylinder`, and in lattices `skin`, `blend`, `skin_blend` and the struts' blend. What cannot be a field
+  (counts, tolerances, resolutions, a Poisson's ratio) says so when given one.
+- **Graded lattices.** `lattice(body, cell, cell_size=<field>)`: big cells here, small cells there, by blending lattices a factor
+  of two apart (up to a factor of 16), for every periodic cell including `cell_custom`.
+- **Fields in the analyses** (tetrahedral elements): `Material(E=field, density=field, conductivity=field, expansion=field)`, a
+  load's `profile=field` (the total stays; it is spread over the surface in proportion to the profile), `fixed_temperature`
+  with a field, `convection` with a field for the coefficient and the ambient temperature, `heat_input` / `heat_generation`
+  with a profile. Checked against beam theory and Fourier's law (`dev/tests/t_solver_fields.py`); topology optimization and
+  the modal analysis take them too. The flow solver takes numbers and says so. The kernel evaluates each field at the centre
+  of every element (`TetProblem::setStiffnessField`, `TetThermalProblem::setConductivityField`, ...); the result cache keys
+  include them.
+- **Points and surfaces are models.** `point(x, y, z)` is drawn as a small ball, has a gizmo, and is accepted wherever a
+  coordinate goes (`distance_to_point(p)`); `plane`, `sphere_surface`, `cylinder_surface`, `wave_surface` are surfaces drawn as
+  thin sheets. A 2D shape is drawn flat. A **field is not drawn**: selecting it in the model tree opens the section viewer on it,
+  which paints a plane through the render region with the field's value at every point (the colour scale found once on a coarse 3D
+  grid; hover reads the value; move the plane to see it in 3D). A field model has no eye in the tree.
+- **Arithmetic on fields.** Field * field, field / field, field ** field and `2 ** field` work like number * number, pointwise
+  (`__rpow__` was missing). The same as functions that always make a field, also from bodies, for the tree and its menus:
+  `add_fields`, `subtract_fields`, `multiply_fields`, `divide_fields`, `power_field`, `min_fields`, `max_fields`, `abs_field`,
+  `negate_field`, `sqrt_field`, `square_field` (right-click: Operation, Field math).
+- **`field_from_body(body)`**: the values of a body as a field -- not a body, not drawn, free to be multiplied and still valid.
+  (A body itself keeps its true scale.)
+- **A point goes wherever a position goes**: `Point` reads as its three coordinates (`move(part, p)`, `sphere(5, p)`,
+  `distance_to_line(p, d)`). In the model tree a point can be dropped on an operation: it takes the place of a position written
+  as a tuple (`distance_to_point((5, 5, 5))` -> `distance_to_point(anchor)`; a flat shape's centre becomes `(anchor.x, anchor.y)`),
+  never of a size, a direction or a scale; and a dropped field never takes the place of a count (`array_x(body, 3, 12)` takes the
+  12's place, not the 3's), with the reason given when there is nothing it can take.
+- **Ctrl+drag makes a shadow, and the model stays.** A model that **nothing else uses yet** stays a top-level
+  row when it is Ctrl-dragged into a call, and the call shows a shadow of
+  it: the drop writes a `# shadow: name` comment on the call's statement, which says the call holds a reference and is not the
+  model's first user. A plain drag onto that call removes the comment and moves the row in; deleting the reference removes it too.
+  A shadow never stands by itself at the top level: dragging such a statement **above** the model's row (which used to do nothing),
+  or the model's row **below** the statement (which used to be refused), asks once -- *the reference inside the statement becomes
+  the real model*: its definition goes directly above the statement, the comment goes, and the separate top-level row is gone.
+- **Recent files**: a small arrow beside the Open and the Import icons lists the scripts opened and the models imported lately.
+- **Open example file** is its own entry of the File menu (the file dialog opens in the examples folder next to the program), and the
+  guided tour ends by pointing at it.
+- **The field viewer is a card of its own**, no longer the section card in a different mode: a coloured **disc** (radius slider)
+  that cuts nothing, with the section card's arrow along the way it faces, two arrows in its plane and the dot in the middle for
+  moving it freely. It starts where the field is about (the point or body it was made from, found by Python: `_field_origin`,
+  inherited by fields made of fields), has no close button (it closes when no field is selected) and, with several fields
+  selected, a menu chooses the one shown. The section card steps aside while it is open and comes back as it was.
+- **Cards are draggable and resizable**: the model tree, the section card, the field viewer and the result card can be dragged
+  anywhere in the viewport (by the header or any empty place) and resized from their edges and corners; they keep their place
+  relative to the window and are remembered between sessions (`CardController`).
+- **The guided tour has a Ctrl+drag step**: "A reference with Ctrl" adds a sphere and a union and shows a Ctrl+drag making a shadow
+  reference (the pretend hand shows a Ctrl key cap).
+
+### Custom blocks
+- **Your own functions, in every script.** Every public function of a `.py` file in the blocks folder is a block: no import, no
+  registration. They are written with the whole library at hand, may use the blocks of the files before them, and appear with
+  call tips, completion, go to definition and in the right-click menus (*Add operation → Custom blocks*, *New custom block*).
+  **Settings → Blocks folder…** chooses the folder; it is watched, and a script that uses a block runs again when its file is
+  saved. A block file's errors are named in the output. See [Custom blocks](docs/blocks.md); `blocks/sample_blocks.py` has four.
+
+### The model tree
+- **The gizmo shows at once.** Selecting a model used to show its gizmo only after the script had run with the new `handles(...)` line
+  (a moment, longer for a heavy script). It is drawn immediately now, from where the model is (the same point the real one has), a
+  little transparent; the real one takes its place when it is ready. A press on the early gizmo is kept: the drag starts as soon as
+  the real one exists, if the button is still down.
+- **Types with icons.** Every kind of thing — 3D shape, 2D shape, field, surface, point, simulation, conditions, lattice cell,
+  selection, import — has an icon of its own colour and shape in the tree and in the menus that make it; a model made by a custom
+  block carries an *f* badge.
+- **Nesting.** The models an operation is made of are its children (a model goes under the first statement that uses it; the
+  others show it as a dim *uses x* row).
+- **Drag and drop.** Drop a row on an operation to make it one of its inputs (replace one, or add one to `union` and the like);
+  drop it between rows to move it in the script, with what it is made of; each is one undoable edit, refused with a reason when
+  something would be used before it is defined.
+- **A field dropped on an operation takes the place of a number**: drag `swell` onto `thick = offset(plate, 1.0)` and the call
+  becomes `offset(plate, swell)` (the first plain number of the call). A model dropped on an operation is added to it, or takes
+  the place of the only model it works on; no menu is asked.
+- **The right-click menu in empty space** makes things by kind: *New 3D shape / 2D shape / point / surface / field / custom
+  block*, then *Add operation*.
+- Selecting a model no longer writes gizmo lines for models that are not shown, and a model that is made of the one that gets
+  numbers loses its now stale `expose()` line instead of failing.
+
+### The guided tour
+- **A tour on the program itself.** The first time FielDes starts it offers a guided tour (**Help → Guided tour** after
+  that): short cards over the live window. Each step dims everything but what it is about, points at it with an arrow and a
+  glowing frame, and lets the user do only that one thing (the rest of the window and the keyboard are held back so that
+  nothing confuses); **Show me** does it with a pretend cursor, through the same mouse events a hand makes (typing a number
+  into the script, dragging a surface, clicking a row, the right-click menu, dragging a field onto an operation, renaming,
+  editing a render setting). Every step can be skipped, and so can the whole tour. The script is shown as half of what the
+  step is about: the lines a step concerns stay lit and framed in the editor, and every line that changes or moves -- typed,
+  dragged in the viewport, dropped or renamed in the tree -- glows for a moment (a line that only moved down because another was
+  put above it does not). It loads a model of its own (a plate with a
+  hole), so it never touches the user's script.
+
+### The model tree
+- **Rows that are already nested can be dragged and dropped** like the others, and the tree answers **at once**: it is
+  updated from the edit before the script has run again (the run confirms it). Dragging no longer writes gizmo lines into
+  the script while the mouse is down, which is what made a drop wait for a run.
+- **Rename by double-clicking** a variable's name (`F2` too): every use changes, scope-aware (strings, keyword arguments,
+  attributes and a function's own variables of the same name are left alone).
+- **Render settings are editable** in the tree: the region, the resolution and the quality are number fields.
+- **The tree is the structure of the calls.** Nesting, renesting and denesting always edit the arguments of a call: a model
+  dropped on an operation becomes an argument, dragged out of one it leaves the arguments, dropped between the children of
+  an operation it stands at that place among them (and the children are listed in the order of the arguments). A model used
+  by several statements has its row under the first and a **shadow** row (half transparent) under each of the others; a
+  shadow can be dragged (only its reference moves), copied, and deleted (button, `D`). **Ctrl+drag moves nothing**: the model
+  keeps its row, and a shadow appears in the call it is dropped in. **A shadow cannot go above its original** (the first
+  statement that uses the model): a message explains why and offers the easy fix, which is its default -- the first use becomes the
+  original place and a reference stays at the old one -- with *Do not show again* (always do that). It is asked once, from the tree
+  the edit would give, so it also catches a statement with shadows dragged above the original, or the original dragged below it,
+  and lists all the shadows in one message. Ctrl+pressing a row that is
+  already selected no longer takes it out of the selection before the drag can begin. **No menu is ever asked on a drop**: a model dropped on an operation is added to it (`union`, ...), or
+  takes the place of the only model the operation works on; a field takes the first plain number of the call; anything that
+  cannot be done is refused, and a red note at the mouse says **why**. Taking a model out of an operation that cannot do without it deletes the
+  operation (and, in turn, what is made of it), after a question whose default is *Delete* (it can be hidden); one undo.
+- **`#SECTION` comments fold** the lines up to the next one (an arrow in the gutter, a box that says how many lines are
+  hidden), are set apart in blue, and complete from `#sec`; an error inside a folded section opens it.
+
+### Linux
+- `scripts/build-linux.sh [--package]` builds FielDes on Linux (Fedora and Ubuntu package lists in the script; made and
+  tested under WSL2 + WSLg) and packs a portable folder (`dist/FielDes-linux-x64.tar.gz`, started with `run.sh`).
+
+### Viewers, typing, the tour (round 6)
+- **The section view and the field viewer are separate.** The field viewer used to take the section's plane for itself and hide the
+  section card while a field was selected. Now each has its own plane in the viewport, its own samples and its own card; the section
+  view is switched on by the user (`Ctrl+Shift+X`) and works the same whether or not a field is selected, and the two cards stack
+  (the field viewer's below the section card). The disc keeps its three arrows and its dot.
+- **Renaming and the render settings write the script as you type.** A name typed in the tree renames the variable in the script
+  with every key (a name that cannot be yet waits; `Enter` keeps it, `Esc` gives the old one back, a name that ends up not being one
+  gives the old one back too); the fields of the render settings write `view.set_*` with every key, and one number typed is one
+  step of undo.
+- **The guided tour's "Show me" shows it once and puts everything back.** The script, the selection and the section view are
+  restored to how they were when the button was pressed, and the step is not counted as done, so the user does it himself.
+  **Every step has a state of its own**: the first time it is what the steps before left, and whenever it is opened again (Back
+  included) it is put back as it was, ready for what it asks. A new step, **Cut a section**, shows the section view, and the
+  last step draws the File menu with **Open example file** framed, as the blocks step draws its menu.
+- **The region has no bin** in the render settings (the resolution and the quality keep theirs: deleting them goes back to the default).
+- **Low-level fields in Python**: `examples/21_low_level.py` does what libfive's Scheme `define-shape` / `remap-shape` do -- a cube from
+  six plane distances, a twist by `.remap`, a ball and a torus from their formulas joined by a smooth minimum written in the script, a
+  gyroid -- with `Shape.X()/Y()/Z()`, the arithmetic and the methods of `Shape`; [Scripting](docs/scripting.md#low-level-your-own-shapes-from-x-y-and-z)
+  explains it.
+
+### Documentation
+- A [tutorial](docs/tutorial.md) (the written version of the tour), a revised README, new screenshots, and the
+  documents of the new features; examples 18 (fields everywhere), 19 (a graded material and a load profile) and 20 (custom
+  blocks), none of which needs a STEP file.
+- **One sample part comes with FielDes**: `examples/step/PivotBearingSupportBracket.STEP` is in the repository and in the
+  portable packages, so examples 01, 05, 08, 10 and 15 run as soon as FielDes is installed. It is a GrabCAD download and is
+  distributed at the maintainer's decision, its author's terms being unknown ([NOTICE.md](NOTICE.md) says so, and that it is
+  taken out on request). The other sample parts (examples 02, 03, 04, 06, 07, 09, 11, 12, 13) are still not distributed.
+
 ## 0.1.0 — first beta
 
 The first release under the name **FielDes**. It is what libfive Studio became on Windows: a design and

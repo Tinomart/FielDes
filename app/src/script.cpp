@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include <QAbstractItemView>
 #include <QCompleter>
+#include <QContextMenuEvent>
 #include <QInputDialog>
 #include <QPainter>
 #include <QPainterPath>
@@ -84,7 +85,12 @@ int bracketDelta(const QString& line)
 
 const QRegularExpression& sectionMarker()
 {
-    static const QRegularExpression r(R"(^\s*#\s*(%%|region\b))");
+    static const QRegularExpression r(R"(^\s*#\s*(%%|region\b|SECTION\b))");
+    return r;
+}
+const QRegularExpression& regionStart()
+{
+    static const QRegularExpression r(R"(^\s*#\s*region\b)");
     return r;
 }
 const QRegularExpression& regionEnd()
@@ -160,6 +166,12 @@ void Script::refreshSelections()
 
 void Script::setErrorLine(int line)
 {
+    // (an error inside a folded section opens it: it is not to be hidden)
+    if (line >= 0 && line != m_errorLine)
+    {
+        const QTextBlock b = document()->findBlockByNumber(line);
+        if (b.isValid()) ensureBlockVisible(b);
+    }
     m_errorLine = line;
     m_gutter->update();
 }
@@ -471,9 +483,9 @@ bool Script::foldRange(int blockNum, int* endOut) const
     int end = -1;
     if (sectionMarker().match(text).hasMatch())
     {
-        // "# %%" / "# region" sections run to the next marker (or the
-        // matching "# endregion", inclusive) or the end of the file
-        const bool region = text.contains("region");
+        // "# %%" / "#SECTION" sections run to the next marker, "# region" ones to the matching
+        // "# endregion" (inclusive), or the end of the file
+        const bool region = regionStart().match(text).hasMatch();
         QTextBlock n = b.next();
         while (n.isValid())
         {
@@ -737,14 +749,18 @@ void Script::paintEvent(QPaintEvent* e)
         }
         if (block.isVisible() && isFolded(block.blockNumber()))
         {
+            int end = block.blockNumber();
+            foldRange(block.blockNumber(), &end);
+            const int hidden = std::max(0, end - block.blockNumber());
+            const QString label = hidden > 1 ? QString("... %1 lines").arg(hidden) : QString("...");
             const int x = int(r.left()) + fm.horizontalAdvance(block.text()) +
                           document()->documentMargin() + 6;
-            QRect box(x, int(r.top()) + 2, fm.horizontalAdvance(" ... "), fm.height() - 4);
+            QRect box(x, int(r.top()) + 2, fm.horizontalAdvance(" " + label + " "), fm.height() - 4);
             p.setPen(Color::base1);
             p.setBrush(Color::base2);
             p.drawRoundedRect(box, 3, 3);
             p.setPen(Color::base00);
-            p.drawText(box, Qt::AlignCenter, "...");
+            p.drawText(box, Qt::AlignCenter, label);
         }
         block = block.next();
     }
@@ -875,6 +891,17 @@ void Script::goToLine(int line, bool flash)
         setSelections(SEL_FLASH, {s});
         m_flashTimer.start();
     }
+}
+
+void Script::scrollToLine(int line)
+{
+    QTextBlock b = document()->findBlockByNumber(std::max(0, line));
+    if (!b.isValid()) return;
+    ensureBlockVisible(b);                  // (opens a fold that hides it)
+    const QTextCursor keep = textCursor();
+    setTextCursor(QTextCursor(b));
+    centerCursor();
+    setTextCursor(keep);
 }
 
 void Script::selectRange(int line0, int col0, int line1, int col1)
@@ -1156,9 +1183,20 @@ void Script::insertCompletion(const QString& completion)
     }
     QTextCursor tc = textCursor();
     const int n = m_completer->completionPrefix().length();
+    const bool section = completion == "SECTION" && atCommentHead(m_completer->completionPrefix());
     tc.movePosition(QTextCursor::Left, QTextCursor::KeepAnchor, n);
     tc.beginEditBlock();
     tc.insertText(completion);
+    if (section)
+    {
+        // (a section has a title: the cursor stands where it goes)
+        const QString rest = tc.block().text().mid(tc.positionInBlock());
+        if (!rest.startsWith(' ')) tc.insertText(" ");
+        else tc.movePosition(QTextCursor::Right);
+        tc.endEditBlock();
+        setTextCursor(tc);
+        return;
+    }
 
     // A function gets its brackets, with the cursor inside them (after them when it takes nothing);
     // typing ")" steps over the closing one.  Not when a "(" follows already, nor for a variable
@@ -1197,6 +1235,16 @@ void Script::insertCompletion(const QString& completion)
     if (call && tip != m_callTips.constEnd()) showCallTip(completion);
 }
 
+bool Script::atCommentHead(const QString& prefix) const
+{
+    // The word being typed is the first of a comment: `#`, or `# `, then it
+    const QTextCursor c = textCursor();
+    const QString line = c.block().text();
+    const int start = c.positionInBlock() - int(prefix.length());
+    static const QRegularExpression head(R"(^\s*#\s?$)");
+    return start >= 0 && head.match(line.left(start)).hasMatch();
+}
+
 void Script::triggerCompletion()
 {
     QString owner;
@@ -1206,6 +1254,10 @@ void Script::triggerCompletion()
     if (!owner.isEmpty())
     {
         words = m_memberWords.value(owner, m_memberWords.value("*"));
+    }
+    else if (atCommentHead(prefix))
+    {
+        words = QStringList{"SECTION"};         // (what a comment can start with: a section of the script)
     }
     else
     {
@@ -1717,7 +1769,14 @@ void Script::keyPressEvent(QKeyEvent* e)
         if (end > start) showCallTip(l.mid(start, end - start));
     }
 
-    if (identKey && !ctrl && !inStr && wanted)
+    // (the first word of a comment: SECTION is offered from the first letter)
+    const bool sectionHead = owner.isEmpty() && prefix.length() >= 1 && atCommentHead(prefix) &&
+                             QString("SECTION").startsWith(prefix, Qt::CaseInsensitive);
+    if (sectionHead && !ctrl && (identKey || (e->key() == Qt::Key_Backspace && m_completer->popup()->isVisible())))
+    {
+        triggerCompletion();
+    }
+    else if (identKey && !ctrl && !inStr && wanted)
     {
         triggerCompletion();
     }
@@ -1758,6 +1817,22 @@ void Script::mousePressEvent(QMouseEvent* e)
     }
     clearExtraCursors();
     QPlainTextEdit::mousePressEvent(e);
+}
+
+void Script::contextMenuEvent(QContextMenuEvent* e)
+{
+    // The rendered script answers a right-click on a line with the viewport's menu for the model the line defines (or the
+    // menu of empty space on a line that defines none); text that is selected, and a right-click inside it, keep the text menu
+    const QTextCursor at = cursorForPosition(e->pos());
+    const QTextCursor sel = textCursor();
+    const bool inSelection = sel.hasSelection() && at.position() >= sel.selectionStart() && at.position() <= sel.selectionEnd();
+    if (!m_objectMenu || inSelection)
+    {
+        QPlainTextEdit::contextMenuEvent(e);
+        return;
+    }
+    e->accept();
+    emit objectMenuRequested(at.blockNumber(), e->globalPos());
 }
 
 void Script::mouseMoveEvent(QMouseEvent* e)

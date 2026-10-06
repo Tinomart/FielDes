@@ -39,7 +39,7 @@ Automation::Automation(QWidget* window, QObject* parent)
         }
         std::cerr << "automation: unknown action " << id.toStdString() << "\n";
     });
-    add("key", [](const QString& a){
+    add("key", [this](const QString& a){
         const QKeySequence seq(a, QKeySequence::PortableText);
         if (seq.isEmpty()) return;
 #if QT_VERSION >= 0x060000
@@ -62,16 +62,19 @@ Automation::Automation(QWidget* window, QObject* parent)
         // (a popup, such as the completion list, has the keys while it is open)
         QWidget* w = QApplication::activePopupWidget();
         if (!w) w = QApplication::focusWidget();
+        // (a window that is not the active one has no keyboard focus; the widget that would have it is the one that is sent the keys)
+        if (!w) w = m_window->focusWidget();
         if (!w) return;
         QKeyEvent press(QEvent::KeyPress, key, mods, text);
         QApplication::sendEvent(w, &press);
         QKeyEvent release(QEvent::KeyRelease, key, mods, text);
         QApplication::sendEvent(w, &release);
     });
-    add("type", [](const QString& a){
+    add("type", [this](const QString& a){
         for (QChar c : a)
         {
             QWidget* w = QApplication::focusWidget();
+            if (!w) w = m_window->focusWidget();
             if (!w) return;
             const int key = c.toUpper().unicode();
             QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, QString(c));

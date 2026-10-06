@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 #include <QList>
 
+#include "fieldes/section.hpp"
 #include "fieldes/settings.hpp"
 #include "fieldes/shape.hpp"
 
@@ -30,6 +31,15 @@ namespace FielDes {
 struct Error {
     QString error;
     QRect range;
+};
+
+/*  A field model of the script (not drawn: the section viewer shows it when it is selected): `key` is the variable's name,
+ *  or "line:N" for a field that is only displayed at the (1-based) line N  */
+struct FieldEntry {
+    QString key;
+    FieldSource source;
+    QVector3D centre;               // where the field is about (the point or the middle of the body it was made from) ...
+    bool hasCentre = false;         // ... when it is known; else the field viewer starts at the origin
 };
 
 struct Result {
@@ -45,6 +55,7 @@ struct Result {
     /*  All of the other things which a valid script can produce */
     Settings settings;
     QList<Shape*> shapes;
+    QList<FieldEntry> fields;
     QMap<libfive::Tree::Id, QRect> vars;
 
     /*  Warnings to be drawn in the GUI, along with quick-fixes.  This is used

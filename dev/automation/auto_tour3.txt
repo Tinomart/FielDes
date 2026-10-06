@@ -1,0 +1,44 @@
+wait 5000
+waitrender 60 20
+tour start
+wait 2500
+tour goto 7
+wait 600
+tour showme
+wait 3500
+tour state
+tour next
+wait 600
+tour showme
+wait 7000
+tour state
+waitrender 60 3
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_10a.png
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour3_tree_10a.txt
+tour showme
+wait 1600
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_10b.png
+wait 4000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour3_script_10.txt
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour3_tree_10b.txt
+waitrender 60 3
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_11a.png
+tour showme
+wait 6000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour3_script_11.txt
+waitrender 60 3
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_12a.png
+tour showme
+wait 6000
+tour state
+waitrender 60 3
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_13a.png
+tour next
+wait 800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour3_14.png
+tour next
+wait 500
+tour state
+quit

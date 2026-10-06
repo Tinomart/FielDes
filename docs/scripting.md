@@ -18,6 +18,8 @@ their documentation is in the [library reference](reference.md); this page is th
 - [Combining shapes](#combining-shapes)
 - [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming)
 - [Arithmetic on fields](#arithmetic-on-fields)
+- [Low level: your own shapes from x, y and z](#low-level-your-own-shapes-from-x-y-and-z)
+- [Your own functions: custom blocks](#your-own-functions-custom-blocks)
 - [Units](#units)
 - [Errors, printing, long computations](#errors-printing-long-computations)
 - [Using the library outside the application](#using-the-library-outside-the-application)
@@ -135,6 +137,83 @@ thick = part - 0.02 * result.von_mises      # grow the part where it is highly s
 
 Numbers and shapes mix freely, and sequences of three numbers are points
 (`cylinder_z(1, 12, (0, 0, -6))`, each coordinate may be a `var()` or a field).
+
+**Field × field works like number × number**, pointwise -- a number is only a field with the same value everywhere:
+
+```python
+a = distance_to_point((0, 0, 0))
+b = x_field() + 10
+c = a * b                       # at every point: the distance times (x + 10)
+d = 2 ** b                      # 2 to the power of the field
+e = (a - 3) / (b + 1)           # NaN only where the divisor is zero
+```
+
+Nothing about it is unpredictable: the result at a point is the result of the same operation on the two numbers there. What
+can surprise is the maths itself -- a divisor that reaches 0 or a negative value under a fractional power gives NaN at those
+points, and a negative factor turns the sign (inside and outside swap where a *body's* values are multiplied by one).
+
+The same is written as functions, which work in the model tree (drag, drop, the right-click menu: **Operation → Field math**) and
+always make a **field**, also from bodies: `add_fields(a, b, ...)`, `subtract_fields(a, b, ...)`, `multiply_fields(a, b, ...)`,
+`divide_fields(a, b, ...)`, `power_field(a, b, ...)`, `min_fields(...)`, `max_fields(...)`, `abs_field(a)`, `negate_field(a)`,
+`sqrt_field(a)`, `square_field(a)`.
+
+**A body keeps its true scale.** The values of a body are a distance to its surface, which a factor would stretch: `2 * sphere(5)`
+is not a sphere of any size. To compute with the values of a body, make a field of it: **`field_from_body(part)`** has the same
+number at every point as the body, but it is a *field* -- it is not drawn, it is not a part, and it can be multiplied, divided or
+powered and still be a valid field to give to a lattice, an offset or an analysis. (Select it in the model tree and the
+[field viewer](interface.md#the-field-viewer) shows its values.)
+
+**A field goes wherever a number goes** — that is the rule of the library, not a feature of a few functions:
+`offset(part, 1.0)` and `offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))` are written alike. See
+[Fields everywhere](fields.md#fields-everywhere) for where it holds and for the few numbers that must stay numbers (counts,
+tolerances, resolutions). A **point** (`point(x, y, z)`) is a model of its own and is accepted where a coordinate goes:
+`distance_to_point(anchor)`.
+
+## Low level: your own shapes from x, y and z
+
+Everything above is built on one thing: a shape is a tree of arithmetic over the three coordinates, and the library is only a
+collection of ready-made trees. The kernel's low-level interface (libfive documents it in Scheme: `define-shape`, `remap-shape`)
+is there in Python, and you can write a shape from nothing but `x`, `y` and `z`:
+
+```python
+from fieldes import *
+from fieldes.shape import shape      # shape(f) calls f(x, y, z) with the three coordinates as trees, and gives the tree
+
+def maximum(*terms):                 # (Python's max cannot compare trees: .max is the method)
+    out = terms[0]
+    for t in terms[1:]:
+        out = out.max(t)
+    return out
+
+cube = shape(lambda x, y, z: maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z))      # (define-shape (cube x y z) ...)
+
+x, y, z = Shape.X(), Shape.Y(), Shape.Z()
+turn = z * 0.14
+twisted = cube.remap(turn.cos() * x + turn.sin() * y,        # (remap-shape (cube x y z) ...): ask the cube about
+                     turn.cos() * y - turn.sin() * x,        # other coordinates, here turned about z by an angle
+                     z)                                      # that grows with z
+twisted
+```
+
+- **The coordinates** are `Shape.X()`, `Shape.Y()`, `Shape.Z()` (the same as `x_field()`, `y_field()`, `z_field()`, which the model tree
+  lists as fields); numbers go where a tree goes.
+- **The operations** are the operators `+ - * / ** %`, unary minus, and the methods `.min`, `.max`, `.abs`, `.sqrt`, `.square`,
+  `.pow`, `.sin`, `.cos`, `.tan`, `.asin`, `.acos`, `.atan`, `.atan2`, `.exp`, `.log`, `.nth_root`, `.nanfill` and `.compare`.
+- **`s.remap(x', y', z')`** gives the shape that, at `(x, y, z)`, has the value `s` has at `(x'(x, y, z), y'(...), z'(...))`.
+  Every transform is a remap: `s.remap(x - 28, y, z)` is `s` moved 28 mm along x.
+- **A shape is a function and a tree you can look at**: `cube(10, 0, 0)` is a number (4.0), `print(cube)` the tree, `.optimized()` a
+  simplified copy, `Shape.var()` a free number (the numbers you can drag are `var(...)`).
+- What comes out is an **ordinary body** (or a field, if you use it as one): `union`, `difference`, `move`, a lattice, an analysis take it
+  as they take a box. A shape made from a `max` is not an exact distance, so the operations that expect a distance (`offset`,
+  `shell_inside`) give a size that is about right, not exact.
+
+`examples/21_low_level.py` does this for a cube, a twist, a ball and a torus joined by a smooth minimum of its own, and a gyroid lattice.
+
+## Your own functions: custom blocks
+
+A function of your own that is there in every script — without importing it — is a **block**: put it in a `.py` file of the blocks
+folder (Settings → Blocks folder…). See [Custom blocks](blocks.md). (A function you need in one script only is an ordinary
+function of that script, or a module next to it: `from bracket import make_bracket`.)
 
 ## Units
 

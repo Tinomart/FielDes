@@ -6,16 +6,16 @@ wait 1500
 grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/menu2_start.png
 viewmouse rclick 200 800
 wait 800
-popup open New primitive/3D shapes
+popup open New 3D shape
 wait 800
 popup grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/menu2_primitives_3d.png
-popup open New primitive/2D shapes
+popup open New 2D shape
 wait 800
 popup grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/menu2_primitives_2d.png
 popup open Add operation/Rounding
 wait 800
 popup grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/menu2_operations_rounding.png
-popup pick New primitive/3D shapes/sphere
+popup pick New 3D shape/sphere
 wait 1000
 waitrender 120 30
 wait 1500

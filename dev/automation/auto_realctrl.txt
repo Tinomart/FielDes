@@ -1,0 +1,9 @@
+wait 4000
+waitrender 60 20
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/realctrl_before.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/realctrl_before.png
+wait 14000
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/realctrl_after.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/realctrl_script.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/realctrl_after.png
+quit

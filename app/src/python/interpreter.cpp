@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QRegularExpression>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #include "fieldes/python/interpreter.hpp"
 #include "fieldes/documentation.hpp"
@@ -192,7 +193,7 @@ QString Interpreter::defaultScript() {
                       .arg(default_settings.max.z()) +
         SET_QUALITY_STR.arg(default_settings.quality) +
         SET_RESOLUTION_STR.arg(default_settings.res) +
-        // (the starting sphere is what the viewport's "New primitive" makes: named, and with its numbers exposed, so
+        // (the starting sphere is what the viewport's "New 3D shape" makes: named, and with its numbers exposed, so
         // that its handles work at once and it is a model of its own in a selection of several)
         "\nsphere_1 = sphere(1)\n"
         "sphere_1 = expose(sphere_1, [\n"
@@ -756,6 +757,47 @@ void Interpreter::evaluate(QString script, bool resuming)
         }
 
       if (reprOk) {
+        // The field models of the script, for the section viewer (fieldes.app_support.field_sources): the field is the colour
+        // of a plane whose own value is below zero everywhere, so the viewer shows it at every point of the plane
+        {
+            PyObject* sup = PyImport_ImportModule("fieldes.app_support");
+            PyObject* list = sup ? PyObject_CallMethod(sup, "field_sources", nullptr) : nullptr;
+            if (list && PyList_Check(list))
+            {
+                for (Py_ssize_t k = 0; k < PyList_Size(list); ++k)
+                {
+                    PyObject* pair = PyList_GetItem(list, k);
+                    if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 3) continue;
+                    PyObject* key = PyTuple_GetItem(pair, 0);
+                    PyObject* ptr = PyObject_GetAttrString(PyTuple_GetItem(pair, 1), "ptr");
+                    if (key && PyUnicode_Check(key) && ptr && PyLong_Check(ptr))
+                    {
+                        FieldEntry entry;
+                        entry.key = QString::fromUtf8(PyUnicode_AsUTF8(key));
+                        entry.source.tree = libfive::Tree(-1.0);
+                        entry.source.vars = vars;
+                        entry.source.color = libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(ptr)));
+                        entry.source.lo = std::numeric_limits<float>::quiet_NaN();     // (the range: found when it is first shown)
+                        entry.source.hi = entry.source.lo;
+                        entry.source.label = "field";
+                        PyObject* origin = PyTuple_GetItem(pair, 2);                    // (where the field is about, or None)
+                        if (origin && PyList_Check(origin) && PyList_Size(origin) == 3)
+                        {
+                            entry.centre = QVector3D(float(PyFloat_AsDouble(PyList_GetItem(origin, 0))),
+                                                     float(PyFloat_AsDouble(PyList_GetItem(origin, 1))),
+                                                     float(PyFloat_AsDouble(PyList_GetItem(origin, 2))));
+                            entry.hasCentre = !PyErr_Occurred();
+                            PyErr_Clear();
+                        }
+                        out.fields.push_back(std::move(entry));
+                    }
+                    Py_XDECREF(ptr);
+                }
+            }
+            Py_XDECREF(list);
+            Py_XDECREF(sup);
+            PyErr_Clear();
+        }
         // Check whether settings were assigned in the script
         auto res = PyObject_GetAttrString(host_mod, "__resolution");
         if (res != Py_None) {

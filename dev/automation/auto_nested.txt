@@ -1,0 +1,32 @@
+wait 4000
+waitrender 60 20
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_0.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/nested_0.png
+treedrop x3 > more > on
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_1_instant.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_1_instant_script.txt
+wait 6000
+waitrender 60 5
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_1.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_1_script.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/nested_1.png
+treedrop x1 > big > on
+wait 500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_2.txt
+treedrop x4 > x2 > above
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_3_instant.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_3_instant_script.txt
+wait 6000
+waitrender 60 5
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_3.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_3_script.txt
+treedrop x1 > nothing > end
+wait 500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_4_script.txt
+treedrop x2 > x1 > below
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_5_instant.txt
+wait 6000
+waitrender 60 5
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/nested_5_script.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/nested_5.png
+quit

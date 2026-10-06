@@ -16,6 +16,8 @@ Fields are evaluated lazily and exactly: nothing is sampled onto a grid (except 
 is — `sample_grid`, `mass_properties`, `exact_distance`). Every function here is in the
 [library reference](reference.md#fields).
 
+- [Fields everywhere](#fields-everywhere)
+- [Points and surfaces](#points-and-surfaces)
 - [Coordinates](#coordinates)
 - [Distances](#distances)
 - [Value maps](#value-maps)
@@ -26,6 +28,60 @@ is — `sample_grid`, `mass_properties`, `exact_distance`). Every function here 
 - [Regressions](#regressions)
 - [Colouring by a field](#colouring-by-a-field)
 - [Evaluating fields in a script](#evaluating-fields-in-a-script)
+
+## Fields everywhere
+
+**Wherever a number goes, a field goes.** This is the rule of the library: a size, a radius, a thickness, a spacing, a
+blend, an offset, a scale — anything that you would write as `2.5` — can be a field instead, and the function evaluates it
+where it needs it. `offset(part, 1.0)` grows a part by a millimetre everywhere;
+`offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))` grows it by 0.2 mm at the bottom and 2 mm at the top. The two are
+written alike; the second is not sampled onto a grid, not meshed first, and not slower to write.
+
+```python
+anchor = point(52, 8, 6)                         # a point: a model, and a value wherever a coordinate goes
+swell  = ramp(distance_to_point(anchor), (0, 60), (4.0, 0.3))
+grown  = offset(plate, swell)                    # 4 mm near the anchor, 0.3 mm far from it
+joined = smooth_union(post, block, ramp(x_field(), (80, 140), (0.5, 8.0)))   # a blend that is sharp here and round there
+foam   = lattice(core, cell_periodic('gyroid'), cell_size=ramp(x_field(), (160, 220), (16, 6)), thickness=1.0)
+```
+
+(`examples/18_fields_everywhere.py` runs these three.) In the [model tree](interface.md#the-model-tree) you do not have to type it:
+**drag a field's row onto an operation** and it takes the place of one of the operation's numbers. Where it works, in short:
+
+| | A field is accepted for |
+|---|---|
+| **Geometry** | every dimension of every primitive and every transform (`sphere`, `box`, `cylinder`, `move`, `rotate*`, `scale_*`, ...: they are tree arithmetic, a field is a tree); `offset`, `thicken`, `shell_*`, `offset_exact`, `shell_exact`, `round_edges`, `fillet` (the size), `smooth` (the radius), `smooth_union` / `smooth_intersection` / `smooth_difference` and `union_all` / `intersection_all` (the radius or blend), `repeat` (the spacing), `twist_z`, `bend_z` |
+| **Fields** | `ramp`, `normalize` (the ranges), `attractor` (the radius, and a point or several points as the centre), `noise_field` (the scale and the amplitude), `distance_to_point`, `distance_to_plane`, `radial_field`, `angle_field`, `polar_field` (the centres, a point works too), `mass_properties` (the density) |
+| **Lattices** | `thickness`, `radius`, `density`, `skin`, `blend`, `skin_blend`, and **`cell_size`**: a graded cell size blends lattices a factor of two apart (it may change by a factor of up to 16 over the part), for any periodic cell including `cell_custom` |
+| **Analyses** | `Material(E=..., density=..., conductivity=..., expansion=...)` (the property at every point of the part), `force(region, ..., profile=field)` (how the total is spread over the surface), `fixed_temperature(region, field)`, `convection(region, h_field, ambient_field)`, `heat_input` / `heat_generation(..., profile=field)`: tetrahedral elements, see [Analysis](analysis.md#fields-in-analyses) |
+
+**What can never be a field** — a number that is not a *length-like value at a place*: counts (`array_x(shape, 3, ...)`, the
+number of modes, iterations, steps), resolutions and element sizes, tolerances, seeds, a Poisson's ratio or a yield
+strength, the numbers of a flow (its fluid, inlets, outlets and walls: the flow solver takes numbers). A function says so
+when it is given a field there (`TypeError: ... is a number`), never silently.
+`dev/tests/t_field_slots.py` runs a **constant field through every numeric slot of the library and checks that it gives
+exactly what the number gives** (98 slots).
+
+The kind of thing a value is — a 3D shape, a 2D shape, a field, a surface, a point — is shown by its colour and icon in
+the [model tree](interface.md#the-model-tree). A field is not a body, so **nothing of it is drawn in the viewport**: select it in
+the model tree and the [field viewer](interface.md#the-field-viewer) opens on it by itself, painting a disc through the render
+region with the field's value at every point -- move the disc to see the field in 3D.
+
+## Points and surfaces
+
+A **point** is a model: `anchor = point(52, 8, 6)` shows as a small ball, has a gizmo, and goes wherever a coordinate
+goes — `distance_to_point(anchor)`, `attractor(anchor, 30)`, `radial_field(anchor, 'z')` — so a design can be driven from
+a point you drag. `anchor.xyz` is its coordinates (they follow the gizmo). A point reads as its three coordinates **wherever a
+position goes** -- `sphere(5, anchor)`, `move(part, anchor)`, `distance_to_line(anchor, (0, 0, 1))` -- and in the model tree you
+can **drag a point onto an operation** to put it in the place of a position written in the call
+(`distance_to_point((5, 5, 5))` → `distance_to_point(anchor)`).
+
+A **surface** is the zero set of a field with no body behind it: `plane(point, normal)`, `sphere_surface(radius, center)`,
+`cylinder_surface(radius, axis, center)`, `wave_surface(amplitude, period, axis, height)`. It is drawn as a thin sheet,
+and the right-click menu makes them (*New surface*). A surface is a field like any other: `distance_to_surface(sheet)`,
+or `lattice_surface_conform(sheet, ...)` for a lattice that follows it.
+
+Both are in the right-click menu of the viewport: *New point* and *New surface* write the call where you clicked.
 
 ## Coordinates
 
@@ -67,8 +123,12 @@ into a true one (see [below](#exact-distances)). Imported STEP parts are accurat
 | `wave(axis, period, amplitude, phase)` | a sine along an axis |
 | `noise_field(scale, octaves, seed, gain, lacunarity, amplitude)` | Perlin noise — `part - 0.3 * noise_field(4)` is an organic texture |
 | `sum_fields(*fields)` | sum |
+| `add_fields`, `subtract_fields`, `multiply_fields`, `divide_fields`, `power_field`, `min_fields`, `max_fields` | arithmetic on any number of fields (and numbers) at every point: `a + b`, `a - b`, `a * b`, `a / b`, `a ** b` as functions, in the model tree's **Operation → Field math** |
+| `abs_field`, `negate_field`, `sqrt_field`, `square_field` | the same on one field |
+| `field_from_body(body)` | the values of a body as a **field**: not a body, not drawn, free to be multiplied (a body itself always keeps its true scale) |
 
-and the arithmetic of [Scripting](scripting.md#arithmetic-on-fields) (`+ - * /`, `abs`, `min`, `max`, …).
+and the arithmetic of [Scripting](scripting.md#arithmetic-on-fields) (`+ - * / **`, `abs`, `min`, `max`, …): field × field and
+2 ** field work like number × number, at every point.
 
 ## Geometry from fields
 

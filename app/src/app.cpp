@@ -18,6 +18,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <QFileOpenEvent>
+#include <QSettings>
 
 #include "fieldes/app.hpp"
 #include "fieldes/args.hpp"
@@ -34,6 +35,13 @@ App::App(int& argc, char** argv)
     // the tessellation cache)
     if (!qEnvironmentVariableIsSet("FIELDES_DIR"))
         qputenv("FIELDES_DIR", QCoreApplication::applicationDirPath().toLocal8Bit());
+
+    // The folder of the custom blocks that was chosen in Settings (the Python package reads it from the environment)
+    if (!qEnvironmentVariableIsSet("FIELDES_BLOCKS"))
+    {
+        const QString blocks = QSettings().value("blocks-folder").toString();
+        if (!blocks.isEmpty()) qputenv("FIELDES_BLOCKS", blocks.toLocal8Bit());
+    }
 
     if (QFontDatabase::addApplicationFont(":/font/Inconsolata.otf") == -1) {
         std::cerr << "App: could not add application font";

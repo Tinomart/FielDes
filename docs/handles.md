@@ -126,7 +126,7 @@ Rules:
 
 ## Primitives and displayed expressions
 
-The sphere a new file starts with is what the right-click menu's *New primitive* makes: named, with its numbers
+The sphere a new file starts with is what the right-click menu's *New 3D shape* makes: named, with its numbers
 exposed once it is selected, so its handles work and it is a model of its own in a selection of several:
 
 ```python

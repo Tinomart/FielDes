@@ -1086,7 +1086,7 @@ def _sources_of(shape):
 
 
 _CARRIED = ('_color_field', '_color_range', '_color_label', '_color_map', '_fit_marker',
-            '_part_name', '_step_ref', '_step_metrics', '_bounds')
+            '_part_name', '_step_ref', '_step_metrics', '_bounds', '_kind', 'xyz', 'size')
 
 
 def _carry_exact(out, src, op=None):

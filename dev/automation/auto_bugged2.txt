@@ -1,0 +1,10 @@
+wait 4000
+waitrender 60 20
+treedrop sphere_2 > union_1 > below
+wait 1500
+grabwidget ConfirmShadow C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/bugged_dialog_b.png
+key Return
+wait 3000
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/bd_b.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/bd_b_script.txt
+quit

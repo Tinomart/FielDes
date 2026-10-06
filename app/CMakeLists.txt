@@ -24,6 +24,7 @@ set(SRCS
     src/background.cpp
     src/bbox.cpp
     src/busy.cpp
+    src/carddrag.cpp
     src/camera.cpp
     src/color.cpp
     src/documentation.cpp
@@ -41,6 +42,8 @@ set(SRCS
     src/shape.cpp
     src/syntax.cpp
     src/theme.cpp
+    src/tutorial.cpp
+    src/typeicons.cpp
     src/view.cpp
     src/window.cpp
 
@@ -66,9 +69,11 @@ set(QOBJECTS
     include/fieldes/script.hpp
     include/fieldes/result_panel.hpp
     include/fieldes/section.hpp
+    include/fieldes/carddrag.hpp
     include/fieldes/shape.hpp
     include/fieldes/shortcuts.hpp
     include/fieldes/syntax.hpp
+    include/fieldes/tutorial.hpp
     include/fieldes/view.hpp
     include/fieldes/window.hpp
 )

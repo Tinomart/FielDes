@@ -1,0 +1,17 @@
+wait 4000
+waitrender 60 20
+treedrop a > t > on hold
+wait 600
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/reason_1.png
+treerelease
+wait 800
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/reason_after.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/reason_2.png
+treedrop c@u > c@v > below ctrl hold
+wait 600
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/reason_3.png
+treerelease
+wait 800
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/reason_after3.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/reason_script.txt
+quit

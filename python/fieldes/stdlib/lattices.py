@@ -74,6 +74,7 @@ import numbers
 from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
+from fieldes.stdlib.fieldargs import is_field, present, positive, number_or_field
 
 __all__ = ['cell_periodic', 'cell_non_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
            'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
@@ -683,6 +684,8 @@ def _balanced(items, op):
 
 
 def _smin(a, b, k):
+    if is_field(k):
+        k = k.max(1e-9)                 # (a blend that is 0 somewhere is sharp there)
     h = (k - abs(a - b)).max(0) / k
     return a.min(b) - h * h * k / 4
 
@@ -720,8 +723,8 @@ def strut_lattice(cell, cell_size=10.0, radius=None, node_radius=None, blend=0.0
     if own:
         # beams with their own radius (a UnitCell): each capsule its radius
         d = [di - (own[b] if b in own else radius) for di, b in zip(d, beams)]
-    if blend and blend > 0:
-        k = float(blend)
+    if present(blend) and positive(blend):
+        k = number_or_field(blend, 'the blend')
         dist = _balanced(d, lambda a, b: _smin(a, b, k))
     else:
         dist = _balanced(d, lambda a, b: a.min(b))
@@ -911,10 +914,12 @@ def fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0):
     elif region != 'volume':
         raise ValueError("fill: region is 'volume' or 'shell'")
     out = lat.max(zone)
-    if skin and (not isinstance(skin, numbers.Number) or skin > 0):
+    if present(skin) and positive(skin):
         shell = body.max(-(body + skin))
-        if blend:
-            k = float(blend)
+        if present(blend):
+            k = number_or_field(blend, 'the blend')
+            if is_field(k):
+                k = k.max(1e-9)
             h = (k - abs(out - shell)).max(0) / k
             out = out.min(shell) - h * h * k / 4
             out = out.max(body)           # (the blend must not grow the body)
@@ -936,8 +941,11 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
             diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
             cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
             or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
-        cell_size: mm, or (sx, sy, sz).  (Default 10 mm; for a cell_custom(region, geometry) cell the size of its
-            region, so that it comes out as you modelled it -- a larger or smaller size scales the cell)
+        cell_size: mm, or (sx, sy, sz), or a FIELD (cells bigger here and smaller there).  (Default 10 mm; for a
+            cell_custom(region, geometry) cell the size of its region, so that it comes out as you modelled it -- a
+            larger or smaller size scales the cell.)  A cell size field is blended from lattices of cells a factor 2
+            apart (up to a factor of 16 in all): the cells are exact where the field is one of those sizes and a blend of
+            the two next to it between them
         thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
             or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
             (planar).  Numbers or fields
@@ -950,16 +958,23 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
         node_radius, blend: joint spheres and joint rounding (struts)
         skin_blend: rounds the lattice-to-skin joints '''
     cellobj = _need_cell(cell, 'lattice', default=lambda: cell_periodic('gyroid'))
+    graded = _graded_size(cell_size)
     if cellobj.family == 'shape':
         given = [n for n, v in (('thickness', thickness), ('radius', radius), ('density', density), ('offset', offset),
                                 ('wall', wall), ('node_radius', node_radius)) if v is not None]
         if given:
             raise ValueError('lattice: a cell_custom(region, geometry) cell is the geometry you modelled, so {} does not '
                              'apply: give the geometry the thickness you want'.format(', '.join(given)))
-        lat = _periodic(cellobj, cell_size, cell_map)
+        if graded is not None:
+            lat = _graded_field(body, graded, lambda c: _periodic(cellobj, c, cell_map))
+        else:
+            lat = _periodic(cellobj, cell_size, cell_map)
         return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
-    cell = _cell3(10.0 if cell_size is None else cell_size)
     if cellobj.family == 'foam':
+        if graded is not None:
+            raise ValueError('lattice: cells that do not repeat (voronoi, delaunay) take a cell size that is a number: '
+                             'their points are about that far apart')
+        cell = _cell3(10.0 if cell_size is None else cell_size)
         r = _beam_radius('lattice', thickness, radius, None)
         if r is None and density is None:
             r = 0.08 * min(cell)
@@ -968,35 +983,81 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
     is_tpms = cellobj.family == 'tpms'
     is_planar = cellobj.family == 'planar'
 
-    # the member size: given, or from a density
-    size = None
-    if is_tpms:
-        size = offset if style == 'network' else thickness
-    elif is_planar:
-        size = wall if wall is not None else thickness
-    else:
-        size = _beam_radius('lattice', thickness, radius, None)
-    if density is not None:
-        if size is not None:
-            raise ValueError('lattice: give either density or the member size, not both')
-        if isinstance(density, Shape):
-            size = _density_map(cellobj, cell, style)(density)
+    def one_size(size_of_cell):
+        ''' The infinite lattice made of cells of one size (a number or (sx, sy, sz)) '''
+        cell = _cell3(size_of_cell)
+        # the member size: given, or from a density
+        size = None
+        if is_tpms:
+            size = offset if style == 'network' else thickness
+        elif is_planar:
+            size = wall if wall is not None else thickness
         else:
-            size = lattice_parameter_for_density(cellobj, cell, density, style)
-    if size is None:
-        size = 0.0 if (is_tpms and style == 'network') else (min(cell) * 0.1)
+            size = _beam_radius('lattice', thickness, radius, None)
+        if density is not None:
+            if size is not None:
+                raise ValueError('lattice: give either density or the member size, not both')
+            if isinstance(density, Shape):
+                size = _density_map(cellobj, cell, style)(density)
+            else:
+                size = lattice_parameter_for_density(cellobj, cell, density, style)
+        if size is None:
+            size = 0.0 if (is_tpms and style == 'network') else (min(cell) * 0.1)
 
-    if is_tpms:
-        if style == 'network':
-            lat = tpms(cellobj, cell, style='network', offset=size, cell_map=cell_map)
-        else:
-            lat = tpms(cellobj, cell, thickness=size, style=style, cell_map=cell_map)
-    elif is_planar:
-        lat = planar_lattice(cellobj, cell[0], wall=size, axis=axis, cell_map=cell_map)
+        if is_tpms:
+            if style == 'network':
+                return tpms(cellobj, cell, style='network', offset=size, cell_map=cell_map)
+            return tpms(cellobj, cell, thickness=size, style=style, cell_map=cell_map)
+        if is_planar:
+            return planar_lattice(cellobj, cell[0], wall=size, axis=axis, cell_map=cell_map)
+        return strut_lattice(cellobj, cell, radius=size, node_radius=node_radius, blend=blend, cell_map=cell_map)
+
+    if graded is not None:
+        lat = _graded_field(body, graded, one_size)
     else:
-        lat = strut_lattice(cellobj, cell, radius=size, node_radius=node_radius, blend=blend,
-                            cell_map=cell_map)
+        lat = one_size(10.0 if cell_size is None else cell_size)
     return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
+
+
+def _graded_size(cell_size):
+    ''' The cell size when it is a field (one for all three directions), else None '''
+    if isinstance(cell_size, Shape):
+        return cell_size
+    if isinstance(cell_size, (tuple, list)) and any(isinstance(c, Shape) for c in cell_size):
+        raise TypeError('lattice: a cell size that is a field is one field for all three directions, not (sx, sy, sz)')
+    return None
+
+
+_GRADED_MAX_LEVELS = 5
+
+
+def _graded_field(body, size, build):
+    ''' A lattice whose cells are as big as the field `size` says wherever they are.  Cells that tile are of one size, so
+        the lattice is made at sizes a factor 2 apart -- from the smallest the field asks for to the largest, found
+        by sampling it over the body -- and the field blends the two sizes next to its value, each with a weight that
+        falls linearly from 1 to 0 over the factor 2 (the weights add up to 1).  `build(c)` makes the lattice of
+        cells of size c. '''
+    from fieldes.stdlib.fields import _shape_bounds, field_range
+    lo, hi = _shape_bounds(Shape.wrap(body), None)
+    smin, smax = field_range(size, body=body, lower=lo, upper=hi, n=20)
+    if not smin > 0:
+        raise ValueError('lattice: the cell size field must be positive everywhere in the body (it is {:g} somewhere)'
+                         .format(smin))
+    levels = 1 + max(1, int(math.ceil(math.log2(smax / smin) - 1e-9)))
+    if levels > _GRADED_MAX_LEVELS:
+        raise ValueError('lattice: the cell size field goes from {:g} to {:g} mm, more than a factor of {}: grade it less'
+                         .format(smin, smax, 2 ** (_GRADED_MAX_LEVELS - 1)))
+    top = smin * 2.0 ** (levels - 1)
+    s = size.max(smin).min(top)
+    u = (s / smin).log() * (1.0 / math.log(2.0))            # where the size is, in levels: 0 .. levels - 1
+    terms = []
+    for j in range(levels):
+        w = (1.0 - abs(u - j)).max(0)
+        terms.append(build(smin * 2.0 ** j) * w)
+    out = terms[0]
+    for t in terms[1:]:
+        out = out + t
+    return out
 
 
 ################################################################################

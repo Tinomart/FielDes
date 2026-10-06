@@ -9,8 +9,10 @@ next to the STEP files you import.
 
 **From source.** See [Building from source](building.md).
 
-FielDes always opens maximised, so the model has the room. The first time it shows a small welcome script;
-afterwards the split between editor and viewport and the recent files are remembered.
+FielDes always opens maximised, so the model has the room. The first time, a card offers the **guided tour** (about two
+minutes, on the program itself; every step and the whole tour can be skipped; **Help → Guided tour** starts it again; the
+written version is the [tutorial](tutorial.md)); afterwards the split between editor and viewport and the recent files are
+remembered.
 
 ## The window
 
@@ -60,6 +62,26 @@ difference(ball, hole)
 - `view.set_bounds`, `view.set_resolution` and `view.set_quality` say where and how finely the
   viewport meshes the shape. They are plain statements in the script.
 
+## Making things from the menu
+
+Right-click empty space in the viewport: **New 3D shape**, **New 2D shape**, **New point**, **New surface** and **New field** write a
+call into the script where you clicked, and select the new model; **Add operation** works on the selected model. The model tree
+shows each kind of thing with its own icon, and nests the models an operation is made of under it; drag a row onto an
+operation to make it one of its inputs. See [The interface](interface.md#the-model-tree).
+
+## Every number can be a field
+
+Anywhere a number goes, a field can go:
+
+```python
+anchor = point(10, 4, 0)
+swell  = ramp(distance_to_point(anchor), (0, 20), (2.0, 0.3))     # 2 mm at the anchor, 0.3 mm 20 mm away
+offset(sphere(6), swell)
+```
+
+See [Fields everywhere](fields.md#fields-everywhere), and [Custom blocks](blocks.md) for your own functions that are there in
+every script.
+
 ## Importing a STEP file
 
 **File → Import model…** (`Ctrl+I`), or drag a `.step`/`.stp` file onto the window. FielDes writes
@@ -86,6 +108,7 @@ if it is not found): prints appear in the console, nothing is drawn.
 
 ## Where to go next
 
-- Open the scripts in `examples/` in order; each is commented and starts from an imported part.
+- The [tutorial](tutorial.md): the idea, the controls that matter, habits that pay off.
+- Open the scripts in `examples/` in order; each is commented (01–13 and 15 start from an imported part; 14 and 16–21 need no file).
 - [Scripting](scripting.md) for the language of shapes and fields.
 - [Analysis](analysis.md) and [Lattices](lattices.md) for the two big toolboxes.

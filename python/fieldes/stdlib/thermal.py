@@ -50,7 +50,7 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.shape import Shape
 from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import FeaError, TopologyResult, aluminium, colored, _bounds, _shape
-from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key
+from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
 
 __all__ = ['fixed_temperature', 'heat_input', 'heat_generation', 'convection',
@@ -64,8 +64,8 @@ class _Temperature:
 
 
 class _Heat:
-    def __init__(self, region, power, volume=False):
-        self.region, self.power, self.volume = region, power, volume
+    def __init__(self, region, power, volume=False, profile=None):
+        self.region, self.power, self.volume, self.profile = region, power, volume, profile
 
 
 class _Convection:
@@ -73,30 +73,50 @@ class _Convection:
         self.region, self.coefficient, self.ambient = region, coefficient, ambient
 
 
+def _number_or_field(value, what):
+    ''' A condition's value: a number, or a field (a Shape: its value at each point of the surface it acts on) '''
+    if isinstance(value, Shape):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise TypeError('{} is a number or a field (a Shape), not {!r}'.format(what, type(value).__name__))
+
+
+def _profile(profile, what):
+    if profile is not None and not isinstance(profile, Shape):
+        raise TypeError('{}: profile is a field (a Shape)'.format(what))
+    return profile
+
+
 def fixed_temperature(region, value):
     ''' The part held at temperature `value` wherever it lies inside
-        `region` (a Shape) '''
-    return _Temperature(_shape(region, 'fixed_temperature(region)'), float(value))
+        `region` (a Shape).  `value` can be a field: the temperature at each point (tetrahedral elements) '''
+    return _Temperature(_shape(region, 'fixed_temperature(region)'), _number_or_field(value, 'fixed_temperature: value'))
 
 
-def heat_input(region, watts):
+def heat_input(region, watts, profile=None):
     ''' A total power (W) put into the part, spread evenly over its surface
-        inside `region` (a Shape); negative takes heat out '''
-    return _Heat(_shape(region, 'heat_input(region)'), float(watts))
+        inside `region` (a Shape); negative takes heat out.  profile: a field -- the power is spread in
+        proportion to it (not negative) instead of evenly '''
+    return _Heat(_shape(region, 'heat_input(region)'), float(watts), profile=_profile(profile, 'heat_input'))
 
 
-def heat_generation(region, watts):
+def heat_generation(region, watts, profile=None):
     ''' A total power (W) generated inside the part, spread evenly through
         its volume inside `region` (a Shape) -- e.g. a resistive heater, or
-        electronics potted in the part '''
-    return _Heat(_shape(region, 'heat_generation(region)'), float(watts), volume=True)
+        electronics potted in the part.  profile: a field -- spread in proportion to it instead of evenly '''
+    return _Heat(_shape(region, 'heat_generation(region)'), float(watts), volume=True,
+                 profile=_profile(profile, 'heat_generation'))
 
 
 def convection(region, coefficient, ambient=20.0):
     ''' The part's exposed surface inside `region` exchanges heat with an
         ambient temperature: coefficient h in W / (mm^2 K) (still air
-        ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2) '''
-    return _Convection(_shape(region, 'convection(region)'), float(coefficient), float(ambient))
+        ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2).  The coefficient and the ambient
+        temperature can each be a field: their values at each point of the surface (tetrahedral elements) '''
+    return _Convection(_shape(region, 'convection(region)'), _number_or_field(coefficient, 'convection: coefficient'),
+                       _number_or_field(ambient, 'convection: ambient'))
 
 
 _FIELDS = ['temperature', 'heat_flux', 'qx', 'qy', 'qz']
@@ -176,6 +196,8 @@ class ThermalResult:
 
 def _conductivity(material, conductivity, what):
     k = conductivity if conductivity is not None else getattr(material, 'conductivity', None)
+    if isinstance(k, Shape):
+        return k
     if not k or not k > 0:
         raise FeaError('{}: the material has no conductivity -- give conductivity= '
                        '(W / (mm K))'.format(what))
@@ -203,10 +225,30 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
         raise ValueError("element is 'tet' (tetrahedra that follow the part, the default) or 'hex' "
                          "(voxel hexahedra)")
     tet = element == 'tet'
+    # (fields -- a conductivity, a held temperature, a convection's coefficient and ambient temperature, a profile of a heat
+    # input -- work with the tetrahedral elements)
+    fields = []
+    if isinstance(k, Shape):
+        fields.append('the conductivity')
+    for b in items:
+        if isinstance(b, _Temperature) and isinstance(b.value, Shape):
+            fields.append('a fixed temperature')
+        elif isinstance(b, _Heat) and b.profile is not None:
+            fields.append('a heat profile')
+        elif isinstance(b, _Convection) and (isinstance(b.coefficient, Shape) or isinstance(b.ambient, Shape)):
+            fields.append('a convection')
+    if fields and not tet:
+        raise FeaError("{}: {} is a field -- fields work with the tetrahedral elements (element='tet', the default), "
+                       "not {!r}".format(what, ', '.join(fields), element))
     if tet:
         if getattr(lib, 'libfive_tetthermal_new', None) is None:
             raise FeaError("this FielDes library is too old for tetrahedral meshing")
-        ptr = lib.libfive_tetthermal_new(shape.ptr, region, element_size, float(k))
+        if fields and getattr(lib, 'libfive_tetthermal_set_conductivity_field', None) is None:
+            raise FeaError('this FielDes library is too old for fields in a thermal analysis')
+        # (a conductivity that is a field is measured against 1: each element has its own value)
+        ptr = lib.libfive_tetthermal_new(shape.ptr, region, element_size, 1.0 if isinstance(k, Shape) else float(k))
+        if isinstance(k, Shape):
+            lib.libfive_tetthermal_set_conductivity_field(ptr, k.ptr)
     else:
         ptr = lib.libfive_thermal_new(shape.ptr, region, element_size, float(k))
     handle = _Handle(ptr, tet)
@@ -214,13 +256,26 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
         lib.libfive_thermal_set_element(ptr, 1)
     for b in items:
         if isinstance(b, _Temperature):
-            handle.fn('add_temperature')(ptr, b.region.ptr, b.value)
+            if isinstance(b.value, Shape):
+                lib.libfive_tetthermal_add_temperature_field(ptr, b.region.ptr, 0.0, b.value.ptr)
+            else:
+                handle.fn('add_temperature')(ptr, b.region.ptr, b.value)
+        elif isinstance(b, _Heat) and b.profile is not None:
+            handle.fn('add_generation_profile' if b.volume else 'add_heat_profile')(ptr, b.region.ptr, b.power, b.profile.ptr)
         elif isinstance(b, _Heat) and b.volume:
             handle.fn('add_generation')(ptr, b.region.ptr, b.power)
         elif isinstance(b, _Heat):
             handle.fn('add_heat')(ptr, b.region.ptr, b.power)
         elif isinstance(b, _Convection):
-            handle.fn('add_convection')(ptr, b.region.ptr, b.coefficient, b.ambient)
+            if isinstance(b.coefficient, Shape) or isinstance(b.ambient, Shape):
+                lib.libfive_tetthermal_add_convection_fields(
+                    ptr, b.region.ptr,
+                    0.0 if isinstance(b.coefficient, Shape) else b.coefficient,
+                    b.coefficient.ptr if isinstance(b.coefficient, Shape) else None,
+                    0.0 if isinstance(b.ambient, Shape) else b.ambient,
+                    b.ambient.ptr if isinstance(b.ambient, Shape) else None)
+            else:
+                handle.fn('add_convection')(ptr, b.region.ptr, b.coefficient, b.ambient)
         else:
             raise TypeError('boundary items are fixed_temperature(...), heat_input(...), '
                             'heat_generation(...) or convection(...)')
@@ -284,7 +339,7 @@ def thermal_analysis(shape, boundary, material=aluminium, element_size=None, bou
         try:
             key = (handle.fn('hash')(ptr), int(max_iterations), float(tolerance), element,
                    tuple((type(b).__name__, shape_key(b.region)) +
-                         tuple(sorted((k2, v) for k2, v in vars(b).items() if k2 != 'region'))
+                         tuple(sorted((k2, value_key(v)) for k2, v in vars(b).items() if k2 != 'region'))
                          for b in items))
         except Uncacheable:
             key = None
@@ -455,7 +510,7 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
                tuple(shape_key(_shape(r, 'keep')) for r in keep),
                tuple(shape_key(_shape(r, 'avoid')) for r in avoid),
                tuple((type(b).__name__, shape_key(b.region)) +
-                     tuple(sorted((k, v) for k, v in vars(b).items() if k != 'region'))
+                     tuple(sorted((k, value_key(v)) for k, v in vars(b).items() if k != 'region'))
                      for b in items))
     except Uncacheable:
         key = None

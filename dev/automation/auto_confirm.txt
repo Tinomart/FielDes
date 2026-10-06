@@ -1,0 +1,13 @@
+wait 4000
+waitrender 60 20
+treedrop a@t > v > on
+wait 1500
+grabwidget ConfirmDelete C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/confirm_dialog.png
+key Return
+wait 1500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/confirm_1.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/confirm_1_script.txt
+treedrop d@v > nothing > end
+wait 1500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/confirm_2.txt
+quit

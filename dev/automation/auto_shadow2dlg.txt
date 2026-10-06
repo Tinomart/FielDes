@@ -1,0 +1,10 @@
+wait 4000
+waitrender 60 20
+treedrop w > u > above
+wait 1500
+grabwidget ConfirmShadow C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/shadow2_dialog.png
+key Return
+wait 2500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow2dlg_tree.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow2dlg_script.txt
+quit

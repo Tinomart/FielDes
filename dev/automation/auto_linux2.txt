@@ -1,0 +1,23 @@
+wait 6000
+waitrender 90 30
+treedump /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/linux2_tree0.txt
+treedrop b@u > nothing > end
+wait 4000
+waitrender 60 5
+treedrop d > u > on ctrl
+wait 4000
+waitrender 60 5
+treedump /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/linux2_tree1.txt
+dump /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/linux2_script.txt
+grab /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/linux2_a.png
+tour start
+wait 3000
+tour goto 4
+wait 1500
+tour showme
+wait 7000
+waitrender 60 5
+tour state
+dump /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/linux2_script_tour.txt
+grab /mnt/c/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/linux2_b.png
+quit

@@ -19,9 +19,11 @@ __pycache__/
 examples/meshes/
 .out.stl
 
-# sample STEP files (GrabCAD downloads, not ours to redistribute): only their README is tracked
+# sample STEP files (GrabCAD downloads, not ours to redistribute): only their README and the one bracket that is shipped are tracked
+# (the caches next to a file, <file>.fieldes-cache.*, stay ignored)
 examples/step/*
 !examples/step/README.md
+!examples/step/PivotBearingSupportBracket.STEP
 
 # editors and OS
 .vs/

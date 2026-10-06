@@ -442,6 +442,30 @@ void TetProblem::addForce(const Tree& region, Eigen::Vector3d total, int loadCas
     m_prepared = false;
 }
 
+void TetProblem::addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile)
+{
+    m_forces.push_back(Force{region, total, std::max(0, loadCase), profile});
+    m_prepared = false;
+}
+
+void TetProblem::setStiffnessField(const Tree& E)
+{
+    m_stiffnessField = E;
+    m_prepared = false;
+}
+
+void TetProblem::setDensityField(const Tree& density)
+{
+    m_densityField = density;
+    m_prepared = false;
+}
+
+void TetProblem::setExpansionField(const Tree& alpha)
+{
+    m_expansionField = alpha;
+    m_prepared = false;
+}
+
 void TetProblem::setGravity(Eigen::Vector3d g, double density)
 {
     m_gravity = g;
@@ -594,6 +618,23 @@ bool TetProblem::prepare(std::string& error)
         {
             std::vector<float> v, vn;
             evalTreePoints(fo.region, pts, vn);
+            // (a load with a profile: its share of a triangle is the area times the profile there, not the area alone)
+            std::vector<float> profileAtFaces, profileAtNodes;
+            if (fo.profile.is_valid())
+            {
+                evalTreePoints(fo.profile, centres, profileAtFaces);
+                evalTreePoints(fo.profile, pts, profileAtNodes);
+            }
+            auto weightOfFace = [&](size_t f) {
+                if (profileAtFaces.empty()) return area[f];
+                const double w = double(profileAtFaces[f]);
+                return std::isfinite(w) && w > 0 ? area[f] * w : 0.0;
+            };
+            auto weightOfNode = [&](size_t n) {
+                if (profileAtNodes.empty()) return 1.0;
+                const double w = double(profileAtNodes[n]);
+                return std::isfinite(w) && w > 0 ? w : 0.0;
+            };
             bool placed = false;
             // (the region must reach the part; one that misses it by a little -- the surface of an optimised
             // design -- still loads it: the second pass takes what lies within half an element)
@@ -604,28 +645,33 @@ bool TetProblem::prepare(std::string& error)
                 // triangle on the side of a bar, next to a loaded end, has one corner inside and is
                 // not the end's); if there are none, those whose centre is inside
                 std::vector<char> take(mesh->faces.size(), 0);
-                double sel = 0;
+                double sel = 0, selArea = 0;
                 for (size_t f = 0; f < take.size(); ++f)
                 {
                     const auto& tri = mesh->faces[f];
                     take[f] = vn[size_t(tri[0])] <= rch && vn[size_t(tri[1])] <= rch && vn[size_t(tri[2])] <= rch;
-                    if (take[f]) sel += area[f];
+                    if (take[f]) { sel += weightOfFace(f); selArea += area[f]; }
                 }
-                if (!(sel > 0))
+                if (!(selArea > 0))
                 {
                     evalTreePoints(fo.region, centres, v);
                     for (size_t f = 0; f < take.size(); ++f)
                     {
                         take[f] = v[f] <= rch;
-                        if (take[f]) sel += area[f];
+                        if (take[f]) { sel += weightOfFace(f); selArea += area[f]; }
                     }
+                }
+                if (selArea > 0 && !(sel > 0))
+                {
+                    error = "a load's profile is zero over the part's surface inside its region";
+                    return false;
                 }
                 if (sel > 0)
                 {
                     for (size_t f = 0; f < take.size(); ++f)
                     {
                         if (!take[f]) continue;
-                        const Vec3 share = fo.total * (area[f] / sel) / 3.0;
+                        const Vec3 share = fo.total * (weightOfFace(f) / sel) / 3.0;
                         for (int p = 0; p < 3; ++p)
                         {
                             const size_t n = size_t(mesh->faces[f][size_t(p)]);
@@ -638,13 +684,19 @@ bool TetProblem::prepare(std::string& error)
                 }
                 // a region holding no surface: over the nodes inside it
                 size_t count = 0;
-                for (float x : vn) count += x <= rch;
+                double nodeWeight = 0;
+                for (size_t n = 0; n < nv; ++n)
+                    if (vn[n] <= rch) { ++count; nodeWeight += weightOfNode(n); }
                 if (count == 0) continue;
-                const Vec3 share = fo.total / double(count);
+                if (!(nodeWeight > 0))
+                {
+                    error = "a load's profile is zero at the nodes inside its region";
+                    return false;
+                }
                 for (size_t n = 0; n < nv; ++n)
                 {
                     if (!(vn[n] <= rch)) continue;
-                    addNodal(n, share, fo.loadCase);
+                    addNodal(n, fo.total * (weightOfNode(n) / nodeWeight), fo.loadCase);
                     loaded[n] = 1;
                 }
                 placed = true;
@@ -668,12 +720,68 @@ bool TetProblem::prepare(std::string& error)
                                  mesh->pos[size_t(v[3])]);
         }
     }, 256);
+    // Material fields: each element's value at its centre
+    m_scale.clear();
+    m_elementDensity.clear();
+    std::vector<double> elementAlpha;
+    if (m_stiffnessField.is_valid() || m_densityField.is_valid() || m_expansionField.is_valid())
+    {
+        std::vector<Eigen::Vector3f> centres(nt);
+        for (size_t t = 0; t < nt; ++t)
+        {
+            Vec3 c = Vec3::Zero();
+            for (int p = 0; p < 4; ++p) c += mesh->pos[size_t(mesh->tets[t][size_t(p)])];
+            centres[t] = (c / 4.0).cast<Eigen::Vector3f::Scalar>();
+        }
+        auto sample = [&](const Tree& field, const char* what, bool strictlyPositive, std::vector<double>& out) {
+            std::vector<float> vals;
+            evalTreePoints(field, centres, vals);
+            out.resize(nt);
+            for (size_t t = 0; t < nt; ++t)
+            {
+                const double x = double(vals[t]);
+                if (!std::isfinite(x) || (strictlyPositive ? !(x > 0) : x < 0))
+                {
+                    char buf[200];
+                    snprintf(buf, sizeof(buf), "%s must be %s everywhere in the part (it is %g at (%.4g, %.4g, %.4g))", what,
+                             strictlyPositive ? "positive" : "not negative", x, double(centres[t].x()), double(centres[t].y()),
+                             double(centres[t].z()));
+                    error = buf;
+                    return false;
+                }
+                out[t] = x;
+            }
+            return true;
+        };
+        if (m_stiffnessField.is_valid())
+        {
+            if (!sample(m_stiffnessField, "the Young's modulus field", true, m_scale)) return false;
+            for (auto& x : m_scale) x /= m_E;
+        }
+        if (m_densityField.is_valid() && !sample(m_densityField, "the density field", false, m_elementDensity)) return false;
+        if (m_expansionField.is_valid())
+        {
+            std::vector<float> vals;
+            evalTreePoints(m_expansionField, centres, vals);
+            elementAlpha.resize(nt);
+            for (size_t t = 0; t < nt; ++t)
+            {
+                if (!std::isfinite(vals[t]))
+                {
+                    error = "the thermal expansion field isn't defined everywhere in the part";
+                    return false;
+                }
+                elementAlpha[t] = double(vals[t]);
+            }
+        }
+    }
     // Gravity: each element's weight, a quarter to each of its nodes
-    if (!m_noLoads && m_density > 0 && m_gravity.norm() > 0)
+    if (!m_noLoads && (m_density > 0 || !m_elementDensity.empty()) && m_gravity.norm() > 0)
     {
         for (size_t t = 0; t < nt; ++t)
         {
-            const Vec3 share = m_gravity * (m_density * geom[t].vol / 4.0);
+            const double rho = m_elementDensity.empty() ? m_density : m_elementDensity[t];
+            const Vec3 share = m_gravity * (rho * geom[t].vol / 4.0);
             for (int p = 0; p < 4; ++p)
             {
                 const size_t n = size_t(mesh->tets[t][size_t(p)]);
@@ -707,12 +815,14 @@ bool TetProblem::prepare(std::string& error)
                 error = "the temperature field isn't defined everywhere in the part";
                 return false;
             }
-            const double e = m_alpha * (double(T[t]) - m_reference);
+            const double alpha = elementAlpha.empty() ? m_alpha : elementAlpha[t];
+            const double e = alpha * (double(T[t]) - m_reference);
             m_thermalStrain[t] = e;
+            const double stiffness = m_scale.empty() ? 1.0 : m_scale[t];
             for (int p = 0; p < 4; ++p)
             {
                 const size_t n = size_t(mesh->tets[t][size_t(p)]);
-                for (int a = 0; a < 3; ++a) force[3 * n + size_t(a)] += geom[t].vol * bulk * e * geom[t].g[p][a];
+                for (int a = 0; a < 3; ++a) force[3 * n + size_t(a)] += geom[t].vol * bulk * stiffness * e * geom[t].g[p][a];
             }
         }
     }
@@ -732,7 +842,7 @@ bool TetProblem::prepare(std::string& error)
         }
         if (!(anyLoad > 0))
         {
-            error = (m_forces.empty() && !(m_density > 0) && m_thermalStrain.empty())
+            error = (m_forces.empty() && !(m_density > 0) && m_elementDensity.empty() && m_thermalStrain.empty())
                         ? "no loads: add force(region, ...), gravity() or thermal_expansion(...)"
                         : "the loads have no effect: a load region may only touch the supports";
             return false;
@@ -771,6 +881,9 @@ bool TetProblem::prepare(std::string& error)
     hsh = fnv(hsh, force.data(), force.size() * sizeof(double));
     for (const auto& cf : caseForce) hsh = fnv(hsh, cf.data(), cf.size() * sizeof(double));
     if (!m_thermalStrain.empty()) hsh = fnv(hsh, m_thermalStrain.data(), m_thermalStrain.size() * sizeof(double));
+    // (what the material fields made of the elements, and of the weight and the mass: another field is another problem)
+    if (!m_scale.empty()) hsh = fnv(hsh, m_scale.data(), m_scale.size() * sizeof(double));
+    if (!m_elementDensity.empty()) hsh = fnv(hsh, m_elementDensity.data(), m_elementDensity.size() * sizeof(double));
     m_hash = hsh;
 
     m_mesh = mesh;
@@ -797,7 +910,7 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
     const Mat6 D = elasticity(m_E, m_nu);
     Assembly A;
     buildPattern(mesh, A);
-    assemble(mesh, D, nullptr, A);
+    assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
     buildPreconditioner(m_fixedDof, A);
     task.set(0.05, "preparing the solver");
 
@@ -860,7 +973,7 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
             Vec6 eps = strainOf(A.geom[t], ue);
             if (!m_thermalStrain.empty())
                 for (int q = 0; q < 3; ++q) eps[q] -= m_thermalStrain[t];       // (the stress-free part)
-            const Vec6 sig = D * eps;
+            const Vec6 sig = (m_scale.empty() ? 1.0 : m_scale[t]) * (D * eps);
             for (int q = 0; q < 6; ++q) res->elementStress[t][size_t(q)] = float(sig[q]);
             res->elementStress[t][6] = float(0.5 * sig.dot(eps));
         }
@@ -1155,7 +1268,8 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
             task.set(double(it) / std::max(1, s.iterations), buf);
         }
         physical(x, xPhys);
-        for (size_t a = 0; a < na; ++a) scale[a] = emin + (1 - emin) * std::pow(xPhys[a], p);
+        for (size_t a = 0; a < na; ++a)
+            scale[a] = (emin + (1 - emin) * std::pow(xPhys[a], p)) * (m_scale.empty() ? 1.0 : m_scale[a]);
         assemble(mesh, D, &scale, A);
         buildPreconditioner(m_fixedDof, A);
         std::fill(dc.begin(), dc.end(), 0.0);
@@ -1179,7 +1293,7 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
                     for (int q = 0; q < 4; ++q)
                         for (int d = 0; d < 3; ++d) ue[3 * q + d] = u[3 * size_t(mesh.tets[a][size_t(q)]) + size_t(d)];
                     const Vec6 eps = strainOf(A.geom[a], ue);
-                    const double ce = A.geom[a].vol * eps.dot(D * eps);
+                    const double ce = A.geom[a].vol * eps.dot(D * eps) * (m_scale.empty() ? 1.0 : m_scale[a]);
                     dc[a] += -p * std::pow(std::max(xPhys[a], 1e-9), p - 1) * (1 - emin) * ce;
                     dv[a] = vol[a];
                 }
@@ -1334,7 +1448,7 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
         error = "ask for at least one mode";
         return false;
     }
-    if (!(density > 0))
+    if (!(density > 0) && !m_densityField.is_valid())
     {
         error = "modal analysis needs the material's density";
         return false;
@@ -1359,13 +1473,16 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
     const Mat6 D = elasticity(m_E, m_nu);
     Assembly A;
     buildPattern(mesh, A);
-    assemble(mesh, D, nullptr, A);
+    assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
     buildPreconditioner(m_fixedDof, A);
     // The lumped mass: a quarter of each element's mass at each of its nodes
     std::vector<double> mass(n, 0.0);
     for (size_t t = 0; t < mesh.tets.size(); ++t)
+    {
+        const double rho = m_elementDensity.empty() ? density : m_elementDensity[t];
         for (int p = 0; p < 4; ++p)
-            for (int a = 0; a < 3; ++a) mass[3 * size_t(mesh.tets[t][size_t(p)]) + size_t(a)] += density * A.geom[t].vol / 4.0;
+            for (int a = 0; a < 3; ++a) mass[3 * size_t(mesh.tets[t][size_t(p)]) + size_t(a)] += rho * A.geom[t].vol / 4.0;
+    }
     for (size_t i = 0; i < n; ++i) if (m_fixedDof[i]) mass[i] = 0.0;
 
     task.set(0.1, "finding the modes");

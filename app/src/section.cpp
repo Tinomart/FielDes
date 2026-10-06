@@ -19,6 +19,7 @@ of the License, or (at your option) any later version.
 #include <vector>
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QHBoxLayout>
@@ -33,6 +34,7 @@ of the License, or (at your option) any later version.
 
 #include "libfive/eval/eval_array.hpp"
 
+#include "fieldes/carddrag.hpp"
 #include "fieldes/section.hpp"
 #include "fieldes/colormap.hpp"
 
@@ -161,6 +163,43 @@ QColor fieldColour(float t)
     return QColor::fromRgbF(c.r, c.g, c.b);
 }
 
+void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi)
+{
+    // The field on a coarse grid over the region: its range without the few extreme values (a field that blows up at one
+    // point -- 1/x -- would otherwise paint everything else one colour)
+    const int n = 16;
+    const size_t N = libfive::ArrayEvaluator::N;
+    libfive::ArrayEvaluator e(src.color, src.vars);
+    std::vector<float> values;
+    values.reserve(size_t(n) * n * n);
+    int k = 0;
+    auto flush = [&] {
+        if (k == 0) return;
+        const auto vs = e.values(k);
+        for (int j = 0; j < k; ++j) if (std::isfinite(vs(j))) values.push_back(vs(j));
+        k = 0;
+    };
+    for (int i = 0; i < n; ++i)
+    for (int j = 0; j < n; ++j)
+    for (int l = 0; l < n; ++l)
+    {
+        e.set(Eigen::Vector3f(lo.x() + (i + 0.5f) / n * (hi.x() - lo.x()), lo.y() + (j + 0.5f) / n * (hi.y() - lo.y()),
+                              lo.z() + (l + 0.5f) / n * (hi.z() - lo.z())), k);
+        if (++k == int(N)) flush();
+    }
+    flush();
+    if (values.empty())
+    {
+        src.lo = 0;
+        src.hi = 1;
+        return;
+    }
+    std::sort(values.begin(), values.end());
+    src.lo = values[size_t(0.01 * double(values.size() - 1))];
+    src.hi = values[size_t(0.99 * double(values.size() - 1))];
+    if (!(src.hi > src.lo)) src.hi = src.lo + 1.0f;
+}
+
 FieldSlice sampleField(const QVector<FieldSource>& sources,
                        const SectionSettings& s,
                        QVector3D bmin, QVector3D bmax, int longSide, float fade,
@@ -219,7 +258,7 @@ FieldSlice sampleField(const QVector<FieldSource>& sources,
             const auto t_build = std::chrono::steady_clock::now();
             libfive::ArrayEvaluator e(src.tree, src.vars);
             std::unique_ptr<libfive::ArrayEvaluator> ce;
-            if (src.color.is_valid()) ce.reset(new libfive::ArrayEvaluator(src.color));
+            if (src.color.is_valid()) ce.reset(new libfive::ArrayEvaluator(src.color, src.vars));
             if (timing)
             {
                 const int ms = int(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_build).count());
@@ -243,20 +282,24 @@ FieldSlice sampleField(const QVector<FieldSource>& sources,
                 const auto vs = e.values(count);
                 // (this model's colour field where it is the nearest model)
                 Eigen::Array<float, 1, Eigen::Dynamic> cs;
+                std::vector<int> inside;
                 if (ce)
                 {
-                    for (int k = 0; k < count; ++k) ce->set(pointOf(start + k), k);
-                    cs = ce->values(count);
+                    // (the colour is only looked at where the plane is inside the model -- the disc of the field viewer, the part
+                    // of a result: outside it nothing is drawn but the outline, so nothing is evaluated there)
+                    for (int k = 0; k < count; ++k)
+                        if (vs(k) < 0 && vs(k) < values[start + k]) inside.push_back(k);
+                    for (size_t m = 0; m < inside.size(); ++m) ce->set(pointOf(start + inside[m]), int(m));
+                    if (!inside.empty()) cs = ce->values(int(inside.size()));
                 }
                 for (int k = 0; k < count; ++k)
                 {
                     const int idx = start + k;
-                    if (vs(k) < values[idx] && colors)
-                    {
-                        colors[idx] = ce ? cs(k) : std::numeric_limits<float>::quiet_NaN();
-                    }
+                    if (vs(k) < values[idx] && colors) colors[idx] = std::numeric_limits<float>::quiet_NaN();
                     values[idx] = std::min(values[idx], vs(k));
                 }
+                if (colors)
+                    for (size_t m = 0; m < inside.size(); ++m) colors[start + inside[m]] = cs(int(m));
             }
             return true;
         });
@@ -400,6 +443,14 @@ void colorizeField(FieldSlice& slice, float range, float spacing)
     slice.spacing = spacing > 0 ? spacing
                                 : niceStep(std::max(slice.rangeIn, slice.rangeOut) / 6);
 
+    // (the image of the 2D view is made when that view is shown -- buildSliceImage: nobody looks at it most of the time, and
+    // making it cost more than sampling the field)
+    slice.image = QImage();
+}
+
+void buildSliceImage(FieldSlice& slice)
+{
+    if (!slice.valid()) return;
     // The image for the 2D view (the viewport colours in its shader)
     const int w = slice.w, h = slice.h;
     const float pixel = std::max((slice.max - slice.min).length() / std::max(w, h), 1e-9f);
@@ -461,6 +512,7 @@ FieldView::FieldView(QWidget* parent) : QWidget(parent)
 void FieldView::setSlice(const FieldSlice& s)
 {
     m_slice = s;
+    if (m_slice.valid() && m_slice.image.isNull()) buildSliceImage(m_slice);       // (made when it is looked at)
     update();
 }
 
@@ -552,6 +604,11 @@ void FieldLegend::setSlice(const FieldSlice& s)
     m_valid = s.valid();
     m_in = s.rangeIn;
     m_out = s.rangeOut;
+    m_hasColor = s.valid() && s.hasColor;
+    m_map = s.colorMap;
+    m_label = s.colorLabel;
+    m_lo = s.colorLo;
+    m_hi = s.colorHi;
     update();
 }
 
@@ -564,19 +621,29 @@ void FieldLegend::paintEvent(QPaintEvent*)
     for (int k = 0; k <= 20; ++k)
     {
         const float t = -1 + 2 * k / 20.f;
-        g.setColorAt(k / 20.0, fieldColour(t));
+        g.setColorAt(k / 20.0, m_hasColor ? colormapColor(m_map, k / 20.f) : fieldColour(t));
     }
     QPainterPath path;
     path.addRoundedRect(bar, 3, 3);
     p.fillPath(path, g);
-    p.setPen(QPen(QColor(20, 20, 20), 1.5));
-    p.drawLine(QPointF(bar.center().x(), bar.top() - 1), QPointF(bar.center().x(), bar.bottom() + 1));
+    if (!m_hasColor)
+    {
+        p.setPen(QPen(QColor(20, 20, 20), 1.5));
+        p.drawLine(QPointF(bar.center().x(), bar.top() - 1), QPointF(bar.center().x(), bar.bottom() + 1));
+    }
 
     QFont f = font();
     f.setPointSize(8);
     p.setFont(f);
     p.setPen(kDim);
     const QRectF labels(0, bar.bottom() + 2, width(), 14);
+    if (m_hasColor)
+    {
+        p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter, QString::number(m_lo, 'g', 4));
+        p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter, QString::number(m_hi, 'g', 4));
+        p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, m_label.isEmpty() ? QString() : m_label);
+        return;
+    }
     if (m_valid)
     {
         p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter,
@@ -785,16 +852,19 @@ SectionPanel::SectionPanel(QWidget* parent)
     body->addWidget(m_view);
 
     auto layout = new QVBoxLayout(this);
-    layout->setContentsMargins(4, 3, 4, 4);
+    layout->setContentsMargins(7, 4, 7, 7);            // (the margin is where a card is resized from)
     layout->setSpacing(2);
     layout->addLayout(head);
     layout->addWidget(m_body);
-    setFixedWidth(300);
+    setMinimumWidth(260);
+    resize(300, 100);
 
+    new CardController(this, "section", m_header, QSize(260, 60));
     connect(m_header, &QToolButton::clicked, this, [this]{
         m_collapsed = !m_collapsed;
         m_body->setVisible(!m_collapsed);
         m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  Section");
+        CardController::collapse(this, m_collapsed, m_header->sizeHint().height() + 14);
         place();
     });
     connect(m_close, &QToolButton::clicked, this, &SectionPanel::closeRequested);
@@ -871,8 +941,9 @@ bool SectionPanel::eventFilter(QObject* obj, QEvent* e)
 
 void SectionPanel::place()
 {
-    adjustSize();
-    if (parentWidget())
+    // (a card the user sized keeps its size, and one the user moved keeps its place: see CardController)
+    if (!CardController::sized(this)) resize(300, std::max(minimumSizeHint().height(), sizeHint().height()));
+    if (parentWidget() && !CardController::moved(this))
     {
         // Top-right, below the orientation triad
         move(parentWidget()->width() - width() - 8, 124);
@@ -1014,6 +1085,327 @@ void SectionPanel::setSlice(FieldSlice s)
         m_view->setSlice(s);
     }
     updateInfo();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The field viewer
+
+FieldPanel::FieldPanel(QWidget* parent)
+    : QFrame(parent),
+      m_header(new QToolButton), m_combo(new QComboBox), m_comboRow(new QWidget), m_body(new QWidget),
+      m_offsetSlider(new QSlider(Qt::Horizontal)), m_offsetSpin(new QDoubleSpinBox),
+      m_radiusSlider(new QSlider(Qt::Horizontal)), m_radiusSpin(new QDoubleSpinBox),
+      m_opacity(new QSlider(Qt::Horizontal)),
+      m_legend(new FieldLegend), m_info(new QLabel),
+      m_show2d(new QToolButton), m_view(new FieldView)
+{
+    setObjectName("FieldPanel");
+    setAttribute(Qt::WA_StyledBackground, true);
+    // (the same look as the section card)
+    setStyleSheet(
+        "#FieldPanel { background: rgba(22, 76, 94, 222);"
+        "  border: 1px solid rgba(147, 161, 161, 90); border-radius: 6px; }"
+        "QLabel { color: #93a1a1; font-size: 8pt; }"
+        "QLabel#FieldInfo { color: #eee8d5; }"
+        "QToolButton { color: #eee8d5; background: rgba(147, 161, 161, 28);"
+        "  border: 1px solid rgba(147, 161, 161, 60); border-radius: 4px;"
+        "  padding: 2px 8px; font-size: 8pt; }"
+        "QToolButton:hover { background: rgba(147, 161, 161, 60); }"
+        "QToolButton:checked { background: rgba(38, 139, 210, 170);"
+        "  border-color: rgba(38, 139, 210, 230); color: white; }"
+        "QToolButton#FieldHeader { background: transparent; border: none; font-weight: bold;"
+        "  font-size: 9pt; padding: 3px 4px; }"
+        "QComboBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
+        "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 3px; padding: 1px 6px; font-size: 8pt; }"
+        "QComboBox QAbstractItemView { color: #eee8d5; background: #25607a;"
+        "  selection-background-color: rgba(38, 139, 210, 200); }"
+        "QSlider::groove:horizontal { height: 4px; background: rgba(147, 161, 161, 70);"
+        "  border-radius: 2px; }"
+        "QSlider::sub-page:horizontal { background: rgba(38, 139, 210, 200); border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;"
+        "  background: #eee8d5; }"
+        "QDoubleSpinBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
+        "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 3px; padding: 1px 2px;"
+        "  font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
+
+    // Header: collapse only (the card is there while a field is selected: it has no close button)
+    m_header->setObjectName("FieldHeader");
+    m_header->setText(QString(QChar(0x25be)) + "  Field viewer");
+    m_header->setCursor(Qt::PointingHandCursor);
+    m_header->setToolTip("Collapse / expand");
+    auto head = new QHBoxLayout;
+    head->setContentsMargins(0, 0, 0, 0);
+    head->addWidget(m_header);
+    head->addStretch();
+
+    auto label = [](const QString& t) {
+        auto l = new QLabel(t);
+        l->setFixedWidth(52);
+        return l;
+    };
+
+    // Which of the selected fields (only when there are several)
+    {
+        auto row = new QHBoxLayout(m_comboRow);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addWidget(label("Field"));
+        m_combo->setObjectName("fieldChoice");
+        m_combo->setToolTip("The selected fields: choose the one that is shown");
+        row->addWidget(m_combo, 1);
+        m_comboRow->hide();
+    }
+
+    // The way the disc faces
+    auto axisRow = new QHBoxLayout;
+    axisRow->setSpacing(2);
+    axisRow->addWidget(label("Plane"));
+    auto group = new QButtonGroup(this);
+    group->setExclusive(true);
+    static const char* names[3] = {"X", "Y", "Z"};
+    for (int i = 0; i < 3; ++i)
+    {
+        m_axes[i] = new QToolButton;
+        m_axes[i]->setText(names[i]);
+        m_axes[i]->setCheckable(true);
+        m_axes[i]->setFixedWidth(30);
+        m_axes[i]->setObjectName(QString("fieldAxis") + names[i]);
+        m_axes[i]->setToolTip(QString("The disc faces along %1").arg(names[i]));
+        group->addButton(m_axes[i], i);
+        axisRow->addWidget(m_axes[i]);
+    }
+    m_axes[2]->setChecked(true);
+    axisRow->addStretch();
+
+    // Position along the way it faces
+    m_offsetSlider->setObjectName("fieldOffset");
+    m_offsetSlider->setRange(0, 1000);
+    m_offsetSpin->setDecimals(3);
+    m_offsetSpin->setRange(-1e6, 1e6);
+    m_offsetSpin->setKeyboardTracking(false);
+    m_offsetSpin->setFixedWidth(74);
+    m_offsetSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
+    m_offsetSpin->setToolTip("Where the disc is along the way it faces (the arrows in the viewport move it)");
+    auto offsetRow = new QHBoxLayout;
+    offsetRow->addWidget(label("Position"));
+    offsetRow->addWidget(m_offsetSlider, 1);
+    offsetRow->addWidget(m_offsetSpin);
+
+    // Radius
+    m_radiusSlider->setObjectName("fieldRadius");
+    m_radiusSlider->setRange(0, 1000);
+    m_radiusSpin->setDecimals(3);
+    m_radiusSpin->setRange(1e-3, 1e6);
+    m_radiusSpin->setKeyboardTracking(false);
+    m_radiusSpin->setFixedWidth(74);
+    m_radiusSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
+    m_radiusSpin->setToolTip("Radius of the disc");
+    auto radiusRow = new QHBoxLayout;
+    radiusRow->addWidget(label("Radius"));
+    radiusRow->addWidget(m_radiusSlider, 1);
+    radiusRow->addWidget(m_radiusSpin);
+
+    m_opacity->setRange(10, 100);
+    m_opacity->setValue(90);
+    auto opacityRow = new QHBoxLayout;
+    opacityRow->addWidget(label("Opacity"));
+    opacityRow->addWidget(m_opacity, 1);
+
+    m_info->setObjectName("FieldInfo");
+    m_info->setWordWrap(true);
+    m_info->setMinimumHeight(16);
+    m_show2d->setCheckable(true);
+    m_show2d->setText("2D view");
+    m_show2d->setToolTip("Flat 2D plot of the disc");
+    m_view->hide();
+    auto viewRow = new QHBoxLayout;
+    viewRow->addWidget(m_info, 1);
+    viewRow->addWidget(m_show2d, 0, Qt::AlignTop);
+
+    auto body = new QVBoxLayout(m_body);
+    body->setContentsMargins(6, 2, 6, 4);
+    body->setSpacing(6);
+    body->addWidget(m_comboRow);
+    body->addLayout(axisRow);
+    body->addLayout(offsetRow);
+    body->addLayout(radiusRow);
+    body->addLayout(opacityRow);
+    body->addWidget(m_legend);
+    body->addLayout(viewRow);
+    body->addWidget(m_view);
+
+    auto layout = new QVBoxLayout(this);
+    layout->setContentsMargins(7, 4, 7, 7);            // (the margin is where a card is resized from)
+    layout->setSpacing(2);
+    layout->addLayout(head);
+    layout->addWidget(m_body);
+    setMinimumWidth(260);
+    resize(300, 100);
+
+    new CardController(this, "field-viewer", m_header, QSize(260, 60));
+    connect(m_header, &QToolButton::clicked, this, [this]{
+        m_collapsed = !m_collapsed;
+        m_body->setVisible(!m_collapsed);
+        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  Field viewer");
+        CardController::collapse(this, m_collapsed, m_header->sizeHint().height() + 14);
+        place();
+    });
+    connect(m_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
+        if (m_updating || i < 0 || i >= m_keys.size()) return;
+        m_name = m_combo->itemText(i);
+        emit(fieldChosen(m_keys[i]));
+    });
+    connect(group, QOverload<int>::of(&QButtonGroup::idClicked), this, [this](int id) {
+        m_settings.axis = id;
+        syncWidgets();
+        emitChange();
+    });
+    connect(m_opacity, &QSlider::valueChanged, this, [this](int v) {
+        if (m_updating) return;
+        m_settings.opacity = v / 100.f;
+        emitChange();
+    });
+    connect(m_offsetSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_updating) return;
+        const int a = m_settings.axis;
+        m_settings.centre[a] = m_min[a] + (m_max[a] - m_min[a]) * v / 1000.f;
+        syncWidgets();
+        emitChange();
+    });
+    connect(m_offsetSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        if (m_updating) return;
+        m_settings.centre[m_settings.axis] = float(v);
+        syncWidgets();
+        emitChange();
+    });
+    connect(m_radiusSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (m_updating) return;
+        m_settings.radius = 0.02f * radiusMax() / 1.5f + (radiusMax() - 0.02f * radiusMax() / 1.5f) * v / 1000.f;
+        syncWidgets();
+        emitChange();
+    });
+    connect(m_radiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        if (m_updating) return;
+        m_settings.radius = float(v);
+        syncWidgets();
+        emitChange();
+    });
+    connect(m_show2d, &QToolButton::toggled, this, [this](bool b) {
+        m_view->setVisible(b);
+        if (b) m_view->setSlice(m_slice);
+        place();
+    });
+
+    if (parent) parent->installEventFilter(this);
+    place();
+}
+
+bool FieldPanel::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == parentWidget() && e->type() == QEvent::Resize) place();
+    // (the section card is open beside it: where it is and how tall it is decides where this one goes)
+    if (obj == m_sectionCard && (e->type() == QEvent::Show || e->type() == QEvent::Hide || e->type() == QEvent::Resize ||
+                                 e->type() == QEvent::Move))
+        place();
+    return QFrame::eventFilter(obj, e);
+}
+
+void FieldPanel::place()
+{
+    if (!CardController::sized(this)) resize(300, std::max(minimumSizeHint().height(), sizeHint().height()));
+    if (parentWidget() && !CardController::moved(this))
+    {
+        // Top-right, below the triad -- and below the section card when that is open too (the two views work together)
+        int y = 124;
+        if (m_sectionCard && m_sectionCard->isVisible()) y = m_sectionCard->y() + m_sectionCard->height() + 8;
+        move(parentWidget()->width() - width() - 8, y);
+    }
+}
+
+void FieldPanel::stackBelow(QWidget* sectionCard)
+{
+    m_sectionCard = sectionCard;
+    sectionCard->installEventFilter(this);
+    place();
+}
+
+float FieldPanel::radiusMax() const
+{
+    const QVector3D size = m_max - m_min;
+    return 1.5f * std::max({size.x(), size.y(), size.z(), 1e-3f});
+}
+
+void FieldPanel::syncWidgets()
+{
+    m_updating = true;
+    for (int i = 0; i < 3; ++i) m_axes[i]->setChecked(i == m_settings.axis);
+    const int a = m_settings.axis;
+    const float span = std::max(m_max[a] - m_min[a], 1e-6f);
+    m_offsetSlider->setValue(int(std::max(0.f, std::min(1.f, (m_settings.centre[a] - m_min[a]) / span)) * 1000));
+    m_offsetSpin->setValue(m_settings.centre[a]);
+    const float lo = 0.02f * radiusMax() / 1.5f, hi = radiusMax();
+    m_radiusSlider->setValue(int(std::max(0.f, std::min(1.f, (m_settings.radius - lo) / std::max(hi - lo, 1e-6f))) * 1000));
+    m_radiusSpin->setValue(m_settings.radius);
+    m_opacity->setValue(int(m_settings.opacity * 100));
+    m_updating = false;
+}
+
+void FieldPanel::emitChange()
+{
+    emit(settingsChanged(m_settings));
+}
+
+void FieldPanel::setFields(const QStringList& keys, const QStringList& names, int current)
+{
+    m_keys = keys;
+    m_updating = true;
+    m_combo->clear();
+    m_combo->addItems(names);
+    m_combo->setCurrentIndex(std::max(0, std::min(current, int(names.size()) - 1)));
+    m_updating = false;
+    m_name = m_combo->currentText();
+    m_comboRow->setVisible(keys.size() >= 2);
+    place();
+    updateInfo();
+}
+
+void FieldPanel::setContext(QVector3D centre, bool known, QVector3D regionMin, QVector3D regionMax)
+{
+    Q_UNUSED(known);
+    m_min = regionMin;
+    m_max = regionMax;
+    m_home = centre;
+    m_settings.centre = centre;
+    const QVector3D size = m_max - m_min;
+    m_settings.radius = 0.5f * std::max({size.x(), size.y(), size.z(), 1e-3f});
+    syncWidgets();
+    emitChange();
+}
+
+void FieldPanel::setCentre(QVector3D centre)
+{
+    m_settings.centre = centre;
+    syncWidgets();
+    emitChange();
+}
+
+void FieldPanel::setSlice(FieldSlice s)
+{
+    m_slice = s;
+    m_legend->setSlice(s);
+    if (m_view->isVisible()) m_view->setSlice(s);
+    updateInfo();
+}
+
+void FieldPanel::setReadout(const QString& text)
+{
+    m_readout = text;
+    updateInfo();
+}
+
+void FieldPanel::updateInfo()
+{
+    if (!m_readout.isEmpty()) m_info->setText(m_readout);
+    else m_info->setText(m_name.isEmpty() ? QString("Drag the arrows to move the disc") : m_name + ": drag the arrows to move the disc");
 }
 
 }   // namespace FielDes

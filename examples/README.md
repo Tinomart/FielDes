@@ -1,6 +1,6 @@
 # Examples
 
-Every example starts from an **imported STEP file** (in `step/`). Open one with **File → Open**, or run it
+Every example starts from an **imported STEP file** (in `step/`). Open one with **File → Open example file**, or run it
 without the application: `python scripts/run_example.py examples/05_static_analysis.py`. The scripts use
 relative paths (`step/Bracket.step`), so they work from wherever the examples folder is; the application
 switches to a script's folder when it opens it.
@@ -31,21 +31,28 @@ can be deleted at any time.
 
 | `17_flow_topology_optimization.py` | none (the post of example 16 in its slab of water) | `flow_topology_optimization`: the post reshaped for the least drag with its volume kept; the body in the flow with its wake, iteration by iteration |
 
+| `18_fields_everywhere.py` | none | wherever a number goes, a field goes: a plate grown by a field (`offset`), a blend radius that varies (`smooth_union`), a lattice of graded cell size, driven from a `point` |
+
+| `19_graded_material.py` | none (a cantilever beam) | fields in an analysis: a material whose stiffness varies, a load spread by a profile, compared with beam theory |
+
+| `20_custom_blocks.py` | none | custom blocks (`blocks/sample_blocks.py`): `perforate` with a field radius, `bracket` |
+| `21_low_level.py` | none | low-level fields, as in libfive's Scheme `define-shape` / `remap-shape`: a cube from six plane distances (`.max`), a twist by `.remap`, a ball and a torus from their formulas joined by a smooth minimum of your own, a gyroid cut to a cube; evaluating and printing a tree |
+
 (Open each script: the comment at its top says what to look at.)
 
 ## About the sample STEP files
 
-| File | Size | What it is |
-|---|---|---|
-| `Bracket.step` | 56 kB | a small bracket |
-| `MobileStand.step` | 85 kB | a phone stand |
-| `ShaftSupportStand.STEP` | 99 kB | a shaft support stand |
-| `PivotBearingSupportBracket.STEP` | 187 kB | a pivot-bearing support bracket |
-| `Keukencombinatie.stp` | 6.4 MB | a kitchen unit assembly (90 parts, free-form surfaces) |
+| File | Size | What it is | In FielDes |
+|---|---|---|---|
+| `PivotBearingSupportBracket.STEP` | 187 kB | a pivot-bearing support bracket | **yes**: examples 01, 05, 08, 10 and 15 run as they are |
+| `Bracket.step` | 56 kB | a small bracket | no |
+| `MobileStand.step` | 85 kB | a phone stand | no |
+| `ShaftSupportStand.STEP` | 99 kB | a shaft support stand | no |
+| `Keukencombinatie.stp` | 6.4 MB | a kitchen unit assembly (90 parts, free-form surfaces) | no |
 
-**These files are not included.** They are sample parts downloaded from GrabCAD, whose authors' terms are not
-known to allow redistribution, so FielDes does not ship them. To run the examples as they are, put your own
-STEP files in `step/` under these names (see [`step/README.md`](step/README.md)). The scripts place their
-regions (supports, loads, boxes) for these particular parts, so a different part needs those numbers
-adjusted; the importing, the fields and the lattices work with any STEP file. To use a file under another
-name, change the path in the script that uses it.
+The bracket is the one sample part that is distributed with FielDes (at the maintainer's decision: it is a GrabCAD
+download whose author's terms are not known; see [`../NOTICE.md`](../NOTICE.md)). **The other files are not included.**
+To run the examples that use them, put your own STEP files in `step/` under these names (see
+[`step/README.md`](step/README.md)). The scripts place their regions (supports, loads, boxes) for these particular
+parts, so a different part needs those numbers adjusted; the importing, the fields and the lattices work with any
+STEP file. To use a file under another name, change the path in the script that uses it.

@@ -64,13 +64,21 @@ __all__ = ['Fluid', 'water', 'air', 'oil', 'glycerol', 'inlet', 'outlet', 'wall'
            'fluid_analysis', 'FluidResult', 'FluidStep', 'flow_topology_optimization', 'FlowTopologyResult']
 
 
+def _scalar(value, what):
+    ''' A number of the flow problem.  (The flow solver takes numbers: its fluid, its inlets, outlets and walls are not fields.
+        Fields work in the other analyses -- see Material, force, fixed_temperature, convection.) '''
+    if isinstance(value, Shape):
+        raise TypeError('{} is a number: the flow solver takes numbers, not fields'.format(what))
+    return float(value)
+
+
 class Fluid:
     ''' A Newtonian fluid: density (t/mm^3) and dynamic viscosity (MPa s = N s / mm^2).
         Water: 1.0e-9 t/mm^3, 1.0e-9 MPa s (kinematic viscosity 1 mm^2/s). '''
     def __init__(self, name, density, viscosity):
         self.name = name
-        self.density = float(density)
-        self.viscosity = float(viscosity)
+        self.density = _scalar(density, 'Fluid: the density')
+        self.viscosity = _scalar(viscosity, 'Fluid: the viscosity')
         if not self.density > 0 or not self.viscosity > 0:
             raise ValueError('Fluid: the density and the viscosity must be positive')
 
@@ -129,11 +137,11 @@ def inlet(region, velocity=None, speed=None, flow_rate=None, profile='uniform'):
         raise ValueError('inlet: give one of velocity=, speed= or flow_rate=')
     direction = (0.0, 0.0, 0.0)
     if velocity is not None:
-        direction = tuple(float(v) for v in velocity)
+        direction = tuple(_scalar(v, 'inlet: velocity') for v in velocity)
         if len(direction) != 3 or not sum(v * v for v in direction) > 0:
             raise ValueError('inlet: velocity must be a non-zero (vx, vy, vz)')
-    s = float(speed) if speed is not None else 0.0
-    q = float(flow_rate) if flow_rate is not None else 0.0
+    s = _scalar(speed, 'inlet: speed') if speed is not None else 0.0
+    q = _scalar(flow_rate, 'inlet: flow_rate') if flow_rate is not None else 0.0
     if speed is not None and not s > 0:
         raise ValueError('inlet: the speed must be positive (it is into the fluid)')
     if flow_rate is not None and not q > 0:
@@ -144,13 +152,13 @@ def inlet(region, velocity=None, speed=None, flow_rate=None, profile='uniform'):
 def outlet(region, pressure=0.0):
     ''' The fluid leaves through the surface inside `region` at `pressure` (MPa, 0 by default; the
         pressure field is relative to it).  Put it where the flow leaves parallel to the walls. '''
-    return _Outlet(_shape(region, 'outlet(region)'), float(pressure))
+    return _Outlet(_shape(region, 'outlet(region)'), _scalar(pressure, 'outlet: pressure'))
 
 
 def wall(region, velocity=(0.0, 0.0, 0.0)):
     ''' A wall moving with `velocity` (mm/s; no-slip).  Surfaces in no region are walls at rest, so
         this is for moving walls, and for naming a wall whose force is wanted (wall_forces). '''
-    v = tuple(float(x) for x in velocity)
+    v = tuple(_scalar(x, 'wall: velocity') for x in velocity)
     if len(v) != 3:
         raise ValueError('wall: velocity must be (vx, vy, vz)')
     return _Wall(_shape(region, 'wall(region)'), v)

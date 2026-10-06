@@ -134,6 +134,10 @@ public slots:
      */
     void applyEdits(QList<TextEdit> edits, QString description);
 
+    /*  The same, for an edit that goes on as something is typed (a name, a number): the edits of one go on after another are
+     *  one undoable step -- an edit joins the one before it as long as nothing else changed the script since  */
+    void applyEditsLive(QList<TextEdit> edits, QString description);
+
     /*  Scrolls to (and flashes) a 0-based line  */
     void goToLine(int line0);
 
@@ -164,6 +168,9 @@ signals:
      *  Emitted when the interpreter delivers us a list of shapes
      */
     void shapes(QList<Shape*> shapes);
+
+    /*  The field models of the script (they are not shapes: the section viewer shows the one that is selected)  */
+    void fieldSources(QList<FieldEntry> fields);
 
     /*
      *  Shows the documentation pane attached to the language
@@ -196,6 +203,10 @@ signals:
 
     /*  A short message for the status bar  */
     void notice(QString text);
+
+    /*  A right-click on a (0-based) line of the rendered script: the viewport's menu for the model it defines is wanted at
+     *  `globalPos`  */
+    void objectMenuRequested(int line0, QPoint globalPos);
 
 protected slots:
     void onSpinner();
@@ -271,6 +282,10 @@ protected:
 
     // Debounces text changes, to avoid emitting too many signals
     QTimer m_textChangedDebounce;
+
+    // The document's revision just after the last live edit (applyEditsLive): the next one joins it only if it is still current
+    int m_liveRevision = -1;
+    void applyEditsAs(QList<TextEdit> edits, bool live);
 
     // Debounces the interpreter's "busy" signal to avoid UI jitter
     QTimer m_interpreterBusyDebounce;

@@ -33,6 +33,7 @@ namespace libfive { class Mesh; }
 
 namespace FielDes {
 class Editor;
+class Tutorial;
 class View;
 
 class Window : public QMainWindow
@@ -54,13 +55,15 @@ public:
 protected slots:
     bool onOpen(bool=false);
     bool onOpenViewer(bool=false);
+    /*  File > Open example file: the file dialog in the examples folder that is next to the program  */
+    bool onOpenExample(bool=false);
     bool onRevert(bool=false);
     bool onSave(bool=false);
     bool onSaveAs(bool=false);
     bool onNew(bool=false);
     void onExport(bool=false);
     void onAbout(bool=false);
-    bool onLoadTutorial(bool=false);
+    bool loadTourModel();
     bool onLoadDefault(bool=false);
     void onAutoLoad(const QString&);
     void onAutoLoadPath(const QString&);
@@ -101,6 +104,10 @@ protected:
 
     /*  File > Open recent  */
     void addRecentFile(const QString& f);
+    /*  The files imported with Import model (and the arrows beside the Open and Import icons list them, and the scripts opened):
+     *  the newest first, only those that still exist  */
+    void addRecentImport(const QString& f);
+    void showRecent(QWidget* below, bool imports);
     void updateRecentMenu();
     class QMenu* recent_menu=nullptr;
 
@@ -140,6 +147,16 @@ protected:
     QStringList m_stepChanged;
     void watchImports(const QString& sceneJson);
 
+    /*  The custom blocks (python/fieldes/blocks.py): the files of the blocks folder are watched, and a script that uses a
+     *  block runs again when its file is saved.  Settings > Blocks folder chooses the folder  */
+    QFileSystemWatcher m_blocksWatcher;
+    QTimer m_blocksReload;
+    QStringList m_blocksChanged;
+    QString m_blocksFolder;
+    void watchBlocks();
+    void chooseBlocksFolder();
+    void setBlocksFolder(const QString& path);
+
     /*  True when we should automatically reload the file on changes */
     bool autoreload=false;
 
@@ -149,6 +166,7 @@ protected:
 
     Editor* editor;
     View* view;
+    Tutorial* tour=nullptr;
     bool closing=false;
 
     /* Used to (re)store the state of the application */

@@ -41,6 +41,11 @@ def main(argv):
 
     from fieldes import Shape
     namespace = {'__name__': '__main__', '__file__': path, 'var': lambda x: x}
+    # (the custom blocks of the blocks folder are there in every script, as they are in the application)
+    from fieldes import blocks
+    namespace.update(blocks.namespace())
+    for file, why in blocks.errors():
+        print('custom block file {}: {}'.format(os.path.basename(file), why))
     started = time.time()
     try:
         for node in tree.body:

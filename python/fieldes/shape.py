@@ -15,16 +15,42 @@ import subprocess
 from fieldes.ffi import (lib, libfive_region_t, libfive_interval_t,
                          libfive_vec3_t, libfive_tree)
 
-def _wrapped(f):
+def _combined_kind(shapes):
+    ''' The kind of what is made of these shapes by arithmetic: a number is a number ('const'), fields combine into a
+        field, and anything else -- a body, or a shape of no known kind -- makes a body (None) '''
+    kinds = [s._kind for s in shapes]
+    if all(k == 'const' for k in kinds):
+        return 'const'
+    if all(k in ('field', 'const') for k in kinds):
+        return 'field'
+    return None
+
+
+def _wrapped(f, whole=True):
     ''' Decorator function which calls Shape.wrap on every argument
-        in f(self, *args), then calls f as usual
+        in f(self, *args), then calls f as usual.  The result is a field when all it is made of are fields (and
+        numbers); with whole=False, as the first of them is (a remapped body is a body)
     '''
     def g(*args):
         args = [Shape.wrap(a) for a in args]
-        return f(*args)
+        out = f(*args)
+        out._kind = _combined_kind(args if whole else args[:1])
+        for a in args:                  # (a field made of fields is about what the first of them is about)
+            o = a._field_origin
+            if o is not None:
+                out._field_origin = o
+                break
+        return out
     return g
 
 class Shape:
+    # What this is, for the model tree's icons and colours (fieldes.kinds): 'field' for what is made to be a field
+    # (a distance, a ramp, noise ...), 'const' for a number made into a tree, 'point' / 'surface' for those, and None
+    # for anything else, which is a body (3D, or 2D when it has no z)
+    _kind = None
+    # Where a field made from a point or a body is "about" (the point, the body, or three numbers): the field viewer starts there
+    _field_origin = None
+
     def __init__(self, ptr):
         ''' Builds a Shape from a raw pointer.
 
@@ -66,7 +92,9 @@ class Shape:
         ''' Ensures that the input argument is a Shape, converting constants
         '''
         if isinstance(t, numbers.Number):
-            return cls(lib.libfive_tree_const(t))
+            out = cls(lib.libfive_tree_const(t))
+            out._kind = 'const'
+            return out
         elif isinstance(t, cls):
             return t
         else:
@@ -132,22 +160,35 @@ class Shape:
         return Shape.new('pow', self.ptr, other.ptr)
 
     @_wrapped
+    def __rpow__(self, other):
+        return Shape.new('pow', other.ptr, self.ptr)
+
+    @_wrapped
     def __truediv__(self, other):
         return Shape.new('div', self.ptr, other.ptr)
 
     def __neg__(self):
-        return Shape.new('neg', self.ptr)
+        return self._unary('neg')
+
+    def __pos__(self):
+        return self
 
     @_wrapped
     def __rtruediv__(self, other):
         return Shape.new('div', other.ptr, self.ptr)
 
-    @_wrapped
+    @staticmethod
+    def _remapped(self, x_, y_, z_):
+        return Shape(lib.libfive_tree_remap(
+            self.ptr, x_.ptr, y_.ptr, z_.ptr))
+
     def remap(self, x_, y_, z_):
         ''' Performs the remapping f(x_, y_, z_)
         '''
-        return Shape(lib.libfive_tree_remap(
-            self.ptr, x_.ptr, y_.ptr, z_.ptr))
+        args = [Shape.wrap(a) for a in (self, x_, y_, z_)]
+        out = Shape._remapped(*args)
+        out._kind = self._kind if self._kind in ('field', 'const') else None
+        return out
 
     def __eq__(self, other):
         raise RuntimeError("Shape does not support equality comparisons")
@@ -165,35 +206,41 @@ class Shape:
     def optimized(self):
         return Shape(lib.libfive_tree_optimized(self.ptr));
 
+    def _unary(self, op):
+        out = Shape.new(op, self.ptr)
+        out._kind = self._kind if self._kind in ('field', 'const') else None
+        out._field_origin = self._field_origin
+        return out
+
     def sqrt(self):
-        return Shape.new('sqrt', self.ptr)
+        return self._unary('sqrt')
 
     @_wrapped
     def pow(self, other):
         return Shape.new('pow', self.ptr, other.ptr)
 
     def sin(self):
-        return Shape.new('sin', self.ptr)
+        return self._unary('sin')
     def cos(self):
-        return Shape.new('cos', self.ptr)
+        return self._unary('cos')
     def tan(self):
-        return Shape.new('tan', self.ptr)
+        return self._unary('tan')
     def asin(self):
-        return Shape.new('asin', self.ptr)
+        return self._unary('asin')
     def acos(self):
-        return Shape.new('acos', self.ptr)
+        return self._unary('acos')
     def atan(self):
-        return Shape.new('atan', self.ptr)
+        return self._unary('atan')
     def exp(self):
-        return Shape.new('exp', self.ptr)
+        return self._unary('exp')
     def log(self):
-        return Shape.new('log', self.ptr)
+        return self._unary('log')
     def square(self):
-        return Shape.new('square', self.ptr)
+        return self._unary('square')
     def abs(self):
-        return Shape.new('abs', self.ptr)
+        return self._unary('abs')
     def __abs__(self):
-        return Shape.new('abs', self.ptr)
+        return self._unary('abs')
 
     @_wrapped
     def atan2(self, other):
@@ -214,6 +261,13 @@ class Shape:
     @_wrapped
     def max(self, other):
         return Shape.new('max', self.ptr, other.ptr)
+
+    def _display(self):
+        ''' What is drawn for this shape: itself, except where it is of a kind that has no body to draw -- a 2D shape
+            (drawn flat), a surface (a thin sheet), a point (a small ball), a field (nothing: the section viewer shows it): see
+            fieldes.stdlib.points '''
+        from fieldes.stdlib import points
+        return points.displayed(self)
 
     def __call__(self, x, y, z):
         if all([isinstance(c, numbers.Number) for c in [x, y, z]]):

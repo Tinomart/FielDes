@@ -6,7 +6,7 @@ wait 1000
 log --- a new sphere from the menu is draggable by its surface at once
 viewmouse rclick 400 700
 wait 800
-popup pick New primitive/3D shapes/sphere
+popup pick New 3D shape/sphere
 wait 2500
 waitrender 60 10
 wait 700

@@ -31,6 +31,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
+import functools
 import sys
 
 from fieldes.ffi import lib
@@ -192,9 +193,11 @@ THROUGH = {
                'normalize', 'lerp', 'mix', 'smoothstep', 'step_field', 'sum_fields', 'evaluate', 'sample_grid',
                'field_range', 'volume_of', 'mass_properties', 'find_extent', 'exact_distance', 'gradient_field',
                'gradient_magnitude', 'normal_field', 'overhang_angle', 'overhang_mask', 'wall_thickness',
-               'curvature_field'],
+               'curvature_field', 'add_fields', 'subtract_fields', 'multiply_fields', 'divide_fields', 'power_field',
+               'min_fields', 'max_fields', 'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body'],
     'cad_import': ['roi', 'roi_resolution', 'poor_fit_region'],
     'excluded': ['exclude'],
+    'fieldargs': ['is_field'],
 }
 
 # (modules whose functions never take a shape that could be excluded)
@@ -208,6 +211,7 @@ NO_BODY = {
     'cad_import': ['step_length_unit_mm', 'import_step_parts', 'import_step', 'import_step_parts_reconstructed',
                    'exact_field'],
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],
+    'points': ['point', 'surface', 'plane', 'sphere_surface', 'cylinder_surface', 'wave_surface'],
     'fea': ['fixed', 'force', 'gravity', 'thermal_expansion'],
     'thermal': ['fixed_temperature', 'heat_input', 'heat_generation', 'convection'],
     'fluid': ['inlet', 'outlet', 'wall', 'slip', 'symmetry'],
@@ -262,7 +266,7 @@ def _keeps(name, fn, first_only, on_free=False):
         if on_free:
             out._free = result          # (so that the next one works on it too)
         return out
-    g.__doc__ = fn.__doc__
+    functools.update_wrapper(g, fn)       # (its signature, for the call tips and for what the model tree can add to it)
     g.__name__ = name
     return g
 
@@ -280,7 +284,7 @@ def _decorates(name, fn):
         if free is not None:
             result._free = free
         return result
-    g.__doc__ = fn.__doc__
+    functools.update_wrapper(g, fn)       # (its signature, for the call tips and for what the model tree can add to it)
     g.__name__ = name
     return g
 
@@ -295,7 +299,7 @@ def _refuses(name, fn):
                                 "tear its locked part away from the rest. Do it before exclude(), e.g. "
                                 "exclude(%s(part, ...), region)." % (name, name))
         return fn(*args, **kwargs)
-    g.__doc__ = fn.__doc__
+    functools.update_wrapper(g, fn)       # (its signature, for the call tips and for what the model tree can add to it)
     g.__name__ = name
     return g
 

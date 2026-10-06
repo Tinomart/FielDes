@@ -1,0 +1,15 @@
+wait 5000
+waitrender 60 10
+action help.guide
+wait 1500
+grabwidget FielDesGuide C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/guide_top.png
+closemenus
+menu Settings
+wait 800
+grabpopups C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/settings_menu.png
+closemenus
+menu Help
+wait 800
+grabpopups C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/help_menu.png
+closemenus
+quit

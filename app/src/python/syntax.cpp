@@ -49,7 +49,12 @@ Syntax::Syntax(QTextDocument* doc)
         m_rules << Rule(R"(\b(?:-|)\d+\b)", num_format);
     }
 
-    {   // Comments!
+    {   // Comments!  (a `#SECTION title` comment, which folds what follows it, is set apart)
+        QTextCharFormat section_format;
+        section_format.setForeground(Color::blue);
+        section_format.setFontWeight(QFont::Bold);
+        m_rules << Rule(R"(^\s*#\s*SECTION\b.*)", section_format);
+
         QTextCharFormat comment_format;
         comment_format.setForeground(Color::base1);
 

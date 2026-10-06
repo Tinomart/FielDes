@@ -1,0 +1,24 @@
+wait 4000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ctrl_start.png
+waitrender 60 20
+treedrop e > u > on ctrl
+wait 3500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_1.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_1_script.txt
+treedrop e > c@v > above ctrl
+wait 3500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_2.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_2_script.txt
+treedrop a@u > v > on ctrl
+wait 3500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_3.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_3_script.txt
+treedrop e > u > on
+wait 3500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_4.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_4_script.txt
+treedrop c@v > u > on ctrl
+wait 3500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_5.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/ctrl_5_script.txt
+quit

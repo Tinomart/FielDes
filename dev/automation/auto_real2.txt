@@ -1,0 +1,10 @@
+wait 4000
+waitrender 60 20
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/real2_before.txt
+wait 10500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/real2_during.png
+wait 8000
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/real2_after.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/real2_script.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/real2_after.png
+quit

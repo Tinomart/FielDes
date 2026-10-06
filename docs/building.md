@@ -60,6 +60,7 @@ FielDes.exe, fieldes.dll, fieldes-stdlib.dll, manifold.dll, Qt5*.dll, plugins\, 
 runtime\python3\        the private Python runtime
 python\fieldes\         the Python library
 examples\               the examples and their STEP files (without caches)
+blocks\                 the custom blocks folder (the sample blocks; see docs\blocks.md)
 docs\                   these documents
 README.md, LICENSE, LICENSE-MPL-2.0, NOTICE.md, CHANGELOG.md
 ```
@@ -84,6 +85,28 @@ The kernel needs no CAD library: the STEP reader and the tessellator are part of
 The CMake options: `BUILD_APP` (default ON; OFF builds only the kernel and its C++ shapes) and
 `ENABLE_DEBUG` (symbols, non-MSVC).
 
+## Linux
+
+`scripts/build-linux.sh` builds the kernel, the Python library and the application, and with `--package` makes a portable
+folder (`~/FielDes-linux`, and `dist/FielDes-linux-x64.tar.gz` in the repository) that is started with `run.sh`. It was made
+and tested on Fedora under WSL2 (Windows 11, WSLg shows the window). Install once:
+
+```
+# Fedora
+sudo dnf install qt5-qtbase-devel qt5-qtbase-private-devel boost-devel eigen3-devel libpng-devel python3-devel \
+    manifold-devel tbb-devel mesa-libGL-devel mesa-libGLU-devel libatomic cmake ninja-build gcc-c++ pkgconf-pkg-config rsync patchelf
+# Ubuntu / Debian
+sudo apt install qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libboost-dev libeigen3-dev libpng-dev python3-dev \
+    libmanifold-dev libtbb-dev libgl-dev libglu1-mesa-dev cmake ninja-build g++ pkg-config rsync patchelf
+```
+
+then `scripts/build-linux.sh --package`. When the sources are on a Windows drive (`/mnt/c/...`) they are copied to the Linux
+file system first (compiling from there is several times faster). Manifold needs Clipper2, which Fedora does not package: the
+script builds it once into `~/fieldes-deps`. The first build takes a good while (the kernel is large) and each compiler needs about
+a gigabyte: on a machine with 8 GB use `--jobs 4`, or the build thrashes; later builds only rebuild what changed. The portable
+folder needs Python 3 and Qt 5 installed on the machine that runs it. Under WSL, `~/FielDes-linux/run.sh` opens the window
+through WSLg.
+
 ## Other platforms
 
 Install the dependencies with your package manager (Eigen ≥ 3.2.92 via pkg-config, Boost, libpng, Qt5,
@@ -94,7 +117,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target FielDes -j
 ```
 
-Expect to fix small things: the application has only been built and used on Windows.
+Expect to fix small things: macOS has not been tried.
 
 ## Running the library without the application
 
@@ -122,4 +145,8 @@ writes `docs/reference.md` from the docstrings of the library. Run it after chan
 A developer facility used to test the application without a person at the keyboard: set `FIELDES_AUTOMATION`
 to a text file of commands (`wait <ms>`, `action <name>`, `grab <file.png>`, `quit`, …; see
 `app/include/fieldes/automation.hpp`) and start `FielDes.exe script.py`. It is how the screenshots in the
-documentation are made.
+documentation are made. Among the commands: `treedump <file>` (the model tree as indented text, with each row's kind),
+`treedrop <source> > <target> > <above|on|below|end>` (a drag and drop in the tree, sent as the mouse events of a hand),
+`treerename <row> > <name>` (rename by double-click, or `f2`), `setting <fn> <index> <text>` (a render setting's field), `tour ...`
+(the guided tour, step by step), `treeclick`, `viewmouse`, `popup` (the context menus), `grabmenus`, `grabwidget`, `grabcrop`, `outdump` (the output pane), `blocksfolder <path>`. The tests that use
+them are in `dev/automation` and `dev/tests`.

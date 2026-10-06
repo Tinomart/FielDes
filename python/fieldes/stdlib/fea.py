@@ -82,23 +82,56 @@ class FeaError(RuntimeError):
     ''' The analysis could not be set up or solved (the message says why) '''
 
 
+def _property(value, what, positive=True):
+    ''' A material property: a number, or a field (a Shape: its value at each point of the part) '''
+    if isinstance(value, Shape):
+        return value
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise TypeError('Material: {} is a number or a field (a Shape), not {!r}'.format(what, type(value).__name__))
+    if positive and not number > 0:
+        raise ValueError('Material: {} must be positive'.format(what))
+    return number
+
+
+def _is_field(value):
+    return isinstance(value, Shape)
+
+
+def _number(value, default=0.0):
+    ''' What a solver call that takes a number gets for a property that may be a field: the field is given by a call of its own,
+        and this number is only what it is measured against '''
+    return float(default) if isinstance(value, Shape) else float(value)
+
+
 class Material:
     ''' An isotropic linear-elastic material: Young's modulus E (MPa),
-        Poisson's ratio nu, density (t/mm^3, for gravity loads), thermal
-        conductivity (W / (mm K), for thermal_analysis), thermal expansion
-        coefficient (1/K, for thermal_expansion) '''
+        Poisson's ratio nu, density (t/mm^3, for gravity loads and the mass of a modal analysis),
+        thermal conductivity (W / (mm K), for thermal_analysis), thermal expansion
+        coefficient (1/K, for thermal_expansion).
+
+        E, density, conductivity and expansion can each be a FIELD instead of a number -- a Shape, its value at every
+        point of the part is the property there: `Material('graded', ramp(z_field(), (0, 50), (70e3, 3e3)), 0.33, 2.7e-9)`
+        is stiff at the bottom and soft at the top; a lattice's density field can drive it as well.  (Fields in a material
+        and in loads work with the tetrahedral elements, the default.)  nu and yield_strength are numbers. '''
     def __init__(self, name, E, nu, density=0.0, yield_strength=None, conductivity=None,
                  expansion=None):
         self.name = name
-        self.E = float(E)
+        self.E = _property(E, 'E')
+        if isinstance(nu, Shape):
+            raise TypeError("Material: nu (Poisson's ratio) is a number, not a field")
         self.nu = float(nu)
-        self.density = float(density)
+        self.density = _property(density, 'density', positive=False)
+        if isinstance(yield_strength, Shape):
+            raise TypeError('Material: yield_strength is a number (the safety factor is one number)')
         self.yield_strength = yield_strength
-        self.conductivity = conductivity
-        self.expansion = expansion
+        self.conductivity = conductivity if conductivity is None else _property(conductivity, 'conductivity')
+        self.expansion = expansion if expansion is None else _property(expansion, 'expansion', positive=False)
 
     def __repr__(self):
-        return 'Material({!r}, E={:g} MPa, nu={:g})'.format(self.name, self.E, self.nu)
+        return 'Material({!r}, E={}, nu={:g})'.format(
+            self.name, 'a field' if _is_field(self.E) else '{:g} MPa'.format(self.E), self.nu)
 
 
 # (conductivity in W / (mm K): 1 W / (m K) = 1e-3 W / (mm K); expansion:
@@ -119,8 +152,8 @@ class _Support:
 
 
 class _Force:
-    def __init__(self, region, vector):
-        self.region, self.vector = region, vector
+    def __init__(self, region, vector, profile=None):
+        self.region, self.vector, self.profile = region, vector, profile
 
 
 class _Gravity:
@@ -169,13 +202,23 @@ def fixed(region, x=True, y=True, z=True):
     return _Support(_shape(region, 'fixed(region)'), bool(x), bool(y), bool(z))
 
 
-def force(region, fx, fy=None, fz=None):
+def force(region, fx, fy=None, fz=None, profile=None):
     ''' A load: the total force (fx, fy, fz) in N, spread evenly over the
         part's surface inside `region` (a Shape).  force(region, (0, 0, -100))
-        works too. '''
+        works too.
+
+        profile  a field: the total is spread over the surface in proportion to it (not negative) instead of evenly --
+                 a pressure that is not the same everywhere, e.g. `profile=ramp(x_field(), (0, 80), (0.2, 1.0))` loads
+                 the end of a beam five times harder at x = 80 than at x = 0, with the same total.  (Tetrahedral
+                 elements.) '''
     if fy is None and fz is None:
         fx, fy, fz = fx
-    return _Force(_shape(region, 'force(region)'), (float(fx), float(fy), float(fz)))
+    if any(isinstance(v, Shape) for v in (fx, fy, fz)):
+        raise TypeError('force(): the components of a force are numbers (N); to spread it unevenly over the region give '
+                        'profile=<a field>')
+    if profile is not None and not isinstance(profile, Shape):
+        raise TypeError('force(): profile is a field (a Shape)')
+    return _Force(_shape(region, 'force(region)'), (float(fx), float(fy), float(fz)), profile)
 
 
 def gravity(g=(0.0, 0.0, -9810.0)):
@@ -193,6 +236,51 @@ def thermal_expansion(temperature, reference=20.0):
     if not isinstance(temperature, Shape):
         temperature = Shape(lib.libfive_tree_const(float(temperature)))
     return _Thermal(temperature, float(reference))
+
+
+def _density_given(material):
+    return isinstance(material.density, Shape) or material.density > 0
+
+
+def _fields_in_use(material, loads=()):
+    ''' The names of the fields a material and loads are made with (the voxel elements take numbers only) '''
+    used = [a for a in ('E', 'density', 'conductivity', 'expansion') if isinstance(getattr(material, a, None), Shape)]
+    if any(getattr(l, 'profile', None) is not None for l in loads if isinstance(l, _Force)):
+        used.append('a load profile')
+    return used
+
+
+def _refuse_fields(material, loads, element, what):
+    if element != 'tet':
+        used = _fields_in_use(material, loads)
+        if used:
+            raise FeaError("{}: {} {} a field -- fields in a material and in loads work with the tetrahedral elements "
+                           "(element='tet', the default), not {!r}".format(what, ', '.join(used),
+                                                                           'is' if len(used) == 1 else 'are', element))
+
+
+def _material_fields(ptr, material):
+    ''' The material's fields on a tetrahedral problem (its numbers went into the calls that take them) '''
+    for attr, name in (('E', 'stiffness'), ('density', 'density'), ('expansion', 'expansion')):
+        value = getattr(material, attr, None)
+        if isinstance(value, Shape):
+            fn = getattr(lib, 'libfive_tetfea_set_%s_field' % name, None)
+            if fn is None:
+                raise FeaError('this FielDes library is too old for a field as a material property')
+            fn(ptr, value.ptr)
+
+
+def _add_force(ptr, l, case=None):
+    ''' A force on a tetrahedral problem, with its profile if it has one '''
+    if l.profile is not None:
+        fn = getattr(lib, 'libfive_tetfea_add_force_profile', None)
+        if fn is None:
+            raise FeaError('this FielDes library is too old for a load profile')
+        fn(ptr, l.region.ptr, *l.vector, 0 if case is None else case, l.profile.ptr)
+    elif case is None:
+        lib.libfive_tetfea_add_force(ptr, l.region.ptr, *l.vector)
+    else:
+        lib.libfive_tetfea_add_force_case(ptr, l.region.ptr, *l.vector, case)
 
 
 # FielDes draws at most this many elements' values a field (more are not drawn)
@@ -483,6 +571,7 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
     loaded = result_cache.load('fea', ekey, 'static analysis')
     if loaded is not None:
         return Result(_Handle(loaded[0]), shape, material, element_size, element)
+    _refuse_fields(material, loads, element, 'static_analysis')
     ptr = lib.libfive_fea_new(shape.ptr, region, element_size, material.E, material.nu)
     handle = _Handle(ptr)
     _set_element(ptr, element)
@@ -636,23 +725,25 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
     loaded = result_cache.load('tetfea', ekey, 'static analysis')
     if loaded is not None:
         return TetResult(_TetHandle(loaded[0]), shape, material, element_size, size)
-    ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, material.E, material.nu)
+    # (a Young's modulus that is a field is measured against 1 MPa: each element has its own value of it)
+    ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
     handle = _TetHandle(ptr)
+    _material_fields(ptr, material)
     for s in supports:
         if not isinstance(s, _Support):
             raise TypeError('supports must be fixed(...) items')
         lib.libfive_tetfea_add_support(ptr, s.region.ptr, *[int(a) for a in s.axes])
     for l in loads:
         if isinstance(l, _Force):
-            lib.libfive_tetfea_add_force(ptr, l.region.ptr, *l.vector)
+            _add_force(ptr, l)
         elif isinstance(l, _Gravity):
-            if not material.density > 0:
+            if not _density_given(material):
                 raise FeaError('gravity needs a material with a density')
-            lib.libfive_tetfea_set_gravity(ptr, *l.g, material.density)
+            lib.libfive_tetfea_set_gravity(ptr, *l.g, _number(material.density))
         elif isinstance(l, _Thermal):
-            if not getattr(material, 'expansion', None):
+            if not (isinstance(material.expansion, Shape) or getattr(material, 'expansion', None)):
                 raise FeaError('thermal_expansion needs a material with an expansion coefficient')
-            lib.libfive_tetfea_set_thermal(ptr, l.temperature.ptr, float(material.expansion), l.reference)
+            lib.libfive_tetfea_set_thermal(ptr, l.temperature.ptr, _number(material.expansion), l.reference)
         else:
             raise TypeError('loads must be force(...), gravity(...) or thermal_expansion(...) items')
     if not lib.libfive_tetfea_prepare(ptr):
@@ -812,8 +903,9 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
         unchanged problem is cached. '''
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
-    if not material.density > 0:
+    if not _density_given(material):
         raise FeaError('modal_analysis needs a material with a density')
+    _refuse_fields(material, (), element, 'modal_analysis')
     supports = _conditions(conditions, 'modal_analysis')[0]
     if not supports:
         raise FeaError('modal_analysis needs supports (fixed(...))')
@@ -848,8 +940,9 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
             _modal_cache[key] = result
         return result
     if tet:
-        ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, material.E, material.nu)
+        ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
         handle = _TetHandle(ptr)
+        _material_fields(ptr, material)
     else:
         ptr = lib.libfive_fea_new(shape.ptr, region, element_size, material.E, material.nu)
         handle = _Handle(ptr)
@@ -863,7 +956,7 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
         (lib.libfive_tetfea_set_salt if tet else lib.libfive_fea_set_salt)(ptr, result_cache.salt(kind, key))
     t0 = time.time()
     if tet:
-        if not lib.libfive_tetfea_modal(ptr, int(modes), float(material.density), int(max_iterations),
+        if not lib.libfive_tetfea_modal(ptr, int(modes), _number(material.density), int(max_iterations),
                                         float(tolerance)):
             raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
         result = ModalResult(handle, shape, material, element_size, time.time() - t0, size=max(size))
@@ -1165,9 +1258,11 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     if tet:
         if getattr(lib, 'libfive_tetfea_optimize', None) is None:
             raise FeaError('this FielDes library is too old for tetrahedral topology optimization')
-        ptr = lib.libfive_tetfea_new(part.ptr, region, element_size, material.E, material.nu)
+        ptr = lib.libfive_tetfea_new(part.ptr, region, element_size, _number(material.E, 1.0), material.nu)
         handle = _TetHandle(ptr)
+        _material_fields(ptr, material)
     else:
+        _refuse_fields(material, [l for case in cases for l in case], element, 'topology_optimization')
         ptr = lib.libfive_fea_new(part.ptr, region, element_size, material.E, material.nu)
         handle = _Handle(ptr)
         _set_element(ptr, element)
@@ -1180,7 +1275,9 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     for case_index, case in enumerate(cases):
         for l in case:
             if isinstance(l, _Force):
-                if len(cases) > 1:
+                if tet:
+                    _add_force(ptr, l, case_index if len(cases) > 1 else None)
+                elif len(cases) > 1:
                     fn('add_force_case')(ptr, l.region.ptr, *l.vector, case_index)
                 else:
                     fn('add_force')(ptr, l.region.ptr, *l.vector)
@@ -1189,10 +1286,10 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
                                "load changes with the design)")
             elif isinstance(l, _Gravity):
                 # (gravity acts in every case)
-                if not material.density > 0:
+                if not _density_given(material):
                     raise FeaError('gravity needs a material with a density')
                 if not gravity_set:
-                    fn('set_gravity')(ptr, *l.g, material.density)
+                    fn('set_gravity')(ptr, *l.g, _number(material.density))
                     gravity_set = True
             else:
                 raise TypeError('loads must be force(...) or gravity(...) items')

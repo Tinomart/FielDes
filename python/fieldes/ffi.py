@@ -164,6 +164,9 @@ lib.libfive_tree_save.restype = ctypes.c_bool
 if hasattr(lib, 'libfive_tree_can_save'):
     lib.libfive_tree_can_save.argtypes = [libfive_tree]
     lib.libfive_tree_can_save.restype = ctypes.c_bool
+if hasattr(lib, 'libfive_tree_axes'):
+    lib.libfive_tree_axes.argtypes = [libfive_tree]
+    lib.libfive_tree_axes.restype = ctypes.c_int
 
 lib.libfive_tree_load.argtypes = [ctypes.c_char_p]
 lib.libfive_tree_load.restype = libfive_tree
@@ -435,6 +438,15 @@ try:
     lib.libfive_tetfea_set_gravity.restype = None
     lib.libfive_tetfea_set_thermal.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float]
     lib.libfive_tetfea_set_thermal.restype = None
+    for name in ('stiffness', 'density', 'expansion'):
+        fn = getattr(lib, 'libfive_tetfea_set_%s_field' % name, None)
+        if fn is not None:
+            fn.argtypes = [libfive_tetfea_p, libfive_tree]
+            fn.restype = None
+    if getattr(lib, 'libfive_tetfea_add_force_profile', None) is not None:
+        lib.libfive_tetfea_add_force_profile.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float,
+                                                        ctypes.c_float, ctypes.c_int, libfive_tree]
+        lib.libfive_tetfea_add_force_profile.restype = None
     lib.libfive_tetfea_prepare.argtypes = [libfive_tetfea_p]
     lib.libfive_tetfea_prepare.restype = ctypes.c_int
     lib.libfive_tetfea_hash.argtypes = [libfive_tetfea_p]
@@ -512,6 +524,19 @@ try:
     lib.libfive_tetthermal_add_generation.restype = None
     lib.libfive_tetthermal_add_convection.argtypes = [libfive_tetthermal_p, libfive_tree, ctypes.c_float, ctypes.c_float]
     lib.libfive_tetthermal_add_convection.restype = None
+    if getattr(lib, 'libfive_tetthermal_set_conductivity_field', None) is not None:
+        lib.libfive_tetthermal_set_conductivity_field.argtypes = [libfive_tetthermal_p, libfive_tree]
+        lib.libfive_tetthermal_set_conductivity_field.restype = None
+        lib.libfive_tetthermal_add_temperature_field.argtypes = [libfive_tetthermal_p, libfive_tree, ctypes.c_float,
+                                                                libfive_tree]
+        lib.libfive_tetthermal_add_temperature_field.restype = None
+        for name in ('heat', 'generation'):
+            fn = getattr(lib, 'libfive_tetthermal_add_%s_profile' % name)
+            fn.argtypes = [libfive_tetthermal_p, libfive_tree, ctypes.c_float, libfive_tree]
+            fn.restype = None
+        lib.libfive_tetthermal_add_convection_fields.argtypes = [libfive_tetthermal_p, libfive_tree, ctypes.c_float,
+                                                                libfive_tree, ctypes.c_float, libfive_tree]
+        lib.libfive_tetthermal_add_convection_fields.restype = None
     lib.libfive_tetthermal_prepare.argtypes = [libfive_tetthermal_p]
     lib.libfive_tetthermal_prepare.restype = ctypes.c_int
     lib.libfive_tetthermal_hash.argtypes = [libfive_tetthermal_p]

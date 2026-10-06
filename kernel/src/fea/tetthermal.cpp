@@ -54,6 +54,37 @@ void TetThermalProblem::addConvection(const Tree& region, double coefficient, do
     m_prepared = false;
 }
 
+void TetThermalProblem::setConductivityField(const Tree& k)
+{
+    m_conductivityField = k;
+    m_prepared = false;
+}
+
+void TetThermalProblem::addTemperatureField(const Tree& region, double value, const Tree& field)
+{
+    m_temperatures.push_back({region, value, field});
+    m_prepared = false;
+}
+
+void TetThermalProblem::addHeatProfile(const Tree& region, double watts, const Tree& profile)
+{
+    m_heats.push_back({region, watts, false, profile});
+    m_prepared = false;
+}
+
+void TetThermalProblem::addGenerationProfile(const Tree& region, double watts, const Tree& profile)
+{
+    m_heats.push_back({region, watts, true, profile});
+    m_prepared = false;
+}
+
+void TetThermalProblem::addConvectionFields(const Tree& region, double coefficient, const Tree& coefficientField,
+                                            double ambient, const Tree& ambientField)
+{
+    m_convections.push_back({region, coefficient, ambient, coefficientField, ambientField});
+    m_prepared = false;
+}
+
 bool TetThermalProblem::prepare(std::string& error)
 {
     if (!(m_h > 0) || !(m_k > 0))
@@ -142,11 +173,18 @@ bool TetThermalProblem::prepare(std::string& error)
             bool any = false;
             for (float x : v) any = any || x <= rch;
             if (!any) rch = 10 * reach;
+            std::vector<float> atNodes;
+            if (t.field.is_valid()) evalTreePoints(t.field, pts, atNodes);
             for (size_t i = 0; i < nv; ++i)
                 if (v[i] <= rch)
                 {
+                    if (!atNodes.empty() && !std::isfinite(atNodes[i]))
+                    {
+                        err = "a held temperature's field isn't defined everywhere in its region";
+                        return false;
+                    }
                     fixed[i] = 1;
-                    fixedValue[i] = t.value;
+                    fixedValue[i] = atNodes.empty() ? t.value : double(atNodes[i]);
                 }
         }
         for (const auto& hq : m_heats)
@@ -165,17 +203,29 @@ bool TetThermalProblem::prepare(std::string& error)
                                           .dot(m.pos[size_t(tv[3])] - m.pos[size_t(tv[0])])) / 6.0;
                 }
                 evalTreePoints(hq.region, tc, v);
-                double sel = 0;
-                for (size_t t = 0; t < nt; ++t) if (v[t] <= reach) sel += vol[t];
-                if (!(sel > 0))
+                std::vector<float> prof;
+                if (hq.profile.is_valid()) evalTreePoints(hq.profile, tc, prof);
+                auto weight = [&](size_t t) {
+                    if (prof.empty()) return vol[t];
+                    const double w = double(prof[t]);
+                    return std::isfinite(w) && w > 0 ? vol[t] * w : 0.0;
+                };
+                double sel = 0, selVolume = 0;
+                for (size_t t = 0; t < nt; ++t) if (v[t] <= reach) { sel += weight(t); selVolume += vol[t]; }
+                if (!(selVolume > 0))
                 {
                     err = "a heat generation region doesn't touch the part";
+                    return false;
+                }
+                if (!(sel > 0))
+                {
+                    err = "a heat generation's profile is zero inside its region";
                     return false;
                 }
                 for (size_t t = 0; t < nt; ++t)
                 {
                     if (!(v[t] <= reach)) continue;
-                    const double share = hq.watts * vol[t] / sel / 4.0;
+                    const double share = hq.watts * weight(t) / sel / 4.0;
                     for (int p = 0; p < 4; ++p) source[size_t(m.tets[t][size_t(p)])] += share;
                 }
                 heatIn += hq.watts;
@@ -184,12 +234,24 @@ bool TetThermalProblem::prepare(std::string& error)
             std::vector<char> take;
             if (trianglesIn(m, hq.region, pts, centres, take) > 0)
             {
+                std::vector<float> prof;
+                if (hq.profile.is_valid()) evalTreePoints(hq.profile, centres, prof);
+                auto weight = [&](size_t f) {
+                    if (prof.empty()) return faceArea(m, f);
+                    const double w = double(prof[f]);
+                    return std::isfinite(w) && w > 0 ? faceArea(m, f) * w : 0.0;
+                };
                 double sel = 0;
-                for (size_t f = 0; f < take.size(); ++f) if (take[f]) sel += faceArea(m, f);
+                for (size_t f = 0; f < take.size(); ++f) if (take[f]) sel += weight(f);
+                if (!(sel > 0))
+                {
+                    err = "a heat input's profile is zero over its region";
+                    return false;
+                }
                 for (size_t f = 0; f < take.size(); ++f)
                 {
                     if (!take[f]) continue;
-                    const double share = hq.watts * faceArea(m, f) / sel / 3.0;
+                    const double share = hq.watts * weight(f) / sel / 3.0;
                     for (int p = 0; p < 3; ++p) source[size_t(m.faces[f][size_t(p)])] += share;
                 }
             }
@@ -197,14 +259,27 @@ bool TetThermalProblem::prepare(std::string& error)
             {
                 // a region holding no surface: over the nodes inside it
                 evalTreePoints(hq.region, pts, v);
+                std::vector<float> prof;
+                if (hq.profile.is_valid()) evalTreePoints(hq.profile, pts, prof);
+                auto weight = [&](size_t i) {
+                    if (prof.empty()) return 1.0;
+                    const double w = double(prof[i]);
+                    return std::isfinite(w) && w > 0 ? w : 0.0;
+                };
                 size_t count = 0;
-                for (float x : v) count += x <= reach;
+                double sel = 0;
+                for (size_t i = 0; i < nv; ++i) if (v[i] <= reach) { ++count; sel += weight(i); }
                 if (count == 0)
                 {
                     err = "a heat input region doesn't touch the part";
                     return false;
                 }
-                for (size_t i = 0; i < nv; ++i) if (v[i] <= reach) source[i] += hq.watts / double(count);
+                if (!(sel > 0))
+                {
+                    err = "a heat input's profile is zero over its region";
+                    return false;
+                }
+                for (size_t i = 0; i < nv; ++i) if (v[i] <= reach) source[i] += hq.watts * weight(i) / sel;
             }
             heatIn += hq.watts;
         }
@@ -216,8 +291,22 @@ bool TetThermalProblem::prepare(std::string& error)
                 err = "a convection region doesn't touch the part";
                 return false;
             }
+            std::vector<float> hf, af;
+            if (c.coefficientField.is_valid()) evalTreePoints(c.coefficientField, centres, hf);
+            if (c.ambientField.is_valid()) evalTreePoints(c.ambientField, centres, af);
             for (size_t f = 0; f < take.size(); ++f)
-                if (take[f]) conv.push_back({m.faces[f][0], m.faces[f][1], m.faces[f][2], faceArea(m, f), c.coefficient, c.ambient});
+            {
+                if (!take[f]) continue;
+                const double h = hf.empty() ? c.coefficient : double(hf[f]);
+                const double amb = af.empty() ? c.ambient : double(af[f]);
+                if (!std::isfinite(h) || h < 0 || !std::isfinite(amb))
+                {
+                    err = "a convection's coefficient must not be negative, and its ambient temperature must be defined, everywhere "
+                          "on its surface";
+                    return false;
+                }
+                conv.push_back({m.faces[f][0], m.faces[f][1], m.faces[f][2], faceArea(m, f), h, amb});
+            }
         }
         return true;
     };
@@ -271,6 +360,32 @@ bool TetThermalProblem::prepare(std::string& error)
         }
     }
 
+    m_elementK.clear();
+    if (m_conductivityField.is_valid())
+    {
+        std::vector<Eigen::Vector3f> tc(mesh->tets.size());
+        for (size_t t = 0; t < tc.size(); ++t)
+        {
+            const auto& tv = mesh->tets[t];
+            tc[t] = ((mesh->pos[size_t(tv[0])] + mesh->pos[size_t(tv[1])] + mesh->pos[size_t(tv[2])] + mesh->pos[size_t(tv[3])]) / 4.0)
+                        .cast<float>();
+        }
+        std::vector<float> kv;
+        evalTreePoints(m_conductivityField, tc, kv);
+        m_elementK.resize(tc.size());
+        for (size_t t = 0; t < tc.size(); ++t)
+        {
+            if (!std::isfinite(kv[t]) || !(kv[t] > 0))
+            {
+                char buf[200];
+                snprintf(buf, sizeof(buf), "the conductivity field must be positive everywhere in the part (it is %g at (%.4g, %.4g, %.4g))",
+                         double(kv[t]), double(tc[t].x()), double(tc[t].y()), double(tc[t].z()));
+                error = buf;
+                return false;
+            }
+            m_elementK[t] = double(kv[t]);
+        }
+    }
     uint64_t hsh = 1469598103934665603ull;
     const double hdr[] = {m_h, m_k, double(mesh->pos.size()), double(mesh->tets.size())};
     hsh = fnv(hsh, hdr, sizeof(hdr));
@@ -280,6 +395,7 @@ bool TetThermalProblem::prepare(std::string& error)
     hsh = fnv(hsh, fixedValue.data(), fixedValue.size() * sizeof(double));
     hsh = fnv(hsh, source.data(), source.size() * sizeof(double));
     hsh = fnv(hsh, conv.data(), conv.size() * sizeof(ConvTri));
+    if (!m_elementK.empty()) hsh = fnv(hsh, m_elementK.data(), m_elementK.size() * sizeof(double));
     m_hash = hsh;
 
     m_mesh = mesh;
@@ -321,7 +437,7 @@ bool TetThermalProblem::solve(int maxIterations, double tolerance, std::string& 
                 {
                     const double d = A.geom[t].g[li][0] * A.geom[t].g[lj][0] + A.geom[t].g[li][1] * A.geom[t].g[lj][1] +
                                      A.geom[t].g[li][2] * A.geom[t].g[lj][2];
-                    val[entry(i, size_t(tv[size_t(lj)]))] += m_k * A.geom[t].vol * d;
+                    val[entry(i, size_t(tv[size_t(lj)]))] += (m_elementK.empty() ? m_k : m_elementK[t]) * A.geom[t].vol * d;
                 }
             }
     }, 16);
@@ -477,7 +593,7 @@ bool TetThermalProblem::solve(int maxIterations, double tolerance, std::string& 
             Vec3 g = Vec3::Zero();
             for (int p2 = 0; p2 < 4; ++p2)
                 for (int a = 0; a < 3; ++a) g[a] += T[size_t(mesh.tets[t][size_t(p2)])] * A.geom[t].g[p2][a];
-            flux[t] = -m_k * g;
+            flux[t] = -(m_elementK.empty() ? m_k : m_elementK[t]) * g;
         }
     }, 256);
     parallelRange(nv, [&](size_t b0, size_t b1) {

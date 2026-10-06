@@ -1,0 +1,26 @@
+wait 4000
+waitrender 60 20
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_0.txt
+treedrop a@u > v > on ctrl
+wait 500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_1.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_1_script.txt
+wait 3500
+treedrop d@v > u > on ctrl
+wait 500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_2.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_2_script.txt
+wait 3500
+treedrop b@w > v > on
+wait 500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_3.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_3_script.txt
+wait 3500
+treedrop c@w > u > on
+wait 500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_4.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow_4_script.txt
+wait 3500
+waitrender 60 5
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/shadow_4.png
+quit

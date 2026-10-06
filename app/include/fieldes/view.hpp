@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/camera.hpp"
 #include "fieldes/shape.hpp"
 #include "fieldes/section.hpp"
+#include "fieldes/result.hpp"
 #include "fieldes/result_panel.hpp"
 #include "fieldes/settings.hpp"
 
@@ -110,11 +111,17 @@ public:
     QList<int> highlightedLines() const;
     QVector3D towardViewer() const { return camera.towardViewer(); }
 
+    /*  How the section view is set now (for the guided tour)  */
+    const SectionSettings& sectionSettings() const { return section; }
+
     /*  The section handle's knob and arrow tip in widget coordinates
      *  (for scripted tests); false if there is no handle  */
     /*  The widget position of a grip of the first part with handles (for
      *  scripted tests): kind 0 = move arrow, 1 = rotation ring; the axis 0-2  */
     bool handleGripPoint(int kind, int axis, QPoint& pos) const;
+
+    /*  Where a point of the model is in the widget (for the guided tour)  */
+    QPoint screenPoint(const QVector3D& p) const { return toScreen(p).toPoint(); }
 
     /*  Selects the surface under a widget position as the menu of a right-click does (for scripted
      *  tests); false if no shape with a line of the script is there  */
@@ -133,6 +140,13 @@ public:
 
 public slots:
 
+    /*  The gizmo of the selected model, at once.  The gizmo is made of numbers in the script (a `handles(...)` line), which a model gets
+     *  when it is selected, and the script has to run for them to exist: that takes a moment.  Until then the gizmo is drawn from where
+     *  the model is (`pivot`: the middle of its box, the same point the real one has), a little transparent, so that it is there the
+     *  moment the model is selected.  Pressing it before it is ready does not lose the press: the drag starts as soon as the real
+     *  gizmo is there, if the button is still down.  `lines0` are the script lines the model is shown by  */
+    void setProvisionalGizmo(bool on, QVector3D pivot, QList<int> lines0);
+
     /*  Zoom to the script's bounds the next time they arrive (e.g. after
      *  an import changed the region of interest)  */
     void zoomOnNextSettings() { zoom_on_next_settings = true; }
@@ -150,6 +164,18 @@ public slots:
 
     /*  Section view / field viewer  */
     void setSection(SectionSettings s);
+
+    /*  The field models of the script, after a run (the field viewer shows the selected one: see showField)  */
+    void setFieldSources(QList<FieldEntry> fields);
+    /*  The field viewer's disc shows the field model with this key (a variable's name, or "line:N"): the field's value at every
+     *  point of the disc.  An empty key (or none that exists) ends it.  The disc is a plane of its own, with its own samples: the
+     *  section view is another one and works whether or not a field is shown  */
+    void showField(QString key);
+    bool fieldShown() const { return !m_fieldKey.isEmpty() && m_fieldSources.contains(m_fieldKey); }
+    /*  The field viewer's disc (see FieldPanel): where it is, which way it faces, how big, how opaque  */
+    void setFieldView(FieldViewSettings s);
+    /*  Where the shown field is about (the point or body it was made from; else the origin), and whether that is known  */
+    QVector3D fieldCentre(bool* known = nullptr) const;
 
     void toOrthographic() { camera.toOrthographic();  }
     void toPerspective()  { camera.toPerspective();   }
@@ -200,6 +226,8 @@ signals:
      */
     void dragStart();
     void dragEnd();
+    /*  The provisional gizmo was pressed: the model is made ready to be dragged now, without waiting  */
+    void provisionalPressed();
 
     /*
      *  Emitted when a drag operation has changed variables
@@ -208,6 +236,8 @@ signals:
 
     /*  A new sample of the distance field on the section plane  */
     void sliceReady(FieldSlice s);
+    /*  A new sample of the shown field on the field viewer's disc  */
+    void fieldSliceReady(FieldSlice s);
 
     /*  The render region changed (the section panel's slider range)  */
     void boundsChanged(QVector3D min, QVector3D max);
@@ -218,11 +248,15 @@ signals:
     /*  A shape's render cache read or kept its mesh (see cacheStates)  */
     void cacheStatesChanged();
 
-    /*  The section plane was dragged by its handle in the viewport  */
+    /*  The section plane was dragged along its normal by its handle in the viewport  */
     void sectionOffsetDragged(float offset);
+    /*  The field viewer's disc was dragged (by its arrow along its normal, by one in its plane, or by the dot in the middle)  */
+    void fieldCentreDragged(QVector3D centre);
 
     /*  The distance field under the mouse on the section plane ("" = none)  */
     void sectionReadout(QString text);
+    /*  The shown field's value under the mouse on the field viewer's disc ("" = none)  */
+    void fieldReadout(QString text);
 
     /*  Whether the section plane cuts a shown analysis result that has elements (the section
      *  card offers "whole elements" only then)  */
@@ -266,11 +300,9 @@ protected slots:
     void update() { QOpenGLWidget::update(); }
     void redrawPicker();
 
-    /*  Starts (debounced) re-sampling of the section field  */
+    /*  Starts (debounced) re-sampling of the section field, and of the field viewer's disc  */
     void requestSlice();
-    void startSlice() { startSliceAt(false); }
-    void startSliceAt(bool fine);
-    void onSliceFinished();
+    void requestFieldSlice();
 
 protected:
     void initializeGL() override;
@@ -306,12 +338,14 @@ protected:
 
     /*  A right-click (not a pan) on a shape: first a menu with Operation (the operations, on that shape) and
      *  Select Surface, which opens the menu of the surface selection  */
-    void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale);
+    void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface = true);
     void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
-    /*  A right-click (not a pan) on empty space: New primitive and Add operation  */
-    void showEmptyMenu(QPoint globalPos, QPoint pos);
-    /*  The operations as a menu's entries (the combining ones greyed when there is no second model)  */
-    void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale);
+    /*  A right-click (not a pan) on empty space: New 3D shape, 2D shape, point, surface, field, custom block, Add operation
+     *  and Add simulation.  `atLine` (from the text editor): what is made is written under that line  */
+    void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
+    /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
+     *  their own menu: `simulations` says which of the two is listed  */
+    void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);
     /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
     QVector3D placeOnRay(QPoint pos) const;
     /*  How many mm about a hundred pixels span, at the depth of a point  */
@@ -428,11 +462,6 @@ protected:
     int m_playMode = 0;                 // 0 loop, 1 back and forth, 2 once (stop at the end)
     float m_playSpeed = 1.0f;           // steps per second = 10 x this
     int m_playDir = 1;                  // (back and forth: which way)
-    QScopedPointer<QOpenGLTexture> slice_color_tex;
-    // The plane as a deformed vertex grid (for a model drawn deformed)
-    int slice_grid_verts = 0;
-    int slice_grid_generation = -1;
-    float slice_grid_scale = -1, slice_grid_offset = 0;
 
     /*  For click-to-select: where the press happened and what it hit  */
     QPoint press_pos;
@@ -441,6 +470,10 @@ protected:
 public:
     ScenePanel* scenePanel() const { return m_scene; }
     const Settings& renderSettings() const { return settings; }
+    /*  The menu of the viewport for the model displayed by a (0-based) line, opened at `globalPos` from outside the viewport
+     *  (a right-click in the text editor or the model tree): as if that model had been right-clicked there.  A line that
+     *  displays no model opens the menu of empty space, and what it creates goes under that line  */
+    void showMenuForLine(int line0, QPoint globalPos);
 protected:
     ScenePanel* m_scene=nullptr;
 
@@ -453,31 +486,84 @@ protected:
     /*  Set to true on the first draw, if the OpenGL version is new enough */
     bool gl_checked=false;
 
-    /*  Section view state  */
+    /*  A plane that shows a sampled field: what the section view has and what the field viewer's disc has, each its own.  The
+     *  samples are made in a worker thread (a quick pass, then a fine one) and drawn from a texture  */
+    struct Plane
+    {
+        FieldSlice slice;
+        bool dirty = false;                // the texture needs re-upload
+        QScopedPointer<QOpenGLTexture> tex;
+        QScopedPointer<QOpenGLTexture> colorTex;
+        QOpenGLBuffer vbo;
+        QOpenGLVertexArrayObject vao;
+        // (the plane as a deformed vertex grid, for a model drawn deformed)
+        int gridVerts = 0;
+        int gridGeneration = -1;
+        float gridScale = -1, gridOffset = 0;
+        QTimer timer;
+        QFutureWatcher<FieldSlice> watcher;
+        std::atomic<int> generation{0};
+        /*  How long the last quick pass took (ms): the fine pass is about sixteen times that, so a field that is slow to evaluate
+         *  gets a coarser fine pass, and the plane is never far behind the hand that moves it  */
+        QElapsedTimer clock;
+        double quickMs = 0;
+    };
+
+    /*  Section view state: the plane that cuts the models and shows the distance field on them  */
     SectionSettings section;
-    FieldSlice slice;
-    bool slice_dirty=false;           // texture needs re-upload
-    QScopedPointer<QOpenGLTexture> slice_tex;
-    QOpenGLBuffer slice_vbo;
-    QOpenGLVertexArrayObject slice_vao;
-    QTimer slice_timer;
-    QFutureWatcher<FieldSlice> slice_watcher;
+    Plane m_sec;
+    /*  The field viewer's disc: a plane of its own, never the section's  */
+    Plane m_fld;
 
     /*  A shape's fields as the plane samples them (copied for the worker thread)  */
     FieldSource sourceOf(Shape* s) const;
-    std::atomic<int> slice_generation{0};
+
+    /*  The field models of the script (they are not shapes, nothing of them is drawn) and the one whose field the disc shows
+     *  (a key: a variable's name, or "line:N").  Their colour ranges are found when a field is first shown, and kept until the
+     *  script runs again  */
+    QMap<QString, FieldSource> m_fieldSources;
+    QMap<QString, QPair<float, float>> m_fieldRanges;
+    QString m_fieldKey;
+    void startSliceAt(Plane& plane, bool fine);
+    void onSliceFinished(Plane& plane);
     void setClipUniform(bool on);
-    void drawSlicePlane(const QMatrix4x4& m);
+    void drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettings& at);
+
+    /*  The disc as the settings of a plane (enabled, no cut): the one that is sampled and drawn  */
+    SectionSettings fieldPlane() const;
 
     /*  Where the field is sampled (around the displayed models) and the
      *  distance outside them where the plane fades out  */
     void sliceRegion(QVector3D& lo, QVector3D& hi, float& fade) const;
 
-    /*  The handle for dragging the plane: an arrow along the plane normal
+    /*  The handle for dragging the section plane: an arrow along the plane normal
      *  through the middle of the model, in widget coordinates  */
     bool sectionHandle(QPointF& p, QPointF& q, float& length) const;
     bool sectionHandleHit(QPoint pos) const;
     void drawSectionHandle(QPainter& painter);
+    /*  The double arrow along a plane's normal through `c`, in widget coordinates, and whether a widget position is on it  */
+    bool normalArrow(int axis, const QVector3D& c, float length, QPointF& p, QPointF& q) const;
+    static bool onArrow(QPoint pos, QPointF p, QPointF q);
+    static void paintNormalArrow(QPainter& painter, QPointF p, QPointF q, bool hot);
+
+    /*  The field viewer's disc has the same arrow along its normal, two more in its plane, and a dot in the middle that moves it
+     *  freely in the plane: the screen points of its middle and of the tips of the two arrows (along the two axes of the plane)
+     *  and of the one along the normal  */
+    bool fieldGizmo(QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& tipN, float& length) const;
+    /*  What is under a widget position: 0 nothing, 1 / 2 an arrow in the plane, 3 the dot, 4 the arrow along the normal  */
+    int fieldGizmoHit(QPoint pos) const;
+    void drawFieldGizmo(QPainter& painter);
+    void dragFieldGizmo(QPoint pos);
+    float fieldRadius() const;
+    void applyFieldView();
+    FieldViewSettings m_fieldView;
+    QMap<QString, QPair<QVector3D, bool>> m_fieldCentres;
+    int field_drag = 0;                       // (which part of the gizmo is held: see fieldGizmoHit)
+    int field_hover = 0;                      // (and which is under the cursor)
+    QPoint field_press;
+    QVector3D field_press_centre, field_press_grab;
+    QPointF field_dir;                        // (the screen direction and the length in mm of the arrow that is held)
+    float field_len = 0;
     QPointF toScreen(const QVector3D& p) const;
 
     /*  The gizmo of placed parts (Shape::handles, fieldes.stdlib.handles): move
@@ -505,6 +591,18 @@ protected:
     QVector<HandleVar> handle_vars;
     QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
     HandleGrip handle_hover;
+    // The provisional gizmo (see setProvisionalGizmo), and a press on it that waits for the real one
+    bool m_prov = false;
+    QVector3D m_provPivot;
+    QList<int> m_provLines;
+    struct WaitGrip { bool on = false; int kind = -1, axis = 0, ticks = 0; QList<int> lines; };
+    WaitGrip m_wait;
+    QTimer m_waitTimer;
+    bool provisionalVisible() const;
+    bool provisionalGripAt(QPoint pos, int* kind, int* axis) const;
+    void drawProvisional(QPainter& painter);
+    void startWaitingGrip();
+    void cancelWaitingGrip();
     HandleGrip handle_active;
     bool handle_drag = false;
     libfive::Tree::Id handle_id = nullptr;
@@ -529,7 +627,8 @@ protected:
     bool section_drag=false;
     QPoint section_press;
     float section_press_offset=0;
-    QString section_readout;
+    QString section_readout;                  // (what the box at the cursor says: the plane nearest the viewer that is under it)
+    QString m_sectionText, m_fieldText;       // (what each plane says about the point under the cursor: its card shows it)
     QPoint section_readout_pos;
     void updateSectionReadout(QPoint pos);
 };

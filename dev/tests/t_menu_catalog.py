@@ -7,12 +7,14 @@ from fieldes import app_support
 
 cat = json.loads(app_support.menu_catalog(''))
 print('primitives %d, operations %d' % (len(cat['primitives']), len(cat['operations'])))
-assert [p['name'] for p in cat['primitives']] == [n for n, _, _ in mc.PRIMITIVES]
+assert [p['name'] for p in cat['primitives'] if p['group'] != 'Custom blocks'] == [n for n, _, _ in mc.PRIMITIVES]
 failed = 0
 
 # a primitive at (12.3, -4.1, 7.7), about 8.2 mm across a hundred pixels there
 base = {'x': 12.3, 'y': -4.1, 'z': 7.7, 'scale': 8.2}
 ns = dict(globals())
+from fieldes import blocks
+ns.update(blocks.namespace())     # (a script has the custom blocks at hand)
 for p in cat['primitives']:
     code = app_support.menu_call(json.dumps(dict(base, kind='primitive', name=p['name'])))
     try:
@@ -37,6 +39,13 @@ ns.update(body=body, other=other)
 for o in cat['operations']:
     code = app_support.menu_call(json.dumps(dict(base, kind='operation', name=o['name'], body='body', other='other', scale=10)))
     try:
+        if o['group'] == 'Simulations':
+            # (a simulation is solved when the script runs: here the call must only be written and its names must exist)
+            tree = compile(code, '<menu>', 'eval')
+            missing = [n for n in tree.co_names if n not in ns]
+            assert not missing, 'unknown names %s' % missing
+            print('  %-16s %s' % (o['name'], code[:150]))
+            continue
         shape = eval(code, ns)
         assert isinstance(shape, Shape), 'not a Shape'
         v = evaluate(shape, [(10, 10, 10), (40, 40, 40)])

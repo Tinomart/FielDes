@@ -1,0 +1,50 @@
+wait 5000
+waitrender 60 20
+tour start
+wait 2500
+tour goto 2
+wait 800
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_a.txt
+tour showme
+wait 2500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_b.txt
+wait 7000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_c.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour4_c.png
+focus script
+cursor 7 47
+key Backspace
+type 9
+wait 3000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_d.txt
+tour next
+wait 600
+tour back
+wait 1500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_e.txt
+tour state
+tour back
+wait 1500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_f.txt
+tour state
+tour next
+wait 1500
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour4_g.txt
+tour state
+tour goto 10
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour4_sec0.png
+tour showme
+wait 3800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour4_sec1.png
+tour state
+wait 5000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour4_sec2.png
+tour state
+tour goto 16
+wait 1200
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour4_last.png
+tour skip
+quit

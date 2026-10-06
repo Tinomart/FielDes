@@ -8,7 +8,7 @@
 # Try: another cell (cell_periodic('bcc') / 'kelvin'), a smaller cell_size, depth=4, side='outside'.  The layout is made once, from
 # one grid of sample points: if a part comes out with a warning or an error, grid_offset=1, 2 or 3, or a smaller cell_size, may close it.
 #
-# (The STEP file is not part of FielDes: see step/README.md.)
+# (The STEP file is the bracket that comes with FielDes: see step/README.md.)
 #
 from fieldes import *
 

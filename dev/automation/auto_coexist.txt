@@ -1,0 +1,18 @@
+wait 4000
+waitrender 60 20
+action view.section
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/coexist_1.png
+treeclick none reach
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/coexist_2.png
+sectiondrag 1.5
+wait 1200
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/coexist_3.png
+treeclick none plate
+wait 1500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/coexist_4.png
+action view.section
+wait 800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/coexist_5.png
+quit

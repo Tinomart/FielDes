@@ -23,6 +23,7 @@ of the License, or (at your option) any later version.
 
 #include "libfive/tree/tree.hpp"
 
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSlider;
@@ -97,7 +98,7 @@ struct FieldSlice
 /*  One displayed shape, copied so sampling can run off the GUI thread  */
 struct FieldSource
 {
-    libfive::Tree tree;
+    libfive::Tree tree = libfive::Tree::invalid();
     std::map<libfive::Tree::Id, float> vars;
     // The field it is coloured by, if any
     libfive::Tree color = libfive::Tree::invalid();
@@ -108,6 +109,10 @@ struct FieldSource
     libfive::Tree disp[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(),
                              libfive::Tree::invalid()};
 };
+
+/*  The colour range (lo, hi) of a field source: its values on a coarse grid over the region, without the extreme one percent
+ *  at each end  */
+void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi);
 
 /*
  *  Samples min(shape values) over the plane (the union of what is shown)
@@ -124,6 +129,9 @@ FieldSlice sampleField(const QVector<FieldSource>& sources,
 /*  Colour scale and iso-line spacing (automatic when the settings say 0),
  *  plus the image for the 2D view  */
 void colorizeField(FieldSlice& slice, float range, float spacing);
+
+/*  The image of a slice for the 2D view (slice.image), made from its samples: only when that view is shown  */
+void buildSliceImage(FieldSlice& slice);
 
 /*  The diverging colour map shared by the 2D view and the legend:
  *  t in [-1, 1], negative = inside  */
@@ -162,6 +170,10 @@ protected:
     void paintEvent(QPaintEvent* e) override;
     float m_in = 0, m_out = 0;
     bool m_valid = false;
+    // (a plane coloured by a field -- an analysis result, a field model: its own colour map and range, not the distance scale)
+    bool m_hasColor = false;
+    QString m_map, m_label;
+    float m_lo = 0, m_hi = 1;
 };
 
 /*
@@ -243,6 +255,84 @@ protected:
     QToolButton* m_show2d;
     FieldView* m_view;
     bool m_collapsed = false;
+};
+
+/*  How the field viewer is configured: a disc, facing along an axis, with its middle at a place (it starts where the field is about;
+ *  the arrows in the viewport move it)  */
+struct FieldViewSettings
+{
+    int axis = 2;            // the disc faces along: 0 = X, 1 = Y, 2 = Z
+    QVector3D centre;        // its middle: the place along the axis is centre[axis]
+    float radius = 0;        // of the disc (0: not chosen yet)
+    float opacity = 0.9f;
+    float offset() const { return centre[axis]; }
+};
+
+/*
+ *  The field viewer, as a card floating in the viewport's top-right corner like the section card: it shows the field that is
+ *  selected in the model tree on a DISC (a plane of a radius), centred where the field is about -- the point or the body it
+ *  was made from, else the origin.  It cuts no models, and has none of the buttons that are only about models.  It is not closed:
+ *  it is there while a field is selected.  With several fields selected, a menu chooses which one it shows.
+ */
+class FieldPanel : public QFrame
+{
+    Q_OBJECT
+public:
+    FieldPanel(QWidget* parent=nullptr);
+    const FieldViewSettings& settings() const { return m_settings; }
+
+    /*  The section view is a card of its own that is open when the user wants it, with or without a field: where both are open
+     *  (and neither was moved by hand) this card sits below that one instead of over it  */
+    void stackBelow(QWidget* sectionCard);
+
+public slots:
+    /*  The selected fields (their keys and the names shown) and the one that is shown; the menu is there for two or more  */
+    void setFields(const QStringList& keys, const QStringList& names, int current);
+    /*  Where the shown field is about (the disc is centred there, at its place along the axis) and the render region (the range
+     *  of the sliders); the disc goes back to its place and its default size  */
+    void setContext(QVector3D centre, bool known, QVector3D regionMin, QVector3D regionMax);
+    void setSlice(FieldSlice s);
+    /*  The disc was dragged in the viewport: along its normal or in its plane, by an arrow, or by the dot in the middle  */
+    void setCentre(QVector3D centre);
+    /*  The field's value under the mouse in the viewport (empty: none)  */
+    void setReadout(const QString& text);
+
+signals:
+    void settingsChanged(FieldViewSettings s);
+    /*  The menu chose another of the selected fields  */
+    void fieldChosen(QString key);
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
+    void place();
+    void emitChange();
+    void syncWidgets();
+    void updateInfo();
+    float radiusMax() const;
+
+    FieldViewSettings m_settings;
+    QVector3D m_home, m_min = QVector3D(-10, -10, -10), m_max = QVector3D(10, 10, 10);
+    bool m_updating = false;
+    bool m_collapsed = false;
+    FieldSlice m_slice;
+    QString m_readout, m_name;
+    QStringList m_keys;
+    QWidget* m_sectionCard = nullptr;
+
+    QToolButton* m_header;
+    QComboBox* m_combo;
+    QWidget* m_comboRow;
+    QWidget* m_body;
+    QToolButton* m_axes[3];
+    QSlider* m_offsetSlider;
+    QDoubleSpinBox* m_offsetSpin;
+    QSlider* m_radiusSlider;
+    QDoubleSpinBox* m_radiusSpin;
+    QSlider* m_opacity;
+    FieldLegend* m_legend;
+    QLabel* m_info;
+    QToolButton* m_show2d;
+    FieldView* m_view;
 };
 
 }   // namespace FielDes

@@ -57,11 +57,16 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `stdlib/excluded.py` | `exclude()` and the lock mechanism: what every function of the library does with an excluded shape |
 | `stdlib/mesh_import.py` | Mesh import |
 | `stdlib/fields.py`, `regression.py` | Fields, regressions |
+| `stdlib/fieldargs.py` | The helpers that let a function take a number *or a field* (`number_or_field`, `positive`, `present`, ...), and the decorators that mark what a function returns (`returns_field`, `returns_body`) |
+| `stdlib/points.py` | `Point` and `Surface` (models of their own), `point()`, `plane()`, `sphere_surface()` ..., and `displayed()`: how a profile, a surface, a point and a field are drawn |
+| `kinds.py` | What a model *is* (`kind_of`: solid, profile, field, surface, point, simulation, conditions, cell, selection, import) and the colour of each; the kernel's `libfive_tree_axes` tells a 2D shape from a 3D one |
+| `blocks.py` | The custom blocks: the files of the blocks folder, hot reload by modification time, what the editor and the menus are told about them |
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
 | `stdlib/handles.py` | `handles()`, `expose()`, `lock()` |
 | `stdlib/content_cache.py` | Content-keyed caches |
-| `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement, evaluating displays, reporting progress |
+| `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement (with the blocks injected into its namespace), evaluating displays, the model tree's description (`scene_json`: items with their `type`, `inputs`, `owner`, ...), reporting progress |
+| `menu_catalog.py` | The one list of what the right-click menus offer (primitives by kind, operations, custom blocks) and the call each entry writes |
 
 ## The application
 
@@ -74,7 +79,8 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `editor.cpp`, `script.cpp`, `syntax.cpp`, `findbar.cpp`, `documentation.cpp` | The code editor and its helpers |
 | `python/interpreter.cpp` | The embedded Python interpreter (host module `_fieldes_host`: `var()`, `view.set_*`, display callbacks) |
 | `view.cpp`, `shape.cpp`, `camera.cpp`, `shader.cpp`, `gl/` | The viewport: meshes, picking, dragging, drawing |
-| `scenetree.cpp` | The model tree |
+| `scenetree.cpp` | The model tree: rows, nesting by the scene's `owner`, selection, every action as a script edit, drag and drop (`SceneTree`, `moveGroups`, `dropOnModel`) |
+| `typeicons.cpp` | The icon and colour of each kind of model, shared by the tree and the menus |
 | `section.cpp` | The section card: the plane evaluated exactly on all cores |
 | `result_panel.cpp` | The result card |
 | `theme.cpp`, `icons.cpp` | Colours and the drawn icons |
@@ -443,7 +449,7 @@ recorded by the scene parser as `locked`, so toggling the way of editing (`handl
 never write each other's lines. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
 
 The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Operation, and Select Surface, which opens
-`View::showSelectMenu`; `View::showEmptyMenu` on empty space: New primitive, Add operation). Select emits `surfaceSelectRequested`;
+`View::showSelectMenu`; `View::showEmptyMenu` on empty space: New 3D shape / 2D shape / point / surface / field / custom block, Add operation). Select emits `surfaceSelectRequested`;
 `ScenePanel::addSurfaceSelection` writes the call into the script as an edit, so the selection is code like everything else (and selects the new model).
 A `SurfaceSelection` displays itself through `_display()`: the part it was picked on, coloured by `patch - whole - t/2`
 (zero or less where the vertex's nearest surface point is in the patch), with `_color_cutoff = 0`; the viewport gives `Shape` a

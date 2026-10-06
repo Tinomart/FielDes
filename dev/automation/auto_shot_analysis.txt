@@ -1,0 +1,8 @@
+wait 5000
+waitrender 600 60
+wait 1000
+action view.std-iso
+wait 2500
+waitrender 120 10
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/docs/images/analysis.png
+quit

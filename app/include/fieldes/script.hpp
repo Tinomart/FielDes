@@ -104,6 +104,8 @@ public:
     /*  Moves the cursor to the start of a (0-based) line, unfolding it if
      *  needed, centres it and briefly flashes it. */
     void goToLine(int line, bool flash=true);
+    /*  Scrolls a (0-based) line into view, without moving the text cursor  */
+    void scrollToLine(int line);
 
     /*  Selects the given (0-based line / column) range */
     void selectRange(int line0, int col0, int line1, int col1);
@@ -140,6 +142,8 @@ public slots:
     void selectNextOccurrence();
     void clearExtraCursors();
     void triggerCompletion();
+    /*  Whether the word being typed (`prefix`) is the first of a comment: after `#` or `# `  */
+    bool atCommentHead(const QString& prefix) const;
     void goToDefinitionAtCursor();
     void zoomInFont()  { zoomFont(+1); }
     void zoomOutFont() { zoomFont(-1); }
@@ -155,7 +159,18 @@ signals:
     /*  A breakpoint was set or removed (the script should run again)  */
     void breakpointsChanged();
 
+    /*  A right-click on a (0-based) line, to be answered with the menu of the viewport for what the line defines (see
+     *  setObjectMenu)  */
+    void objectMenuRequested(int line0, QPoint globalPos);
+
+public:
+    /*  Whether a right-click on a line opens the menu of the viewport for the model that line defines (the script that is
+     *  rendered has it; a right-click on selected text still opens the text menu: cut, copy, paste)  */
+    void setObjectMenu(bool on) { m_objectMenu = on; }
+
 protected:
+    void contextMenuEvent(QContextMenuEvent* e) override;
+    bool m_objectMenu = false;
     void keyPressEvent(QKeyEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
     void paintEvent(QPaintEvent* e) override;

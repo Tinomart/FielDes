@@ -1,0 +1,12 @@
+wait 5000
+waitrender 60 20
+wait 1000
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/fd_a.txt
+treedrop swell > thick > on
+wait 9000
+waitrender 60 10
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/fd_b_script.txt
+outdump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/fd_b_out.txt
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/fd_b.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/fd_b.png
+quit

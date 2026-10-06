@@ -223,6 +223,11 @@ Editor::Editor(Language::Type language)
 
     connect(script, &Script::libraryDefinitionRequested,
             this, &Editor::showSource);
+
+    // A right-click on a line of the rendered script is a right-click on the model the line defines (the window opens the
+    // viewport's menu for it); the other tabs (files that are only read) keep the text menu
+    script->setObjectMenu(true);
+    connect(script, &Script::objectMenuRequested, this, &Editor::objectMenuRequested);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(2);
     setLayout(layout);
@@ -389,6 +394,7 @@ void Editor::onInterpreterDone(Result r)
         vars = r.vars;
 
         emit(shapes(r.shapes));
+        emit(fieldSources(r.fields));
         if (!r.scene.isEmpty())
         {
             emit(sceneChanged(r.scene));
@@ -684,6 +690,17 @@ void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
 void Editor::applyEdits(QList<TextEdit> edits, QString description)
 {
     (void)description;
+    applyEditsAs(edits, false);
+}
+
+void Editor::applyEditsLive(QList<TextEdit> edits, QString description)
+{
+    (void)description;
+    applyEditsAs(edits, true);
+}
+
+void Editor::applyEditsAs(QList<TextEdit> edits, bool live)
+{
     if (edits.isEmpty())
     {
         return;
@@ -705,7 +722,9 @@ void Editor::applyEdits(QList<TextEdit> edits, QString description)
     const bool wasEnabled = script->isEnabled();
     script->setEnabled(true);
     QTextCursor c(script_doc);
-    c.beginEditBlock();
+    // (a live edit joins the one before it when the script is as that one left it)
+    if (live && m_liveRevision >= 0 && m_liveRevision == script_doc->revision()) c.joinPreviousEditBlock();
+    else c.beginEditBlock();
     for (const auto& e : edits)
     {
         c.setPosition(pos(e.line0, e.col0));
@@ -713,7 +732,12 @@ void Editor::applyEdits(QList<TextEdit> edits, QString description)
         c.insertText(e.text);
     }
     c.endEditBlock();
+    m_liveRevision = live ? script_doc->revision() : -1;
     script->setEnabled(wasEnabled);
+    // An edit made by the program (the tree, a menu) is one decision, not typing that goes on: the script runs at once, without
+    // the quarter of a second that waits for the next key
+    m_textChangedDebounce.stop();
+    onTextChangedDebounce();
 }
 
 void Editor::goToLine(int line0)

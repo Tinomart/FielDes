@@ -29,7 +29,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
 #include <QRegularExpression>
+#include <QContextMenuEvent>
 #include <QTextBlock>
 #include <QTreeWidget>
 #include <iostream>
@@ -56,6 +62,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QFrame>
 #include <QToolButton>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QUrl>
 #include <memory>
 
 #include "libfive/step/step_progress.hpp"
@@ -67,6 +75,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/findbar.hpp"
 #include "fieldes/icons.hpp"
 #include "fieldes/theme.hpp"
+#include "fieldes/tutorial.hpp"
 #include "fieldes/scenetree.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/section.hpp"
@@ -107,10 +116,47 @@ static QString guideHtml()
          "code{background:#eee}</style>";
     h += "<h1>FielDes guide</h1>"
          "<p>The script is the model. Whatever you do in the viewport is written into the script, so "
-         + keys("edit.undo") + " undoes it. The <b>docs</b> folder has the full documentation.</p>";
+         + keys("edit.undo") + " undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.</p>";
+
+    h += "<h2>Making things</h2><ul>"
+         "<li><b>Right-click</b> empty space in the viewport: <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New point</b>, "
+         "<b>New surface</b>, <b>New field</b> and <b>New custom block</b> write the call into the script where the cursor is "
+         "(and select it, ready to drag); <b>Add operation</b> and <b>Add simulation</b> work on the selected model. "
+         "Right-click a model for <b>Operation</b> (offsets, moving, field math ...) and <b>Simulation</b> (static, modal, "
+         "topology optimization, thermal, flow) on it, written with that model as the argument.</li>"
+         "<li><b>The same menu opens in the text editor and in the model tree</b>: right-click a line of the script that defines "
+         "a model, or its row in the tree, and it is as if you had right-clicked the model in the viewport. On a line with no "
+         "model it is the menu of empty space, and what you make goes under that line.</li>"
+         "<li><b>A field is not drawn</b>: select it in the model tree and the section viewer opens on it, showing its value at "
+         "every point of a plane you can move through it. Fields can be multiplied, added ... like numbers "
+         "(<code>a * b</code>, <code>2 ** a</code>); <code>field_from_body(part)</code> makes a field of a body's values.</li>"
+         "<li>Every kind of thing has its own colour and icon in the tree and the menus: "
+         "<span style='color:#4aa8e8'><b>3D shape</b></span>, <span style='color:#35c4b3'><b>2D shape</b></span>, "
+         "<span style='color:#82cc58'><b>field</b></span>, <span style='color:#b583ee'><b>surface</b></span>, "
+         "<span style='color:#f4b73a'><b>point</b></span>, <span style='color:#ee6a5e'><b>simulation</b></span>, "
+         "<span style='color:#e08f58'><b>conditions</b></span>, <span style='color:#d4b43c'><b>lattice cell</b></span>. "
+         "A model made by one of your own blocks has a small <b>f</b> badge.</li>"
+         "<li><b>Every number can be a field</b>: <code>offset(part, 0.5)</code> and "
+         "<code>offset(part, ramp(z_field(), (0, 40), (0.2, 2)))</code> are written alike. A point can stand "
+         "where a coordinate goes: <code>distance_to_point(p)</code>.</li></ul>";
 
     h += "<h2>Model tree</h2><ul>"
          "<li><b>Click</b> a row to select it and see its code. <b>Eye</b>: show or hide.</li>"
+         "<li><b>Nesting is the structure of the calls</b>: the models an operation is made of are its children, in the "
+         "order of its arguments. A model that several statements use has its row under the first, and a <b>shadow</b> "
+         "(half transparent) under each other one: that statement's own reference. Every nest, renest and denest is an edit "
+         "of the arguments: <b>drag a row onto an operation</b> to make it one of its inputs (added to a <code>union</code> and the "
+         "like; never a menu); drag it out of a call to take it out; drop it "
+         "<b>between the children</b> of an operation to put it at that place among the arguments. Dragging a shadow moves "
+         "only that reference. <b>Ctrl+drag</b> moves nothing: it puts a new shadow where it is dropped (a model nothing else uses stays a top-level row, and the call gets a <code># shadow: name</code> comment). A shadow cannot go above "
+         "its original (the first statement that uses the model): a message explains it (once, however many shadows it is about, also "
+         "when a whole statement is dragged above the original) and offers the fix, which makes the first use the original and "
+         "leaves a reference at the old one. A "
+         "field dropped on an operation takes the place of one of its numbers (<code>offset(plate, 1.0)</code> becomes "
+         "<code>offset(plate, swell)</code>). Between two top-level rows a model moves in the script (with what it is made "
+         "of, when that is defined later). Taking a model out of an operation that cannot do without it (fixed inputs) "
+         "<b>deletes that operation</b>, after a question (default: Delete; it can be hidden). The bin button and "
+         + keys("view.delete") + " work on a shadow too: its reference is taken out. All of it is one undoable step.</li>"
          "<li><b>Several rows</b>: Ctrl+click adds one or takes it out, Shift+click selects from the last one clicked, "
          "as in a file list. In the viewport Ctrl+click does the same, and dragging draws a rectangle that selects "
          "every body lying wholly inside it (with Ctrl too: added to the selection). A click on empty space "
@@ -132,6 +178,8 @@ static QString guideHtml()
          keys("view.delete") + " deletes the selected models from the script. "
          "A toggle first puts all the selected models in its on state (shown, locked, cached) if they are "
          "not all in it; only then does it turn them all off.</li>"
+         "<li><b>Rename</b>: double-click a name (or F2), type, Enter: every use in the script changes. "
+         "<b>Render settings</b>: open the row and edit the region, resolution and quality as numbers.</li>"
          "<li>A displayed expression gets a name first: <code>sphere(3)</code> becomes <code>sphere_1 = sphere(3)</code>.</li>"
          "<li><b>Reimport</b> reads a file again; the <b>bin</b> also clears its cache and handle edits.</li>"
          "<li>Grey: hidden, or outside the render region.</li></ul>";
@@ -169,6 +217,12 @@ static QString guideHtml()
          "<li>Results are fields: <code>result.show('von_mises')</code>, or <code>part - 0.02 * result.von_mises</code>.</li>"
          "<li>An unchanged analysis is not solved again.</li></ul>";
 
+    h += "<h2>Custom blocks</h2><ul>"
+         "<li>Put a <code>.py</code> file in the <b>blocks folder</b> (Settings &rarr; Blocks folder... chooses it; "
+         "<i>Show the blocks folder</i> opens it) and every function in it is there in every script, with its call tip "
+         "and completion: <code>def perforate(body, hole_radius=2.0): ...</code>. Save the file and the scripts that "
+         "use it run again. A block whose first argument is a model is in <b>Add operation &rarr; Custom blocks</b>.</li></ul>";
+
     h += "<h2>Fields and lattices</h2><ul>"
          "<li>Any shape is a field. <code>depth_below(part)</code>, <code>ramp()</code>, <code>fit(data)</code> and "
          "analysis results can drive offsets, thicknesses and lattices.</li>"
@@ -185,6 +239,8 @@ static QString guideHtml()
          "(&#9654;) is the script that is rendered, the others are only for editing; " + keys("edit.back-to-script") +
          " goes back to it, " + keys("edit.close-tab") + " closes a tab.</li>"
          "<li>Breakpoint on a line: " + keys("edit.toggle-breakpoint") + "; continue: " + keys("edit.continue") + ".</li>"
+         "<li><b>Sections</b>: a comment <code>#SECTION Title</code> gets a fold arrow in the gutter; it folds everything up to "
+         "the next <code>#SECTION</code> (typing <code>#sec</code> completes it).</li>"
          "<li>Text size: " + keys("settings.font-bigger") + " and " + keys("settings.font-smaller") + ".</li></ul>";
 
     h += "<h2>Keyboard shortcuts</h2><p>Change them under Settings &rarr; Keyboard shortcuts ("
@@ -277,6 +333,28 @@ Window::Window(Arguments args)
         statusBar()->showMessage("Reloading: " + names.join(", ") + " changed on disk", 6000);
         editor->onTextChangedDebounce();
     });
+    // The custom blocks: a script that uses a block runs again when the file that defines it is saved
+    m_blocksReload.setSingleShot(true);
+    m_blocksReload.setInterval(500);
+    connect(&m_blocksWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString& path) {
+        if (!m_blocksChanged.contains(path)) m_blocksChanged << path;
+        if (QFileInfo::exists(path) && !m_blocksWatcher.files().contains(path)) m_blocksWatcher.addPath(path);
+        m_blocksReload.start();
+    });
+    connect(&m_blocksWatcher, &QFileSystemWatcher::directoryChanged, this, [this](const QString& path) {
+        if (!m_blocksChanged.contains(path)) m_blocksChanged << path;
+        m_blocksReload.start();
+    });
+    connect(&m_blocksReload, &QTimer::timeout, this, [this]{
+        QStringList names;
+        for (const auto& p : m_blocksChanged) names << QFileInfo(p).fileName();
+        m_blocksChanged.clear();
+        watchBlocks();      // (files that came or went)
+        // (only a script that uses a block of the folder is run again)
+        if (editor->callSupport("blocks_used", editor->getScript(), nullptr) != "1") return;
+        statusBar()->showMessage("Running the script again: " + names.join(", ") + " changed", 6000);
+        editor->onTextChangedDebounce();
+    });
     connect(&watcher, &QFileSystemWatcher::fileChanged,
             this, &Window::onAutoLoad);
     connect(&watcher, &QFileSystemWatcher::directoryChanged,
@@ -317,6 +395,11 @@ Window::Window(Arguments args)
 
     recent_menu = file_menu->addMenu("Open recent");
     updateRecentMenu();
+
+    // The examples are small scripts that show how the features work: they have their own entry in the menu
+    auto example_action = file_menu->addAction("Open example file...");
+    Shortcuts::add(example_action, "file.open-example", {});
+    connect(example_action, &QAction::triggered, this, &Window::onOpenExample);
 
     auto import_action = file_menu->addAction("Import model...");
     Shortcuts::add(import_action, "file.import-model", {QKeySequence(Qt::CTRL | Qt::Key_I)});
@@ -396,6 +479,17 @@ Window::Window(Arguments args)
         connect(shortcuts_action, &QAction::triggered, this, [this]{
             ShortcutDialog d(this);
             d.exec();
+        });
+        settings_menu->addSeparator();
+        // The custom blocks: the files of one folder become functions in every script
+        auto blocks_action = settings_menu->addAction("Blocks folder...");
+        blocks_action->setToolTip("The folder whose Python files are your custom blocks: every function in them is there in every script");
+        connect(blocks_action, &QAction::triggered, this, [this]{ chooseBlocksFolder(); });
+        auto show_blocks = settings_menu->addAction("Show the blocks folder");
+        connect(show_blocks, &QAction::triggered, this, [this]{
+            if (m_blocksFolder.isEmpty()) watchBlocks();
+            QDir().mkpath(m_blocksFolder);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(m_blocksFolder));
         });
         settings_menu->addSeparator();
     }
@@ -675,15 +769,28 @@ Window::Window(Arguments args)
             return view->meshBounds(lo, hi);
         });
         panel->setCameraDirectionProvider([this]{ return view->towardViewer(); });
+        // The field viewer: a card of its own, like the section card, for the field that is selected (a disc, no cut).  The two
+        // views are separate: the section view is switched on by the user and cuts models, the field viewer is there while a
+        // field is selected; each has its own plane in the viewport, and each card hears only its own plane
+        auto fieldPanel = new FieldPanel(view);
+        fieldPanel->hide();
+        fieldPanel->stackBelow(panel);
+        connect(fieldPanel, &FieldPanel::settingsChanged, view, &View::setFieldView);
+        connect(view, &View::fieldCentreDragged, fieldPanel, &FieldPanel::setCentre);
         connect(view, &View::sliceReady, panel, &SectionPanel::setSlice);
+        connect(view, &View::fieldSliceReady, fieldPanel, &FieldPanel::setSlice);
         connect(view, &View::boundsChanged, panel, &SectionPanel::setBounds);
         connect(view, &View::sectionOffsetDragged, panel, &SectionPanel::setOffset);
         connect(view, &View::sectionReadout, panel, &SectionPanel::setReadout);
+        connect(view, &View::fieldReadout, fieldPanel, &FieldPanel::setReadout);
         connect(view, &View::sectionCutsElements, panel, &SectionPanel::setWholeElementsAvailable);
         if (automated)
         {
             connect(view, &View::sectionReadout, this, [](QString t) {
                 std::cerr << "automation: readout '" << t.toStdString() << "'" << std::endl;
+            });
+            connect(view, &View::fieldReadout, this, [](QString t) {
+                std::cerr << "automation: field readout '" << t.toStdString() << "'" << std::endl;
             });
         }
 
@@ -691,6 +798,35 @@ Window::Window(Arguments args)
         section_action->setCheckable(true);
         sectionToggle = section_action;
         Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X)});
+        // Selecting field models (they are not drawn) opens the field viewer on them, which shows the field on a disc; with several
+        // fields selected a menu in it chooses the one shown.  It closes when no field is selected.  The section card is not touched
+        auto shownKey = std::make_shared<QString>();
+        auto showKey = [=](const QString& key, const QStringList& keys) {
+            *shownKey = key;
+            QStringList names;
+            for (const QString& k : keys) names << (k.startsWith("line:") ? "field at line " + k.mid(5) : k);
+            view->showField(key);
+            fieldPanel->setFields(keys, names, std::max(0, int(keys.indexOf(key))));
+            bool known = false;
+            const QVector3D centre = view->fieldCentre(&known);
+            const auto& s = view->renderSettings();
+            fieldPanel->setContext(centre, known, s.min, s.max);
+            fieldPanel->show();
+            fieldPanel->raise();
+        };
+        auto fieldKeys = std::make_shared<QStringList>();
+        connect(view->scenePanel(), &ScenePanel::fieldsSelected, this, [=](QStringList keys) {
+            *fieldKeys = keys;
+            if (keys.isEmpty())
+            {
+                *shownKey = QString();
+                view->showField(QString());
+                fieldPanel->hide();
+                return;
+            }
+            showKey(keys.contains(*shownKey) ? *shownKey : keys.first(), keys);
+        });
+        connect(fieldPanel, &FieldPanel::fieldChosen, this, [=](QString key) { showKey(key, *fieldKeys); });        connect(editor, &Editor::fieldSources, view, &View::setFieldSources);
         connect(section_action, &QAction::toggled, this, [=](bool on) {
             if (on)
             {
@@ -879,8 +1015,7 @@ Window::Window(Arguments args)
     help_menu->addSeparator();
     connect(help_menu->addAction("About"), &QAction::triggered,
             this, &Window::onAbout);
-    connect(help_menu->addAction("Open the welcome script"), &QAction::triggered,
-            this, &Window::onLoadTutorial);
+    connect(help_menu->addAction("Guided tour"), &QAction::triggered, this, [this]{ if (tour) tour->start(); });
     auto ref_action = help_menu->addAction("Shape reference");
     Shortcuts::add(ref_action, "help.shape-reference", {QKeySequence(Qt::Key_F1)});
     connect(ref_action, &QAction::triggered, editor, &Editor::onShowDocs);
@@ -891,7 +1026,7 @@ Window::Window(Arguments args)
         auto row = new QHBoxLayout(holder);
         row->setContentsMargins(6, 0, 6, 0);
         row->setSpacing(2);
-        auto add = [&](QAction* target, const QIcon& icon, const QString& what) {
+        auto add = [&](QAction* target, const QIcon& icon, const QString& what, bool imports) {
             auto b = new QToolButton;
             b->setObjectName("TopButton");
             b->setIcon(icon);
@@ -908,9 +1043,21 @@ Window::Window(Arguments args)
             connect(target, &QAction::changed, b, tip);
             connect(b, &QToolButton::clicked, target, &QAction::trigger);
             row->addWidget(b);
+            // A small arrow beside it: the files opened (imported) lately, to choose one
+            auto arrow = new QToolButton;
+            arrow->setObjectName("TopArrow");
+            arrow->setIcon(Icons::dropArrow());
+            arrow->setIconSize(QSize(11, 11));
+            arrow->setFixedSize(14, 30);
+            arrow->setAutoRaise(true);
+            arrow->setCursor(Qt::PointingHandCursor);
+            arrow->setToolTip(imports ? "Recently imported models" : "Recently opened scripts");
+            connect(arrow, &QToolButton::clicked, this, [=]{ showRecent(arrow, imports); });
+            row->addWidget(arrow);
+            row->addSpacing(imports ? 0 : 4);
         };
-        add(open_action, Icons::open(), "Open a script");
-        add(import_action, Icons::importFile(), "Import a model");
+        add(open_action, Icons::open(), "Open a script", false);
+        add(import_action, Icons::importFile(), "Import a model", true);
         auto line = new QFrame;
         line->setObjectName("TopDivider");
         line->setFrameShape(QFrame::VLine);
@@ -938,9 +1085,13 @@ Window::Window(Arguments args)
         connect(editor, &Editor::sceneChanged, this, &Window::onSceneChanged);
         connect(scene, &ScenePanel::goToLine, editor, &Editor::goToLine);
         connect(scene, &ScenePanel::editScript, editor, &Editor::applyEdits);
+        connect(scene, &ScenePanel::editScriptLive, editor, &Editor::applyEditsLive);
         connect(scene, &ScenePanel::rerunRequested, editor, &Editor::onTextChangedDebounce);
         connect(scene, &ScenePanel::highlightLines, view, &View::highlightLines);
         connect(scene, &ScenePanel::focusRequested, view, &View::focusOn);
+        // (the gizmo of a model that is selected is drawn at once, before the script has run with its numbers)
+        connect(scene, &ScenePanel::provisionalGizmo, view, &View::setProvisionalGizmo);
+        connect(view, &View::provisionalPressed, scene, &ScenePanel::prepareNow);
         // Selecting in the viewport leaves the keyboard where it is: in the viewport, so that the keys that work on
         // the selection (E, R, G, H, I) go on working, and never in the editor
         connect(view, &View::shapeClicked, this, [=](int line) {
@@ -964,6 +1115,9 @@ Window::Window(Arguments args)
         });
         view->setMenuCatalogSource([this]{ return editor->callSupport("menu_catalog", QString(), nullptr); });
         connect(view, &View::createRequested, scene, &ScenePanel::createFromMenu);
+        // A right-click in the text editor, or in the model tree, opens the viewport's menu for the model of that line / row
+        connect(editor, &Editor::objectMenuRequested, view, &View::showMenuForLine);
+        connect(scene, &ScenePanel::menuRequested, view, &View::showMenuForLine);
         // (the list is asked for once, after a script has run, so that a right-click never waits for Python)
         connect(editor, &Editor::sceneChanged, view, [=]{ view->loadMenuCatalog(); });
         // (what the render cache did, on the cache buttons of the shapes that have it on)
@@ -1019,18 +1173,17 @@ Window::Window(Arguments args)
     setWindowTitle("FielDes[*]");
     show();
 
-    if (settings.value("first-run", true).toBool() &&
-        args.filename.isEmpty())
-    {
-        args.filename = ":/examples/welcome.py";
-    }
-    settings.setValue("first-run", false);
+    // The guided tour: offered the first time FielDes runs (and from Help after that)
+    tour = new Tutorial(this, view, editor, [this]{ return loadTourModel(); }, this);
+    connect(tour, &Tutorial::finished, this, [this]{ if (!automated) settings.setValue("tour/done", true); });
+    const bool offerTour = !automated && args.filename.isEmpty() && !settings.value("tour/done", false).toBool();
 
     onNew();
     if (!args.filename.isEmpty() && loadFile(args.filename))
     {
         setFilename(args.filename);
     }
+    if (offerTour) QTimer::singleShot(900, tour, &Tutorial::offer);
 
     // Scripted GUI checks (developer facility; see automation.hpp)
     const QString automation_file = qEnvironmentVariable("FIELDES_AUTOMATION");
@@ -1038,6 +1191,21 @@ Window::Window(Arguments args)
     {
         auto a = new Automation(this, this);
         auto script = editor->scriptWidget();
+        // tour <offer|start|goto N|next|back|showme|skip|state>: the guided tour, step by step; prints where it is
+        a->add("tour", [=](const QString& args){
+            const QString cmd = args.section(' ', 0, 0);
+            const QString rest = args.section(' ', 1);
+            if (cmd == "offer") tour->offer();
+            else if (cmd == "start") tour->start();
+            else if (cmd == "goto") tour->goTo(rest.toInt());
+            else if (cmd == "next") tour->next();
+            else if (cmd == "back") tour->back();
+            else if (cmd == "showme") tour->showMe();
+            else if (cmd == "skip") tour->stop(false);
+            std::cerr << "automation: tour step " << tour->stepIndex() << "/" << tour->stepCount() - 1 << " ["
+                      << tour->stepTitle().toStdString() << "] done=" << tour->stepDone() << " active=" << tour->active()
+                      << " demo=" << tour->demoRunning() << "\n";
+        });
         a->add("focus", [=](const QString& w){
             if (w == "view") view->setFocus(); else script->setFocus();
         });
@@ -1082,6 +1250,11 @@ Window::Window(Arguments args)
         });
         // tabdump <file>: the text of the tab being edited; tabcursor <line> <column>: its cursor;
         // tabselect <index>: show a tab
+        // fold <line>: the fold of the (0-based) line, as a click on its arrow in the gutter does (closed when open, open when closed)
+        a->add("fold", [=](const QString& args){
+            const int line = args.toInt();
+            script->setFolded(line, !script->isFolded(line));
+        });
         a->add("tabdump", [=](const QString& path){
             QFile f(path);
             if (f.open(QIODevice::WriteOnly)) f.write(editor->scriptWidget()->toPlainText().toUtf8());
@@ -1104,6 +1277,12 @@ Window::Window(Arguments args)
             QFile f(path);
             if (f.open(QIODevice::WriteOnly)) f.write(editor->getScript().toUtf8());
         });
+        // outdump <file>: the text of the output pane (what the script printed, its error)
+        a->add("outdump", [=](const QString& path){
+            QFile f(path);
+            if (f.open(QIODevice::WriteOnly))
+                if (auto o = editor->findChild<QPlainTextEdit*>("Output")) f.write(o->toPlainText().toUtf8());
+        });
         a->add("ctrlclick", [=](const QString& args){
             const auto p = args.split(' ');
             if (p.size() < 2) return;
@@ -1119,11 +1298,18 @@ Window::Window(Arguments args)
         });
         // tree <column> <text prefix>: click a model-tree row (column 0 =
         // name, 1 = eye, 2 = action); treedbl <text prefix>: double-click
+        // (a row by the start of its name; `model@statement`: the row of the model under that statement, a shadow too)
         auto findRow = [=](const QString& prefix) -> QTreeWidgetItem* {
-            auto tree = view->scenePanel()->findChild<QTreeWidget*>();
+            auto scene = view->scenePanel();
+            auto tree = scene->findChild<QTreeWidget*>();
             if (!tree) return nullptr;
-            auto found = tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0);
-            return found.isEmpty() ? nullptr : found.first();
+            const int at = prefix.indexOf('@');
+            if (at > 0) return scene->rowUnder(prefix.mid(at + 1).trimmed(), prefix.left(at).trimmed());
+            for (auto row : tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+            {
+                if (!scene->isShadow(row)) return row;
+            }
+            return nullptr;
         };
         a->add("tree", [=](const QString& args){
             const int col = args.section(' ', 0, 0).toInt();
@@ -1257,6 +1443,57 @@ Window::Window(Arguments args)
             send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
         });
+        // treerclick <text prefix>: a right-click on the name of a model-tree row (an empty prefix: the empty space under the rows)
+        a->add("treerclick", [=](const QString& args){
+            auto tree = view->scenePanel()->findChild<QTreeWidget*>();
+            if (!tree) return;
+            QPoint pos(tree->viewport()->width() / 2, tree->viewport()->height() - 4);
+            if (!args.trimmed().isEmpty())
+            {
+                auto row = findRow(args);
+                if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+                tree->scrollToItem(row);
+                QApplication::processEvents();
+                pos = tree->visualItemRect(row).center();
+            }
+            QContextMenuEvent e(QContextMenuEvent::Mouse, pos, tree->viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(tree->viewport(), &e);
+        });
+        // widgetgeom <objectName>: where a widget is in its parent, and how large it is (a card, for instance)
+        a->add("widgetgeom", [=](const QString& name){
+            auto w = findChild<QWidget*>(name.trimmed());
+            if (!w) { std::cerr << "automation: no widget " << name.toStdString() << "\n"; return; }
+            std::cerr << "automation: " << name.trimmed().toStdString() << " visible=" << w->isVisible() << " at " << w->x() << "," << w->y()
+                      << " size " << w->width() << "x" << w->height() << "\n";
+        });
+        // widgetdrag <objectName> <x0> <y0> <x1> <y1>: the left button pressed at (x0, y0) of a widget, dragged to (x1, y1) and let go
+        // (in the widget's own coordinates: a card is dragged by its header, resized from its edge)
+        a->add("widgetdrag", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            auto w = p.size() == 5 ? findChild<QWidget*>(p[0]) : nullptr;
+            if (!w) { std::cerr << "automation: widgetdrag <objectName> x0 y0 x1 y1: no widget in " << args.toStdString() << "\n"; return; }
+            const QPoint from(p[1].toInt(), p[2].toInt()), to(p[3].toInt(), p[4].toInt());
+            // (the cursor is where the screen says: the widget moves under it, so its own coordinates are worked out each time)
+            const QPoint start = w->mapToGlobal(from);
+            auto send = [&](QEvent::Type t, const QPoint& global, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, w->mapFromGlobal(global), global, b, bs, Qt::NoModifier);
+                QApplication::sendEvent(w, &e);
+                QApplication::processEvents();
+            };
+            send(QEvent::MouseMove, start, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+            for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, start + (to - from) * i / 8, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, start + (to - from), Qt::LeftButton, Qt::NoButton);
+        });
+        // editorrclick <line>: a right-click on a (0-based) line of the script in the text editor
+        a->add("editorrclick", [=](const QString& args){
+            Script* s = editor->scriptWidget();
+            const QTextBlock b = s->document()->findBlockByNumber(args.trimmed().toInt());
+            if (!b.isValid()) { std::cerr << "automation: no line " << args.toStdString() << "\n"; return; }
+            const QPoint pos = s->cursorRect(QTextCursor(b)).center();
+            QContextMenuEvent e(QContextMenuEvent::Mouse, pos, s->viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(s->viewport(), &e);
+        });
         // selected: what is selected in the model tree (in the order it was selected) and lit up in the viewport
         a->add("selected", [=](const QString&){
             QStringList lines;
@@ -1272,7 +1509,7 @@ Window::Window(Arguments args)
         });
         // popup open <path>: hover an entry of the open context menu, so that its submenu opens; popup pick <path>:
         // choose an entry; popup grab <file>: a picture of the window with the menus open.  A path is entry names
-        // through the submenus, as "New primitive/sphere"
+        // through the submenus, as "New 3D shape/sphere"
         a->add("popup", [=](const QString& args){
             const QString cmd = args.section(' ', 0, 0), rest = args.section(' ', 1).trimmed();
             QMenu* root = nullptr;
@@ -1426,13 +1663,229 @@ Window::Window(Arguments args)
             QFile f(path);
             if (!f.open(QIODevice::WriteOnly | QIODevice::Append)) return;
             QString text = QString("-- viewport shapes: %1\n").arg(view->shapeCount());
-            if (auto tree = view->scenePanel()->findChild<QTreeWidget*>())
-                for (int i = 0; i < tree->topLevelItemCount(); ++i)
-                    text += tree->topLevelItem(i)->text(0) + "\n";
+            text += view->scenePanel()->dumpRows();
             f.write(text.toUtf8());
         });
+        // treedrop <source prefix> > <target prefix> > <above|on|below|end> [ctrl] [hold]: drag a row of the model tree and drop it
+        // (`hold`: the button stays down until `treerelease`)
+        // (the mouse events of a hand -- press, moves, release -- sent to the tree, so the code that runs is the one the real
+        // mouse runs); `ctrl`: with Ctrl held, which makes the drop a copy (a reference).  A row may be named `model@statement`:
+        // the row of that model under that statement, a shadow too
+        // (a drag held with `hold`: where the mouse is, for treerelease)
+        auto heldDrag = std::make_shared<QPair<QPoint, Qt::KeyboardModifiers>>();
+        a->add("treerelease", [=](const QString&){
+            QWidget* vp = view->scenePanel()->treeViewport();
+            QMouseEvent e(QEvent::MouseButtonRelease, heldDrag->first, vp->mapToGlobal(heldDrag->first), Qt::LeftButton,
+                          Qt::NoButton, heldDrag->second);
+            QApplication::sendEvent(vp, &e);
+            QApplication::processEvents();
+        });
+        a->add("treedrop", [=](const QString& args){
+            const QStringList p = args.split('>');
+            if (p.size() < 3) { std::cerr << "automation: treedrop <source> > <target> > <above|on|below|end> [ctrl]\n"; return; }
+            auto src = findRow(p[0].trimmed());
+            const QStringList words = p[2].trimmed().split(' ', Qt::SkipEmptyParts);
+            const QString where = words.value(0);
+            Qt::KeyboardModifiers mods = Qt::NoModifier;
+            bool hold = false;
+            for (int k = 1; k < words.size(); ++k)
+            {
+                if (words[k] == "ctrl") mods |= Qt::ControlModifier;
+                else if (words[k] == "hold") hold = true;
+                else { std::cerr << "automation: treedrop: unknown word " << words[k].toStdString() << "\n"; return; }
+            }
+            auto dst = where == "end" ? nullptr : findRow(p[1].trimmed());
+            if (!src || (!dst && where != "end")) { std::cerr << "automation: no tree row in " << args.toStdString() << "\n"; return; }
+            auto tree = src->treeWidget();
+            auto scene = view->scenePanel();
+            QWidget* vp = scene->treeViewport();
+            auto send = [&](QEvent::Type t, const QPoint& pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, vp->mapToGlobal(pos), b, bs, mods);
+                QApplication::sendEvent(vp, &e);
+                QApplication::processEvents();
+            };
+            tree->scrollToItem(src);
+            QApplication::processEvents();
+            const QPoint from(60, tree->visualItemRect(src).center().y());
+            QPoint to(8, vp->height() - 2);
+            if (dst)
+            {
+                tree->scrollToItem(dst);
+                QApplication::processEvents();
+                const QRect r = tree->visualItemRect(dst);
+                to = QPoint(60, where == "above" ? r.top() + r.height() / 8 : where == "below" ? r.bottom() - r.height() / 8
+                                                                                              : r.center().y());
+            }
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            for (int i = 1; i <= 8; ++i)
+                send(QEvent::MouseMove, from + (to - from) * i / 8, Qt::NoButton, Qt::LeftButton);
+            std::cerr << "automation: dragging " << (scene->dragging() ? "yes" : "no") << " at " << where.toStdString() << "\n";
+            if (hold)
+            {
+                // (the button stays down: a grab shows the drag as it is; treerelease lets go)
+                *heldDrag = qMakePair(to, mods);
+                return;
+            }
+            if (qEnvironmentVariableIsSet("FIELDES_SHOW_DIALOGS"))
+            {
+                // (a question may be asked by the drop: the mouse is let go from the event loop, so that the test goes on)
+                QTimer::singleShot(50, vp, [=] {
+                    QMouseEvent e(QEvent::MouseButtonRelease, to, vp->mapToGlobal(to), Qt::LeftButton, Qt::NoButton, mods);
+                    QApplication::sendEvent(vp, &e);
+                });
+                return;
+            }
+            send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+        });
+        // blocksfolder <path>: Settings > Blocks folder, chosen (empty: the default one)
+        a->add("blocksfolder", [=](const QString& path){ setBlocksFolder(path.trimmed()); });
         a->add("open", [=](const QString& path){
             if (loadFile(path)) setFilename(path);
+        });
+        // setting <set_bounds|set_resolution|set_quality> <index> <text> [esc]: type into one field of the render settings in the
+        // tree and press Enter (or Esc), as a user does
+        a->add("setting", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) { std::cerr << "automation: setting <fn> <index> <text> [esc]\n"; return; }
+            auto scene = view->scenePanel();
+            scene->showSettings(true);
+            QApplication::processEvents();
+            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
+            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
+            f->setFocus();
+            f->selectAll();
+            f->setText(p[2]);
+            const int key = p.size() > 3 && p[3] == "esc" ? Qt::Key_Escape : Qt::Key_Return;
+            QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier), release(QEvent::KeyRelease, key, Qt::NoModifier);
+            QApplication::sendEvent(f, &press);
+            QApplication::sendEvent(f, &release);
+            QApplication::processEvents();
+            std::cerr << "automation: setting " << p[0].toStdString() << " " << p[1].toStdString() << " shows '" << f->text().toStdString() << "'\n";
+        });
+        // (the editor of a name in the tree: the field that has the keyboard, else the one that is open in the tree -- a window that
+        // is not the active one has no keyboard focus, and a test must not depend on that)
+        auto nameEditor = [=]() -> QLineEdit* {
+            auto f = qobject_cast<QLineEdit*>(QApplication::focusWidget());
+            if (f && !f->property("fn").isValid()) return f;
+            for (auto e : view->scenePanel()->treeViewport()->findChildren<QLineEdit*>())
+                if (e->isVisible() && !e->property("fn").isValid()) return e;
+            return nullptr;
+        };
+        // renamekey <enter|esc>: the key on the name editor that is open (after treerename ... typeonly)
+        a->add("renamekey", [=](const QString& what){
+            auto f = nameEditor();
+            if (!f) { std::cerr << "automation: no name editor is open\n"; return; }
+            const int key = what.trimmed() == "esc" ? Qt::Key_Escape : Qt::Key_Return;
+            QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier), release(QEvent::KeyRelease, key, Qt::NoModifier);
+            QApplication::sendEvent(f, &press);
+            QApplication::sendEvent(f, &release);
+            QApplication::processEvents();
+        });
+        // treerename <row prefix> > <new name> [esc|f2]: double-click the name of a row (or select it and press F2), type the new name, Enter
+        // (or Esc)
+        a->add("treerename", [=](const QString& args){
+            const QStringList p = args.split('>');
+            if (p.size() < 2) { std::cerr << "automation: treerename <row> > <new name> [esc|f2]\n"; return; }
+            auto row = findRow(p[0].trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            const QString newName = p[1].trimmed().section(' ', 0, 0);
+            const QString how = p[1].trimmed().section(' ', 1, 1);
+            auto tree = row->treeWidget();
+            QWidget* vp = view->scenePanel()->treeViewport();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            const QPoint at(70, tree->visualItemRect(row).center().y());
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, vp->mapToGlobal(at), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(vp, &e);
+                QApplication::processEvents();
+            };
+            if (how == "f2")
+            {
+                tree->setCurrentItem(row);
+                tree->setFocus();
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier), release(QEvent::KeyRelease, Qt::Key_F2, Qt::NoModifier);
+                QApplication::sendEvent(tree, &press);
+                QApplication::sendEvent(tree, &release);
+            }
+            else
+            {
+                send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+                send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+                send(QEvent::MouseButtonDblClick, Qt::LeftButton, Qt::LeftButton);
+                send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            }
+            QApplication::processEvents();
+            auto field = nameEditor();
+            if (!field) { std::cerr << "automation: no name editor opened\n"; return; }
+            std::cerr << "automation: name editor opened on '" << field->text().toStdString() << "'\n";
+            // (type | typeonly: the name is typed a key at a time, as a hand does -- the script follows every key, and the editor is
+            // built again under the hand; typeonly leaves it open, for a dump of the script before Enter or Esc)
+            if (how == "type" || how == "typeonly")
+            {
+                field->selectAll();
+                for (const QChar c : newName)
+                {
+                    auto f = nameEditor();
+                    if (!f) { std::cerr << "automation: the name editor was lost\n"; return; }
+                    QKeyEvent key(QEvent::KeyPress, 0, Qt::NoModifier, QString(c));
+                    QApplication::sendEvent(f, &key);
+                    QApplication::processEvents();
+                }
+                if (how == "typeonly") return;
+                if (auto f = nameEditor()) field = f;
+            }
+            else field->setText(newName);
+            const int key = how == "esc" ? Qt::Key_Escape : Qt::Key_Return;
+            QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier), release(QEvent::KeyRelease, key, Qt::NoModifier);
+            QApplication::sendEvent(field, &press);
+            QApplication::sendEvent(field, &release);
+            QApplication::processEvents();
+        });
+        // settingtype <set_bounds|set_resolution|set_quality> <index> <text> [enter]: type into one field of the render settings a key
+        // at a time (the script follows every key); Enter after it only when asked
+        a->add("settingtype", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) { std::cerr << "automation: settingtype <fn> <index> <text> [enter]\n"; return; }
+            auto scene = view->scenePanel();
+            scene->showSettings(true);
+            QApplication::processEvents();
+            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
+            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
+            f->setFocus();
+            f->selectAll();
+            for (const QChar c : p[2])
+            {
+                // (the tree is built again as the script runs: the field is looked up again each key)
+                f = scene->settingEditor(p[0], p[1].toInt());
+                if (!f) break;
+                QKeyEvent key(QEvent::KeyPress, 0, Qt::NoModifier, QString(c));
+                QApplication::sendEvent(f, &key);
+                QApplication::processEvents();
+            }
+            f = scene->settingEditor(p[0], p[1].toInt());
+            if (f && p.size() > 3 && p[3] == "enter")
+            {
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier), release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+                QApplication::sendEvent(f, &press);
+                QApplication::sendEvent(f, &release);
+                QApplication::processEvents();
+            }
+            std::cerr << "automation: settingtype " << p[0].toStdString() << " " << p[1].toStdString() << " shows '"
+                      << (f ? f->text().toStdString() : std::string("?")) << "'\n";
+        });
+        // rowpos <row>: where the row is, in the coordinates of a grab of the window (for the tests that use the real mouse)
+        a->add("rowpos", [=](const QString& args){
+            auto row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto scene = view->scenePanel();
+            QWidget* vp = scene->treeViewport();
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            const QRect r = tree->visualItemRect(row);
+            const QPoint p = vp->mapTo(this, QPoint(70, r.center().y()));
+            std::cerr << "automation: rowpos " << args.trimmed().toStdString() << " " << p.x() << " " << p.y() << "\n";
         });
         a->add("treedbl", [=](const QString& args){
             auto row = findRow(args);
@@ -1472,6 +1925,33 @@ Window::Window(Arguments args)
             painter.end();
             base.save(path);
         });
+        // grabmenus <file>: the open context menu and the submenus that are open, as one picture
+        a->add("grabmenus", [=](const QString& path){
+            QRect all;
+            QList<QMenu*> menus;
+            for (QWidget* w : QApplication::topLevelWidgets())
+            {
+                auto m = qobject_cast<QMenu*>(w);
+                if (m && m->isVisible())
+                {
+                    menus << m;
+                    all = all.united(QRect(m->pos(), m->size()));
+                }
+            }
+            if (menus.isEmpty()) return;
+            QPixmap shot(all.size());
+            shot.fill(Qt::transparent);
+            QPainter painter(&shot);
+            for (auto m : menus) painter.drawPixmap(m->pos() - all.topLeft(), m->grab());
+            painter.end();
+            shot.save(path);
+        });
+        // grabcrop <x> <y> <width> <height> <file>: a part of the window
+        a->add("grabcrop", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 5) return;
+            grab(QRect(p[0].toInt(), p[1].toInt(), p[2].toInt(), p[3].toInt())).save(p.mid(4).join(' '));
+        });
         if (a->load(automation_file))
         {
             QTimer::singleShot(1500, a, &Automation::start);
@@ -1505,6 +1985,26 @@ bool Window::onOpen(bool)
         return openFile(f);
     }
     return false;
+}
+
+bool Window::onOpenExample(bool)
+{
+    CHECK_UNSAVED();
+
+    const QString dir = QDir(QCoreApplication::applicationDirPath()).filePath("examples");
+    if (!QDir(dir).exists())
+    {
+        QMessageBox m(this);
+        m.setText("The examples folder was not found");
+        m.setInformativeText("The examples are the files of the folder <code>examples</code> next to the program, and there is none at<br><code>" +
+                             QDir::toNativeSeparators(dir) + "</code>");
+        m.addButton(QMessageBox::Ok);
+        m.setIcon(QMessageBox::Information);
+        m.exec();
+        return false;
+    }
+    const QString f = QFileDialog::getOpenFileName(this, "Open an example", dir, "FielDes examples (*.py);;Any files (*)");
+    return f.isEmpty() ? false : openFile(f);
 }
 
 bool Window::onOpenViewer(bool)
@@ -1826,6 +2326,48 @@ void Window::addRecentFile(const QString& f)
     updateRecentMenu();
 }
 
+void Window::addRecentImport(const QString& f)
+{
+    if (f.isEmpty() || automated) return;
+    QStringList r = settings.value("recent-imports").toStringList();
+    const QString abs = QFileInfo(f).absoluteFilePath();
+    r.removeAll(abs);
+    r.prepend(abs);
+    while (r.size() > 12) r.removeLast();
+    settings.setValue("recent-imports", r);
+}
+
+void Window::showRecent(QWidget* below, bool imports)
+{
+    // The list of the files opened (scripts) or imported (models) lately, newest first; one that is gone is left out
+    auto menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    const QString key = imports ? "recent-imports" : "recent-files";
+    int n = 0;
+    for (const auto& f : settings.value(key).toStringList())
+    {
+        const QFileInfo fi(f);
+        if (!fi.exists()) continue;
+        ++n;
+        auto a = menu->addAction(fi.fileName() + "    " + QDir::toNativeSeparators(fi.path()));
+        a->setToolTip(QDir::toNativeSeparators(fi.absoluteFilePath()));
+        connect(a, &QAction::triggered, this, [=]{ if (imports) importModel(f); else openFile(f); });
+    }
+    if (n == 0)
+    {
+        menu->addAction(imports ? "No model has been imported yet" : "No script has been opened yet")->setEnabled(false);
+    }
+    else
+    {
+        menu->addSeparator();
+        connect(menu->addAction("Clear list"), &QAction::triggered, this, [=]{
+            settings.remove(key);
+            updateRecentMenu();
+        });
+    }
+    menu->popup(below->mapToGlobal(QPoint(-30, below->height())));
+}
+
 void Window::updateRecentMenu()
 {
     if (!recent_menu)
@@ -1986,6 +2528,7 @@ void Window::onImportModel(bool)
 
 void Window::importModel(const QString& path)
 {
+    addRecentImport(path);
     const QFileInfo fi(path);
     const QString ext = fi.suffix().toLower();
     const bool mesh = (ext == "stl" || ext == "obj" || ext == "ply" || ext == "3mf" ||
@@ -2144,10 +2687,44 @@ void Window::watchImports(const QString& sceneJson)
     for (const auto& p : paths) if (!had.contains(p)) m_stepWatcher.addPath(p);
 }
 
+void Window::watchBlocks()
+{
+    // The interpreter says which folder holds the blocks and which files are in it: the folder and the files are watched
+    const QStringList lines = editor->callSupport("blocks_files", QString(), nullptr).split('\n', Qt::SkipEmptyParts);
+    if (lines.isEmpty()) return;
+    m_blocksFolder = lines.first();
+    const QStringList want = lines;
+    const QStringList had = m_blocksWatcher.files() + m_blocksWatcher.directories();
+    for (const auto& p : had) if (!want.contains(p)) m_blocksWatcher.removePath(p);
+    for (const auto& p : want) if (!had.contains(p) && QFileInfo::exists(p)) m_blocksWatcher.addPath(p);
+}
+
+void Window::setBlocksFolder(const QString& path)
+{
+    // (empty: the folder next to FielDes again)
+    settings.setValue("blocks-folder", path);
+    if (path.isEmpty()) qunsetenv("FIELDES_BLOCKS");
+    else qputenv("FIELDES_BLOCKS", path.toLocal8Bit());
+    editor->callSupport("set_blocks_folder", path, nullptr);
+    watchBlocks();
+    editor->onTextChangedDebounce();
+}
+
+void Window::chooseBlocksFolder()
+{
+    if (m_blocksFolder.isEmpty()) watchBlocks();
+    const QString chosen = QFileDialog::getExistingDirectory(this, "Blocks folder: the Python files in it are your custom blocks",
+                                                             m_blocksFolder);
+    if (chosen.isEmpty()) return;
+    setBlocksFolder(chosen);
+    statusBar()->showMessage("Blocks folder: " + chosen, 6000);
+}
+
 void Window::onSceneChanged(QString json)
 {
     m_lastScene = json;
     watchImports(json);
+    watchBlocks();
     if (m_pendingImport.isEmpty())
     {
         return;
@@ -2188,17 +2765,24 @@ void Window::onSceneChanged(QString json)
     }
 }
 
-bool Window::onLoadTutorial(bool)
+// The model the guided tour works on: a new script, not a file (so that nothing of it is saved by accident)
+bool Window::loadTourModel()
 {
     CHECK_UNSAVED();
 
-    QString target = ":/examples/welcome.py";
-    if (loadFile(target))
+    QFile file(":/examples/tour.py");
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    // (the tour is about the model tree: it is shown whatever it was before)
+    for (QAction* a : menuBar()->findChildren<QAction*>())
     {
-        setFilename(target);
-        return true;
+        if (a->isCheckable() && a->text() == "Model tree") a->setChecked(true);
     }
-    return false;
+    setFilename("");
+    setWindowTitle("FielDes[*]");
+    editor->setScript(file.readAll(), false);
+    editor->setModified(false);
+    editor->guessLanguage("py");
+    return true;
 }
 
 bool Window::onLoadDefault(bool)

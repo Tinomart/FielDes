@@ -1,0 +1,78 @@
+wait 5000
+waitrender 60 20
+tour start
+wait 2500
+tour goto 5
+wait 600
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_05.png
+tour next
+wait 600
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_06.png
+tour next
+wait 600
+tour showme
+wait 3500
+tour state
+waitrender 60 10
+tour showme
+wait 3000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_08.png
+wait 2000
+waitrender 60 10
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_script_8.txt
+tour next
+wait 800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_09.png
+tour showme
+wait 1800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_09b.png
+wait 3000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_script_9.txt
+waitrender 60 10
+tour next
+wait 3000
+waitrender 60 10
+tour state
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_tree_10.txt
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_10.png
+tour showme
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_10b.png
+wait 3000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_script_10.txt
+waitrender 60 10
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_tree_10b.txt
+tour goto 11
+wait 800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_11.png
+tour showme
+wait 1500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_11b.png
+wait 4000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_script_11.txt
+waitrender 60 10
+tour goto 12
+wait 1000
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_12.png
+tour showme
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_12b.png
+wait 3000
+tour state
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/tour2_script_12.txt
+waitrender 60 10
+tour goto 13
+wait 1500
+grabpopups C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_13_popup.png
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_13.png
+tour next
+wait 800
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_14.png
+tour next
+wait 500
+tour state
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/tour2_end.png
+quit

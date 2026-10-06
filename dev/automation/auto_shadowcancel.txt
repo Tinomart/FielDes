@@ -1,0 +1,10 @@
+wait 4000
+waitrender 60 20
+treedrop d@v > u > on ctrl
+wait 1500
+grabwidget ConfirmShadow C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/shadowcancel_dialog.png
+key Escape
+wait 2500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadowcancel_tree.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadowcancel_script.txt
+quit

@@ -117,6 +117,18 @@ public:
     /*  A load in a load case (0, 1, ...): topology optimization makes the part stiff for each
      *  case on its own; a static analysis applies every load together  */
     void addForce(const Tree& region, Eigen::Vector3d total, int loadCase = 0);
+    /*  The same, with the total spread over the region's surface in proportion to a field (taken at the centres of the boundary
+     *  triangles; not negative) instead of evenly by area: a pressure that is not the same everywhere  */
+    void addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile);
+
+    /*  Material properties as fields of space (each is evaluated at the centre of every tetrahedron):
+     *    setStiffnessField  Young's modulus in MPa -- E given to the constructor is then only what the stiffness matrix is
+     *                       made with, each element's stiffness being E(centre) / E of it
+     *    setDensityField    the density in t / mm^3: the weight of gravity, the mass of a modal analysis
+     *    setExpansionField  the thermal expansion coefficient in 1 / K  */
+    void setStiffnessField(const Tree& E);
+    void setDensityField(const Tree& density);
+    void setExpansionField(const Tree& alpha);
     void setGravity(Eigen::Vector3d g, double density);
     void setThermal(const Tree& temperature, double alpha, double reference);
 
@@ -181,13 +193,14 @@ private:
     double m_h, m_E, m_nu;
 
     struct Support { Tree region; bool fix[3]; };
-    struct Force { Tree region; Eigen::Vector3d total; int loadCase; };
+    struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); };
     std::vector<Support> m_supports;
     std::vector<Force> m_forces;
     Eigen::Vector3d m_gravity = Eigen::Vector3d::Zero();
     double m_density = 0;
     Tree m_temperature = Tree::invalid();
     double m_alpha = 0, m_reference = 0;
+    Tree m_stiffnessField = Tree::invalid(), m_densityField = Tree::invalid(), m_expansionField = Tree::invalid();
 
     // Prepared
     bool m_prepared = false;
@@ -196,6 +209,8 @@ private:
     std::vector<double> m_force;                // per DOF: the loads, gravity and thermal expansion together
     std::vector<std::vector<double>> m_caseForce;   // per load case, when there are several
     std::vector<double> m_thermalStrain;        // per tetrahedron: alpha (T - reference)
+    std::vector<double> m_scale;                // per tetrahedron: its Young's modulus over E (empty without a stiffness field)
+    std::vector<double> m_elementDensity;       // per tetrahedron (empty without a density field)
     int m_looseElements = 0, m_fixedNodes = 0, m_loadedNodes = 0;
     Eigen::Vector3d m_totalLoad = Eigen::Vector3d::Zero();
     uint64_t m_hash = 0;

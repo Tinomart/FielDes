@@ -18,8 +18,10 @@ from fieldes.stdlib.selection import *
 from fieldes.stdlib.thermal import *
 from fieldes.stdlib.fluid import *
 from fieldes.stdlib.fields import *
+from fieldes.stdlib.fieldargs import *
 from fieldes.stdlib.regression import *
 from fieldes.stdlib.surfaces import *
+from fieldes.stdlib.points import *
 from fieldes.stdlib.lattices import *
 from fieldes.stdlib.conformal import *
 from fieldes.stdlib.content_cache import cache_info, clear_caches

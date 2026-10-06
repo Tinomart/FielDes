@@ -85,6 +85,15 @@ QIcon importFile()
     });
 }
 
+QIcon dropArrow()
+{
+    return make([](QPainter& p) {
+        p.setPen(QPen(kInk, 2.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawLine(QPointF(7, 9.5), QPointF(12, 14.5));
+        p.drawLine(QPointF(17, 9.5), QPointF(12, 14.5));
+    });
+}
+
 QIcon logo(int size)
 {
     // The mark: a dark tile, the F in cream, its field as two rings

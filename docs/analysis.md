@@ -8,6 +8,7 @@ fill the part they came from.
 - [Regions: supports and loads are shapes](#regions-supports-and-loads-are-shapes)
 - [Boundary conditions](#boundary-conditions)
 - [Materials](#materials)
+- [Fields in analyses](#fields-in-analyses)
 - [Static structural analysis](#static-structural-analysis)
 - [Reading a result](#reading-a-result)
 - [Modal analysis](#modal-analysis)
@@ -102,6 +103,43 @@ factor), thermal conductivity (W/(mm·K)) and expansion coefficient (1/K). Prede
 | `nylon` (PA12) | 1 700 | 0.39 | 45 | 0.24 |
 
 These are typical handbook values. Check them against the real material before relying on a result.
+
+## Fields in analyses
+
+The same rule as everywhere in FielDes — **wherever a number goes, a field goes** (see
+[Fields everywhere](fields.md#fields-everywhere)) — holds for the properties and the loads of an analysis. A field is a
+shape: its value at a point is the number there. It is read **at the centre of every tetrahedron** (or at the nodes or
+boundary triangles a condition acts on), exactly: nothing is sampled onto a grid first. They work with the tetrahedral elements,
+the default; the voxel elements (`element='hex'`) refuse a field with a message that says so.
+
+| | Field |
+|---|---|
+| `Material(..., E=field)` | Young's modulus at every point (MPa): a graded material, stiff here and soft there; a lattice's density field can drive it |
+| `Material(..., density=field)` | the density (t/mm³): the weight under `gravity()`, the mass in a modal analysis |
+| `Material(..., conductivity=field)` | the conductivity (W/(mm·K)) in a thermal analysis |
+| `Material(..., expansion=field)` | the thermal expansion coefficient (1/K) |
+| `force(region, vector, profile=field)` | the **total** stays `vector`; it is spread over the surface in proportion to the profile (not negative): a pressure that grows along the beam, a load carried mostly on one side |
+| `fixed_temperature(region, field)` | the temperature held, at every node inside the region |
+| `convection(region, coefficient, ambient)` | the heat transfer coefficient and the ambient temperature, each a number or a field, at every boundary triangle |
+| `heat_input(region, watts, profile=field)`, `heat_generation(...)` | the total power spread in proportion to the profile (by area over a surface, by volume through a body) |
+| `thermal_expansion(temperature_field, reference)` | always was a field: a thermal analysis's own `.temperature` works |
+
+```python
+graded = Material('graded', ramp(x_field(), (0, 100), (aluminium.E, aluminium.E / 10)), aluminium.nu)
+conditions = static_boundary_conditions(beam, supports=[fixed(wall)], loads=[force(top, (0, 0, -200), profile=ramp(x_field(), (0, 100), (0, 1)))])
+result = static_analysis(beam, conditions, material=graded, element_size=3)
+```
+
+`examples/19_graded_material.py` runs it and compares with beam theory: the tip of a cantilever whose stiffness falls to a
+tenth along its length deflects as much as the beam-theory integral says; a load spread evenly along the top deflects 0.375 of
+the same load at the tip, and one spread in proportion to *x* deflects 0.55 of it — which is what the solver reproduces.
+(`dev/tests/t_solver_fields.py` checks a constant field against the number, those theories, topology optimization, modal
+analysis and the thermal conditions.)
+
+**Not fields:** Poisson's ratio and the yield strength (a number: the safety factor is one number), the
+components of a force (the profile is how a force is spread), and everything of the flow solver — its fluid, inlets, outlets and
+walls take numbers, and say so when given a field. A field must be defined, and positive (the moduli, the conductivity), at
+the centre of **every element**: where it is not, the analysis stops and says where.
 
 ## Static structural analysis
 
@@ -444,6 +482,7 @@ of it is found in the render cache too. `cache=False` solves every time. See
   no dynamics beyond natural frequencies. Always compare the peak stress with the material's yield strength
   *and* with a hand calculation.
 - Linear tetrahedra need refinement in bending; check convergence.
+- Fields as properties and loads work with the tetrahedral elements only; the flow solver takes numbers.
 - A stress singularity (a sharp re-entrant corner or a point load) does not converge with refinement; the
   peak there means nothing. Load over a region.
 - The mesh follows the **field** of the part. For an imported part with poorly fitted B-spline faces (see

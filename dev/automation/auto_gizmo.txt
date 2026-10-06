@@ -1,0 +1,7 @@
+wait 4000
+waitrender 60 20
+treeclick plain drilled
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/gizmo_instant.png
+wait 2500
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/gizmo_later.png
+quit

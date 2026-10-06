@@ -136,6 +136,18 @@ def _prepare_imports():
             del sys.modules[name]
 
 
+def _blocks():
+    ''' (the custom blocks (fieldes.blocks) every script has at hand, what could not be read: said in the output) '''
+    try:
+        import os
+        from fieldes import blocks
+        found = blocks.namespace()
+        said = ''.join('custom block file {}: {}\n'.format(os.path.basename(p), why) for p, why in blocks.errors())
+        return found, said
+    except Exception:
+        return {}, ''
+
+
 def run(s, breakpoints=None, **env):
     ''' Evaluates a string, clause-by-clause.
 
@@ -155,16 +167,18 @@ def run(s, breakpoints=None, **env):
     tagged = VarTransformer().generic_visit(parsed)
     from fieldes import run_progress
     _count_loops(tagged)
+    block_functions, block_trouble = _blocks()
     state = {
         's': s,
         'body': tagged.body,
         'source_lines': s.splitlines(),
-        'gs': {**env, '__libfive_counted__': run_progress.counted},
+        'gs': {**block_functions, **env, '__libfive_counted__': run_progress.counted},
         'out': [],
         'lines': [],
         'i': 0,
         'printed': io.StringIO(),
     }
+    state['printed'].write(block_trouble)
     return _continue(state, breakpoints, skip_first=False)
 
 
@@ -221,7 +235,7 @@ class _PartialScenes:
         try:
             from fieldes.app_support import scene_json
             n = st['i']
-            self.host.partial_scene(scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n))
+            self.host.partial_scene(scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n, errored=True))
         except Exception:
             pass
 

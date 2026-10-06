@@ -51,7 +51,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', 'size')
 
 
 def _is_number(v):
@@ -84,6 +84,8 @@ def _carry(out, shape):
     # (the part's own resolution, roi_resolution(...), is set on the part later in
     # the script than this call: FielDes looks for it on the part a shape was made from)
     out._placed_from = shape
+    from fieldes.kinds import keep_kind
+    keep_kind(out, shape)
 
 
 def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
@@ -119,6 +121,10 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
     # (always a new shape, to hang the handles on: the part itself is shared)
     out = _move(out, tuple(move))
     _carry(out, shape)
+    if hasattr(shape, 'xyz'):
+        # (a point that is moved is where it is moved to: its coordinates follow the move)
+        out.xyz = tuple((c + m) if not (_is_number(c) and _is_number(m)) else float(c) + float(m)
+                        for c, m in zip(shape.xyz, move))
     # (the box of a part moved by plain numbers only follows them)
     b = getattr(shape, '_bounds', None)
     if b and all(_is_number(m) for m in move) and all(_is_number(r) and r == 0 for r in rotate) \
@@ -260,4 +266,6 @@ def expose(shape, values):
             except AttributeError:
                 pass
     cad_import._carry_exact(out, shape)
+    from fieldes.kinds import keep_kind
+    keep_kind(out, shape)
     return out

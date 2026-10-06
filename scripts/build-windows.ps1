@@ -87,12 +87,16 @@ if ($Package) {
         @('/XD', '__pycache__', 'test', 'idlelib', 'turtledemo', '/XF', '_freeze_module.exe')
     # 3. The Python package
     Mirror (Join-Path $Source 'python') (Join-Path $PackageDir 'python') @('/XD', '__pycache__')
-    # 4. The examples (without sample STEP files: those are GrabCAD downloads that may not be redistributed)
+    # 4. The examples (without sample STEP files: those are GrabCAD downloads that may not be redistributed -- except the one
+    #    bracket that is distributed at the maintainer's decision, copied in below)
     Mirror (Join-Path $Source 'examples') (Join-Path $PackageDir 'examples') @('/XD', '__pycache__', '*.fieldes-cache.trees', '*.fieldes-bspline', '*.fieldes-tessellation', 'meshes', '/XF', '*.fieldes-cache.py', '*.step', '*.stp')
+    Copy-Item (Join-Path $Source 'examples\step\PivotBearingSupportBracket.STEP') (Join-Path $PackageDir 'examples\step') -Force
     foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md') {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }
     Mirror (Join-Path $Source 'docs') (Join-Path $PackageDir 'docs') @()
+    # The custom blocks folder (the sample blocks; the user's own blocks go here or in a folder of their choice)
+    Mirror (Join-Path $Source 'blocks') (Join-Path $PackageDir 'blocks') @('/XD', '__pycache__')
     # 5. The MSVC runtime, so it runs without the VC++ redistributable installed
     $crt = Get-ChildItem (Join-Path $vsRoot 'VC\Redist\MSVC') -Directory |
         ForEach-Object { Join-Path $_.FullName 'x64\Microsoft.VC143.CRT' } | Where-Object { Test-Path $_ } | Select-Object -Last 1

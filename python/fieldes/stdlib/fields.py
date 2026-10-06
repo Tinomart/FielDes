@@ -49,6 +49,8 @@ import sys
 from fieldes.ffi import lib, libfive_vec3_t
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
+from fieldes.stdlib.fieldargs import (is_field, present, positive, number_or_field, lowest, highest,
+                                      returns_field, returns_body)
 
 __all__ = [
     'x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'polar_field',
@@ -57,6 +59,8 @@ __all__ = [
     'distance_to_surface', 'depth_below', 'signed_distance',
     'ramp', 'clamp', 'lerp', 'smoothstep', 'step_field', 'normalize',
     'remap_field', 'attractor', 'wave', 'sum_fields', 'mix',
+    'add_fields', 'subtract_fields', 'multiply_fields', 'divide_fields', 'power_field', 'min_fields', 'max_fields',
+    'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body',
     'thicken', 'shell_inside', 'shell_outside', 'shell_centered', 'offset_by',
     'smooth_union', 'smooth_intersection',
     'smooth_difference', 'chamfer_union', 'union_all', 'intersection_all',
@@ -124,6 +128,17 @@ def render_mesh(shape, region, res):
     return lib.libfive_tree_render_mesh(shape.ptr, region, res) or None
 
 
+def _coords(p, n=3):
+    ''' A point whose coordinates are numbers or fields (a field is kept: the point is then wherever the field says);
+        a Point (point(x, y, z)) is its coordinates '''
+    if hasattr(p, 'xyz'):
+        p = p.xyz
+    p = tuple(c if isinstance(c, Shape) else float(c) for c in p)
+    if len(p) != n:
+        raise ValueError('expected a point with {} coordinates, got {}'.format(n, p))
+    return p
+
+
 def _vec(p, n=3):
     p = tuple(float(c) for c in p)
     if len(p) != n:
@@ -171,8 +186,8 @@ def z_field():
 
 
 def radial_field(center=(0, 0, 0), axis='z'):
-    ''' Distance from an axis through `center` (cylindrical radius, mm) '''
-    c = _vec(center)
+    ''' Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields '''
+    c = _coords(center)
     x, y, z = X() - c[0], Y() - c[1], Z() - c[2]
     a, b = {'x': (y, z), 'y': (x, z), 'z': (x, y)}[axis]
     return (a.square() + b.square()).sqrt()
@@ -180,7 +195,7 @@ def radial_field(center=(0, 0, 0), axis='z'):
 
 def angle_field(center=(0, 0, 0), axis='z'):
     ''' Angle around an axis through `center`, in radians (-pi..pi) '''
-    c = _vec(center)
+    c = _coords(center)
     x, y, z = X() - c[0], Y() - c[1], Z() - c[2]
     a, b = {'x': (y, z), 'y': (z, x), 'z': (x, y)}[axis]
     return b.atan2(a)
@@ -189,7 +204,7 @@ def angle_field(center=(0, 0, 0), axis='z'):
 def polar_field(center=(0, 0, 0), axis='z'):
     ''' Angle from an axis through `center`, in radians (0..pi): 0 along the
         axis, pi/2 at its equator (spherical coordinates) '''
-    c = _vec(center)
+    c = _coords(center)
     x, y, z = X() - c[0], Y() - c[1], Z() - c[2]
     a, b, w = {'x': (y, z, x), 'y': (z, x, y), 'z': (x, y, z)}[axis]
     return (a.square() + b.square()).sqrt().atan2(w)
@@ -199,8 +214,8 @@ def polar_field(center=(0, 0, 0), axis='z'):
 # Distances
 
 def distance_to_point(p):
-    ''' Euclidean distance to a point '''
-    p = _vec(p)
+    ''' Euclidean distance to a point (its coordinates may be fields: a point that is where a field says) '''
+    p = _coords(p)
     return ((X() - p[0]).square() + (Y() - p[1]).square() + (Z() - p[2]).square()).sqrt()
 
 
@@ -250,10 +265,14 @@ def distance_to_polyline(points, closed=False):
 
 
 def distance_to_plane(point=(0, 0, 0), normal=(0, 0, 1)):
-    ''' Signed distance to a plane: positive on the side the normal points to '''
-    p = _vec(point)
-    n = _vec(normal)
-    L = math.sqrt(sum(c * c for c in n))
+    ''' Signed distance to a plane: positive on the side the normal points to (the point's and the normal's
+        coordinates may be fields: a plane that moves or tilts from place to place) '''
+    p = _coords(point)
+    n = _coords(normal)
+    if any(isinstance(c, Shape) for c in n):
+        L = sum((Shape.wrap(c).square() for c in n[1:]), Shape.wrap(n[0]).square()).sqrt()
+    else:
+        L = math.sqrt(sum(c * c for c in n))
     return ((X() - p[0]) * n[0] + (Y() - p[1]) * n[1] + (Z() - p[2]) * n[2]) / L
 
 
@@ -285,13 +304,13 @@ def clamp(field, lo, hi):
 
 
 def ramp(field, input_range, output_range, clamped=True):
-    ''' Linear map of a field: input_range=(a, b) -> output_range=(va, vb).
-        Clamped by default (values beyond the input range hold the end
+    ''' Linear map of a field: input_range=(a, b) -> output_range=(va, vb); each end is a number or a field (a ramp
+        that starts and ends where other fields say).  Clamped by default (values beyond the input range hold the end
         values), e.g. ramp(z_field(), (0, 50), (2, 0.5)) is 2 at z = 0,
         falling to 0.5 at z = 50 and above. '''
-    a, b = (float(v) for v in input_range)
-    va, vb = (float(v) for v in output_range)
-    if a == b:
+    a, b = (number_or_field(v, 'an end of the input range') for v in input_range)
+    va, vb = (number_or_field(v, 'an end of the output range') for v in output_range)
+    if not is_field(a) and not is_field(b) and a == b:
         raise ValueError('ramp: the input range is empty')
     t = (_s(field) - a) / (b - a)
     if clamped:
@@ -332,17 +351,17 @@ def step_field(field, edge):
 
 
 def attractor(points, radius, falloff='smooth', strength=1.0):
-    ''' A field that is `strength` at the given points (or curves: pass a
+    ''' (`radius` and `strength` are numbers or fields.)  A field that is `strength` at the given points (or curves: pass a
         distance field instead of points) and falls to 0 at `radius`.
         falloff: 'linear', 'smooth' (smoothstep) or 'gauss'. '''
-    if isinstance(points, Shape):
+    if isinstance(points, Shape) and not hasattr(points, 'xyz'):
         d = points
     else:
-        pts = list(points)
+        pts = [points] if hasattr(points, 'xyz') else list(points)
         if pts and isinstance(pts[0], numbers.Number):
             pts = [pts]
         d = distance_to_points(pts)
-    r = float(radius)
+    r = number_or_field(radius, 'the radius')
     if falloff == 'linear':
         f = (1 - d / r).max(0)
     elif falloff == 'gauss':
@@ -366,6 +385,94 @@ def sum_fields(*fields):
     out = _s(fields[0])
     for f in fields[1:]:
         out = out + f
+    return out
+
+
+################################################################################
+# Arithmetic on fields
+#
+# A number is a field with the same value everywhere, so every one of these takes numbers and fields alike, and the same
+# can be written with the operators (a + b, a - b, a * b, a / b, a ** b, abs(a), -a).  What they make is a FIELD, also of
+# bodies: the values of a body (its distance to its surface) are multiplied, divided ... like any other values.
+
+def _fold(fields, name, op):
+    if not fields:
+        raise TypeError('%s needs at least one field' % name)
+    out = _s(fields[0])
+    for f in fields[1:]:
+        out = op(out, f)
+    return out
+
+
+def add_fields(*fields):
+    ''' The sum of fields (and numbers): a + b + ... at every point '''
+    return _fold(fields, 'add_fields', lambda a, b: a + b)
+
+
+def subtract_fields(first, *others):
+    ''' The first field minus the others: a - b - ... at every point '''
+    return _fold((first,) + others, 'subtract_fields', lambda a, b: a - b)
+
+
+def multiply_fields(*fields):
+    ''' The product of fields (and numbers): a * b * ... at every point '''
+    return _fold(fields, 'multiply_fields', lambda a, b: a * b)
+
+
+def divide_fields(first, *others):
+    ''' The first field divided by the others: a / b / ... at every point (NaN where a divisor is zero) '''
+    return _fold((first,) + others, 'divide_fields', lambda a, b: a / b)
+
+
+def power_field(base, *exponents):
+    ''' The first field to the power of the next: (a ** b) ** ... at every point (NaN where a negative value meets a
+        fractional power) '''
+    return _fold((base,) + exponents, 'power_field', lambda a, b: a ** b)
+
+
+def min_fields(*fields):
+    ''' The smallest of the fields (and numbers) at every point '''
+    if not fields:
+        raise TypeError('min_fields needs at least one field')
+    return _minimum([_s(f) for f in fields])
+
+
+def max_fields(*fields):
+    ''' The largest of the fields (and numbers) at every point '''
+    if not fields:
+        raise TypeError('max_fields needs at least one field')
+    return _maximum([_s(f) for f in fields])
+
+
+def abs_field(field):
+    ''' The absolute value of a field at every point '''
+    return _s(field).abs()
+
+
+def negate_field(field):
+    ''' A field with its sign changed: -a at every point '''
+    return -_s(field)
+
+
+def sqrt_field(field):
+    ''' The square root of a field at every point (NaN where it is negative) '''
+    return _s(field).sqrt()
+
+
+def square_field(field):
+    ''' A field times itself at every point '''
+    return _s(field).square()
+
+
+def field_from_body(body):
+    ''' The values of a body as a FIELD: the same number at every point as the body (its distance to its surface, negative
+        inside), but not a body -- it is not drawn, it is not a part, and it is free to be multiplied, divided or powered
+        and still be a valid field.  (A body itself always keeps its true scale: it is a distance, which a factor would
+        break.  Selecting the field shows it in the section viewer.) '''
+    s = _s(body)
+    out = Shape(lib.libfive_tree_copy(s.ptr))
+    out._kind = 'field'
+    out._field_origin = s._field_origin if s._field_origin is not None else s       # (the viewer starts at the body)
     return out
 
 
@@ -403,10 +510,14 @@ def offset_by(shape, distance):
 
 
 def smooth_union(a, b, radius):
-    ''' Union with a rounded blend of the given radius where the shapes meet '''
-    a, b, k = _s(a), _s(b), float(radius)
-    if k <= 0:
-        return a.min(b)
+    ''' Union with a rounded blend of the given radius where the shapes meet (a number, or a field: a blend that
+        is round here and sharp there) '''
+    a, b, k = _s(a), _s(b), number_or_field(radius, 'the radius')
+    if not is_field(k):
+        if k <= 0:
+            return a.min(b)
+    else:
+        k = k.max(1e-9)                 # (where the field is 0 the union is sharp)
     h = (k - abs(a - b)).max(0) / k
     return a.min(b) - h * h * k / 4
 
@@ -430,7 +541,7 @@ def chamfer_union(a, b, size):
 def union_all(shapes, blend=0):
     ''' Union of many shapes (optionally blended) '''
     shapes = [_s(s) for s in shapes]
-    if blend:
+    if present(blend):
         out = shapes[0]
         for s in shapes[1:]:
             out = smooth_union(out, s, blend)
@@ -441,7 +552,7 @@ def union_all(shapes, blend=0):
 def intersection_all(shapes, blend=0):
     ''' Intersection of many shapes (optionally blended) '''
     shapes = [_s(s) for s in shapes]
-    if blend:
+    if present(blend):
         out = shapes[0]
         for s in shapes[1:]:
             out = smooth_intersection(out, s, blend)
@@ -451,14 +562,14 @@ def intersection_all(shapes, blend=0):
 
 def repeat(shape, spacing, center=(0, 0, 0)):
     ''' Repeats a shape infinitely on a grid.  spacing: a number or (sx, sy,
-        sz); 0 along an axis leaves that axis alone.  The shape should fit
+        sz), each a number or a field (the repeat is closer here and wider there); 0 along an axis leaves that axis alone.  The shape should fit
         inside one grid cell centred on `center`. '''
-    if isinstance(spacing, numbers.Number):
+    if isinstance(spacing, (numbers.Number, Shape)):
         spacing = (spacing,) * 3
-    c = _vec(center)
+    c = _coords(center)
     coords = []
     for axis, (v, s, o) in enumerate(zip((X(), Y(), Z()), spacing, c)):
-        if s:
+        if present(s):
             coords.append(((v - o + s / 2) % s) - s / 2 + o)
         else:
             coords.append(v)
@@ -598,7 +709,9 @@ def volume_of(shape, lower=None, upper=None, resolution=None):
 @content_cached('mass_properties', limit=16, copy_result=True)
 def mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None):
     ''' Volume, mass (density in g/cm^3 -> grams), centroid and bounding box
-        of a solid, by grid sampling.  Returns a dict. '''
+        of a solid, by grid sampling.  Returns a dict.  The density is a number or a field (a material that is
+        denser here than there: a lattice graded by its density, a result): the mass adds it up over the solid, and the
+        dict has the centre of mass as well as the centroid. '''
     lo, hi = _bounds_of(shape, lower, upper)
     size = [hi[i] - lo[i] for i in range(3)]
     if resolution is None:
@@ -610,19 +723,22 @@ def mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None)
         n = [max(1, v // 2) for v in n]
     pts, vals = sample_grid(shape, lo, hi, n)
     cell = (size[0] / n[0]) * (size[1] / n[1]) * (size[2] / n[2])
-    count = 0
-    sx = sy = sz = 0.0
-    for p, v in zip(pts, vals):
-        if v < 0:
-            count += 1
-            sx += p[0]
-            sy += p[1]
-            sz += p[2]
+    inside = [p for p, v in zip(pts, vals) if v < 0]
+    count = len(inside)
+    sx = sum(p[0] for p in inside)
+    sy = sum(p[1] for p in inside)
+    sz = sum(p[2] for p in inside)
     vol = count * cell
     centroid = (sx / count, sy / count, sz / count) if count else (float('nan'),) * 3
-    return {'volume': vol, 'mass': vol * float(density) / 1000.0,
-            'centroid': centroid, 'fill_fraction': count / float(len(pts)),
-            'samples': n}
+    out = {'volume': vol, 'mass': vol * float(density) / 1000.0 if not is_field(density) else None,
+           'centroid': centroid, 'fill_fraction': count / float(len(pts)), 'samples': n}
+    if is_field(density):
+        d = _eval_many(density, inside) if inside else []
+        total = sum(d)
+        out['mass'] = total * cell / 1000.0
+        out['center_of_mass'] = (tuple(sum(di * p[a] for di, p in zip(d, inside)) / total for a in range(3))
+                                 if count and total else (float('nan'),) * 3)
+    return out
 
 
 ################################################################################
@@ -720,23 +836,42 @@ def _exact_distance(shape, bounds=None, resolution=None, margin=0.0, script_vars
     return out
 
 
+def _reach(v, lo, hi):
+    ''' (smallest, largest) that a number or a field takes inside the box lo..hi: the number itself, or the field
+        sampled on a grid -- how far an operation with a field for its size can reach '''
+    if not is_field(v):
+        return float(v), float(v)
+    return field_range(v, lower=lo, upper=hi, n=16)
+
+
 def offset_exact(shape, distance, bounds=None, resolution=None):
     ''' A uniform offset of any shape: grows it by `distance` mm everywhere
         (shrinks it for a negative distance), measured along true normals,
-        so edges and corners get round, not stretched '''
-    d = float(distance)
-    e = exact_distance(shape, bounds, resolution, margin=max(d, 0.0) * 1.2)
+        so edges and corners get round, not stretched.  The distance is a number or a field (an offset that
+        is more here than there) '''
+    d = number_or_field(distance, 'the distance')
+    if is_field(d):
+        lo0, hi0 = _shape_bounds(_s(shape), bounds)
+        grow = max(_reach(d, lo0, hi0)[1], 0.0)
+    else:
+        grow = max(d, 0.0)
+    e = exact_distance(shape, bounds, resolution, margin=grow * 1.2)
     out = e - d
     lo, hi = e._bounds
-    out._bounds = (tuple(v - max(d, 0.0) for v in lo), tuple(v + max(d, 0.0) for v in hi))
+    out._bounds = (tuple(v - grow for v in lo), tuple(v + grow for v in hi))
     return out
 
 
 def shell_exact(shape, thickness, side='inside', bounds=None, resolution=None):
     ''' A hollow shell of uniform thickness (true distance), side = 'inside',
-        'outside' or 'center' '''
-    t = float(thickness)
-    e = exact_distance(shape, bounds, resolution, margin=t * 1.2 if side != 'inside' else 0.0)
+        'outside' or 'center'.  The thickness is a number or a field. '''
+    t = number_or_field(thickness, 'the thickness')
+    if is_field(t):
+        lo0, hi0 = _shape_bounds(_s(shape), bounds)
+        reach = max(_reach(t, lo0, hi0)[1], 0.0)
+    else:
+        reach = max(t, 0.0)
+    e = exact_distance(shape, bounds, resolution, margin=reach * 1.2 if side != 'inside' else 0.0)
     if side == 'inside':
         out = e.max(-(e + t))
     elif side == 'outside':
@@ -751,13 +886,14 @@ def shell_exact(shape, thickness, side='inside', bounds=None, resolution=None):
 
 def round_edges(shape, radius, bounds=None, resolution=None):
     ''' Rounds every convex (outside) edge and corner of a shape with the
-        given radius: the shape is shrunk by the radius and grown back, with
+        given radius (a number or a field): the shape is shrunk by the radius and grown back, with
         exact distances both times.  resolution (samples per mm) sets how
         finely the surfaces are followed; about 4 / radius or finer. '''
-    r = float(radius)
+    r = number_or_field(radius, 'the radius')
     lo, hi = _shape_bounds(_s(shape), bounds)
     size = max(hi[i] - lo[i] for i in range(3))
-    res = resolution or max(150.0 / size, 4.0 / r)
+    rmin = max(_reach(r, lo, hi)[0], size / 1000.0)         # (a field radius: the finest it asks for)
+    res = resolution or max(150.0 / size, 4.0 / rmin)
     e0 = exact_distance(shape, (lo, hi), res)
     e1 = exact_distance(e0 + r, (lo, hi), res)
     out = e1 - r
@@ -767,14 +903,16 @@ def round_edges(shape, radius, bounds=None, resolution=None):
 
 def fillet(shape, radius, bounds=None, resolution=None):
     ''' Fills every concave (inside) edge and corner of a shape with a
-        fillet of the given radius: the shape is grown by the radius and
+        fillet of the given radius (a number or a field): the shape is grown by the radius and
         shrunk back, with exact distances both times '''
-    r = float(radius)
+    r = number_or_field(radius, 'the radius')
     lo, hi = _shape_bounds(_s(shape), bounds)
     size = max(hi[i] - lo[i] for i in range(3))
-    res = resolution or max(150.0 / size, 4.0 / r)
-    e0 = exact_distance(shape, (lo, hi), res, margin=1.3 * r)
-    e1 = exact_distance(e0 - r, (tuple(v - r for v in lo), tuple(v + r for v in hi)), res)
+    rmin, rmax = _reach(r, lo, hi)
+    rmin = max(rmin, size / 1000.0)
+    res = resolution or max(150.0 / size, 4.0 / rmin)
+    e0 = exact_distance(shape, (lo, hi), res, margin=1.3 * rmax)
+    e1 = exact_distance(e0 - r, (tuple(v - rmax for v in lo), tuple(v + rmax for v in hi)), res)
     out = e1 + r
     out._bounds = (tuple(lo), tuple(hi))
     return out
@@ -805,7 +943,8 @@ def smooth(shape, radius, steps=1):
         where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
         averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
         field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
-        grows as the square root of the number of steps).  Like any smoothing it eases convex features slightly
+        grows as the square root of the number of steps).  The radius is a number or a field (smoothed more where
+        the field is large, not at all where it is 0).  Like any smoothing it eases convex features slightly
         inwards and concave ones slightly outwards; the body as a whole does not grow.
 
         The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
@@ -814,9 +953,9 @@ def smooth(shape, radius, steps=1):
         is drawn, and the cost is that of the field times the copies.  The body's field should be about a
         distance (the primitives and what is made of them are; a part imported from STEP is replaced by its exact
         distance, as offset() does), because a field that rises faster smooths by as much more. '''
-    r = float(radius)
+    r = number_or_field(radius, 'the radius')
     n = int(steps)
-    if not r > 0:
+    if not positive(r):
         raise ValueError('smooth: the radius must be positive (mm)')
     if n < 1:
         raise ValueError('smooth: steps is at least 1')
@@ -973,13 +1112,36 @@ def field_from_csv(path, x='x', y='y', z='z', value='value', neighbours=8, power
 
 
 def noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0):
-    ''' Smooth random variation (Perlin noise), about -amplitude..amplitude:
+    ''' Smooth random variation (Perlin noise), about -amplitude..amplitude (`scale` and `amplitude` are numbers or fields):
         `scale` is the size (mm) of the largest features, each octave adds
         detail half as large and `gain` as strong.  A different seed gives a
         different pattern.  E.g. an organic surface texture:
         part - 0.3 * noise_field(4)  '''
     if getattr(lib, 'libfive_field_noise', None) is None:
         raise RuntimeError('this FielDes library is too old for noise_field')
-    n = Shape(lib.libfive_field_noise(float(scale), int(octaves), int(seed) & 0xffffffff,
-                                      float(gain), float(lacunarity)))
+    if is_field(scale):
+        # (the noise made at a scale of 1 mm, looked at through coordinates divided by the scale at every point: a
+        # pattern that is finer here and coarser there)
+        unit = noise_field(1.0, octaves, seed, gain, lacunarity)
+        n = unit.remap(X() / scale, Y() / scale, Z() / scale)
+    else:
+        n = Shape(lib.libfive_field_noise(float(scale), int(octaves), int(seed) & 0xffffffff,
+                                          float(gain), float(lacunarity)))
+    if is_field(amplitude):
+        return n * amplitude
     return n if amplitude == 1.0 else n * float(amplitude)
+
+
+# What makes a field (and not a body) is of the kind 'field' (see fieldes.kinds): the model tree gives it a field's icon, the
+# section viewer shows it (a plane coloured by it) when it is selected.  A wall made round one is a body again.
+for _name in ('x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'polar_field', 'distance_to_point',
+              'distance_to_points', 'distance_to_line', 'distance_to_segment', 'distance_to_polyline',
+              'distance_to_plane', 'distance_to_surface', 'depth_below', 'clamp', 'ramp', 'remap_field', 'normalize',
+              'lerp', 'mix', 'smoothstep', 'step_field', 'attractor', 'wave', 'sum_fields', 'noise_field',
+              'gradient_field', 'gradient_magnitude', 'normal_field', 'curvature_field', 'overhang_angle',
+              'overhang_mask', 'wall_thickness', 'field_from_points', 'field_from_csv',
+              'add_fields', 'subtract_fields', 'multiply_fields', 'divide_fields', 'power_field', 'min_fields', 'max_fields',
+              'abs_field', 'negate_field', 'sqrt_field', 'square_field'):
+    globals()[_name] = returns_field(globals()[_name])
+for _name in ('thicken', 'shell_centered'):
+    globals()[_name] = returns_body(globals()[_name])

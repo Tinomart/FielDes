@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
 
 ## Primitive shapes
 
@@ -924,6 +924,69 @@ Write it under a shape's definition, with its handles() and expose() lines:
 
 (FielDes's model tree has a lock button on every shape, and the key R toggles it.)
 
+## Points and surfaces
+
+Points and surfaces: models of their own kind, and how every kind is drawn.
+
+    p = point(10, 0, 5)                    a point: drawn as a small ball, dragged by its gizmo
+    s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
+    wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
+
+A point is usable where a field function takes a position (distance_to_point(p), attractor(p, ...)) and gives its
+coordinates as p.xyz.  A surface is a field like any other (negative on one side, positive on the other), so it works
+wherever a field does: thicken(s, 1) makes it a wall, lattice_surface_conform(s, ...) lays a lattice on it.
+
+What is drawn for each kind of model (Shape._display calls displayed() below):
+    a 3D shape and a simulation   as they are
+    a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
+    a surface                     a thin sheet
+    a point                       a small ball (about the size of a mark on the screen, whatever the part's size)
+    a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
+                                  which colours a plane through the render region by the field (move the plane to see
+                                  the field in 3D)
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `Point`
+
+A point: p.xyz is its coordinates (numbers or fields).  It is a small ball as a field, so it can be moved,
+dragged and shown like any shape; size (mm) is the ball's radius -- by default about a mark on the screen
+(a fortieth of the render region's longest side, at least two voxels)
+
+### `Surface`
+
+An open surface: the zero set of a field, with no body behind it (negative on one side, positive on the other)
+
+### `cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0))`
+
+The surface of an infinite cylinder along an axis: a surface, negative inside
+
+### `displayed(shape)`
+
+What FielDes draws for a shape (see the top of this file)
+
+### `plane(point=(0, 0, 0), normal=(0, 0, 1))`
+
+A plane through `point`, positive on the side `normal` points to: a surface
+
+### `point(x=0.0, y=0.0, z=0.0, size=None)`
+
+A point at (x, y, z).  Its coordinates are numbers or fields.  size: the radius (mm) of the ball it is drawn as
+
+### `sphere_surface(radius=10.0, center=(0, 0, 0))`
+
+The surface of a sphere (without its inside): a surface, negative inside
+
+### `surface(field)`
+
+An open surface from any field: where the field is 0.  (A body's field as a surface is its skin.)
+
+### `wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0)`
+
+A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it
+
 ## Fields
 
 Field-driven design tools: scalar fields (Shapes used as values rather than
@@ -967,13 +1030,21 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
+### `abs_field(field)`
+
+The absolute value of a field at every point
+
+### `add_fields(*fields)`
+
+The sum of fields (and numbers): a + b + ... at every point
+
 ### `angle_field(center=(0, 0, 0), axis='z')`
 
 Angle around an axis through `center`, in radians (-pi..pi)
 
 ### `attractor(points, radius, falloff='smooth', strength=1.0)`
 
-A field that is `strength` at the given points (or curves: pass a
+(`radius` and `strength` are numbers or fields.)  A field that is `strength` at the given points (or curves: pass a
 distance field instead of points) and falls to 0 at `radius`.
 falloff: 'linear', 'smooth' (smoothstep) or 'gauss'.
 
@@ -1006,11 +1077,12 @@ Distance to an infinite line through `point` along `direction`
 
 ### `distance_to_plane(point=(0, 0, 0), normal=(0, 0, 1))`
 
-Signed distance to a plane: positive on the side the normal points to
+Signed distance to a plane: positive on the side the normal points to (the point's and the normal's
+coordinates may be fields: a plane that moves or tilts from place to place)
 
 ### `distance_to_point(p)`
 
-Euclidean distance to a point
+Euclidean distance to a point (its coordinates may be fields: a point that is where a field says)
 
 ### `distance_to_points(points)`
 
@@ -1030,6 +1102,10 @@ Unsigned distance to a shape's surface (the shape's field is used as
 the distance, so this is exact for exact distance fields such as
 spheres, boxes, imported meshes)
 
+### `divide_fields(first, *others)`
+
+The first field divided by the others: a / b / ... at every point (NaN where a divisor is zero)
+
 ### `evaluate(field, point_or_points)`
 
 A field's value at a point, or a list of values at many points
@@ -1045,6 +1121,13 @@ depth.  resolution: mesh samples per mm (default ~150 along the
 longest side); margin: extra room around the bounds for offsets.
 (A shape with var() numbers is meshed with the numbers they have in
 the script, and the result is remembered by them.)
+
+### `field_from_body(body)`
+
+The values of a body as a FIELD: the same number at every point as the body (its distance to its surface, negative
+inside), but not a body -- it is not drawn, it is not a part, and it is free to be multiplied, divided or powered
+and still be a valid field.  (A body itself always keeps its true scale: it is a distance, which a factor would
+break.  Selecting the field shows it in the section viewer.)
 
 ### `field_from_csv(path, x='x', y='y', z='z', value='value', neighbours=8, power=2.0, delimiter=None, scale=1.0)`
 
@@ -1069,7 +1152,7 @@ samples.  points: [(x, y, z), ...] with values [v, ...], or
 ### `fillet(shape, radius, bounds=None, resolution=None)`
 
 Fills every concave (inside) edge and corner of a shape with a
-fillet of the given radius: the shape is grown by the radius and
+fillet of the given radius (a number or a field): the shape is grown by the radius and
 shrunk back, with exact distances both times
 
 ### `find_extent(shape, budget=200000, resolution=2.0, half=1000000.0)`
@@ -1101,7 +1184,17 @@ t = 1 (t may itself be a field)
 ### `mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None)`
 
 Volume, mass (density in g/cm^3 -> grams), centroid and bounding box
-of a solid, by grid sampling.  Returns a dict.
+of a solid, by grid sampling.  Returns a dict.  The density is a number or a field (a material that is
+denser here than there: a lattice graded by its density, a result): the mass adds it up over the solid, and the
+dict has the centre of mass as well as the centroid.
+
+### `max_fields(*fields)`
+
+The largest of the fields (and numbers) at every point
+
+### `min_fields(*fields)`
+
+The smallest of the fields (and numbers) at every point
 
 ### `mirror_x(shape, x=0.0)`
 
@@ -1119,9 +1212,17 @@ Mirror-symmetric copy: the half at z > z0 reflected onto the other
 
 Same as lerp()
 
+### `multiply_fields(*fields)`
+
+The product of fields (and numbers): a * b * ... at every point
+
+### `negate_field(field)`
+
+A field with its sign changed: -a at every point
+
 ### `noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0)`
 
-Smooth random variation (Perlin noise), about -amplitude..amplitude:
+Smooth random variation (Perlin noise), about -amplitude..amplitude (`scale` and `amplitude` are numbers or fields):
 `scale` is the size (mm) of the largest features, each octave adds
 detail half as large and `gain` as strong.  A different seed gives a
 different pattern.  E.g. an organic surface texture:
@@ -1145,7 +1246,8 @@ part by 0.02 mm per MPa of stress: offset_by(part, 0.02 * stress)
 
 A uniform offset of any shape: grows it by `distance` mm everywhere
 (shrinks it for a negative distance), measured along true normals,
-so edges and corners get round, not stretched
+so edges and corners get round, not stretched.  The distance is a number or a field (an offset that
+is more here than there)
 
 ### `overhang_angle(shape, build_direction=(0, 0, 1))`
 
@@ -1165,14 +1267,19 @@ where supports are needed (typically below 45 degrees).
 Angle from an axis through `center`, in radians (0..pi): 0 along the
 axis, pi/2 at its equator (spherical coordinates)
 
+### `power_field(base, *exponents)`
+
+The first field to the power of the next: (a ** b) ** ... at every point (NaN where a negative value meets a
+fractional power)
+
 ### `radial_field(center=(0, 0, 0), axis='z')`
 
-Distance from an axis through `center` (cylindrical radius, mm)
+Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields
 
 ### `ramp(field, input_range, output_range, clamped=True)`
 
-Linear map of a field: input_range=(a, b) -> output_range=(va, vb).
-Clamped by default (values beyond the input range hold the end
+Linear map of a field: input_range=(a, b) -> output_range=(va, vb); each end is a number or a field (a ramp
+that starts and ends where other fields say).  Clamped by default (values beyond the input range hold the end
 values), e.g. ramp(z_field(), (0, 50), (2, 0.5)) is 2 at z = 0,
 falling to 0.5 at z = 50 and above.
 
@@ -1189,7 +1296,7 @@ var()s is meshed with the numbers they have in the script.
 ### `repeat(shape, spacing, center=(0, 0, 0))`
 
 Repeats a shape infinitely on a grid.  spacing: a number or (sx, sy,
-sz); 0 along an axis leaves that axis alone.  The shape should fit
+sz), each a number or a field (the repeat is closer here and wider there); 0 along an axis leaves that axis alone.  The shape should fit
 inside one grid cell centred on `center`.
 
 ### `repeat_polar(shape, count, center=(0, 0), axis='z')`
@@ -1200,7 +1307,7 @@ lie in the wedge around the +x direction
 ### `round_edges(shape, radius, bounds=None, resolution=None)`
 
 Rounds every convex (outside) edge and corner of a shape with the
-given radius: the shape is shrunk by the radius and grown back, with
+given radius (a number or a field): the shape is shrunk by the radius and grown back, with
 exact distances both times.  resolution (samples per mm) sets how
 finely the surfaces are followed; about 4 / radius or finer.
 
@@ -1216,7 +1323,7 @@ A shell straddling the surface (half inside, half outside)
 ### `shell_exact(shape, thickness, side='inside', bounds=None, resolution=None)`
 
 A hollow shell of uniform thickness (true distance), side = 'inside',
-'outside' or 'center'
+'outside' or 'center'.  The thickness is a number or a field.
 
 ### `shell_inside(shape, thickness)`
 
@@ -1238,7 +1345,8 @@ about `radius` mm are smoothed away, edges and corners are eased, and a flat or 
 where it is (unlike offset() or thicken(), which move or grow the surface).  The field of the body is
 averaged over the points a `radius` away on all six sides -- the smoothing of a mesh's Laplacian, done on the
 field -- and `steps` of those make the field of the smoothed body: more steps smooth further (the reach
-grows as the square root of the number of steps).  Like any smoothing it eases convex features slightly
+grows as the square root of the number of steps).  The radius is a number or a field (smoothed more where
+the field is large, not at all where it is 0).  Like any smoothing it eases convex features slightly
 inwards and concave ones slightly outwards; the body as a whole does not grow.
 
 The result is a field like any other, a weighted sum of copies of the body's own field moved by whole
@@ -1258,15 +1366,28 @@ Intersection with a rounded blend
 
 ### `smooth_union(a, b, radius)`
 
-Union with a rounded blend of the given radius where the shapes meet
+Union with a rounded blend of the given radius where the shapes meet (a number, or a field: a blend that
+is round here and sharp there)
 
 ### `smoothstep(field, edge0, edge1)`
 
 0 below edge0, 1 above edge1, a smooth S-curve between
 
+### `sqrt_field(field)`
+
+The square root of a field at every point (NaN where it is negative)
+
+### `square_field(field)`
+
+A field times itself at every point
+
 ### `step_field(field, edge)`
 
 0 below the edge, 1 above (a sharp step; see smoothstep)
+
+### `subtract_fields(first, *others)`
+
+The first field minus the others: a - b - ... at every point
 
 ### `sum_fields(*fields)`
 
@@ -1455,7 +1576,7 @@ turn, standing on `center`, its ends cut flat.
 
 ### `ellipsoid(radii, center=(0, 0, 0))`
 
-An ellipsoid with semi-axes radii = (a, b, c) along x, y, z
+An ellipsoid with semi-axes radii = (a, b, c) along x, y, z, numbers or fields
 (distance-like near the surface; exact for a sphere)
 
 ### `elliptic_cylinder(a, b, center=(0, 0, 0))`
@@ -1804,8 +1925,11 @@ cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diam
     diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
     cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
     or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
-cell_size: mm, or (sx, sy, sz).  (Default 10 mm; for a cell_custom(region, geometry) cell the size of its
-    region, so that it comes out as you modelled it -- a larger or smaller size scales the cell)
+cell_size: mm, or (sx, sy, sz), or a FIELD (cells bigger here and smaller there).  (Default 10 mm; for a
+    cell_custom(region, geometry) cell the size of its region, so that it comes out as you modelled it -- a
+    larger or smaller size scales the cell.)  A cell size field is blended from lattices of cells a factor 2
+    apart (up to a factor of 16 in all): the cells are exact where the field is one of those sizes and a blend of
+    the two next to it between them
 thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
     or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
     (planar).  Numbers or fields
@@ -2164,9 +2288,14 @@ The analysis could not be set up or solved (the message says why)
 ### `Material`
 
 An isotropic linear-elastic material: Young's modulus E (MPa),
-Poisson's ratio nu, density (t/mm^3, for gravity loads), thermal
-conductivity (W / (mm K), for thermal_analysis), thermal expansion
-coefficient (1/K, for thermal_expansion)
+Poisson's ratio nu, density (t/mm^3, for gravity loads and the mass of a modal analysis),
+thermal conductivity (W / (mm K), for thermal_analysis), thermal expansion
+coefficient (1/K, for thermal_expansion).
+
+E, density, conductivity and expansion can each be a FIELD instead of a number -- a Shape, its value at every
+point of the part is the property there: `Material('graded', ramp(z_field(), (0, 50), (70e3, 3e3)), 0.33, 2.7e-9)`
+is stiff at the bottom and soft at the top; a lattice's density field can drive it as well.  (Fields in a material
+and in loads work with the tetrahedral elements, the default.)  nu and yield_strength are numbers.
 
 ### `ModalResult`
 
@@ -2278,11 +2407,16 @@ A support: the part is held in place wherever it lies inside
 `region` (a Shape).  x / y / z = False leave that direction free
 (a sliding support).
 
-### `force(region, fx, fy=None, fz=None)`
+### `force(region, fx, fy=None, fz=None, profile=None)`
 
 A load: the total force (fx, fy, fz) in N, spread evenly over the
 part's surface inside `region` (a Shape).  force(region, (0, 0, -100))
 works too.
+
+profile  a field: the total is spread over the surface in proportion to it (not negative) instead of evenly --
+         a pressure that is not the same everywhere, e.g. `profile=ramp(x_field(), (0, 80), (0.2, 1.0))` loads
+         the end of a beam five times harder at x = 80 than at x = 0, with the same total.  (Tetrahedral
+         elements.)
 
 ### `gravity(g=(0.0, 0.0, -9810.0))`
 
@@ -2504,23 +2638,25 @@ conditions and material
 
 The part's exposed surface inside `region` exchanges heat with an
 ambient temperature: coefficient h in W / (mm^2 K) (still air
-~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2)
+~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2).  The coefficient and the ambient
+temperature can each be a field: their values at each point of the surface (tetrahedral elements)
 
 ### `fixed_temperature(region, value)`
 
 The part held at temperature `value` wherever it lies inside
-`region` (a Shape)
+`region` (a Shape).  `value` can be a field: the temperature at each point (tetrahedral elements)
 
-### `heat_generation(region, watts)`
+### `heat_generation(region, watts, profile=None)`
 
 A total power (W) generated inside the part, spread evenly through
 its volume inside `region` (a Shape) -- e.g. a resistive heater, or
-electronics potted in the part
+electronics potted in the part.  profile: a field -- spread in proportion to it instead of evenly
 
-### `heat_input(region, watts)`
+### `heat_input(region, watts, profile=None)`
 
 A total power (W) put into the part, spread evenly over its surface
-inside `region` (a Shape); negative takes heat out
+inside `region` (a Shape); negative takes heat out.  profile: a field -- the power is spread in
+proportion to it (not negative) instead of evenly
 
 ### `thermal_analysis(shape, boundary, material=Material('aluminium', E=69000 MPa, nu=0.33), element_size=None, bounds=None, conductivity=None, max_iterations=50000, tolerance=1e-07, element='tet', cache=True)`
 

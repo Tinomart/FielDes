@@ -1,0 +1,7 @@
+wait 4000
+waitrender 120 30
+viewzoom 790 640 9
+wait 3000
+waitrender 120 10
+grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex21_3.png
+quit

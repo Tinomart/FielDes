@@ -204,6 +204,23 @@ bool libfive_tree_can_save(libfive_tree ptr)
 {
     return canKeep(Tree(ptr));
 }
+
+int libfive_tree_axes(libfive_tree ptr)
+{
+    int mask = 0;
+    for (auto& n : Tree(ptr).walk())
+    {
+        switch (n->op())
+        {
+            case Opcode::VAR_X: mask |= 1; break;
+            case Opcode::VAR_Y: mask |= 2; break;
+            case Opcode::VAR_Z: mask |= 4; break;
+            case Opcode::ORACLE: mask |= 7; break;      // (a mesh, a data field: at any point of space)
+            default: break;
+        }
+    }
+    return mask;
+}
 bool libfive_tree_save(libfive_tree ptr, const char* filename)
 {
     if (!canKeep(Tree(ptr)))
@@ -1284,6 +1301,31 @@ void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, flo
     f->prepared = f->solved = false;
 }
 
+void libfive_tetfea_set_stiffness_field(libfive_tetfea* f, libfive_tree E)
+{
+    f->problem->setStiffnessField(Tree(E));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetfea_set_density_field(libfive_tetfea* f, libfive_tree density)
+{
+    f->problem->setDensityField(Tree(density));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetfea_set_expansion_field(libfive_tetfea* f, libfive_tree alpha)
+{
+    f->problem->setExpansionField(Tree(alpha));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
+                                      int load_case, libfive_tree profile)
+{
+    f->problem->addForceProfile(Tree(region), Eigen::Vector3d(fx, fy, fz), load_case, Tree(profile));
+    f->prepared = f->solved = false;
+}
+
 int libfive_tetfea_prepare(libfive_tetfea* f)
 {
     f->message.clear();
@@ -1576,6 +1618,38 @@ void libfive_tetthermal_add_generation(libfive_tetthermal* f, libfive_tree regio
 void libfive_tetthermal_add_convection(libfive_tetthermal* f, libfive_tree region, float coefficient, float ambient)
 {
     f->problem->addConvection(Tree(region), coefficient, ambient);
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetthermal_set_conductivity_field(libfive_tetthermal* f, libfive_tree k)
+{
+    f->problem->setConductivityField(Tree(k));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetthermal_add_temperature_field(libfive_tetthermal* f, libfive_tree region, float value, libfive_tree field)
+{
+    f->problem->addTemperatureField(Tree(region), value, field ? Tree(field) : Tree::invalid());
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetthermal_add_heat_profile(libfive_tetthermal* f, libfive_tree region, float watts, libfive_tree profile)
+{
+    f->problem->addHeatProfile(Tree(region), watts, Tree(profile));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetthermal_add_generation_profile(libfive_tetthermal* f, libfive_tree region, float watts, libfive_tree profile)
+{
+    f->problem->addGenerationProfile(Tree(region), watts, Tree(profile));
+    f->prepared = f->solved = false;
+}
+
+void libfive_tetthermal_add_convection_fields(libfive_tetthermal* f, libfive_tree region, float coefficient,
+                                              libfive_tree coefficient_field, float ambient, libfive_tree ambient_field)
+{
+    f->problem->addConvectionFields(Tree(region), coefficient, coefficient_field ? Tree(coefficient_field) : Tree::invalid(),
+                                    ambient, ambient_field ? Tree(ambient_field) : Tree::invalid());
     f->prepared = f->solved = false;
 }
 

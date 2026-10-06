@@ -16,6 +16,7 @@ namespace Icons
 {
     QIcon open();
     QIcon importFile();
+    QIcon dropArrow();              // a small chevron: the arrow beside Open and Import, which lists recent files
     QIcon logo(int size);           // the FielDes mark (the window icon)
 }
 

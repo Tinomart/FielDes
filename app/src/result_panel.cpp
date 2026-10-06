@@ -18,6 +18,7 @@ of the License, or (at your option) any later version.
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "fieldes/carddrag.hpp"
 #include "fieldes/result_panel.hpp"
 #include "fieldes/colormap.hpp"
 
@@ -189,7 +190,9 @@ ResultPanel::ResultPanel(QWidget* parent)
     bottom->addStretch();
     layout->addLayout(bottom);
     layout->addWidget(m_info);
-    setFixedWidth(240);
+    setMinimumWidth(220);
+    resize(240, 100);
+    new CardController(this, "result", nullptr, QSize(220, 120));      // (dragged by any empty place, resized from its edges)
 
     connect(m_fields, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
         if (!m_updating && i >= 0) emit(channelChanged(i));

@@ -7,7 +7,7 @@
         <file>gl/slice.vert</file>
         <file>gl/slice.frag</file>
 
-        <file>examples/welcome.py</file>
+        <file>examples/tour.py</file>
 
         <file>font/Inconsolata.otf</file>
     </qresource>

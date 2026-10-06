@@ -1,0 +1,9 @@
+wait 4000
+waitrender 60 20
+treedrop a@t > v > on
+wait 1500
+key Escape
+wait 1500
+treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/confirm2_1.txt
+dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/confirm2_1_script.txt
+quit

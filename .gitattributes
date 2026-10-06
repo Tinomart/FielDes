@@ -1,0 +1,2 @@
+# shell scripts must keep LF line endings (they are run on Linux, also from a Windows checkout in WSL)
+*.sh text eol=lf

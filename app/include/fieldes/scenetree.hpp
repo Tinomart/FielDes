@@ -14,8 +14,12 @@ of the License, or (at your option) any later version.
 #include <QElapsedTimer>
 #include <QFrame>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QList>
+#include <QPair>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
@@ -24,6 +28,7 @@ of the License, or (at your option) any later version.
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolButton;
+class QLineEdit;
 class QLabel;
 class QMenu;
 
@@ -68,12 +73,41 @@ public:
      *  by the (0-based) line `line0` (for the operations that combine two)  */
     bool hasModel() const;
     bool hasOtherModel(int line0) const;
+    /*  Whether the (0-based) line belongs to a model (a variable or a displayed expression that ran), and the middle of its
+     *  bounds -- where a menu opened on it from outside the viewport takes its place from  */
+    bool modelAtLine(int line0, QVector3D* centre = nullptr) const;
+    /*  Whether a (0-based) line is one of a model's own: where it is displayed, its statement, its expose and handles lines  */
+    bool ownsLine(const QJsonObject& item, int line0) const;
 
     /*  The selection, in the order it was made (the first is the one a subtraction subtracts from): the keys of the
      *  selected rows (for scripted tests)  */
     QStringList selectionKeys() const { return m_selectOrder; }
 
+    /*  For the guided tour and the tests: select the model a variable holds (once it is in the tree); the rectangle of a row (the
+     *  first whose text starts with `prefix`) in the coordinates of `in`; the tree's viewport (where a mouse is sent to); a
+     *  render setting's field (fn: "set_bounds" part 0..5 | "set_resolution" 0 | "set_quality" 0); whether the settings are open  */
+    bool selectModel(const QString& var) { return selectVar(var); }
+    QRect rowRect(const QString& prefix, QWidget* in);
+    QWidget* treeViewport() const;
+    QLineEdit* settingEditor(const QString& fn, int index) const;
+    void showSettings(bool open);
+    bool settingsOpen() const;
+    bool dragging() const { return m_dragging; }
+    /*  For the tests: whether a row is a shadow (the reference of a statement to a model another statement owns), and the row of a
+     *  model under a statement, shadow or not (null if there is none)  */
+    bool isShadow(QTreeWidgetItem* row) const;
+    QTreeWidgetItem* rowUnder(const QString& parentVar, const QString& modelVar) const;
+
+    /*  Where in a row a dragged model is dropped: above it, on it, below it, or in the empty space of the tree  */
+    enum DropAt { DropAbove, DropOn, DropBelow, DropViewport };
+
+    /*  The rows as text, one per line, two spaces of indentation for each level of nesting: `name  [type]` (for scripted tests)  */
+    QString dumpRows() const;
+
 public slots:
+    /*  The provisional gizmo was pressed: the selected model is made ready to be dragged now, not after the pause that
+     *  lets a rectangle finish selecting  */
+    void prepareNow();
     /*  The I key: only the selected model is shown, all others hidden; pressed again, what was shown before is
      *  shown again.  Both are script edits (one undoable step), like the eyes of the tree  */
     void toggleIsolation();
@@ -148,8 +182,16 @@ signals:
     /*  Scroll the editor to a (0-based) line and flash it  */
     void goToLine(int line0);
 
+    /*  A right-click in the tree: the viewport's menu for the model displayed by the (0-based) line `line0` (-1: the menu of
+     *  empty space), to be opened at `globalPos`  */
+    void menuRequested(int line0, QPoint globalPos);
+
     /*  Apply these edits to the script as one undoable step  */
     void editScript(QList<TextEdit> edits, QString description);
+
+    /*  The same, for an edit made while something is typed (a name, a number): the edits of one go on after another are one
+     *  undoable step  */
+    void editScriptLive(QList<TextEdit> edits, QString description);
 
     /*  Run the script again (nothing in its text changed)  */
     void rerunRequested();
@@ -160,13 +202,184 @@ signals:
     /*  Frame the camera on a box; if the box is empty, on the shapes
      *  displayed by the given lines  */
     void focusRequested(QVector3D min, QVector3D max, QList<int> lines0);
+    /*  The selected model has no gizmo yet (it gets its numbers when the script has run): where it will be, so that the view can
+     *  draw it at once (see View::setProvisionalGizmo); `on` false when there is none to show  */
+    void provisionalGizmo(bool on, QVector3D pivot, QList<int> lines0);
+
+    /*  The fields among the selected models (they are not drawn: the field viewer shows them), by their keys -- a variable's name,
+     *  or "line:N" for a field that is only displayed -- in the order selected; empty when the selection holds none.  Emitted when
+     *  it changes  */
+    void fieldsSelected(QStringList keys);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
     void rebuild();
+    /*  The field that is being typed in -- one of the render settings, or the name of a row -- found without asking the keyboard
+     *  focus of the application, which a window that is not the active one does not have: the editor of the row that is current, else
+     *  the widget that has the focus of the window  */
+    QWidget* typingWidget() const;
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemDoubleClicked(QTreeWidgetItem* item, int column);
     void onContextMenu(const QPoint& pos);
+
+    /*  Drag and drop: models are dragged by their rows (the selected ones).  Dropped on an operation they become inputs of it
+     *  (a menu asks which input they replace, or adds one to an operation that takes any number of them); dropped between
+     *  two rows they are moved in the script, with the models they are made of when those come later; dropped in the empty
+     *  space, to the end.  All of it is edits of the script text, in one undoable step  */
+    QList<QJsonObject> draggedModels() const;
+    bool canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why = nullptr) const;
+    /*  What a drop ON an operation does (never a question): the text that is written and where -- `replace` is the span of what it
+     *  takes the place of, `after` the span of the argument it is put after -- or, when it cannot be done, why not  */
+    struct OnPlan { bool ok = false; bool own = false; QJsonArray replace, after; QString text, what, why; };
+    OnPlan planDropOn(const QList<QJsonObject>& models, const QJsonObject& target) const;
+    bool takesInput(const QJsonObject& model) const;
+    /*  Whether the model's call is written with numbers (a FIELD dropped on it can take the place of one: anywhere a number
+     *  goes, a field goes)  */
+    bool takesNumber(const QJsonObject& model) const;
+    /*  Whether the model's call is written with a position as a tuple of numbers (a POINT dropped on it can take its place)  */
+    bool takesPoint(const QJsonObject& model) const;
+    bool dependsOn(const QJsonObject& model, const QJsonObject& on) const;
+    /*  What a drop into a call writes about references (the # shadow: a, b comment on the last line of its statement): see the definition  */
+    void markShadows(QStringList& lines, const QList<QJsonObject>& models, const QJsonObject& target, int last, bool copy,
+                     bool reference) const;
+    /*  A drag begins at a row: false if it cannot (nothing that can be dragged is selected); the label it carries  */
+    bool beginDrag(QTreeWidgetItem* row, QString* text, QIcon* icon, bool ctrl, bool wasSelected);
+    /*  The left button went down on the tree / came up: a model selected by a press is not made ready to be dragged (lines
+     *  written into the script) while the button is down -- the drag that may follow must not wait for a run of the script  */
+    void onTreeHeld(bool down);
+    void onDrop(QTreeWidgetItem* over, int at, const QPoint& global, bool copy);
+    void finishDrop(const QString& overKey, int at, const QPoint& global, bool copy);
+    void dropOnModel(const QList<QJsonObject>& models, const QJsonObject& target, bool copy);
+
+    /*  The tree is the structure of the calls: a model that stands under an operation is one of the models it is given.  Every
+     *  nesting, renesting and denesting is therefore an edit of the arguments of a call -- worked out here, before anything
+     *  is written, as a `Rewire`: the models taken out of calls and put into them, and the statements that cannot do without
+     *  a model that is taken out (they are deleted, after asking, and what is made of them loses them in turn)  */
+    struct Rewire
+    {
+        struct Put { QString name, relative, side; };                // side: "before" or "after" `relative`, or "end"
+        struct Change { QJsonObject item; QStringList remove; QList<Put> insert; };
+        QMap<int, Change> edits;                                     // the statements whose call is rewritten, by their line
+        QMap<int, QJsonObject> deleted;                              // the statements that go, by their line
+        QStringList notes;                                           // what happens that was not asked for
+    };
+    QJsonObject itemByKey(const QString& key) const;
+    /*  Shadows deleted: the references (statement, model's name) are taken out of their calls, as when a model is denested  */
+    void deleteReferences(const QList<QPair<QJsonObject, QString>>& refs);
+    QJsonObject itemAtLine(int line) const;
+    /*  The statement a dragged model is dragged out of: the one its row stands under, or, for a shadow, the one the shadow is
+     *  under (empty: a model that stands under none)  */
+    QJsonObject sourceStatement(const QJsonObject& model) const;
+    /*  The statements that use what `stmt` makes  */
+    QList<QJsonObject> usersOf(const QJsonObject& stmt) const;
+    /*  `model` is taken out of the call of `from`: out of its arguments when it takes any number of models and keeps one at
+     *  least, else the statement goes (and the statements that use it lose it in turn)  */
+    void wireRemove(Rewire& w, const QJsonObject& from, const QJsonObject& model, bool cascade) const;
+    void wireDelete(Rewire& w, const QJsonObject& stmt, const QString& because) const;
+    void wireInsert(Rewire& w, const QJsonObject& parent, const QString& name, const QString& relative, const QString& side) const;
+    /*  Writes a rewire into the lines (the interpreter rewrites the calls; the lines stay where they are, a line that is no more
+     *  is marked, and the lines of what goes are marked) -- `targets` gets the variables of the rewritten statements, `newLength`
+     *  the number of lines of each.  False, with the reason, when a call cannot be rewritten  */
+    bool wireStage(const Rewire& w, QStringList& lines, QStringList* targets, QHash<QString, int>* newLength, QString* why) const;
+    void wireDropGone(QStringList& lines, QVector<int>& origin) const;
+    /*  Asks before a statement is deleted by a rewire (unless the message was hidden); false when the user says no  */
+    bool wireConfirm(const Rewire& w, const QString& what);
+    /*  A shadow cannot be above its original.  The tree gives a model its row under the FIRST statement that uses it (the original);
+     *  every later use is a shadow.  Whatever an edit does -- a copy or a moved shadow dropped above the original, a statement that holds
+     *  a shadow moved above it, the original moved below -- a shadow that would then come first is found in the tree the edit is
+     *  predicted to give (ownershipFlips), and ONE message lists them all (confirmFlips): the row would move to the first use and the
+     *  old place would show a reference.  That is the easy fix, and it is what is done unless the user cancels (or has asked for it
+     *  always, with "do not show again")  */
+    struct Flip { QString model, from, to; bool added = false; };
+    QList<Flip> ownershipFlips(const QJsonObject& predicted) const;
+    bool confirmFlips(const QList<Flip>& flips);
+    /*  Whether a copy / moved shadow of one of `models` dropped in `target` would be above the original use of it (no question asked)  */
+    bool isAboveOriginal(const QList<QJsonObject>& models, const QJsonObject& target) const;
+    QList<QPair<QString, QString>> m_copyAdds;          // (model, statement) the references this drop adds: copies and moved shadows
+    /*  Models dropped between the models an operation is given: they become inputs at that place (or move there, when they
+     *  are inputs already), and leave the call they were taken from, unless `copy`  */
+    void insertAmong(const QList<QJsonObject>& models, const QJsonObject& parent, const QString& relative, bool after, bool copy);
+    QList<QJsonObject> m_dropModels;
+    QHash<QString, int> m_dragSourceLine;                // (model key -> the line of the statement it is dragged out of)
+    bool m_dragShadow = false;                           // (the drag began on a shadow row)
+    bool m_dropShadow = false;
+    /*  The definition of a variable as a statement on `line` (1-based) sees it  */
+    QJsonObject itemBefore(const QString& var, int line) const;
+    /*  The line ranges (0-based, from..to) a model's statements are on: its definition (with the comment lines right above
+     *  it) and the lines that show, hide, edit and lock it  */
+    QList<QPair<int, int>> groupRanges(const QJsonObject& it, bool comments = true) const;
+    int groupStart(const QJsonObject& it) const;
+    /*  The line after a model's definition and the lines of its own that follow it right away  */
+    int groupEnd(const QJsonObject& it) const;
+    /*  Moves the statements of `models` (and, of what they need, what is defined after `at`) in front of the line `at`
+     *  (0-based); with `onlyLater`, only models that are below that line move.  False, with the reason, when something
+     *  would then be used before it is defined  */
+    bool moveGroups(QStringList& lines, QVector<int>* origin, const QList<QJsonObject>& models, int at, bool onlyLater,
+                    QString* why, QList<QJsonObject>* pulled = nullptr) const;
+    /*  A model that statements hold only references to (`# shadow: name` in theirs) keeps its own row at the top level. When a
+     *  statement that holds such a reference ends up above the model's definition -- the statement is dragged above it, or the
+     *  model below the statement -- the reference is the first use: the model's definition goes directly above that statement and
+     *  becomes its own, and the separate row is gone (a shadow is only ever an argument, it never stands by itself in the tree).
+     *  A message asks first, once for all of them (hideable)  */
+    struct Dissolve { QJsonObject model, user; };
+    bool confirmDissolve(const QList<Dissolve>& list);
+
+    /*  Text on one line of the script that moved: every column from `col` on, on the (1-based) `line`, is `delta` further  */
+    struct ColShift { int line, col, delta; };
+    /*  The edit that turns the script's lines `before` into `after` (one replacement of what differs), as one undoable step;
+     *  and, at once, the tree as it will be when the script has run (see predictScene).  `origin` says, for each line of
+     *  `after`, the line of `before` it is (-1: a new one); `shifts` the columns that moved; `target` the variable of the
+     *  statement whose call was rewritten  */
+    void applyLines(const QStringList& before, const QStringList& after, const QString& what, const QVector<int>& origin,
+                    const QList<ColShift>& shifts, const QStringList& targets,
+                    const QHash<QString, int>& newLength = QHash<QString, int>());
+    /*  The tree as it will be once the script that was just edited has run, worked out from the edit alone, so that it is there
+     *  at once: the lines of every item are where the edit put them, the models are nested by the new order of the statements and
+     *  by what the rewritten statement uses; with a rename, the name is changed everywhere.  The scene of the run replaces it
+     *  (the rows that depend on what only the run knows -- the inputs of the rewritten statement -- are marked `stale`)  */
+    void predictScene(int oldCount, const QStringList& after, const QVector<int>& origin, const QList<ColShift>& shifts,
+                      const QStringList& targets, const QHash<QString, int>& newLength = QHash<QString, int>(),
+                      const QString& renameFrom = QString(), const QString& renameTo = QString());
+    /*  The scene predictScene would show, without showing it (and without changing anything of the panel)  */
+    QJsonObject predictedScene(int oldCount, const QStringList& after, const QVector<int>& origin, const QList<ColShift>& shifts,
+                               const QStringList& targets, const QHash<QString, int>& newLength = QHash<QString, int>(),
+                               const QString& renameFrom = QString(), const QString& renameTo = QString()) const;
+    void installPrediction(const QJsonObject& scene);
+    /*  Renaming a variable (a double click on its name): the interpreter says where the name is used (not in text, not an
+     *  attribute, not a keyword, not another variable of the same name inside a function), all of them are replaced.  The script
+     *  is rewritten as the name is typed (`live`: a name that is not one yet -- empty, a digit first, one that is taken -- waits
+     *  for the next key without a word); false when the name cannot be, which is said unless it is live  */
+    bool applyRename(const QString& oldName, const QString& newText, bool live = false);
+    /*  What a name that is typed in a row is: the name it had when the typing began, and the one the script has now (the last
+     *  that could be) -- so that a name that does not end up as one, or Escape, can give the first back  */
+    struct Renaming { QString original, current; bool active = false; } m_renaming;
+    void liveRename(QTreeWidgetItem* row, const QString& typed);
+    void endRenaming(bool keep);
+    /*  Escape gave the old name back; the editor's text, which is still the typed one, is then offered to the tree as if Enter had
+     *  been pressed: that commit is not to put the typed name back  */
+    QElapsedTimer m_revertClock;
+    /*  A run answers a key that was typed some keys ago: its scene calls the variable what it was called then.  While a name is
+     *  typed such a scene is not shown (it would take the name, and the editor, away under the hand): a scene that does not have
+     *  the name the script has now is skipped, and the run that answers the last key brings the one that is shown  */
+    bool staleWhileRenaming(const QJsonObject& scene) const;
+
+    /*  The render settings as rows with fields in them: a number is typed in the tree and the call is rewritten (or added), as it
+     *  is typed (`live`) and when the field is left  */
+    void commitSetting(QLineEdit* edited, bool live = false);
+    void insertSettingLine(const QString& call, const QString& fn = QString(), bool live = false);
+    QHash<QString, QList<QPointer<QLineEdit>>> m_settingEditors;
+    /*  Where the call that the last live edit of a setting wrote stands in the script, so that the next key rewrites the same place
+     *  without waiting for a run to say where it is now (the scene is a run behind)  */
+    struct LiveSetting { int line0 = -1, col0 = 0; QString call; };
+    QHash<QString, LiveSetting> m_liveSettings;         // (by the function: set_bounds, set_resolution, set_quality)
+    bool m_liveSettingStale = false;    // (written since the last scene: the scene's spans are not to be trusted)
+    QList<QJsonObject> m_dragModels;
+    bool m_dragging = false;            // (a model is being dragged by the mouse)
+    bool m_treeHeld = false;            // (the left button is down on the tree)
+    bool m_dropEdited = false;          // (the drag that is over edited the script)
+    bool m_predicted = false;           // (the tree shown is a prediction: the script has not run yet)
+    QElapsedTimer m_predictClock;
+    void expandTo(QTreeWidgetItem* row);
 
     /*  Actions (all become script edits)  */
     void toggleVisible(const QJsonObject& it);
@@ -211,7 +424,6 @@ protected:
      *  its handles and expose lines) when it is turned on, deleted when it is turned off  */
     void toggleCache(const QJsonObject& target);
     void setCacheButton(QTreeWidgetItem* row, const QJsonObject& target);
-    void addModeActions(QMenu& menu, const QJsonObject& target);
     /*  A part back to what the file says: its handles() and expose() lines are deleted and the
      *  import is read again (reimport)  */
     void reimportPart(const QJsonObject& imp, int part);
@@ -278,6 +490,9 @@ protected:
     bool stripLocked(bool warn);
     void warnLockedMultiSelect();
     void prepareSelection();
+    void updateProvisional();
+    void updateFieldView();
+    QString m_fieldKeyShown;
     /*  The lines that make a model's surfaces draggable (an expose() statement), indented like its definition; empty (and
      *  the reason) when it cannot be done.  exposeSurfaces writes them (the model's menu, for a shape too big to get them
      *  by being selected)  */
