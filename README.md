@@ -132,10 +132,6 @@ takes a few seconds and is cached next to it. **Examples 14 and 16–21 need no 
 
 `python scripts/run_example.py examples/05_static_analysis.py` runs any script without the application.
 
-<p align="center">
-  <img src="docs/images/inspect.png" width="900" alt="The wall thickness of an imported part painted on it; hovering reads the value under the cursor">
-</p>
-
 ## Documentation
 
 | | |
