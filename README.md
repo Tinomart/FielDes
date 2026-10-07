@@ -22,8 +22,6 @@ the viewport.
   <img src="docs/images/overview.png" width="900" alt="FielDes: the script on the left; the viewport on the right with the model tree, whose rows are typed and nested: a plate grown by a field, a blend whose radius varies, a lattice of graded cells">
 </p>
 
-> **Status: first beta (0.1).** Windows 10/11 (x64) is the tested platform. See [Known limitations](#known-limitations).
-
 ## The idea
 
 - **The script is the model.** What you see is what a Python script says. Every drag and every button in the viewport is an
