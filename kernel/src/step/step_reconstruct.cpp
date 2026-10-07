@@ -2503,7 +2503,7 @@ static thread_local std::string g_fitReport;
 std::vector<StepPart> importStepTreePartsReconstructed(
     const std::string& path, bool& ok, std::string& error,
     int* numSolids, int* numFacesResolved, int* numFacesSkipped,
-    int* numReconstructed, int* numOracleFallback)
+    int* numReconstructed, int* numOracleFallback, const std::vector<int>* only)
 {
     const auto tParse = std::chrono::steady_clock::now();
     g_fitReport.clear();
@@ -2564,9 +2564,18 @@ std::vector<StepPart> importStepTreePartsReconstructed(
         }
     }
 
+    // (the solids the caller leaves out -- it imports them some other way)
+    std::vector<char> wanted(N, 1);
+    if (only) {
+        std::fill(wanted.begin(), wanted.end(), 0);
+        for (int si : *only) {
+            if (si >= 0 && size_t(si) < N) wanted[size_t(si)] = 1;
+        }
+    }
+
     progress::setSolids(N);
     for (size_t si = 0; si < N; si++) {
-        if (copyOf[si] != size_t(-1)) progress::skipSolid(si);
+        if (copyOf[si] != size_t(-1) || !wanted[si]) progress::skipSolid(si);
     }
 
     // 2. Every original solid, rebuilt in parallel (a few at a time, the
@@ -2574,12 +2583,21 @@ std::vector<StepPart> importStepTreePartsReconstructed(
     struct Built { Tree tree = Tree(1e9); bool ok = false; std::string error; double seconds = 0; };
     std::vector<Built> built(N);
     auto rebuild = [&](size_t si) {
+        if (!wanted[si]) {
+            built[si].error = "solid " + std::to_string(si) + ": left out of the reconstruction (it is imported another way)";
+            return;
+        }
         const auto t0 = std::chrono::steady_clock::now();
         progress::Scope scope{long(si)};
         progress::solidStarted(si);
         struct Done { size_t si; ~Done() { progress::solidDone(si); } } done{si};
         const Solid& solid = solids[si];
         Built& b = built[si];
+        if (solid.surface) {
+            b.error = "solid " + std::to_string(si) + ": a surface body (an open shell of faces, with no inside): it "
+                      "cannot be rebuilt as a solid -- tessellate() imports it as a sheet";
+            return;
+        }
         int badFace = -1;
         bool isBSpline = false;
         if (!reconstructible(solid, &badFace, &isBSpline)) {
@@ -2613,7 +2631,7 @@ std::vector<StepPart> importStepTreePartsReconstructed(
         b.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     };
     std::vector<size_t> todo;
-    for (size_t si = 0; si < N; si++) if (copyOf[si] == size_t(-1)) todo.push_back(si);
+    for (size_t si = 0; si < N; si++) if (copyOf[si] == size_t(-1) && wanted[si]) todo.push_back(si);
     std::stable_sort(todo.begin(), todo.end(), [&](size_t a, size_t b) {
         return solids[a].faces.size() > solids[b].faces.size();
     });
@@ -2635,7 +2653,7 @@ std::vector<StepPart> importStepTreePartsReconstructed(
     for (size_t si = 0; si < N; si++) {
         if (copyOf[si] != size_t(-1) && !built[copyOf[si]].ok) {
             copyOf[si] = size_t(-1);
-            rebuild(si);
+            rebuild(si);                    // (a copy that is left out says so: see `wanted`)
         }
     }
 
@@ -2667,7 +2685,7 @@ std::vector<StepPart> importStepTreePartsReconstructed(
     {
         const auto tMetrics = std::chrono::steady_clock::now();
         for (size_t si = 0; si < N; si++) {
-            if (copyOf[si] == size_t(-1)) metrics[si] = solidMetrics(solids[si]);
+            if (copyOf[si] == size_t(-1) && wanted[si]) metrics[si] = solidMetrics(solids[si]);
         }
         if (dbgTime)
             fprintf(stderr, "[import] resolution hints %.2f s\n",
@@ -2861,7 +2879,7 @@ extern "C" int libfive_step_parity_inside(const char* path, int solidIdx,
     return 1;
 }
 
-// The same for part `partIdx` of import_step_parts(path, units='file'):
+// The same for part `partIdx` of reconstruct(path, units='file'):
 // points in the placed (assembly) frame, in the file's first length unit.
 // Parts are ordered as importStepTreePartsReconstructed emits them (each
 // solid's first instance at its index, further instances after the last).

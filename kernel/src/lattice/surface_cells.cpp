@@ -545,15 +545,24 @@ void measureThickness(Field& F, std::vector<GNode>& nodes, const std::vector<int
     const double step = cell / 8.0;
     const int steps = int(std::ceil(maxDepth / step));
     const double tol = 0.01 * cell;
+    // (how deep the field must have gone for a body to have been found: a hundredth of a cell is a hair, a wall thinner than the first
+    // step of a cell's eighth is not, and is what a thin shell is)
+    const double seen = 0.0025 * cell;
+    // The ways along the normal the field is read at: first in finer and finer steps up to a tenth of a cell, so that a wall thinner than
+    // an eighth of a cell (a shell, a thin plate: the layer is its thickness) is found as well, then every eighth of a cell.  A wall that
+    // the first step already jumped over looked like no body at all, and its layer was given the whole reach, three cells deep, standing
+    // out into the air on the other side
+    std::vector<double> ways;
+    for (double w = cell / 160.0; w < 0.99 * step; w *= 2.0) ways.push_back(w);
+    for (int s = 1; s <= steps; ++s) ways.push_back(std::min(maxDepth, s * step));
     std::vector<V3> pts, g;
     std::vector<double> f;
     std::vector<size_t> active(N);
     std::iota(active.begin(), active.end(), size_t(0));
-    for (int s = 1; s <= steps && !active.empty(); ++s)
+    for (size_t s = 0; s < ways.size() && !active.empty(); ++s)
     {
         pts.clear();
-        for (size_t a : active)
-            pts.push_back(nodes[size_t(ids[a])].p + heightDir * nodes[size_t(ids[a])].nl * std::min(maxDepth, s * step));
+        for (size_t a : active) pts.push_back(nodes[size_t(ids[a])].p + heightDir * nodes[size_t(ids[a])].nl * ways[s]);
         F.eval(pts, f, g);
         std::vector<size_t> next;
         for (size_t k = 0; k < active.size(); ++k)
@@ -564,22 +573,29 @@ void measureThickness(Field& F, std::vector<GNode>& nodes, const std::vector<int
             if (d > deepest[a]) deepest[a] = d;
             // (out of the body: the way in has turned round, and is on its way back to zero, after it has been well inside;
             // there the distance falls as fast as the way goes, so the way plus the distance is the whole depth)
-            if (deepest[a] > 4.0 * tol && (f[k] >= -tol || d < 0.6 * deepest[a]))
+            // (at the finest ways a normal that is tilted from the true one is still a long way from "back at zero": the hair `tol` is
+            // taken as a quarter of the way there)
+            if (deepest[a] > 4.0 * seen && (f[k] >= -std::min(tol, 0.25 * ways[s]) || d < 0.6 * deepest[a]))
             {
                 left[a] = 1;
-                thick[a] = std::min(maxDepth, s * step) + d;
+                thick[a] = ways[s] + d;
             }
             else
                 next.push_back(a);
         }
         active.swap(next);
     }
+    size_t whole = 0;
     for (size_t i = 0; i < N; ++i)
     {
         // (a body that goes on past the reach: the reach; one that ends: twice its deepest, never more than the reach)
         const double t = left[i] ? thick[i] : maxDepth;
+        if (!left[i]) ++whole;
         nodes[size_t(ids[i])].t = std::min(maxDepth, std::max(t, 0.0));
     }
+    if (std::getenv("FIELDES_SC_STATS"))
+        std::fprintf(stderr, "[conform] depth of the body under %zu of %zu corners found; %zu given the whole reach of %.2f mm (the field goes on inside, or no body was found along the normal)\n",
+                     N - whole, N, whole, maxDepth);
 }
 
 // A depth measured along one normal can be far off where the normal is not true (at a crease, on a facet): each node's
@@ -654,61 +670,6 @@ namespace body {
 #include "surface_quads.inl"
 }
 
-// Does the surface go on past the box it is wanted in?  (A closed body ends inside its box; a sheet cut by a region does not.)  Cubes of a third of a cell that the surface
-// passes through, in a box a cell and a half larger on every side: one beyond the box (by more than half a cell) means the surface is cut by the box
-bool surfaceContinuesBeyond(Field& F, const V3& lo, const V3& hi, double cell)
-{
-    const double pad = 1.5 * cell;
-    const body::NearCubes nc = body::nearCubes(F, lo - V3::Constant(pad), hi + V3::Constant(pad), cell / 3.0, 2, false, 0, nullptr, 0.0);
-    const double beyond = 0.5 * cell;
-    // (a cube is only where the surface MAY be -- a field that is not a distance lets cubes well away from it through -- so the centres of the cubes beyond the box are put onto
-    // the surface, as the sampling does, and only the points that get there count)
-    std::vector<V3> cand;
-    for (const auto& c : nc.cubes)
-    {
-        const V3 p = nc.origin + V3((c[0] + 0.5) * nc.h, (c[1] + 0.5) * nc.h, (c[2] + 0.5) * nc.h);
-        for (int a = 0; a < 3; ++a)
-            if (p[a] < lo[a] - beyond || p[a] > hi[a] + beyond)
-            {
-                cand.push_back(p);
-                break;
-            }
-    }
-    double worst = 0;
-    int worstAxis = 0;
-    if (!cand.empty())
-    {
-        if (cand.size() > 30000)
-        {
-            std::vector<V3> thin;
-            const size_t step = cand.size() / 30000 + 1;
-            for (size_t i = 0; i < cand.size(); i += step) thin.push_back(cand[i]);
-            cand.swap(thin);
-        }
-        body::Surf S(F, 0.02 * cell / 3.0);
-        std::vector<V3> nrm;
-        std::vector<char> ok;
-        S.project(cand, nrm, ok, 5, 0.02 * cell / 3.0);
-        for (size_t i = 0; i < cand.size(); ++i)
-        {
-            if (!ok[i]) continue;
-            for (int a = 0; a < 3; ++a)
-            {
-                const double out = std::max(lo[a] - cand[i][a], cand[i][a] - hi[a]);
-                if (out > worst)
-                {
-                    worst = out;
-                    worstAxis = a;
-                }
-            }
-        }
-    }
-    if (std::getenv("FIELDES_SC_STATS"))
-        std::fprintf(stderr, "[conform] box (%.2f %.2f %.2f) to (%.2f %.2f %.2f), cell %.3f: the surface reaches %.3f mm (%.2f cells) beyond it along axis %d\n", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], cell,
-                     worst, worst / cell, worstAxis);
-    return worst > beyond;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // Beams from the cells
 
@@ -729,7 +690,7 @@ struct PtKeyHash
 
 bool beamsFromCells(Field& F, const std::vector<GNode>& nodes, const std::vector<Cell>& cells,
                     const std::vector<CellGeo>& geos, double cell, const std::vector<std::array<V3, 2>>& unitBeams,
-                    int layers, double inset, double heightDir, std::vector<V3>& outNodes,
+                    int layers, double inset, double heightDir, double lift, std::vector<V3>& outNodes,
                     std::vector<std::array<int, 2>>& outBeams, SurfaceBeamsInfo& binfo)
 {
     outNodes.clear();
@@ -870,7 +831,7 @@ bool beamsFromCells(Field& F, const std::vector<GNode>& nodes, const std::vector
                     for (int tt = 0; tt < 2; ++tt) t += (s ? q[0] : 1 - q[0]) * (tt ? q[1] : 1 - q[1]) * r[s][tt]->t;
                 // (a layer thinner than its struts keeps them inside as far as it can)
                 const double ins = std::min(inset, 0.3 * t);
-                const double h = heightDir * (ins + (layer + q[2]) * (t - 2.0 * ins) / layers);
+                const double h = heightDir * (lift + ins + (layer + q[2]) * (t - 2.0 * ins) / layers);
                 const V3 x = surfPos[si] + h * surfNormal[si];
                 const int id = int(pts.size());
                 ids.emplace(key, id);
@@ -892,8 +853,9 @@ bool beamsFromCells(Field& F, const std::vector<GNode>& nodes, const std::vector
     if (beamList.empty()) return false;
     // A layer inside the body stays inside it, one that stands out of it stays out: a point that came out on the wrong side (at
     // a cell with a bent corner, a rim, a hole) is taken back along its own line as far as it is on the right side, found by
-    // halving.  No strut can end in the air of a hole.
-    if (heightDir != 0)
+    // halving.  No strut can end in the air of a hole.  (Not for layers that are lifted: they were put partly on the other side of
+    // the surface on purpose, and the caller cuts them there.)
+    if (heightDir != 0 && lift == 0)
     {
         std::vector<V3> at(pts.size());
         for (size_t i = 0; i < pts.size(); ++i) at[i] = pts[i].second;
@@ -1159,7 +1121,11 @@ struct CellSet
 
 // The cells over the surface of the field -- one closed mesh of quads -- how deep a layer goes from each corner, and the edges of
 // every cell
-bool makeCells(Field& F, const V3& lo, const V3& hi, const V3& directionIn, int gridOffset, double cell, double depth,
+// Which layout lays the cells out is TOLD, not guessed from the field: 0 a body (a closed surface: one closed mesh of quads that covers all
+// of it), 1 a sheet (a surface that is only a surface, cut at the box it is wanted in), 2 a patch of a surface (a selection: the sheet
+// layout over the part of the surface by the field `region`, which is negative where the patch is).  A selection is tiled as the surface it
+// is, whatever the rest of the surface of the thing it was picked on does
+bool makeCells(Field& F, const V3& lo, const V3& hi, const V3& directionIn, int gridOffset, int layout, Field* region, double cell, double depth,
                double heightDir, CellSet& out, std::string& error)
 {
     const bool say = std::getenv("FIELDES_SC_STATS") != nullptr;
@@ -1171,15 +1137,26 @@ bool makeCells(Field& F, const V3& lo, const V3& hi, const V3& directionIn, int 
     };
     std::string note;
     out.usedDirection = V3::Zero();
-    if (surfaceContinuesBeyond(F, lo, hi, cell))
+    if (layout != 0)
     {
-        if (say) std::fprintf(stderr, "[conform] the surface goes on past the region: the sheet layout\n");
+        sheet::PatchMask mask;
+        if (layout == 2)
+        {
+            if (!region)
+            {
+                error = "a patch of a surface needs the field that says where the patch is";
+                return false;
+            }
+            mask.region = region;
+            mask.slack = cell / 6.0;                    // (the edge of the scaffold follows the patch's to within half a step of its grid)
+        }
+        if (say) std::fprintf(stderr, "[conform] the %s layout\n", layout == 2 ? "patch (the sheet layout over a patch of a surface)" : "sheet");
         stagePlan(kSheetSteps);
-        sheet::growQuads(F, lo, hi, cell, directionIn, out.nodes, out.paths, out.cells, out.usedDirection, note);
+        sheet::growQuads(F, lo, hi, cell, directionIn, out.nodes, out.paths, out.cells, out.usedDirection, note, mask);
     }
     else
     {
-        if (say) std::fprintf(stderr, "[conform] the surface ends inside the region: the body layout\n");
+        if (say) std::fprintf(stderr, "[conform] the body layout\n");
         stagePlan(kBodySteps);
         body::growQuads(F, lo, hi, cell, directionIn, gridOffset, out.nodes, out.paths, out.cells, out.usedDirection, note, out.warning);
     }
@@ -1192,7 +1169,8 @@ bool makeCells(Field& F, const V3& lo, const V3& hi, const V3& directionIn, int 
     }
     if (out.nodes.empty())
     {
-        error = "no surface was found in the region";
+        error = layout == 2 ? "the selected surface is smaller than a cell of this size (or too narrow for one): use a smaller cell_size"
+                            : "no surface was found in the region";
         return false;
     }
     if (out.cells.empty())
@@ -1326,9 +1304,9 @@ V3 bezierSlope(const V3* c, double u)
 class CellMapData
 {
 public:
-    CellMapData(const CellSet& cs, double cellSize, double heightDir, int layers, int kind, double thickness, int style,
+    CellMapData(const CellSet& cs, double cellSize, double heightDir, double lift, int layers, int kind, double thickness, int style,
                 double offset, double skin)
-        : hd(heightDir), L(std::max(1, layers)), kind(kind), thickness(thickness), style(style), offset(offset), skin(skin),
+        : hd(heightDir), lift(lift), L(std::max(1, layers)), kind(kind), thickness(thickness), style(style), offset(offset), skin(skin),
           cellSize(cellSize)
     {
         // the size of a cell at a node: the middle of the lengths of the edges that meet there.  The same for every cell that
@@ -1418,7 +1396,7 @@ public:
             mix(m.nl, sizeof(m.nl));
             mix(m.th, sizeof(m.th));
         }
-        const double par[7] = {hd, double(L), double(kind), thickness, double(style), offset, skin};
+        const double par[8] = {hd, double(L), double(kind), thickness, double(style), offset, skin, lift};
         mix(par, sizeof(par));
         char buf[64];
         std::snprintf(buf, sizeof(buf), "cellmap#%016llx#%zu", (unsigned long long)h, cells.size());
@@ -1461,7 +1439,7 @@ public:
         V3 N = (1 - s) * (1 - t) * m.nl[0] + s * (1 - t) * m.nl[1] + (1 - s) * t * m.nl[2] + s * t * m.nl[3];
         const double nn = N.norm();
         if (nn > 1e-9) N /= nn;
-        return C + hd * w * T * N;
+        return C + hd * (lift + w * T) * N;
     }
 
     // The map and its derivatives with respect to s, t and w (the columns of J)
@@ -1486,10 +1464,10 @@ public:
         const V3 N = R / rn;
         const V3 Ns = (Rs - N * N.dot(Rs)) / rn;
         const V3 Nt = (Rt - N * N.dot(Rt)) / rn;
-        J.col(0) = Cs + hd * w * (Ts * N + T * Ns);
-        J.col(1) = Ct + hd * w * (Tt * N + T * Nt);
+        J.col(0) = Cs + hd * (w * Ts * N + (lift + w * T) * Ns);
+        J.col(1) = Ct + hd * (w * Tt * N + (lift + w * T) * Nt);
         J.col(2) = hd * T * N;
-        return C + hd * w * T * N;
+        return C + hd * (lift + w * T) * N;
     }
 
     struct Hit
@@ -1769,7 +1747,7 @@ private:
     std::vector<MapCell> cells;
     std::vector<int> order;
     std::vector<Node> nodes;
-    double hd;
+    double hd, lift;
     int L, kind;
     double thickness;
     int style;
@@ -1838,8 +1816,8 @@ private:
 }   // namespace
 
 bool fieldCells(const Tree& body, const std::map<Tree::Id, float>& vars, const V3& lo, const V3& hi,
-                const V3& directionIn, int gridOffset, double cell, const std::vector<std::array<V3, 2>>& unitBeams, double depth,
-                int layersIn, double radiusIn, double heightDir, std::vector<V3>& outNodes,
+                const V3& directionIn, int gridOffset, int layout, const Tree* regionTree, double cell, const std::vector<std::array<V3, 2>>& unitBeams, double depth,
+                int layersIn, double radiusIn, double heightDir, double lift, std::vector<V3>& outNodes,
                 std::vector<std::array<int, 2>>& outBeams, SurfaceBeamsInfo& binfo, V3& usedDirection, std::string& error)
 {
     binfo = SurfaceBeamsInfo();
@@ -1849,22 +1827,24 @@ bool fieldCells(const Tree& body, const std::map<Tree::Id, float>& vars, const V
         return false;
     }
     Field F(body, vars);
+    std::unique_ptr<Field> region;
+    if (regionTree) region.reset(new Field(*regionTree, vars));
     CellSet cs;
     StageGuard guard;
-    if (!makeCells(F, lo, hi, directionIn, gridOffset, cell, depth, heightDir, cs, error)) return false;
+    if (!makeCells(F, lo, hi, directionIn, gridOffset, layout, region.get(), cell, depth, heightDir, cs, error)) return false;
     usedDirection = cs.usedDirection;
     binfo.warning = cs.warning;
     const double typical = cs.typical;
     stageBegin("making the struts of the cells");
     // the size of the struts, how deep the layers are in all, how many
     double radius = radiusIn > 0 ? radiusIn : 0.12 * std::min(cell, typical);
-    const double inset = heightDir < 0 ? radius : 0.0;      // (a layer in the body keeps its struts in it)
+    const double inset = (heightDir < 0 && lift == 0) ? radius : 0.0;      // (a layer in the body keeps its struts in it)
     int layers = layersIn;
     if (layers <= 0) layers = std::max(1, int(std::lround((typical - 2.0 * inset) / cell)));
     binfo.radius = radius;
     binfo.thickness = typical;
     binfo.layers = layers;
-    if (!beamsFromCells(F, cs.nodes, cs.cells, cs.geos, cell, unitBeams, layers, inset, heightDir, outNodes, outBeams, binfo))
+    if (!beamsFromCells(F, cs.nodes, cs.cells, cs.geos, cell, unitBeams, layers, inset, heightDir, lift, outNodes, outBeams, binfo))
     {
         error = "the unit cell has no beams";
         return false;
@@ -1876,7 +1856,7 @@ bool fieldCells(const Tree& body, const std::map<Tree::Id, float>& vars, const V
 }
 
 bool fieldCellTpms(const Tree& body, const std::map<Tree::Id, float>& vars, const V3& lo, const V3& hi,
-                   const V3& directionIn, int gridOffset, double cell, double depth, int layersIn, double heightDir, int kind, double thickness,
+                   const V3& directionIn, int gridOffset, int layout, const Tree* regionTree, double cell, double depth, int layersIn, double heightDir, double lift, int kind, double thickness,
                    int style, double offset, double skin, std::vector<Tree>& out,
                    SurfaceBeamsInfo& binfo, V3& usedDirection, std::string& error)
 {
@@ -1888,8 +1868,10 @@ bool fieldCellTpms(const Tree& body, const std::map<Tree::Id, float>& vars, cons
     }
     StageGuard guard;
     Field F(body, vars);
+    std::unique_ptr<Field> region;
+    if (regionTree) region.reset(new Field(*regionTree, vars));
     CellSet cs;
-    if (!makeCells(F, lo, hi, directionIn, gridOffset, cell, depth, heightDir, cs, error)) return false;
+    if (!makeCells(F, lo, hi, directionIn, gridOffset, layout, region.get(), cell, depth, heightDir, cs, error)) return false;
     usedDirection = cs.usedDirection;
     binfo.warning = cs.warning;
     int layers = layersIn > 0 ? layersIn : std::max(1, int(std::lround(cs.typical / cell)));
@@ -1897,10 +1879,503 @@ bool fieldCellTpms(const Tree& body, const std::map<Tree::Id, float>& vars, cons
     binfo.nodes = cs.nodes.size();
     binfo.thickness = cs.typical;
     binfo.layers = layers;
-    auto data = std::make_shared<const CellMapData>(cs, cell, heightDir, layers, kind, thickness, style, offset, skin);
+    auto data = std::make_shared<const CellMapData>(cs, cell, heightDir, lift, layers, kind, thickness, style, offset, skin);
     out.clear();
     out.push_back(Tree(std::make_unique<CellMapClause>(data)));
     return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Selecting a patch of a surface: a flood fill over the surface of a field, from the field alone
+
+namespace {
+
+// The samples of a walk, in a hash of cubes: is there one within r of a point?
+class SampleHash
+{
+public:
+    SampleHash(const std::vector<V3>& samples, double cell) : pts_(samples), cell_(cell) {}
+
+    void add(size_t index)
+    {
+        grid_[key(cellOf(pts_[index]))].push_back(uint32_t(index));
+    }
+
+    bool near(const V3& p, double r) const
+    {
+        const std::array<long, 3> c = cellOf(p);
+        const double r2 = r * r;
+        for (long dx = -1; dx <= 1; ++dx)
+            for (long dy = -1; dy <= 1; ++dy)
+                for (long dz = -1; dz <= 1; ++dz)
+                {
+                    const auto it = grid_.find(key({c[0] + dx, c[1] + dy, c[2] + dz}));
+                    if (it == grid_.end()) continue;
+                    for (uint32_t i : it->second)
+                        if ((pts_[i] - p).squaredNorm() < r2) return true;
+                }
+        return false;
+    }
+
+private:
+    std::array<long, 3> cellOf(const V3& p) const
+    {
+        return {long(std::floor(p.x() / cell_)), long(std::floor(p.y() / cell_)), long(std::floor(p.z() / cell_))};
+    }
+    static uint64_t key(const std::array<long, 3>& c)
+    {
+        const uint64_t m = (uint64_t(1) << 21) - 1;
+        return ((uint64_t(c[0] + (1 << 20)) & m) << 42) | ((uint64_t(c[1] + (1 << 20)) & m) << 21) | (uint64_t(c[2] + (1 << 20)) & m);
+    }
+
+    const std::vector<V3>& pts_;
+    double cell_;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> grid_;
+};
+
+// Two unit vectors that span the plane normal to n
+void tangents(const V3& n, V3& a, V3& b)
+{
+    const V3 axis = std::abs(n.x()) < 0.6 ? V3(1, 0, 0) : (std::abs(n.y()) < 0.6 ? V3(0, 1, 0) : V3(0, 0, 1));
+    a = n.cross(axis).normalized();
+    b = n.cross(a).normalized();
+}
+
+}   // namespace
+
+bool selectSurfacePatch(const Tree& body, const std::map<Tree::Id, float>& vars, const V3& seed, double angleDegrees, int mode,
+                        double maxRadius, double spacing, const V3& lo, const V3& hi, SurfacePatch& out, std::string& error)
+{
+    out = SurfacePatch();
+    if (!(spacing > 0) || !std::isfinite(spacing))
+    {
+        error = "the spacing of the samples must be positive";
+        return false;
+    }
+    if (!(angleDegrees > 0) || angleDegrees > 90.0)
+    {
+        error = "the angle is between 0 and 90 degrees";
+        return false;
+    }
+    const V3 diag = hi - lo;
+    if (!diag.allFinite() || diag.minCoeff() <= 0 || diag.maxCoeff() / spacing > 1.0e6)
+    {
+        error = "the part is too big for samples this close (more than a million along its length): raise the spacing";
+        return false;
+    }
+    Field F(body, vars);
+    const double s = spacing;
+    const double cosLimit = std::cos(angleDegrees * M_PI / 180.0);
+
+    // the seed, moved along the gradient onto the surface
+    std::vector<V3> p0{seed}, n0;
+    std::vector<char> ok0;
+    projectToSurface(F, p0, n0, ok0, diag.norm(), 1e-4 * s);
+    if (!ok0[0] || !p0[0].allFinite())
+    {
+        error = "no surface was found near the seed: put it on, or close to, the part";
+        return false;
+    }
+    out.spacing = s;
+    out.seedPoint = p0[0];
+    out.seedDistance = (p0[0] - seed).norm();
+    out.points.push_back(p0[0]);
+    out.normals.push_back(n0[0]);
+    const V3 nSeed = n0[0];
+
+    // the lowest and highest corners of what may be reached: a little past the box, which only bounds the search
+    const V3 boxLo = lo - V3::Constant(2 * s), boxHi = hi + V3::Constant(2 * s);
+
+    SampleHash hash(out.points, 0.7 * s);
+    hash.add(0);
+    std::vector<size_t> frontier{0};
+    // (the sample every sample was reached from: the smooth walk measures how far the surface has turned along the way back)
+    std::vector<size_t> cameFrom{size_t(-1)};
+    // How tightly the surface may bend in the smooth mode: `angle` degrees within this length of the walk (a curvature limit that
+    // does not depend on how close the samples are: a limit per step would be a limit on the triangles of a mesh, and a rounded
+    // skin never turns that much in a step)
+    const double kSmoothLength = 10.0;
+    const int smoothSteps = std::max(1, int(std::lround(kSmoothLength / s)));
+    const double noiseFloor = std::min(angleDegrees, 10.0);       // (the normals of a mesh jump by a few degrees from facet to facet)
+    const size_t kMax = 4000000;
+    std::vector<V3> cand, cn;
+    std::vector<size_t> parent;
+    std::vector<char> ok;
+    while (!frontier.empty())
+    {
+        cand.clear();
+        parent.clear();
+        for (size_t f : frontier)
+        {
+            const V3 p = out.points[f];
+            V3 a, b;
+            tangents(out.normals[f], a, b);
+            for (int k = 0; k < 8; ++k)
+            {
+                const double t = k * M_PI / 4.0;
+                const V3 q = p + s * (std::cos(t) * a + std::sin(t) * b);
+                if (hash.near(q, 0.55 * s)) continue;              // (the surface there is taken already: nothing to look at)
+                cand.push_back(q);
+                parent.push_back(f);
+            }
+        }
+        if (cand.empty()) break;
+        std::vector<V3> start = cand;
+        projectToSurface(F, cand, cn, ok, s, 2e-3 * s);
+        std::vector<size_t> next;
+        for (size_t i = 0; i < cand.size(); ++i)
+        {
+            if (!ok[i] || !cand[i].allFinite()) continue;
+            const V3& q = cand[i];
+            // (a point that the walk had to carry far to the surface is past an edge or a gap: the surface does not go on there)
+            if ((q - start[i]).norm() > 0.6 * s) continue;
+            if ((q.array() < boxLo.array()).any() || (q.array() > boxHi.array()).any()) continue;
+            if (maxRadius > 0 && (q - out.seedPoint).norm() > maxRadius) continue;
+            const V3& nq = cn[i];
+            double c, limit = cosLimit;
+            if (mode == 0)
+                c = nq.dot(nSeed);
+            else
+            {
+                // the sample about kSmoothLength back along the walk (or the seed, if the walk is not that long yet): the surface may have
+                // turned `angle` degrees for every kSmoothLength of the way between them
+                size_t a = parent[i];
+                int steps = 1;
+                while (steps < smoothSteps && cameFrom[a] != size_t(-1))
+                {
+                    a = cameFrom[a];
+                    ++steps;
+                }
+                const double allowed = std::min(179.0, std::max(noiseFloor, angleDegrees * (steps * s) / kSmoothLength));
+                limit = std::cos(allowed * M_PI / 180.0);
+                c = nq.dot(out.normals[a]);
+            }
+            if (!(c >= limit)) continue;
+            if (hash.near(q, 0.7 * s)) continue;
+            out.points.push_back(q);
+            out.normals.push_back(nq);
+            cameFrom.push_back(parent[i]);
+            hash.add(out.points.size() - 1);
+            next.push_back(out.points.size() - 1);
+            if (out.points.size() >= kMax)
+            {
+                out.stopped = true;
+                break;
+            }
+        }
+        if (out.stopped) break;
+        frontier.swap(next);
+    }
+    return true;
+}
+
+// The distance to the nearest of a set of points, as a field: a kd-tree of the points, so that a point of the field and a box
+// of space are answered by looking at the few that are near
+namespace {
+
+struct PointCloud
+{
+    std::vector<V3> p;
+    std::vector<V3> n;              // (the normals, for a cloud of oriented points: see orientedPointsTree)
+    double sigma = 0;               // (and the width of the blend of their planes)
+    struct Node
+    {
+        V3 lo = V3::Zero(), hi = V3::Zero();
+        int left = -1, right = -1;
+        uint32_t start = 0, count = 0;
+    };
+    std::vector<Node> nodes;
+    std::vector<uint32_t> order;
+    std::string key;
+
+    void build()
+    {
+        order.resize(p.size());
+        std::iota(order.begin(), order.end(), uint32_t(0));
+        nodes.clear();
+        nodes.reserve(p.size() / 4 + 16);
+        make(0, uint32_t(p.size()));
+        // (a hash of the points to a thousandth, in the order of the tree: what the cloud is, not how it was found)
+        uint64_t h = 1469598103934665603ull;
+        std::vector<std::array<int64_t, 3>> r;
+        r.reserve(p.size());
+        for (const V3& q : p) r.push_back({int64_t(std::llround(q.x() * 1000)), int64_t(std::llround(q.y() * 1000)), int64_t(std::llround(q.z() * 1000))});
+        std::sort(r.begin(), r.end());
+        for (const auto& a : r)
+            for (int64_t v : a)
+            {
+                h ^= uint64_t(v);
+                h *= 1099511628211ull;
+            }
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "points#%016llx#%zu", static_cast<unsigned long long>(h), p.size());
+        key = buf;
+    }
+
+    int make(uint32_t start, uint32_t count)
+    {
+        Node n;
+        n.start = start;
+        n.count = count;
+        n.lo = V3::Constant(1e300);
+        n.hi = V3::Constant(-1e300);
+        for (uint32_t i = start; i < start + count; ++i)
+        {
+            n.lo = n.lo.cwiseMin(p[order[i]]);
+            n.hi = n.hi.cwiseMax(p[order[i]]);
+        }
+        const int index = int(nodes.size());
+        nodes.push_back(n);
+        if (count <= 8) return index;
+        const V3 ext = n.hi - n.lo;
+        int axis = 0;
+        if (ext.y() > ext[axis]) axis = 1;
+        if (ext.z() > ext[axis]) axis = 2;
+        if (!(ext[axis] > 0)) return index;
+        const uint32_t half = count / 2;
+        std::nth_element(order.begin() + start, order.begin() + start + half, order.begin() + start + count,
+                         [&](uint32_t a, uint32_t b) { return p[a][axis] < p[b][axis]; });
+        const int l = make(start, half);
+        const int r = make(start + half, count - half);
+        nodes[size_t(index)].left = l;
+        nodes[size_t(index)].right = r;
+        return index;
+    }
+
+    static double boxDistance2(const V3& q, const V3& lo, const V3& hi)
+    {
+        const V3 d = (lo - q).cwiseMax(V3::Zero()).cwiseMax((q - hi).cwiseMax(V3::Zero()));
+        return d.squaredNorm();
+    }
+
+    // the squared distance to the nearest point, and which
+    void nearest(const V3& q, int node, double& best, uint32_t& who) const
+    {
+        const Node& n = nodes[size_t(node)];
+        if (boxDistance2(q, n.lo, n.hi) >= best) return;
+        if (n.left < 0)
+        {
+            for (uint32_t i = n.start; i < n.start + n.count; ++i)
+            {
+                const double d = (p[order[i]] - q).squaredNorm();
+                if (d < best)
+                {
+                    best = d;
+                    who = order[i];
+                }
+            }
+            return;
+        }
+        const Node& a = nodes[size_t(n.left)];
+        const Node& b = nodes[size_t(n.right)];
+        const bool first = boxDistance2(q, a.lo, a.hi) <= boxDistance2(q, b.lo, b.hi);
+        nearest(q, first ? n.left : n.right, best, who);
+        nearest(q, first ? n.right : n.left, best, who);
+    }
+
+    // the points within sqrt(r2) of q
+    void within(const V3& q, double r2, int node, std::vector<uint32_t>& out) const
+    {
+        const Node& nd = nodes[size_t(node)];
+        if (boxDistance2(q, nd.lo, nd.hi) > r2) return;
+        if (nd.left < 0)
+        {
+            for (uint32_t i = nd.start; i < nd.start + nd.count; ++i)
+                if ((p[order[i]] - q).squaredNorm() <= r2) out.push_back(order[i]);
+            return;
+        }
+        within(q, r2, nd.left, out);
+        within(q, r2, nd.right, out);
+    }
+
+    // the squared distance from a box to the nearest point of the cloud
+    void boxNearest(const V3& lo, const V3& hi, int node, double& best) const
+    {
+        const Node& n = nodes[size_t(node)];
+        // (the boxes' own distance: the cloud's node box and the query box)
+        const V3 gap = (n.lo - hi).cwiseMax(V3::Zero()).cwiseMax((lo - n.hi).cwiseMax(V3::Zero()));
+        if (gap.squaredNorm() >= best) return;
+        if (n.left < 0)
+        {
+            for (uint32_t i = n.start; i < n.start + n.count; ++i)
+                best = std::min(best, boxDistance2(p[order[i]], lo, hi));
+            return;
+        }
+        boxNearest(lo, hi, n.left, best);
+        boxNearest(lo, hi, n.right, best);
+    }
+};
+
+class PointCloudOracle : public OracleStorage<>
+{
+public:
+    explicit PointCloudOracle(std::shared_ptr<const PointCloud> c) : cloud(std::move(c)) {}
+
+    void evalInterval(Interval& out) override
+    {
+        const V3 lo = lower.cast<double>(), hi = upper.cast<double>();
+        const V3 c = 0.5 * (lo + hi);
+        const double r = 0.5 * (hi - lo).norm();
+        double bestBox = std::numeric_limits<double>::infinity();
+        cloud->boxNearest(lo, hi, 0, bestBox);
+        double best = std::numeric_limits<double>::infinity();
+        uint32_t who = 0;
+        cloud->nearest(c, 0, best, who);
+        out = Interval(float(std::sqrt(bestBox)), float(std::sqrt(best) + r));
+    }
+
+    void evalPoint(float& out, size_t index) override
+    {
+        double best = std::numeric_limits<double>::infinity();
+        uint32_t who = 0;
+        cloud->nearest(points.col(index).matrix().cast<double>(), 0, best, who);
+        out = float(std::sqrt(best));
+    }
+
+    void checkAmbiguous(Eigen::Block<Eigen::Array<bool, 1, LIBFIVE_EVAL_ARRAY_SIZE>, 1, Eigen::Dynamic> /* out */) override {}
+
+    void evalFeatures(boost::container::small_vector<Feature, 4>& out) override
+    {
+        const V3 q = points.col(0).matrix().cast<double>();
+        double best = std::numeric_limits<double>::infinity();
+        uint32_t who = 0;
+        cloud->nearest(q, 0, best, who);
+        const V3 away = q - cloud->p[who];
+        const double len = away.norm();
+        out.push_back(Feature(len > 1e-12 ? Eigen::Vector3f((away / len).cast<float>()) : Eigen::Vector3f(0, 0, 0)));
+    }
+
+private:
+    std::shared_ptr<const PointCloud> cloud;
+};
+
+class PointCloudClause : public OracleClause
+{
+public:
+    explicit PointCloudClause(std::shared_ptr<const PointCloud> c) : cloud(std::move(c)) {}
+    std::unique_ptr<Oracle> getOracle() const override { return std::make_unique<PointCloudOracle>(cloud); }
+    std::string name() const override { return "PointCloudDistance"; }
+    std::string contentKey() const override { return cloud->key; }
+    std::string persistentKey() const override { return cloud->key; }
+
+private:
+    std::shared_ptr<const PointCloud> cloud;
+};
+
+// The field of a SURFACE made of oriented points (the samples of a walk over it, each with the normal of the surface there): at a point, its
+// height above the surface along the normal -- the mean of (q - p).n over the samples p near it, weighted by how near they are and by how
+// little their normal turns from that of the nearest one (so that a sharp edge is not rounded off).  It is zero on the surface, positive
+// on the side the normals face.  The surface alone: nothing that lies behind it is in the field, so it has no thickness to find
+double orientedValue(const PointCloud& c, const V3& q, V3* grad)
+{
+    double best = std::numeric_limits<double>::infinity();
+    uint32_t who = 0;
+    c.nearest(q, 0, best, who);
+    const V3 n0 = c.n[who];
+    std::vector<uint32_t> near;
+    const double R = 3.0 * c.sigma;
+    c.within(q, R * R, 0, near);
+    double sw = 0, sf = 0;
+    V3 sn = V3::Zero();
+    for (uint32_t i : near)
+    {
+        const double a = c.n[i].dot(n0);
+        if (!(a > 0)) continue;
+        const V3 d = q - c.p[i];
+        const double w = std::exp(-d.squaredNorm() / (c.sigma * c.sigma)) * std::pow(a, 6.0);
+        sw += w;
+        sf += w * d.dot(c.n[i]);
+        sn += w * c.n[i];
+    }
+    if (!(sw > 1e-12))
+    {
+        if (grad) *grad = n0;
+        return (q - c.p[who]).dot(n0);
+    }
+    if (grad) *grad = sn.norm() > 1e-12 ? V3(sn.normalized()) : n0;
+    return sf / sw;
+}
+
+class OrientedPointsOracle : public OracleStorage<>
+{
+public:
+    explicit OrientedPointsOracle(std::shared_ptr<const PointCloud> c) : cloud(std::move(c)) {}
+
+    void evalInterval(Interval& out) override
+    {
+        const V3 lo = lower.cast<double>(), hi = upper.cast<double>();
+        const V3 mid = 0.5 * (lo + hi);
+        const double r = 0.5 * (hi - lo).norm();
+        double best = std::numeric_limits<double>::infinity();
+        uint32_t who = 0;
+        cloud->nearest(mid, 0, best, who);
+        // (the height above the surface is at most the distance to the samples that count)
+        const double u = 3.0 * cloud->sigma + std::sqrt(best) + r;
+        out = Interval(float(-u), float(u));
+    }
+
+    void evalPoint(float& out, size_t index) override
+    {
+        out = float(orientedValue(*cloud, points.col(index).matrix().cast<double>(), nullptr));
+    }
+
+    void checkAmbiguous(Eigen::Block<Eigen::Array<bool, 1, LIBFIVE_EVAL_ARRAY_SIZE>, 1, Eigen::Dynamic> /* out */) override {}
+
+    void evalFeatures(boost::container::small_vector<Feature, 4>& out) override
+    {
+        V3 g = V3::Zero();
+        orientedValue(*cloud, points.col(0).matrix().cast<double>(), &g);
+        out.push_back(Feature(Eigen::Vector3f(g.cast<float>())));
+    }
+
+private:
+    std::shared_ptr<const PointCloud> cloud;
+};
+
+class OrientedPointsClause : public OracleClause
+{
+public:
+    explicit OrientedPointsClause(std::shared_ptr<const PointCloud> c) : cloud(std::move(c)) {}
+    std::unique_ptr<Oracle> getOracle() const override { return std::make_unique<OrientedPointsOracle>(cloud); }
+    std::string name() const override { return "OrientedPointsSurface"; }
+    std::string contentKey() const override { return cloud->key; }
+    std::string persistentKey() const override { return cloud->key; }
+
+private:
+    std::shared_ptr<const PointCloud> cloud;
+};
+
+}   // namespace
+
+Tree orientedPointsTree(const std::vector<V3>& points, const std::vector<V3>& normals, double sigma)
+{
+    auto cloud = std::make_shared<PointCloud>();
+    cloud->p = points;
+    cloud->n = normals;
+    cloud->sigma = sigma;
+    cloud->build();
+    // (the points are in the key already; the normals and the width of the blend are what else the field is)
+    uint64_t h = 1469598103934665603ull;
+    for (const V3& q : normals)
+        for (int k = 0; k < 3; ++k)
+        {
+            h ^= uint64_t(int64_t(std::llround(q[k] * 1000)));
+            h *= 1099511628211ull;
+        }
+    h ^= uint64_t(std::llround(sigma * 1000));
+    h *= 1099511628211ull;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "#oriented%016llx", static_cast<unsigned long long>(h));
+    cloud->key += buf;
+    return Tree(std::make_unique<OrientedPointsClause>(cloud));
+}
+
+Tree pointsDistanceTree(const std::vector<V3>& points)
+{
+    auto cloud = std::make_shared<PointCloud>();
+    cloud->p = points;
+    cloud->build();
+    return Tree(std::make_unique<PointCloudClause>(cloud));
 }
 
 }   // namespace lattice

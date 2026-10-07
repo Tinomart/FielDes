@@ -391,6 +391,9 @@ public:
     // A patch of a surface (see patchTreeFromArrays): the distance to it, unsigned
     bool unsignedMode = false;
 
+    // The box of the vertices: nothing outside it is inside the mesh
+    Eigen::AlignedBox3d bounds;
+
     struct Node
     {
         Eigen::AlignedBox3d box;
@@ -609,6 +612,23 @@ public:
                 if (check)
                 {
                     sign = winding(p) > 0.5 ? -1.0 : 1.0;
+                }
+            }
+            // The pseudo-normal of the closest feature is the side of ONE patch of the surface.  Where that patch faces the wrong
+            // way (a thin wedge folded the wrong way round, a fin of two layers that cancel: the tessellation of a thin free-form
+            // part has them), it says "inside" over a whole cone of space outside the part, and the field has a solid there that
+            // is not.  Nothing outside the box of the mesh is inside it; and an "inside" is believed only if the winding number of
+            // the whole mesh, which a defect of one patch changes nowhere but in the defect, agrees (it is 1 inside a closed shell
+            // and 0 outside; a point nearer the surface than a billionth of the size is not judged)
+            if (sign < 0)
+            {
+                if (!bounds.contains(p))
+                {
+                    return 1.0;
+                }
+                if (dist > 1e-9 * scaleRef && winding(p) < 0.25)
+                {
+                    return 1.0;
                 }
             }
             return sign;
@@ -950,6 +970,165 @@ struct Edges
     }
 };
 
+// +1 when the three vertices of a triangle are in the order of their indices (or a cyclic shift of it), -1 when the winding is
+// the other way round
+int windingParity(const Tri& t)
+{
+    const int inversions = (t[0] > t[1]) + (t[0] > t[2]) + (t[1] > t[2]);
+    return (inversions & 1) ? -1 : 1;
+}
+
+// Drops the triangles that have two corners at one vertex, and settles the duplicates: the same three vertices twice with the
+// same winding are one triangle; with opposite windings they are a sheet of two layers with no volume between them (a face used
+// from both sides, a fold), and both go -- keeping one of them would leave a single sheet standing in space, with an inside on
+// one side of it.  Returns how many triangles were removed.
+size_t dropDegenerateAndCancelDuplicates(std::vector<Tri>& tris)
+{
+    struct Group
+    {
+        int net = 0;
+        int64_t firstPositive = -1, firstNegative = -1;
+    };
+    std::unordered_map<Tri, Group, ArrayHash> groups;
+    groups.reserve(tris.size());
+    for (size_t i=0; i < tris.size(); ++i)
+    {
+        const Tri& tr = tris[i];
+        if (tr[0] == tr[1] || tr[1] == tr[2] || tr[0] == tr[2])
+        {
+            continue;
+        }
+        Tri key = tr;
+        std::sort(key.begin(), key.end());
+        Group& g = groups[key];
+        const int sign = windingParity(tr);
+        g.net += sign;
+        if (sign > 0 && g.firstPositive < 0) g.firstPositive = static_cast<int64_t>(i);
+        if (sign < 0 && g.firstNegative < 0) g.firstNegative = static_cast<int64_t>(i);
+    }
+    std::vector<char> keep(tris.size(), 0);
+    for (const auto& kv : groups)
+    {
+        const Group& g = kv.second;
+        if (g.net > 0) keep[g.firstPositive] = 1;
+        else if (g.net < 0) keep[g.firstNegative] = 1;
+    }
+    std::vector<Tri> kept;
+    kept.reserve(tris.size());
+    for (size_t i=0; i < tris.size(); ++i)
+    {
+        if (keep[i])
+        {
+            kept.push_back(tris[i]);
+        }
+    }
+    const size_t removed = tris.size() - kept.size();
+    tris.swap(kept);
+    return removed;
+}
+
+// A sliver is a triangle whose three corners lie on one line.  The tessellation of a solid makes them where one face splits an
+// edge that its neighbour keeps whole: the sliver closes the crack.  Dropped, it would open the crack again, and a shell with a
+// hole has no inside to speak of near it.  So the neighbour across the sliver's long edge is split at the sliver's middle vertex
+// instead, which keeps the shell closed, and the sliver goes.  A sliver that has no neighbour on that edge, or more than one,
+// is only dropped.  Returns how many were dealt with.
+size_t splitSlivers(const std::vector<V3>& verts, std::vector<Tri>& tris, double diag)
+{
+    const double absolute = 1e-18 * diag * diag;
+    size_t handled = 0;
+    auto edgeKey = [](uint32_t a, uint32_t b) {
+        return (static_cast<uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    const int passes = 8;
+    for (int pass=0; pass < passes; ++pass)
+    {
+        struct Sliver { uint32_t tri, p, q, m; };
+        std::vector<Sliver> slivers;
+        for (uint32_t i=0; i < tris.size(); ++i)
+        {
+            const Tri& tr = tris[i];
+            const V3 e[3] = {verts[tr[1]] - verts[tr[0]], verts[tr[2]] - verts[tr[1]], verts[tr[0]] - verts[tr[2]]};
+            const double len[3] = {e[0].norm(), e[1].norm(), e[2].norm()};
+            int k = 0;
+            if (len[1] > len[k]) k = 1;
+            if (len[2] > len[k]) k = 2;
+            const double cross = e[0].cross(e[1]).norm();
+            if (cross <= std::max(absolute, 1e-6 * len[k] * len[k]))
+            {
+                slivers.push_back({i, tr[k], tr[(k + 1) % 3], tr[(k + 2) % 3]});
+            }
+        }
+        if (slivers.empty())
+        {
+            break;
+        }
+        std::unordered_map<uint64_t, std::vector<uint32_t>> users;
+        users.reserve(2 * tris.size());
+        for (uint32_t i=0; i < tris.size(); ++i)
+        {
+            for (int k=0; k < 3; ++k)
+            {
+                users[edgeKey(tris[i][k], tris[i][(k + 1) % 3])].push_back(i);
+            }
+        }
+        std::vector<char> dead(tris.size(), 0), touched(tris.size(), 0);
+        std::vector<Tri> added;
+        const bool last = pass == passes - 1;
+        for (const auto& s : slivers)
+        {
+            if (dead[s.tri])
+            {
+                continue;
+            }
+            int other = -1, count = 0;
+            for (uint32_t j : users[edgeKey(s.p, s.q)])
+            {
+                if (j != s.tri)
+                {
+                    other = static_cast<int>(j);
+                    ++count;
+                }
+            }
+            if (count == 1 && !dead[other] && !touched[other])
+            {
+                // The neighbour (u, v, e) with the edge u -> v the sliver's long edge: it becomes (u, m, e) and (m, v, e)
+                const Tri& o = tris[other];
+                for (int k=0; k < 3; ++k)
+                {
+                    if (edgeKey(o[k], o[(k + 1) % 3]) == edgeKey(s.p, s.q))
+                    {
+                        const uint32_t u = o[k], v = o[(k + 1) % 3], e = o[(k + 2) % 3];
+                        added.push_back({u, s.m, e});
+                        added.push_back({s.m, v, e});
+                        break;
+                    }
+                }
+                dead[s.tri] = dead[other] = 1;
+                touched[other] = 1;
+                ++handled;
+            }
+            else if (count != 1 || last)
+            {
+                dead[s.tri] = 1;                // (nothing to split: it only goes)
+                ++handled;
+            }
+            // (else: the neighbour was split by another sliver this pass: this one waits for the next)
+        }
+        std::vector<Tri> next;
+        next.reserve(tris.size() + added.size());
+        for (size_t i=0; i < tris.size(); ++i)
+        {
+            if (!dead[i])
+            {
+                next.push_back(tris[i]);
+            }
+        }
+        next.insert(next.end(), added.begin(), added.end());
+        tris.swap(next);
+    }
+    return handled;
+}
+
 std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris,
                                     MeshImportInfo& info, std::string& error)
 {
@@ -968,33 +1147,10 @@ std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris
     // Weld duplicated vertices (STL stores every triangle's own copies)
     weld(verts, tris, diag * 1e-9);
 
-    {   // Drop degenerate and duplicate triangles
-        std::vector<Tri> kept;
-        kept.reserve(tris.size());
-        std::unordered_set<Tri, ArrayHash> seen;
-        seen.reserve(tris.size());
-        const double min_cross = 1e-18 * diag * diag;
-        for (const auto& tr : tris)
-        {
-            if (tr[0] == tr[1] || tr[1] == tr[2] || tr[0] == tr[2])
-            {
-                continue;
-            }
-            const V3 n = (verts[tr[1]] - verts[tr[0]]).cross(verts[tr[2]] - verts[tr[0]]);
-            if (!(n.norm() > min_cross))
-            {
-                continue;
-            }
-            Tri key = tr;
-            std::sort(key.begin(), key.end());
-            if (!seen.insert(key).second)
-            {
-                continue;
-            }
-            kept.push_back(tr);
-        }
-        info.dropped = tris.size() - kept.size();
-        tris.swap(kept);
+    {   // Drop degenerate triangles, settle the duplicates, close the slivers (see the functions)
+        info.dropped = dropDegenerateAndCancelDuplicates(tris);
+        info.dropped += splitSlivers(verts, tris, diag);
+        info.dropped += dropDegenerateAndCancelDuplicates(tris);
     }
     if (tris.empty())
     {
@@ -1322,6 +1478,7 @@ std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris
     {
         bounds.extend(p);
     }
+    data->bounds = bounds;
     for (int i=0; i < 3; ++i)
     {
         info.lower[i] = bounds.min()[i];
@@ -1521,131 +1678,6 @@ Tree finishMesh(std::vector<V3> verts, std::vector<Tri> tris, double scale,
     return Tree(std::make_unique<MeshOracleClause>(mesh));
 }
 }   // anonymous namespace
-
-namespace {
-
-// The triangle of the arrays nearest to p, and its distance (a scan: the arrays are used once)
-uint32_t nearestTriangle(const std::vector<V3>& v, const std::vector<Tri>& t, const V3& p, double& dist)
-{
-    double best = std::numeric_limits<double>::infinity();
-    uint32_t bi = 0;
-    for (uint32_t i=0; i < t.size(); ++i)
-    {
-        int f;
-        const V3 cp = closestOnTriangle(p, v[t[i][0]], v[t[i][1]], v[t[i][2]], f);
-        const double d2 = (p - cp).squaredNorm();
-        if (d2 < best)
-        {
-            best = d2;
-            bi = i;
-        }
-    }
-    dist = std::sqrt(best);
-    return bi;
-}
-
-}   // anonymous namespace
-
-bool floodSurface(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
-                  const double seed[3], double angleDegrees, int mode, double maxRadius,
-                  uint8_t* selected, size_t& count, double& seedDistance, std::string& error)
-{
-    count = 0;
-    seedDistance = 0;
-    if (!xyz || !tri || !vertex_count || !tri_count || !selected)
-    {
-        error = "the surface has no triangles";
-        return false;
-    }
-    std::vector<V3> verts(vertex_count);
-    for (size_t i=0; i < vertex_count; ++i)
-    {
-        verts[i] = V3(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]);
-    }
-    std::vector<Tri> tris(tri_count);
-    for (size_t i=0; i < tri_count; ++i)
-    {
-        for (int k=0; k < 3; ++k)
-        {
-            if (tri[3 * i + k] >= vertex_count)
-            {
-                error = "a triangle refers to a vertex that does not exist";
-                return false;
-            }
-            tris[i][k] = tri[3 * i + k];
-        }
-    }
-    // (the triangles keep their numbers; vertices that coincide are given one index, so that the
-    // triangles around them are neighbours)
-    {
-        Eigen::AlignedBox3d box;
-        for (const auto& p : verts) box.extend(p);
-        const double diag = box.diagonal().norm();
-        if (!(diag > 0) || !std::isfinite(diag))
-        {
-            error = "the surface has no extent";
-            return false;
-        }
-        std::vector<V3> v2 = verts;
-        std::vector<Tri> t2 = tris;
-        weld(v2, t2, diag * 1e-7);
-        verts.swap(v2);
-        tris.swap(t2);
-    }
-
-    std::vector<V3> normal(tri_count, V3(0, 0, 1)), middle(tri_count);
-    std::vector<char> usable(tri_count, 1);
-    for (size_t i=0; i < tri_count; ++i)
-    {
-        const V3 c = (verts[tris[i][1]] - verts[tris[i][0]]).cross(verts[tris[i][2]] - verts[tris[i][0]]);
-        const double len = c.norm();
-        usable[i] = len > 0;
-        if (len > 0) normal[i] = c / len;
-        middle[i] = (verts[tris[i][0]] + verts[tris[i][1]] + verts[tris[i][2]]) / 3.0;
-    }
-
-    // Neighbours: the triangles that share an edge
-    std::unordered_map<uint64_t, std::vector<uint32_t>> edges;
-    edges.reserve(tri_count * 2);
-    auto key = [](uint32_t a, uint32_t b) {
-        return (static_cast<uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
-    };
-    for (uint32_t i=0; i < tri_count; ++i)
-    {
-        for (int k=0; k < 3; ++k)
-        {
-            edges[key(tris[i][k], tris[i][(k + 1) % 3])].push_back(i);
-        }
-    }
-
-    const V3 s(seed[0], seed[1], seed[2]);
-    const uint32_t first = nearestTriangle(verts, tris, s, seedDistance);
-    const double cosLimit = std::cos(std::max(0.0, angleDegrees) * 3.14159265358979323846 / 180.0);
-    std::fill(selected, selected + tri_count, 0);
-    std::vector<uint32_t> queue;
-    queue.push_back(first);
-    selected[first] = 1;
-    for (size_t q=0; q < queue.size(); ++q)
-    {
-        const uint32_t ti = queue[q];
-        for (int k=0; k < 3; ++k)
-        {
-            const auto it = edges.find(key(tris[ti][k], tris[ti][(k + 1) % 3]));
-            if (it == edges.end()) continue;
-            for (uint32_t u : it->second)
-            {
-                if (selected[u] || !usable[u]) continue;
-                const double c = (mode == 0 ? normal[first] : normal[ti]).dot(normal[u]);
-                if (c < cosLimit) continue;
-                if (maxRadius > 0 && (middle[u] - s).norm() > maxRadius) continue;
-                selected[u] = 1;
-                queue.push_back(u);
-            }
-        }
-    }
-    count = queue.size();
-    return true;
-}
 
 Tree patchTreeFromArrays(const float* xyz, size_t vertex_count, const uint32_t* tri, size_t tri_count,
                          const uint8_t* selected, MeshImportInfo& info, bool& ok, std::string& error)

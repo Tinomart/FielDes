@@ -1,9 +1,10 @@
 '''
-Triangle-mesh import: STL (binary or ASCII), Wavefront OBJ, PLY (ASCII or
-binary), 3MF and glTF (.glb / .gltf) files.
+Triangle-mesh import (what import_model() does with a mesh file): STL (binary or ASCII), Wavefront OBJ, PLY
+(ASCII or binary), 3MF and glTF (.glb / .gltf) files.
 
-    bracket, bounds = import_mesh(r"C:\\models\\bracket.stl")
-    view.set_bounds(*roi(bounds))
+    parts = import_model(r"C:\\models\\bracket.stl")
+    bracket, bounds = parts[0]
+    view.set_bounds(*roi(parts))
 
 The mesh becomes an exact signed distance field (negative inside), so it
 works with everything else in fieldes.stdlib: union / difference with CSG
@@ -33,10 +34,7 @@ from fieldes.shape import Shape
 from fieldes.stdlib import cad_import as _cad
 from fieldes.stdlib.content_cache import cache_for
 
-__all__ = ['import_mesh', 'mesh_info']
-
-_NATIVE = ('.stl', '.obj')          # read by the kernel itself
-_PYTHON = ('.ply', '.3mf', '.glb', '.gltf')   # read here, passed on as arrays
+__all__ = ['mesh_info']
 
 
 def mesh_info(path):
@@ -453,8 +451,8 @@ def _read_gltf(path):
 
 # ---------------------------------------------------------------------------
 
-def import_mesh(path, units='mm', file_units=None, rev=None):
-    ''' Imports a triangle mesh (.stl, .obj, .ply, .3mf, .glb or .gltf) as a Shape whose
+def _import_mesh(path, units='mm', file_units=None, rev=None):
+    ''' import_model() of a mesh file (.stl, .obj, .ply, .3mf, .glb or .gltf): a Shape whose
         value is the exact signed distance to its triangles (negative
         inside).
 
@@ -474,8 +472,8 @@ def import_mesh(path, units='mm', file_units=None, rev=None):
     path = os.fspath(path)
     ext = os.path.splitext(path)[1].lower()
     if ext not in _NATIVE + _PYTHON:
-        raise ValueError('import_mesh({!r}): unsupported file type {!r}; use '
-                         'an .stl, .obj, .ply, .3mf, .glb or .gltf file'.format(path, ext))
+        raise ValueError('import_model({!r}): unsupported file type {!r}; use a STEP file or '
+                         'an .stl, .obj, .ply, .3mf, .glb or .gltf mesh'.format(path, ext))
 
     # The same file (by its path, size and modification time), read with the same units, is the same shape:
     # reading, cleaning and building the distance structure of a big mesh takes seconds, and a script runs
@@ -501,7 +499,7 @@ def import_mesh(path, units='mm', file_units=None, rev=None):
     declared_mm = None                  # the unit stated by the file, if any
     if ext in _PYTHON:
         if not os.path.exists(path):
-            raise RuntimeError('import_mesh({!r}): could not open the file'.format(path))
+            raise RuntimeError('import_model({!r}): could not open the file'.format(path))
         try:
             if ext == '.ply':
                 xyz, tri = _read_ply(path)
@@ -510,7 +508,7 @@ def import_mesh(path, units='mm', file_units=None, rev=None):
             else:
                 xyz, tri, declared_mm = _read_gltf(path)
         except (RuntimeError, ValueError, KeyError, IndexError, TypeError, OSError, struct.error) as e:
-            raise RuntimeError('import_mesh({!r}): {}'.format(path, e))
+            raise RuntimeError('import_model({!r}): {}'.format(path, e))
 
     if file_units is not None:
         file_mm = _cad._target_mm(file_units)
@@ -524,14 +522,14 @@ def import_mesh(path, units='mm', file_units=None, rev=None):
         ptr = lib.libfive_import_mesh(path.encode('utf-8'), scale, ctypes.byref(info))
     else:
         if not len(tri):
-            raise RuntimeError('import_mesh({!r}): the file contains no triangles'.format(path))
+            raise RuntimeError('import_model({!r}): the file contains no triangles'.format(path))
         cx = (ctypes.c_float * len(xyz)).from_buffer(xyz)
         ct = (ctypes.c_uint32 * len(tri)).from_buffer(tri)
         ptr = lib.libfive_mesh_from_arrays(cx, len(xyz) // 3, ct, len(tri) // 3,
                                            scale, ctypes.byref(info))
     message = lib.libfive_import_mesh_last_message().decode('utf-8', 'replace')
     if not ptr:
-        raise RuntimeError('import_mesh({!r}): {}'.format(path, message))
+        raise RuntimeError('import_model({!r}): {}'.format(path, message))
     shape = Shape(ptr)
 
     b = info.bounds

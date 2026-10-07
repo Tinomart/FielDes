@@ -6,7 +6,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/PivotBearingSupportBracket.STEP")   # one (shape, bounds) per solid
+parts = import_model("step/PivotBearingSupportBracket.STEP")   # one (shape, bounds) per solid
 part, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))                   # the region the viewport meshes

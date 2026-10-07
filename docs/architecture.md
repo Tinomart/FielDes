@@ -142,7 +142,7 @@ The part's field (above) is not a distance, so `thicken`, `shell_inside`, `shell
 the distance to that mesh. What it knows about the part is the attribute `_distance_of`, a function that makes the
 distance on the first call:
 
-- `import_step_parts` gives it to every part (`cad_import._distance_getter`; fresh or from the cache).
+- `reconstruct` (and `import_model`, for the parts it reconstructs) gives it to every part (`cad_import._distance_getter`; fresh or from the cache).
 - The transforms (`move`, `rotate_*`, `scale_*`, `reflect_*`: `transforms._exact_follows`) give a copy the same
   transform of that distance with the same numbers, so `handles()` (a gizmo and its `var()`s) and placement in a
   script keep it. (A transformed oracle holds its coordinate expressions itself: the evaluators hand it the
@@ -163,14 +163,20 @@ of the vertices more than half a millimetre from where the skin belongs (worst 1
 
 ## Selecting a surface and lattices that follow it
 
-`select_surface()` (`stdlib/selection.py`) meshes the shape (`render_mesh`, the viewport's own meshing with the
-script's `var()`s) and hands the triangles to the kernel (`libfive_mesh_flood`, `mesh_import.cpp`): a breadth-first
-fill over the triangles that share an edge, with the angle test of mode `flat` (against the seed triangle's normal)
-or `smooth` (against the neighbour it came from) and a radius. `libfive_mesh_patch` renumbers the vertices of the
-chosen triangles and returns a `MeshOracle` in **unsigned mode** — the unsigned distance to the patch, with a lower
-bound of 0 for the interval evaluator — which is the field of the selection (less half its thickness). The same
-call over all triangles gives `.whole`; `patch - whole` is 0 exactly where the nearest point of the surface is in
-the patch, which is how a ribbing gets sides that run straight along the normal.
+`select_surface()` (`stdlib/selection.py`) calls the kernel's `libfive_surface_select` (`selectSurfacePatch` in
+`kernel/src/lattice/surface_cells.cpp`), which works from the field alone — its value and gradient, through the same
+`Field` evaluator and `projectToSurface` the conformal lattice uses; no mesh of the shape is made. The seed is carried
+onto the surface (Newton along the gradient); from every sample the walk takes eight steps of one spacing in the tangent
+plane, each carried back onto the surface, and keeps a step whose normal passes the angle test of mode `flat` (against the
+seed's normal) or `smooth` (against the sample about 10 mm back along the walk, the angle allowed per 10 mm), that stays inside the radius, that was not carried more than
+0.6 of a step to reach the surface (it is past an edge or a gap otherwise), and that is not within 0.7 of a step of a
+sample already taken (a hash of cubes). A step is a front: all the candidates of a front are carried onto the surface in one
+batch, on all the threads. The samples are the patch; `libfive_points_distance` makes them a field, the distance to the
+nearest, with a kd-tree (`PointCloudOracle`: a point and a box of space are answered by the few samples near them, the
+interval bound is the box-to-nearest-sample distance). The selection is that field less half of the thinnest layer the samples cover (no setting); `.patch` is it
+less the cover of the samples (0.85 of a step), `.whole` is `|f|`, the shape's own value, and `patch - whole` is below 0
+where the nearest point of the surface is in the patch, which is how a ribbing gets sides that run straight along the
+normal.
 
 `lattice_surface_conform()` (`stdlib/conformal.py`, `kernel/src/lattice/surface_cells.cpp` with `surface_quads.inl` and `quad_layout.inl`,
 `libfive_surface_cells`) lays a strut lattice on the surface of a body **from its field alone** — a rule of the project: the mesh is the
@@ -451,7 +457,7 @@ never write each other's lines. `ScenePanel::applyModes` and `applyLock` build o
 The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Operation, and Select Surface, which opens
 `View::showSelectMenu`; `View::showEmptyMenu` on empty space: New 3D shape / 2D shape / point / surface / field / custom block, Add operation). Select emits `surfaceSelectRequested`;
 `ScenePanel::addSurfaceSelection` writes the call into the script as an edit, so the selection is code like everything else (and selects the new model).
-A `SurfaceSelection` displays itself through `_display()`: the part it was picked on, coloured by `patch - whole - t/2`
+A `SurfaceSelection` displays itself through `_display()`: the part it was picked on, coloured by `patch - whole`
 (zero or less where the vertex's nearest surface point is in the patch), with `_color_cutoff = 0`; the viewport gives `Shape` a
 per-vertex `patch_value` and its fragment shader discards what is above zero, so only the patch is drawn, a hair towards the eye. The
 other entries emit `createRequested`: `ScenePanel::createFromMenu` asks the interpreter for the call (`menu_call` in
@@ -575,7 +581,7 @@ watertight surface without a global weld.
   gets curves between the outline and the pole. Tori are refined by the turn of the normal and the new point is
   the surface point nearest the edge's middle; a refinement is kept only if the mesh's area comes closer to the
   patch's own (`A = r |∮ (R v + r sin v) du|`), except at the apex of a spindle dome.
-- The tessellating importer (`import_step_tessellated_parts`) is made of this tessellation: `step::brepParts` tessellates every
+- The tessellated import (`tessellate`, and `import_model` for the parts it tessellates) is made of this tessellation: `step::brepParts` tessellates every
   solid (a few at a time, each on all threads) and describes the placed occurrences; the Python side makes
   the triangles a distance field (`libfive_mesh_from_arrays`), places it with `remap`, and keeps the tessellation
   in `<file>.fieldes-tessellation` (keyed by the file, `quality` and `kTessellationVersion`).
@@ -590,7 +596,7 @@ arc is circular at two more points, as the quarter of an ellipse has a circle's 
 |---|---|---|
 | `<name>.step.fieldes-cache.py` and `.fieldes-cache.trees/` | next to each imported STEP file | the import cache; safe to delete |
 | `field-cache/<key>.fdtree`, `.fdfield` | FielDes's cache folder (beside the render cache) | the field cache; safe to delete (Settings → Clear the caches) |
-| `<name>.step.fieldes-tessellation/` | next to a STEP file imported with `import_step_tessellated_parts` | its tessellation (`meta.json`, one `.mesh` per solid); safe to delete |
+| `<name>.step.fieldes-tessellation/` | next to a STEP file imported with `tessellate` (or tessellated parts of `import_model`) | its tessellation (`meta.json`, one `.mesh` per solid); safe to delete |
 | autosave | the script's own file, every 5 s once it has a name | your script |
 | settings | the usual per-user location (`QSettings`: `FielDes`) | window, splitter, recent files, shortcuts |
 
@@ -604,6 +610,8 @@ Nothing else is written outside the folders you choose (meshes exported by the s
 | `FIELDES_AUTOMATION` | path of a command file: run a scripted GUI session (developer facility, `automation.hpp`) |
 | `FIELDES_TIMING` | print timing lines to stderr |
 | `FIELDES_FIELD_CACHE_DIR` | folder of the field cache (default: `field-cache` beside the render cache) |
+| `FIELDES_SCENE_CACHE_DIR` | folder of the kept model trees (default: `scene-cache` beside the render cache) |
+| `FIELDES_SHAPE_LOG`, `FIELDES_TREE_LOG` | files the tests read: per run, how many viewport shapes were kept / new (`View::setShapes`); and the model tree's rebuild phases, the edits it followed and their times (developer) |
 | `FIELDES_NO_EXACT_OFFSETS` | thicken, shell and offset an imported part with its own field instead of its exact distance |
 | `FIELDES_TESS_DEBUG`, `_TRACE`, `_QUALITY`, `_DUMP` | tessellator diagnostics (developer) |
 | `FIELDES_STEP_*`, `FIELDES_FEA_*`, `FIELDES_TET_*` | importer and solver diagnostics and tuning knobs (developer; see the `getenv` calls in `kernel/src`) |

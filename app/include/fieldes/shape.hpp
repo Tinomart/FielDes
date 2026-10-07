@@ -170,8 +170,27 @@ public:
      *  not finer than it needs.  `res` was chosen for the scene resolution
      *  `scene_res`; when the scene's resolution is changed (studio.
      *  set_resolution) the part's changes with it, in proportion.  A part whose
-     *  box is not inside the render region uses the scene's resolution. */
+     *  box is not inside the render region uses the scene's resolution.  A `scene_res` below 0 says the resolution is the
+     *  part's own, absolute (custom_resolution(x, r)): it does not follow the scene's.  */
     void setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res);
+
+    /*  A part that is the exact distance to triangles of its own (a tessellated STEP part: fieldes tessellate()) is drawn from
+     *  those triangles, not meshed from its field: a wall as thin as you like is there at any resolution, and nothing is
+     *  meshed.  `mesh` holds the triangles in the part's own coordinates (one is shared by every run of the script and every
+     *  copy of the part: `key` says which it is), `matrix` (row-major 3 x 4) puts them where the script has the part.  The
+     *  numbers (var()s) the part used when the script ran are part of what it is: a drag of one of them moves the part, and
+     *  until the script has run again its field is meshed instead of the triangles.  The field stays the truth: colours,
+     *  sections, probes and every operation on the part use it.  */
+    struct ExactMesh
+    {
+        std::string key;
+        std::vector<float> verts;               // x, y, z of each vertex
+        std::vector<uint32_t> tris;             // three vertex numbers each
+    };
+    void setExactMesh(std::shared_ptr<const ExactMesh> mesh, const double* matrix);
+    /*  Whether a render with these settings would mesh something other than the one that is going or was done last (see
+     *  RenderGeometry): the viewport restarts only the shapes for which it would  */
+    bool wouldRenderDifferently(const Settings& s) const;
 
     /*  The render cache (fieldes.stdlib.render_cache.render_cache): when it is on, the finished mesh of
      *  the shape is kept on disk -- by what the shape is: its expression with the numbers it is drawn
@@ -580,6 +599,35 @@ protected:
     QVector3D run_hint_lo, run_hint_hi;
     float run_hint_side=0;
     void placeHint();
+    // where the part's own-resolution cube is now, without making it the one a render in progress uses
+    void placedHint(QVector3D& lo, QVector3D& hi, float& side) const;
+
+    // What a render with some settings meshes: the region and the resolution (the part's own cube and resolution when it has
+    // them and they fit in the scene's region, else the scene's) and the quality.  Settings that change none of it must not
+    // restart a render that is going, nor throw away a mesh that is done: the parts of an import that are meshing do not start
+    // again because a part was added to the script that changed the scene's region
+    struct RenderGeometry
+    {
+        QVector3D lo, hi;
+        double res = 0;
+        float quality = 0;
+        std::string exact;                      // (the triangles it is drawn from, if it is: see setExactMesh)
+        bool operator==(const RenderGeometry& o) const
+        { return lo == o.lo && hi == o.hi && res == o.res && quality == o.quality && exact == o.exact; }
+    };
+    bool exactCurrent() const;
+    std::unique_ptr<libfive::Mesh> exactMeshIn(const libfive::Region<3>& r) const;
+    std::shared_ptr<const ExactMesh> m_exact;
+    double m_exact_matrix[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    std::map<libfive::Tree::Id, float> m_exact_vars;     // (the numbers the script had when it said what the part is)
+    RenderGeometry renderGeometry(const Settings& s) const;
+    /*  The region and the resolution a shape with a resolution of its own is meshed at in these settings (false: the scene's)  */
+    bool ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
+                   QVector3D& lo, QVector3D& hi, double& res) const;
+    RenderGeometry m_geometry;                  // (of the render that is going, or was done last)
+    bool m_geometry_known = false;
+    Settings m_last_settings;                   // (the settings that render was started with)
+    libfive::BRepAlgorithm m_last_alg = libfive::BRepAlgorithm::DUAL_CONTOURING;
 
     Handles m_handles;
     bool m_locked = false;

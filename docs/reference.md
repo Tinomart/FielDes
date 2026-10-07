@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing STEP models](#importing-step-models) | [Importing STEP models exactly (almost all free-form)](#importing-step-models-exactly-almost-all-free-form) | [Importing triangle meshes](#importing-triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body)
 
 ## Primitive shapes
 
@@ -474,14 +474,126 @@ This is fieldes.stdlib.text
 Returns the given text, rendered in a custom f-rep font
 (with a character height of 1)
 
-## Importing STEP models
+## Importing models
+
+Importing a model: import_model(), reconstruct() and tessellate().
+
+    parts = import_model("bracket.step")           # STEP or mesh: each part the way that suits it
+    part, bounds = parts[0]
+    view.set_bounds(*roi(parts))
+
+import_model() is the one function to know.  It reads a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply,
+.3mf, .glb, .gltf) and returns a list of (shape, (lower corner, upper corner)), one entry per part -- one for a mesh --
+each part placed where the file has it, in the units you ask for.  What is a field here is chosen by the file:
+
+    a mesh                  the exact signed distance to its triangles
+    a part of a STEP file   reconstructed (reconstruct()) -- planes, cylinders, cones, spheres and tori as exact
+                            formulas, free-form faces fitted: fast, light, and the faces can be dragged -- unless
+                            more than `threshold` (10 % by default) of its surface is free-form (B-spline): a
+                            sculpted body, a gear, a thread, which a fit does not follow.  That part is tessellated
+                            (tessellate()): its exact surface as triangles, made a distance field.  A surface body
+                            (an open sheet of faces, which has no inside) is always tessellated
+    the choice is made part by part (an assembly can have both); the model tree says which each part is
+
+The other two are the same import, made one way by name when you want that:
+
+    reconstruct(path)       every part rebuilt as CSG from its faces (STEP files only)
+    tessellate(source)      the exact surface as a distance field -- of a STEP file's parts, of a mesh file, of ANY
+                            field (tessellate(shape): the field's surface made a mesh and the exact distance to it,
+                            which makes offsets, shells and lattices uniform), of a list of parts
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `import_model(path, units='mm', file_units=None, rev=None, cache=True, threshold=0.1, quality=64, thickness=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64, fit_tolerance=1.0)`
+
+Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf) as a list of
+(shape, (lower corner, upper corner)): one entry per part of a STEP file (an assembly comes out assembled: every
+part is where the file puts it, a part used several times has an entry for each place), one for a mesh.  Nothing
+else to say: the way each part is made a field is chosen for it -- see the module's text:
+
+    parts = import_model("bracket.step")
+    part, bounds = parts[2]
+    view.set_bounds(*roi(parts))
+
+A part with more than `threshold` of its surface free-form (B-spline) is tessellated, any other
+reconstructed -- and so is a reconstructed part whose free-form faces were fitted badly (`fit_tolerance`); a surface
+body (an open sheet) is always tessellated.  reconstruct() and tessellate() make every
+part one way.  A part that cannot be imported is a FailedPart that says why the moment it is used; the others
+import normally.
+
+units       the units of your script ('mm', 'cm', 'm', 'in'...): a STEP file declares its own (each part
+            its own; the numbers are converted), 'file' gives the first declared one
+file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ and PLY do not; 3MF does,
+            glTF is metres) -- for mesh files only
+rev         a number that is part of what an import is kept by: another one imports again ("Reimport" in FielDes)
+cache       an import is kept in files next to the STEP file (<file>.fieldes-cache.py, ...-tessellation):
+            False: not
+threshold   the free-form share of a part's surface from which it is tessellated (0.10: a tenth).  0 tessellates
+            every part, 1 reconstructs them all (a surface body is tessellated anyway)
+quality     points per full turn of a circle of a tessellated part (64: 0.05 % of a radius off the surface)
+thickness   of a surface body that does not close, which has no inside: it is made a sheet this thick (default
+            0.4 % of the size of the file), in `units`
+fit_tolerance
+            a part that is reconstructed has its free-form faces fitted by closed-form surfaces; when the worst of them is
+            off by this many percent of the face's size (1.0 by default) the fit does not look like the part, and the part is
+            tessellated instead.  None keeps every reconstruction
+auto_exclude, exclude_threshold, exclude_quality
+            for the reconstructed parts: see reconstruct()
+
+### `reconstruct(path, units='mm', cache=True, rev=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64)`
+
+Imports a STEP file (.step, .stp) with every part rebuilt as CSG from its faces, using FielDes's built-in reader:
+planes, cylinders, cones, spheres and tori as exact formulas, free-form (B-spline) faces as closed-form surfaces
+fitted to them (listed after the import; where a fit is off by more than 0.5 % of its face's size the model is
+shaded, turning fully red at 10 %).  Fast, light, and the faces of the result can be dragged -- but a gear, a
+thread or a sculpted body does not survive a fit: import_model() tessellates such parts instead (and
+tessellate() does it for all).
+
+Returns [(shape, (lower corner, upper corner))], one per solid -- see import_model() for what the list holds,
+and for units and rev.  A solid that cannot be rebuilt (a surface body, a face of a kind not supported) is a
+FailedPart that says why the moment it is used; the other solids import normally.
+
+cache       the result is kept in <file>.fieldes-cache.py (and a folder of trees) next to the STEP file until the
+            file or the import algorithm changes -- a rebuilt library keeps it; False: not
+auto_exclude  True excludes every poorly fitted place by itself: where the fit is off by more than
+            `exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the lowest) the part is its
+            exact surface, meshed from the STEP file and made a field, locked against every later operation
+            (see exclude(); `exclude_quality` is its quality).  Off by default: the exact surfaces cost
+            tessellation time
+
+### `tessellate(source, units='mm', file_units=None, rev=None, cache=True, quality=64, thickness=None, bounds=None, resolution=None)`
+
+The exact surface, as a distance field.  `source` is
+
+a file          a STEP file: every part as the triangles of its faces (free-form faces refined inside their
+                outlines until no triangle turns the surface by more than 2 pi over `quality`), made the exact signed
+                distance field -- nothing is reconstructed or fitted, so a gear, a thread, a sculpted body or a
+                thin wall is what the file says.  A mesh file: what import_model() makes of it.
+                Returns [(shape, bounds)] as import_model() does.  A surface body that does not close is made a
+                sheet `thickness` thick
+a field         any shape: its surface is meshed (`resolution` samples per unit, default about 200 along its
+                longest side; `bounds` = ((x0, y0, z0), (x1, y1, z1)) if they cannot be found) and the result is
+                the exact signed distance to that mesh.  Booleans, blends and warps have fields that are only
+                roughly a distance; after this offsets and shells are uniform.  Returns a shape.  (A feature
+                thinner than the mesh cells falls between its samples: raise `resolution`)
+a list          of (shape, bounds) -- what import_model() returns -- or of shapes: each tessellated
+
+What it costs: tessellating a part with many free-form faces takes seconds (done once, on all the processor's
+threads, kept in <file>.fieldes-tessellation); the distance field a fraction of a second; meshing it 0.5 to 2.8
+times as long as a reconstructed part.  What it is not: a rebuilt solid -- the planes of the part are triangles
+here, and its faces cannot be dragged.  units, rev, cache: see import_model()
+
+## The region and resolution of imported models
 
 Python library of FielDes, built on the libfive CAD kernel
 
 Hand-written (not code-generated): imports CAD files using FielDes's own
 small, dependency-free STEP reader (see kernel/src/step/).
 
-The main entry points are import_step_parts() and import_step(). Every
+The entry points are import_model(), reconstruct() and tessellate() (fieldes.stdlib.importing); this
+module is reconstruct()'s: every
 solid is rebuilt as CSG by the reconstruction algorithm (see
 step_reconstruct.hpp): analytic faces (plane / cylinder / cone / sphere /
 torus) as exact expressions.  A solid that can't be rebuilt doesn't stop the
@@ -509,168 +621,6 @@ instead of silently substituting Oracle or approximate geometry.
 
 The exact surface of the parts `sources` (_ExactSource) as a field: meshed straight from the STEP file, made
 a signed distance field (negative inside the solid), the parts united
-
-### `import_step(path, cache=True, units='mm', rev=None)`
-
-Imports a STEP (.step/.stp) file as ONE Shape combining every solid
-(the union of import_step_parts()), so it can be used with the rest
-of fieldes.stdlib (union/difference/intersection with anything else,
-transforms, etc). Cached exactly as import_step_parts() is.
-
-Meshing a multi-part assembly as a single Shape forces one
-resolution across the whole assembly's bounding box, driven by
-whatever feature is smallest anywhere in the file; for a large
-assembly, mesh each part from import_step_parts() over its own
-bounds instead.
-
-Raises RuntimeError (with a message describing why) if the file
-can't be read, contains no importable solids, or ANY solid could
-not be reconstructed as native CSG (unlike import_step_parts(),
-which lets you still use the other, good parts of the same file by
-index -- combining every part into one Shape here means one
-FailedPart necessarily fails the whole union).
-
-### `import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64)`
-
-Imports a STEP (.step/.stp) file as a separate Shape PER SOLID, using
-FielDes's built-in reader -- no external CAD-kernel dependency.
-
-Every solid is rebuilt as CSG by the reconstruction algorithm:
-analytic faces (plane, cylinder, cone, sphere, torus) as exact
-expressions, free-form B-spline faces as fitted closed-form surfaces
-(an approximation: the faces that fit poorly are listed after the
-import and shown in red).  The results are ordinary Shapes.
-A solid the reconstruction can't resolve does not stop the rest of
-the file from importing -- its list entry is a FailedPart instead,
-which raises a specific RuntimeError describing why the moment it's
-actually used (meshed, combined with other shapes, etc).
-
-The reconstruction can take several seconds on a large file, so the
-result is saved to a Python file next to the STEP file
-("<file>.fieldes-cache.py") and reused on later calls -- for example
-every time a FielDes script is re-run -- until the STEP file changes or
-the import algorithm does (a rebuilt library keeps it). cache=False
-disables it; cache='some/path.py'
-stores it elsewhere.
-
-Meshing each part returned here separately, over its own `bounds`,
-lets you pick a resolution matched to that part's own scale:
-
-    for i, (shape, bounds) in enumerate(import_step_parts(path)):
-        shape.save_stl(f'part_{i}.stl', bounds[0], bounds[1],
-                        resolution=...)
-
-Returns a list of (Shape, (xyz_min, xyz_max)) tuples, one per solid,
-where xyz_min/xyz_max are that solid's own tight bounding box
-(three-element tuples, ready to pass straight into
-save_stl()/get_mesh()). Raises RuntimeError if the file can't be
-read or contains no importable solids.
-
-Assemblies come out assembled: every part is placed where the
-file's assembly structure puts it.  A component used several
-times (four identical screws) gives one entry per occurrence --
-the first at its solid's index, the others appended after the last
-solid, so part indices stay the same as for a single occurrence.
-Each part Shape's `_part_name` is its occurrence in the assembly
-(e.g. 'Drive:1/Motor:1/M3x10-Screw:2').
-
-units: the model is converted from the unit each part of the STEP
-file declares (millimetres, metres, inches, ...; one file can mix
-them) into these units ('mm' by default; 'cm', 'm', 'in' also
-work), so a file exported in metres isn't a thousand times too
-small.  units='file' gives the numbers in the file's first declared
-unit.
-
-rev: an arbitrary revision number that is part of the cache key --
-changing it (FielDes's "Reimport" does exactly that) forces a fresh
-reconstruction instead of reusing the cached result.
-
-B-spline faces are imported as fitted simple surfaces (planes,
-quadrics, extruded / revolved / helical curves), listed after the import; where
-a fit is off by more than 0.5 % of its face's size, the model is
-shaded there, turning fully red at 10 %.
-Faces that must be exact (threads, gear teeth): exclude() a region
-around them -- that uses the STEP geometry itself.
-
-auto_exclude=True does that for every poorly fitted place by itself: each
-part's fit marker is read, the places where the fit is off by more than
-`exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the
-lowest) are excluded from the part (the region is the field poor_fit_region):
-there the part is its exact surface, meshed from the STEP file and made a
-field, locked against every later operation; the fitted field is the
-part everywhere else.  `exclude_quality` is exclude()'s `quality`.
-Off by default: the exact surfaces cost tessellation time.
-
-### `import_step_parts_reconstructed(path, cache=True, units='mm', rev=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64)`
-
-Imports a STEP (.step/.stp) file as a separate Shape PER SOLID, using
-FielDes's built-in reader -- no external CAD-kernel dependency.
-
-Every solid is rebuilt as CSG by the reconstruction algorithm:
-analytic faces (plane, cylinder, cone, sphere, torus) as exact
-expressions, free-form B-spline faces as fitted closed-form surfaces
-(an approximation: the faces that fit poorly are listed after the
-import and shown in red).  The results are ordinary Shapes.
-A solid the reconstruction can't resolve does not stop the rest of
-the file from importing -- its list entry is a FailedPart instead,
-which raises a specific RuntimeError describing why the moment it's
-actually used (meshed, combined with other shapes, etc).
-
-The reconstruction can take several seconds on a large file, so the
-result is saved to a Python file next to the STEP file
-("<file>.fieldes-cache.py") and reused on later calls -- for example
-every time a FielDes script is re-run -- until the STEP file changes or
-the import algorithm does (a rebuilt library keeps it). cache=False
-disables it; cache='some/path.py'
-stores it elsewhere.
-
-Meshing each part returned here separately, over its own `bounds`,
-lets you pick a resolution matched to that part's own scale:
-
-    for i, (shape, bounds) in enumerate(import_step_parts(path)):
-        shape.save_stl(f'part_{i}.stl', bounds[0], bounds[1],
-                        resolution=...)
-
-Returns a list of (Shape, (xyz_min, xyz_max)) tuples, one per solid,
-where xyz_min/xyz_max are that solid's own tight bounding box
-(three-element tuples, ready to pass straight into
-save_stl()/get_mesh()). Raises RuntimeError if the file can't be
-read or contains no importable solids.
-
-Assemblies come out assembled: every part is placed where the
-file's assembly structure puts it.  A component used several
-times (four identical screws) gives one entry per occurrence --
-the first at its solid's index, the others appended after the last
-solid, so part indices stay the same as for a single occurrence.
-Each part Shape's `_part_name` is its occurrence in the assembly
-(e.g. 'Drive:1/Motor:1/M3x10-Screw:2').
-
-units: the model is converted from the unit each part of the STEP
-file declares (millimetres, metres, inches, ...; one file can mix
-them) into these units ('mm' by default; 'cm', 'm', 'in' also
-work), so a file exported in metres isn't a thousand times too
-small.  units='file' gives the numbers in the file's first declared
-unit.
-
-rev: an arbitrary revision number that is part of the cache key --
-changing it (FielDes's "Reimport" does exactly that) forces a fresh
-reconstruction instead of reusing the cached result.
-
-B-spline faces are imported as fitted simple surfaces (planes,
-quadrics, extruded / revolved / helical curves), listed after the import; where
-a fit is off by more than 0.5 % of its face's size, the model is
-shaded there, turning fully red at 10 %.
-Faces that must be exact (threads, gear teeth): exclude() a region
-around them -- that uses the STEP geometry itself.
-
-auto_exclude=True does that for every poorly fitted place by itself: each
-part's fit marker is read, the places where the fit is off by more than
-`exclude_threshold` (percent of the face's size, 1.0 by default; 0.5 is the
-lowest) are excluded from the part (the region is the field poor_fit_region):
-there the part is its exact surface, meshed from the STEP file and made a
-field, locked against every later operation; the fitted field is the
-part everywhere else.  `exclude_quality` is exclude()'s `quality`.
-Off by default: the exact surfaces cost tessellation time.
 
 ### `poor_fit_region(part, threshold=1.0)`
 
@@ -730,74 +680,14 @@ Millimetres per length unit of a STEP file, read from the unit its
 (The importers themselves read every part's own unit: a file can
 mix them.)
 
-## Importing STEP models exactly (almost all free-form)
+## Triangle meshes
 
-STEP import for parts that are almost all free-form (B-spline) surface: the
-exact surface, as a distance field.
+Triangle-mesh import (what import_model() does with a mesh file): STL (binary or ASCII), Wavefront OBJ, PLY
+(ASCII or binary), 3MF and glTF (.glb / .gltf) files.
 
-    parts = import_step_tessellated_parts("organic_bracket.step")
-    part, bounds = parts[0]
-
-The main importer (import_step_parts) rebuilds a solid as CSG: planes, cylinders,
-cones, spheres and tori exactly, and a free-form face as a closed-form surface
-fitted to it -- fast, but an approximation that a gear, a thread or a sculpted
-body does not survive.  This function does not reconstruct or fit anything:
-every solid is tessellated straight from its trimmed faces (the free-form faces
-refined inside their outlines until no triangle turns the surface by more
-than a turn's share, 2 pi over `quality`), the way a CAD program or nTop does
-for an implicit body, and the triangles are made the exact signed distance
-field of the part (see mesh_import).  What comes back are ordinary shapes, with the same parts, names,
-units and bounds as import_step_parts(), and offsets, shells and lattices of
-them are made from the true distance.
-
-What it costs: tessellating a part with many free-form faces takes seconds
-(done once, on all the processor's threads, and kept in a folder next to the
-STEP file: a 90-part assembly 22 s, a worm gear 4 s); building the distance
-field a fraction of a second a part; meshing it, in FielDes or for an export,
-0.5 to 2.8 times as long as the main importer's formulas (about as long for
-free-form parts, 2.2 to 2.8 times for analytic ones).  What it is not: a
-rebuilt solid -- the planes and cylinders of the part are triangles here, and
-the faces cannot be dragged (expose) -- so use import_step_parts() for parts
-that are mostly analytic.
-
-This Source Code Form is subject to the terms of the Mozilla Public
-License, v. 2.0. If a copy of the MPL was not distributed with this file,
-You can obtain one at http://mozilla.org/MPL/2.0/.
-
-### `import_step_tessellated(path, units='mm', quality=64, cache=True, rev=None)`
-
-import_step_tessellated_parts() as ONE Shape (the union of its parts), as import_step() is of
-import_step_parts().  Raises RuntimeError if any solid could not be tessellated.
-
-### `import_step_tessellated_parts(path, units='mm', quality=64, cache=True, rev=None)`
-
-Imports a STEP (.step/.stp) file as a separate Shape PER PART whose surface is the file's own, exactly
-(see the module's text): the solids are tessellated from their faces, and each tessellation is the
-exact signed distance field of its triangles.  For parts that are almost all free-form (B-spline)
-faces -- sculpted bodies, gears, threads -- which the fitted closed-form surfaces of import_step_parts()
-do not follow; for the rest import_step_parts() is the faster and lighter choice.
-
-Returns a list of (Shape, (xyz_min, xyz_max)), one per part, as import_step_parts() does: the same
-order, the same names (`_part_name`), the assemblies assembled, each part in `units` ('mm', 'cm',
-'m', 'in', or 'file').  A solid that could not be tessellated is a FailedPart that says why the moment
-it is used.
-
-quality   points per full turn of a circle (2 pi over it is the most a triangle may turn the surface
-          by): 64 is about 0.05 % of a radius off the surface; 128 halves the triangles' size ... and
-          makes four times as many of them
-cache     the tessellation is kept in the folder '<file>.fieldes-tessellation' next to the STEP file
-          (cache=False: not; a string: some other folder) until the file, the quality or the
-          tessellation changes
-rev       a number that is part of what the tessellation is kept by: another one tessellates again
-          ("Reimport" in FielDes)
-
-## Importing triangle meshes
-
-Triangle-mesh import: STL (binary or ASCII), Wavefront OBJ, PLY (ASCII or
-binary), 3MF and glTF (.glb / .gltf) files.
-
-    bracket, bounds = import_mesh(r"C:\models\bracket.stl")
-    view.set_bounds(*roi(bounds))
+    parts = import_model(r"C:\models\bracket.stl")
+    bracket, bounds = parts[0]
+    view.set_bounds(*roi(parts))
 
 The mesh becomes an exact signed distance field (negative inside), so it
 works with everything else in fieldes.stdlib: union / difference with CSG
@@ -815,25 +705,6 @@ overrides it.  glTF's Y-up axes are turned into FielDes's Z-up.
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
-
-### `import_mesh(path, units='mm', file_units=None, rev=None)`
-
-Imports a triangle mesh (.stl, .obj, .ply, .3mf, .glb or .gltf) as a Shape whose
-value is the exact signed distance to its triangles (negative
-inside).
-
-units       the units of your script ('mm', 'cm', 'm', 'in', ...)
-file_units  what the numbers in the file mean.  STL, OBJ and PLY
-            files don't say (millimetres are assumed); 3MF files do
-            and glTF is in metres, which is used unless this
-            overrides it
-rev         not used by the import itself: changing it makes FielDes
-            run the script (and read the file) again, e.g. after
-            the file changed on disk
-
-Returns (shape, (xyz_min, xyz_max)): the shape and its bounding box,
-ready for view.set_bounds(*roi(...)).  Raises RuntimeError if the
-file can't be read or has no usable triangles.
 
 ### `mesh_info(path)`
 
@@ -1053,6 +924,19 @@ falloff: 'linear', 'smooth' (smoothstep) or 'gauss'.
 Bends a shape lying along +x around the z axis: x becomes arc length
 on a circle of the given radius
 
+### `body_from_field(field, level=0.0)`
+
+A BODY from a field: what is inside where the field is below `level` (0 by default), its surface where the field
+equals `level` -- the other way of field_from_body().  The result is drawn and is a part like any other (it can be
+offset, shelled, filled with a lattice, analysed, exported).
+
+    noise = noise_field(12, 3)                                  # a field: not drawn
+    lumps = body_from_field(noise, 0.2)                         # the places where it is below 0.2: a body
+
+The value of the body is the field's less `level`, so it is a true distance to its surface only where the field is
+one (field_from_body of a body, a distance_to_point ...): the surface is exact, an offset of a body made from a
+field that only roughly measures distance is about right, not exact.  `level` may be a field too.
+
 ### `chamfer_union(a, b, size)`
 
 Union with a 45-degree chamfer of the given size where the shapes meet
@@ -1181,6 +1065,37 @@ Intersection of many shapes (optionally blended)
 Linear interpolation between two values or fields: a at t = 0, b at
 t = 1 (t may itself be a field)
 
+### `low_level_body(logic)`
+
+A BODY from your own logic: `logic(x, y, z)` returns a number that is NEGATIVE inside the body, zero on its surface and
+positive outside -- ideally the distance to the surface, so that offsets and shells come out right:
+
+    def ball(x, y, z):
+        return (x.square() + y.square() + z.square()).sqrt() - 20          # a ball of radius 20
+
+    part = low_level_body(ball)
+
+or `low_level_body(lambda x, y, z: maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z))` for a cube of 12.  The body is
+drawn and is a part like any other.  See low_level_field() for the operations; a field that is not a body is
+low_level_field() (and body_from_field() makes a body of it).
+
+### `low_level_field(logic)`
+
+A FIELD from your own logic, in one line or a few: `logic` is a function of the coordinates -- it is called ONCE, with
+x, y and z as fields (a function of x and y alone is a 2D field) -- and returns the value you want at that point:
+
+    def ripple(x, y, z):
+        distance = (x.square() + y.square()).sqrt()          # the distance from the z axis
+        return (distance * 0.6).sin() * 3                    # a ring pattern, up to 3
+
+    waves = low_level_field(ripple)
+
+Write the math with + - * / **, the methods .sqrt() .square() .abs() .sin() .cos() .tan() .exp() .log(), a.max(b) and
+a.min(b) (or maximum(a, b, c) and minimum(a, b, c)); a number is a constant field.  What you get is a field like any
+other: it is not drawn (select it and the field viewer shows it), it goes wherever a number goes (`offset(part,
+waves)`), a lattice's cell size, a load's profile.  low_level_body() is the same for a body; body_from_field() makes a
+body of a field.  In FielDes: right-click, New field, low_level_field, writes the function and the call for you.
+
 ### `mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None)`
 
 Volume, mass (density in g/cm^3 -> grams), centroid and bounding box
@@ -1192,9 +1107,18 @@ dict has the centre of mass as well as the centroid.
 
 The largest of the fields (and numbers) at every point
 
+### `maximum(*terms)`
+
+The largest of several fields, point by point (Python's own max cannot compare fields; `.max` of one takes one
+other): maximum(x - 6, -6 - x, y - 6) is the intersection of three half-spaces.  See minimum().
+
 ### `min_fields(*fields)`
 
 The smallest of the fields (and numbers) at every point
+
+### `minimum(*terms)`
+
+The smallest of several fields, point by point: minimum(a, b, c) is the union of three bodies.  See maximum().
 
 ### `mirror_x(shape, x=0.0)`
 
@@ -1540,7 +1464,7 @@ Closed-form surfaces: cheap primitives beyond planes, spheres and cylinders.
 
 Each is a handful of arithmetic operations, so it meshes as fast as any
 other shape.  The general forms are what the STEP importer fits to B-spline
-faces (see import_step_parts); the named ones are for modeling:
+faces (see reconstruct); the named ones are for modeling:
 
     quadric(coefficients, center, scale)        any surface of degree 2
     extruded_curve(coefficients, direction, origin, scale)
@@ -1891,7 +1815,7 @@ kind    a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin (= 
 
 Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
     lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
-    lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
+    lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
 (Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
 repeat: cell_non_periodic().)
 
@@ -2024,14 +1948,22 @@ along it -- the "conformal" lattice of nTop.
     from fieldes import *
 
     # a thin shell of the part filled with strut cells 6 mm wide: the cells run through its thickness
-    skin = lattice_surface_conform(shell_outside(part, 4), cell_periodic('octet'), cell_size=6)
+    skin = lattice_surface_conform(shell_outside(part, 4), cell_periodic('octet'), cell_thickness=None, cell_size=6)
+
+    # a thin layer (3 mm, the default) of strut cells 6 mm wide on the surface of the part, standing out of it: the cells are
+    # flattened to fit (stretch_cell=True, the default)
+    layer = lattice_surface_conform(part, cell_periodic('octet'), side='outside', cell_size=6, radius=0.4)
+
+    # the same, but the cells keep their own proportions (as deep as they are wide): 3 mm of each stands out of the surface, and the
+    # rest of it, on the inside of the body, is cut off at the surface
+    rivets = lattice_surface_conform(part, cell_periodic('octet'), side='outside', stretch_cell=False, cell_size=6, radius=0.6)
 
     # strut cells standing 6 mm out of the surface of the part
-    ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', depth=6, cell_size=6, radius=0.6)
+    ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 
     # ... or only over a face you picked (right-click it in FielDes, or select_surface())
     top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
-    ribs = lattice_surface_conform(top, cell_periodic('bcc'), side='outside', depth=6, cell_size=6, radius=0.6)
+    ribs = lattice_surface_conform(top, cell_periodic('bcc'), cell_thickness=6, cell_size=6, radius=0.6)
 
     part_with_ribs = union(part, ribs)
 
@@ -2039,20 +1971,22 @@ along it -- the "conformal" lattice of nTop.
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
     layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box_exact((-30, -20, -14), (30, 20, 14)),
-                                    side='outside', depth=6)
+                                    side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
-    texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_size=6, thickness=1.0)
+    texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_thickness=None, cell_size=6, thickness=1.0)
 
 A body's surface is what the cells are laid on.  Where a plain lattice() cuts a straight grid off at the surface,
 here the grid is drawn on the surface itself: a row of cells runs along it and bends with it, round a cylinder,
 over a fillet, along an S-shaped surface, and every cell has its top and bottom face parallel to the surface and its
-sides along the surface normal -- the same face towards the normal everywhere.  By default (side='inside') the
-lattice FILLS the body: the cells run through its thickness, one layer for a thin shell or sheet, more where it is
-thicker (at most three cells deep, or `depth`).  With side='outside' the layers stand out of the surface instead
-(ribbing standing on the part), `depth` deep.  A *surface* -- a field that is only a surface, with no thickness (and so
-no other face, no rim) -- gets one layer, on the side `side` names (`'outside'` is the side the field is positive on),
-cut off at the edge of the region given as `within=`.
+sides along the surface normal -- the same face towards the normal everywhere.  The layer is `cell_thickness` thick (3 mm by
+default: a thin layer, for riveting and the like), measured from the surface: with side='inside' (the default for a body) it goes into
+the body, with side='outside' the cells stand out of the surface (ribbing standing on the part).  Its cells are flattened to fit
+(`stretch_cell=True`); with `stretch_cell=False` they keep their own proportions, and only `cell_thickness` of them stands out of the
+surface, the rest -- on the other side of it, the inside of the body -- being cut off there.  `cell_thickness=None` fills the body
+instead: the cells run through its thickness, one layer for a thin shell or sheet, more where it is thicker (at most three cells
+deep).  A *surface* -- a field that is only a surface, with no thickness (and so no other face, no rim) -- gets one layer, on the side
+`side` names (`'outside'` is the side the field is positive on), cut off at the edge of the region given as `within=`.
 
 It is made from the body's field and nothing else: the surface is where the field is zero, its normal the field's
 gradient.  No mesh of the body is made and no distance is taken to one; the mesh is only what is drawn at the end.
@@ -2060,11 +1994,11 @@ gradient.  No mesh of the body is made and no distance is taken to one; the mesh
 How the cells are laid out
     The surface is first covered by ONE MESH OF QUADS, one quad to a cell, before any cell is made: its rows follow the surface's own
     directions -- along a sharp edge, round a hole, along a handle -- and its quads are `cell_size` wide where the surface lets them be.
-    There are two layouts, because there are two kinds of surface; which one is used is found out from the field (does the surface go on
-    past the region it is wanted in?).
+    There are three layouts, for three kinds of surface, and which one is used is TOLD, never guessed from the field: a closed BODY, a
+    SURFACE that is only a surface (cut by the region you give it), and a SELECTION (a patch picked on a surface with select_surface()).
 
-    A BODY (a closed solid, or a selection of one): the surface ends inside its box, and the mesh is CLOSED and covers ALL of it.  It is made
-    from a cloud of points of the surface, in five steps, all from the field:
+    A BODY (a closed solid): the surface ends inside its box, and the mesh is CLOSED and covers ALL of it.  It is made from a cloud of
+    points of the surface, in five steps, all from the field:
 
     1. points of the surface a third of a spacing apart (the centres of the cubes the surface passes through, put onto the surface along the
        field's gradient); two points are neighbours when the SURFACE joins them, not when they are close in space -- a hop is accepted if its
@@ -2103,6 +2037,12 @@ How the cells are laid out
     region with k corners is made into k quads as above; the nodes are moved over the surface until the cells are even.  The sheet is laid
     out over a margin of two cells round the region, so that the region lies well inside it.
 
+    A SELECTION is a surface, and is laid out as one, by the same method as a sheet: from the surface the picked patch makes -- the points
+    the walk over it took, with their normals, as a field (the height above the patch along its normal) -- over the part of it that is by the
+    patch, and only there.  The body it was picked on is not looked at, nor its other faces, nor how thick it is: a shell, a plate and a solid
+    are the same to it, and the cells cover the patch and nothing else (their edge follows the patch's, to within a third of a cell).  The
+    lattice stands on the side the surface faces (side='outside', `cell_thickness` thick).
+
     Every node is on the surface, and every point of a cell is put back on it too, so no strut lies in a hole or outside the body.  Cells
     are distorted wherever the surface cannot be flattened -- over a fillet, round the lip of a rim, across a dome -- and none is left out
     for that: a cell is as stretched, squeezed or bent as the surface makes it, and the beams of the unit cell follow.  Where a narrow
@@ -2131,7 +2071,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0, radius=None, layers=None, side='inside', blend=0.0, direction=None, bounds=None, thickness=None, style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0)`
+### `lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretch_cell=True, cell_size=5.0, radius=None, layers=None, side=None, blend=0.0, direction=None, bounds=None, thickness=None, style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0)`
 
 A lattice that follows a surface (see the module): its cells lie on it, as big as asked all along it, each
 with a face towards the surface normal -- filling the body the surface bounds (side='inside', the default) or
@@ -2139,22 +2079,32 @@ standing out of it (side='outside').
 
 surface_field   the surface, as ONE argument whatever it is: a body (a closed solid: its surface), a surface
                 (a field that is zero on it, with no body behind it), or a select_surface(...) selection (the
-                patch picked on a body: the lattice is laid on that patch only).  Which of them it is is found
-                out, not told
+                patch picked on a body: a SURFACE, laid out as one -- a method of its own, that has nothing to do
+                with what is behind it or how thick that is -- the lattice is laid on that patch only)
 cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
                 TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
                 surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
-depth           how deep the layers are together (mm).  Default: as deep as the body is under each cell (a thin
-                shell: its thickness; at most three cells) for side='inside', one cell for 'outside'
+cell_thickness  how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it
+                (side='outside') or go into the body (side='inside').  Default 3 mm: the lattice is a thin layer,
+                for riveting and the like.  None: for a body filled from inside, as deep as the body is under each
+                cell (a thin shell: its thickness; at most three cells); for a surface, a selection or side='outside',
+                one cell
+stretch_cell    True (the default): the cells are deformed to fit the thickness -- `cell_size` along the surface,
+                `cell_thickness` through it, so a thin layer has flat cells.  False: the cells keep their own
+                proportions (as deep as they are wide), and `cell_thickness` of them stands out of the surface;
+                the rest of each cell, on the other side of the surface (the inside of the body), is cut off there.
+                (`layers` then counts whole cells through the depth; a thickness over one cell makes more of them)
 within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
 cell_size       mm along the surface
 thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
-            the wall of a TPMS sheet (below).  Default: beams 24 % of the smaller of cell_size and the layer's
-            depth across, a sheet 15 % of cell_size
+            the wall of a TPMS sheet (below).  Default: beams 24 % of cell_size across (not more than half of the layer's
+            thickness), a sheet 15 % of cell_size
 radius      the same for beams, as a radius (half of thickness; give one of the two): a number, or a field (the
-            struts taper between the nodes).  Struts inside a body keep inside it
+            struts taper between the nodes).  Struts inside a body keep inside it.  Default: 12 % of cell_size, but not
+            more than a quarter of the layer's thickness (a thin layer has thin struts)
 layers      the number of cells through the depth (default: as many as fit, at least 1)
-side        'inside' (the default: the lattice fills the body) or 'outside' (it stands out of the surface)
+side        'inside' (the default for a body: the lattice fills it) or 'outside' (it stands out of the surface: the
+            default for a selection or a surface, on the side its normal faces -- the side the field is positive on)
 blend       rounds the joints of struts
 direction   the way the rows of cells run where the surface gives them no way (a flat or smoothly curved part with
             no edge to follow) (default: along x)
@@ -2185,52 +2135,105 @@ Selecting a surface: the flood fill of a CAD program, as a field.
     top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
     top                                       # displayed: the part's surface, only the patch of it, lit up
 
-`select_surface` picks the patch of the part's surface around `seed` (a point on or near it) by spreading over
-the neighbouring triangles of the surface mesh: with mode='flat' (the default) as long as the surface stays
-within `angle` degrees of the way it faced at the seed -- a flat face, or a gently curved one; with mode='smooth'
-as long as it turns less than `angle` degrees from one triangle to the next -- a cylinder, a fillet, a whole
-rounded skin, up to a sharp edge.  `radius` stops it that far from the seed.
+`select_surface` picks the patch of the part's surface around `seed` (a point on or near it) by walking over the
+surface: from the seed, in small steps along it, as long as the surface stays within `angle` degrees -- with
+mode='flat' (the default) of the way it faced at the seed (a flat face, or a gently curved one); with mode='smooth' the
+surface may turn at most `angle` degrees within 10 mm of the walk -- a limit on how tightly it bends: a cylinder, a fillet or
+a gently rounded skin is followed, a tight bend (the toe of a shoe, a small round) or a sharp edge stops it.  `radius` stops
+it that far from the seed.
 
-What comes back is a field, like everything else here: negative in a thin layer (`thickness`) across the
-patch, positive elsewhere, so it is a region you can give to `fixed()` and `force()`, show on the part, combine
-with other shapes, or hand to `lattice_surface_conform()` as the surface to put a lattice on:
+It is made from the part's FIELD alone -- its value and its gradient, which is the surface normal -- the way the
+conformal lattice is: a step is carried onto the surface where the field is zero, and the angle is the angle of the
+gradients.  No mesh of the part is made or read, so it does the same on any shape however it was made (a
+reconstructed STEP part, a tessellated one, a mesh, a CSG model), and a thin wall is no harder than a thick one: the walk
+follows the surface, not the space, and finds no surface to step onto past an edge.
+
+What comes back is a SURFACE -- the patch of the part's surface, nothing thicker -- as a field, like everything else here.
+It is a region you can give to `fixed()` and `force()`, show on the part, combine with other shapes, or hand to
+`lattice_surface_conform()` as the surface to put a lattice on:
 
     conditions = static_boundary_conditions(part, [fixed(select_surface(part, (0, 0, 0)))],
                                             [force(top, (0, -100, 0))])
     result = static_analysis(part, conditions, material=aluminium)
 
-In FielDes, right-click a surface in the viewport: the menu holds the angle, the mode and the thickness, and
+In FielDes, right-click a surface in the viewport: the menu holds the mode, the angle and the radius, and
 writes the `select_surface(...)` line into the script under the part, like everything else the program does.
+
+`surface_from_bodies` picks a surface by other bodies instead of by a place: the surface of the FIRST body, where it meets the
+bodies that follow.
+
+    plate_holes = surface_from_bodies(plate, bolt_1, bolt_2)      # the walls of the holes the two bolts sit in
+    skin = surface_from_bodies(plate)                             # no other body: the whole surface of the plate
+
+It is a surface like the one `select_surface` makes -- a region for `fixed()` and `force()`, a surface to lay a lattice on --
+and it too is made from the fields alone: the first body's surface is where its field is zero, and "meets" is a number, the
+distance of that surface from the other bodies (their field), so no mesh is made and a body that is dragged or has var()
+numbers moves the selection with it.  In FielDes: select several models in the model tree (Ctrl or Shift click), right-click
+one, Operation > Surfaces > surface_from_bodies: the first selected is the body, the others are what it is met by.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
+### `BodiesSurface`
+
+The surface of a body where it meets other bodies (see surface_from_bodies): a surface, with the attributes of a
+SurfaceSelection (.shape the first body, .patch, .whole, .surface, .cover, .spacing) and .others (the bodies that
+select it, a list: empty for the whole surface), .tolerance
+
 ### `SurfaceSelection`
 
-A patch of a surface (see select_surface): a field, negative in a thin layer across the patch.
-.shape (what it was picked on), .seed, .angle, .mode, .thickness, .triangles (how many of the surface
-mesh's), .patch (the unsigned distance to the patch itself, a field), .whole (the same to the whole
-surface mesh: it equals .patch exactly where the nearest point of the surface is in the patch),
-.arrays (the patch's own triangles)
+A patch of a surface (see select_surface): a surface.
+.shape (what it was picked on), .surface (the patch as a field: the height above it, zero on it), .seed, .angle, .mode, .samples (how many points of the surface the
+walk took), .spacing (how far apart they are), .patch (the distance to the patch's surface, a field: zero on it,
+to within `.cover`), .whole (the distance to the whole surface, a field: the shape's own value, |f|, which is the
+distance where the shape's field is one -- as the field of an imported part or a mesh is; it equals .patch where the
+nearest point of the surface is in the patch), .cover (how far the surface of the patch can be from a sample: the
+patch and the whole differ by less than that where the nearest surface is in the patch)
 
-### `select_surface(shape, seed, angle=15.0, mode='flat', thickness=None, radius=None, resolution=None, bounds=None)`
+### `select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution=None, bounds=None)`
 
-The patch of the surface of `shape` around the point `seed`, found by a flood fill over the triangles of
-its surface (see the module), as a field: negative in a layer `thickness` mm thick across the patch.
+The patch of the surface of `shape` around the point `seed`, found by a flood fill over the surface made from the
+shape's field (see the module): a surface.
 
 seed        a point on (or near) the surface: (x, y, z)
-angle       degrees: with mode='flat' how far a triangle may face from the way the seed's does, with
-            mode='smooth' how much the surface may turn from one triangle to the next
-mode        'flat' (a face, flat or gently curved) or 'smooth' (round faces, up to a sharp edge)
-thickness   mm (default: a hundredth of the shape's size, at least two cells of the surface mesh)
-radius      mm: stop this far from the seed (default: no limit)
-resolution  samples per mm of the surface mesh the fill runs over (default: about 200 along the
-            longest side, at least 1): finer follows small faces
+angle       degrees: with mode='flat' how far from the way the seed's surface faces it may face, with
+            mode='smooth' how much it may turn within 10 mm of the surface (how tightly it may bend)
+mode        'flat' (a face, flat or gently curved) or 'smooth' (round faces: a bend tighter than `angle` per 10 mm
+            stops it, and so does a sharp edge)
+radius     mm: stop this far from the seed (default: no limit)
+resolution  steps per mm along the surface (default: about 150 along the longest side, at least 0.1): a finer one
+            follows smaller faces and places the edge of the patch more exactly, and costs more (the walk takes a
+            sample for every step of the surface it reaches)
 bounds      ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
 
 Returns a SurfaceSelection: a shape (so it is shown, hidden, deleted like any), usable as a region:
-fixed(selection), force(selection, ...), lattice_surface_conform(shape, surface=selection, ...).
+fixed(selection), force(selection, ...), lattice_surface_conform(selection, ...).
+
+### `surface_from_bodies(body, *others, tolerance=None, bounds=None)`
+
+The surface of `body` where it meets `others`, the bodies that follow: the parts of its surface that intersect them (that
+touch them or run through them), as a surface.  With no other body, the whole surface of `body`.
+
+    holes = surface_from_bodies(plate, bolt_1, bolt_2)   # the plate's surface where the bolts are
+    skin = surface_from_bodies(plate)                    # all of it
+
+body        the body whose surface is selected (a part, an imported part, any shape)
+others      the bodies that choose where: a point of the surface of `body` is selected when it is inside one of
+            them or within `tolerance` of one (several can be given, or a list)
+tolerance   mm: how close a body must come to the surface to count as meeting it (default: half a percent of the
+            size of `body`) -- bodies that touch at a face, or that sit in a hole with a little play, meet; a gap
+            wider than this is a gap
+bounds      ((x0, y0, z0), (x1, y1, z1)) of `body`, if it cannot be found
+
+It is made from the fields alone, like everything: the surface of `body` is where its field is zero, and the distance of
+a point from the others is their field.  No mesh is made, and a body that moves (a var() number, a drag) moves
+the selection.  The selection is a thin layer along the surface, a hundredth of the body thick at most -- not a setting: a
+surface has no thickness -- the way select_surface makes it.  The patch is cut by the others the way a box cuts
+it: where one ends, the selection ends (it follows no face to its edges).  What comes back is a surface, shown
+lit up on the body, and a region for `fixed()` and `force()` (and the other conditions), or
+`lattice_surface_conform()`.  If the bodies do not meet, nothing is selected (a note says so when their boxes do not
+even touch).
 
 ## Structural analysis and topology optimization
 
@@ -3058,3 +3061,40 @@ same math, another one when anything about the math changes (an operation, a num
 value it has now, an imported file) -- or None when the shape cannot be kept: it depends on something no
 other run could recognise (a solved analysis).  (The region, resolution and quality it is meshed at are
 part of the key the application uses, which is made of this and them.)
+
+## A resolution of its own for one body
+
+A resolution of its own for one body.
+
+The viewport meshes the whole scene at one resolution (view.set_resolution): fine enough for the finest thing in it, which is
+more than the rest needs.  `custom_resolution(body, resolution)` gives ONE body a resolution of its own, in samples per mm,
+whatever the scene's is: a part that is intricate is drawn fine and the rest of the scene stays coarse and quick -- or a part
+that is big and plain is drawn coarser than the scene.
+
+    from fieldes import *
+
+    view.set_resolution(2)                        # the scene: 2 samples per mm
+    gear = custom_resolution(gear, 8)             # ... except the gear, drawn at 8
+    gear                                          # (it is shown by the line that names it, as always)
+
+The body is meshed on its own, over a cube round it, at that resolution; the number is the resolution, not a scale of the scene's,
+so it stays what it is when the scene's resolution is changed.  Nothing is drawn outside the region of the scene (view.set_bounds), as
+for every shape: a body that reaches out of it is drawn at its own resolution inside it.  It changes how the body is DRAWN, not what it
+is: an analysis, a boolean or an export of it is the same.
+
+The finest a body can be drawn is 2000 samples along its longest side (a longer one would be hundreds of millions of cells): a
+resolution above that is not an error, the body is drawn at the finest there is, and the model tree's row says what is used
+(`resolution 8 -> 7.6`).
+
+In FielDes, right-click a body and choose "Custom resolution": the line is written under its definition, and the number is a field
+under the body in the model tree (type in it; the bin takes the line away).
+
+### `custom_resolution(shape, resolution, bounds=None)`
+
+`shape` drawn at a resolution of its own: `resolution` samples per mm, whatever the scene's resolution is (see the module).
+
+shape       a body
+resolution  samples per mm (a number above 0); 2 draws features of half a millimetre, 10 of a tenth
+bounds      ((x0, y0, z0), (x1, y1, z1)) of the body, if its extent cannot be found
+
+Returns the body itself in every other way; only the way it is meshed for the viewport is changed.

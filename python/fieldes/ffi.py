@@ -200,6 +200,9 @@ except AttributeError:
 
 lib.libfive_import_step_parts_reconstructed.argtypes = [ctypes.c_char_p]
 lib.libfive_import_step_parts_reconstructed.restype = ctypes.POINTER(libfive_step_parts_t)
+lib.libfive_import_step_parts_reconstructed_only.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_int32),
+                                                             ctypes.c_uint32]
+lib.libfive_import_step_parts_reconstructed_only.restype = ctypes.POINTER(libfive_step_parts_t)
 
 try:
     lib.libfive_step_exact_surface.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int,
@@ -216,7 +219,8 @@ class libfive_step_brep_solid_t(ctypes.Structure):
     _fields_ = [("mesh", ctypes.POINTER(libfive_mesh_t)),
                 ("error", ctypes.c_char_p),
                 ("faces", ctypes.c_int32),
-                ("bspline_faces", ctypes.c_int32)]
+                ("bspline_faces", ctypes.c_int32),
+                ("surface", ctypes.c_int32)]
 class libfive_step_brep_instance_t(ctypes.Structure):
     _fields_ = [("solid", ctypes.c_int32),
                 ("instance", ctypes.c_int32),
@@ -226,7 +230,8 @@ class libfive_step_brep_instance_t(ctypes.Structure):
                 ("bounds", libfive_region_t),
                 ("detail", ctypes.c_double),
                 ("area_flat", ctypes.c_double),
-                ("area_curved", ctypes.c_double)]
+                ("area_curved", ctypes.c_double),
+                ("area_bspline", ctypes.c_double)]
 class libfive_step_brep_t(ctypes.Structure):
     _fields_ = [("solids", ctypes.POINTER(libfive_step_brep_solid_t)),
                 ("solid_count", ctypes.c_uint32),
@@ -234,9 +239,12 @@ class libfive_step_brep_t(ctypes.Structure):
                 ("instance_count", ctypes.c_uint32)]
 
 try:
-    # The tessellated import (fieldes.stdlib.cad_import.import_step_tessellated_parts)
+    # The tessellated import (fieldes.stdlib.tessellated_import: tessellate())
     lib.libfive_step_brep_read.argtypes = [ctypes.c_char_p, ctypes.c_int]
     lib.libfive_step_brep_read.restype = ctypes.POINTER(libfive_step_brep_t)
+    lib.libfive_step_brep_read_only.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
+                                                ctypes.c_uint32]
+    lib.libfive_step_brep_read_only.restype = ctypes.POINTER(libfive_step_brep_t)
     lib.libfive_step_brep_delete.argtypes = [ctypes.POINTER(libfive_step_brep_t)]
     lib.libfive_step_brep_delete.restype = None
     lib.libfive_step_tessellation_version.argtypes = []
@@ -267,12 +275,6 @@ lib.libfive_mesh_from_arrays.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.
 lib.libfive_mesh_from_arrays.restype = libfive_tree
 
 try:
-    lib.libfive_mesh_flood.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32,
-                                       ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
-                                       ctypes.POINTER(ctypes.c_float), ctypes.c_float, ctypes.c_int,
-                                       ctypes.c_float, ctypes.POINTER(ctypes.c_uint8),
-                                       ctypes.POINTER(ctypes.c_float)]
-    lib.libfive_mesh_flood.restype = ctypes.c_int64
     lib.libfive_mesh_patch.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32,
                                        ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
                                        ctypes.POINTER(ctypes.c_uint8),
@@ -774,11 +776,37 @@ try:
     # A strut lattice's cells laid on the surface of a body, from its field alone, as a graph of beams
     lib.libfive_surface_cells.argtypes = [libfive_tree, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float),
                                           ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                          ctypes.POINTER(ctypes.c_double), ctypes.c_int,
+                                          ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int, libfive_tree,
                                           ctypes.c_double, ctypes.POINTER(ctypes.c_float), ctypes.c_int,
-                                          ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double,
+                                          ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_double,
                                           ctypes.POINTER(ctypes.c_double)]
     lib.libfive_surface_cells.restype = ctypes.POINTER(libfive_graph_t)
+except AttributeError:
+    pass
+
+class libfive_surface_patch_t(ctypes.Structure):
+    _fields_ = [("points", ctypes.POINTER(ctypes.c_float)),
+                ("normals", ctypes.POINTER(ctypes.c_float)),
+                ("count", ctypes.c_uint32),
+                ("seed_point", ctypes.c_double * 3),
+                ("seed_distance", ctypes.c_double),
+                ("spacing", ctypes.c_double),
+                ("stopped", ctypes.c_int32)]
+
+try:
+    # A patch of a surface found by walking over it from a seed, from the field alone; the field of a set of points
+    lib.libfive_surface_select.argtypes = [libfive_tree, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float),
+                                           ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
+                                           ctypes.POINTER(ctypes.c_double), ctypes.c_double, ctypes.c_int, ctypes.c_double,
+                                           ctypes.c_double]
+    lib.libfive_surface_select.restype = ctypes.POINTER(libfive_surface_patch_t)
+    lib.libfive_surface_patch_delete.argtypes = [ctypes.POINTER(libfive_surface_patch_t)]
+    lib.libfive_surface_patch_delete.restype = None
+    lib.libfive_points_distance.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
+    lib.libfive_points_distance.restype = libfive_tree
+    lib.libfive_points_surface.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_uint32,
+                                           ctypes.c_double]
+    lib.libfive_points_surface.restype = libfive_tree
 except AttributeError:
     pass
 
@@ -786,8 +814,8 @@ try:
     # The same cells with a periodic surface (a TPMS) laid on them, as a field
     lib.libfive_surface_tpms.argtypes = [libfive_tree, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float),
                                          ctypes.c_int, ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_double),
-                                         ctypes.POINTER(ctypes.c_double), ctypes.c_int,
-                                         ctypes.c_double, ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_int,
+                                         ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_int, libfive_tree,
+                                         ctypes.c_double, ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double, ctypes.c_int,
                                          ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double,
                                          ctypes.POINTER(ctypes.c_double)]
     lib.libfive_surface_tpms.restype = libfive_tree

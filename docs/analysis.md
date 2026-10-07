@@ -85,6 +85,16 @@ and a list of `fixed(...)` items passed to them is an error that says so. One se
 to several analyses (a static one, a modal one, an optimisation of the same part), and for
 `topology_optimization` the loads may be several load cases, `loads=[[force(a, …)], [force(b, …), gravity()]]`.
 
+**Every condition is a model too** (kind `conditions`, orange): `fixed_1 = fixed(fixed_1_region)` is a row of the model tree, with its
+region -- a box model of its own -- nested under it. Right-click empty space -> **Add simulation** -> **New support or load** (fixed, force, gravity, thermal
+expansion), **New thermal condition** (fixed temperature, heat input, heat generation, convection), **New flow condition** (inlet,
+outlet, wall, slip) writes one, with its region a box at the cursor; **Simulation -> static_boundary_conditions** (the menu of a model) writes the whole
+`static_boundary_conditions(part, supports=[...], loads=[...])` for a model. In the tree, **drag them onto what takes them**: a
+set of conditions onto an analysis becomes its `conditions` (it replaces the one it has), a support onto
+`static_boundary_conditions` goes into its `supports=[...]`, a load into its `loads=[...]`, a thermal or flow condition into the
+list of its analysis; a selected surface dragged onto a condition takes the place of its region. A drop that cannot be done says why
+(a load does not go in the supports, a material does not go in a condition).
+
 ## Materials
 
 `Material(name, E, nu, density, yield_strength, conductivity, expansion)` — an isotropic linear-elastic
@@ -103,6 +113,13 @@ factor), thermal conductivity (W/(mm·K)) and expansion coefficient (1/K). Prede
 | `nylon` (PA12) | 1 700 | 0.39 | 45 | 0.24 |
 
 These are typical handbook values. Check them against the real material before relying on a result.
+
+**A material is a model** (a kind of its own, `material`: tan, a hatched block in the tree and the menus): `steel_1 = Material(...)`
+is a row of the model tree, and so is a fluid (`Fluid(...)`, `water`). Right-click empty space -> **Add simulation** -> **New material** writes one of the
+presets above with its numbers (steel, stainless steel, aluminium, titanium, PLA, PETG, ABS, nylon) or a material of your own;
+**New fluid** the same for water, air, oil, glycerol. An analysis is given its material as `material=steel_1` (a flow, its fluid
+as `fluid=`): **drag the material's row onto the analysis** and it becomes that argument (it replaces the one the analysis has),
+and the analysis then shows it nested under it in the tree.
 
 ## Fields in analyses
 

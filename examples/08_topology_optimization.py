@@ -17,7 +17,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/PivotBearingSupportBracket.STEP")
+parts = import_model("step/PivotBearingSupportBracket.STEP")
 space, (lo, hi) = parts[0]
 # hidden: space
 

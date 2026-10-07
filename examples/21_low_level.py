@@ -4,7 +4,10 @@
 # arithmetic over three coordinates, negative inside, zero on the surface, positive outside.  libfive documents it in Scheme
 # (define-shape, remap-shape); here it is the same in Python.  `Shape.X()`, `Shape.Y()` and `Shape.Z()` are the coordinates, the
 # operators + - * / ** and the methods .min .max .abs .sqrt .square .sin .cos .tan .atan2 .exp .log build the tree, and
-# `.remap(x', y', z')` asks a shape about other coordinates (every transform is one).  Five things made that way, side by side:
+# `.remap(x', y', z')` asks a shape about other coordinates (every transform is one).  `low_level_body(logic)` and
+# `low_level_field(logic)` call your function ONCE with the three coordinates and give back the body or the field it describes
+# (in FielDes: right-click, New 3D shape / New field, low_level_body / low_level_field writes the function and the call for you);
+# `body_from_field(field, level)` turns a field into a body, `field_from_body(body)` the other way.  Five things made that way:
 #
 #   1. a cube, as the largest of six plane distances            (the Scheme define-shape example)
 #   2. the cube twisted about z with a remap                    (the Scheme remap-shape example)
@@ -15,27 +18,14 @@
 # No STEP file is needed.  What comes out is an ordinary body: the library's own operations (union, offset, move, the
 # analyses ...) take it as they take a box or a sphere.  Change a number and look.
 from fieldes import *
-from fieldes.shape import shape       # shape(f) calls f(x, y, z) with the three coordinates as trees, and gives the tree
 
 view.set_bounds([-12, -12, -14], [124, 12, 14])
 view.set_resolution(6)
 view.set_quality(8)
 
 
-# Python's own max and min cannot compare trees: these fold the methods .max and .min over their arguments, as the Scheme
-# (max a b c ...) does
-def maximum(*terms):
-    out = terms[0]
-    for t in terms[1:]:
-        out = out.max(t)
-    return out
-
-
-def minimum(*terms):
-    out = terms[0]
-    for t in terms[1:]:
-        out = out.min(t)
-    return out
+# (Python's own max and min cannot compare trees: the library's maximum(a, b, c ...) and minimum(...) fold the methods .max
+# and .min over their arguments, as the Scheme (max a b c ...) does)
 
 
 # 1. (define-shape (cube x y z) (max (- x 1) (- -1 x) (- y 1) (- -1 y) (- z 1) (- -1 z))), with a half-width of 6 mm.
@@ -44,7 +34,7 @@ def cube_of(x, y, z):
     return maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z)
 
 
-cube = shape(cube_of)
+cube = low_level_body(cube_of)
 cube
 
 
@@ -84,8 +74,8 @@ def smooth_min(a, b, k):
     return a.min(b) - h.square() * k / 4
 
 
-ball = shape(ball_of)
-torus = shape(torus_of)
+ball = low_level_body(ball_of)
+torus = low_level_body(torus_of)
 joined = shifted(smooth_min(ball, shifted(torus, 9), 6), 56)
 joined
 
@@ -98,14 +88,14 @@ def gyroid_of(x, y, z):
     return maximum(g.abs() - 0.45, cube_of(x, y, z))
 
 
-gyroid = shifted(shape(gyroid_of), 84)
+gyroid = shifted(low_level_body(gyroid_of), 84)
 gyroid
 
 
 # 5. A shape is a function you can call (a number at a point: negative inside), and a tree you can print.  The cube is -6 at
 #    its middle, 0 on a face and 4 mm outside it; the gyroid is the Scheme-like text of its tree.
 print('cube at (0, 0, 0), (6, 0, 0), (10, 0, 0):', cube(0, 0, 0), cube(6, 0, 0), cube(10, 0, 0))
-print('a tree:', shape(lambda x, y, z: (x * y + 1).sqrt() - z))
+print('a tree:', low_level_field(lambda x, y, z: (x * y + 1).sqrt() - z))
 
 # ...and what comes out of all this is a body like any other: here a twisted cube with a slot cut through it by the library's own
 # box_exact and difference.  (A shape made from a max is not an exact distance: an offset of it is only about as large as it says.)

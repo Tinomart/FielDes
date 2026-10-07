@@ -129,7 +129,9 @@ std::vector<StepPart> importStepTreePartsReconstructed(
     const std::string& path, bool& ok, std::string& error,
     int* numSolids = nullptr, int* numFacesResolved = nullptr,
     int* numFacesSkipped = nullptr, int* numReconstructed = nullptr,
-    int* numOracleFallback = nullptr);
+    int* numOracleFallback = nullptr,
+    // only these solids are rebuilt (the others come back as parts that say they were left out); null: all
+    const std::vector<int>* only = nullptr);
 
 }  // namespace step
 }  // namespace libfive

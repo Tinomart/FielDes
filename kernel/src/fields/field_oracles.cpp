@@ -15,6 +15,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <sstream>
 
 #include "libfive/fields/field_oracles.hpp"
+#include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/oracle/oracle_storage.hpp"
@@ -32,7 +33,15 @@ class FieldOracle : public OracleStorage<>
 {
 public:
     FieldOracle(const Tree& t, Kind kind, int mode, double param, std::string key = std::string())
-        : deriv(t), value(t), kind(kind), mode(mode), param(param), key(std::move(key)) {}
+        : deriv(t, varsOf(t)), value(t, varsOf(t)), kind(kind), mode(mode), param(param), key(std::move(key)) {}
+
+    // The shape's var()s are the script's numbers (a part moved by handles(): its move, rotate and scale): the evaluators of the shape
+    // are given them the way the evaluator that holds this oracle is -- with every variable it is given, and whenever one changes
+    void setVar(const void* var, float v) override
+    {
+        deriv.setVar(static_cast<Tree::Id>(var), v);
+        value.setVar(static_cast<Tree::Id>(var), v);
+    }
 
     // (a thickness or curvature costs ray casts or a dozen evaluations of the shape at each point:
     // its answers are remembered by what it is of; the gradient is one derivative evaluation)
@@ -105,6 +114,16 @@ public:
     }
 
 private:
+    // (every free variable of the tree, at zero until the evaluator that holds this oracle says what it is)
+    static std::map<Tree::Id, float> varsOf(const Tree& t)
+    {
+        std::map<Tree::Id, float> m;
+        const Tree flat = t.flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+        for (const auto* d : flat.walk())
+            if (d->op() == Opcode::VAR_FREE) m[d] = 0.0f;
+        return m;
+    }
+
     double f(const Eigen::Vector3d& p)
     {
         return value.value(p.cast<float>());

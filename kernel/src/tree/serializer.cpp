@@ -30,7 +30,8 @@ void Serializer::run(Archive& a)
 
 void Serializer::serializeTree(const Tree& t)
 {
-    for (auto& n : t.walk())
+    const Tree flat = t.flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+    for (auto& n : flat.walk())
     {
         // Skip this id, as it has already been stored
         if (ids.find(n) != ids.end())

@@ -16,9 +16,9 @@ MODULES = [
     ('csg', 'Combining shapes (CSG)', 'fieldes.stdlib.csg'),
     ('transforms', 'Moving, rotating, scaling, deforming', 'fieldes.stdlib.transforms'),
     ('text', 'Text', 'fieldes.stdlib.text'),
-    ('cad_import', 'Importing STEP models', 'fieldes.stdlib.cad_import'),
-    ('tessellated_import', 'Importing STEP models exactly (almost all free-form)', 'fieldes.stdlib.tessellated_import'),
-    ('mesh_import', 'Importing triangle meshes', 'fieldes.stdlib.mesh_import'),
+    ('importing', 'Importing models', 'fieldes.stdlib.importing'),
+    ('cad_import', 'The region and resolution of imported models', 'fieldes.stdlib.cad_import'),
+    ('mesh_import', 'Triangle meshes', 'fieldes.stdlib.mesh_import'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
     ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
     ('fields', 'Fields', 'fieldes.stdlib.fields'),
@@ -33,6 +33,7 @@ MODULES = [
     ('fluid', 'Fluid flow analysis', 'fieldes.stdlib.fluid'),
     ('content_cache', 'Caching', 'fieldes.stdlib.content_cache'),
     ('render_cache', 'Keeping rendered meshes (render cache)', 'fieldes.stdlib.render_cache'),
+    ('custom_resolution', 'A resolution of its own for one body', 'fieldes.stdlib.custom_resolution'),
 ]
 
 

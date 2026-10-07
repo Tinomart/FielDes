@@ -827,6 +827,11 @@ typedef struct libfive_step_parts {
  *  libfive_import_step_last_message() says why (on success it returns a
  *  short summary).  Free the result with libfive_step_parts_delete(). */
 libfive_step_parts* libfive_import_step_parts_reconstructed(const char* filename);
+
+/*  The same, rebuilding only the `count` solids listed in `solids` (NULL: all): the others come back as parts whose
+ *  `error` says they were left out -- for a caller that imports them another way (the tessellation).  */
+libfive_step_parts* libfive_import_step_parts_reconstructed_only(const char* filename, const int32_t* solids,
+                                                                 uint32_t count);
 void libfive_step_parts_delete(libfive_step_parts* parts);
 
 /*  The version of the import algorithm (kImportVersion in step_reconstruct.hpp):
@@ -857,6 +862,7 @@ typedef struct libfive_step_brep_solid {
     char* error;
     int32_t faces;
     int32_t bspline_faces;
+    int32_t surface;         /*  1: a surface body (an open shell: a sheet, no inside), not a solid  */
 } libfive_step_brep_solid;
 
 typedef struct libfive_step_brep_instance {
@@ -869,6 +875,7 @@ typedef struct libfive_step_brep_instance {
     double detail;           /*  as in libfive_step_part, in millimetres  */
     double area_flat;
     double area_curved;
+    double area_bspline;     /*  (of area_curved) the free-form faces: what the share of free-form surface is from  */
 } libfive_step_brep_instance;
 
 typedef struct libfive_step_brep {
@@ -881,12 +888,25 @@ typedef struct libfive_step_brep {
 /*  NULL if the file could not be read (libfive_import_step_last_message() says why).  Free with
  *  libfive_step_brep_delete.  `turn_samples`: points per full turn of a circle (the quality; 64).  */
 libfive_step_brep* libfive_step_brep_read(const char* filename, int turn_samples);
+
+/*  The same, tessellating only the `count` solids of `solids` (NULL: all): the others have `error` set ("left out"),
+ *  their instances are there, with no areas.  (The areas of libfive_step_brep_read(file, 12) -- the free-form share of
+ *  each part -- are a cheap survey of a file.)  */
+libfive_step_brep* libfive_step_brep_read_only(const char* filename, int turn_samples, const int32_t* solids,
+                                               uint32_t count);
 void libfive_step_brep_delete(libfive_step_brep* b);
 
 /*  The version of the tessellation (kTessellationVersion): meshes kept from before it changed are stale.  */
 int libfive_step_tessellation_version(void);
 
-/*  A strut lattice's cells laid on the surface of `body` (where its field is zero), as a graph of beams -- from the
+/*  `lift` (mm): the base of the layers is this far from the surface along their way (negative: on the other side of it, so that cells
+ *  of their own proportions reach through the surface and the caller cuts them there).  0: the layers start on the surface.
+ *
+ *  `layout`: 0 the surface is a closed BODY (laid out as one closed mesh of quads that covers all of it), 1 a SHEET (a surface with no body, cut by
+ *  the box `lo3`..`hi3`), 2 a PATCH of a surface -- `region` is a field that is below 0 within the walk's cover of the patch (a selection's
+ *  `.patch`): the cells cover that part of the surface only.  It is told, not guessed.
+ *
+ *  A strut lattice's cells laid on the surface of `body` (where its field is zero), as a graph of beams -- from the
  *  field alone: its value and gradient, no mesh.  `vars`/`values` (`var_count` of them) are the script's variables.
  *  `lo3`..`hi3` is the box to look for the surface in, `unit_beams` are `unit_beam_count` beams of 6 floats (two ends in
  *  unit-cube coordinates), carried to every cell.  The cells are one closed mesh of quads over the surface, one quad to a
@@ -900,8 +920,35 @@ int libfive_step_tessellation_version(void);
  *  used, the layers and how deep they are.  */
 libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
                                      const double* lo3, const double* hi3, const double* direction3, int grid_offset,
+                                     int layout, libfive_tree region,
                                      double cell, const float* unit_beams, int unit_beam_count,
-                                     double depth, int layers, double radius, double height_dir, double* info);
+                                     double depth, int layers, double radius, double height_dir, double lift, double* info);
+
+/*  A patch of a surface, found by walking over it from a seed: the flood fill of a CAD program, from the field alone (its value
+ *  and gradient: no mesh).  `seed3` is a point on or near the surface; the walk spreads over the surface in steps of `spacing`
+ *  while it stays within `angle_degrees` of the seed's own direction (mode 0) or turns less than `angle_degrees` for every 10 mm of the walk (mode 1), and within
+ *  `max_radius` (<= 0: no limit) of the seed; `lo3`..`hi3` is the box of the body.  Returns the samples of the patch's surface
+ *  (about `spacing` apart, with the normals) or NULL with libfive_lattice_last_error() set; free it with
+ *  libfive_surface_patch_delete.  libfive_points_distance makes the field of a set of points: the distance to the nearest.  */
+typedef struct libfive_surface_patch {
+    float* points;          /*  3 floats a sample  */
+    float* normals;
+    uint32_t count;
+    double seed_point[3];   /*  where the seed is on the surface  */
+    double seed_distance;
+    double spacing;
+    int32_t stopped;        /*  1: the walk was cut short (too many samples)  */
+} libfive_surface_patch;
+
+libfive_surface_patch* libfive_surface_select(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
+                                              const double* lo3, const double* hi3, const double* seed3,
+                                              double angle_degrees, int mode, double max_radius, double spacing);
+void libfive_surface_patch_delete(libfive_surface_patch* p);
+libfive_tree libfive_points_distance(const float* xyz, uint32_t count);
+
+/*  The surface the samples of a patch make, as a field: the height above it along the normals (`normals`, 3 floats a sample), zero on it,
+ *  positive on the side they face, blended over `sigma`.  A surface and nothing else: no body behind it, so nothing of a thickness.  */
+libfive_tree libfive_points_surface(const float* xyz, const float* normals, uint32_t count, double sigma);
 
 /*  The same cells with a periodic surface (a TPMS) laid on them that follows the surface: returns the field (a tree) or NULL
  *  with libfive_lattice_last_error() set.  `kind` 0 gyroid, 1 Schwarz P, 2 diamond, 3 Neovius, 4 Lidinoid, 5 split P, 6 IWP,
@@ -910,7 +957,8 @@ libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars
  *  libfive_surface_cells (info[3], the beams, is 0).  */
 libfive_tree libfive_surface_tpms(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
                                   const double* lo3, const double* hi3, const double* direction3, int grid_offset,
-                                  double cell, double depth, int layers, double height_dir, int kind, double thickness,
+                                  int layout, libfive_tree region,
+                                  double cell, double depth, int layers, double height_dir, double lift, int kind, double thickness,
                                   int style, double offset, double skin, double* info);
 
 /*  Triangle-mesh import (.stl binary / ASCII, .obj): the returned tree is
@@ -934,16 +982,6 @@ typedef struct libfive_mesh_import_info {
 
 libfive_tree libfive_import_mesh(const char* filename, float scale,
                                  libfive_mesh_import_info* info);
-
-/*  Selecting a patch of a surface mesh by a flood fill from the triangle nearest to `seed` (3 floats):
- *  mode 0 spreads while a triangle's normal is within `angle_degrees` of the first one's (a flat face),
- *  mode 1 while it is within that of the triangle it is reached from (a round face, up to a sharp edge);
- *  max_radius > 0 also limits how far from `seed` (0: no limit).  `selected` (tri_count bytes) gets 1
- *  for the triangles of the patch.  Returns how many, or -1 (libfive_import_mesh_last_message() says why);
- *  *seed_distance (may be NULL) is how far the seed is from the surface.  */
-int64_t libfive_mesh_flood(const float* xyz, uint32_t vertex_count, const uint32_t* tri, uint32_t tri_count,
-                           const float* seed, float angle_degrees, int mode, float max_radius,
-                           uint8_t* selected, float* seed_distance);
 
 /*  The unsigned distance to the triangles with selected[i] != 0 (an open patch of a surface has no
  *  inside).  NULL on failure.  */

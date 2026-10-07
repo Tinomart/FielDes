@@ -8,6 +8,9 @@ as published by the Free Software Foundation; either version 2
 of the License, or (at your option) any later version.
 */
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <QElapsedTimer>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -26,10 +29,18 @@ of the License, or (at your option) any later version.
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QApplication>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QDirIterator>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QItemSelectionModel>
 #include <QLocale>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QStyle>
 #include <QStyledItemDelegate>
 #include <QDoubleValidator>
 #include <QHBoxLayout>
@@ -63,7 +74,8 @@ namespace FielDes {
 namespace {
 
 enum Role { ROLE_ITEM = Qt::UserRole, ROLE_TYPE, ROLE_PART, ROLE_KEY, ROLE_LINE, ROLE_RENAME };
-enum Column { COL_NAME = 0, COL_EYE, COL_HANDLES, COL_LOCK, COL_CACHE, COL_ACTION, COL_RESET, COL_DELETE };
+// (COL_DOT is the last by number and the second on the screen: the orange dot of a model whose surfaces cannot be pulled)
+enum Column { COL_NAME = 0, COL_EYE, COL_HANDLES, COL_LOCK, COL_CACHE, COL_ACTION, COL_RESET, COL_DELETE, COL_DOT };
 
 const QColor kText(0xee, 0xe8, 0xd5);
 const QColor kDim(0x93, 0xa1, 0xa1);
@@ -110,6 +122,13 @@ const QIcon& eyeIcon(bool open)
         }
     });
     return open ? on : off;
+}
+
+// An import of a STEP file (the ones that have a cache to reset and parts to reimport; a mesh file has neither)
+bool isStepImport(const QJsonObject& it)
+{
+    const QString p = it["path"].toString().toLower();
+    return p.endsWith(".step") || p.endsWith(".stp");
 }
 
 const QIcon& reimportIcon()
@@ -202,6 +221,40 @@ const QIcon& lockIcon(bool locked)
     return locked ? closed : open;
 }
 
+// A model with no numbers to pull its surfaces by gets them when it is selected, if they are no more than this many; a bigger one
+// (an imported part can have a thousand) is not made draggable by its surfaces: it is marked with an orange dot, and its gizmo moves it
+const int kAutoExposeNumbers = 120;
+
+// Why a model's surfaces cannot be pulled, for the orange dot and the line under the tree: "" when they can (it has the numbers, or it
+// is given them when it is selected), or when there is nothing to pull (a point, a field, a material).  `mesh`: a tessellated part
+QString noDragReason(const QJsonObject& m, bool mesh)
+{
+    if (mesh)
+        return "Its surfaces cannot be dragged: it is a mesh (tessellated), which has no faces to pull. Its gizmo moves it.";
+    if (!m.contains("var") || m["failed"].toBool() || m["kind"].toString() == "display" || m["kind"].toString() == "failed") return QString();
+    if (m["has_var"].toBool() || m.contains("exposed")) return QString();
+    const int n = m["expose_count"].toInt();
+    if (n <= 0) return QString();
+    const int cap = m["expose_cap"].toInt();
+    if (cap > 0 && n > cap)
+        return QString("Its surfaces cannot be dragged: %1 numbers place its faces, more than the %2 FielDes writes into a script. "
+                       "Its gizmo moves it.").arg(n).arg(cap);
+    if (n > kAutoExposeNumbers)
+        return QString("Its surfaces cannot be dragged: %1 numbers place its faces, and FielDes makes the surfaces of a model draggable "
+                       "up to %2 numbers. Its gizmo moves it.").arg(n).arg(kAutoExposeNumbers);
+    return QString();
+}
+
+const QIcon& dragDotIcon()
+{
+    static QIcon dot = makeIcon([](QPainter& p) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xf0, 0x90, 0x28));
+        p.drawEllipse(QPointF(8, 8), 3.4, 3.4);
+    });
+    return dot;
+}
+
 // Where a click on the gizmo button (or the E key) goes: click, never, always, and round again
 QString nextModeName(const QString& mode)
 {
@@ -222,8 +275,10 @@ void setModeButton(QTreeWidgetItem* row, const QJsonObject& target)
     if (mode == "never") tip = "Gizmo: never shown";
     else if (mode == "always") tip = "Gizmo: always shown";
     else tip = "Gizmo: shown while the model is selected (click)";
-    row->setToolTip(COL_HANDLES, tip + "  ·  its surfaces can always be dragged  ·  click: " + nextMode(target) +
-                                 "  ·  key E");
+    const QString surfaces = target["tessellated"].toBool()
+        ? "  ·  a mesh (tessellated): its faces cannot be dragged, the gizmo moves it"
+        : "  ·  its surfaces can always be dragged";
+    row->setToolTip(COL_HANDLES, tip + surfaces + "  ·  click: " + nextMode(target) + "  ·  key E");
 }
 
 // What a shape's lock button says and does
@@ -342,6 +397,22 @@ const QIcon& kindIcon(const QString& kind, bool failed)
         p.drawLine(QPointF(13.5, 2.5), QPointF(13.5, 9.5));
         p.drawLine(QPointF(11, 12), QPointF(13.5, 9.5));
     });
+    static QIcon partMeshI = makeIcon([](QPainter& p) {     // a triangle cut into triangles: a part that is a mesh (tessellated)
+        const QColor amber(0xe0, 0xa0, 0x50);
+        p.setPen(QPen(amber, 1.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(QColor(0xe0, 0xa0, 0x50, 40));
+        p.drawPolygon(QPolygonF({QPointF(8, 2.3), QPointF(13.9, 12.7), QPointF(2.1, 12.7)}));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolygon(QPolygonF({QPointF(5.05, 7.5), QPointF(10.95, 7.5), QPointF(8, 12.7)}));
+    });
+    static QIcon partEmptyI = makeIcon([](QPainter& p) {    // a dashed outline: a body the file lists and gives no surface
+        QColor c = kDim;
+        c.setAlpha(150);
+        QPen pen(c, 1.1, Qt::DashLine);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(3.2, 3.2, 9.6, 9.6), 1.5, 1.5);
+    });
     static QIcon settingsI = makeIcon([](QPainter& p) {     // sliders
         p.setPen(QPen(kDim, 1.3));
         for (int i=0; i < 3; ++i)
@@ -352,9 +423,11 @@ const QIcon& kindIcon(const QString& kind, bool failed)
             p.drawEllipse(QPointF(4 + i * 3.5, y), 1.6, 1.6);
         }
     });
+    if (kind == "part_empty") return partEmptyI;
     if (failed) return failedI;
     if (kind == "import") return importI;
     if (kind == "part") return partI;
+    if (kind == "part_mesh") return partMeshI;
     if (kind == "display") return displayI;
     if (kind == "settings") return settingsI;
     return shapeI;
@@ -378,6 +451,121 @@ QString keyOf(const QJsonObject& it)
     if (it.contains("var")) return kind + ":" + it["var"].toString();
     if (it.contains("list_var")) return kind + ":" + it["list_var"].toString();
     return kind + ":" + it["label"].toString();
+}
+
+QString md5Hex(const QString& text)
+{
+    return QString::fromLatin1(QCryptographicHash::hash(text.toUtf8(), QCryptographicHash::Md5).toHex());
+}
+
+// The item of the scene that is on `line` (1-based) and is called `var`, changed by `f` (nothing happens when there is none)
+void patchAt(QJsonObject& scene, int line, const QString& var, const std::function<void(QJsonObject&)>& f)
+{
+    QJsonArray items = scene["items"].toArray();
+    for (int i = 0; i < items.size(); ++i)
+    {
+        QJsonObject o = items[i].toObject();
+        if (o["line"].toInt() != line || o["var"].toString() != var) continue;
+        f(o);
+        items[i] = o;
+        scene["items"] = items;
+        return;
+    }
+}
+
+// What showing or hiding a model does to its item: its line that shows it (`x`) is, or is not, a `# hidden: x` line.  The lines are
+// where the edit put them already; a model that had no such line gets one right under its definition
+void patchVisible(QJsonObject& o, bool show)
+{
+    // (the number is copied out first: o["a"] = o["b"] inserts a key while it holds a reference into the same object)
+    if (show)
+    {
+        if (o.contains("hidden_line"))
+        {
+            const int line = o["hidden_line"].toInt();
+            o.remove("hidden_line");
+            o["display_line"] = line;
+        }
+        else
+        {
+            const int line = o["end_line"].toInt() + 1;
+            o["display_line"] = line;
+        }
+        o["visible"] = true;
+    }
+    else
+    {
+        if (o.contains("display_line"))
+        {
+            const int line = o["display_line"].toInt();
+            o.remove("display_line");
+            o["hidden_line"] = line;
+        }
+        o["visible"] = false;
+    }
+}
+
+// A statement `name = fn(name)` that the edit put on `line` (1-based), as the scene describes the statements of that kind
+QJsonObject statementInfo(int line, const QString& var, const QString& fn, const QString& argsText, const QString& indent)
+{
+    const QString text = var + " = " + fn + "(" + var + argsText + ")";
+    const int col = indent.size() + var.size() + 3;                     // (where the call starts: after `name = `)
+    QJsonObject c;
+    c["line"] = line;
+    c["end_line"] = line;
+    c["call"] = QJsonArray{line, col, line, int(indent.size() + text.size())};
+    c["text"] = text;
+    return c;
+}
+
+// Whether `text` is the line the rows mean by `kind` for the model `var` (see ScenePanel::lineIs)
+bool lineMatches(const QString& text, const QString& var, const QString& kind)
+{
+    const QString name = QRegularExpression::escape(var);
+    QString pattern;
+    if (kind == "display")
+    {
+        pattern = "^\\s*" + name + "\\s*(?:#.*)?$";
+    }
+    else if (kind == "hidden")
+    {
+        pattern = "^\\s*(?:#\\s*hidden:\\s?)+" + name + "\\s*(?:#.*)?$";
+    }
+    else if (kind == "definition")
+    {
+        // (a statement of the model that is none of the ones that edit it: its name stands on the left of the =)
+        for (const char* fn : {"lock", "handles", "expose", "render_cache", "custom_resolution"})
+        {
+            if (lineMatches(text, var, QString::fromLatin1(fn))) return false;
+        }
+        // (it may be one of several targets: `a = b = f()`; what stands between its name and the next = is no call, no comparison)
+        pattern = "^[^#]*?\\b" + name + "\\b[^#=()\\[\\]]*=(?!=)";
+    }
+    else
+    {
+        pattern = "^\\s*" + name + "\\s*=\\s*(?:[A-Za-z_][\\w.]*\\.)?" + kind + "\\(\\s*" + name + "\\b";
+    }
+    return QRegularExpression(pattern).match(text).hasMatch();
+}
+
+// The program and the library that make a scene and read it: a tree that was kept by other ones is not shown (it would be built by
+// other rules than the ones the next run follows)
+QString sceneCacheStamp()
+{
+    static QString stamp;
+    if (!stamp.isEmpty()) return stamp;
+    qint64 newest = QFileInfo(QCoreApplication::applicationFilePath()).lastModified().toMSecsSinceEpoch();
+    QDirIterator it(QDir(QCoreApplication::applicationDirPath()).filePath("python/fieldes"), QStringList{"*.py"}, QDir::Files,
+                    QDirIterator::Subdirectories);
+    int count = 0;
+    while (it.hasNext())
+    {
+        it.next();
+        newest = std::max(newest, it.fileInfo().lastModified().toMSecsSinceEpoch());
+        ++count;
+    }
+    stamp = "1-" + QString::number(count) + "-" + QString::number(newest, 36);
+    return stamp;
 }
 
 // Index of the parenthesis closing the one at `open`, skipping over string
@@ -939,6 +1127,10 @@ ScenePanel::ScenePanel(QWidget* parent)
         "QToolButton#SceneHeader { color: #eee8d5; border: none; font-weight: bold;"
         "  font-size: 9pt; padding: 3px 6px; text-align: left; }"
         "QLabel { color: #93a1a1; font-size: 8pt; padding: 0px 6px 4px 6px; }"
+        // The script has an error: the card says so (a red frame, the header, the note under the rows)
+        "#ScenePanel[error=\"true\"] { border: 2px solid rgba(255, 110, 100, 235); }"
+        "QToolButton#SceneHeader[error=\"true\"] { color: #ff9a8f; }"
+        "QLabel[error=\"true\"] { color: #ff9a8f; font-size: 8.5pt; font-weight: bold; }"
         // The scroll bars of the card: a thin pill that floats over nothing -- no track, no arrows
         "QScrollBar:vertical { background: transparent; width: 11px; margin: 2px 0px; border: none; }"
         "QScrollBar::handle:vertical { background: rgba(147, 161, 161, 105); border-radius: 4px; min-height: 28px;"
@@ -953,13 +1145,13 @@ ScenePanel::ScenePanel(QWidget* parent)
 
     m_header->setObjectName("SceneHeader");
     m_header->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    m_header->setText(QString(QChar(0x25be)) + "  Model tree");
+    m_header->setText(headerText());
     m_header->setCursor(Qt::PointingHandCursor);
     m_header->setToolTip("Show / hide the model tree\nDrag a model onto an operation to make it one of its inputs,\n"
                          "or between two rows to move it in the script");
     connect(m_header, &QToolButton::clicked, this, [this]{ setCollapsed(!m_collapsed); });
 
-    m_tree->setColumnCount(8);
+    m_tree->setColumnCount(9);
     m_tree->setHeaderHidden(true);
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(COL_NAME, QHeaderView::Stretch);
@@ -970,6 +1162,10 @@ ScenePanel::ScenePanel(QWidget* parent)
         m_tree->header()->setSectionResizeMode(c, QHeaderView::Fixed);
         m_tree->header()->resizeSection(c, 20);
     }
+    // (the dot of a model whose surfaces cannot be pulled: narrow, and right after the name)
+    m_tree->header()->setSectionResizeMode(COL_DOT, QHeaderView::Fixed);
+    m_tree->header()->resizeSection(COL_DOT, 14);
+    m_tree->header()->moveSection(m_tree->header()->visualIndex(COL_DOT), 1);
     m_tree->setIndentation(14);
     m_tree->setIconSize(QSize(16, 16));
     {   // Models are dragged by their rows with the mouse: onto an operation (an input of it), between rows (their place in the
@@ -1010,7 +1206,7 @@ ScenePanel::ScenePanel(QWidget* parent)
             endRenaming(hint != QAbstractItemDelegate::RevertModelCache);
         });
         m_tree->setItemDelegateForColumn(COL_NAME, renamer);
-        for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE)})
+        for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE), int(COL_DOT)})
         {
             auto none = new NoEditDelegate;
             none->setParent(m_tree);
@@ -1086,6 +1282,13 @@ bool ScenePanel::eventFilter(QObject* obj, QEvent* e)
     {
         m_clickMods = static_cast<QMouseEvent*>(e)->modifiers();
     }
+    if (obj == m_tree->viewport() && e->type() == QEvent::MouseButtonPress)
+    {
+        // (what was selected when the button went down: a click on a button of one of several selected rows is for all of them, but the
+        // click makes that row the only one selected before itemClicked comes)
+        m_pressedSelection.clear();
+        for (auto row : m_tree->selectedItems()) m_pressedSelection << row->data(COL_NAME, ROLE_KEY).toString();
+    }
     return QFrame::eventFilter(obj, e);
 }
 
@@ -1094,7 +1297,7 @@ void ScenePanel::setCollapsed(bool c)
     m_collapsed = c;
     m_tree->setVisible(!c);
     m_note->setVisible(!c && !m_note->text().isEmpty());
-    m_header->setText(QString(QChar(c ? 0x25b8 : 0x25be)) + "  Model tree");
+    m_header->setText(headerText());
     if (CardController::sized(this))
     {
         // (a card the user sized keeps its size: only collapsing to the header and opening again change it)
@@ -1137,9 +1340,21 @@ void ScenePanel::setScene(const QString& json)
         return;
     }
     if (staleWhileRenaming(doc.object())) return;
+    // The tree that an edit of the rows made at once (a prediction) is not given back to the text before it by a run that was begun
+    // before the edit and could not be stopped in time: the scene of the run that fits the script is on its way (every edit has one)
+    if (m_predicted && m_source)
+    {
+        const QString md5 = doc.object()["source_md5"].toString();
+        if (!md5.isEmpty() && md5 != md5Hex(m_source())) return;
+    }
     m_scene = doc.object();
+    m_sceneClock.start();
     m_predicted = false;
+    m_partialShown = false;
     m_liveSettingStale = false;         // (the spans of the scene are those of a run again)
+    // The tree of this text is kept for the next time it is opened (a scene of a run of the text that is in the editor now)
+    if (m_source && !m_scene["errored"].toBool() && m_scene["source_md5"].toString() == md5Hex(m_source()))
+        saveSceneCache(json, m_scene["source_md5"].toString());
     TypeIcons::setKinds(m_scene["kinds"].toObject());
     ++m_generation;
     rebuild();
@@ -1165,17 +1380,21 @@ void ScenePanel::setScene(const QString& json)
             for (auto r : rows) m_tree->setCurrentItem(r, 0, QItemSelectionModel::Select | QItemSelectionModel::Rows);
         }
     }
-    // (a model locked while it was in a selection of several leaves it; the guard of the strip keeps the selection's
-    // bookkeeping from running meanwhile, so it runs now)
-    m_silentStrip = true;
-    if (stripLocked(false)) onSelectionChanged();
-    m_silentStrip = false;
+    // (a model locked or unlocked while it is in a selection of several: what the selection can do changes, said without a popup)
+    noteLockedInMulti(false);
     // (the shapes of this run are in the viewport already, and a changed shape is a new one: the selected models are
     // lit up again, from the lines they are on now)
     emit(highlightLines(selectedLines()));
     updateMultiNote();
     updateProvisional();
     updateFieldView();
+    // A click that was refused because the rows were of an older text (refuseOutOfDate) says so again now that the rows are the script's
+    if (!m_refusedNote.isEmpty() && m_source && m_scene["source_md5"].toString() == md5Hex(m_source()))
+    {
+        const QString note = m_refusedNote;
+        m_refusedNote.clear();
+        notify(note);
+    }
     // The run that answers an edit of prepareSelection is done: the scene is current again, and a selection that
     // grew meanwhile gets its numbers too
     m_editPending = false;
@@ -1221,6 +1440,12 @@ void ScenePanel::setScene(const QString& json)
         else if (++m_selectNewTries > 8) m_selectNew.clear();
     }
 
+    // What is selected is made ready to be dragged after every run, not only after the runs that something asked it of (a model
+    // shown by the isolate key, a script that was edited by hand): it writes nothing for a model that is ready
+    if (!m_prepareAgain && !m_editPending && !selectedModels().isEmpty() && !m_treeHeld) m_prepareTimer.start();
+
+    // A click made while the script was running again waits for this scene (one at a time: see runDeferred)
+    runDeferred();
 }
 
 void ScenePanel::setPartialScene(const QString& json)
@@ -1236,8 +1461,18 @@ void ScenePanel::setPartialScene(const QString& json)
     {
         return;
     }
+    // The same for a tree that is shown already, from a run that is done: the script runs again after an edit (an eye, a lock, a
+    // letter typed), and the statements that are done so far are fewer than the tree has rows for -- the tree would shrink to them
+    // while the import or the analysis runs (seconds, for a big file) and grow back when it ends, as if it were loaded again.  It stays
+    // as it is until the run is done.  Only a tree that is empty (a script just opened) fills as the run goes on, row by row
+    if (!doc.object()["errored"].toBool() && !m_partialShown && !m_scene["items"].toArray().isEmpty())
+    {
+        return;
+    }
     if (staleWhileRenaming(doc.object())) return;
     m_predicted = false;
+    m_partialShown = !doc.object()["errored"].toBool();       // (the tree of a run that stopped with an error is that run's last word)
+    m_sceneClock.start();
     // (only the rows: the run is not over, so nothing that waits for the finished scene is answered, and the scene
     // does not count as a new run of the script)
     m_scene = doc.object();
@@ -1251,6 +1486,8 @@ void ScenePanel::clearScene()
     emit(provisionalGizmo(false, QVector3D(), QList<int>()));
     m_scene = QJsonObject();
     m_predicted = false;
+    m_partialShown = false;
+    m_deferred.clear();
     m_dragModels.clear();
     ++m_generation;
     m_selectedKey.clear();
@@ -1289,8 +1526,55 @@ QWidget* ScenePanel::typingWidget() const
     return nullptr;
 }
 
+namespace {
+
+// FIELDES_TIMING: how long the model tree takes to be made (what the user sees as "the tree reloads")
+struct TreeTimer
+{
+    QElapsedTimer clock;
+    const char* what;
+    QTreeWidget* tree;
+    explicit TreeTimer(const char* w, QTreeWidget* t) : what(w), tree(t) { clock.start(); }
+    ~TreeTimer()
+    {
+        const char* log = std::getenv("FIELDES_TREE_LOG");       // (a file that the tests read: the stderr of a window is not caught)
+        if (!std::getenv("FIELDES_TIMING") && !log) return;
+        int rows = 0;
+        for (QTreeWidgetItemIterator i(tree); *i; ++i) ++rows;
+        if (std::getenv("FIELDES_TIMING"))
+            std::cerr << "[tree] " << what << ": " << rows << " rows, " << clock.elapsed() << " ms" << std::endl;
+        if (log)
+        {
+            if (FILE* f = std::fopen(log, "a"))
+            {
+                std::fprintf(f, "[tree] %s: %d rows, %lld ms\n", what, rows, static_cast<long long>(clock.elapsed()));
+                std::fclose(f);
+            }
+        }
+    }
+};
+
+}   // anonymous namespace
+
 void ScenePanel::rebuild()
 {
+    TreeTimer timer("rebuild", m_tree);
+    m_rebuildPending = false;
+    // (for the tests: where the time of a rebuild goes, phase by phase, into FIELDES_TREE_LOG)
+    QElapsedTimer phaseClock;
+    phaseClock.start();
+    const char* phaseLog = std::getenv("FIELDES_TREE_LOG");
+    auto phase = [&](const char* name) {
+        if (phaseLog)
+        {
+            if (FILE* f = std::fopen(phaseLog, "a"))
+            {
+                std::fprintf(f, "[tree]     phase %-12s %lld ms\n", name, static_cast<long long>(phaseClock.elapsed()));
+                std::fclose(f);
+            }
+        }
+        phaseClock.restart();
+    };
     const int scroll = m_tree->verticalScrollBar() ? m_tree->verticalScrollBar()->value() : 0;
     // (clearing and filling the tree changes its selection; the order the rows were selected in is kept meanwhile)
     m_rebuilding = true;
@@ -1327,7 +1611,9 @@ void ScenePanel::rebuild()
         }
     }
     m_settingEditors.clear();
+    phase("setup");
     m_tree->clear();
+    phase("clear");
     QTreeWidgetItem* toSelect = nullptr;
     QList<QTreeWidgetItem*> restore;
 
@@ -1340,9 +1626,16 @@ void ScenePanel::rebuild()
         if (o.contains("var")) definitions[o["var"].toString()]++;
     }
 
+    // The rows of the models are made apart from the tree and put into it once, when they are nested: a row that is in the tree makes
+    // the view lay out every row that is there at each change of it (an icon, a tooltip), which made the tree of 400 models take six
+    // seconds to build (14 ms for each row, 94 % of it the making of the row); made apart, the same rows take a few milliseconds
+    bool detachTop = false;
+    QList<QTreeWidgetItem*> topRows;
+    QSet<QTreeWidgetItem*> nested;
     auto makeRow = [&](QTreeWidgetItem* parent, const QString& text, const QIcon& icon,
                        const QString& type, const QJsonObject& it, const QString& key) {
-        auto row = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_tree);
+        auto row = parent ? new QTreeWidgetItem(parent) : (detachTop ? new QTreeWidgetItem() : new QTreeWidgetItem(m_tree));
+        if (!parent && detachTop) topRows << row;
         row->setText(COL_NAME, text);
         row->setIcon(COL_NAME, icon);
         row->setData(COL_NAME, ROLE_ITEM, it);
@@ -1402,6 +1695,8 @@ void ScenePanel::rebuild()
             {
                 auto e = new QLineEdit(values[i]);
                 e->setFixedSize(58, 18);
+                e->setAlignment(Qt::AlignCenter);           // (a number is centred in its field)
+                e->setCursorPosition(0);                    // (one too long for it shows from its first digit, not its last)
                 auto v = new QDoubleValidator(-1e9, 1e9, 6, e);
                 v->setNotation(QDoubleValidator::StandardNotation);
                 v->setLocale(QLocale::c());
@@ -1457,10 +1752,14 @@ void ScenePanel::rebuild()
         row->setExpanded(m_expandState.value("settings", false));
     }
     const auto region = settings["bounds"].toObject()["value"].toArray();
+    phase("settings");
+    detachTop = true;           // (the settings row is in the tree: its fields are widgets; the rows of the models come apart)
 
     // Which imports list their parts as rows (the part variables are shown
     // there rather than again at the top level)
     QSet<int> partLists;
+    QList<QPair<QTreeWidgetItem*, QJsonObject>> partResolutions;      // (part rows that have a resolution of their own: see below)
+    QHash<QTreeWidgetItem*, QString> partNotes;                       // (and what is to be said in that row: a mesh has no resolution to change)
     for (const auto v : items)
     {
         const auto it = v.toObject();
@@ -1547,24 +1846,20 @@ void ScenePanel::rebuild()
         {
             const bool visible = it["visible"].toBool();
             row->setIcon(COL_EYE, eyeIcon(visible));
+            row->setData(COL_EYE, Qt::UserRole, visible);
             row->setToolTip(COL_EYE, visible ? "Hide" : "Show");
         }
-        else if (kind == "import" && it.contains("list_var") && !failed)
+        // (the assembly -- the import row the parts are nested under -- has no eye: it is the file, not something drawn; each of its
+        // parts has its own eye, in its own row below)
+
+        // A model whose surfaces cannot be pulled: an orange dot, and why
+        if (!failed && kind != "import")
         {
-            // A parts list: the eye shows / hides every part
-            int ok = 0, shown = 0;
-            for (const auto pv : it["parts"].toArray())
+            const QString why = noDragReason(it, false);
+            if (!why.isEmpty())
             {
-                const auto p = pv.toObject();
-                if (!p["ok"].toBool()) continue;
-                ++ok;
-                if (p.contains("var") && itemForVar(p["var"].toString())["visible"].toBool()) ++shown;
-            }
-            if (ok)
-            {
-                row->setIcon(COL_EYE, eyeIcon(shown > 0));
-                row->setData(COL_EYE, Qt::UserRole, shown == ok);
-                row->setToolTip(COL_EYE, shown == ok ? "Hide all parts" : "Show all parts");
+                row->setIcon(COL_DOT, dragDotIcon());
+                row->setToolTip(COL_DOT, why);
             }
         }
 
@@ -1590,7 +1885,7 @@ void ScenePanel::rebuild()
         }
 
         // Reset: an import back to the file (its cache deleted, its handle edits removed)
-        if (kind == "import" && !failed && it.contains("path") && it["func"].toString().startsWith("import_step"))
+        if (kind == "import" && !failed && it.contains("path") && isStepImport(it))
         {
             row->setIcon(COL_RESET, resetIcon());
             row->setToolTip(COL_RESET, "Reset: clear the cache and handle edits");
@@ -1625,23 +1920,79 @@ void ScenePanel::rebuild()
                 if (!shortName.isEmpty()) t += QString("  ·  ") + shortName;
                 else if (p.contains("var")) t += QString("   (part %1)").arg(k);
                 if (k == current) t += "  *";
-                auto c = makeRow(row, t, kindIcon("part", !ok), "part", it,
+                // (a cube for a part that is rebuilt from its faces -- its faces can be dragged -- and a triangle cut into triangles for
+                // one that is a mesh, tessellated: only its gizmo moves it)
+                const bool tessPart = ok && p["method"].toString() == "tessellate";
+                // (a body that has no surface in the file: nothing to import, which is not a failure of the import -- it is shown dimmed,
+                // not struck through in red)
+                const bool emptyPart = !ok && p["empty"].toBool();
+                auto c = makeRow(row, t, kindIcon(emptyPart ? "part_empty" : tessPart ? "part_mesh" : "part", !ok && !emptyPart), "part", it,
                                  key + "#" + QString::number(k));
                 c->setData(COL_NAME, ROLE_PART, k);
                 QString ptip = "Size: " + sizeText(p["bounds"].toArray());
                 ptip = QString("Part %1").arg(k) + (path.isEmpty() ? "" : ": " + path) + "\n" + ptip;
+                // How it was imported (import_model chooses per part: see fieldes.stdlib.importing)
+                if (p.contains("method"))
+                {
+                    const bool tess = p["method"].toString() == "tessellate";
+                    const int share = int(std::lround(100.0 * p["free_form"].toDouble()));
+                    if (!tess)
+                    {
+                        ptip += QString("\nReconstructed (a cube): %1 % of its surface is free-form").arg(share);
+                        if (p.contains("fit"))
+                            ptip += QString(", its fitted faces off by %1 % of their size at most").arg(100.0 * p["fit"].toDouble(), 0, 'g', 2);
+                        ptip += "\nIts gizmo moves it, and its faces can be dragged";
+                    }
+                    else
+                    {
+                        if (p["surface"].toBool())
+                            ptip += "\nTessellated (a mesh): a surface body (a sheet of faces: no inside to reconstruct)";
+                        else if (p.contains("poor_fit"))
+                            ptip += QString("\nTessellated (a mesh): its free-form faces were fitted %1 % of their size off, which shows; "
+                                            "its exact surface is used instead").arg(100.0 * p["poor_fit"].toDouble(), 0, 'g', 2);
+                        else
+                            ptip += QString("\nTessellated (a mesh): %1 % of its surface is free-form").arg(share);
+                        ptip += "\nIts gizmo moves it; its faces cannot be dragged (a mesh has none)";
+                    }
+                }
                 const QJsonObject bound = p.contains("var") ? itemForVar(p["var"].toString())
                                                             : QJsonObject();
+                // (a resolution of its own that the script gives the part: its row is made under this one, once the rows are in the tree)
+                if (!bound.isEmpty() && bound.contains("custom_resolution") && !bound["failed"].toBool())
+                {
+                    partResolutions << qMakePair(c, bound);
+                    if (tessPart) partNotes[c] = "a mesh";
+                }
+                // A part that is in the script is a model like any other: it is dragged (onto an operation, between models)
+                // from its row here as from its own
+                if (ok && !bound.isEmpty() && !bound["failed"].toBool() && bound["kind"].toString() != "failed" &&
+                    definitions.value(bound["var"].toString()) == 1)
+                {
+                    c->setFlags(c->flags() | Qt::ItemIsDragEnabled);
+                }
                 // Handles work on a part that is in the script (as a variable)
                 const QJsonObject target = handlesTarget(it, k);
+                // (a mesh has no faces to pull, and a part with more numbers than FielDes makes draggable cannot be pulled either:
+                // the dot says so from the start, which parts have handles and which have not)
+                if (ok)
+                {
+                    const QString why = tessPart ? noDragReason(QJsonObject(), true) : noDragReason(target, false);
+                    if (!why.isEmpty())
+                    {
+                        c->setIcon(COL_DOT, dragDotIcon());
+                        c->setToolTip(COL_DOT, why);
+                    }
+                }
                 if (ok && !target.isEmpty())
                 {
-                    setModeButton(c, target);
+                    QJsonObject modeTarget = target;
+                    if (tessPart) modeTarget["tessellated"] = true;
+                    setModeButton(c, modeTarget);
                     setLockButton(c, target);
                     setCacheButton(c, target);
                 }
                 // Reimport: back to what the file says (its handle edits gone), the file read again
-                if (ok && it["func"].toString().startsWith("import_step"))
+                if (ok && isStepImport(it))
                 {
                     c->setIcon(COL_RESET, reimportIcon());
                     c->setToolTip(COL_RESET, "Reimport this part");
@@ -1655,13 +2006,28 @@ void ScenePanel::rebuild()
                 const bool partVisible = !bound.isEmpty() ? bound["visible"].toBool()
                                          : (k == current && it["visible"].toBool());
                 if (ok && !partVisible) c->setForeground(COL_NAME, kDim);
+                if (ok)
+                {
+                    // (the eye of a part: hides or shows it when it is a model of the script; for one that is not yet, it adds it)
+                    c->setIcon(COL_EYE, eyeIcon(partVisible));
+                    c->setData(COL_EYE, Qt::UserRole, partVisible);
+                    c->setToolTip(COL_EYE, !bound.isEmpty() ? (partVisible ? "Hide" : "Show")
+                                                            : QString("Show (adds it to the script)"));
+                }
                 if (ok && partVisible && region.size() == 2 &&
                     !boxesOverlap(p["bounds"].toArray(), region))
                 {
                     c->setForeground(COL_NAME, kDim);
                     ptip += "\nOutside the render region";
                 }
-                if (!ok)
+                if (emptyPart)
+                {
+                    c->setForeground(COL_NAME, kDim);
+                    ptip = QString("Part %1%2 is empty: the file lists this body but gives it no surface, so there is nothing to import.\n"
+                                   "It is not an error of your script; the parts after it keep their numbers.")
+                               .arg(k).arg(path.isEmpty() ? QString() : " (" + path + ")");
+                }
+                else if (!ok)
                 {
                     c->setForeground(COL_NAME, QColor(0xdc, 0x6e, 0x5e));
                     ptip = p["error"].toString();
@@ -1670,24 +2036,10 @@ void ScenePanel::rebuild()
                 {
                     const bool inUse = (k == current);
                     ptip += inUse ? "\nIn use" : "\nDouble-click: use this part";
-                    c->setIcon(COL_EYE, eyeIcon(inUse && it["visible"].toBool()));
                 }
                 else if (!p.contains("var"))
                 {
                     ptip += "\nDouble-click: add to the script";
-                    c->setIcon(COL_EYE, eyeIcon(false));
-                }
-                else
-                {
-                    // Mirror the bound variable's visibility
-                    for (const auto ov : items)
-                    {
-                        const auto o = ov.toObject();
-                        if (o["var"].toString() == p["var"].toString() && o["kind"].toString() != "import")
-                        {
-                            c->setIcon(COL_EYE, eyeIcon(o["visible"].toBool()));
-                        }
-                    }
                 }
                 c->setToolTip(COL_NAME, ptip);
             }
@@ -1718,7 +2070,7 @@ void ScenePanel::rebuild()
         }
         if (anyUses || !mine.isEmpty()) expandedByDefault[row] = true;
     }
-
+    phase("items");
     // The nesting: each owned model's row goes under its owner's.  Under a statement the rows of the models it is given stand
     // in the order of its arguments (the owned ones and the shadows alike), then what it uses otherwise
     QHash<QTreeWidgetItem*, QList<QTreeWidgetItem*>> owning;
@@ -1728,9 +2080,9 @@ void ScenePanel::rebuild()
         if (!it.contains("owner")) continue;
         QTreeWidgetItem* child = rowOfKey.value(keyOf(it));
         QTreeWidgetItem* parent = rowOfKey.value(it["owner"].toString());
-        if (!child || !parent || child == parent || m_tree->indexOfTopLevelItem(child) < 0) continue;
+        if (!child || !parent || child == parent || nested.contains(child)) continue;
         // (an owner is a later statement than what it owns, so a row is never put under its own child)
-        m_tree->takeTopLevelItem(m_tree->indexOfTopLevelItem(child));
+        nested.insert(child);
         owning[parent] << child;
     }
     for (auto parent : rowOfKey)
@@ -1758,6 +2110,105 @@ void ScenePanel::rebuild()
         for (auto c : others) parent->addChild(c);
         for (auto c : rows) parent->addChild(c);
     }
+    {
+        // Every row that is not under another goes into the tree, all at once
+        QList<QTreeWidgetItem*> top;
+        for (auto r : topRows)
+        {
+            if (!nested.contains(r)) top << r;
+        }
+        m_tree->addTopLevelItems(top);
+    }
+    phase("nesting");
+    // The property rows of the models.  They are made here, once the rows are in their order: a row that is taken out of its parent and put back
+    // (above) is given back without its widgets
+    auto addResolutionRow = [&](QTreeWidgetItem* row, const QJsonObject& it, const QString& meshNote = QString()) {
+        // A property of the model, a child row: the resolution it is meshed at, whatever the scene's is.  The number is typed in here
+        // (the line `x = custom_resolution(x, number)` is rewritten as it is typed); the bin takes the line away
+        const auto cr = it["custom_resolution"].toObject();
+        const QString var = it["var"].toString();
+        const QString fn = "custom_resolution:" + var;
+        auto c = makeRow(row, QString(), QIcon(), "setting", cr, "setting:" + fn);
+        c->setData(COL_NAME, ROLE_LINE, cr["line"].toInt() - 1);
+        c->setToolTip(COL_NAME, "A resolution of its own for " + var + " (samples per mm), whatever the scene's is. Type a number; the bin "
+                                "deletes the line\n" + cr["text"].toString());
+        c->setFirstColumnSpanned(true);
+        auto w = new QWidget;
+        w->setStyleSheet("background: transparent;");
+        auto lay = new QHBoxLayout(w);
+        lay->setContentsMargins(0, 0, 2, 0);
+        lay->setSpacing(3);
+        auto lab = new QLabel("custom_resolution");
+        lab->setFixedWidth(116);
+        lab->setAttribute(Qt::WA_TransparentForMouseEvents);
+        lab->setStyleSheet("color: #eee8d5; font-size: 8.5pt; padding: 0px;");
+        lay->addWidget(lab);
+        const QString shown = cr["value"].isDouble() ? QString::number(cr["value"].toDouble(), 'g', 8) : QString();
+        auto e = new QLineEdit(shown);
+        e->setFixedSize(58, 18);
+        e->setAlignment(Qt::AlignCenter);                   // (a number is centred in its field)
+        e->setCursorPosition(0);
+        auto vd = new QDoubleValidator(0.0, 1e9, 6, e);
+        vd->setNotation(QDoubleValidator::StandardNotation);
+        vd->setLocale(QLocale::c());
+        e->setValidator(vd);
+        e->setProperty("fn", fn);
+        e->setProperty("shown", shown);
+        e->setToolTip("Samples per mm");
+        e->setStyleSheet("QLineEdit { background: rgba(0, 0, 0, 80); color: #eee8d5; border: 1px solid rgba(147, 161, 161, 90);"
+                         " border-radius: 2px; padding: 0px 3px; font-size: 8.5pt; selection-background-color: #268bd2; }"
+                         "QLineEdit:focus { border: 1px solid #268bd2; background: rgba(0, 0, 0, 120); }");
+        e->installEventFilter(this);
+        connect(e, &QLineEdit::textEdited, this, [this, e] { commitSetting(e, true); });
+        connect(e, &QLineEdit::editingFinished, this, [this, e] { commitSetting(e); });
+        lay->addWidget(e);
+        m_settingEditors[fn] << QPointer<QLineEdit>(e);
+        if (cr["used"].isDouble())
+        {
+            // A body can be drawn at 2000 samples along its longest side at the most: a finer number is not an error, it is capped,
+            // and what is drawn is said here
+            auto capped = new QLabel(QString(QChar(0x2192)) + " " + QString::number(cr["used"].toDouble(), 'g', 3));
+            capped->setStyleSheet("color: #e0b050; font-size: 8.5pt; padding: 0px;");
+            capped->setToolTip(QString("%1 samples per mm is more than this body can be drawn at: it is %2 mm long, and 2000 samples along its "
+                                       "longest side is the finest there is. It is drawn at %3 per mm.")
+                                   .arg(shown).arg(QString::number(2000.0 / cr["used"].toDouble(), 'g', 4))
+                                   .arg(QString::number(cr["used"].toDouble(), 'g', 3)));
+            lay->addWidget(capped);
+        }
+        if (!meshNote.isEmpty())
+        {
+            // A part that was imported as a mesh (tessellated) is drawn from its own triangles: there is nothing to mesh, so no resolution
+            // changes how it looks
+            auto mesh = new QLabel("(" + meshNote + ")");
+            mesh->setStyleSheet("color: #93a1a1; font-size: 8.5pt; padding: 0px;");
+            mesh->setToolTip("This part was imported as a mesh: it is drawn from its own triangles, not meshed from a field, so a resolution "
+                             "does not change how it looks.");
+            lay->addWidget(mesh);
+        }
+        lay->addStretch(1);
+        auto bin = new QToolButton;
+        bin->setIcon(deleteIcon());
+        bin->setIconSize(QSize(16, 16));
+        bin->setFixedSize(20, 20);
+        bin->setAutoRaise(true);
+        bin->setToolTip("Delete this line (the model is drawn at the scene's resolution again)");
+        connect(bin, &QToolButton::clicked, this, [this, c] { deleteRow(c); });
+        lay->addWidget(bin);
+        m_tree->setItemWidget(c, COL_NAME, w);
+    };
+    for (auto row : rowOfKey)
+    {
+        const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        if (it.contains("custom_resolution") && it.contains("var") && !it["failed"].toBool()) addResolutionRow(row, it);
+    }
+    // (a part of an import that the script has as a variable is a row of its own under the import, not a model row: its resolution is
+    // a row under it, the same one)
+    for (const auto& pr : partResolutions)
+    {
+        addResolutionRow(pr.first, pr.second, partNotes.value(pr.first));
+        pr.first->setExpanded(m_expandState.value(pr.first->data(COL_NAME, ROLE_KEY).toString(), true));
+    }
+    phase("properties");
     // (a row's expansion is a property of its place in the view: set once the rows are where they stay)
     for (auto row : rowOfKey)
     {
@@ -1783,8 +2234,12 @@ void ScenePanel::rebuild()
     {
         note = "Isolated: " + m_isolatedName + ". Press I to show everything again.";
     }
+    // (the script has an error: the note says what, in red, and the rows are the last that worked)
+    if (!m_errorText.isEmpty()) note = errorNote();
+    setErrorStyle(m_note, !m_errorText.isEmpty());
     m_note->setText(note);
 
+    phase("expansion");
     // The selection comes back: every row that was selected, the current one as it was
     if (restore.isEmpty() && toSelect) restore << toSelect;
     for (auto r : restore) m_tree->setCurrentItem(r, 0, QItemSelectionModel::Select | QItemSelectionModel::Rows);
@@ -1800,12 +2255,32 @@ void ScenePanel::rebuild()
         if (!order.contains(k)) order << k;
     }
     m_selectOrder = order;
+    phase("selection");
     m_rebuilding = false;
-    if (m_tree->verticalScrollBar())
-    {
-        m_tree->verticalScrollBar()->setValue(scroll);
-    }
+    // The tree is where it was.  The range of the scroll bar is only known once the rows have been laid out (done lazily, after
+    // this function), and a value put into the bar before that is cut down to the old range: the tree jumped to the top
+    // whenever its rows changed under it (the I key writes a line for each model, and the tree is built again).  So the layout
+    // is done now, the value put back, the panel resized to its rows (which can change the range again), and once more when
+    // the event loop has laid the rest out
+    auto putScrollBack = [this, scroll] {
+        if (auto bar = m_tree->verticalScrollBar()) bar->setValue(scroll);
+    };
+    m_tree->doItemsLayout();
+    putScrollBack();
+    phase("layout1");
     setCollapsed(m_collapsed);
+    phase("collapse");
+    m_tree->doItemsLayout();
+    putScrollBack();
+    phase("layout2");
+    if (scroll > 0)
+    {
+        // (only if something put it back to the top meanwhile: a scroll the user or a selection makes after this stays)
+        QTimer::singleShot(0, this, [this, scroll] {
+            auto bar = m_tree->verticalScrollBar();
+            if (bar && bar->value() == 0 && !m_rebuilding) bar->setValue(scroll);
+        });
+    }
     if (typedIndex >= 0)
     {
         if (auto typing = settingEditor(typedFn, typedIndex))
@@ -1862,6 +2337,43 @@ QString ScenePanel::lineText(int line0) const
 {
     const QStringList lines = m_source ? m_source().split('\n') : QStringList();
     return (line0 >= 0 && line0 < lines.size()) ? lines[line0] : QString();
+}
+
+bool ScenePanel::lineIs(int line0, const QString& var, const QString& kind) const
+{
+    const QString text = lineText(line0);
+    if (lineMatches(text, var, kind)) return true;
+    QString says;
+    if (kind == "display") says = "the line that shows " + var;
+    else if (kind == "hidden") says = "the line that hides " + var + " (# hidden: " + var + ")";
+    else if (kind == "definition") says = "a statement of " + var;
+    else says = "the line " + var + " = " + kind + "(" + var + ", ...)";
+    m_lineMismatch = QString("line %1 of the script is `%2`, and the rows say it is %3").arg(line0 + 1).arg(text.trimmed().left(70)).arg(says);
+    return false;
+}
+
+bool ScenePanel::lineIsExpression(int line0, const QJsonObject& it) const
+{
+    // (a displayed expression has no name: its row has the first characters of the statement; hidden, the line has `# hidden: ` before it)
+    static const QRegularExpression hiddenRe(R"(^(\s*)(?:#\s*hidden:\s?)+)");
+    QString text = lineText(line0);
+    text.replace(hiddenRe, "\\1");
+    const QString head = it["text"].toString().simplified().left(12);
+    if (!head.isEmpty() && text.simplified().left(head.size()) == head) return true;
+    m_lineMismatch = QString("line %1 of the script is `%2`, and the rows say it is the expression `%3`").arg(line0 + 1)
+                         .arg(lineText(line0).trimmed().left(70)).arg(it["text"].toString().left(40));
+    return false;
+}
+
+void ScenePanel::refuseOutOfDate()
+{
+    notify("Nothing was written: the rows of the tree are of an older text than the script (" + m_lineMismatch + "), and an edit made "
+           "from them would have changed the wrong line. The script is being run again to bring the rows up to date: click again then.");
+    // (the run that brings the rows up to date clears the line under the tree: what happened is said again when it is done)
+    m_refusedNote = "Your last click wrote nothing: the rows were of an older text than the script (" + m_lineMismatch + "). They are up to "
+                    "date now: click again.";
+    m_lineMismatch.clear();
+    emit(rerunRequested());
 }
 
 QString ScenePanel::uniqueName(const QString& base) const
@@ -1931,11 +2443,16 @@ bool ScenePanel::visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit
             const int L = it["display_line"].toInt() - 1;
             const QString t = lineText(L);
             if (!hiddenRe.match(t).hasMatch())
+            {
+                // (the line is checked to be the line that shows the model: m_lineMismatch says when it is not, and the caller writes nothing)
+                if (!lineIs(L, it["var"].toString(), "display")) return false;
                 edits << TextEdit{L, 0, L, int(t.size()), indentOf(t) + "# hidden: " + t.trimmed()};
+            }
         }
         else if (show && it.contains("hidden_line"))
         {
             const int L = it["hidden_line"].toInt() - 1;
+            if (!lineIs(L, it["var"].toString(), "hidden")) return false;
             const QString t = lineText(L);
             QString shown = t;
             shown.replace(hiddenRe, "\\1");
@@ -1944,6 +2461,7 @@ bool ScenePanel::visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit
         else if (show)
         {
             const int L = it["end_line"].toInt() - 1;
+            if (!lineIs(it["line"].toInt() - 1, it["var"].toString(), "definition")) return false;
             const QString t = lineText(L);
             edits << TextEdit{L, int(t.size()), L, int(t.size()), "\n" + indentOf(t) + it["var"].toString()};
         }
@@ -1952,6 +2470,7 @@ bool ScenePanel::visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit
     if (it["kind"].toString() == "display")
     {
         const int a = it["line"].toInt() - 1, b = it["end_line"].toInt() - 1;
+        if (!lineIsExpression(a, it)) return false;
         for (int L = a; L <= b; ++L)
         {
             const QString t = lineText(L);
@@ -1965,61 +2484,10 @@ bool ScenePanel::visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit
     return false;
 }
 
-void ScenePanel::setAllParts(const QJsonObject& imp, bool show)
-{
-    QList<TextEdit> edits;
-    QString added;
-    const QString list = imp["list_var"].toString();
-    QSet<QString> taken;
-    for (const auto pv : imp["parts"].toArray())
-    {
-        const auto p = pv.toObject();
-        if (!p["ok"].toBool()) continue;
-        if (p.contains("var"))
-        {
-            const auto o = itemForVar(p["var"].toString());
-            if (!o.isEmpty()) visibilityEdit(o, show, edits);
-        }
-        else if (show)
-        {
-            QString name = uniqueName(list + "_" + QString::number(p["index"].toInt()));
-            for (int n = 2; taken.contains(name); ++n) name += "_" + QString::number(n);
-            taken << name;
-            added += QString("\n%1 = %2[%3][0]\n%1").arg(name).arg(list).arg(p["index"].toInt());
-        }
-    }
-    if (!added.isEmpty())
-    {
-        const int L = imp["end_line"].toInt() - 1;
-        const QString t = lineText(L);
-        edits << TextEdit{L, int(t.size()), L, int(t.size()), added};
-    }
-    if (show && !edits.isEmpty())
-    {
-        // ...and render the whole assembly, with whatever else is shown
-        int end = imp["end_line"].toInt();
-        QStringList exprs = visibleRoiExprs(imp["line"].toInt(), &end);
-        exprs.removeAll(list);
-        exprs.prepend(list);
-        QJsonObject all;
-        all["roi_expr"] = exprs.join(", ");
-        all["end_line"] = end;
-        roiEdits(all, edits);
-    }
-    if (!edits.isEmpty())
-    {
-        emit(editScript(edits, show ? "Show all parts" : "Hide all parts"));
-        if (show && imp.contains("bounds"))
-        {
-            focusOn(imp);   // frame the whole assembly
-        }
-    }
-}
-
 void ScenePanel::showOtherPart(const QJsonObject& imp, int part)
 {
-    // "x = import_step_parts(P)[i]..." can show only part i: split it into
-    // "name = import_step_parts(P)" and "x = name[i]...", then add the part
+    // "x = import_model(P)[i]..." can show only part i: split it into
+    // "name = import_model(P)" and "x = name[i]...", then add the part
     const auto c = imp["call"].toArray();
     if (c.size() != 4) return;
     const QString callText = spanText(c);
@@ -2041,45 +2509,386 @@ void ScenePanel::showOtherPart(const QJsonObject& imp, int part)
     emit(editScript(edits, "Show part " + QString::number(part)));
 }
 
+bool ScenePanel::sceneIsStale() const
+{
+    // The rows know the lines of the script as they were when it ran.  When the text has changed since (an edit of the script that is
+    // still running, or one that a click of the tree has made and whose run is not done), an edit made from those lines lands on
+    // other lines: a definition commented out, a line of the lock deleted that is another's
+    if (!m_source) return false;
+    // The rows are made again a moment from now (after an edit that the tree followed): the ones that are there are the old ones
+    if (m_rebuildPending) return true;
+    // A prediction is of the text that the edit gave: while the script is as the edit left it, the lines of the rows fit it (a key typed
+    // in the editor since makes them wrong again)
+    if (m_predicted) return md5Hex(m_source()) != m_predictedMd5;
+    if (m_sceneClock.isValid() && m_sceneClock.elapsed() > 120000) return false;     // (no scene has come for two minutes: not waited for)
+    if (m_partialShown) return true;                    // (a run that is not done)
+    const QString md5 = m_scene["source_md5"].toString();
+    if (md5.isEmpty()) return false;
+    return QCryptographicHash::hash(m_source().toUtf8(), QCryptographicHash::Md5).toHex() != md5.toLatin1();
+}
+
+bool ScenePanel::deferEdit(std::function<void()> again, const QString& what)
+{
+    if (!sceneIsStale()) return false;
+    if (!m_errorText.isEmpty())
+    {
+        // (no run is going to bring a tree that fits: the one shown is the last run that worked)
+        notify("The script has an error, so the rows are those of the last run that worked and no longer fit it: " + what +
+               " cannot be done from them. Fix the error first.");
+        return true;
+    }
+    m_deferred << again;
+    notify("The script is running: " + what + " follows when it is done.");
+    return true;
+}
+
+bool ScenePanel::deferItems(const QList<QJsonObject>& items, const QString& what,
+                            std::function<void(const QList<QJsonObject>&)> again)
+{
+    for (const auto& it : items)
+    {
+        if (!it.contains("var") && !it.contains("list_var")) return false;       // (an expression has no name to find it again by)
+    }
+    if (!sceneIsStale()) return false;
+    QStringList keys;
+    for (const auto& it : items) keys << keyOf(it);
+    return deferEdit([this, keys, again] {
+        QList<QJsonObject> fresh;
+        for (const QString& k : keys)
+        {
+            const QJsonObject o = itemByKey(k);
+            if (!o.isEmpty()) fresh << o;
+        }
+        if (!fresh.isEmpty()) again(fresh);
+    }, what);
+}
+
+void ScenePanel::runDeferred()
+{
+    // (one at a time: what it edits makes the scene out of date again, and the next waits for the run that answers it)
+    if (m_deferred.isEmpty() || sceneIsStale()) return;
+    const auto next = m_deferred.takeFirst();
+    QTimer::singleShot(0, this, next);
+}
+
+QVector<int> ScenePanel::originAfter(const QStringList& before, const QList<TextEdit>& edits, const QStringList& after) const
+{
+    // The text is its lines joined by newlines: every edit is a range of characters replaced by a text.  A line is the same line
+    // afterwards when its first character is where a line begins afterwards -- a line that is replaced from its first character on
+    // stays that line, a line that is deleted from its first character on is gone, and a line before which text is put is pushed down
+    // by the lines of that text (what is put in front of it on its own line does not make it another line)
+    const int n = before.size(), m = after.size();
+    if (n == 0 || m == 0) return QVector<int>();
+    QVector<int> start(n + 1);
+    int off = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        start[i] = off;
+        off += before[i].size() + 1;
+    }
+    start[n] = off;
+    const int end = off - 1;                                        // (the text's length)
+    auto at = [&](int line, int col) {
+        if (line < 0) return 0;
+        if (line >= n) return end;
+        return start[line] + std::min(std::max(col, 0), int(before[line].size()));
+    };
+    struct Span { int a, b, len, lastNewline; };
+    QList<Span> spans;
+    int expected = end;
+    for (const auto& e : edits)
+    {
+        const Span s{at(e.line0, e.col0), at(e.line1, e.col1), int(e.text.size()), int(e.text.lastIndexOf('\n'))};
+        if (s.b < s.a) return QVector<int>();
+        spans << s;
+        expected += s.len - (s.b - s.a);
+    }
+    std::stable_sort(spans.begin(), spans.end(), [](const Span& x, const Span& y) { return x.a != y.a ? x.a < y.a : x.b < y.b; });
+    for (int k = 1; k < spans.size(); ++k)
+    {
+        if (spans[k].a < spans[k - 1].b) return QVector<int>();            // (edits that overlap)
+    }
+    // Where each line of the new text begins; the new text must be what these edits make of the old one (its length at least)
+    QHash<int, int> lineAt;
+    off = 0;
+    for (int i = 0; i < m; ++i)
+    {
+        lineAt.insert(off, i);
+        off += after[i].size() + 1;
+    }
+    if (off - 1 != expected) return QVector<int>();
+    QVector<int> origin(m, -1);
+    for (int i = 0; i < n; ++i)
+    {
+        const int p = start[i];
+        int delta = 0;
+        bool gone = false;
+        for (const auto& s : spans)
+        {
+            if (p < s.a) break;
+            if (s.a == s.b)
+            {
+                delta += (p == s.a) ? s.lastNewline + 1 : s.len;
+                continue;
+            }
+            if (p == s.a)
+            {
+                gone = s.len == 0;
+                break;
+            }
+            if (p < s.b)
+            {
+                gone = true;
+                break;
+            }
+            delta += s.len - (s.b - s.a);
+        }
+        if (gone) continue;
+        const auto found = lineAt.constFind(p + delta);
+        if (found == lineAt.constEnd()) return QVector<int>();             // (a line that stays, and is not where a line begins: not these edits)
+        if (origin[found.value()] >= 0) return QVector<int>();             // (two lines that cannot be told apart)
+        origin[found.value()] = i;
+    }
+    // A line that no edit touched is the same text afterwards: if it is not, the edits are not what happened to the text
+    for (int k = 0; k < m; ++k)
+    {
+        const int i = origin[k];
+        if (i < 0) continue;
+        const int lo = start[i], hi = start[i] + before[i].size();
+        bool touched = false;
+        for (const auto& s : spans)
+        {
+            if (s.a <= hi && s.b >= lo)
+            {
+                touched = true;
+                break;
+            }
+        }
+        if (!touched && before[i] != after[k]) return QVector<int>();
+    }
+    return origin;
+}
+
+bool ScenePanel::editFollowed(const QList<TextEdit>& edits, const QString& what,
+                              const std::function<void(QJsonObject&, const QVector<int>&)>& patch)
+{
+    if (!m_source)
+    {
+        emit(editScript(edits, what));
+        return false;
+    }
+    // An edit that starts or ends before the first line is not one: the rows it was worked out from do not fit the script (the editor
+    // would put it at the end of the text).  It is not written
+    for (const auto& e : edits)
+    {
+        if (e.line0 < 0 || e.line1 < 0 || e.col0 < 0 || e.col1 < 0)
+        {
+            notify("The rows do not fit the script (a line they point at is not there): nothing was changed. Wait for the script to run.");
+            return false;
+        }
+    }
+    // (the rows must be of the text the edit is made from: the buttons ask deferItems before they work out the edit)
+    const bool fits = !sceneIsStale();
+    const QStringList before = m_source().split('\n');
+    QElapsedTimer clock;
+    clock.start();
+    emit(editScript(edits, what));
+    if (!fits) return false;
+    const QStringList after = m_source().split('\n');
+    if (after == before) return false;
+    const QVector<int> origin = originAfter(before, edits, after);
+    if (origin.isEmpty()) return false;                 // (not followed: the tree waits for the run, as an edit of the editor's does)
+    QVector<int> newIndex(before.size(), -1);
+    for (int k = 0; k < origin.size(); ++k)
+    {
+        if (origin[k] >= 0 && origin[k] < newIndex.size()) newIndex[origin[k]] = k;
+    }
+    QJsonObject scene = predictedScene(before.size(), after, origin, QList<ColShift>(), QStringList(), QHash<QString, int>());
+    {
+        // (an edit that took no line away takes no model away: a tree that lost some is not what the edit made)
+        bool taken = false;
+        for (int v : newIndex) taken = taken || v < 0;
+        int was = 0, now = 0;
+        for (const auto v : m_scene["items"].toArray()) was += v.toObject().contains("line") ? 1 : 0;
+        for (const auto v : scene["items"].toArray()) now += v.toObject().contains("line") ? 1 : 0;
+        if (!taken && was != now) return false;
+    }
+    if (const char* log = std::getenv("FIELDES_TREE_LOG"))
+    {
+        // (for the tests: what the edit was and what the tree made of it)
+        if (FILE* f = std::fopen(log, "a"))
+        {
+            QString o;
+            for (int k = 0; k < origin.size() && k < 40; ++k) o += QString::number(origin[k]) + " ";
+            std::fprintf(f, "[tree] edit \"%s\": %d -> %d lines, origin %s\n", what.toUtf8().constData(), int(before.size()),
+                         int(after.size()), o.toUtf8().constData());
+            for (const auto& e : edits)
+                std::fprintf(f, "[tree]   replace %d:%d - %d:%d by \"%s\"\n", e.line0, e.col0, e.line1, e.col1,
+                             QString(e.text).replace('\n', "\\n").toUtf8().constData());
+            std::fclose(f);
+        }
+    }
+    patch(scene, newIndex);
+    if (const char* log = std::getenv("FIELDES_TREE_LOG"))
+    {
+        if (FILE* f = std::fopen(log, "a"))
+        {
+            for (const auto v : scene["items"].toArray())
+            {
+                const auto o = v.toObject();
+                if (!o.contains("var")) continue;
+                std::fprintf(f, "[tree]   item %s line=%d display=%d hidden=%d visible=%d locked=%d cache_off=%d\n",
+                             o["var"].toString().toUtf8().constData(), o["line"].toInt(), o["display_line"].toInt(), o["hidden_line"].toInt(),
+                             o["visible"].toBool() ? 1 : 0, o["locked"].toObject()["line"].toInt(), o["cache_off"].toObject()["line"].toInt());
+            }
+            std::fclose(f);
+        }
+    }
+    // The scene is the prediction from now on; the rows are made from it a moment later, not inside the click that is being handled
+    // (the click's own row is deleted by that: the tree is still using it) -- until then an edit waits (sceneIsStale)
+    m_scene = scene;
+    m_predicted = true;
+    m_predictedMd5 = md5Hex(m_source());
+    m_partialShown = false;
+    m_predictClock.start();
+    // The viewport's shapes are made on lines that this edit has moved: they are told, so that a shape that is clicked is the row it
+    // is, and the row that is selected lights up its own shape, until the run has made new ones
+    emit(sourceLinesMoved(newIndex));
+    if (!m_rebuildPending)
+    {
+        m_rebuildPending = true;
+        QTimer::singleShot(0, this, [this] {
+            if (!m_rebuildPending) return;              // (a scene made the rows meanwhile)
+            rebuild();
+            updateMultiNote();
+            emit(highlightLines(selectedLines()));      // (the shapes of the selected rows, by their lines as they are now)
+            runDeferred();
+        });
+    }
+    if (std::getenv("FIELDES_TREE_LOG"))
+    {
+        if (FILE* f = std::fopen(std::getenv("FIELDES_TREE_LOG"), "a"))
+        {
+            std::fprintf(f, "[tree] followed \"%s\": %lld ms to write and follow\n", what.toUtf8().constData(),
+                         static_cast<long long>(clock.elapsed()));
+            std::fclose(f);
+        }
+    }
+    return true;
+}
+
+QString ScenePanel::sceneCachePath(const QString& md5) const
+{
+    const QByteArray env = qgetenv("FIELDES_SCENE_CACHE_DIR");
+    const QString dir = !env.isEmpty() ? QString::fromLocal8Bit(env)
+                                       : QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/scene-cache";
+    return dir + "/" + md5 + "-" + sceneCacheStamp() + ".fdscene";
+}
+
+void ScenePanel::saveSceneCache(const QString& json, const QString& md5)
+{
+    const QString key = md5 + "|" + QString::fromLatin1(QCryptographicHash::hash(json.toUtf8(), QCryptographicHash::Md5).toHex());
+    if (key == m_savedSceneKey) return;                 // (the same tree is kept already)
+    m_savedSceneKey = key;
+    const QString path = sceneCachePath(md5);
+    // (a moment later, with the rows made: the tree does not wait for the disk)
+    QTimer::singleShot(250, this, [path, json] {
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile f(path);
+        if (!f.open(QIODevice::WriteOnly)) return;
+        f.write(qCompress(json.toUtf8(), 3));
+        if (!f.commit()) return;
+        // (the oldest trees go: sixty are kept)
+        const auto files = QDir(QFileInfo(path).absolutePath()).entryInfoList(QStringList{"*.fdscene"}, QDir::Files, QDir::Time);
+        for (int i = 60; i < files.size(); ++i) QFile::remove(files[i].absoluteFilePath());
+    });
+}
+
+void ScenePanel::showCached()
+{
+    if (!m_source || m_predicted || !m_scene["items"].toArray().isEmpty()) return;
+    const QString text = m_source();
+    if (text.trimmed().isEmpty()) return;
+    const QString md5 = md5Hex(text);
+    const QString path = sceneCachePath(md5);
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const QByteArray json = qUncompress(f.readAll());
+    f.close();
+    const auto doc = QJsonDocument::fromJson(json);
+    if (!doc.isObject()) return;
+    const QJsonObject scene = doc.object();
+    // (a tree of this very text, from a run that worked)
+    if (scene["errored"].toBool() || scene["source_md5"].toString() != md5 || scene["items"].toArray().isEmpty()) return;
+    {
+        // (the newest are kept when the oldest go)
+        QFile touch(path);
+        if (touch.open(QIODevice::ReadWrite)) touch.setFileTime(QDateTime::currentDateTime(), QFileDevice::FileModificationTime);
+    }
+    m_savedSceneKey = md5 + "|" + QString::fromLatin1(QCryptographicHash::hash(json, QCryptographicHash::Md5).toHex());
+    m_scene = scene;
+    m_sceneClock.start();
+    m_predicted = false;
+    m_partialShown = false;
+    TypeIcons::setKinds(m_scene["kinds"].toObject());
+    ++m_generation;
+    rebuild();
+    updateMultiNote();
+}
+
 void ScenePanel::toggleVisible(const QJsonObject& it)
 {
+    if (deferItems({it}, "showing or hiding it", [this](const QList<QJsonObject>& f) { toggleVisible(f[0]); })) return;
     QList<TextEdit> edits;
     static const QRegularExpression hiddenRe(R"(^(\s*)(?:#\s*hidden:\s?)+)");
     if (it.contains("var"))
     {
         const QString var = it["var"].toString();
+        bool show = true;
+        // (the line an edit is written on is checked to be the line the row says: see lineIs)
         if (it.contains("display_line"))
         {
+            show = false;
             const int L = it["display_line"].toInt() - 1;
             const QString t = lineText(L);
             if (!hiddenRe.match(t).hasMatch())
+            {
+                if (!lineIs(L, var, "display")) { refuseOutOfDate(); return; }
                 edits << TextEdit{L, 0, L, int(t.size()), indentOf(t) + "# hidden: " + t.trimmed()};
-            emit(editScript(edits, "Hide " + var));
+            }
         }
         else if (it.contains("hidden_line"))
         {
             const int L = it["hidden_line"].toInt() - 1;
+            if (!lineIs(L, var, "hidden")) { refuseOutOfDate(); return; }
             const QString t = lineText(L);
             QString shown = t;
             shown.replace(hiddenRe, "\\1");
             edits << TextEdit{L, 0, L, int(t.size()), shown};
             m_prepareAgain = true;          // (a selected model that is shown now is made ready to be dragged once the script has run)
-            emit(editScript(edits, "Show " + var));
         }
         else
         {
             const int L = it["end_line"].toInt() - 1;
+            // (the statement starts on its `line`; the last of its lines can be the end of a call)
+            if (!lineIs(it["line"].toInt() - 1, var, "definition") || lineText(L).isNull()) { refuseOutOfDate(); return; }
             const QString t = lineText(L);
             edits << TextEdit{L, int(t.size()), L, int(t.size()), "\n" + var};
             m_prepareAgain = true;          // (a selected model that is shown now is made ready to be dragged once the script has run)
-            emit(editScript(edits, "Show " + var));
         }
+        if (edits.isEmpty()) return;
+        // The tree follows the edit at once (its eye, its dimmed name, every line under it), without waiting for the run
+        editFollowed(edits, (show ? "Show " : "Hide ") + var, [it, show](QJsonObject& scene, const QVector<int>& moved) {
+            const int line = moved.value(it["line"].toInt() - 1, -1) + 1;
+            if (line > 0) patchAt(scene, line, it["var"].toString(), [show](QJsonObject& o) { patchVisible(o, show); });
+        });
         return;
     }
     if (it["kind"].toString() == "display")
     {
         const int a = it["line"].toInt() - 1, b = it["end_line"].toInt() - 1;
         const bool visible = it["visible"].toBool();
+        if (!lineIsExpression(a, it)) { refuseOutOfDate(); return; }
         for (int L = a; L <= b; ++L)
         {
             const QString t = lineText(L);
@@ -2098,7 +2907,7 @@ QJsonObject ScenePanel::handlesTarget(const QJsonObject& imp, int part) const
     if (part < 0 || part >= parts.size()) return QJsonObject();
     const auto p = parts[part].toObject();
     if (p.contains("var")) return itemForVar(p["var"].toString());
-    // "x = import_step_parts(P)[k]": the statement's own variable is the part
+    // "x = import_model(P)[k]": the statement's own variable is the part
     if (imp.contains("var") && imp.contains("index") && imp["index"].toInt() == part &&
         !imp["failed"].toBool())
     {
@@ -2116,10 +2925,6 @@ QString gizmoLine(const QString& var, const QString& mode = "click")
     return var + " = handles(" + var + ", move=(var(0), var(0), var(0)), rotate=(var(0), var(0), var(0)), "
                  "scale=(var(1), var(1), var(1))" + (mode == "click" ? QString() : ", mode='" + mode + "'") + ")";
 }
-
-// A model with no numbers to pull its surfaces by gets them when it is selected, if they are no more than this many
-// (a bigger one -- an imported part -- has it in its menu: they are pages of script)
-const int kAutoExposeNumbers = 120;
 
 }   // anonymous namespace
 
@@ -2205,6 +3010,7 @@ void ScenePanel::toggleSelectedLock()
 
 void ScenePanel::toggleSelectedVisible()
 {
+    if (deferEdit([this] { toggleSelectedVisible(); }, "showing or hiding the selected models")) return;
     QList<Model> models;
     for (const Model& m : selectedModels())
     {
@@ -2218,13 +3024,36 @@ void ScenePanel::toggleSelectedVisible()
     for (const Model& m : models) allShown = allShown && m.item["visible"].toBool();
     QList<TextEdit> edits;
     QStringList names;
+    QList<QJsonObject> changed;
+    bool followable = true;                     // (the tree follows models that are variables; an expression is the run's to say)
+    m_lineMismatch.clear();
     for (const Model& m : models)
     {
         if (visibilityEdit(m.item, !allShown, edits))
+        {
             names << (m.item.contains("var") ? m.item["var"].toString() : m.item["label"].toString());
+            changed << m.item;
+            followable = followable && m.item.contains("var");
+        }
     }
+    // (a line that is not the one the rows say: nothing is written, not even for the models whose lines are right)
+    if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
     if (edits.isEmpty()) return;
-    emit(editScript(edits, QString(allShown ? "Hide " : "Show ") + names.join(", ")));
+    m_prepareAgain = true;          // (a selected model that is shown now is made ready to be dragged once the script has run)
+    const QString what = QString(allShown ? "Hide " : "Show ") + names.join(", ");
+    if (!followable)
+    {
+        emit(editScript(edits, what));
+        return;
+    }
+    const bool show = !allShown;
+    editFollowed(edits, what, [changed, show](QJsonObject& scene, const QVector<int>& moved) {
+        for (const auto& item : changed)
+        {
+            const int line = moved.value(item["line"].toInt() - 1, -1) + 1;
+            if (line > 0) patchAt(scene, line, item["var"].toString(), [show](QJsonObject& o) { patchVisible(o, show); });
+        }
+    });
 }
 
 void ScenePanel::toggleSelectedCache()
@@ -2255,6 +3084,42 @@ void ScenePanel::toggleEditMode(const QJsonObject& target)
 void ScenePanel::toggleLock(const QJsonObject& target)
 {
     if (!target.isEmpty()) applyLock({target}, !target.contains("locked"));
+}
+
+QString ScenePanel::headerText() const
+{
+    return QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  Model tree" +
+           (m_errorText.isEmpty() ? QString() : QString("   ") + QChar(0x26a0) + " error");
+}
+
+QString ScenePanel::errorNote() const
+{
+    return QString(QChar(0x26a0)) + " " + (m_errorLine >= 0 ? QString("Line %1: ").arg(m_errorLine + 1) : QString()) + m_errorText +
+           "\nRows: the last run that worked.";
+}
+
+void ScenePanel::setErrorStyle(QWidget* w, bool on)
+{
+    if (w->property("error").toBool() == on) return;
+    w->setProperty("error", on);
+    w->style()->unpolish(w);
+    w->style()->polish(w);
+    w->update();
+}
+
+void ScenePanel::setError(const QString& text, int line0)
+{
+    m_errorText = text;
+    if (!text.isEmpty()) m_deferred.clear();           // (what waited for a run that fits the script: there is none now)
+    m_errorLine = line0;
+    const bool on = !text.isEmpty();
+    setErrorStyle(this, on);
+    setErrorStyle(m_header, on);
+    setErrorStyle(m_note, on);
+    m_header->setText(headerText());
+    // (cleared: the next scene, which comes with the run that worked, writes the note again; shown: it is written now)
+    m_note->setText(on ? errorNote() : QString());
+    setCollapsed(m_collapsed);
 }
 
 void ScenePanel::notify(const QString& text)
@@ -2292,6 +3157,8 @@ void ScenePanel::setMode(const QJsonObject& target, const QString& next, bool qu
 void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& next, bool quiet)
 {
     if (next != "click" && next != "never" && next != "always") return;
+    if (deferItems(targets, "changing the gizmo mode",
+                   [this, next, quiet](const QList<QJsonObject>& f) { applyModes(f, next, quiet); })) return;
     if (targets.size() == 1 && targets[0]["kind"].toString() == "display")
     {
         nameThen(targets[0], next);
@@ -2299,14 +3166,22 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
     }
     QList<TextEdit> edits;
     QStringList names;
+    QList<QJsonObject> changed;
     ModeImports imports;
     QString why;
+    m_lineMismatch.clear();
     for (const auto& t : targets)
     {
         // (an expression that has no name yet is named one at a time, above)
         if (t["kind"].toString() == "display" || !t.contains("var")) continue;
-        if (modeEdits(t, next, edits, imports, &why)) names << t["var"].toString();
+        if (modeEdits(t, next, edits, imports, &why))
+        {
+            names << t["var"].toString();
+            changed << t;
+        }
     }
+    // (a line that is not the one the rows say: nothing is written, not even for the models whose lines are right)
+    if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
     if (imports.handles) addImportIfMissing(edits, "handles", "handles");
     if (imports.expose) addImportIfMissing(edits, "expose", "handles");
     if (edits.isEmpty())
@@ -2315,10 +3190,45 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
         return;
     }
     emit(editScript(edits, "Edit " + names.join(", ") + ": " + next));
+    // The buttons say the new mode at once, and the rows know it for the next click.  The lines the edit wrote (a handles() line, its
+    // mode) are the run's to say: until its scene is there the rows are the old ones and the next edit waits for it
+    auto sameModel = [&](const QJsonObject& a, const QJsonObject& b) {
+        return a["var"].toString() == b["var"].toString() && a["line"].toInt() == b["line"].toInt();
+    };
+    QJsonArray items = m_scene["items"].toArray();
+    for (int i = 0; i < items.size(); ++i)
+    {
+        QJsonObject o = items[i].toObject();
+        for (const auto& t : changed)
+        {
+            if (!sameModel(o, t)) continue;
+            o["mode"] = next;
+            o["mode_explicit"] = true;
+            items[i] = o;
+            break;
+        }
+    }
+    m_scene["items"] = items;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (row->icon(COL_HANDLES).isNull()) continue;
+        QJsonObject model = modelOfRow(row);
+        if (model.isEmpty()) continue;
+        for (const auto& t : changed)
+        {
+            if (!sameModel(model, t)) continue;
+            model["mode"] = next;
+            setModeButton(row, model);
+            if (row->data(COL_NAME, ROLE_TYPE).toString() == "item") row->setData(COL_NAME, ROLE_ITEM, model);
+            break;
+        }
+    }
 }
 
 void ScenePanel::applyLock(const QList<QJsonObject>& targets, bool lock)
 {
+    if (deferItems(targets, lock ? "locking" : "unlocking", [this, lock](const QList<QJsonObject>& f) { applyLock(f, lock); })) return;
     if (targets.size() == 1 && targets[0]["kind"].toString() == "display")
     {
         // (an expression is named first, and locked once the script has run again)
@@ -2327,34 +3237,65 @@ void ScenePanel::applyLock(const QList<QJsonObject>& targets, bool lock)
     }
     QList<TextEdit> edits;
     QStringList names;
+    struct Done { QJsonObject t; int after; QString indent; };
+    QList<Done> done;
     for (const auto& t : targets)
     {
         if (t["kind"].toString() == "display" || !t.contains("var")) continue;
         if (t.contains("locked") == lock) continue;             // (as asked already)
         const QString var = t["var"].toString();
+        int placed = -1;
+        QString indent;
         if (lock)
         {
+            // (the line the new one goes under is the definition of the model, as the rows say)
+            if (!lineIs(t["line"].toInt() - 1, var, "definition")) { refuseOutOfDate(); return; }
             // Under the definition, and under the numbers exposed for its surfaces, its handles and its cache
             int after = t["end_line"].toInt() - 1;
-            for (const char* key : {"exposed", "handles", "cache", "cache_off"})
+            for (const char* key : {"exposed", "handles", "cache", "cache_off", "custom_resolution"})
             {
                 if (t.contains(key)) after = std::max(after, t[key].toObject()["end_line"].toInt() - 1);
             }
-            const QString indent = indentOf(lineText(t["line"].toInt() - 1));
+            indent = indentOf(lineText(t["line"].toInt() - 1));
             const QString last = lineText(after);
             edits << TextEdit{after, int(last.size()), after, int(last.size()),
                               "\n" + indent + var + " = lock(" + var + ")"};
+            placed = after;
         }
         else
         {
             const auto c = t["locked"].toObject();
+            if (!lineIs(c["line"].toInt() - 1, var, "lock")) { refuseOutOfDate(); return; }
             edits << deleteLines(c["line"].toInt() - 1, c["end_line"].toInt() - 1);
         }
+        done << Done{t, placed, indent};
         names << var;
     }
     if (edits.isEmpty()) return;
     if (lock) addImportIfMissing(edits, "lock", "handles");
-    emit(editScript(edits, QString(lock ? "Lock " : "Unlock ") + names.join(", ")));
+    // (a model that was locked from the start -- an imported part -- has no gizmo line and no numbers for its surfaces yet: once it
+    // is unlocked and the script has run, the selected ones are made ready to be dragged)
+    else m_prepareAgain = true;
+    // The tree follows the edit at once: the lock line is under the definition (or gone), every line under it has moved
+    editFollowed(edits, QString(lock ? "Lock " : "Unlock ") + names.join(", "),
+                 [done, lock](QJsonObject& scene, const QVector<int>& moved) {
+        for (const auto& d : done)
+        {
+            const int line = moved.value(d.t["line"].toInt() - 1, -1) + 1;
+            if (line <= 0) continue;
+            const QString var = d.t["var"].toString();
+            if (!lock)
+            {
+                patchAt(scene, line, var, [](QJsonObject& o) { o.remove("locked"); });
+                continue;
+            }
+            const int placed = moved.value(d.after, -1);        // (the line the new one follows, in the new text)
+            if (placed < 0) continue;
+            patchAt(scene, line, var, [&](QJsonObject& o) {
+                o["locked"] = statementInfo(placed + 2, var, "lock", QString(), d.indent);
+            });
+        }
+    });
 }
 
 bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList<TextEdit>& edits,
@@ -2366,6 +3307,10 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     const QString indent = indentOf(lineText(a));
     const bool hasHandles = target.contains("handles"), hasExposed = target.contains("exposed");
     const auto h = target["handles"].toObject();
+    // (the lines this edit is written at are checked to be what the rows say: the caller writes nothing when m_lineMismatch says one is not)
+    if (!lineIs(a, var, "definition")) return false;
+    if (hasHandles && !lineIs(h["line"].toInt() - 1, var, "handles")) return false;
+    if (hasExposed && !lineIs(target["exposed"].toObject()["line"].toInt() - 1, var, "expose")) return false;
 
     // Under the definition, or under the numbers exposed for its surfaces
     const int after = hasExposed ? target["exposed"].toObject()["end_line"].toInt() - 1 : b;
@@ -2424,6 +3369,7 @@ QString ScenePanel::exposeBlock(const QJsonObject& target, QString* why) const
 
 void ScenePanel::exposeSurfaces(const QJsonObject& target)
 {
+    if (deferItems({target}, "making its surfaces draggable", [this](const QList<QJsonObject>& f) { exposeSurfaces(f[0]); })) return;
     // (the shape's menu: the numbers of a shape too big to get them by being selected)
     if (target.isEmpty() || !target.contains("var")) return;
     QString why;
@@ -2484,6 +3430,7 @@ void ScenePanel::toggleCache(const QJsonObject& target)
 
 void ScenePanel::applyCache(const QList<QJsonObject>& targets, bool on)
 {
+    if (deferItems(targets, "the render cache", [this, on](const QList<QJsonObject>& f) { applyCache(f, on); })) return;
     if (targets.size() == 1 && targets[0]["kind"].toString() == "display")
     {
         // (a displayed expression is on by default: it is named first, as the handles button does, and the line that
@@ -2494,15 +3441,21 @@ void ScenePanel::applyCache(const QList<QJsonObject>& targets, bool on)
     QList<TextEdit> edits;
     QStringList names;
     bool needImport = false;
+    // What the tree does with each (the cache lines are `x = render_cache(x, False)`; `placed` is the line a new one follows)
+    struct Done { QJsonObject t; int placed; QString indent; };
+    QList<Done> done;
     for (const auto& t : targets)
     {
         if (t["kind"].toString() == "display" || !t.contains("var")) continue;
         const QString var = t["var"].toString();
+        int placed = -1;
+        QString indent;
         if (on)
         {
             // Off by a line `x = render_cache(x, False)`: the line goes, and it is on again (the default)
             if (!t.contains("cache_off")) continue;
             const auto c = t["cache_off"].toObject();
+            if (!lineIs(c["line"].toInt() - 1, var, "render_cache")) { refuseOutOfDate(); return; }
             edits << deleteLines(c["line"].toInt() - 1, c["end_line"].toInt() - 1);
         }
         else
@@ -2513,7 +3466,8 @@ void ScenePanel::applyCache(const QList<QJsonObject>& targets, bool on)
                 // On, and said so by a line `x = render_cache(x)`: the line becomes the one that says off
                 const auto c = t["cache"].toObject();
                 const int a = c["line"].toInt() - 1, b = c["end_line"].toInt() - 1;
-                const QString indent = indentOf(lineText(a));
+                if (!lineIs(a, var, "render_cache")) { refuseOutOfDate(); return; }
+                indent = indentOf(lineText(a));
                 edits << TextEdit{a, 0, b, int(lineText(b).size()), indent + var + " = render_cache(" + var + ", False)"};
             }
             else
@@ -2521,23 +3475,53 @@ void ScenePanel::applyCache(const QList<QJsonObject>& targets, bool on)
                 // On by default: the line that turns it off goes under the definition, and under the numbers exposed
                 // for its surfaces, its handles and its lock: the cache is the last of what is done to the shape, so
                 // that it keeps the shape as it is shown
+                if (!lineIs(t["line"].toInt() - 1, var, "definition")) { refuseOutOfDate(); return; }
                 int after = t["end_line"].toInt() - 1;
-                for (const char* key : {"exposed", "handles", "locked"})
+                for (const char* key : {"exposed", "handles", "locked", "custom_resolution"})
                 {
                     if (t.contains(key)) after = std::max(after, t[key].toObject()["end_line"].toInt() - 1);
                 }
-                const QString indent = indentOf(lineText(t["line"].toInt() - 1));
+                indent = indentOf(lineText(t["line"].toInt() - 1));
                 const QString last = lineText(after);
                 edits << TextEdit{after, int(last.size()), after, int(last.size()),
                                   "\n" + indent + var + " = render_cache(" + var + ", False)"};
                 needImport = true;
+                placed = after;
             }
         }
+        done << Done{t, placed, indent};
         names << var;
     }
     if (edits.isEmpty()) return;
     if (needImport) addImportIfMissing(edits, "render_cache", "render_cache");
-    emit(editScript(edits, QString(on ? "Render cache on: " : "Render cache off: ") + names.join(", ")));
+    // The tree follows the edit at once
+    editFollowed(edits, QString(on ? "Render cache on: " : "Render cache off: ") + names.join(", "),
+                 [done, on](QJsonObject& scene, const QVector<int>& moved) {
+        for (const auto& d : done)
+        {
+            const int line = moved.value(d.t["line"].toInt() - 1, -1) + 1;
+            if (line <= 0) continue;
+            const QString var = d.t["var"].toString();
+            patchAt(scene, line, var, [&](QJsonObject& o) {
+                if (on)
+                {
+                    o.remove("cache_off");
+                }
+                else if (d.t.contains("cache"))
+                {
+                    // (the line that said it was on says it is off now: the same lines)
+                    const QJsonObject c = o["cache"].toObject();
+                    o.remove("cache");
+                    o["cache_off"] = statementInfo(c["line"].toInt(), var, "render_cache", ", False", d.indent);
+                }
+                else if (d.placed >= 0)
+                {
+                    const int at = moved.value(d.placed, -1);
+                    if (at >= 0) o["cache_off"] = statementInfo(at + 2, var, "render_cache", ", False", d.indent);
+                }
+            });
+        }
+    });
 }
 
 TextEdit ScenePanel::deleteLines(int a, int b) const
@@ -2551,6 +3535,17 @@ TextEdit ScenePanel::deleteLines(int a, int b) const
 
 void ScenePanel::deleteRow(QTreeWidgetItem* row)
 {
+    {
+        // (a row is found again by its key when the script has run: the rows are made anew)
+        const QString key = row->data(COL_NAME, ROLE_KEY).toString();
+        if (deferEdit([this, key] {
+                for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+                {
+                    if ((*i)->data(COL_NAME, ROLE_KEY).toString() == key) { deleteRow(*i); return; }
+                }
+            }, "deleting"))
+            return;
+    }
     const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
     const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
     if (type == "setting")
@@ -2559,8 +3554,24 @@ void ScenePanel::deleteRow(QTreeWidgetItem* row)
         if (row->data(COL_NAME, ROLE_KEY).toString().startsWith("setting:set_bounds")) return;
         if (it.contains("line"))
         {
-            emit(editScript({deleteLines(it["line"].toInt() - 1, it["end_line"].toInt() - 1)},
-                            "Delete " + it["text"].toString()));
+            const QList<TextEdit> edit{deleteLines(it["line"].toInt() - 1, it["end_line"].toInt() - 1)};
+            const QString what = "Delete " + it["text"].toString();
+            // (the resolution of a model of its own is a block of its model: its row goes with its line, at once.  What a render setting
+            // goes back to is the run's to say)
+            const QString key = row->data(COL_NAME, ROLE_KEY).toString();
+            if (key.startsWith("setting:custom_resolution:"))
+            {
+                if (!lineIs(it["line"].toInt() - 1, key.mid(int(QString("setting:custom_resolution:").size())), "custom_resolution"))
+                {
+                    refuseOutOfDate();
+                    return;
+                }
+                editFollowed(edit, what, [](QJsonObject&, const QVector<int>&) {});
+            }
+            else
+            {
+                emit(editScript(edit, what));
+            }
         }
         return;
     }
@@ -2617,6 +3628,215 @@ void ScenePanel::deleteSelected()
     deleteItems(items);
 }
 
+namespace {
+
+// `text` with the name `from` made `to` wherever it is a name: not a keyword argument (`f(from=1)`), an attribute (`.from`), part of
+// another name, or inside a string
+QString renamedIn(const QString& text, const QString& from, const QString& to)
+{
+    const QRegularExpression re("(?<![\\w.])" + QRegularExpression::escape(from) + "(?!\\w)");
+    QString out;
+    int last = 0;
+    for (auto m = re.globalMatch(text); m.hasNext(); )
+    {
+        const auto hit = m.next();
+        const int a = hit.capturedStart(), b = hit.capturedEnd();
+        // (a keyword argument: after "(" or ",", before a single "=")
+        int before = a - 1;
+        while (before >= 0 && text[before] == ' ') --before;
+        int after = b;
+        while (after < text.size() && text[after] == ' ') ++after;
+        const bool keyword = before >= 0 && (text[before] == '(' || text[before] == ',') && after < text.size() &&
+                             text[after] == '=' && !(after + 1 < text.size() && text[after + 1] == '=');
+        // (inside a string: an odd number of quotes of one kind before it on its line)
+        const int lineStart = text.lastIndexOf('\n', a) + 1;
+        const QString head = text.mid(lineStart, a - lineStart);
+        const bool inString = head.count('"') % 2 == 1 || head.count('\'') % 2 == 1;
+        if (keyword || inString) continue;
+        out += text.mid(last, a - last) + to;
+        last = b;
+    }
+    return out + text.mid(last);
+}
+
+}   // namespace
+
+// The lines of a model's statements as they are in the script: its definition, the line that shows or hides it, its handles(),
+// expose(), render_cache() and lock() lines
+QString ScenePanel::groupText(const QJsonObject& it) const
+{
+    QStringList out;
+    for (const auto& r : groupRanges(it, false))
+        for (int l = r.first; l <= r.second; ++l) out << lineText(l);
+    return out.join('\n');
+}
+
+// A free name for a copy of `name`: its number counted up (`box_1`: `box_2`), or a number added to it
+QString ScenePanel::copyName(const QString& name, const QSet<QString>& taken, bool part) const
+{
+    static const QRegularExpression numbered(R"(^(.*)_(\d+)$)");
+    const auto m = numbered.match(name);
+    const QString base = (m.hasMatch() && !part) ? m.captured(1) : name;
+    int n = (m.hasMatch() && !part) ? m.captured(2).toInt() + 1 : 2;
+    const QString src = m_source ? m_source() : QString();
+    for (;; ++n)
+    {
+        const QString candidate = base + "_" + QString::number(n);
+        if (taken.contains(candidate)) continue;
+        if (QRegularExpression("\\b" + QRegularExpression::escape(candidate) + "\\b").match(src).hasMatch()) continue;
+        return candidate;
+    }
+}
+
+// The models that Ctrl+D / Ctrl+C work on: the selected ones that are defined by a statement of their own (an import is
+// imported again by importing the file, not by copying its statement)
+QList<QJsonObject> ScenePanel::copyableModels() const
+{
+    QList<QJsonObject> out;
+    for (const Model& m : selectedModels())
+    {
+        if (!m.item.contains("var") || m.item["kind"].toString() == "import" || m.item["failed"].toBool()) continue;
+        out << m.item;
+    }
+    return out;
+}
+
+void ScenePanel::duplicateSelected()
+{
+    const QList<QJsonObject> items = copyableModels();
+    if (items.isEmpty()) { notify("Select a model to duplicate first."); return; }
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { duplicateSelected(); };             // (the script is being edited to get the models ready: the scene is a run behind)
+        return;
+    }
+    const QString src = m_source ? m_source() : QString();
+    const QStringList lines = src.split('\n');
+    QSet<QString> taken;
+    QList<QPair<QString, QString>> renames;                       // old name, new name
+    for (const auto& it : items)
+    {
+        const QString old = it["var"].toString();
+        const QString fresh = copyName(old, taken, it.contains("part_of"));
+        taken << fresh;
+        renames << qMakePair(old, fresh);
+    }
+    QList<TextEdit> edits;
+    QStringList made;
+    for (int i = 0; i < items.size(); ++i)
+    {
+        QString text = groupText(items[i]);
+        for (const auto& r : renames) text = renamedIn(text, r.first, r.second);
+        const int at = groupEnd(items[i]);
+        if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
+        else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()),
+                               "\n" + text};
+        made << renames[i].second;
+    }
+    m_selectNew = made.last();
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Duplicate " + made.join(", ")));
+}
+
+void ScenePanel::copySelected()
+{
+    const QList<QJsonObject> items = copyableModels();
+    if (items.isEmpty()) { notify("Select a model to copy first."); return; }
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { copySelected(); };                  // (the lines selecting a model writes are not in its statements yet)
+        return;
+    }
+    m_copied.clear();
+    m_copiedPart.clear();
+    QStringList all;
+    for (const auto& it : items)
+    {
+        if (it.contains("part_of")) m_copiedPart << it["var"].toString();         // (a part of an import: its number is not a copy count)
+        m_copied << qMakePair(it["var"].toString(), groupText(it));
+        all << m_copied.last().second;
+    }
+    m_copiedText = all.join("\n");
+    QApplication::clipboard()->setText(m_copiedText);
+    notify(QString("Copied %1 model%2: Ctrl+V pastes %3.").arg(items.size()).arg(items.size() == 1 ? "" : "s")
+               .arg(items.size() == 1 ? "it" : "them"));
+}
+
+void ScenePanel::pasteModels()
+{
+    // (what the tree copied, unless the clipboard has been given something else since: that is what the user means to paste)
+    auto plain = [](QString t) { return t.remove('\r').trimmed(); };
+    const QString now = plain(QApplication::clipboard()->text());
+    if (m_copied.isEmpty())
+    {
+        notify("Nothing copied from the model tree: select models and press Ctrl+C first.");
+        return;
+    }
+    if (!now.isEmpty() && now != plain(m_copiedText))
+    {
+        notify("The clipboard holds something else than the models copied from the tree: copy them again (Ctrl+C) to paste them.");
+        return;
+    }
+    const QString src = m_source ? m_source() : QString();
+    const QStringList lines = src.split('\n');
+    // (the copies go under the last selected model; with none selected, at the end of the script)
+    QJsonObject after;
+    const QList<Model> picked = selectedModels();
+    if (!picked.isEmpty()) after = picked.last().item;
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { pasteModels(); };
+        return;
+    }
+    QSet<QString> taken;
+    QList<QPair<QString, QString>> renames;
+    for (const auto& c : m_copied)
+    {
+        // (a name the script does not have yet -- a copy pasted into another script -- is kept)
+        const bool exists = QRegularExpression("\\b" + QRegularExpression::escape(c.first) + "\\b").match(src).hasMatch();
+        const QString name = exists || taken.contains(c.first) ? copyName(c.first, taken, m_copiedPart.contains(c.first)) : c.first;
+        taken << name;
+        renames << qMakePair(c.first, name);
+    }
+    QStringList blocks;
+    for (const auto& c : m_copied)
+    {
+        QString text = c.second;
+        for (const auto& r : renames) text = renamedIn(text, r.first, r.second);
+        blocks << text;
+    }
+    const QString text = blocks.join("\n");
+    static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
+    const QString star = starImport.match(src).hasMatch() ? QString() : QString("from fieldes import *\n\n");
+    QList<TextEdit> edits;
+    if (!after.isEmpty() && after.contains("end_line"))
+    {
+        const int at = groupEnd(after);
+        if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
+        else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()),
+                               "\n" + text};
+        if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+    }
+    else
+    {
+        int last = int(lines.size()) - 1;
+        while (last >= 0 && lines[last].trimmed().isEmpty()) --last;
+        if (last < 0)
+        {
+            // (an empty script: the import of the library, then the models)
+            edits << TextEdit{0, 0, int(lines.size()) - 1, int(lines.last().size()), star + text + "\n"};
+        }
+        else
+        {
+            edits << TextEdit{last, int(lines[last].size()), last, int(lines[last].size()), "\n\n" + text};
+            if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+        }
+    }
+    m_selectNew = renames.last().second;
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Paste " + renames.last().second));
+}
+
 void ScenePanel::deleteReferences(const QList<QPair<QJsonObject, QString>>& refs)
 {
     for (const auto& r : refs)
@@ -2664,6 +3884,7 @@ void ScenePanel::deleteByLine(int line0)
 
 void ScenePanel::deleteItems(const QList<QJsonObject>& items)
 {
+    if (deferItems(items, "deleting", [this](const QList<QJsonObject>& f) { deleteItems(f); })) return;
     // What goes: the statement(s) of each item, the line showing it, the line hiding it, its handles() and
     // expose() lines -- and, for a list of an import's parts, the same for every part variable made from it
     QList<QJsonObject> all;
@@ -2685,6 +3906,35 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
         }
     }
     if (all.isEmpty()) return;
+    // Every line that goes is checked to be the line the rows say it is (see lineIs): rows of another text than the script's would
+    // have a definition, a lock or a handles line of ANOTHER model deleted.  Nothing is written when one is not
+    m_lineMismatch.clear();
+    for (const auto& o : all)
+    {
+        if (o.contains("var") || o.contains("list_var"))
+        {
+            const QString var = o.contains("var") ? o["var"].toString() : o["list_var"].toString();
+            lineIs(o["line"].toInt() - 1, var, "definition");
+            if (o.contains("display_line")) lineIs(o["display_line"].toInt() - 1, var, "display");
+            if (o.contains("hidden_line")) lineIs(o["hidden_line"].toInt() - 1, var, "hidden");
+            static const QList<QPair<const char*, const char*>> blocks = {
+                {"handles", "handles"}, {"exposed", "expose"}, {"cache", "render_cache"}, {"cache_off", "render_cache"},
+                {"locked", "lock"}, {"custom_resolution", "custom_resolution"}};
+            for (const auto& b : blocks)
+            {
+                if (o.contains(b.first)) lineIs(o[b.first].toObject()["line"].toInt() - 1, var, QString::fromLatin1(b.second));
+            }
+        }
+        else if (o["kind"].toString() == "display")
+        {
+            lineIsExpression(o["line"].toInt() - 1, o);
+        }
+        if (!m_lineMismatch.isEmpty())
+        {
+            refuseOutOfDate();
+            return;
+        }
+    }
     QList<QPair<int, int>> ranges;                  // 0-based, inclusive
     QStringList names;
     for (const auto& o : all)
@@ -2692,7 +3942,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
         ranges << qMakePair(o["line"].toInt() - 1, o["end_line"].toInt() - 1);
         if (o.contains("display_line")) ranges << qMakePair(o["display_line"].toInt() - 1, o["display_line"].toInt() - 1);
         if (o.contains("hidden_line")) ranges << qMakePair(o["hidden_line"].toInt() - 1, o["hidden_line"].toInt() - 1);
-        for (const char* key : {"handles", "exposed", "cache", "cache_off", "locked"})
+        for (const char* key : {"handles", "exposed", "cache", "cache_off", "locked", "custom_resolution"})
         {
             if (!o.contains(key)) continue;
             const auto h = o[key].toObject();
@@ -2748,19 +3998,24 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
 
     QList<TextEdit> edits;
     for (const auto& r : merged) edits << deleteLines(r.first, r.second);
-    emit(editScript(edits, "Delete " + what));
+    // The rows go at once: the lines of the statements are gone, every line under them has moved up, and what an operation that is
+    // deleted was made of is on its own again (the prediction works that out from the lines).  The run follows
+    editFollowed(edits, "Delete " + what, [](QJsonObject&, const QVector<int>&) {});
 }
 
 void ScenePanel::removeHandles(const QJsonObject& target)
 {
+    if (deferItems({target}, "removing its handles", [this](const QList<QJsonObject>& f) { removeHandles(f[0]); })) return;
     if (!target.contains("handles")) return;
     const auto h = target["handles"].toObject();
+    if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), "handles")) { refuseOutOfDate(); return; }
     emit(editScript({deleteLines(h["line"].toInt() - 1, h["end_line"].toInt() - 1)},
                     "Remove the handles of " + target["var"].toString()));
 }
 
 void ScenePanel::reimportPart(const QJsonObject& imp, int part)
 {
+    if (deferItems({imp}, "importing the part again", [this, part](const QList<QJsonObject>& f) { reimportPart(f[0], part); })) return;
     // What was done to the part in the script is undone (its handles() and expose() lines are deleted)...
     QList<TextEdit> edits;
     const QJsonObject target = handlesTarget(imp, part);
@@ -2768,6 +4023,11 @@ void ScenePanel::reimportPart(const QJsonObject& imp, int part)
     {
         if (!target.contains(key)) continue;
         const auto h = target[key].toObject();
+        if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), QString::fromLatin1(key[0] == 'h' ? "handles" : "expose")))
+        {
+            refuseOutOfDate();
+            return;
+        }
         edits << deleteLines(h["line"].toInt() - 1, h["end_line"].toInt() - 1);
     }
     // ...and the file is read again: the import call's rev= goes up (see reimport)
@@ -2778,6 +4038,7 @@ void ScenePanel::reimportPart(const QJsonObject& imp, int part)
 
 void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
 {
+    if (deferItems({imp}, "resetting the import", [this, ask](const QList<QJsonObject>& f) { resetImport(f[0], ask); })) return;
     const QString path = imp["path"].toString();
     if (path.isEmpty()) return;
     const QString label = imp["label"].toString();
@@ -2820,6 +4081,11 @@ void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
         {
             if (!t.contains(key)) continue;
             const auto h = t[key].toObject();
+            if (!lineIs(h["line"].toInt() - 1, t["var"].toString(), QString::fromLatin1(key[0] == 'h' ? "handles" : "expose")))
+            {
+                refuseOutOfDate();
+                return;                         // (before the cache is deleted: nothing has been done)
+            }
             edits << deleteLines(h["line"].toInt() - 1, h["end_line"].toInt() - 1);
         }
     }
@@ -2838,8 +4104,51 @@ void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
     }
 }
 
+// The menu of the row of an import: how the file is imported (the function the statement calls), and the row's own buttons
+void ScenePanel::importMenu(const QJsonObject& it, const QPoint& global)
+{
+    auto menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setToolTipsVisible(true);
+    const QString current = it["func"].toString();
+    struct Way { const char* func; const char* title; const char* tip; };
+    static const Way ways[] = {
+        {"import_model", "Import (automatic)",
+         "Each part is reconstructed as exact CSG, or tessellated if more of its surface is free-form (B-spline) than the "
+         "threshold says."},
+        {"reconstruct", "Reconstruct",
+         "Every part rebuilt as CSG from its faces: planes, cylinders... exact, free-form faces fitted (fast, light, "
+         "draggable)."},
+        {"tessellate", "Tessellate",
+         "Every part as the exact triangles of its faces, made a distance field (any free-form shape, any thin wall)."},
+    };
+    auto way = menu->addMenu("Import as");
+    way->setToolTipsVisible(true);
+    for (const Way& w : ways)
+    {
+        const QString func = w.func;
+        auto a = way->addAction(w.title, this, [=] {
+            const auto c = it["call"].toArray();
+            if (c.size() != 4 || func == current) return;
+            QList<TextEdit> edits;
+            // (the function's name at the start of the call: its other arguments -- the file, rev=, units= -- stay)
+            edits << TextEdit{c[0].toInt() - 1, c[1].toInt(), c[0].toInt() - 1, c[1].toInt() + int(current.size()), func};
+            emit(editScript(edits, "Import " + it["label"].toString() + " as " + func));
+        });
+        a->setCheckable(true);
+        a->setChecked(func == current);
+        a->setToolTip(w.tip);
+    }
+    menu->addSeparator();
+    menu->addAction("Reimport the file", this, [=] { reimport(it); });
+    menu->addAction("Reset (clear the cache and handle edits)", this, [=] { resetImport(it, true); });
+    menu->addAction("Delete from the script", this, [=] { deleteItem(it); });
+    menu->popup(global);
+}
+
 void ScenePanel::reimport(const QJsonObject& it)
 {
+    if (deferItems({it}, "importing the file again", [this](const QList<QJsonObject>& f) { reimport(f[0]); })) return;
     QList<TextEdit> edits;
     if (reimportEdit(it, edits)) emit(editScript(edits, "Reimport " + it["label"].toString()));
 }
@@ -2978,6 +4287,7 @@ QString ScenePanel::spanText(const QJsonArray& s) const
 
 void ScenePanel::showPart(const QJsonObject& imp, int part)
 {
+    if (deferItems({imp}, "showing the part", [this, part](const QList<QJsonObject>& f) { showPart(f[0], part); })) return;
     const auto parts = imp["parts"].toArray();
     if (part < 0 || part >= parts.size() || !parts[part].toObject()["ok"].toBool())
     {
@@ -3005,11 +4315,14 @@ void ScenePanel::showPart(const QJsonObject& imp, int part)
     QList<TextEdit> edits;
     edits << TextEdit{L, int(t.size()), L, int(t.size()),
                       QString("\n%1 = %2[%3][0]\n%1").arg(name).arg(list).arg(part)};
-    emit(editScript(edits, "Show part " + QString::number(part)));
+    m_selectNew = name;                 // (it is a model of the script now, and the selected one: ready to be dragged)
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Add part " + QString::number(part)));
 }
 
 void ScenePanel::switchPart(const QJsonObject& imp, int part)
 {
+    if (deferItems({imp}, "using the part", [this, part](const QList<QJsonObject>& f) { switchPart(f[0], part); })) return;
     if (!imp.contains("index_span")) return;
     const auto s = imp["index_span"].toArray();
     QList<TextEdit> edits;
@@ -3119,19 +4432,31 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
     m_clickMods = Qt::NoModifier;
     const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
     const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    // (a click on the eye or the lock changes that row's button at once: the script that answers it may take a while to run
+    // again, and nothing else in the tree changes)
+    auto flipEye = [&](QTreeWidgetItem* r) {
+        const bool now = !r->data(COL_EYE, Qt::UserRole).toBool();
+        r->setData(COL_EYE, Qt::UserRole, now);
+        r->setIcon(COL_EYE, eyeIcon(now));
+        r->setToolTip(COL_EYE, now ? "Hide" : "Show");
+        if (now) r->setData(COL_NAME, Qt::ForegroundRole, QVariant());
+        else r->setForeground(COL_NAME, kDim);
+    };
     if (column == COL_EYE && !row->icon(COL_EYE).isNull())
     {
         if (type == "part")
         {
-            showPart(it, row->data(COL_NAME, ROLE_PART).toInt());
-        }
-        else if (it.contains("list_var") && !it.contains("var"))
-        {
-            // Every part at once: show all unless all are already shown
-            setAllParts(it, !row->data(COL_EYE, Qt::UserRole).toBool());
+            const int k = row->data(COL_NAME, ROLE_PART).toInt();
+            const auto p = it["parts"].toArray()[k].toObject();
+            // (a part that is a model of the script is shown or hidden; one that is not is added to the script)
+            const bool toggles = p.contains("var") || (it.contains("index") && it["index"].toInt() == k);
+            showPart(it, k);
+            if (toggles) flipEye(row);
         }
         else
         {
+            // (the button first: the edit makes the tree follow it, and the rows are made again a moment later)
+            flipEye(row);
             toggleVisible(it);
         }
         return;
@@ -3143,12 +4468,53 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
     }
     if (column == COL_LOCK && !row->icon(COL_LOCK).isNull())
     {
-        toggleLock(type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
+        const QJsonObject target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        if (target.contains("var") && m_pressedSelection.size() >= 2 &&
+            m_pressedSelection.contains(row->data(COL_NAME, ROLE_KEY).toString()))
+        {
+            // A row that was one of several selected when its button was pressed: the button is for all of them (to lock or unlock a
+            // handful of parts at once, as R does), and they stay selected
+            const bool lock = !target.contains("locked");
+            QList<QJsonObject> targets;
+            QList<QTreeWidgetItem*> again;
+            for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+            {
+                if (!m_pressedSelection.contains((*i)->data(COL_NAME, ROLE_KEY).toString())) continue;
+                QJsonObject model = modelOfRow(*i);
+                if (model.isEmpty() || !model.contains("var") || model["kind"].toString() == "display") continue;
+                targets << model;
+                again << *i;
+                QJsonObject now = model;
+                if (lock) now["locked"] = QJsonObject();
+                else now.remove("locked");
+                setLockButton(*i, now);
+            }
+            for (auto r : again) m_tree->setCurrentItem(r, 0, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            m_pressedSelection.clear();
+            applyLock(targets, lock);
+            return;
+        }
+        if (target.contains("var") && target["kind"].toString() != "display")
+        {
+            QJsonObject now = target;
+            if (now.contains("locked")) now.remove("locked");
+            else now["locked"] = QJsonObject();
+            setLockButton(row, now);
+        }
+        toggleLock(target);
         return;
     }
     if (column == COL_CACHE && !row->icon(COL_CACHE).isNull())
     {
-        toggleCache(type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
+        const QJsonObject target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        if (target.contains("var") && target["kind"].toString() != "display")
+        {
+            QJsonObject now = target;
+            if (now.contains("cache_off")) now.remove("cache_off");
+            else now["cache_off"] = QJsonObject();
+            setCacheButton(row, now);
+        }
+        toggleCache(target);
         return;
     }
     if (column == COL_DELETE && !row->icon(COL_DELETE).isNull())
@@ -3205,10 +4571,37 @@ void ScenePanel::onContextMenu(const QPoint& pos)
     }
     else if (type == "part")
     {
-        const auto p = model["parts"].toArray()[row->data(COL_NAME, ROLE_PART).toInt()].toObject();
+        const int k = row->data(COL_NAME, ROLE_PART).toInt();
+        const auto p = model["parts"].toArray()[k].toObject();
         if (p.contains("var") && !itemForVar(p["var"].toString()).isEmpty()) model = itemForVar(p["var"].toString());
+        else
+        {
+            // A part that is not in the script yet has no model to make a menu of: it can be added (it is then a model like
+            // any other, with its menu and its place in the tree), or read from the file again
+            const QJsonObject imp = model;
+            auto menu = new QMenu(this);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            menu->setToolTipsVisible(true);
+            auto add = menu->addAction(imp.contains("index") ? "Use this part" : "Add to the script", this, [=] {
+                if (imp.contains("index")) switchPart(imp, k);
+                else showPart(imp, k);
+            });
+            add->setEnabled(p["ok"].toBool());
+            add->setToolTip(imp.contains("index") ? "The import statement takes this part instead"
+                                                  : "Writes `name = " + imp["list_var"].toString() + "[" + QString::number(k) +
+                                                    "][0]` and shows it: a model like any other");
+            if (isStepImport(imp) && p["ok"].toBool())
+                menu->addAction("Reimport this part", this, [=] { reimportPart(imp, k); });
+            menu->popup(global);
+            return;
+        }
     }
     else if (type != "item") return;
+    if (!model.isEmpty() && model["kind"].toString() == "import" && isStepImport(model))
+    {
+        importMenu(model, global);
+        return;
+    }
     if (model.isEmpty() || model["failed"].toBool() || model["kind"].toString() == "failed") return;
     if (!model.contains("var") && model["kind"].toString() != "display") return;       // (the render settings and the like)
     emit menuRequested(model["line"].toInt() - 1, global);
@@ -3230,6 +4623,15 @@ bool ScenePanel::modelAtLine(int line0, QVector3D* centre) const
             : QVector3D();
     }
     return true;
+}
+
+QString ScenePanel::typeAtLine(int line0) const
+{
+    QJsonObject model;
+    QString source;
+    int after = 0;
+    if (!resolveModel(line0, &model, &source, &after)) return QString();
+    return model["type"].toString();
 }
 
 bool ScenePanel::describeModel(const QJsonObject& target, QString* source, int* after) const
@@ -3299,8 +4701,44 @@ bool ScenePanel::resolveModel(int line0, QJsonObject* model, QString* source, in
     return true;
 }
 
-void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double thickness,
-                                     double radius)
+// "Custom resolution" from a model's menu: the line that gives the model a resolution of its own goes under its definition (and under the
+// other lines that edit it), with the scene's resolution as its number, so that nothing changes until the number is typed over
+void ScenePanel::addCustomResolution(int line0)
+{
+    QJsonObject target;
+    QString source;
+    int after = 0;
+    if (!resolveModel(line0, &target, &source, &after)) return;
+    if (!target.contains("var"))
+    {
+        notify("Give the model a name first (a variable): the resolution is a line under its definition.");
+        return;
+    }
+    const QString var = target["var"].toString();
+    if (target.contains("custom_resolution"))
+    {
+        notify(var + " has a resolution of its own already: it is the row under it in the tree.");
+        return;
+    }
+    if (!lineIs(target["line"].toInt() - 1, var, "definition")) { refuseOutOfDate(); return; }
+    // the scene's resolution, as the number to start from
+    double res = m_scene["settings"].toObject()["resolution"].toObject()["value"].toDouble(0.0);
+    if (!(res > 0)) res = 10.0;
+    int last = target["end_line"].toInt() - 1;
+    for (const char* key : {"exposed", "handles", "locked", "cache", "cache_off"})
+    {
+        if (target.contains(key)) last = std::max(last, target[key].toObject()["end_line"].toInt() - 1);
+    }
+    const QString indent = indentOf(lineText(target["line"].toInt() - 1));
+    const QString lastText = lineText(last);
+    QList<TextEdit> edits;
+    edits << TextEdit{last, int(lastText.size()), last, int(lastText.size()),
+                      "\n" + indent + var + " = custom_resolution(" + var + ", " + QString::number(res, 'g', 3) + ")"};
+    addImportIfMissing(edits, "custom_resolution", "custom_resolution");
+    emit(editScript(edits, "Custom resolution " + var));
+}
+
+void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double radius)
 {
     QJsonObject target;
     QString source;
@@ -3319,7 +4757,6 @@ void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, do
     QString call = QString("%1 = select_surface(%2, seed=(%3, %4, %5), angle=%6")
                        .arg(name, source, num(seed.x()), num(seed.y()), num(seed.z()), num(angle));
     if (mode != "flat") call += ", mode='" + mode + "'";
-    if (thickness > 0) call += ", thickness=" + num(thickness);
     if (radius > 0) call += ", radius=" + num(radius);
     call += ")";
 
@@ -3459,61 +4896,80 @@ QJsonObject ScenePanel::modelOfRow(QTreeWidgetItem* row) const
     return (model.contains("var") || model["kind"].toString() == "display") ? model : QJsonObject();
 }
 
-bool ScenePanel::stripLocked(bool warn)
+bool ScenePanel::lockedInMulti() const
 {
-    // A locked model cannot be in a selection of several: it stays out (selected on its own it is fine: that is how
-    // it is unlocked)
-    QList<QTreeWidgetItem*> models, locked;
-    for (auto row : m_tree->selectedItems())
+    // A selection of several models that has a locked one in it: it can be selected and operated on, but not moved or edited
+    const auto models = selectedModels();
+    if (models.size() < 2) return false;
+    for (const Model& m : models)
     {
-        const auto model = modelOfRow(row);
-        if (model.isEmpty()) continue;
-        models << row;
-        if (model.contains("locked")) locked << row;
+        if (m.item.contains("locked")) return true;
     }
-    if (models.size() < 2 || locked.isEmpty()) return false;
-    m_stripping = true;
-    for (auto row : locked) m_tree->setCurrentItem(row, 0, QItemSelectionModel::Deselect | QItemSelectionModel::Rows);
-    for (auto row : models)
-    {
-        if (locked.contains(row)) continue;
-        m_tree->setCurrentItem(row, 0, QItemSelectionModel::NoUpdate);
-        break;
-    }
-    m_stripping = false;
-    if (warn && !m_silentStrip) QTimer::singleShot(0, this, [this]{ warnLockedMultiSelect(); });
-    return true;
+    return false;
+}
+
+void ScenePanel::noteLockedInMulti(bool warn)
+{
+    const bool now = lockedInMulti();
+    if (now && !m_lockedInMulti && warn) QTimer::singleShot(0, this, [this]{ warnLockedMultiSelect(); });
+    m_lockedInMulti = now;
+    updateMultiNote();
 }
 
 void ScenePanel::warnLockedMultiSelect()
 {
     QSettings store;
-    if (store.value("hidden-messages/locked-multi-select", false).toBool()) return;
+    if (store.value("hidden-messages/locked-in-multi-select", false).toBool()) return;
+    const QString text = "When a locked object is part of a multi select, the multi selection can no longer be moved or edited.";
     if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION"))
     {
-        fprintf(stderr, "[warning] locked shapes cannot be multi selected\n");
+        fprintf(stderr, "[warning] %s\n", text.toUtf8().constData());
         return;
     }
-    QMessageBox box(QMessageBox::Warning, "Locked shapes", "Locked shapes cannot be multi selected.", QMessageBox::Ok, this);
-    box.setInformativeText("A locked shape stays out of a selection of several, and is left out of this one. Select it "
-                           "on its own to unlock it (its lock button, or R).");
+    QMessageBox box(QMessageBox::Warning, "Locked shapes", text, QMessageBox::Ok, this);
+    box.setInformativeText("It can still be unlocked (R, or a lock button) and combined, hidden or deleted. Unlock the locked "
+                           "ones and the selection can be moved again.");
     auto again = new QCheckBox("Do not show this message again");
     box.setCheckBox(again);
     box.exec();
-    if (again->isChecked()) store.setValue("hidden-messages/locked-multi-select", true);
+    if (again->isChecked()) store.setValue("hidden-messages/locked-in-multi-select", true);
 }
 
 void ScenePanel::updateMultiNote()
 {
-    // The multi-select state is not an edit mode of any model: the line under the tree says what it is
-    const int n = selectedModels().size();
-    if (n >= 2)
+    // The multi-select state is not an edit mode of any model: the line under the tree says what it is.  So does a locked
+    // model that is selected on its own: nothing appears to drag, and the reason is that it is locked
+    const auto models = selectedModels();
+    const int n = models.size();
+    QString mine;
+    if (n >= 2 && lockedInMulti())
+    {
+        int locked = 0;
+        for (const Model& m : models) locked += m.item.contains("locked") ? 1 : 0;
+        mine = QString("%1 models selected, %2 locked: a selection with a locked model cannot be moved or edited. Unlock "
+                       "them (R) and one gizmo moves them all.").arg(n).arg(locked);
+    }
+    else if (n >= 2)
+    {
+        mine = QString("%1 models selected: one gizmo moves them all. Each keeps its own gizmo mode (E) for "
+                       "when it is selected alone.").arg(n);
+    }
+    else if (n == 1 && models[0].item.contains("locked") && models[0].item.contains("var"))
+    {
+        mine = QString("%1 is locked, so it has no gizmo and its surfaces cannot be dragged. Unlock it with its lock button (or R).")
+                   .arg(models[0].item["var"].toString());
+    }
+    else if (n == 1 && !noDragReason(models[0].item, false).isEmpty())
+    {
+        // (the model that is selected and cannot be pulled by its surfaces says why, as its orange dot does)
+        mine = models[0].item["var"].toString() + ": " + noDragReason(models[0].item, false);
+    }
+    if (!mine.isEmpty())
     {
         if (m_note->text().isEmpty() || m_multiNote)
         {
             m_multiNote = true;
-            m_note->setText(QString("%1 models selected: one gizmo moves them all. Each keeps its own gizmo mode (E) for "
-                                    "when it is selected alone.").arg(n));
+            m_note->setText(mine);
             setCollapsed(m_collapsed);
         }
     }
@@ -3574,12 +5030,14 @@ void ScenePanel::updateProvisional()
 void ScenePanel::prepareSelection()
 {
     // The selected models are made ready to be dragged.  Pulling a shape's surfaces is always there, so a model that has
-    // no numbers to pull them by gets them -- an `expose(x, [...])` line -- when they are few (a bigger one has it in its
-    // menu).  The gizmo is shown by its mode (click: while the model is selected) and moves what has numbers to move it
+    // no numbers to pull them by gets them -- an `expose(x, [...])` line -- when they are no more than kAutoExposeNumbers (a bigger one
+    // has an orange dot in the tree and is moved by its gizmo).  The gizmo is shown by its mode (click: while the model is selected) and
+    // moves what has numbers to move it
     // by -- a `handles(x, move=(var, ...))` line, which a model that has none gets too, in the mode it is in (click, when
     // it has no line).  Nothing else about the model changes
     const auto models = selectedModels();
-    if (models.isEmpty())
+    // (a selection of several with a locked model in it is not moved or edited: nothing is written for it)
+    if (models.isEmpty() || lockedInMulti())
     {
         // (nothing to prepare: what was waiting for the scene goes ahead)
         if (m_afterRun)
@@ -3593,6 +5051,14 @@ void ScenePanel::prepareSelection()
     if (m_editPending && m_editClock.elapsed() < 20000)
     {
         m_prepareAgain = true;                  // (the scene is out of date until the run of the last edit is done)
+        return;
+    }
+    // The tree is a prediction: an edit of its buttons has been followed, and the run that answers it is not done.  What is written now
+    // would make the rows wrong again (the lines it adds are not in them) and the next click would wait for the run; it is written
+    // when the scene is there, as it is for every run (setScene starts this again)
+    if (m_predicted)
+    {
+        m_prepareAgain = true;
         return;
     }
     QList<TextEdit> edits;
@@ -3747,8 +5213,8 @@ void ScenePanel::prepareSelection()
 
 void ScenePanel::onSelectionChanged()
 {
-    if (m_rebuilding || m_stripping) return;
-    stripLocked(true);
+    if (m_rebuilding) return;
+    noteLockedInMulti(true);
     // The order the rows were selected in (the first one is what a subtraction subtracts from): the ones that went
     // are dropped, the ones that came are put at the end -- in tree order when several came at once
     QSet<QString> now;
@@ -3834,9 +5300,16 @@ bool ScenePanel::combines(const QString& operation) const
         {
             const auto o = v.toObject();
             m_combining[o["name"].toString()] = o["other"].toBool();
+            m_needsSecond[o["name"].toString()] = o["needs_other"].toBool(o["other"].toBool());
         }
     }
     return m_combining.value(operation, false);
+}
+
+bool ScenePanel::needsSecond(const QString& operation) const
+{
+    combines(operation);            // (reads the interpreter's list the first time)
+    return m_needsSecond.value(operation, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3851,6 +5324,22 @@ bool ScenePanel::selectVar(const QString& var)
     {
         if ((*i)->data(COL_NAME, ROLE_KEY).toString() == key &&
             (*i)->data(COL_NAME, ROLE_TYPE).toString() == "item")
+        {
+            expandTo(*i);
+            m_tree->setCurrentItem(*i);
+            m_tree->scrollToItem(*i);
+            select(*i, false);
+            return true;
+        }
+    }
+    // (a part of an import that is a model of the script is a row under its file: that row stands for it)
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() != "part") continue;
+        const auto imp = (*i)->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        const auto parts = imp["parts"].toArray();
+        const int k = (*i)->data(COL_NAME, ROLE_PART).toInt();
+        if (k >= 0 && k < parts.size() && parts[k].toObject()["var"].toString() == var)
         {
             expandTo(*i);
             m_tree->setCurrentItem(*i);
@@ -4005,9 +5494,10 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
             target = last.item;
             after = last.after;
         }
-        else if (combining)
+        else if (combining && needsSecond(name))
         {
-            // (one model: the operation takes the last other model of the script)
+            // (one model: the operation takes the last other model of the script; one that takes others only if there are some,
+            // like surface_from_bodies, is written with the one model)
             for (const auto v : m_scene["items"].toArray())
             {
                 const auto o = v.toObject();
@@ -4030,6 +5520,9 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     request["scale"] = scale;
     request["body"] = body;
     request["other"] = other;
+    // (the variable the model will get: a function written above the call is named after it)
+    const QString var = freeName(name);
+    request["var"] = var;
     if (target["bounds"].toArray().size() == 2)             // (what a simulation lays its supports and loads on)
     {
         request["lo"] = target["bounds"].toArray()[0];
@@ -4043,8 +5536,11 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         notify("Could not create " + name + (error.isEmpty() ? QString() : ": " + error));
         return;
     }
-    const QString var = freeName(name);
-    const QString statement = var + " = " + call;
+    // (a template may write a function above the call, for the user to put their own logic in: see menu_catalog.PRELUDE)
+    static const QString preludeMark = "\n#@@#\n";
+    const int cut = call.indexOf(preludeMark);
+    const QString prelude = cut >= 0 ? call.left(cut) : QString();
+    const QString statement = (cut >= 0 ? prelude + "\n" : QString()) + var + " = " + (cut >= 0 ? call.mid(cut + preludeMark.size()) : call);
 
     // The library's functions are in scope with `from fieldes import *`
     static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
@@ -4090,6 +5586,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
 
 void ScenePanel::toggleIsolation()
 {
+    if (deferEdit([this] { toggleIsolation(); }, "isolating the selected models")) return;
     // What is selected now: the models that stay shown (all the selected ones), and their names
     QSet<QString> keep;
     QStringList names;
@@ -4099,40 +5596,14 @@ void ScenePanel::toggleIsolation()
     for (auto row : rows)
     {
         const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
-        const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
         selectedKeys << row->data(COL_NAME, ROLE_KEY).toString();
-        if (type == "item" && !it["failed"].toBool() && it["kind"].toString() != "failed")
+        // (a model: a variable, or an expression that is shown.  The row of a part that is in the script stands for its model, as
+        // for every other key; a file that was imported -- the assembly -- is not one: its parts are)
+        const QJsonObject it = (type == "item" || type == "part") ? modelOfRow(row) : QJsonObject();
+        if (!it.isEmpty())
         {
-            if (it.contains("var") || it["kind"].toString() == "display")
-            {
-                keep << keyOf(it);
-                names << (it.contains("var") ? it["var"].toString() : it["label"].toString());
-            }
-            else if (it.contains("list_var"))
-            {
-                // (a list of the parts of an import: every part that is a variable)
-                for (const auto pv : it["parts"].toArray())
-                {
-                    const auto p = pv.toObject();
-                    if (p.contains("var") && !itemForVar(p["var"].toString()).isEmpty())
-                        keep << keyOf(itemForVar(p["var"].toString()));
-                }
-                names << it["list_var"].toString();
-            }
-        }
-        else if (type == "part")
-        {
-            const auto p = it["parts"].toArray()[row->data(COL_NAME, ROLE_PART).toInt()].toObject();
-            if (p.contains("var") && !itemForVar(p["var"].toString()).isEmpty())
-            {
-                keep << keyOf(itemForVar(p["var"].toString()));
-                names << p["var"].toString();
-            }
-            else if (it.contains("index") && it["index"].toInt() == row->data(COL_NAME, ROLE_PART).toInt())
-            {
-                keep << keyOf(it);
-                names << (it.contains("var") ? it["var"].toString() : it["label"].toString());
-            }
+            keep << keyOf(it);
+            names << (it.contains("var") ? it["var"].toString() : it["label"].toString());
         }
     }
     selectedKeys.sort();
@@ -4149,6 +5620,7 @@ void ScenePanel::toggleIsolation()
     QList<TextEdit> edits;
     const QSet<QString> shown = restore ? m_isolateRestore : keep;
     QSet<QString> visibleNow;
+    m_lineMismatch.clear();
     for (const auto v : m_scene["items"].toArray())
     {
         const auto o = v.toObject();
@@ -4158,6 +5630,8 @@ void ScenePanel::toggleIsolation()
         if (o["visible"].toBool()) visibleNow << keyOf(o);
         visibilityEdit(o, shown.contains(keyOf(o)), edits);
     }
+    // (a line that is not the one the rows say: nothing is written, and the isolation is not begun or ended)
+    if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
     if (restore)
     {
         m_isolated = false;
@@ -4174,7 +5648,10 @@ void ScenePanel::toggleIsolation()
         m_isolatedName = name;
     }
     if (!edits.isEmpty())
+    {
+        m_prepareAgain = true;      // (the model that is shown now is made ready to be dragged -- its gizmo line, the numbers of its surfaces)
         emit(editScript(edits, restore ? QString("Show everything again") : "Isolate " + name));
+    }
     else
         rebuild();      // (nothing to change in the script: the note only)
 }
@@ -4189,6 +5666,7 @@ QString ScenePanel::dumpRows() const
         const QString type = r->data(COL_NAME, ROLE_TYPE).toString();
         const auto it = r->data(COL_NAME, ROLE_ITEM).toJsonObject();
         out += QString(depth * 2, ' ') + r->text(COL_NAME);
+        if (!r->icon(COL_DOT).isNull()) out += "  [orange dot: " + r->toolTip(COL_DOT) + "]";
         if (type == "item")
         {
             const QString t = it["type"].toString();
@@ -4204,14 +5682,75 @@ QString ScenePanel::dumpRows() const
     return out;
 }
 
+void ScenePanel::debugShiftLines(int delta, bool blocks)
+{
+    QJsonArray items = m_scene["items"].toArray();
+    for (int i = 0; i < items.size(); ++i)
+    {
+        QJsonObject o = items[i].toObject();
+        if (!blocks)
+        {
+            for (const char* key : {"display_line", "hidden_line"})
+            {
+                if (o.contains(key)) o[key] = o[key].toInt() + delta;
+            }
+        }
+        else
+        {
+            // (the lines of the statements that edit a model: lock, handles, expose, the render cache, its resolution)
+            for (const char* key : {"locked", "handles", "exposed", "cache", "cache_off", "custom_resolution"})
+            {
+                if (!o.contains(key)) continue;
+                QJsonObject b = o[key].toObject();
+                b["line"] = b["line"].toInt() + delta;
+                b["end_line"] = b["end_line"].toInt() + delta;
+                o[key] = b;
+            }
+        }
+        items[i] = o;
+    }
+    m_scene["items"] = items;
+    rebuild();
+}
+
+QString ScenePanel::dumpState() const
+{
+    QString out;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* r = *i;
+        if (r->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
+        const auto it = r->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        if (!it.contains("var")) continue;
+        out += QString("%1 line=%2-%3 display=%4 hidden=%5 visible=%6 locked=%7 cache_off=%8 mode=%9 | eye=%10 lock=%11 gizmo=%12\n")
+                   .arg(it["var"].toString())
+                   .arg(it["line"].toInt()).arg(it["end_line"].toInt())
+                   .arg(it["display_line"].toInt()).arg(it["hidden_line"].toInt())
+                   .arg(it["visible"].toBool() ? 1 : 0)
+                   .arg(it.contains("locked") ? it["locked"].toObject()["line"].toInt() : 0)
+                   .arg(it.contains("cache_off") ? it["cache_off"].toObject()["line"].toInt() : 0)
+                   .arg(it["mode"].toString())
+                   .arg(r->data(COL_EYE, Qt::UserRole).toBool() ? "on" : "off")
+                   .arg(r->toolTip(COL_LOCK).startsWith("Locked") ? "locked" : "unlocked")
+                   .arg(r->toolTip(COL_HANDLES).section(" ", 1, 2));
+    }
+    out += QString("state: predicted=%1 pending=%2 partial=%3 stale=%4\n")
+               .arg(m_predicted ? 1 : 0).arg(m_rebuildPending ? 1 : 0).arg(m_partialShown ? 1 : 0).arg(sceneIsStale() ? 1 : 0);
+    return out;
+}
+
 QList<QJsonObject> ScenePanel::draggedModels() const
 {
     // The selected models that can be moved, in the order they were selected
     QHash<QString, QJsonObject> byKey;
     for (auto row : m_tree->selectedItems())
     {
-        if (row->data(COL_NAME, ROLE_TYPE).toString() != "item" || !(row->flags() & Qt::ItemIsDragEnabled)) continue;
-        byKey[row->data(COL_NAME, ROLE_KEY).toString()] = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+        if ((type != "item" && type != "part") || !(row->flags() & Qt::ItemIsDragEnabled)) continue;
+        // (the row of a part of an import that is a model of the script stands for that model)
+        const QJsonObject model = type == "part" ? modelOfRow(row) : row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        if (model.isEmpty()) continue;
+        byKey[row->data(COL_NAME, ROLE_KEY).toString()] = model;
     }
     QList<QJsonObject> out;
     for (const QString& k : m_selectOrder)
@@ -4296,6 +5835,129 @@ ScenePanel::OnPlan ScenePanel::planDropOn(const QList<QJsonObject>& models, cons
         }
     }
     const QJsonArray inputs = target["inputs"].toArray();
+    // A material or a condition goes where an analysis asks for one: in place of the one it is given, or as the argument it is
+    // not given yet (`material=`, `conditions=`, or the list of supports and loads).  Never a question
+    {
+        const auto allOfType = [&](const char* type) {
+            for (const auto& m : models) if (m["type"].toString() != type) return false;
+            return !models.isEmpty();
+        };
+        const QJsonObject callSlots = target["slots"].toObject();
+        const QJsonObject given = callSlots["args"].toObject();
+        const auto hasParam = [&](const QString& name) {
+            for (const auto pv : callSlots["params"].toArray()) if (pv.toString() == name) return true;
+            return false;
+        };
+        // (written in place of the argument the call has, or as a keyword after its last argument)
+        const auto place = [&](const QString& param, const QString& text, const QString& what) {
+            const QJsonObject cur = given[param].toObject();
+            p.ok = true;
+            if (!cur.isEmpty()) p.replace = cur["span"].toArray();
+            else p.after = callSlots["last"].toArray();
+            p.text = cur.isEmpty() ? param + "=" + text : text;
+            p.what = what;
+            return p;
+        };
+        if (allOfType("material"))
+        {
+            if (models.size() > 1)
+            {
+                p.why = "An analysis is made of one material (or one fluid): drop one of " + quoted + " on it.";
+                return p;
+            }
+            const QString param = hasParam("material") ? "material" : hasParam("fluid") ? "fluid" : QString();
+            if (param.isEmpty())
+            {
+                p.why = "'" + tname + "' is made by " + fnText + ", which is not given a material or a fluid: the analyses are "
+                        "(static_analysis(part, conditions, material=steel), fluid_analysis(part, conditions, fluid=water)).";
+                return p;
+            }
+            if (given[param].toObject()["text"].toString() == names[0])
+            {
+                p.why = "'" + names[0] + "' is already the " + param + " of '" + tname + "', so dropping it here changes nothing.";
+                return p;
+            }
+            return place(param, names[0], "Use " + names[0] + " as the " + param + " of " + tname);
+        }
+        if (allOfType("conditions"))
+        {
+            const QString role = models[0]["condition_role"].toString();
+            for (const auto& m : models)
+            {
+                if (m["condition_role"].toString() != role)
+                {
+                    p.why = "Supports, loads and other conditions go to different places: drop " + quoted + " one kind at a time.";
+                    return p;
+                }
+            }
+            if (role == "set")
+            {
+                // a whole set of conditions (static_boundary_conditions(...)): the call's conditions
+                if (models.size() > 1)
+                {
+                    p.why = "An analysis is given one set of conditions: drop one of " + quoted + " on it.";
+                    return p;
+                }
+                const QString param = hasParam("conditions") ? "conditions" : hasParam("boundary") ? "boundary" : QString();
+                if (param.isEmpty())
+                {
+                    p.why = "'" + tname + "' is made by " + fnText + ", which is not given conditions.";
+                    return p;
+                }
+                if (given[param].toObject()["text"].toString() == names[0])
+                {
+                    p.why = "'" + names[0] + "' is already the conditions of '" + tname + "', so dropping it here changes nothing.";
+                    return p;
+                }
+                return place(param, names[0], "Use " + names[0] + " as the conditions of " + tname);
+            }
+            // one or several supports, loads ...: into the list the call has for them
+            QString param;
+            if (hasParam("supports") && hasParam("loads")) param = role == "support" ? "supports" : "loads";
+            else param = hasParam("conditions") ? "conditions" : hasParam("boundary") ? "boundary" : QString();
+            if (param.isEmpty())
+            {
+                p.why = "'" + tname + "' is made by " + fnText + ", which takes no list of conditions: it is a "
+                        "static_boundary_conditions(part, supports=[...], loads=[...]), or an analysis given its conditions as a list.";
+                return p;
+            }
+            if (param == "supports" && role != "support")
+            {
+                p.why = "A " + (role.isEmpty() ? QString("condition") : role) + " goes in the loads of '" + tname + "', not its supports.";
+                return p;
+            }
+            const QJsonObject cur = given[param].toObject();
+            const QString list = names.join(", ");
+            if (cur.isEmpty())
+            {
+                p.ok = true;
+                p.after = callSlots["last"].toArray();
+                p.text = param + "=[" + list + "]";
+            }
+            else if (cur["list"].toBool())
+            {
+                p.ok = true;
+                if (cur.contains("last"))
+                {
+                    p.after = cur["last"].toArray();
+                    p.text = list;
+                }
+                else
+                {
+                    p.replace = cur["span"].toArray();
+                    p.text = "[" + list + "]";
+                }
+            }
+            else
+            {
+                p.why = "'" + tname + "' is given its " + param + " as " + cur["text"].toString() + ", not as a list written in the call, so "
+                        "there is no list to add to. Write the list in the script.";
+                return p;
+            }
+            p.what = "Add " + list + " to the " + param + " of " + tname;
+            return p;
+        }
+    }
     if (allPoints(models) && models.size() == 1)
     {
         // A point is the position wherever one is asked for: it takes the place of another point the call is given, or else of the
@@ -4505,7 +6167,7 @@ QList<QPair<int, int>> ScenePanel::groupRanges(const QJsonObject& it, bool comme
     {
         if (it.contains(key)) { const int L = it[key].toInt() - 1; r << qMakePair(L, L); }
     }
-    for (const char* key : {"handles", "exposed", "locked", "cache", "cache_off"})
+    for (const char* key : {"handles", "exposed", "locked", "cache", "cache_off", "custom_resolution"})
     {
         if (it.contains(key))
         {
@@ -4686,6 +6348,14 @@ void ScenePanel::applyLines(const QStringList& before, const QStringList& after,
     emit(editScript(QList<TextEdit>{e}, what));
     // (the tree does not wait for the script to run: it is there at once)
     installPrediction(predicted);
+    // (and the viewport's shapes are told which lines went where: see sourceLinesMoved)
+    QVector<int> moved(n, -1);
+    for (int k = 0; k < origin.size(); ++k)
+    {
+        if (origin[k] >= 0 && origin[k] < n) moved[origin[k]] = k;
+    }
+    emit(sourceLinesMoved(moved));
+    emit(highlightLines(selectedLines()));
 }
 
 QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, const QVector<int>& origin, const QList<ColShift>& shifts,
@@ -4712,7 +6382,7 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
     };
 
     static const QSet<QString> lineKeys = {"line", "end_line", "display_line", "hidden_line", "part_of"};
-    static const QStringList blockKeys = {"handles", "exposed", "locked", "cache", "cache_off"};
+    static const QStringList blockKeys = {"handles", "exposed", "locked", "cache", "cache_off", "custom_resolution"};
     std::function<QJsonValue(const QString&, const QJsonValue&)> walk;
     walk = [&](const QString& key, const QJsonValue& v) -> QJsonValue {
         if (v.isObject())
@@ -4883,6 +6553,8 @@ void ScenePanel::installPrediction(const QJsonObject& scene)
 {
     m_scene = scene;
     m_predicted = true;
+    m_predictedMd5 = m_source ? md5Hex(m_source()) : QString();
+    m_partialShown = false;
     m_predictClock.start();
     rebuild();
     updateMultiNote();
@@ -4954,7 +6626,9 @@ bool ScenePanel::beginDrag(QTreeWidgetItem* row, QString* text, QIcon* icon, boo
         {
             models = draggedModels();
         }
-        const QString key = row->data(COL_NAME, ROLE_KEY).toString();
+        // (the row of a part of an import stands for the model of that part: its key is the model's, not the row's)
+        const QJsonObject own = modelOfRow(row);
+        const QString key = !own.isEmpty() ? keyOf(own) : row->data(COL_NAME, ROLE_KEY).toString();
         bool has = false;
         for (const auto& m : models) has = has || keyOf(m) == key;
         if (!has) return false;
@@ -5908,6 +7582,11 @@ QWidget* ScenePanel::treeViewport() const
     return m_tree->viewport();
 }
 
+int ScenePanel::treeScroll() const
+{
+    return m_tree->verticalScrollBar()->value();
+}
+
 bool ScenePanel::isShadow(QTreeWidgetItem* row) const
 {
     return row && row->data(COL_NAME, ROLE_TYPE).toString() == "dep";
@@ -6012,10 +7691,57 @@ void ScenePanel::insertSettingLine(const QString& call, const QString& fn, bool 
     m_editClock.start();
 }
 
+// The number of the line `x = custom_resolution(x, number)`, rewritten as it is typed (the line is found in the script as it is now)
+void ScenePanel::commitCustomResolution(QLineEdit* edited, bool live, const QString& var)
+{
+    bool ok = false;
+    const double v = QLocale::c().toDouble(edited->text().trimmed(), &ok);
+    if (!ok)
+    {
+        if (!live) edited->setText(edited->property("shown").toString());           // (not a number: the one that was there stays)
+        return;
+    }
+    if (!(v > 0))
+    {
+        if (live) return;
+        edited->setText(edited->property("shown").toString());
+        notify("The resolution must be more than 0 (samples per mm).");
+        return;
+    }
+    const QString text = QString::number(v, 'g', 8);
+    if (text == edited->property("shown").toString())
+    {
+        if (!live && edited->hasFocus()) edited->clearFocus();
+        return;
+    }
+    const QString src = m_source ? m_source() : QString();
+    const QRegularExpression re("^(\\s*" + QRegularExpression::escape(var) + "\\s*=\\s*custom_resolution\\(\\s*" + QRegularExpression::escape(var) +
+                                "\\s*,\\s*)([^,)\\n]+)", QRegularExpression::MultilineOption);
+    const auto m = re.match(src);
+    if (!m.hasMatch())
+    {
+        if (!live) notify("The line of custom_resolution is not in the script as the tree expects it (" + var + " = custom_resolution(" + var + ", number)).");
+        return;
+    }
+    const int pos = m.capturedStart(2), end = m.capturedEnd(2);
+    const int line = int(src.left(pos).count('\n'));
+    const int col = pos - (int(src.lastIndexOf('\n', pos - 1)) + 1);
+    edited->setProperty("shown", text);
+    const QList<TextEdit> edit{TextEdit{line, col, line, col + (end - pos), text}};
+    if (live) emit(editScriptLive(edit, "Set custom_resolution"));
+    else emit(editScript(edit, "Set custom_resolution"));
+    if (!live) edited->clearFocus();
+}
+
 void ScenePanel::commitSetting(QLineEdit* edited, bool live)
 {
     if (m_rebuilding) return;
     const QString fn = edited->property("fn").toString();
+    if (fn.startsWith("custom_resolution:"))
+    {
+        commitCustomResolution(edited, live, fn.mid(int(QString("custom_resolution:").size())));
+        return;
+    }
     const auto fields = m_settingEditors.value(fn);
     // (a number that is still being typed -- empty, a minus sign, a value the setting cannot have -- waits for the next key without
     // a word and without being given back; leaving the field says why it is not taken)

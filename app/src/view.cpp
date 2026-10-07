@@ -339,6 +339,20 @@ void View::setShapes(QList<Shape*> new_shapes)
         busy.hide();
         emit(renderBusy(false));
     }
+    if (const char* log = std::getenv("FIELDES_SHAPE_LOG"))
+    {
+        // (for the tests: how many shapes of the run before went on, how many were new -- their render starts again -- and how many are gone)
+        static int number = 0;
+        size_t fresh = 0;
+        for (auto s : new_shapes)
+            if (new_shapes_map.count(new_shapes_canonical[s->id()])) ++fresh;
+        if (FILE* f = std::fopen(log, "a"))
+        {
+            std::fprintf(f, "run %d: %d shapes shown, %d new (render starts), %d kept\n", ++number, int(shapes.size()), int(fresh),
+                         int(shapes.size()) - int(fresh));
+            std::fclose(f);
+        }
+    }
     update();
     requestSlice();
 }
@@ -380,6 +394,19 @@ void View::highlightLines(QList<int> lines0)
     {
         s->setSelected(lines0.contains(s->sourceLine()));
     }
+    update();
+}
+
+void View::moveSourceLines(QVector<int> moved)
+{
+    auto moveLine = [&](int line) { return (line >= 0 && line < moved.size()) ? moved[line] : line; };
+    for (auto& s : shapes)
+    {
+        if (s->sourceLine() >= 0) s->setSourceLine(moveLine(s->sourceLine()));
+    }
+    // (what the view keeps by line as well: the provisional gizmo's models, the press that waits for a gizmo)
+    for (int& l : m_provLines) l = moveLine(l);
+    for (int& l : m_wait.lines) l = moveLine(l);
     update();
 }
 
@@ -502,7 +529,16 @@ void View::onSettingsFromScript(Settings s, bool first)
         const bool bounds = settings.min != s.min || settings.max != s.max;
         settings = s;
         update();
-        emit(startRender(s));
+        // A shape starts again only if its own render changes with the settings: the region it meshes, the resolution, the quality.
+        // The parts of an import mesh over cubes of their own, at resolutions of their own, so a model added to the script (the
+        // scene's region grows) leaves the ones that are meshing to go on, and the ones that are done as they are
+        for (auto shape : shapes)
+        {
+            if (shape->wouldRenderDifferently(s))
+            {
+                shape->startRender(s, alg);
+            }
+        }
         if (bounds)
         {
             emit(boundsChanged(s.min, s.max));
@@ -784,6 +820,7 @@ void View::paintOverlay(QPainter& painter)
     drawLegends(painter);
     drawScaleBar(painter);
     drawRenderProgress(painter);
+    drawErrorBanner(painter);
 
     if (mouse.state == mouse.DRAG_RECT && (rect_now - rect_start).manhattanLength() >= 4)
     {
@@ -1005,8 +1042,9 @@ void View::drawLegends(QPainter& painter)
     QVector<Bar> bars;
     for (auto s : shapes)
     {
-        // (analysis results have their own card)
-        if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc") continue;
+        // (analysis results have their own card; the shading of a fit that is off -- an imported part lit up from grey to red -- is its
+        // colour alone: no bar of percentages, and nothing read under the cursor)
+        if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc" || s->colorMap() == "fit") continue;
         Bar b{s->colorLabel(), s->colorMap(), s->colorLo(), s->colorHi()};
         bool dup = false;
         for (auto& o : bars)
@@ -1375,9 +1413,8 @@ QVector3D View::toModelPos(QPoint pt) const
     float pick_z = 0;
     if (pick_img.valid(pt))
     {
-        pick_z = 2 * pick_depth.at(
-                    pt.x() + pick_img.width() *
-                    (pick_img.height() - pt.y() - 1)) - 1;
+        const int at = pt.x() + pick_img.width() * (pick_img.height() - pt.y() - 1);
+        if (at >= 0 && at < pick_depth.size()) pick_z = 2 * pick_depth.at(at) - 1;      // (the depths are of the picture's own size)
     }
     return toModelPos(pt, pick_z);
 }
@@ -1414,6 +1451,14 @@ void View::mousePressEvent(QMouseEvent* event)
 
     if (mouse.state == mouse.RELEASED)
     {
+        if (event->button() == Qt::LeftButton && !m_errorText.isEmpty() && m_errorRect.contains(event->pos()))
+        {
+            // The error banner: the editor goes to the line (the press is not a selection click)
+            emit(errorClicked(m_errorLine));
+            press_pos = QPoint(-100000, -100000);
+            press_target = nullptr;
+            return;
+        }
         if (event->button() == Qt::LeftButton)
         {
             // A part's handle (a move arrow or a rotation ring)
@@ -1671,14 +1716,14 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     mouse.state = mouse.RELEASED;
 }
 
-bool View::selectSurfaceAt(QPoint pos, const QString& mode, double angle, double thickness, double radius)
+bool View::selectSurfaceAt(QPoint pos, const QString& mode, double angle, double radius)
 {
     syncPicker();
     const auto picked = pick_img.valid(pos) ? (pick_img.pixel(pos) & 0xFFFFFF) : 0;
     if (!picked || int(picked) > shapes.size()) return false;
     Shape* target = shapes.at(picked - 1);
     if (target->sourceLine() < 0) return false;
-    emit(surfaceSelectRequested(target->sourceLine(), toModelPos(pos), mode, angle, thickness, radius));
+    emit(surfaceSelectRequested(target->sourceLine(), toModelPos(pos), mode, angle, radius));
     return true;
 }
 
@@ -1710,12 +1755,70 @@ void View::loadMenuCatalog()
     TypeIcons::setKinds(m_catalog["kinds"].toObject());
 }
 
+namespace {
+
+// What the simulation menu holds besides the analyses: the groups of primitives that are about a simulation (a material, a
+// fluid, the supports and loads and the thermal and flow conditions an analysis is given), and the operation that makes
+// the boundary conditions of a model
+bool isSimulationPrimitive(const QString& group)
+{
+    return group == "Materials" || group == "Fluids" || group == "Supports and loads" ||
+           group == "Thermal conditions" || group == "Flow conditions";
+}
+
+bool isSimulationOperation(const QString& group)
+{
+    return group == "Simulations" || group == "Conditions";
+}
+
+}   // anonymous namespace
+
+void View::addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale)
+{
+    const int generation = m_scene ? m_scene->generation() : -1;
+    auto action = menu->addAction(TypeIcons::icon("solid"), "Body from field", this,
+                                  [=]{ emit(createRequested("operation", "body_from_field", point, scale, line, generation)); });
+    action->setToolTip("A body where the field is below 0: body_from_field(field, level) -- change the level in the script to take "
+                       "another surface of it.  (Operation > Field math has it too, with the rest of the field math.)");
+}
+
+void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine)
+{
+    // New material, New fluid, New support or load, New thermal condition, New flow condition: each a menu of its own, in the
+    // order the catalog has them
+    static const QHash<QString, QString> titles = {
+        {"Materials", "New material"}, {"Fluids", "New fluid"}, {"Supports and loads", "New support or load"},
+        {"Thermal conditions", "New thermal condition"}, {"Flow conditions", "New flow condition"}};
+    static const QStringList order = {"Materials", "Fluids", "Supports and loads", "Thermal conditions", "Flow conditions"};
+    QHash<QString, QList<QJsonObject>> groups;
+    for (const auto v : m_catalog["primitives"].toArray())
+    {
+        const auto p = v.toObject();
+        const QString g = p["group"].toString();
+        if (isSimulationPrimitive(g)) groups[g] << p;
+    }
+    for (const QString& g : order)
+    {
+        if (!groups.contains(g)) continue;
+        const auto& entries = groups[g];
+        const QString type = entries.first()["type"].toString("conditions");
+        auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, g));
+        sub->setToolTipsVisible(true);
+        for (const auto& p : entries)
+        {
+            const QString name = p["name"].toString();
+            sub->addAction(TypeIcons::icon(p["type"].toString(type)), name,
+                           this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
+        }
+    }
+}
+
 void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations)
 {
     QJsonArray ops;
     for (const auto v : m_catalog["operations"].toArray())
     {
-        if ((v.toObject()["group"].toString() == "Simulations") == simulations) ops.append(v);
+        if (isSimulationOperation(v.toObject()["group"].toString()) == simulations) ops.append(v);
     }
     if (ops.isEmpty())
     {
@@ -1731,7 +1834,13 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
     for (const auto v : ops)
     {
         const auto o = v.toObject();
-        if (simulations) sub = menu;            // (the simulations are the entries of their own menu)
+        if (simulations)
+        {
+            // (the boundary conditions and the analyses are the entries of the simulation menu, apart by a line)
+            if (sub && o["group"].toString() != group) menu->addSeparator();
+            group = o["group"].toString();
+            sub = menu;
+        }
         else if (!sub || o["group"].toString() != group)
         {
             group = o["group"].toString();
@@ -1741,9 +1850,9 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         const QString name = o["name"].toString();
         auto action = sub->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
-        if (simulations) action->setIcon(TypeIcons::icon("simulation"));
+        if (simulations) action->setIcon(TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation"));
         if (!o["doc"].toString().isEmpty()) action->setToolTip(o["doc"].toString());
-        if (o["other"].toBool() && !haveOther)
+        if (o["needs_other"].toBool(o["other"].toBool()) && !haveOther)
         {
             action->setEnabled(false);
             action->setToolTip("Needs a second model");
@@ -1785,8 +1894,15 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setToolTipsVisible(true);
+    // The field the field viewer shows (the disc is not a model that can be right-clicked: this is its menu): a body from it at once
+    if (fieldShown() && m_scene)
+    {
+        addBodyFromField(menu, -1, point, scale);
+        menu->addSeparator();
+    }
     // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces,
-    // fields, and the custom blocks that need no model.  (A kind with one entry is that entry.)
+    // fields, and the custom blocks that need no model.  (A kind with one entry is that entry.)  What a simulation is made of --
+    // materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu, not here
     const QJsonArray list = m_catalog["primitives"].toArray();
     if (list.isEmpty()) menu->addAction("(not loaded yet: run the script first)")->setEnabled(false);
     {
@@ -1799,6 +1915,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
         {
             const auto p = v.toObject();
             const QString g = p["group"].toString();
+            if (isSimulationPrimitive(g)) continue;
             if (!groups.contains(g)) order << g;
             groups[g] << p;
         }
@@ -1825,16 +1942,23 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
         }
     }
     menu->addSeparator();
+    {
+        auto imp = menu->addAction("Import model...", this, [=]{ emit(importRequested()); });
+        imp->setToolTip("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
+                        "whichever suits it.");
+    }
     auto ops = menu->addMenu("Add operation");
     auto sims = menu->addMenu(TypeIcons::icon("simulation"), "Add simulation");
     sims->setToolTipsVisible(true);
+    // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
+    fillSimulationPrimitives(sims, point, scale, atLine);
+    sims->addSeparator();
     if (m_scene && !m_scene->hasModel())
     {
-        for (auto m : {ops, sims})
-        {
-            m->menuAction()->setEnabled(false);
-            m->menuAction()->setToolTip("There is no model to work on yet");
-        }
+        ops->menuAction()->setEnabled(false);
+        ops->menuAction()->setToolTip("There is no model to work on yet");
+        auto none = sims->addAction("Boundary conditions and analyses need a model");
+        none->setEnabled(false);
     }
     else
     {
@@ -1850,10 +1974,30 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     auto menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setToolTipsVisible(true);
+    // A field is not drawn, so what is made from it is the first thing its menu offers: a body (field_from_body is the way back)
+    if (m_scene && m_scene->typeAtLine(line) == "field")
+    {
+        addBodyFromField(menu, line, point, scale);
+        menu->addSeparator();
+    }
     fillOperations(menu->addMenu("Operation"), line, point, scale);
     auto sims = menu->addMenu(TypeIcons::icon("simulation"), "Simulation");
     sims->setToolTipsVisible(true);
+    fillSimulationPrimitives(sims, point, scale, line);
+    sims->addSeparator();
     fillOperations(sims, line, point, scale, true);
+    {
+        // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
+        const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
+        auto own = menu->addAction("Custom resolution", this, [=]{ if (m_scene) m_scene->addCustomResolution(line); });
+        own->setToolTip("Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolution(x, number) under its "
+                        "definition; the number is a field under the model in the tree");
+        if (type == "field" || type == "point" || type.isEmpty())
+        {
+            own->setEnabled(false);
+            own->setToolTip("A resolution of its own is for a model that is drawn: a shape, a surface");
+        }
+    }
     auto select = menu->addAction("Select Surface", this, [=]{
         // (after this menu has closed: the menu of the surface selection takes its place)
         QTimer::singleShot(0, this, [=]{ showSelectMenu(globalPos, line, point); });
@@ -1910,27 +2054,23 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     mode->addItem("Flat face", "flat");
     mode->addItem("Round / smooth faces", "smooth");
     mode->setToolTip("Flat: spreads while the surface faces the way it does at the click.\n"
-                     "Smooth: spreads over round faces (cylinders, fillets) up to a sharp edge.");
+                     "Smooth: spreads over round faces (cylinders, fillets) until the surface bends tighter than the angle allows, or to a sharp edge.");
     mode->setCurrentIndex(store.value("select/mode", "flat").toString() == "smooth" ? 1 : 0);
     auto angle = new QDoubleSpinBox;
     angle->setRange(0.5, 90.0);
     angle->setSuffix(" deg");
     angle->setDecimals(1);
     angle->setToolTip("Flat: how far from the click's direction the surface may face.\n"
-                      "Smooth: how much it may turn from one triangle to the next.");
-    auto defaultAngle = [mode]{ return mode->currentData().toString() == "smooth" ? 30.0 : 10.0; };
-    angle->setValue(store.value("select/angle-" + mode->currentData().toString(), defaultAngle()).toDouble());
+                      "Smooth: how much the surface may turn within 10 mm: a tighter bend stops the selection.");
+    // (the smooth angle is per 10 mm of the surface now, not per step of the walk: the value remembered from before means
+    // something else, so it is kept under another name)
+    auto defaultAngle = [](const QString& m) { return m == "smooth" ? 35.0 : 10.0; };
+    auto angleKey = [](const QString& m) { return QString("select/angle-") + (m == "smooth" ? "smooth-10mm" : m); };
+    angle->setValue(store.value(angleKey(mode->currentData().toString()), defaultAngle(mode->currentData().toString())).toDouble());
     connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), angle, [=](int) {
         QSettings s;
-        angle->setValue(s.value("select/angle-" + mode->currentData().toString(), defaultAngle()).toDouble());
+        angle->setValue(s.value(angleKey(mode->currentData().toString()), defaultAngle(mode->currentData().toString())).toDouble());
     });
-    auto thickness = new QDoubleSpinBox;
-    thickness->setRange(0.0, 1000.0);
-    thickness->setDecimals(2);
-    thickness->setSuffix(" mm");
-    thickness->setSpecialValueText("automatic");
-    thickness->setValue(store.value("select/thickness", 0.0).toDouble());
-    thickness->setToolTip("How thick the field across the patch is (automatic: a hundredth of the model).");
     auto radius = new QDoubleSpinBox;
     radius->setRange(0.0, 100000.0);
     radius->setDecimals(1);
@@ -1940,7 +2080,6 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     radius->setToolTip("Stop this far from the click.");
     form->addRow("Spread", mode);
     form->addRow("Angle", angle);
-    form->addRow("Thickness", thickness);
     form->addRow("Radius", radius);
     auto buttons = new QHBoxLayout;
     auto select = new QPushButton("Select");
@@ -1956,14 +2095,13 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     // (the menu stays open until one of the buttons: Select remembers the values and asks for the selection)
     connect(select, &QPushButton::clicked, menuPtr, [=]{
         const QString m = mode->currentData().toString();
-        const double a = angle->value(), t = thickness->value(), r = radius->value();
+        const double a = angle->value(), r = radius->value();
         QSettings s;
         s.setValue("select/mode", m);
-        s.setValue("select/angle-" + m, a);
-        s.setValue("select/thickness", t);
+        s.setValue(angleKey(m), a);
         s.setValue("select/radius", r);
         menuPtr->close();
-        emit(surfaceSelectRequested(line, point, m, a, t, r));
+        emit(surfaceSelectRequested(line, point, m, a, r));
     });
     connect(cancel, &QPushButton::clicked, menuPtr, &QMenu::close);
     auto action = new QWidgetAction(&menu);
@@ -2121,7 +2259,10 @@ void View::checkHoverTarget(QPoint pos)
     syncPicker();
 
     auto picked = pick_img.valid(pos) ? (pick_img.pixel(pos) & 0xFFFFFF) : 0;
-    auto target = picked ? shapes.at(picked - 1) : nullptr;
+    // (a number that is not the place of a shape in the list -- the picture is of other shapes than there are, or a pixel that is not
+    // one's colour -- is nothing: every other place that reads the picture says so, and this one read past the list and wrote to what
+    // it found there, which corrupted the heap while the mouse moved over a model that was still being made)
+    auto target = (picked && int(picked) <= shapes.size()) ? shapes.at(picked - 1) : nullptr;
     if (target && selectedShapeCount() < 2 && target->nativeDragOk())
     {
         if (hover_target)
@@ -2148,7 +2289,7 @@ void View::checkHoverTarget(QPoint pos)
     // the probing; an analysis result has its own card and is always probed)
     const bool legend_on = target && (target->hasResult() ||
                                       (show_legends && !hidden_legends.contains(target->colorLabel())));
-    probe_valid = target && target->hasColorField() && target->colorMap() != "bc" && legend_on &&
+    probe_valid = target && target->hasColorField() && target->colorMap() != "bc" && target->colorMap() != "fit" && legend_on &&
                   target->probe(cursor_pos, probe_value);
     if (probe_valid)
     {
@@ -2184,6 +2325,68 @@ void View::setSection(SectionSettings s)
     }
     pick_timer.start();
     update();
+}
+
+void View::setError(const QString& text, int line0)
+{
+    if (text == m_errorText && line0 == m_errorLine) return;
+    m_errorText = text;
+    m_errorLine = line0;
+    if (text.isEmpty()) m_errorRect = QRect();
+    if (m_overlay) m_overlay->update();
+    update();
+}
+
+void View::drawErrorBanner(QPainter& painter)
+{
+    if (m_errorText.isEmpty())
+    {
+        m_errorRect = QRect();
+        return;
+    }
+    const QColor red(255, 110, 100);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    // A frame round the whole viewport: it is seen with the eyes on the model, which is where the work is
+    painter.setPen(QPen(QColor(red.red(), red.green(), red.blue(), 190), 3));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(rect().adjusted(1, 1, -2, -2));
+
+    QFont head = painter.font();
+    head.setPointSizeF(10.5);
+    head.setBold(true);
+    QFont body = painter.font();
+    body.setPointSizeF(9.0);
+    QFont hintFont = body;
+    hintFont.setPointSizeF(8.0);
+    const QFontMetrics fmHead(head), fmBody(body), fmHint(hintFont);
+    const QString title = (m_errorLine >= 0 ? QString("Error in line %1").arg(m_errorLine + 1) : QString("Error in the script"));
+    const QString hint = "The picture is the last one that worked.  Click to go to the error.";
+    const int maxWidth = std::max(260, std::min(width() - 40, 640));
+    const QString message = fmBody.elidedText(m_errorText, Qt::ElideRight, maxWidth - 28);
+    const int w = std::max({fmHead.horizontalAdvance(title), fmBody.horizontalAdvance(message), fmHint.horizontalAdvance(hint)}) + 28;
+    const int h = fmHead.height() + fmBody.height() + fmHint.height() + 22;
+    // (centred, but not under the model tree card on the left)
+    int x = (width() - w) / 2;
+    if (m_scene && m_scene->isVisible()) x = std::max(x, m_scene->geometry().right() + 14);
+    x = std::max(8, std::min(x, width() - w - 8));
+    m_errorRect = QRect(x, 14, w, h);
+    painter.setPen(QPen(red, 1.5));
+    painter.setBrush(QColor(92, 24, 24, 235));
+    painter.drawRoundedRect(m_errorRect, 8, 8);
+    int y = m_errorRect.top() + 7;
+    painter.setPen(QColor(255, 160, 150));
+    painter.setFont(head);
+    painter.drawText(QRect(x + 14, y, w - 28, fmHead.height()), Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(0x26a0)) + "  " + title);
+    y += fmHead.height();
+    painter.setPen(QColor(0xee, 0xe8, 0xd5));
+    painter.setFont(body);
+    painter.drawText(QRect(x + 14, y, w - 28, fmBody.height()), Qt::AlignLeft | Qt::AlignVCenter, message);
+    y += fmBody.height() + 1;
+    painter.setPen(QColor(0xc8, 0xb4, 0xb0));
+    painter.setFont(hintFont);
+    painter.drawText(QRect(x + 14, y, w - 28, fmHint.height()), Qt::AlignLeft | Qt::AlignVCenter, hint);
+    painter.restore();
 }
 
 void View::setFieldSources(QList<FieldEntry> fields)
@@ -2281,7 +2484,8 @@ void View::requestSlice()
 {
     if (section.enabled && section.field)
     {
-        m_sec.timer.start();
+        // (a throttle, not a debounce: see requestFieldSlice)
+        if (!m_sec.timer.isActive()) m_sec.timer.start();
     }
 }
 
@@ -2289,7 +2493,10 @@ void View::requestFieldSlice()
 {
     if (fieldShown())
     {
-        m_fld.timer.start();
+        // The first request arms the timer, and the ones that come before it fires add nothing: the pass samples the state it finds
+        // when it starts.  Starting the timer again at every request waited for the hand to rest, so a drag that moves faster than
+        // the timer's interval showed nothing until it stopped -- the plane lagged behind the mouse
+        if (!m_fld.timer.isActive()) m_fld.timer.start();
     }
 }
 
@@ -2346,8 +2553,10 @@ void View::startSliceAt(Plane& plane, bool fine)
     if (fieldMode ? !fieldShown() : !(section.enabled && section.field)) return;      // (switched off while this waited)
     if (plane.watcher.isRunning())
     {
-        // Abandon the one in flight; we'll restart once it returns
-        plane.generation++;
+        // A quick pass that is on its way is let finish -- its picture is shown, and the next pass follows at its end.  Abandoning it
+        // at every tick of a drag meant that no pass lived long enough to be shown.  A fine pass, or a quick one that takes long, is
+        // abandoned (what it samples is out of date); we start again once it returns
+        if (plane.runningFine || plane.clock.elapsed() > 400) plane.generation++;
         plane.timer.start();
         return;
     }
@@ -2405,6 +2614,7 @@ void View::startSliceAt(Plane& plane, bool fine)
     if (estimate > 350.0) fineSamples = std::max(256, int(720.0 * std::sqrt(350.0 / estimate)));
     const int samples = fine ? fineSamples : 180;
     plane.clock.start();
+    plane.runningFine = fine;
     std::atomic<int>* g = &plane.generation;
     plane.watcher.setFuture(QtConcurrent::run([=]() {
         const auto t0 = std::chrono::steady_clock::now();
@@ -2701,6 +2911,18 @@ bool View::fieldGizmo(QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& ti
     return std::isfinite(middle.x()) && std::isfinite(tipU.x()) && std::isfinite(tipV.x()) && std::isfinite(tipN.x());
 }
 
+bool View::fieldGizmoPoint(int part, QPoint& out) const
+{
+    // (for the automation: a point that grips part 1, 2 (the arrows in the plane), 3 (the dot) or 4 (the arrow along the normal))
+    if (!fieldShown()) return false;
+    QPointF m, u, v, n;
+    float len;
+    if (!fieldGizmo(m, u, v, n, len)) return false;
+    const QPointF p = part == 1 ? m + 0.6 * (u - m) : part == 2 ? m + 0.6 * (v - m) : part == 4 ? m + 0.7 * (n - m) : m;
+    out = QPoint(int(std::lround(p.x())), int(std::lround(p.y())));
+    return fieldGizmoHit(out) == part;
+}
+
 int View::fieldGizmoHit(QPoint pos) const
 {
     if (!fieldShown()) return 0;
@@ -2761,7 +2983,9 @@ void View::dragFieldGizmo(QPoint pos)
 {
     const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
     QVector3D c = field_press_centre;
-    auto clamp = [&](int a, float v) { return std::max(settings.min[a], std::min(settings.max[a], v)); };
+    // (nothing keeps the disc inside the render region or anywhere else: a field is about all of space, and the way to see it is to
+    // take the disc to where it is interesting)
+    auto clamp = [&](int, float v) { return v; };
     if (field_drag == 1 || field_drag == 2 || field_drag == 4)
     {
         // An arrow: the mouse movement along its screen direction, in mm (the one along the normal moves the disc through the field)
@@ -2904,16 +3128,18 @@ bool View::groupHandles(QList<Shape*>& members, QVector3D& center) const
     // one gizmo, whatever gizmo mode each has when it is selected alone -- unless all of them say never
     members.clear();
     int selected = 0;
-    bool anyShown = false;
+    bool anyShown = false, anyLocked = false;
     for (Shape* s : shapes)
     {
         if (!s->isSelected()) continue;
         ++selected;
+        anyLocked |= s->isLocked();
         if (!s->hasMoveVars()) continue;
         members << s;
         anyShown |= s->handles().mode != Shape::Handles::NEVER;
     }
-    if (selected < 2 || members.isEmpty() || !anyShown) return false;
+    // (a locked shape in the selection: the selection is not moved or edited -- there is no gizmo for it)
+    if (selected < 2 || anyLocked || members.isEmpty() || !anyShown) return false;
     QVector3D lo, hi;
     bool first = true;
     for (const Shape* s : members)
@@ -3396,6 +3622,21 @@ void View::applyHandleNumbers(const std::map<libfive::Tree::Id, float>& m)
         emit(renderBusy(true));
         requestSlice();
     }
+    // The field the field viewer shows is not a shape that is drawn, so nothing above reached its numbers: when the numbers that are
+    // dragged are its own (the gizmo of the field, or a surface of it), the disc shows it from the new ones as they come, not
+    // from the numbers of the last run of the script
+    bool fieldChanged = false;
+    for (auto source = m_fieldSources.begin(); source != m_fieldSources.end(); ++source)
+    {
+        for (const auto& v : m)
+        {
+            const auto found = source->vars.find(v.first);
+            if (found == source->vars.end() || found->second == v.second) continue;
+            found->second = v.second;
+            if (source.key() == m_fieldKey) fieldChanged = true;
+        }
+    }
+    if (fieldChanged && fieldShown()) requestFieldSlice();
     m_overlay->update();
 }
 

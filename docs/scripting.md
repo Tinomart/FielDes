@@ -173,19 +173,37 @@ tolerances, resolutions). A **point** (`point(x, y, z)`) is a model of its own a
 
 Everything above is built on one thing: a shape is a tree of arithmetic over the three coordinates, and the library is only a
 collection of ready-made trees. The kernel's low-level interface (libfive documents it in Scheme: `define-shape`, `remap-shape`)
-is there in Python, and you can write a shape from nothing but `x`, `y` and `z`:
+is there in Python, and you can write a shape from nothing but `x`, `y` and `z`.
+
+**The short way: `low_level_field` and `low_level_body`.** You write a function of the coordinates; it is called once, with
+`x`, `y` and `z` as fields, and what it returns is the field or the body:
+
+```python
+def ripple(x, y, z):
+    distance = (x.square() + y.square()).sqrt()          # the distance from the z axis
+    return (distance * 0.6).sin() * 3                    # a ring pattern, up to 3
+
+waves = low_level_field(ripple)                          # a field (not drawn: select it to see it in the field viewer)
+
+def ball(x, y, z):
+    return (x.square() + y.square() + z.square()).sqrt() - 20       # negative inside, zero on the surface
+
+part = low_level_body(ball)                              # a body: drawn, a part like any other
+rind = body_from_field(waves, 0.5)                       # a body from a field: where the field is below 0.5
+```
+
+In FielDes, **right-click → New field → low_level_field** (or **New 3D shape → low_level_body**) writes the function with a working
+first logic -- the distance from the place you clicked -- and the call under it, and selects the model: change the logic in the
+text and it runs again. A function of `x` and `y` alone (`lambda x, y: ...`) is a field that does not depend on `z`. `a.max(b)`,
+`a.min(b)`, and the library's `maximum(a, b, c ...)` and `minimum(a, b, c ...)` stand for Python's `max` and `min`, which cannot
+compare fields. **`body_from_field(field, level=0)`** and **`field_from_body(body)`** convert between the two.
+
+**The long way**, as libfive's Scheme documents it (`define-shape`, `remap-shape`):
 
 ```python
 from fieldes import *
-from fieldes.shape import shape      # shape(f) calls f(x, y, z) with the three coordinates as trees, and gives the tree
 
-def maximum(*terms):                 # (Python's max cannot compare trees: .max is the method)
-    out = terms[0]
-    for t in terms[1:]:
-        out = out.max(t)
-    return out
-
-cube = shape(lambda x, y, z: maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z))      # (define-shape (cube x y z) ...)
+cube = low_level_body(lambda x, y, z: maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z))      # (define-shape (cube x y z) ...)
 
 x, y, z = Shape.X(), Shape.Y(), Shape.Z()
 turn = z * 0.14
@@ -240,7 +258,7 @@ import os
 os.add_dll_directory(r"C:\path\to\FielDes")       # the folder holding fieldes.dll
 from fieldes import *
 
-part, (lo, hi) = import_step_parts("bracket.step")[0]
+part, (lo, hi) = import_model("bracket.step")[0]
 print(mass_properties(part, density=2.7, lower=lo, upper=hi)["mass"], "g")
 part.save_stl("bracket.stl", lo, hi, resolution=4)
 ```

@@ -31,6 +31,6 @@ my_cell = cell_custom_truss({"o": (0, 0, 0), "ex": (0.5, 0, 0), "ey": (0, 0.5, 0
                             mirror="xyz")
 print("my cell:", my_cell, my_cell.check() or "tiles")
 
-lattice = lattice_surface_conform(wave, my_cell, within=patch, side='outside', depth=6, cell_size=6, radius=0.6)
+lattice = lattice_surface_conform(wave, my_cell, within=patch, side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 
 lattice

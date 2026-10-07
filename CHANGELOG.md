@@ -1,5 +1,270 @@
 # Changelog
 
+## Next — one import function, a field walk for surface selection, materials and conditions as models
+
+### Speed and feel
+- **Dragging never writes a number into the wrong place (the "unclosed bracket" error).** A drag writes its numbers into the `var(...)`
+  calls of the script at the lines and columns that the last finished run recorded -- and the script can be another text by then: selecting a
+  model makes FielDes write an `expose(...)` block above its handles line, a click on the tree puts a line in or takes one out, a key is
+  typed. A number written at an old place went into the middle of some other line (`var(31.73047.0)`, then `SyntaxError`). Reproduced
+  in a window on the previous build by selecting a part and dragging its gizmo at once, then fixed: the places are now cursors of the
+  document, which every edit moves along (the tree's, the keyboard's, undo, the drag's own); a run's places are taken over only when the
+  run was of the text that is in the editor; and what stands at a place is checked to be the number before it is written over (a number
+  that is not there is not written, and the script is run again). Also correct now for a line with an accent before a number (Python
+  counts bytes, the editor characters). The test `dev/tests/run_drag_after_edit.ps1` does the sequence and reads the script after each step;
+  on the keuken file (select a part and drag at once, lock another and drag, unlock and drag) every step parses and the numbers land in
+  the part's handles line.
+- **The viewport follows the tree's lines.** The tree moves to the new lines the moment a click edits the script, but the shapes in the viewport
+  knew the lines they were made on only from a run -- so for the seconds the run took, selecting a model in the tree lit up another shape (or
+  none, and no gizmo to drag), and a click on a shape selected another row. The tree now tells the viewport where each line went (the same
+  for drops), and the shapes' lines move with it.
+- **A render goes on when you change something that has nothing to do with it.** A model's numbers (`var()`) were told apart by the
+  order they appear in the script, so one new `var()` line above a shape renamed every number below it: the shapes were "new" and
+  every render started again. The numbers are found again by the statement they are in (`name = function` of its statement, and
+  which one of that name it is) and their place in it, so a new line, a comment, a changed number elsewhere or another statement
+  leave the shapes (and their renders and meshes) as they are. Measured with a window: three unrelated edits above two shapes,
+  2 of 2 shapes kept each time (the old numbering restarted both at the first edit).
+- **A run that a newer edit has already replaced is not made.** Every edit of the script used to queue a run of the script as it was
+  then, and the runs went one after another, each to its end. Only the last of a row of edits runs now; the one that is running
+  is stopped as before.
+- **Delete is instant too.** The bin of a row (and `D`) takes the statements out of the tree at once, with the lines under them moved
+  up, and what an operation was made of stays as rows of its own (5-7 ms to write and follow, in a window: three deletes and a lock in a row
+  while the script was running). The bin of a `custom_resolution` row goes the same way.
+- **The model tree follows its buttons at once.** The eye, the lock and the render cache write their lines and the tree changes with
+  them, in the same moment (a few milliseconds), without waiting for the script to run: every row is on the line the edit gave it, the
+  clicked model has its new state, and the rows are made again from that. Clicks in a row while the script is running are all made
+  at once, from the tree as it is now, and make ONE run of the last text -- six clicks in a row on a script that takes four seconds
+  to run were done in 0.3 s, and the script ran once. The gizmo button shows its new mode at once as well (its lines are the run's to
+  say: a second click on it waits for the run, as before). A tree that is followed this way is checked against the text: if a line
+  that no edit touched is not the same afterwards, or the lines do not fit, the tree is not followed, nothing is guessed, and the
+  tree waits for the run as it did.
+- **The model tree is there when a file is opened.** The tree of every run that worked is kept (by the md5 of the script's text, and of
+  the program and library that made it; sixty are kept, the oldest go) in `scene-cache` next to the render cache
+  (`FIELDES_SCENE_CACHE_DIR` moves it). Opening the same text shows that tree at once, correct, and editable, while the script runs
+  for the first time -- measured with a script that sleeps 8 s: 2.5 s after the start, the first launch has two of three rows, the second
+  all of them. The run's scene replaces it when it is done.
+- A scene from a run that was begun before an edit of the tree is not shown over the tree that edit gave (it would take the tree back
+  to the text before it for a moment).
+- **An edit of the tree never lands on the wrong line.** In `keuken_no-drag_handles.py` a lock statement had been commented out as if it
+  were a hidden model (`# hidden: keukencombinatie_1 = lock(keukencombinatie_1)`, and a ghost row for it in the tree): a hide made from rows
+  that were of another text than the script's wrote on the line they pointed at, which was the lock line. Now every edit that comments out,
+  rewrites, deletes or inserts under a line it found by the rows first checks what is on that line -- the line that shows the model is
+  `x`, the one that hides it `# hidden: x`, a lock is `x = lock(x)`, and so on for handles, expose, the render cache, the resolution and
+  the definition -- and when it is not, **nothing is written**: the line under the tree says why (what the line is, and what the rows
+  said), the script is run again to bring the rows up to date, and the note says again when that is done. Covered: the eye, the
+  multi-select eye, isolate, lock and unlock, the render cache, the gizmo mode, delete (the bin and `D`), removing handles, the reimport
+  of a part, reset of an import, the resolution row and its menu entry. (Drops and renames work out their own edit from the whole text and
+  were not changed.) Tested in a window by moving the rows' lines onto the wrong statements: the script came out unchanged
+  for the eye, isolate, delete and unlock, and the same click on right rows worked.
+- **A comment that begins `# hidden:` is a hidden model only when what follows is a name or an expression.** `# hidden: x = lock(x)`
+  (a statement that was commented out) is a comment now, and no row of the tree.
+- **The model tree is built about a hundred times faster in a big file.** The rows were made inside the view, which then laid out
+  every row it had at each icon and tooltip that was set: 405 rows took 6.2 s (14 ms a row, 94 % of it the making of the row) --
+  and the window was frozen for that long at every run and, with the buttons following clicks, at every click. The rows are made
+  apart and put into the tree once: the same 405 rows take 66 ms (12 ms for the rows). Clicks on a file with 400 models: 33-59 ms
+  to write and follow, 50-70 ms to make the rows.
+- **A model that is selected is made ready to be dragged when the script has run**, not while clicks of the tree are being followed:
+  the lines it writes (`expose`, `handles`) would have made the rows wrong again, and the next click wait for a whole run.
+- A test window of the harness no longer crashes when a scene arrives while it is looking for a row (`treebutton`, `treeclick`).
+
+### One body at its own resolution
+- **`custom_resolution(body, resolution)`**: ONE body is meshed at a resolution of its own (samples per mm, whatever
+  `view.set_resolution` says), so a fine part does not make the whole scene fine -- or a plain big one is drawn coarser. In the
+  model tree it is a **property row under the variable** (type the number: `part = custom_resolution(part, 3)` is written as you type;
+  the bin takes the line away) and **Custom resolution** is in the right-click menu of a model (on a row of the tree, a line of
+  the script, or in the viewport). It changes how the body is drawn, not what it is. Documented in the reference and in
+  [Caching and performance](docs/caching-and-performance.md#resolution-and-quality).
+- **It works on a body that reaches out of the scene's region** (found in `still_broken_lattice.py`: the lattice's box is an
+  estimate and went 17 mm past the pump's region, so the viewport silently drew it at the scene's 0.71 samples per mm and the
+  number in the tree changed nothing). The body is meshed at its own resolution over the part of its cube that is in the region.
+- **A number that is too fine is capped, not an error**: 2000 samples along the body's longest side is the finest there is. Typing `8`
+  for a 262 mm lattice raised an error, which took the picture and the row away, so the number could not be corrected in the tree.
+  The body is drawn at the finest there is (7.63 here) and the row says so in amber (`→ 7.63`, why in its tooltip).
+- **A plus button at the very left of the top bar**, before Open: a new script (File → New, `Ctrl+N`). The plus is white, and it leaves the room of the arrow the other two have, so the icons are evenly spaced.
+- **The numbers in the model tree's fields are centred** (the region, the resolution, the quality and the resolution of a model), not
+  left-bound; a number too long for its field shows from its first digit, not its last.
+- **A resolution given to a PART of an import has its row too.** The parts of an import are rows under the import, not model rows, and
+  only model rows got the `custom_resolution` row: the line was written (by the right-click menu of the part's row, or by hand) and the
+  tree showed nothing. The row is under the part now, the same one (number, bin, the amber cap note). A part that was imported as a
+  mesh (tessellated: drawn from its own triangles) says `(a mesh)` in its row, with the reason in the tooltip: a resolution changes
+  nothing for it. Tested in a window on a kitchen part (meshed at its own 2 samples per mm, as the render log says) and a pump part.
+- **The bin of the row (or deleting the line) takes the resolution away at once**: a shape that had one kept it until FielDes was
+  restarted.
+- **The default number of the menu entry is the scene's resolution** (it was always 10 -- the scene's was looked up under the wrong
+  name), so that nothing changes until you type over it.
+
+### Import
+- **A part whose free-form faces are fitted badly is tessellated, not reconstructed.** The reconstruction measures how far each fitted
+  B-spline face is from the exact face; `import_model` tessellates the part when the worst is `fit_tolerance` (1 % of the face's
+  size) or more -- not every part with B-spline faces, only those that do not import properly (in the kitchen file, two parts off by
+  2.2 % became meshes; the others, off by 0.4 % and less, keep their faces that can be dragged). `fit_tolerance=None` keeps every
+  reconstruction.
+- **The model tree shows how each part was imported**: a cube for a reconstructed part (its faces can be dragged), a triangle cut
+  into triangles for a tessellated one (a mesh: only its gizmo moves it); the tooltips say why, and the gizmo button of a mesh says it
+  has no faces to drag.
+- **No legend and no reading under the cursor for the shading of a fit that is off**: the parts light up from grey to red, and that is
+  all.
+- **One function imports a model: `import_model(path)`.** A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF), a list of
+  `(shape, bounds)` back, one per part (one for a mesh). For each part of a STEP file it chooses: **tessellated** (its exact surface
+  as triangles, made a distance field) when more than a tenth of its surface is free-form (B-spline) — `threshold=0.10`, measured
+  on the test files: the parts of the examples have none to a few percent, the sculpted ones more than half — or when it is a
+  surface body; **reconstructed** (a formula from its faces) otherwise. `reconstruct(path)` and `tessellate(source)` make every
+  part one way, by name. **`tessellate` works on anything**: a STEP file, a mesh file, a list of parts, and ANY field
+  (`tessellate(shape)`: its surface meshed, the exact distance to that mesh). `import_step_parts`, `import_step`,
+  `import_step_parts_reconstructed`, `import_step_tessellated(_parts)` and `import_mesh` are gone everywhere (library, docs,
+  examples, tests, the application); the model tree's row of an import has **Import as** (automatic / reconstruct / tessellate),
+  **Import model...** is in the menu of empty space, and a part's tooltip says how it was imported and how free-form it is.
+- **Surface models import.** The sports shoe was a `SHELL_BASED_SURFACE_MODEL` of 34 open shells — no solid in it, which is
+  what "does not contain a solid" meant. Each shell is a part now: a **solid** if it closes, a **sheet** (the distance to its
+  triangles less half a thickness, `thickness=`, 0.4 % of the file by default) if it does not. `reconstruct` says that a surface body
+  cannot be rebuilt. A face with no surface to tessellate is a failed part that says so (pump.stp's last one).
+- **Tessellated parts are drawn from their own triangles**, not meshed from their field: a wall as thin as you like needs no
+  resolution (the thin-part resolution problem), nothing is meshed, a part renders at once. The triangles follow `move`, `rotate`,
+  `scale`, `reflect` and `handles()` by a matrix; while a `var()` of the part is being dragged its field is meshed instead, and the
+  triangles are back when the script has run. `roi_resolution` leaves such parts out (they ask for no resolution and cost none of
+  the vertex budget).
+- **The ghosts of a tessellated part are gone** (the kernel's mesh-to-distance): slivers and duplicate sheets of the tessellation
+  no longer make a solid that is not there; ghosts 6 -> 0, holes 0 on the test parts.
+- A failed part says why when it is used in an operator too (`part + 1`), and a part that is a model of the script can be selected, dragged
+  (onto an operation, between models), copied and pasted like any model; a part that is not in the script is added by a
+  double-click or its menu.
+
+### Surface selection
+- **`surface_from_bodies(body, *others, tolerance=None)`**: the surface of the first body where it meets the bodies that follow (inside
+  them, or within `tolerance` of them); one body alone is its whole surface. A surface like `select_surface` makes -- a region for
+  `fixed()`/`force()`, a surface for `lattice_surface_conform()` -- made from the fields alone. In the viewport: select several models,
+  right-click, **Operation → Surfaces → surface_from_bodies** (one model: its whole surface). Tested in `dev/tests/t_surface_from_bodies.py`
+  (the wall of a hole a bolt fills, a face under a block, a gap and `tolerance`, several bodies and a list, a sphere cut by a box, the menu, a lattice laid on the
+  patch) and in the window (`win_surface_bodies*.py`).
+- **A selection is drawn exactly, also in the middle of a big flat face.** The viewport showed the lit-up patch by the vertices of the part's
+  mesh, and a flat face is a few huge triangles, so a patch lying in the middle of one -- the face of a box inside a sphere -- came out as skewed
+  slivers between far-away corners (or not at all). A triangle that can hold the edge of the patch is now cut into four, again and again,
+  down to a tenth of a millimetre or so on a part 65 mm across; one wholly in the patch, or too far from it to hold any, is left. The edge is as sharp as
+  the mesh is fine, for `select_surface` too (checked: the top face of a plate with a hole is one clean rectangle with a round hole).
+- **A selected surface is a surface, with no thickness.** `select_surface(..., thickness=)` and the *Thickness* entry of the
+  right-click menu are gone: a surface has none. The selection is of the *Surface* kind in the model tree (the separate
+  *Selection* kind and its icon are gone), like any open surface; as a field it keeps the thinnest layer the samples cover,
+  which is what makes it a region at all, not a setting (thicken it with `offset_by(selection, mm)` for a coarse analysis).
+- **The smooth selection stops where the surface bends tightly.** Smooth mode used to limit the turn from one step of the walk
+  to the next -- 30 degrees over 1.7 mm on a shoe, which nothing but a sharp edge ever reaches, so it took the whole outside. It is now a
+  limit on how tightly the surface bends: `angle` degrees for every 10 mm of the walk (measured from the sample about 10 mm back).
+  On the pump shoe: 15 degrees or more takes the whole outside, 10 about half of it, 5 a patch round the seed. The menu's default is
+  10 degrees for both spreads, and the value it remembered from before (a different quantity) is dropped.
+- **`select_surface` on a part that was isolated no longer fails.** Isolating a model writes `part = handles(part, move=(var(0)...))`
+  into the script; `handles()` lost the part's box when its numbers were `var()`s, so a selection made on it had to search the
+  shape's extent, which does not work on a mesh in the application (it did in a headless run): "could not find the extent of the
+  shape". `handles()` now carries the box (scaled, rotated, moved by the numbers the `var()`s have).
+- **A lattice on a thin shell no longer reaches into the air.** `lattice_surface_conform` (side `inside`, the default) gives each
+  layer the depth of the body under it, found by reading the field inwards along the normal; it stepped an eighth of a cell at a
+  time, so a wall thinner than that was jumped over and read as no body at all, and the layer got the whole reach (three cells)
+  standing out of the surface. On a shoe with a 1.4 mm wall and 20 mm cells that left lattice pieces 15-26 mm above the shoe. The
+  field is now read in finer steps first, so the layer is the wall (1.4 mm), and every piece lies within 1.5 mm of the part.
+- **`lattice_surface_conform` makes a thin layer by default, and has `cell_thickness` and `stretch_cell`.** The lattice used to be as thick
+  as its cells were wide; for riveting and the like it is now a layer `cell_thickness` thick (3 mm by default), measured from the
+  surface. `stretch_cell=True` (the default) deforms the cells to fit that thickness: `cell_size` along the surface, `cell_thickness`
+  through it. `stretch_cell=False` keeps the cells' own proportions (as deep as they are wide): `cell_thickness` of them stands out of
+  the surface and the rest, on the other side of it (the inside of the body), is cut off at the surface -- for strut cells and for a
+  periodic surface, outside or inside, on a body, a surface or a selection. The argument `depth` is gone: it is `cell_thickness`
+  (`None` = as it was: a body filled as deep as it is, or one cell). The default strut of a thin layer is a quarter of its thickness
+  across at most (a thinner one is finer than the viewport can draw).
+- **A lattice on a selection is laid out as a surface, by a method of its own.** A selection is a surface: it used to go through the
+  closed-body layout (the whole part had to be mapped as one closed surface, and the call was refused for a part that is not closed,
+  `the cell map does not cover the whole surface ...`) and then be cut to the patch, which left the tops of cells in the air. The layout is
+  now told, not guessed from the field: a body, a surface (cut by its region) or a selection. A selection is laid out over the
+  surface the picked patch makes -- the points of the walk with their normals, as a field, `selection.surface` (the height above the
+  patch along its normal) -- over the part of it by the patch only, by the sheet method. Nothing of the body behind it is looked at,
+  and nothing is cut afterwards. `lattice_surface_conform(selection, ...)` stands on the side the surface faces, one cell deep, unless you
+  give `side=` or `depth=` (the default `side` is `'inside'` for a body, `'outside'` for a surface or a selection).
+- **`select_surface` is made from the field alone** — its value and gradient, like the conformal lattice: a walk over the surface
+  from the seed in steps (eight from every sample, each carried onto the surface along the gradient), kept where the surface
+  stays within the angle of the seed's (flat) or of the sample before (smooth). No mesh is made or read: it is the same on a reconstructed part, a
+  tessellated one, a mesh, a CSG model, however thin. The selection is the distance to the walked samples (a kd-tree field) less half its
+  thickness; `.samples`, `.spacing`, `.cover`, `.patch`, `.whole` (= |field|). `resolution` is steps per mm (default 150 along the
+  longest side). Tested on a box, a plate thinner than a step, a sphere, a cylinder, moved shapes, the bracket reconstructed and
+  tessellated, and pump_2 (`dev/tests/t_select_walk.py`). The mesh flood (`libfive_mesh_flood`) is removed.
+
+### Model tree and viewport
+- **An error leaves no shadow rows.** The `# hidden: name` lines that come after the line that failed (their models were never
+  made) were listed as rows of their own, pointing at nothing, next to the real part rows. A run that stopped, or is still running,
+  lists only what it got to.
+- **The error banner goes when the failing line is rewritten or passed**, not when the whole run ends: the moment the line it
+  was on is not in the script any more, or the run has completed a statement after it. A run that takes long (an import, a
+  lattice) used to leave the banner up the whole time. If the new text fails again, the banner comes back after the usual moment.
+- **Materials are their own kind** (`material`: tan, a hatched block): `Material(...)`, the presets and fluids. They are models in
+  the tree, nested under the analysis that uses them, and **dragged onto an analysis** a material becomes its `material=` (a fluid
+  its `fluid=`), replacing the one it has. Conditions are dragged the same way: a set (`static_boundary_conditions`) becomes the
+  analysis's conditions, a support goes into `supports=[...]`, a load into `loads=[...]`, a thermal or flow condition into the list the
+  analysis takes — never a question, and the reason when it cannot be done.
+- **The simulation menus list them** (**Add simulation** in the menu of empty space, **Simulation** in a model's menu -- the first
+  menu stays short): New material (steel, stainless steel, aluminium, titanium, PLA, PETG, ABS, nylon — written
+  out with their numbers — and your own), New fluid (water, air, oil, glycerol), New support or load (fixed, force, gravity,
+  thermal expansion), New thermal condition (fixed temperature, heat input, heat generation, convection), New flow condition (inlet,
+  outlet, wall, slip); a condition is written with its region as a box model of its own (change it, or drag a selected surface
+  onto the condition to replace it), and **Simulation -> static_boundary_conditions** writes the boundary conditions of a model. **Lattices**
+  (`lattice`, `lattice_surface_conform`) and **Importing** (`tessellate`) are in the Operation menu.
+- **Ctrl+D duplicates, Ctrl+C / Ctrl+V copy and paste models** (viewport or model tree focused; Ctrl+D is the editor's multi-cursor
+  with the editor focused): the model's statements with free names, copies referring to each other's copies, one undo step.
+- **The part rows have an eye each**; only the **assembly** (the import row the parts are nested under) has none, since it is the
+  file and not something drawn. Imported parts are ordinary models: nothing is locked unless you lock it (the lock button, `R`).
+  A locked model that is selected says why it has no gizmo (a line under the tree), and unlocking one that was never made ready
+  makes it ready (its gizmo line, its draggable surfaces).
+- **A part shown with `I` (or `V`) is made ready to be dragged.** A part that was hidden and was shown by isolating it got its gizmo
+  (from the `handles(...)` line it had) but never the numbers that place its surfaces, so its faces could not be pulled; only the
+  eye prepared a model. What is selected is made ready after every run now (nothing is written for a model that is ready).
+- **An orange dot marks every model whose surfaces cannot be pulled.** Selecting a model writes the numbers that place its surfaces
+  (`expose(...)`) when they are no more than 120 -- a bigger one would be pages of script -- and the model tree now shows which
+  models have no such handles from the start: a small orange dot right after the name (parts of an import included: a tessellated
+  part is a mesh with no faces to pull, a reconstructed one with more than 120 numbers, such as the kitchen file's part 3 with 1620,
+  is not made draggable). Its tooltip says which and why; the gizmo moves such a model all the same, and selecting it says it under the tree.
+- **The disaster file crashed while the mouse moved over it.** Hovering a model asks which numbers it is made of, and the kernel's
+  `Tree::walk()` of a tree that has been moved (remapped: a gizmo, `handles()`) returned pointers into a flattened copy that was
+  already gone, so the walk read freed memory: heap corruption or a jump to a freed object, a few seconds after opening, whenever a
+  moved model was under the cursor (exit code 0xC0000374 or 0xC0000005; reproduced by moving the mouse over the file while it
+  loads). Every walk of such a tree keeps the flattened copy alive now (the hover, the field walker, the save check, the axes, the
+  serializer). The hover also checks the shape number it reads from the picking picture, as every other place did.
+- **A crash leaves a report**: `%LOCALAPPDATA%\FielDes\FielDes\crash\crash-<date>.txt` with the exception and the places the
+  program was at; `dev/tools/crash_symbols.py` names them with the build's map files.
+- **A body with no surface is not a failure.** `pump.stp` lists a last body that has no surface to import: its row is dashed and dimmed
+  with a tooltip, not red and struck through.
+- **A locked model can be in a selection of several again** -- to select a handful of parts and unlock them at once (`R`, or the
+  lock button of any of the selected rows, which then acts on all of them). A selection with a locked model in it cannot be
+  moved or edited (no shared gizmo, nothing written for it), and a popup says so: when a locked object is part of a multi
+  select, the multi selection can no longer be moved or edited. A line under the tree says how many are locked.
+- **A click on the tree waits for a script that fits.** Eye, lock, gizmo mode, cache, delete and the import buttons make their edit
+  from the lines the last run reported; clicked again before that run was done (a big file runs for seconds) the second edit hit
+  the lines of the first one's text, and a definition was commented out or deleted -- the script then ended in an error. The
+  scene says which text it is of, and an edit made while the text is another waits for the scene that fits (one at a time; a script
+  with an error refuses it and says why).
+- **The model tree no longer reloads when you click an eye or a lock.** The script runs again after such a click, and once a
+  statement (an import of ninety parts) had run for a moment the tree was replaced by the rows of the statements that were
+  done -- one row -- and filled up again when the run ended. A tree that is shown now stays as it is until the run is done (only
+  an empty tree, a script just opened, fills row by row as the run goes on), and the button that was clicked changes at once.
+- **Dragging numbers no longer eats parentheses.** A drag writes the numbers of a line of `var(...)`s into the script as they
+  change; the place of the numbers to the right of one that changed was moved along only when they changed in the same step,
+  so one that changed in a later step was written one character off (`var5.200222)` in `examples/dragging_causes_parenthesis_error.py`).
+  All of them move along now (`dev/tests/win_varsteps.py`).
+- **`I` keeps the tree where it was**; **Fix All** puts
+  fixes after `from fieldes import *`; a running render keeps going when something else changes (only a shape whose geometry
+  changes starts again).
+- **An error shows**: after 1.3 s of a script that does not work, the model tree header says "error" and the viewport gets a red frame
+  and a banner with the line (click to go there); it clears when the script runs.
+
+### Fields
+- **The field viewer is not kept anywhere.** The disc could not be dragged out of the render region (a box round the part, in a
+  big file a small one); nothing limits it now, and the Position slider, which spanned that region, is gone: the arrows move the
+  disc.
+- **A field has "Body from field" at the top of its menu** (its row in the tree, and the field viewer's disc), next to
+  Operation > Field math, which has it too.
+- **The field viewer follows the hand.** The disc was sampled again only when the mouse rested: every move started its timer
+  anew and a pass on its way was abandoned at every tick, so a drag showed one picture, at its end (measured: 1 per drag of
+  40 moves; now 20). The same for the section plane. The numbers of a field that a gizmo drags reach the viewer as they move.
+- **The analysis fields read the script's `var()` numbers**: `gradient_magnitude`, `normal_field`, `wall_thickness`, `curvature_field` of a shape moved by `handles()` (or any shape with a `var()`) used 0 for every variable (the kernel printed "uninitialized variable" hundreds of times); they are given the numbers the evaluator holds now, and follow a drag.
+- **`body_from_field(field, level=0)`**: a body where the field is below `level` (the inverse of `field_from_body`).
+- **`low_level_field(logic)` and `low_level_body(logic)`**: your function of the coordinates, called once with x, y and z as fields
+  (or x and y; or x), is the field or the body — `maximum(...)` and `minimum(...)` stand for Python's max and min. Right-click ->
+  New field -> low_level_field (or New 3D shape -> low_level_body) writes the function, with a first working logic at the cursor,
+  and the call. Example 21 uses them.
+
 ## Next — fields everywhere, custom blocks, a typed and nested model tree
 
 ### Fields everywhere

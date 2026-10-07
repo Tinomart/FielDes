@@ -1,3 +1,0 @@
-wait 3500
-treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/error_tree.txt
-quit

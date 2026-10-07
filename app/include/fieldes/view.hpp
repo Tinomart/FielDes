@@ -96,6 +96,11 @@ public slots:
      *  (0-based) script lines  */
     void highlightLines(QList<int> lines0);
 
+    /*  The model tree followed an edit of the script before it was run (a line went in or out): the lines the shapes were made on are the
+     *  lines they are on now -- moved[old line] = new line, or -1 when the line is gone.  Until the run that answers the edit has made new
+     *  shapes, a click on a shape would otherwise select the row of another model, and the row that is selected would light up another shape  */
+    void moveSourceLines(QVector<int> moved);
+
     /*  Frames the camera on a box, or (if the box is empty) on the meshes
      *  of the shapes displayed by the given lines  */
     void focusOn(QVector3D min, QVector3D max, QList<int> lines0);
@@ -114,6 +119,12 @@ public:
     /*  How the section view is set now (for the guided tour)  */
     const SectionSettings& sectionSettings() const { return section; }
 
+    /*  The script has an error: a red banner at the top of the viewport and a frame round it say so, with the message and the
+     *  (0-based) line, -1 when it is not known; the picture is the last one that worked.  An empty text takes them away.  (The
+     *  window decides when: not at the first key of a line that is being typed)  */
+    void setError(const QString& text, int line0);
+    bool hasError() const { return !m_errorText.isEmpty(); }
+
     /*  The section handle's knob and arrow tip in widget coordinates
      *  (for scripted tests); false if there is no handle  */
     /*  The widget position of a grip of the first part with handles (for
@@ -125,7 +136,7 @@ public:
 
     /*  Selects the surface under a widget position as the menu of a right-click does (for scripted
      *  tests); false if no shape with a line of the script is there  */
-    bool selectSurfaceAt(QPoint pos, const QString& mode, double angle, double thickness, double radius);
+    bool selectSurfaceAt(QPoint pos, const QString& mode, double angle, double radius);
 
     /*  What the context menus create: the primitives and operations of the library, as the interpreter lists
      *  them (fieldes.menu_catalog); asked once, when a script has run, so a right-click never waits for Python  */
@@ -248,6 +259,9 @@ signals:
     /*  A shape's render cache read or kept its mesh (see cacheStates)  */
     void cacheStatesChanged();
 
+    /*  The error banner was clicked: the (0-based) line it is about, -1 when none is known  */
+    void errorClicked(int line0);
+
     /*  The section plane was dragged along its normal by its handle in the viewport  */
     void sectionOffsetDragged(float offset);
     /*  The field viewer's disc was dragged (by its arrow along its normal, by one in its plane, or by the dot in the middle)  */
@@ -284,10 +298,9 @@ signals:
     /*
      *  The menu of a right-click on a shape was confirmed: select the surface of the shape displayed by
      *  the (0-based) line `line0` around `point` (a flood fill: mode "flat" or "smooth", the angle in
-     *  degrees, the thickness and the radius in mm, 0 = automatic / no limit)
+     *  degrees, the radius in mm, 0 = no limit)
      */
-    void surfaceSelectRequested(int line0, QVector3D point, QString mode, double angle, double thickness,
-                                double radius);
+    void surfaceSelectRequested(int line0, QVector3D point, QString mode, double angle, double radius);
 
     /*
      *  An entry of a context menu was chosen: a new primitive (kind "primitive") placed at `point`, or an
@@ -295,6 +308,9 @@ signals:
      *  selected one; `scale` is how many mm about a hundred pixels span at that place
      */
     void createRequested(QString kind, QString name, QVector3D point, double scale, int line0, int generation);
+
+    /*  "Import model..." was chosen in the menu of empty space: the window asks for the file  */
+    void importRequested();
 
 protected slots:
     void update() { QOpenGLWidget::update(); }
@@ -341,11 +357,17 @@ protected:
     void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface = true);
     void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
     /*  A right-click (not a pan) on empty space: New 3D shape, 2D shape, point, surface, field, custom block, Add operation
-     *  and Add simulation.  `atLine` (from the text editor): what is made is written under that line  */
+     *  and Add simulation (which also holds the materials, fluids, supports, loads and conditions).  `atLine` (from the text
+     *  editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
     /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
-     *  their own menu: `simulations` says which of the two is listed  */
+     *  their own menu: `simulations` says which of the two is listed (the boundary conditions and the analyses are in it)  */
     void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);
+    /*  The entry that makes a body from the field of the model at `line` (-1: the selected field the viewer shows)  */
+    void addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale);
+    /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of a simulation
+     *  menu: what an analysis is given, made at a place like any new model  */
+    void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine);
     /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
     QVector3D placeOnRay(QPoint pos) const;
     /*  How many mm about a hundred pixels span, at the depth of a point  */
@@ -507,6 +529,7 @@ protected:
          *  gets a coarser fine pass, and the plane is never far behind the hand that moves it  */
         QElapsedTimer clock;
         double quickMs = 0;
+        bool runningFine = false;          // (the pass in flight is a fine one)
     };
 
     /*  Section view state: the plane that cuts the models and shows the distance field on them  */
@@ -550,6 +573,13 @@ protected:
      *  freely in the plane: the screen points of its middle and of the tips of the two arrows (along the two axes of the plane)
      *  and of the one along the normal  */
     bool fieldGizmo(QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& tipN, float& length) const;
+public:
+    /*  A point that grips a part of the field viewer's disc gizmo (1, 2: the arrows in its plane; 3: the dot; 4: the arrow along
+     *  its normal), in the widget's coordinates -- for the automation's test drags  */
+    bool fieldGizmoPoint(int part, QPoint& out) const;
+    /*  Where the field viewer's disc is (its middle)  */
+    QVector3D fieldViewCentre() const { return m_fieldView.centre; }
+protected:
     /*  What is under a widget position: 0 nothing, 1 / 2 an arrow in the plane, 3 the dot, 4 the arrow along the normal  */
     int fieldGizmoHit(QPoint pos) const;
     void drawFieldGizmo(QPainter& painter);
@@ -622,6 +652,11 @@ protected:
     bool ringPoint(QPoint pos, const QVector3D& pivot, const QVector3D& axis, QVector3D& out) const;
     void applyHandleNumber(libfive::Tree::Id id, float value);
     void applyHandleNumbers(const std::map<libfive::Tree::Id, float>& numbers);
+
+    QString m_errorText;
+    int m_errorLine = -1;
+    QRect m_errorRect;                  // (where the banner was drawn: a click on it goes to the line)
+    void drawErrorBanner(QPainter& painter);
 
     bool section_hover=false;
     bool section_drag=false;

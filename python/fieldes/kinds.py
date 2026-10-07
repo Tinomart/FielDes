@@ -7,12 +7,12 @@ Everything a script makes is one of a few kinds, and FielDes shows the kind with
     solid       a 3D shape (a body: the field is negative inside it)
     profile     a 2D shape (a field that does not depend on z: drawn flat, in the z = 0 plane)
     field       a field that is not a body: a distance, a ramp, noise, a stress ... (a value at every point of space)
-    surface     an open surface (the zero set of a field, with no body behind it)
+    surface     an open surface (the zero set of a field, with no body behind it); a patch picked on a surface is one too
     point       a point
     simulation  a solved analysis or optimisation
-    conditions  what an analysis is given: supports, loads, materials, fluids, boundary conditions
+    material    what a part (or a fluid) is made of: Material(...), steel, aluminium, water ...: an analysis is given one
+    conditions  what an analysis is given: supports, loads, thermal and flow boundary conditions
     cell        what a lattice is made of: a cell, a cell map, a graph of beams
-    selection   a patch picked on a surface
     import      a file read in
     block       (a model made by one of your custom blocks carries a small block mark on its icon)
 
@@ -31,9 +31,9 @@ KINDS = {
     'surface':    ('Surface',     '#b583ee'),
     'point':      ('Point',       '#f4b73a'),
     'simulation': ('Simulation',  '#ee6a5e'),
+    'material':   ('Material',    '#c9a66b'),
     'conditions': ('Conditions',  '#e08f58'),
     'cell':       ('Lattice cell', '#d4b43c'),
-    'selection':  ('Selection',   '#f07ab5'),
     'import':     ('Import',      '#2aa198'),
     'block':      ('Custom block', '#8da2c0'),
 }
@@ -42,12 +42,12 @@ KINDS = {
 _BY_CLASS = {
     'Result': 'simulation', 'ModalResult': 'simulation', 'ThermalResult': 'simulation', 'FluidResult': 'simulation',
     'TopologyResult': 'simulation', 'FlowTopologyResult': 'simulation',
-    'Material': 'conditions', 'Fluid': 'conditions', '_Support': 'conditions', '_Force': 'conditions',
+    'Material': 'material', 'Fluid': 'material', '_Support': 'conditions', '_Force': 'conditions',
     '_Gravity': 'conditions', '_Thermal': 'conditions', '_Temperature': 'conditions', '_Heat': 'conditions',
     '_Convection': 'conditions', '_Inlet': 'conditions', '_Outlet': 'conditions', '_Wall': 'conditions',
     '_Slip': 'conditions', '_PlainConditions': 'conditions', 'StaticBoundaryConditions': 'conditions',
     'LatticeCell': 'cell', 'CellMap': 'cell', 'LatticeGraph': 'cell',
-    'SurfaceSelection': 'selection',
+    'SurfaceSelection': 'surface',
     'Regression': 'field', 'FieldFit': 'field',
 }
 

@@ -18,7 +18,7 @@
 #       no region: the places where a part's fit is worse than `threshold` percent, found
 #       from the fit markers, in every part.  kitchen[19] = exclude(kitchen[19]) does one part.
 #
-#   import_step_parts(..., auto_exclude=True)
+#   import_model(..., auto_exclude=True)
 #       the same, in the import.
 #
 # The first run reads the STEP file (about a minute and a half) and keeps the result next to it;
@@ -28,7 +28,7 @@ from fieldes import *
 
 THRESHOLD = 1.0        # percent of the face's size; the marker starts at 0.5
 
-kitchen = import_step_parts("step/Keukencombinatie.stp")
+kitchen = import_model("step/Keukencombinatie.stp")
 
 # A field object as the region: the places where the fit of any part is worse than THRESHOLD.
 # poor_fit_region(part) is a field, negative where that part's fit is poor and positive away from

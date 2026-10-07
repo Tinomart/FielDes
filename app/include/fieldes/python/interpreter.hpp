@@ -19,6 +19,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #pragma once
 
+#include <atomic>
+
 #include <QMutex>
 
 #include "fieldes/interpreter.hpp"
@@ -41,6 +43,7 @@ public:
     QString extension() override { return ".py"; }
 
     void halt() override;
+    void noteRequest() override;
     void preinit() override;
     void setBreakpoints(QList<int> lines) override;
     QString callSupport(const QString& function, const QString& arg, QString* error) override;
@@ -69,6 +72,7 @@ protected:
     PyObject* m_varFunc=NULL;
     PyThreadState* m_threadState=NULL;
     unsigned long m_workerThreadId=0;
+    std::atomic<int> m_requests{0};         // the runs of the script that have been asked for and not begun
 
 };
 

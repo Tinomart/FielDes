@@ -1,8 +1,0 @@
-wait 4000
-waitrender 60 20
-treedrop u > w > below
-wait 800
-treedump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow3_tree.txt
-dump C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/logs/shadow3_script.txt
-wait 3000
-quit

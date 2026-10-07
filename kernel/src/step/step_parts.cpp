@@ -55,6 +55,7 @@ SolidMetrics solidMetricsFromMesh(const Solid& solid, const TessMesh& mesh)
     } else {
         for (size_t f = 0; f < solid.faces.size(); ++f) {
             (solid.faces[f].surface.kind == SurfaceKind::Plane ? m.areaFlat : m.areaCurved) += faceArea[f];
+            if (solid.faces[f].surface.kind == SurfaceKind::BSpline) m.areaBSpline += faceArea[f];
         }
     }
 
@@ -70,7 +71,8 @@ SolidMetrics solidMetricsFromMesh(const Solid& solid, const TessMesh& mesh)
             if (ext[i] > 1e-6 * std::max(diag, 1e-12)) detail = std::min(detail, ext[i]);
         }
     }
-    if (total > 0 && std::isfinite(volume)) {
+    // (a surface body has no volume: its "thickness" is nothing, and says nothing about its detail)
+    if (!solid.surface && total > 0 && std::isfinite(volume)) {
         const double thickness = 2.0 * std::abs(volume) / total;
         if (thickness > 1e-6 * std::max(diag, 1e-12)) detail = std::min(detail, thickness);
     }

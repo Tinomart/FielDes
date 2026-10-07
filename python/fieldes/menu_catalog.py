@@ -12,8 +12,8 @@ that is closest to the origin, rounded), {s} the size (about a hundred pixels on
 of it, {xm} {xp} {ym} {yp} {zm} {zp} the place minus and plus half the size.  For an operation: {body} is the model
 it works on, {other} the other models (for the operations that combine models: one name, or several separated by
 commas, as when several models are selected -- union, difference, intersection and exclude take any number: for exclude the
-first is the shape and the others are the regions locked in it), {s} the size,
-{t} a tenth of it.
+first is the shape and the others are the regions locked in it), {others} the same with a comma before it, or nothing when there
+are none (surface_from_bodies: the surface of one model, or where the others meet it), {s} the size, {t} a tenth of it.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -21,6 +21,55 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import json
 import math
+
+# What a template may put ABOVE the line it writes (a function the call uses, for the user to write their own logic in): the
+# text before this line is written above the assignment, the text after it is the call.  {var} is the variable the model gets.
+PRELUDE = '\n#@@#\n'
+
+_LOW_LEVEL_FIELD = '''def {var}_logic(x, y, z):
+    # Your own field: x, y and z are the coordinates (fields). Return the value you want at that point.
+    # Write the math with + - * / **, x.sqrt() x.square() x.abs() x.sin() x.cos(), a.max(b) a.min(b); a number is a constant field.
+    return ((x - {x}).square() + (y - {y}).square() + (z - {z}).square()).sqrt() - {h}     # (here: the distance from a point, less {h})
+#@@#
+low_level_field({var}_logic)'''
+
+_LOW_LEVEL_BODY = '''def {var}_logic(x, y, z):
+    # Your own body: x, y and z are the coordinates (fields). Return a number that is negative inside the body, zero on its
+    # surface and positive outside -- ideally the distance to the surface. Math: + - * / **, x.sqrt() x.square() x.abs() x.sin()
+    # x.cos(), a.max(b) a.min(b), maximum(a, b, c) minimum(a, b, c).
+    return ((x - {x}).square() + (y - {y}).square() + (z - {z}).square()).sqrt() - {h}     # (here: a ball of radius {h})
+#@@#
+low_level_body({var}_logic)'''
+
+# A condition's region is a model of its own, a box laid at the cursor (the box is the first line, the condition the second): drag
+# another model onto the condition to take its place -- a surface you picked, a part -- or change the box in the script
+_REGION = '''{var}_region = box_exact(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))
+#@@#
+'''
+
+
+def _g(value):
+    return '%.6g' % value
+
+
+def _materials():
+    ''' The materials the menus offer: the presets of the library, written out with their numbers (so that they are there to
+        change), a Material of your own, and the fluids '''
+    out = []
+    try:
+        from fieldes.stdlib import fea, fluid
+        for name in ('steel', 'stainless_steel', 'aluminium', 'titanium', 'pla', 'petg', 'abs_plastic', 'nylon'):
+            m = getattr(fea, name)
+            out.append((name, 'Materials', 'Material(%r, %s, %s, %s, %s, %s, %s)' % (
+                m.name, _g(m.E), _g(m.nu), _g(m.density), _g(m.yield_strength), _g(m.conductivity), _g(m.expansion))))
+        out.append(('material', 'Materials', "Material('my material', 70000, 0.33, 2.7e-09, 100)"))
+        for name in ('water', 'air', 'oil', 'glycerol'):
+            f = getattr(fluid, name)
+            out.append((name, 'Fluids', 'Fluid(%r, %s, %s)' % (f.name, _g(f.density), _g(f.viscosity))))
+    except Exception:
+        pass
+    return out
+
 
 # (function, group, template)
 PRIMITIVES = [
@@ -46,6 +95,7 @@ PRIMITIVES = [
     ('pyramid_z', '3D', 'pyramid_z(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
     ('half_space', '3D', 'half_space((0, 0, 1), ({x}, {y}, {z}))'),
     ('gyroid', '3D', 'gyroid(({s}, {s}, {s}), {t})'),
+    ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
     ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),
     ('rectangle_exact', '2D', 'rectangle_exact(({xm}, {ym}), ({xp}, {yp}))'),
@@ -64,12 +114,28 @@ PRIMITIVES = [
     ('z_field', 'Fields', 'z_field()'),
     ('noise_field', 'Fields', 'noise_field({s}, 3)'),
     ('wave', 'Fields', "wave('x', {s}, {t})"),
-]
+    ('low_level_field', 'Fields', _LOW_LEVEL_FIELD),
+    # What an analysis is given
+    ('fixed', 'Supports and loads', _REGION + 'fixed({var}_region)'),
+    ('force', 'Supports and loads', _REGION + 'force({var}_region, (0, 0, -100))'),
+    ('gravity', 'Supports and loads', 'gravity()'),
+    ('thermal_expansion', 'Supports and loads', 'thermal_expansion(60)'),
+    ('fixed_temperature', 'Thermal conditions', _REGION + 'fixed_temperature({var}_region, 20)'),
+    ('heat_input', 'Thermal conditions', _REGION + 'heat_input({var}_region, 5.0)'),
+    ('heat_generation', 'Thermal conditions', _REGION + 'heat_generation({var}_region, 5.0)'),
+    ('convection', 'Thermal conditions', _REGION + 'convection({var}_region, 2.5e-05, 20)'),
+    ('inlet', 'Flow conditions', _REGION + 'inlet({var}_region, speed=100)'),
+    ('outlet', 'Flow conditions', _REGION + 'outlet({var}_region)'),
+    ('wall', 'Flow conditions', _REGION + 'wall({var}_region)'),
+    ('slip', 'Flow conditions', _REGION + 'slip({var}_region)'),
+] + _materials()
 
 # What a group of primitives makes (the kind: see fieldes.kinds), for the icon beside each entry
-GROUP_KINDS = {'3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field'}
+GROUP_KINDS = {'3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field',
+               'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
+               'Thermal conditions': 'conditions', 'Flow conditions': 'conditions'}
 
-# (function, group, template, needs a second model)
+# (function, group, template, takes a second model: True = needs one, 'optional' = takes the other selected models if there are any)
 OPERATIONS = [
     ('offset', 'Offsets and walls', 'offset({body}, {t})', False),
     ('shell', 'Offsets and walls', 'shell({body}, {t})', False),
@@ -96,6 +162,9 @@ OPERATIONS = [
     ('difference', 'Combining', 'difference({body}, {other})', True),
     ('intersection', 'Combining', 'intersection({body}, {other})', True),
     ('exclude', 'Combining', 'exclude({body}, {other})', True),
+    # A surface chosen by bodies: the first selected model's surface where the others meet it; one model alone: all of its surface
+    # ('optional': the others are not needed, but taken when several models are selected: {others} is ", a, b" or nothing)
+    ('surface_from_bodies', 'Surfaces', 'surface_from_bodies({body}{others})', 'optional'),
     # Arithmetic on fields (a number is a field too; of a body they work on its values, which makes a field)
     ('add_fields', 'Field math', 'add_fields({body}, {other})', True),
     ('subtract_fields', 'Field math', 'subtract_fields({body}, {other})', True),
@@ -109,6 +178,17 @@ OPERATIONS = [
     ('sqrt_field', 'Field math', 'sqrt_field({body})', False),
     ('square_field', 'Field math', 'square_field({body})', False),
     ('field_from_body', 'Field math', 'field_from_body({body})', False),
+    ('body_from_field', 'Field math', 'body_from_field({body})', False),
+    # The conditions of a static analysis, for the model: a support on its lower end and a load on its upper end
+    ('static_boundary_conditions', 'Conditions',
+     'static_boundary_conditions({body}, supports=[fixed({bottom})], loads=[force({top}, (0, 0, -100))])', False),
+    # Lattices (the cell is a first choice to change in the script: cell_periodic('octet'), cell_non_periodic('voronoi'), ...)
+    ('lattice', 'Lattices', "lattice({body}, cell_periodic('gyroid'), cell_size={cs}, thickness={ct})", False),
+    ('lattice_surface_conform', 'Lattices',
+     "lattice_surface_conform({body}, cell_periodic('octet'), cell_size={cs})", False),
+    # Importing: the surface of any model as the exact distance to its meshed surface (a file is imported from the menu of
+    # empty space, Import model...)
+    ('tessellate', 'Importing', 'tessellate({body})', False),
     # Simulations: the model is the part (the fluid, for the flow); the supports and loads are boxes laid on its lower and upper
     # ends (its left and right ends for the flow), a first problem to change in the script
     ('static_analysis', 'Simulations',
@@ -145,7 +225,8 @@ def catalog():
         'primitives': [{'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid')} for n, g, _ in PRIMITIVES]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
-        'operations': [{'name': n, 'group': g, 'other': o} for n, g, _, o in OPERATIONS]
+        # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
+        'operations': [{'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True} for n, g, _, o in OPERATIONS]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'other': False, 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['operation']],
     })
@@ -207,7 +288,9 @@ def _regions(r, scale):
         return 'box_exact(({}, {}, {}), ({}, {}, {}))'.format(*[_num(v) for v in a + b])
 
     return {'bottom': box(2, 0), 'top': box(2, 1), 'left': box(0, 0), 'right': box(0, 1),
-            'es': _num(_nice(longest / 20.0))}
+            'es': _num(_nice(longest / 20.0)),
+            # (a lattice's cells: a tenth of the model across, their members an eighth of that thick)
+            'cs': _num(_nice(longest / 10.0)), 'ct': _num(_nice(longest / 10.0) / 8.0)}
 
 
 def call(request):
@@ -227,8 +310,9 @@ def call(request):
     values = {
         'x': _num(x), 'y': _num(y), 'z': _num(z), 's': _num(s), 'h': _num(h), 't': _num(s / 10.0), 'q': _num(s / 6.0),
         'xm': _num(x - h), 'xp': _num(x + h), 'ym': _num(y - h), 'yp': _num(y + h), 'zm': _num(z - h), 'zp': _num(z + h),
-        'body': r.get('body', ''), 'other': r.get('other', ''),
+        'body': r.get('body', ''), 'other': r.get('other', ''), 'var': r.get('var') or (name + '_1'),
     }
+    values['others'] = ', ' + values['other'] if values['other'] else ''       # (for a call that may have no other model)
     values.update(_regions(r, s))
     if kind == 'primitive':
         for n, _, template in PRIMITIVES:

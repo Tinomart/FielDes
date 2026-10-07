@@ -1,5 +1,0 @@
-wait 12000
-action view.std-iso
-wait 3000
-grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/small2.png
-quit

@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <algorithm>
 #include <array>
 #include <set>
 #include <cassert>
@@ -25,6 +26,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDateTime>
 #include <QDir>
 #include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
@@ -35,6 +38,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QPushButton>
 #include <QSettings>
 #include <QSizePolicy>
+#include <QRegularExpression>
 #include <QTextBlock>
 
 #include "libfive/step/step_progress.hpp"
@@ -390,9 +394,13 @@ void Editor::onInterpreterDone(Result r)
             setResult(Theme::text, r.result == "None" ? QString() : r.result);
         }
 
-        // Store the textual position of variables, for later editing
-        vars = r.vars;
+        // Store the textual position of variables, for later editing -- when this run was of the text that is in the editor now.  If the
+        // text has been edited since the run began (a click of the tree, a key, the writes of a drag), the places that were followed
+        // through those edits are the right ones, and the run's places are of another text (see varSpans)
+        if (r.script == script_doc->toPlainText()) setVarSpans(r.vars);
 
+        m_errorLine0 = -1;
+        emit(scriptErrorChanged(QString(), -1));       // (before the scene: the model tree's note is made from it)
         emit(shapes(r.shapes));
         emit(fieldSources(r.fields));
         if (!r.scene.isEmpty())
@@ -401,6 +409,19 @@ void Editor::onInterpreterDone(Result r)
         }
     } else {
         setResult(Color::red, r.error.error);
+        {
+            // (the last line of a traceback says what went wrong)
+            QString last;
+            for (const QString& l : r.error.error.split('\n'))
+            {
+                if (!l.trimmed().isEmpty()) last = l.trimmed();
+            }
+            if (last.size() > 220) last = last.left(217) + "...";
+            emit(scriptErrorChanged(last.isEmpty() ? QString("The script has an error") : last,
+                                    r.error.range.isNull() ? -1 : r.error.range.top()));
+            m_errorLine0 = r.error.range.isNull() ? -1 : r.error.range.top();
+            m_errorLineText = m_errorLine0 >= 0 ? script_doc->findBlockByNumber(m_errorLine0).text() : QString();
+        }
 
         // Add new selections for errors in the script doc.  A null range
         // means "no location known"; a zero-width range marks a whole line
@@ -469,12 +490,49 @@ void Editor::onInterpreterDone(Result r)
         if (fixes.size()) {
             auto button = new QPushButton("Fix All", this);
             connect(button, &QPushButton::pressed, this, [=](){
+                // The import of the library goes to the top of the script; every other fix (the render settings) goes under
+                // that line -- above it `view` is not there yet, and a settings line written before the model it is about
+                // (`view.set_bounds(*roi(part))`) is an error -- and in the order they are listed
+                static const QRegularExpression libraryImport(R"(^\s*(from\s+fieldes[\w.]*\s+import\b|import\s+fieldes\b))");
                 QTextCursor c(script_doc);
-                c.movePosition(QTextCursor::Start);
+                c.beginEditBlock();
+                int at = -1;
                 for (auto& f : fixes)
                 {
+                    if (libraryImport.match(f).hasMatch())
+                    {
+                        c.setPosition(0);
+                        c.insertText(f);
+                        at = c.position();
+                        continue;
+                    }
+                    if (at < 0)
+                    {
+                        at = 0;
+                        for (QTextBlock b = script_doc->begin(); b.isValid(); b = b.next())
+                        {
+                            if (!libraryImport.match(b.text()).hasMatch())
+                            {
+                                continue;
+                            }
+                            if (b.next().isValid())
+                            {
+                                at = b.next().position();
+                            }
+                            else
+                            {
+                                c.setPosition(b.position() + b.length() - 1);      // (the import is the last line)
+                                c.insertText("\n");
+                                at = c.position();
+                            }
+                            break;
+                        }
+                    }
+                    c.setPosition(at);
                     c.insertText(f);
-                }});
+                    at = c.position();
+                }
+                c.endEditBlock();});
             v->addWidget(button, 0, Qt::AlignHCenter);
         }
         layout->addLayout(v);
@@ -521,8 +579,10 @@ void Editor::setScript(const QString& s, bool reload)
         // and what a run of it that is still going delivers is thrown away.  Left until the new script has run, a file
         // that is slow, or does not run, would look as if opening it had done nothing
         m_discardResults = true;
-        vars.clear();
+        varSpans.clear();
         setResult(Theme::text, QString());
+        m_errorLine0 = -1;
+        emit(scriptErrorChanged(QString(), -1));
         script->setSelections(Script::SEL_ERROR, QList<QTextEdit::ExtraSelection>());
         script->setErrorLine(-1);
         emit(shapes(QList<Shape*>()));
@@ -530,14 +590,33 @@ void Editor::setScript(const QString& s, bool reload)
     }
     script->clearBreakpoints();     // (their lines mean nothing in new text)
     script->setPlainText(s);
+    if (!reload) emit(scriptLoaded());
 }
 
 void Editor::onInterpreterPartialScene(QString json)
 {
     if (m_scriptRunning && !m_discardResults)
     {
+        // An error is shown from the run before: when this run has got past the line it was on (the statements up to `done_line`
+        // are done, none of them failed), it is not an error any more -- and the rest of the run, which may take a while, is no
+        // reason to go on showing it
+        if (m_errorLine0 >= 0)
+        {
+            const auto doc = QJsonDocument::fromJson(json.toUtf8());
+            if (doc.isObject() && !doc.object()["errored"].toBool() && doc.object()["done_line"].toInt() > m_errorLine0)
+                clearErrorNow();
+        }
         emit(partialSceneChanged(json));
     }
+}
+
+void Editor::clearErrorNow()
+{
+    m_errorLine0 = -1;
+    m_errorLineText.clear();
+    script->setSelections(Script::SEL_ERROR, QList<QTextEdit::ExtraSelection>());
+    script->setErrorLine(-1);
+    emit(scriptErrorChanged(QString(), -1));
 }
 
 QString Editor::getScript() const
@@ -554,6 +633,10 @@ void Editor::setModified(bool m)
 void Editor::onTextChangedDebounce()
 {
     auto txt = script_doc->toPlainText();
+    // The line the error was on is not in the script any more (it was rewritten): the error is gone from the screen at once, not
+    // when the run of the new text ends.  If the new text fails again, the error comes back as an error does (after a moment)
+    if (m_errorLine0 >= 0 && !m_errorLineText.trimmed().isEmpty() && !txt.contains(m_errorLineText))
+        clearErrorNow();
     m_language->setBreakpoints(script->breakpoints());
     emit(scriptChanged(txt));
 }
@@ -624,60 +707,41 @@ void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
     }
     drag_should_join = true;
 
-    // Build an ordered set so that we can walk through variables
-    // in sorted line / column order, making offsets as textual positions
-    // shift due to earlier variables in the same line
-    auto comp = [&](libfive::Tree::Id a, libfive::Tree::Id b){
-        auto& pa = vars[a];
-        auto& pb = vars[b];
-        return (pa.top() != pb.top()) ? (pa.top() < pb.top())
-                                      : (pa.left() < pb.left());
-    };
-    std::set<libfive::Tree::Id, decltype(comp)> ordered(comp);
-    for (auto v=vs.begin(); v != vs.end(); ++v)
+    // Where a number is NOW is where the cursor of its place is: every edit of the text since the run that said where it was -- the
+    // writes of this drag, a click of the tree that put a line above, a key -- has moved it along (see varSpans).  So there is no
+    // arithmetic of columns here, and no order to walk them in.  What stands at the place is checked to be what is expected before it
+    // is written over: a number that is not there (its text was edited by hand, the script was replaced since the run) is not
+    // written, anywhere -- the places of the others are not affected -- and the script is run again, which says where the numbers are
+    bool lost = false;
+    for (auto v = vs.begin(); v != vs.end(); ++v)
     {
-        ordered.insert(v.key());
-    }
-
-    int line = -1;
-    int offset = 0;
-    for (auto t : ordered)
-    {
-        auto v = vs.find(t);
-        assert(v != vs.end());
-
-        // Apply an offset to compensate for other variables that may have
-        // changed already in this line
-        auto pos = vars.find(v.key());
-        assert(pos != vars.end());
-        if (pos.value().top() == line)
+        auto it = varSpans.find(v.key());
+        if (it == varSpans.end()) continue;                 // (a number the editor has no place for: the text it is in has changed since the run)
+        VarSpan& span = it.value();
+        const int a = span.start.position(), b = span.end.position();
+        QTextCursor look(script_doc);
+        look.setPosition(a);
+        look.setPosition(b, QTextCursor::KeepAnchor);
+        if (b <= a || look.selectedText() != span.text || script_doc->characterAt(b) != QLatin1Char(')'))
         {
-            pos.value().translate({offset, 0});
-        }
-        else
-        {
-            line = pos.value().top();
-            offset = 0;
+            varSpans.erase(it);
+            lost = true;
+            continue;
         }
 
-        drag_cursor.movePosition(QTextCursor::Start);
-        drag_cursor.movePosition(
-                QTextCursor::Down, QTextCursor::MoveAnchor, pos.value().top());
-        drag_cursor.movePosition(
-                QTextCursor::Right, QTextCursor::MoveAnchor, pos.value().left());
-
-        const auto length_before = pos.value().right() - pos.value().left();
-        drag_cursor.movePosition(
-                QTextCursor::Right, QTextCursor::KeepAnchor, length_before);
+        drag_cursor.setPosition(a);
+        drag_cursor.setPosition(b, QTextCursor::KeepAnchor);
         drag_cursor.removeSelectedText();
 
         QString str;
         str.setNum(v.value());
         drag_cursor.insertText(str);
-        auto length_after = str.length();
 
-        pos.value().setRight(pos.value().left() + length_after);
-        offset += length_after - length_before;
+        // (the edit moved the cursors of the numbers to the right of this one by itself; this one's own are put back round what is
+        // written: an insertion at a cursor's place is put before the cursor)
+        span.start.setPosition(a);
+        span.end.setPosition(a + str.size());
+        span.text = str;
     }
 
     // Disable the script again (because this is only called when we're
@@ -685,6 +749,66 @@ void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
     // be locked).
     drag_cursor.endEditBlock();
     script->setEnabled(false);
+    if (lost) m_textChangedDebounce.start();
+}
+
+void Editor::setVarSpans(const QMap<libfive::Tree::Id, QRect>& rects)
+{
+    varSpans.clear();
+    // (Python's columns are bytes of UTF-8, the document's are characters: a line with an accent before a number is told apart)
+    QHash<int, QPair<bool, QByteArray>> lines;
+    auto charColumn = [&](int line, const QString& text, int byteColumn) {
+        auto found = lines.find(line);
+        if (found == lines.end())
+        {
+            bool ascii = true;
+            for (const QChar c : text) ascii = ascii && c.unicode() < 128;
+            found = lines.insert(line, qMakePair(ascii, ascii ? QByteArray() : text.toUtf8()));
+        }
+        return found->first ? byteColumn : QString::fromUtf8(found->second.left(byteColumn)).size();
+    };
+    for (auto it = rects.begin(); it != rects.end(); ++it)
+    {
+        const QRect& r = it.value();
+        if (r.height() != 0) continue;                      // (a call over several lines: its number is not written to)
+        const QTextBlock block = script_doc->findBlockByNumber(r.top());
+        if (!block.isValid()) continue;
+        const QString text = block.text();
+        // (the rectangle goes from the first character of the number to the `)` that ends the call, which is not part of the number)
+        const int first = charColumn(r.top(), text, r.left());
+        const int last = charColumn(r.top(), text, r.left() + r.width() - 1);
+        if (first < 0 || last <= first || last >= text.size() || text[last] != QLatin1Char(')')) continue;
+        VarSpan span{QTextCursor(script_doc), QTextCursor(script_doc), text.mid(first, last - first)};
+        span.start.setPosition(block.position() + first);
+        span.end.setPosition(block.position() + last);
+        varSpans.insert(it.key(), span);
+    }
+}
+
+int Editor::testVarSteps(int line0)
+{
+    QList<QPair<int, libfive::Tree::Id>> onLine;           // (the column, the number)
+    for (auto it = varSpans.begin(); it != varSpans.end(); ++it)
+    {
+        if (it.value().start.blockNumber() == line0) onLine << qMakePair(it.value().start.positionInBlock(), it.key());
+    }
+    std::sort(onLine.begin(), onLine.end(), [](const QPair<int, libfive::Tree::Id>& a, const QPair<int, libfive::Tree::Id>& b) {
+        return a.first < b.first;
+    });
+    auto step = [&](const QList<int>& which, float base) {
+        QMap<libfive::Tree::Id, float> m;
+        for (int k : which)
+        {
+            if (k < onLine.size()) m[onLine[k].second] = base + 1.2345678f * float(k);
+        }
+        if (!m.isEmpty()) setVarValues(m);
+    };
+    step({0}, 123.456f);
+    step({2}, -987.654f);
+    step({1, 3}, 55.5f);
+    step({0, 3}, 7.7777f);
+    script->setEnabled(true);
+    return int(onLine.size());
 }
 
 void Editor::applyEdits(QList<TextEdit> edits, QString description)

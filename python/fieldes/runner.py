@@ -10,9 +10,42 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 import ast
 import numbers
 
+def _statement_base(stmt):
+    ''' What names a top-level statement, for the var()s in it: `name=function` of `name = function(...)`, `expr:function` of a bare
+        call, else the kind of statement.  Not its line, and not its numbers: a line added above, or a number dragged, leave it as it is '''
+    def callee(v):
+        if isinstance(v, ast.Call):
+            if isinstance(v.func, ast.Name):
+                return v.func.id
+            if isinstance(v.func, ast.Attribute):
+                return v.func.attr
+        return type(v).__name__
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+        return 'assign:{}={}'.format(stmt.targets[0].id, callee(stmt.value))
+    if isinstance(stmt, ast.Expr):
+        return 'expr:' + callee(stmt.value)
+    return type(stmt).__name__
+
+
 class VarTransformer(ast.NodeTransformer):
     def __init__(self):
         self._i = 0
+        self._base = ''
+        self._in_statement = 0
+
+    def transform(self, module):
+        ''' Tags the var()s of every top-level statement.  Each gets a KEY -- the statement (see _statement_base, and which one of that name
+            it is) and its number in it -- by which the host finds it again in the next run: the variable of a model is the same one
+            whatever is added or taken out above it, so that a shape that has numbers is the same shape, and its render goes on '''
+        seen = {}
+        for stmt in module.body:
+            base = _statement_base(stmt)
+            count = seen.get(base, 0)
+            seen[base] = count + 1
+            self._base = '{}@{}'.format(base, count)
+            self._in_statement = 0
+            self.visit(stmt)
+        return module
 
     def check_var(self, node):
         if len(node.args) != 1 or node.keywords:
@@ -59,6 +92,8 @@ class VarTransformer(ast.NodeTransformer):
                 node.args.append(ast.Constant(value=(
                     node.lineno, node.end_lineno,
                     node.col_offset + 4, node.end_col_offset), **dummy))
+                node.args.append(ast.Constant(value='{}/{}'.format(self._base, self._in_statement), **dummy))
+                self._in_statement += 1
             self._i += 1
         return self.generic_visit(node) # Recurse, e.g. to patch sphere(var(1))
 
@@ -164,7 +199,7 @@ def run(s, breakpoints=None, **env):
     _paused = None
     _prepare_imports()
     parsed = ast.parse(s)
-    tagged = VarTransformer().generic_visit(parsed)
+    tagged = VarTransformer().transform(parsed)
     from fieldes import run_progress
     _count_loops(tagged)
     block_functions, block_trouble = _blocks()

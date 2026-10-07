@@ -14,6 +14,7 @@ namespace FielDes {
 /*  The line-art icons of the top dock (Open, Import) and the application mark, drawn at run time  */
 namespace Icons
 {
+    QIcon newFile();                // a plus: a new script
     QIcon open();
     QIcon importFile();
     QIcon dropArrow();              // a small chevron: the arrow beside Open and Import, which lists recent files

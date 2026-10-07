@@ -60,7 +60,8 @@ __all__ = [
     'ramp', 'clamp', 'lerp', 'smoothstep', 'step_field', 'normalize',
     'remap_field', 'attractor', 'wave', 'sum_fields', 'mix',
     'add_fields', 'subtract_fields', 'multiply_fields', 'divide_fields', 'power_field', 'min_fields', 'max_fields',
-    'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body',
+    'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body', 'body_from_field',
+    'low_level_field', 'low_level_body', 'maximum', 'minimum',
     'thicken', 'shell_inside', 'shell_outside', 'shell_centered', 'offset_by',
     'smooth_union', 'smooth_intersection',
     'smooth_difference', 'chamfer_union', 'union_all', 'intersection_all',
@@ -474,6 +475,109 @@ def field_from_body(body):
     out._kind = 'field'
     out._field_origin = s._field_origin if s._field_origin is not None else s       # (the viewer starts at the body)
     return out
+
+
+def body_from_field(field, level=0.0):
+    ''' A BODY from a field: what is inside where the field is below `level` (0 by default), its surface where the field
+        equals `level` -- the other way of field_from_body().  The result is drawn and is a part like any other (it can be
+        offset, shelled, filled with a lattice, analysed, exported).
+
+            noise = noise_field(12, 3)                                  # a field: not drawn
+            lumps = body_from_field(noise, 0.2)                         # the places where it is below 0.2: a body
+
+        The value of the body is the field's less `level`, so it is a true distance to its surface only where the field is
+        one (field_from_body of a body, a distance_to_point ...): the surface is exact, an offset of a body made from a
+        field that only roughly measures distance is about right, not exact.  `level` may be a field too. '''
+    f = _s(field)
+    if level is None or (isinstance(level, (int, float)) and level == 0):
+        out = Shape(lib.libfive_tree_copy(f.ptr))
+    else:
+        grown = f - _s(level)                 # (named: a temporary would free its tree before the copy is made)
+        out = Shape(lib.libfive_tree_copy(grown.ptr))
+    return out
+
+
+def maximum(*terms):
+    ''' The largest of several fields, point by point (Python's own max cannot compare fields; `.max` of one takes one
+        other): maximum(x - 6, -6 - x, y - 6) is the intersection of three half-spaces.  See minimum(). '''
+    if not terms:
+        raise ValueError('maximum() needs at least one field')
+    out = _s(terms[0])
+    for t in terms[1:]:
+        out = out.max(_s(t))
+    return out
+
+
+def minimum(*terms):
+    ''' The smallest of several fields, point by point: minimum(a, b, c) is the union of three bodies.  See maximum(). '''
+    if not terms:
+        raise ValueError('minimum() needs at least one field')
+    out = _s(terms[0])
+    for t in terms[1:]:
+        out = out.min(_s(t))
+    return out
+
+
+def _from_logic(logic, who, kind):
+    ''' What low_level_field and low_level_body do: `logic` called once with the coordinates, its answer made a shape '''
+    import inspect
+    if not callable(logic):
+        raise TypeError('{}(logic): logic is a function of the coordinates -- def logic(x, y, z): return ... -- or a '
+                        'lambda: lambda x, y, z: x * x + y * y + z * z - 100'.format(who))
+    # (as many coordinates as the function takes, one to three: a function of x and y is a 2D shape)
+    try:
+        count = len([p for p in inspect.signature(logic).parameters.values()
+                     if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty])
+    except (TypeError, ValueError):
+        count = 3
+    if not 1 <= count <= 3:
+        raise TypeError('{}: logic takes the coordinates -- (x), (x, y) or (x, y, z) -- and yours takes {} arguments'
+                        .format(who, count))
+    coordinates = (Shape.X(), Shape.Y(), Shape.Z())[:count]
+    value = logic(*coordinates)
+    if isinstance(value, (int, float)):
+        value = Shape.wrap(float(value))
+    if not isinstance(value, Shape):
+        raise TypeError('{}: your logic returned {} -- it must return a field: a number, or an expression of the coordinates '
+                        '(+ - * / **, .sqrt() .square() .sin() .cos() .abs(), a.max(b) a.min(b), maximum(...) minimum(...))'
+                        .format(who, type(value).__name__))
+    out = Shape(lib.libfive_tree_copy(value.ptr))
+    if kind == 'field':
+        out._kind = 'field'
+    return out
+
+
+def low_level_field(logic):
+    ''' A FIELD from your own logic, in one line or a few: `logic` is a function of the coordinates -- it is called ONCE, with
+        x, y and z as fields (a function of x and y alone is a 2D field) -- and returns the value you want at that point:
+
+            def ripple(x, y, z):
+                distance = (x.square() + y.square()).sqrt()          # the distance from the z axis
+                return (distance * 0.6).sin() * 3                    # a ring pattern, up to 3
+
+            waves = low_level_field(ripple)
+
+        Write the math with + - * / **, the methods .sqrt() .square() .abs() .sin() .cos() .tan() .exp() .log(), a.max(b) and
+        a.min(b) (or maximum(a, b, c) and minimum(a, b, c)); a number is a constant field.  What you get is a field like any
+        other: it is not drawn (select it and the field viewer shows it), it goes wherever a number goes (`offset(part,
+        waves)`), a lattice's cell size, a load's profile.  low_level_body() is the same for a body; body_from_field() makes a
+        body of a field.  In FielDes: right-click, New field, low_level_field, writes the function and the call for you. '''
+    return _from_logic(logic, 'low_level_field', 'field')
+
+
+def low_level_body(logic):
+    ''' A BODY from your own logic: `logic(x, y, z)` returns a number that is NEGATIVE inside the body, zero on its surface and
+        positive outside -- ideally the distance to the surface, so that offsets and shells come out right:
+
+            def ball(x, y, z):
+                return (x.square() + y.square() + z.square()).sqrt() - 20          # a ball of radius 20
+
+            part = low_level_body(ball)
+
+        or `low_level_body(lambda x, y, z: maximum(x - 6, -6 - x, y - 6, -6 - y, z - 6, -6 - z))` for a cube of 12.  The body is
+        drawn and is a part like any other.  See low_level_field() for the operations; a field that is not a body is
+        low_level_field() (and body_from_field() makes a body of it). '''
+    return _from_logic(logic, 'low_level_body', 'solid')
 
 
 ################################################################################

@@ -38,9 +38,9 @@ QHash<QString, Kind>& kinds()
         {"surface",    {"Surface",      QColor("#b583ee")}},
         {"point",      {"Point",        QColor("#f4b73a")}},
         {"simulation", {"Simulation",   QColor("#ee6a5e")}},
+        {"material",   {"Material",     QColor("#c9a66b")}},
         {"conditions", {"Conditions",   QColor("#e08f58")}},
         {"cell",       {"Lattice cell", QColor("#d4b43c")}},
-        {"selection",  {"Selection",    QColor("#f07ab5")}},
         {"import",     {"Import",       QColor("#2aa198")}},
         {"block",      {"Custom block", QColor("#8da2c0")}},
     };
@@ -130,6 +130,15 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.setPen(QPen(alpha(c, 220), 1.2, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(QPointF(1.8, 13.8), QPointF(14.2, 13.8));
     }
+    else if (type == "material")
+    {
+        // what a part is made of: a block with the hatching of a section
+        p.setPen(QPen(c, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(alpha(c, 50));
+        p.drawRoundedRect(QRectF(2.4, 3.2, 11.2, 9.6), 1.2, 1.2);
+        p.setPen(QPen(c, 1.1, Qt::SolidLine, Qt::RoundCap));
+        for (int k = 0; k < 3; ++k) p.drawLine(QPointF(3.6 + 3.2 * k, 12.0), QPointF(6.6 + 3.2 * k, 4.4));
+    }
     else if (type == "conditions")
     {
         // what an analysis is given: a load pressing down on a support
@@ -156,17 +165,6 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         p.drawEllipse(QPointF(8, 8), 1.6, 1.6);
-    }
-    else if (type == "selection")
-    {
-        // a patch picked on a surface: a dashed marquee
-        QPen pen(c, 1.5, Qt::DashLine, Qt::FlatCap, Qt::MiterJoin);
-        p.setPen(pen);
-        p.setBrush(alpha(c, 55));
-        p.drawRect(QRectF(2.6, 2.6, 10.8, 10.8));
-        p.setPen(Qt::NoPen);
-        p.setBrush(c);
-        p.drawRect(QRectF(10.6, 10.6, 3.6, 3.6));
     }
     else if (type == "import")
     {

@@ -76,6 +76,8 @@ public:
     /*  Whether the (0-based) line belongs to a model (a variable or a displayed expression that ran), and the middle of its
      *  bounds -- where a menu opened on it from outside the viewport takes its place from  */
     bool modelAtLine(int line0, QVector3D* centre = nullptr) const;
+    /*  What kind of model the line is of ("solid", "field", ...: see fieldes.kinds), or "" when it is no model's  */
+    QString typeAtLine(int line0) const;
     /*  Whether a (0-based) line is one of a model's own: where it is displayed, its statement, its expose and handles lines  */
     bool ownsLine(const QJsonObject& item, int line0) const;
 
@@ -89,6 +91,7 @@ public:
     bool selectModel(const QString& var) { return selectVar(var); }
     QRect rowRect(const QString& prefix, QWidget* in);
     QWidget* treeViewport() const;
+    int treeScroll() const;                      // (the vertical scroll of the tree: for tests)
     QLineEdit* settingEditor(const QString& fn, int index) const;
     void showSettings(bool open);
     bool settingsOpen() const;
@@ -103,6 +106,18 @@ public:
 
     /*  The rows as text, one per line, two spaces of indentation for each level of nesting: `name  [type]` (for scripted tests)  */
     QString dumpRows() const;
+
+    /*  What the rows of the models say, one line each: the lines of the script they are on, whether they are shown, locked, cached, what
+     *  their gizmo's mode is, and what their buttons show (for scripted tests), and how the tree stands (a prediction, a scene)  */
+    QString dumpState() const;
+
+    /*  For the tests: the lines that show and hide the models are moved by `delta` in the rows, the script untouched -- rows that are of
+     *  another text than the script's, which is what an edit must not be made from (lineIs)  */
+    void debugShiftLines(int delta, bool blocks = false);
+
+    /*  The script has an error (the last line of its traceback, and the 0-based line, -1 when it is not known): the card has a red
+     *  frame and header and the note under the rows says what, until it runs well again.  An empty text takes it away  */
+    void setError(const QString& text, int line0);
 
 public slots:
     /*  The provisional gizmo was pressed: the selected model is made ready to be dragged now, not after the pause that
@@ -122,6 +137,10 @@ public slots:
     int generation() const { return m_generation; }
 
     void setScene(const QString& json);
+
+    /*  A script has just been opened (its text is in the editor): if the tree of an earlier run of this very text was kept, it is
+     *  shown at once, correct, before the script has run -- and the run replaces it  */
+    void showCached();
 
     /*  While the script is still running: the models its finished statements have made so far (the rows are there as soon
      *  as their statement is done; the whole scene follows when the script is)  */
@@ -146,6 +165,13 @@ public slots:
     /*  D: the selected models are deleted from the script (their definitions and the lines that show, hide, edit and
      *  lock them), as one undoable step; it asks once if the rest of the script still uses their names  */
     void deleteSelected();
+
+    /*  Ctrl+D: a copy of each selected model under it; Ctrl+C: the selected models (their statements) are kept, and
+     *  Ctrl+V puts copies of them under the selected model, or at the end of the script -- with names that are free, and
+     *  the copies referring to each other's copies.  Written like every other edit of the tree: one undoable step  */
+    void duplicateSelected();
+    void copySelected();
+    void pasteModels();
     /*  The viewport's Delete entry on the model displayed by (0-based) line `line0`: that model, or all the selected
      *  ones when it is one of several selected  */
     void deleteByLine(int line0);
@@ -169,9 +195,12 @@ public slots:
 
     /*  A surface picked in the viewport: writes `name = select_surface(shape, seed=(x, y, z), ...)` and a
      *  line showing it under the definition of the shape displayed by the (0-based) line `line0`
-     *  (the thickness and the radius are mm, 0: automatic / no limit)  */
-    void addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double thickness,
-                             double radius);
+     *  (the radius is mm, 0: no limit)  */
+    void addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double radius);
+
+    /*  The model displayed by the (0-based) line `line0` is given a resolution of its own: the line `x = custom_resolution(x, number)` is
+     *  written under its definition (the number: the scene's resolution)  */
+    void addCustomResolution(int line0);
 
     /*  What the render cache did for the shapes displayed by (0-based) lines: "kept" (meshed and kept),
      *  "read" (the mesh on screen came from the cache), "no" (cannot be kept), "on" (not meshed yet),
@@ -198,6 +227,9 @@ signals:
 
     /*  Highlight the shapes displayed by these (0-based) lines  */
     void highlightLines(QList<int> lines0);
+    /*  An edit of the script was followed by the tree before it was run: every (0-based) line of the old text is moved[line] now, or -1
+     *  when it is gone.  The viewport's shapes know the lines they were made on only from a run: they are told  */
+    void sourceLinesMoved(QVector<int> moved);
 
     /*  Frame the camera on a box; if the box is empty, on the shapes
      *  displayed by the given lines  */
@@ -309,6 +341,9 @@ protected:
      *  it) and the lines that show, hide, edit and lock it  */
     QList<QPair<int, int>> groupRanges(const QJsonObject& it, bool comments = true) const;
     int groupStart(const QJsonObject& it) const;
+    QString groupText(const QJsonObject& it) const;
+    QString copyName(const QString& name, const QSet<QString>& taken, bool part) const;
+    QList<QJsonObject> copyableModels() const;
     /*  The line after a model's definition and the lines of its own that follow it right away  */
     int groupEnd(const QJsonObject& it) const;
     /*  Moves the statements of `models` (and, of what they need, what is defined after `at`) in front of the line `at`
@@ -368,6 +403,7 @@ protected:
     void commitSetting(QLineEdit* edited, bool live = false);
     void insertSettingLine(const QString& call, const QString& fn = QString(), bool live = false);
     QHash<QString, QList<QPointer<QLineEdit>>> m_settingEditors;
+    void commitCustomResolution(QLineEdit* edited, bool live, const QString& var);
     /*  Where the call that the last live edit of a setting wrote stands in the script, so that the next key rewrites the same place
      *  without waiting for a run to say where it is now (the scene is a run behind)  */
     struct LiveSetting { int line0 = -1, col0 = 0; QString call; };
@@ -378,17 +414,44 @@ protected:
     bool m_treeHeld = false;            // (the left button is down on the tree)
     bool m_dropEdited = false;          // (the drag that is over edited the script)
     bool m_predicted = false;           // (the tree shown is a prediction: the script has not run yet)
+    bool m_partialShown = false;        // (the tree shown is what a run in progress has made so far: the next partial one replaces it)
+    /*  An edit made from the rows needs rows that fit the script's text.  When the text has changed since the scene was made (a run
+     *  is on its way), the edit waits for the scene that fits (deferEdit, deferItems: the items are found again by their keys),
+     *  one at a time (runDeferred); a script with an error has no such scene to wait for, and the edit is refused with the reason  */
+    bool sceneIsStale() const;
+    bool deferEdit(std::function<void()> again, const QString& what);
+    bool deferItems(const QList<QJsonObject>& items, const QString& what, std::function<void(const QList<QJsonObject>&)> again);
+    void runDeferred();
+    QList<std::function<void()>> m_deferred;
+    QElapsedTimer m_sceneClock;         // (since the scene shown was made)
     QElapsedTimer m_predictClock;
+    QString m_predictedMd5;             // (the text the prediction is of: its lines fit that text, and only it)
+    bool m_rebuildPending = false;      // (the rows are built from the scene a moment from now: until then they are the old ones)
+    /*  The line of the old text that each line of the new text is (-1: a new line), found from the edits alone; empty when the edits
+     *  cannot be followed with certainty (a line that no edit touched is not the same text afterwards, two lines became one ...)  */
+    QVector<int> originAfter(const QStringList& before, const QList<TextEdit>& edits, const QStringList& after) const;
+    /*  The edits of a button of the tree, written to the script AND followed by the tree at once: every row has the line that the
+     *  edit gave it, and `patch` says what the edit did to the rows it is about (it gets the scene, and for each line of the old
+     *  text the 0-based line it is in the new one).  The rows are made again a moment later (never inside the click that made the
+     *  edit), and the scene that the run brings replaces it.  False when the edit could not be followed: it is written all the same,
+     *  and the tree waits for the run, as it always did  */
+    bool editFollowed(const QList<TextEdit>& edits, const QString& what,
+                      const std::function<void(QJsonObject&, const QVector<int>&)>& patch);
+    /*  The tree of the last run of a text is kept (by the text's md5 and by the program and library that made it): the next time the
+     *  text is opened, the tree is there at once, before the script has run  */
+    QString sceneCachePath(const QString& md5) const;
+    void saveSceneCache(const QString& json, const QString& md5);
+    QString m_savedSceneKey;            // (what was saved last, or shown from the cache: not written again)
     void expandTo(QTreeWidgetItem* row);
 
     /*  Actions (all become script edits)  */
     void toggleVisible(const QJsonObject& it);
     void reimport(const QJsonObject& it);
+    void importMenu(const QJsonObject& it, const QPoint& global);
     /*  The edit raising the import call's rev= (false if it cannot be found)  */
     bool reimportEdit(const QJsonObject& it, QList<TextEdit>& edits);
     void showPart(const QJsonObject& imp, int part);
     void switchPart(const QJsonObject& imp, int part);
-    void setAllParts(const QJsonObject& imp, bool show);
     void showOtherPart(const QJsonObject& imp, int part);
     /*  The item whose handles a part row edits: the part's variable's item
      *  (or the import statement's own variable); empty if the part is not
@@ -470,8 +533,10 @@ protected:
      *  are selected and that one is among them, all of them (in the order they were selected), else just that one
      *  (in empty space: the selected ones, else the last model)  */
     QList<Model> operandsFor(int line0) const;
-    /*  Whether an operation of the menu combines models (union, difference, intersection)  */
+    /*  Whether an operation of the menu takes several models (union, difference, intersection, surface_from_bodies)  */
     bool combines(const QString& operation) const;
+    /*  Whether it cannot do without a second model (surface_from_bodies can: one model alone is its whole surface)  */
+    bool needsSecond(const QString& operation) const;
     /*  The (0-based) lines that show the selected rows, for highlighting them in the viewport  */
     QList<int> selectedLines() const;
     QList<int> rowLines(QTreeWidgetItem* row) const;
@@ -483,11 +548,12 @@ protected:
 
     /*  The multi-select state (two or more models selected) is a state of its own, not an edit mode of any model:
      *  the models are moved by one gizmo whatever way each of them is edited when selected alone, which is kept (and
-     *  comes back when the selection is one model).  A locked model cannot be in it:
-     *  stripLocked deselects the locked ones of a selection of several (with a warning, unless `warn` is false);
+     *  comes back when the selection is one model).  A locked model can be in it, but then the whole selection cannot be moved
+     *  or edited (lockedInMulti; a popup says so when it comes about, unless `warn` is false, and a line under the tree);
      *  prepareSelection gives each selected model that has no numbers to move it by a gizmo line, in the mode it is in, and
      *  the numbers to pull its surfaces by (expose) when it is small  */
-    bool stripLocked(bool warn);
+    bool lockedInMulti() const;
+    void noteLockedInMulti(bool warn);
     void warnLockedMultiSelect();
     void prepareSelection();
     void updateProvisional();
@@ -500,8 +566,7 @@ protected:
     void exposeSurfaces(const QJsonObject& target);
     QSet<QString> m_exposeTried;              // (the models prepareSelection has tried to expose: once each)
     void updateMultiNote();
-    bool m_stripping = false;
-    bool m_silentStrip = false;               // (a model locked by a key leaves the selection without a warning)
+    bool m_lockedInMulti = false;             // (the selection of several that is there has a locked model in it)
     bool m_multiNote = false;                 // (the note under the tree is the multi-select one)
     bool m_editPending = false;               // (an edit of prepareSelection has not been answered by a run yet)
     bool m_prepareAgain = false;
@@ -517,9 +582,14 @@ protected:
     QStringList m_selectOrder;
     bool m_rebuilding = false;
     Qt::KeyboardModifiers m_clickMods;
+    QStringList m_pressedSelection;     // (the keys of the rows selected when the mouse button last went down in the tree)
     mutable QHash<QString, bool> m_combining;
+    mutable QHash<QString, bool> m_needsSecond;
 
     /*  A variable to select once the script that creates it has run (tries counts the runs waited)  */
+    QList<QPair<QString, QString>> m_copied;     // (the models of the last Ctrl+C: name, statements)
+    QString m_copiedText;                        // (what the clipboard held then: a paste is of this only)
+    QSet<QString> m_copiedPart;                  // (which of them were parts of an import)
     QString m_selectNew;
     int m_selectNewTries = 0;
     /*  Isolation: the keys of the models that were shown before, the one isolated, whether it is on  */
@@ -529,6 +599,18 @@ protected:
 
     QList<int> linesOf(const QJsonObject& it) const;
     QString lineText(int line0) const;
+    /*  An edit that comments out, rewrites or deletes a line that it found by the rows asks first whether the line IS what the rows say:
+     *  the line that shows the model `var` (kind "display": `x`), that hides it ("hidden": `# hidden: x`), a statement that edits it
+     *  ("lock", "handles", "expose", "render_cache", "custom_resolution": `x = lock(x)`), or its "definition".  Rows of another text than
+     *  the script's (a scene that a run left behind, a prediction that was wrong) would have the edit land on a line that is something
+     *  else -- a `lock(x)` line commented out as if it were a hidden model.  False says why in m_lineMismatch  */
+    bool lineIs(int line0, const QString& var, const QString& kind) const;
+    /*  The same for a displayed expression that has no name (its row has the text of the statement)  */
+    bool lineIsExpression(int line0, const QJsonObject& it) const;
+    mutable QString m_lineMismatch;
+    QString m_refusedNote;              // (what a refused click said: said again when the run that brings the rows up to date is done)
+    /*  Nothing is written: the notes say why, and the script is run again, which brings the rows up to date  */
+    void refuseOutOfDate();
     QString uniqueName(const QString& base) const;
     void addImportIfMissing(QList<TextEdit>& edits, const QString& name,
                             const QString& module = "cad_import") const;
@@ -539,6 +621,11 @@ protected:
 
     QTreeWidget* m_tree;
     QToolButton* m_header;
+    QString m_errorText;
+    int m_errorLine = -1;
+    QString headerText() const;
+    QString errorNote() const;
+    static void setErrorStyle(QWidget* w, bool on);
     QLabel* m_note;
 
     QJsonObject m_scene;

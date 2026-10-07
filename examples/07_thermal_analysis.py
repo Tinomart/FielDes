@@ -7,7 +7,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/ShaftSupportStand.STEP")
+parts = import_model("step/ShaftSupportStand.STEP")
 stand, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))

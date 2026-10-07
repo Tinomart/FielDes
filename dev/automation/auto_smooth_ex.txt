@@ -1,6 +1,0 @@
-# a smoothed box with a region excluded: how long the script takes and how long the render does
-wait 3000
-waitrender 240 120
-wait 800
-log --- first run done
-quit

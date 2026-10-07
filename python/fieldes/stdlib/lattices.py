@@ -1359,7 +1359,7 @@ def cell_periodic(kind='octet'):
 
         Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
             lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
-            lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
+            lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
         (Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
         repeat: cell_non_periodic().) '''
     if not isinstance(kind, str):

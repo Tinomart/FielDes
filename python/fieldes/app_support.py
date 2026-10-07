@@ -292,8 +292,9 @@ import json
 import os
 import re
 
-IMPORT_FUNCS = ('import_step_parts', 'import_step', 'import_step_parts_reconstructed',
-                'import_step_tessellated_parts', 'import_step_tessellated', 'import_mesh')
+# (the ways of importing a file: tessellate() and reconstruct() are imports only when they are given a FILE -- tessellate()
+# of a shape is an operation on it)
+IMPORT_FUNCS = ('import_model', 'reconstruct', 'tessellate')
 SETTINGS_FUNCS = ('set_bounds', 'set_resolution', 'set_quality')
 HIDDEN_RE = re.compile(r'^(\s*)(?:#\s*hidden:\s?)+(.*)$')
 MAX_ITEMS = 400
@@ -309,7 +310,7 @@ def _types():
 
 
 def _call_name(node):
-    ''' "import_step_parts" / "view.set_bounds" for a Call node '''
+    ''' "import_model" / "view.set_bounds" for a Call node '''
     f = node.func
     if isinstance(f, ast.Name):
         return f.id
@@ -375,14 +376,30 @@ def _bounds_list(b):
         return None
 
 
-def _find_import(stmt):
+def _is_import_call(node, gs=None):
+    ''' Whether a Call node imports a file: import_model(...) always; reconstruct(...) and tessellate(...) when they are
+        given a path -- a string, or a name that is a string in the script's globals `gs` -- and not a model
+        (tessellate(shape) is an operation on it, not an import) '''
+    name = _short_name(_call_name(node))
+    if name not in IMPORT_FUNCS:
+        return False
+    if name == 'import_model':
+        return True
+    arg = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg in ('path', 'source')), None)
+    if isinstance(arg, ast.Constant):
+        return isinstance(arg.value, str)
+    if isinstance(arg, ast.Name):
+        return gs is not None and isinstance(gs.get(arg.id), str)
+    return False
+
+
+def _find_import(stmt, gs=None):
     ''' (call, subscript-or-None) for the first import call in a statement '''
     for node in ast.walk(stmt):
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call) and \
-                _short_name(_call_name(node.value)) in IMPORT_FUNCS:
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call) and _is_import_call(node.value, gs):
             return node.value, node
     for node in ast.walk(stmt):
-        if isinstance(node, ast.Call) and _short_name(_call_name(node)) in IMPORT_FUNCS:
+        if isinstance(node, ast.Call) and _is_import_call(node, gs):
             return node, None
     return None, None
 
@@ -987,6 +1004,71 @@ def _inputs_of(value, gs, by_name, own=None):
     return found, variadic, _numbers_of(value, gs)
 
 
+def _condition_role(value):
+    ''' What a condition is, for a drop on the call that takes it: 'support' and 'load' go to the lists of
+        static_boundary_conditions, 'boundary' (a temperature, a heat, a convection, an inlet ...) to the list of an analysis,
+        'set' is a whole set of conditions (static_boundary_conditions(...)); '' for anything else '''
+    name = type(value).__name__
+    if name == '_Support':
+        return 'support'
+    if name in ('_Force', '_Gravity', '_Thermal'):
+        return 'load'
+    if name in ('_Temperature', '_Heat', '_Convection', '_Inlet', '_Outlet', '_Wall', '_Slip'):
+        return 'boundary'
+    if name in ('StaticBoundaryConditions', '_PlainConditions'):
+        return 'set'
+    return ''
+
+
+def _call_slots(value, gs, src):
+    ''' What a call is given, argument by argument, and what it could be given: {params: [the names of the callee's
+        parameters], args: {parameter: {span, text, list (a list written in the call: its `last` element's span, or none
+        when it is empty)}}, last: the span of the call's last argument} -- for the model tree: a material or a condition
+        dropped on the call goes in place of the argument it has, or becomes the one it has not '''
+    if not isinstance(value, ast.Call):
+        return {}
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    params = []
+    positional = []
+    if callable(callee):
+        try:
+            for p in inspect.signature(callee).parameters.values():
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+                    positional.append(p.name)
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
+                    params.append(p.name)
+        except (TypeError, ValueError):
+            pass
+    given = {}
+    last = None
+
+    def note(name, node):
+        nonlocal last
+        span = _span(node)
+        d = {'span': span, 'text': _short(src.segment(node), 60)}
+        if isinstance(node, ast.List):
+            d['list'] = True
+            if node.elts:
+                d['last'] = _span(node.elts[-1])
+        if name:
+            given[name] = d
+        if last is None or (span[2], span[3]) > (last[2], last[3]):
+            last = span
+
+    for i, a in enumerate(value.args):
+        if isinstance(a, ast.Starred):
+            continue
+        note(positional[i] if i < len(positional) else None, a)
+    for kw in value.keywords:
+        if kw.arg:
+            note(kw.arg, kw.value)
+    out = {'params': params, 'args': given}
+    if last is not None:
+        out['last'] = last
+    return out
+
+
 def _block_names():
     ''' The names of the custom blocks (see fieldes.blocks), or none '''
     try:
@@ -1071,7 +1153,7 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
                 continue
 
         # --- imports
-        call, sub = _find_import(stmt)
+        call, sub = _find_import(stmt, gs)
         if call is not None:
             func = _short_name(_call_name(call))
             path = None
@@ -1155,10 +1237,25 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
         # shape x (not shapes of their own)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and \
                 isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call) and \
-                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache', 'lock') and stmt.value.args and \
+                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache', 'lock', 'custom_resolution') and stmt.value.args and \
                 isinstance(stmt.value.args[0], ast.Name) and \
                 stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
             target = by_name[stmt.targets[0].id]
+            if _short_name(_call_name(stmt.value)) == 'custom_resolution':
+                # (a resolution of its own for the shape: its number is a field under the shape in the tree)
+                arg = stmt.value.args[1] if len(stmt.value.args) > 1 else None
+                for kw in stmt.value.keywords:
+                    if kw.arg == 'resolution':
+                        arg = kw.value
+                number = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)) and not isinstance(arg.value, bool) else None
+                info = {'line': line, 'end_line': end, 'call': _span(stmt.value), 'text': _short(src.segment(stmt), 60),
+                        'value': number, 'span': _span(arg) if arg is not None else None}
+                # (a number that is finer than a body can be drawn is capped: the tree's row says what is used)
+                used = getattr(gs.get(stmt.targets[0].id), '_custom_resolution_used', None)
+                if isinstance(used, (int, float)) and number is not None and used < number * (1 - 1e-9):
+                    info['used'] = used
+                target['custom_resolution'] = info
+                continue
             if _short_name(_call_name(stmt.value)) == 'render_cache':
                 # (the render cache keeps every shape's mesh unless the script says render_cache(x, False): that line
                 # is the opt-out; render_cache(x) is the default said aloud)
@@ -1228,6 +1325,9 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
                     if not shown:
                         item['displayable'] = False     # (a material, a lattice cell ...: nothing to draw)
                     item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name, t.id)
+                    item['slots'] = _call_slots(stmt.value, gs, src)
+                    if mkind == 'conditions':
+                        item['condition_role'] = _condition_role(v)
                     item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
                     item['callee'] = _callee_name(stmt.value)
                     item['role'] = 'operation' if item['deps'] else 'primitive'
@@ -1292,6 +1392,7 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
                         item['displayable'] = False
                         _FIELD_SOURCES.append(('line:%d' % line, shown_value))
                 item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name)
+                item['slots'] = _call_slots(stmt.value, gs, src)
                 item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
                 item['callee'] = _callee_name(stmt.value)
                 item['role'] = 'operation' if deps else 'primitive'
@@ -1331,11 +1432,19 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
                     text += '\n' + HIDDEN_RE.match(lines[j]).group(2)
                 else:
                     break
+        try:
+            ast.parse(text, mode='eval')
+        except SyntaxError:
+            # (`# hidden: x = lock(x)` is a statement that was commented out, not a model that is hidden: it is a comment, and no row
+            # of the tree -- a row there would be a ghost that a hide of another model's line had made)
+            i = start + 1
+            continue
         name = text.strip()
         if name in by_name:
             by_name[name]['hidden_line'] = start + 1
-        elif not (partial and start + 1 > (tree.body[-1].end_lineno if tree.body else 0)):
-            # (a run in progress has not reached the lines after its last statement)
+        elif not ((partial or errored or upto is not None) and start + 1 > (tree.body[-1].end_lineno if tree.body else 0)):
+            # (a run in progress, or one that stopped with an error, has not reached the lines after its last statement: a
+            # `# hidden: name` line there names a model that does not exist yet, and would be a row of its own that points at nothing)
             items.append({'kind': 'display', 'line': start + 1, 'end_line': j + 1,
                           'label': _short(text, 50), 'text': _short(text, 90),
                           'hidden_line': start + 1})
@@ -1388,10 +1497,11 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
             v = gs.get(it.get('var'))
         if is_shape(v):
             n = _expose_count(v)
-            # (FielDes writes the numbers of a small shape itself when it is selected, and offers the others in the
-            # shape's menu: `expose_count` says how many there are)
+            # (FielDes writes the numbers of a shape itself when it is selected, whatever their number, up to the cap the library
+            # will write: `expose_count` says how many there are, `expose_cap` the most)
             it['can_expose'] = 0 < n <= _MAX_EXPOSED
             it['expose_count'] = n
+            it['expose_cap'] = _MAX_EXPOSED
     for it in items:
         it.pop('_value', None)
 
@@ -1444,7 +1554,13 @@ def scene_json(source, gs, results, upto=None, partial=False, errored=False):
         if v is not None:
             settings.setdefault(k, {})['value'] = v
 
+    import hashlib
     return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(),
                        'truncated': truncated, 'errored': bool(errored),
+                       # (how far the run has got: the last line of the last statement that is done -- a model that stopped with an
+                       # error on a line before it is no longer in error)
+                       'done_line': tree.body[-1].end_lineno if tree.body else 0,
+                       # (the text this scene is of: the tree's edits are made from its lines, and wait for a scene that fits the text)
+                       'source_md5': hashlib.md5(source.encode('utf-8')).hexdigest(),
                        'has_roi': 'roi' in gs, 'has_roi_resolution': 'roi_resolution' in gs},
                       default=str)

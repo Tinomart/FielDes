@@ -530,6 +530,34 @@ def _lazy_once(fn):
 RAW = {}
 
 
+def _placed_display(display, prev, args, kwargs):
+    ''' The triangles a tessellated part is drawn from (see tessellated_import), placed as the transform `prev(shape, *args)`
+        -- one of the affine ones: move, rotate, scale, reflect -- places the part.  A transform makes the field `shape`
+        composed with its inverse G, so applied to the coordinate fields it hands back G itself, worked out here from
+        G at four points (with the numbers the script has for its var()s); the triangles' matrix is then G^-1 after
+        the one they had.  Nothing of the triangles is touched: they are the same bytes, placed by a matrix. '''
+    from fieldes.stdlib.fields import _eval_many
+    key, verts, tris, m = display
+    probes = [(0.0, 0.0, 0.0), (100.0, 0.0, 0.0), (0.0, 100.0, 0.0), (0.0, 0.0, 100.0)]
+    g = [_eval_many(prev(axis, *args, **kwargs), probes) for axis in (Shape.X(), Shape.Y(), Shape.Z())]
+    b = [g[r][0] for r in range(3)]
+    a = [[(g[r][c + 1] - g[r][0]) / 100.0 for c in range(3)] for r in range(3)]       # G(p) = a p + b
+    (m00, m01, m02), (m10, m11, m12), (m20, m21, m22) = a
+    det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20)
+    if abs(det) < 1e-12:
+        return None
+    inv = [[(m11 * m22 - m12 * m21) / det, (m02 * m21 - m01 * m22) / det, (m01 * m12 - m02 * m11) / det],
+           [(m12 * m20 - m10 * m22) / det, (m00 * m22 - m02 * m20) / det, (m02 * m10 - m00 * m12) / det],
+           [(m10 * m21 - m11 * m20) / det, (m01 * m20 - m00 * m21) / det, (m00 * m11 - m01 * m10) / det]]
+    old = [[m[4 * r + c] for c in range(3)] for r in range(3)]
+    shift = [m[4 * r + 3] - b[r] for r in range(3)]
+    new = []
+    for r in range(3):
+        row = [sum(inv[r][k] * old[k][c] for k in range(3)) for c in range(3)]
+        new.extend(row + [sum(inv[r][k] * shift[k] for k in range(3))])
+    return (key, verts, tris, tuple(new))
+
+
 def _exact_follows(name):
     prev = globals()[name]
     RAW[name] = prev
@@ -542,6 +570,12 @@ def _exact_follows(name):
         get = getattr(t, '_distance_of', None)
         if get is not None:
             out._distance_of = _lazy_once(lambda: prev(get(), *args, **kwargs))
+        # (a tessellated part is drawn from its own triangles: they are placed the way the field is)
+        display = getattr(t, '_display_mesh', None)
+        if display is not None:
+            moved = _placed_display(display, prev, args, kwargs)
+            if moved is not None:
+                out._display_mesh = moved
         if hasattr(t, '_exact_source') or hasattr(t, '_exact_sources'):
             from fieldes.stdlib import cad_import
             cad_import._carry_exact(out, t, (name, args, kwargs))

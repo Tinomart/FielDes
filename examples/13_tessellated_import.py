@@ -1,10 +1,12 @@
 # The kitchen of example 03, imported EXACTLY.
 #
-# import_step_parts() rebuilds every solid as a formula and FITS its free-form (B-spline) faces with simple
+# reconstruct() rebuilds every solid as a formula and FITS its free-form (B-spline) faces with simple
 # surfaces: fast and light, and an approximation (example 03 shows how far off, and draws the file's own
-# surface where it matters).  import_step_tessellated_parts() is for parts that are almost all free-form, where
+# surface where it matters).  tessellate() is for parts that are almost all free-form, where
 # that does not work: it fits nothing.  Every solid is tessellated straight from its trimmed faces, on all
 # the processor's threads, and the triangles are made the exact signed distance field of the part.
+# (import_model(), which example 03 uses, chooses between the two for each part: the one with more than a tenth
+# of its surface free-form is tessellated.  Here every part is, by name.)
 #
 # Look at the output: how many triangles, how many of the faces are free-form, and how long the tessellation
 # took (the first run; it is kept in step/Keukencombinatie.stp.fieldes-tessellation and read from there next time).
@@ -13,10 +15,10 @@
 #
 # The parts come in the same order, with the same names, units and bounds as example 03's: kitchen[7] is the
 # same part in both.  What you give up is the formula: the faces of this import cannot be dragged (the gizmo
-# of the model tree works), and a part that is mostly flat faces and cylinders is lighter as import_step_parts().
+# of the model tree works), and a part that is mostly flat faces and cylinders is lighter reconstructed.
 from fieldes import *
 
-kitchen = import_step_tessellated_parts("step/Keukencombinatie.stp")
+kitchen = tessellate("step/Keukencombinatie.stp")
 kitchen_0 = kitchen[0][0]
 kitchen_0
 kitchen_1 = kitchen[1][0]

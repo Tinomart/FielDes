@@ -15,7 +15,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/MobileStand.step")
+parts = import_model("step/MobileStand.step")
 stand = parts[0][0]
 view.set_bounds((-60, -80, -20), (140, 80, 90))
 view.set_resolution(2)

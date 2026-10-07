@@ -37,7 +37,16 @@ struct NearCubes
     double h = 0;
 };
 
-NearCubes nearCubes(Field& F, const V3& lo, const V3& hi, double h0, int levels, bool say)
+// The scaffold of a PATCH of a surface (a selection): the surface is the zero set of the field, as for any sheet, and only the part of it by the
+// patch is covered -- the cubes within `slack` of the patch (where the field `region` is below `slack`), and then the scaffold itself, CUT AT the
+// outline of the patch, where `region` is zero.  Nothing about what lies behind the surface is looked at: a surface has no thickness
+struct PatchMask
+{
+    Field* region = nullptr;
+    double slack = 0.0;
+};
+
+NearCubes nearCubes(Field& F, const V3& lo, const V3& hi, double h0, int levels, bool say, const PatchMask& mask = PatchMask())
 {
     using Vox = std::array<int, 3>;
     NearCubes out;
@@ -58,15 +67,17 @@ NearCubes nearCubes(Field& F, const V3& lo, const V3& hi, double h0, int levels,
         const int nx = int(std::floor(ext[0] / v0)) + 1, ny = int(std::floor(ext[1] / v0)) + 1, nz = int(std::floor(ext[2] / v0)) + 1;
         std::vector<V3> pts;
         std::vector<Vox> all;
-        std::vector<double> f;
-        std::vector<V3> g;
+        std::vector<double> f, fr;
+        std::vector<V3> g, gr;
         auto flush = [&]() {
             if (pts.empty()) return;
             F.eval(pts, f, g);
+            if (mask.region) mask.region->eval(pts, fr, gr);
             for (size_t k = 0; k < pts.size(); ++k)
             {
                 const double gn = g[k].norm();
                 if (!std::isfinite(f[k]) || !(gn > 1e-12)) continue;
+                if (mask.region && !(fr[k] <= reach * v0 + mask.slack)) continue;
                 if (std::abs(f[k]) <= reach * v0 * gn) cur.push_back(all[k]);
             }
             pts.clear();
@@ -98,14 +109,16 @@ NearCubes nearCubes(Field& F, const V3& lo, const V3& hi, double h0, int levels,
                         kids.push_back(w);
                         pts.push_back(centre(w, s));
                     }
-        std::vector<double> f;
-        std::vector<V3> g;
+        std::vector<double> f, fr;
+        std::vector<V3> g, gr;
         F.eval(pts, f, g);
+        if (mask.region) mask.region->eval(pts, fr, gr);
         cur.clear();
         for (size_t i = 0; i < kids.size(); ++i)
         {
             const double gn = g[i].norm();
             if (!std::isfinite(f[i]) || !(gn > 1e-12)) continue;
+            if (mask.region && !(fr[i] <= reach * s + mask.slack)) continue;
             if (std::abs(f[i]) <= reach * s * gn) cur.push_back(kids[i]);
         }
         stageSet(double(k + 1) / double(deepest + 1), "level " + std::to_string(k + 1) + " of " + std::to_string(deepest + 1) + " of the cubes the surface passes through");
@@ -130,7 +143,7 @@ struct TriMesh
 // cubes agree).  A tetrahedron whose corners are not all on one side of the surface gets one triangle or two, with its corners on
 // the edges that cross.  A crossing is one vertex for every tetrahedron that has that edge, so the triangles fit exactly: every
 // edge of the mesh is the edge of two triangles.
-TriMesh marchingTetrahedra(Field& F, const NearCubes& nc, bool say)
+TriMesh marchingTetrahedra(Field& F, const NearCubes& nc, bool say, const PatchMask& mask = PatchMask())
 {
     TriMesh m;
     const double h = nc.h;
@@ -218,6 +231,74 @@ TriMesh marchingTetrahedra(Field& F, const NearCubes& nc, bool say)
     projectToSurface(F, pts, nn, ok, h, 1e-4);
     for (size_t i = 0; i < pts.size(); ++i)
         if (!ok[i] || (pts[i] - raw[i]).norm() > 0.75 * h) pts[i] = raw[i];
+    if (mask.region)
+    {
+        // The patch: the scaffold is cut AT the outline of the patch, where the field `region` is zero.  A triangle that crosses it is cut
+        // there: the places where its edges cross are new vertices (one for every edge, shared by the triangles that have it, and put onto the
+        // surface), and the part that is inside is kept.  So the scaffold ends ON the outline, not a step short of it or past it, and the
+        // cells that are laid out over it end there.  The vertices that no triangle has left are dropped and the rest numbered again.
+        std::vector<double> fr;
+        std::vector<V3> gr;
+        mask.region->eval(pts, fr, gr);
+        std::map<std::pair<int, int>, int> crossing;
+        std::vector<V3> extra;                       // (where the edges cross, before they are put onto the surface)
+        auto crossAt = [&](int in, int out) {
+            const std::pair<int, int> key = in < out ? std::make_pair(in, out) : std::make_pair(out, in);
+            const auto it = crossing.find(key);
+            if (it != crossing.end()) return it->second;
+            const double ri = fr[size_t(in)], ro = fr[size_t(out)];
+            double t = ri / (ri - ro);               // (ri <= 0 < ro)
+            t = std::min(0.98, std::max(0.02, t));
+            const int id = int(pts.size()) + int(extra.size());
+            extra.push_back(pts[size_t(in)] + t * (pts[size_t(out)] - pts[size_t(in)]));
+            crossing[key] = id;
+            return id;
+        };
+        std::vector<std::array<int, 3>> kept;
+        for (const auto& t : m.tri)
+        {
+            int in[3];
+            for (int s = 0; s < 3; ++s) in[s] = fr[size_t(t[size_t(s)])] <= 0.0 ? 1 : 0;
+            const int count = in[0] + in[1] + in[2];
+            if (count == 3)
+                kept.push_back(t);
+            else if (count == 1)
+            {
+                const int s = in[0] ? 0 : (in[1] ? 1 : 2);
+                const int u = t[size_t(s)], v = t[size_t((s + 1) % 3)], w = t[size_t((s + 2) % 3)];
+                kept.push_back({u, crossAt(u, v), crossAt(u, w)});
+            }
+            else if (count == 2)
+            {
+                const int s = !in[0] ? 0 : (!in[1] ? 1 : 2);
+                const int w = t[size_t(s)], u = t[size_t((s + 1) % 3)], v = t[size_t((s + 2) % 3)];      // (w is outside)
+                const int xvw = crossAt(v, w), xwu = crossAt(u, w);
+                kept.push_back({u, v, xvw});
+                kept.push_back({u, xvw, xwu});
+            }
+        }
+        if (!extra.empty())
+        {
+            std::vector<V3> moved = extra, nrm;
+            std::vector<char> okm;
+            projectToSurface(F, moved, nrm, okm, h, 1e-4);
+            for (size_t k = 0; k < extra.size(); ++k)
+                if (okm[k] && (moved[k] - extra[k]).norm() <= 0.75 * h) extra[k] = moved[k];
+            pts.insert(pts.end(), extra.begin(), extra.end());
+        }
+        m.tri.swap(kept);
+        std::vector<int> number(pts.size(), -1);
+        int count = 0;
+        for (const auto& t : m.tri)
+            for (int k = 0; k < 3; ++k)
+                if (number[size_t(t[size_t(k)])] < 0) number[size_t(t[size_t(k)])] = count++;
+        std::vector<V3> packed(size_t(count), V3::Zero());
+        for (size_t i = 0; i < pts.size(); ++i)
+            if (number[i] >= 0) packed[size_t(number[i])] = pts[i];
+        for (auto& t : m.tri)
+            for (int k = 0; k < 3; ++k) t[size_t(k)] = number[size_t(t[size_t(k)])];
+        pts.swap(packed);
+    }
     std::vector<double> fv;
     std::vector<V3> gv;
     F.eval(pts, fv, gv);
@@ -619,7 +700,8 @@ double positionSweep(QLevel& L, const std::vector<int>& order, double rho)
 // The layout
 
 void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& directionIn,
-               std::vector<GNode>& nodes, PathMap& paths, std::vector<Cell>& cells, V3& firstDirection, std::string& note)
+               std::vector<GNode>& nodes, PathMap& paths, std::vector<Cell>& cells, V3& firstDirection, std::string& note,
+               const PatchMask& mask = PatchMask())
 {
     const bool say = std::getenv("FIELDES_SC_STATS") != nullptr;
     const auto t0 = std::chrono::steady_clock::now();
@@ -647,8 +729,8 @@ void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& 
     const V3 lo = loIn - V3::Constant(2.0 * cell), hi = hiIn + V3::Constant(2.0 * cell);
 
     // ---- the scaffold: a closed triangle mesh of the surface
-    const NearCubes nc = nearCubes(F, lo, hi, hgrid, 2, say);
-    TriMesh mesh = marchingTetrahedra(F, nc, say);
+    const NearCubes nc = nearCubes(F, lo, hi, hgrid, 2, say, mask);
+    TriMesh mesh = marchingTetrahedra(F, nc, say, mask);
     lap("scaffold");
     if (mesh.tri.size() < 8) return;
     const int N = int(mesh.p.size());
@@ -1964,6 +2046,236 @@ void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& 
             std::fprintf(stderr, "[quads] %zu of %zu middle nodes could not be projected: %zu went to the middle vertex of their line, %zu to a vertex of their region, %zu to the nearest vertex of the scaffold\n",
                          snapped + inRegion + onLine, toPlace.size(), onLine, inRegion, snapped);
     }
+    // (the outline of the surface -- the scaffold's own boundary -- and the nearest point on it: for the rule that the outer nodes lie on it, and for
+    // every node to stay inside it)
+    std::vector<std::array<V3, 2>> outline;
+    {
+        std::unordered_map<uint64_t, int> uses;
+        for (const auto& t : mesh.tri)
+            for (int s = 0; s < 3; ++s) ++uses[edgeKey(t[size_t(s)], t[size_t((s + 1) % 3)])];
+        for (const auto& kv : uses)
+            if (kv.second == 1) outline.push_back({mesh.p[size_t(kv.first >> 32)], mesh.p[size_t(kv.first & 0xffffffffu)]});
+        std::sort(outline.begin(), outline.end(), [](const std::array<V3, 2>& a, const std::array<V3, 2>& b) {
+            for (int k = 0; k < 3; ++k)
+            {
+                if (a[0][k] != b[0][k]) return a[0][k] < b[0][k];
+                if (a[1][k] != b[1][k]) return a[1][k] < b[1][k];
+            }
+            return false;
+        });
+    }
+    auto onOutline = [&](const V3& q) {
+        V3 best = q;
+        double bestD = 1e300;
+        for (const auto& seg : outline)
+        {
+            const V3 d = seg[1] - seg[0];
+            const double len2 = d.squaredNorm();
+            const double u = len2 > 1e-18 ? std::min(1.0, std::max(0.0, (q - seg[0]).dot(d) / len2)) : 0.0;
+            const V3 x = seg[0] + u * d;
+            const double dd = (x - q).squaredNorm();
+            if (dd < bestD)
+            {
+                bestD = dd;
+                best = x;
+            }
+        }
+        return best;
+    };
+    // ---- CELLS AS BIG AS ASKED.  Where the layout stretches its rows (a narrow neck of the surface, a tight bend) a cell is left with a side
+    // much longer than a cell, and the struts of its unit cell run across it as long chords, in the air over the curve.  A side longer than
+    // one and a half cells is cut: a ROW of cells is inserted through it -- the chord of the quad mesh that crosses the side (it goes from a
+    // quad to the one across its opposite side, and on, to the edge of the surface or round to where it began) -- every side the row crosses
+    // gets a node in the middle, put onto the surface, and every quad of the row becomes two.  A quad mesh stays a quad mesh, every edge
+    // stays on two cells (or on one, at the edge of the surface); the relaxation below then evens the sizes
+    {
+        const double longest = 1.5 * cell;
+        const size_t cap = 3 * cells.size() + 64;
+        size_t inserted = 0, rounds = 0;
+        std::set<uint64_t> blocked;             // (sides of a row that touches a cell that is no quad: that row is left alone)
+        auto ringOf = [](const Cell& c) { return std::array<int, 4>{c.c[0], c.c[1], c.c[3], c.c[2]}; };
+        auto makeCell = [](int a, int b, int c, int d) { return Cell{{a, b, d, c}}; };
+        auto rebuildEdges = [&]() {
+            edgeCount.clear();
+            edgeList.clear();
+            for (const Cell& cl : cells)
+            {
+                const auto r = ringOf(cl);
+                for (int k = 0; k < 4; ++k)
+                {
+                    const int x = r[size_t(k)], y = r[size_t((k + 1) % 4)];
+                    if (x == y) continue;
+                    if (++edgeCount[edgeKey(x, y)] == 1) edgeList.push_back({std::min(x, y), std::max(x, y)});
+                }
+            }
+        };
+        for (; rounds < 80; ++rounds)
+        {
+            // the longest side
+            int ea = -1, eb = -1;
+            double worstLen = longest;
+            for (const auto& e : edgeList)
+            {
+                if (blocked.count(edgeKey(e[0], e[1]))) continue;
+                const double len = (nodes[size_t(e[0])].p - nodes[size_t(e[1])].p).norm();
+                if (len > worstLen)
+                {
+                    worstLen = len;
+                    ea = e[0];
+                    eb = e[1];
+                }
+            }
+            if (ea < 0 || cells.size() > cap) break;
+            // the row through it
+            std::unordered_map<uint64_t, std::vector<int>> cellsOfEdge;
+            std::vector<char> usable(cells.size(), 1);
+            for (size_t ci = 0; ci < cells.size(); ++ci)
+            {
+                const auto r = ringOf(cells[ci]);
+                for (int k = 0; k < 4; ++k)
+                    if (r[size_t(k)] == r[size_t((k + 1) % 4)]) usable[ci] = 0;           // (a cell with a repeated corner is no quad: no row goes through it)
+                if (!usable[ci]) continue;
+                for (int k = 0; k < 4; ++k) cellsOfEdge[edgeKey(r[size_t(k)], r[size_t((k + 1) % 4)])].push_back(int(ci));
+            }
+            std::set<uint64_t> row;
+            std::vector<uint64_t> queue = {edgeKey(ea, eb)};
+            row.insert(queue.back());
+            while (!queue.empty())
+            {
+                const uint64_t key = queue.back();
+                queue.pop_back();
+                const auto it = cellsOfEdge.find(key);
+                if (it == cellsOfEdge.end()) continue;
+                for (int ci : it->second)
+                {
+                    const auto r = ringOf(cells[size_t(ci)]);
+                    for (int k = 0; k < 4; ++k)
+                        if (edgeKey(r[size_t(k)], r[size_t((k + 1) % 4)]) == key)
+                        {
+                            const uint64_t across = edgeKey(r[size_t((k + 2) % 4)], r[size_t((k + 3) % 4)]);
+                            if (row.insert(across).second) queue.push_back(across);
+                        }
+                }
+            }
+            // (a row that reaches a cell with a repeated corner would leave a node on one side of it only: it is left alone)
+            bool bad = false;
+            for (size_t ci = 0; ci < cells.size() && !bad; ++ci)
+                if (!usable[ci])
+                {
+                    const auto r = ringOf(cells[ci]);
+                    for (int k = 0; k < 4; ++k)
+                        if (r[size_t(k)] != r[size_t((k + 1) % 4)] && row.count(edgeKey(r[size_t(k)], r[size_t((k + 1) % 4)]))) bad = true;
+                }
+            if (bad)
+            {
+                blocked.insert(row.begin(), row.end());
+                continue;
+            }
+            // a node in the middle of every side of the row
+            std::map<uint64_t, int> middleOf;
+            std::vector<V3> at;
+            std::vector<int> made;
+            for (uint64_t key : row)
+            {
+                const int a = int(key >> 32), b = int(key & 0xffffffffu);
+                GNode g;
+                g.p = 0.5 * (nodes[size_t(a)].p + nodes[size_t(b)].p);
+                const V3 nn = nodes[size_t(a)].n + nodes[size_t(b)].n;
+                g.n = nn.norm() > 1e-9 ? V3(nn.normalized()) : nodes[size_t(a)].n;
+                nodes.push_back(g);
+                middleOf[key] = int(nodes.size()) - 1;
+                made.push_back(int(nodes.size()) - 1);
+                at.push_back(g.p);
+            }
+            // the quads of the row, each split by the nodes of its sides (a quad that the row crosses twice, in four)
+            std::vector<Cell> next;
+            std::vector<int> centreOf;
+            for (size_t ci = 0; ci < cells.size(); ++ci)
+            {
+                const auto r = ringOf(cells[ci]);
+                int m[4] = {-1, -1, -1, -1};
+                for (int k = 0; k < 4; ++k)
+                {
+                    const auto it = middleOf.find(edgeKey(r[size_t(k)], r[size_t((k + 1) % 4)]));
+                    if (it != middleOf.end() && usable[ci]) m[k] = it->second;
+                }
+                const bool s02 = m[0] >= 0 && m[2] >= 0, s13 = m[1] >= 0 && m[3] >= 0;
+                if (s02 && s13)
+                {
+                    GNode g;
+                    g.p = 0.25 * (nodes[size_t(r[0])].p + nodes[size_t(r[1])].p + nodes[size_t(r[2])].p + nodes[size_t(r[3])].p);
+                    g.n = nodes[size_t(r[0])].n;
+                    nodes.push_back(g);
+                    const int q = int(nodes.size()) - 1;
+                    made.push_back(q);
+                    at.push_back(g.p);
+                    next.push_back(makeCell(r[0], m[0], q, m[3]));
+                    next.push_back(makeCell(m[0], r[1], m[1], q));
+                    next.push_back(makeCell(q, m[1], r[2], m[2]));
+                    next.push_back(makeCell(m[3], q, m[2], r[3]));
+                }
+                else if (s02)
+                {
+                    next.push_back(makeCell(r[0], m[0], m[2], r[3]));
+                    next.push_back(makeCell(m[0], r[1], r[2], m[2]));
+                }
+                else if (s13)
+                {
+                    next.push_back(makeCell(r[1], m[1], m[3], r[0]));
+                    next.push_back(makeCell(m[1], r[2], r[3], m[3]));
+                }
+                else
+                    next.push_back(cells[ci]);
+            }
+            cells.swap(next);
+            // (the new nodes, onto the surface)
+            std::vector<V3> before = at, nn;
+            std::vector<char> ok;
+            projectToSurface(F, at, nn, ok, 0.5 * cell, 1e-4);
+            for (size_t k = 0; k < made.size(); ++k)
+                if (ok[k] && (at[k] - before[k]).norm() < 0.3 * cell)
+                {
+                    nodes[size_t(made[k])].p = at[k];
+                    if (nn[k].dot(nodes[size_t(made[k])].n) > 0.3) nodes[size_t(made[k])].n = nn[k];
+                }
+            if (mask.region && !outline.empty())
+            {
+                // (the middle of a side that crosses a bay of the outline is beyond the patch: it is put on the outline)
+                std::vector<V3> now;
+                for (int id : made) now.push_back(nodes[size_t(id)].p);
+                std::vector<double> fr;
+                std::vector<V3> gr;
+                mask.region->eval(now, fr, gr);
+                for (size_t k = 0; k < made.size(); ++k)
+                    if (fr[k] > 0.0) nodes[size_t(made[k])].p = onOutline(nodes[size_t(made[k])].p);
+            }
+            rebuildEdges();
+            ++inserted;
+        }
+        if (say && inserted) std::fprintf(stderr, "[quads] %zu rows of cells inserted where a side was longer than one and a half cells: %zu cells\n", inserted, cells.size());
+    }
+    // ---- THE OUTER NODES LIE ON THE OUTLINE.  Where the surface ends (the outline of a patch, the edge a box cuts), the cells end, and every
+    // node on an edge that only one cell has -- an outer node -- is ON that edge of the surface: put onto the nearest point of the scaffold's
+    // own boundary, and kept there by the relaxation below.  The sides between two outer nodes follow the outline too (see the lines of the
+    // edges, at the end).  A rule of the layout, not an approximation: a lattice never reaches past the surface it is laid on, nor stops short
+    // of its edge by a node
+    std::vector<char> outerNode(nodes.size(), 0);
+    if (!outline.empty())
+    {
+        for (const auto& e : edgeList)
+            if (edgeCount[edgeKey(e[0], e[1])] == 1) outerNode[size_t(e[0])] = outerNode[size_t(e[1])] = 1;
+        size_t snappedOuter = 0;
+        double farthest = 0;
+        for (size_t i = 0; i < nodes.size(); ++i)
+            if (outerNode[i])
+            {
+                const V3 x = onOutline(nodes[i].p);
+                farthest = std::max(farthest, (x - nodes[i].p).norm());
+                nodes[i].p = x;
+                ++snappedOuter;
+            }
+        if (say) std::fprintf(stderr, "[quads] %zu outer nodes put on the outline of the surface (the farthest moved %.2f mm)\n", snappedOuter, farthest);
+    }
     // ---- relaxation: the nodes are moved over the surface so that the cells are of one size and their corners are square: every
     // node goes part of the way to where its sides would be a cell long and it would be in the middle of its neighbours, and back
     // onto the surface; a node on a sharp edge goes along the edge only (so that the edge stays), and no move is made that folds a
@@ -2021,6 +2333,12 @@ void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& 
             const V3 t = nodes[i].n.cross(nodes[size_t(across)].n);
             along[i] = t.norm() > 0.3 ? V3(t.normalized()) : V3::Zero();
         }
+        for (size_t i = 0; i < M; ++i)
+            if (outerNode[i])
+            {
+                pinned[i] = 1;                  // (an outer node stays where it was put: on the outline)
+                along[i] = V3::Zero();
+            }
         size_t movable = 0, edgeNodes = 0;
         for (size_t i = 0; i < M; ++i)
         {
@@ -2055,10 +2373,17 @@ void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& 
             std::vector<V3> nn;
             std::vector<char> ok;
             projectToSurface(F, pts, nn, ok, 0.5 * cell, 1e-4);
+            // (no node is moved beyond the outline of the surface)
+            std::vector<double> beyond(pts.size(), -1.0);
+            if (mask.region && !pts.empty())
+            {
+                std::vector<V3> gr;
+                mask.region->eval(pts, beyond, gr);
+            }
             for (size_t k = 0; k < who.size(); ++k)
             {
                 const size_t i = who[k];
-                if (!ok[k] || (pts[k] - nodes[i].p).norm() > 0.3 * cell || nn[k].dot(nodes[i].n) < (pinned[i] ? 0.9 : 0.8)) continue;
+                if (!ok[k] || (pts[k] - nodes[i].p).norm() > 0.3 * cell || nn[k].dot(nodes[i].n) < (pinned[i] ? 0.9 : 0.8) || beyond[k] > 0.0) continue;
                 const V3 oldP = nodes[i].p, oldN = nodes[i].n;
                 const double oldWorst = worstCorner(i);
                 nodes[i].p = pts[k];
@@ -2150,11 +2475,15 @@ void growQuads(Field& F, const V3& loIn, const V3& hiIn, double cell, const V3& 
         for (size_t i = 0; i < edgeList.size(); ++i)
         {
             std::vector<V3> line = {nodes[size_t(edgeList[i][0])].p};
+            // (a side between two outer nodes that only one cell has runs along the outline of the surface: its points are put on it)
+            const bool alongOutline = !outline.empty() && outerNode[size_t(edgeList[i][0])] && outerNode[size_t(edgeList[i][1])] &&
+                                      edgeCount[edgeKey(edgeList[i][0], edgeList[i][1])] == 1;
             for (int k = 0; k < 3; ++k)
             {
                 const size_t at = 3 * i + size_t(k);
                 const V3 chord = before[at];
-                line.push_back(ok[at] && (pts[at] - chord).norm() < 0.3 * cell ? pts[at] : chord);
+                const V3 q = ok[at] && (pts[at] - chord).norm() < 0.3 * cell ? pts[at] : chord;
+                line.push_back(alongOutline ? onOutline(q) : q);
             }
             line.push_back(nodes[size_t(edgeList[i][1])].p);
             paths[edgeKey(edgeList[i][0], edgeList[i][1])] = std::move(line);

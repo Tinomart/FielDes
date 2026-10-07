@@ -4,7 +4,8 @@ Python library of FielDes, built on the libfive CAD kernel
 Hand-written (not code-generated): imports CAD files using FielDes's own
 small, dependency-free STEP reader (see kernel/src/step/).
 
-The main entry points are import_step_parts() and import_step(). Every
+The entry points are import_model(), reconstruct() and tessellate() (fieldes.stdlib.importing); this
+module is reconstruct()'s: every
 solid is rebuilt as CSG by the reconstruction algorithm (see
 step_reconstruct.hpp): analytic faces (plane / cylinder / cone / sphere /
 torus) as exact expressions.  A solid that can't be rebuilt doesn't stop the
@@ -31,9 +32,6 @@ from fieldes import run_progress
 
 __all__ = [
     'poor_fit_region',
-    'import_step',
-    'import_step_parts',
-    'import_step_parts_reconstructed',
     'FailedPart',
     'roi',
     'roi_resolution',
@@ -61,6 +59,10 @@ class FailedPart(object):
         raise RuntimeError('this part could not be imported: {}'.format(self.error))
 
     def __getattr__(self, name):
+        if name.startswith('_'):
+            # (the library asks every part for its private notes -- _bounds, _step_ref, _fit_marker -- and
+            # an absent one is None: only using the part as a shape is an error)
+            raise AttributeError(name)
         self._raise()
 
     def __repr__(self):
@@ -69,6 +71,21 @@ class FailedPart(object):
     def __bool__(self):
         self._raise()
     __nonzero__ = __bool__
+
+
+def _blocked(name):
+    def method(self, *args, **kwargs):
+        self._raise()
+    method.__name__ = name
+    return method
+
+
+# (an operator is looked up on the class, not through __getattr__: without these `part + 1` would say only that the
+# operand type is not supported, and not why the part could not be imported)
+for _op in ('__add__', '__radd__', '__sub__', '__rsub__', '__mul__', '__rmul__', '__truediv__', '__rtruediv__',
+            '__pow__', '__rpow__', '__neg__', '__pos__', '__abs__', '__call__', '__lt__', '__le__', '__gt__', '__ge__',
+            '__and__', '__rand__', '__or__', '__ror__', '__invert__'):
+    setattr(FailedPart, _op, _blocked(_op))
 
 
 def _collect_parts(parts_ptr):
@@ -161,12 +178,11 @@ def _mark_poor_fits(parts, report):
     for i, (shape, bounds) in enumerate(parts):
         marker = getattr(shape, '_fit_marker', None)
         if marker is not None and not isinstance(shape, FailedPart):
-            label = 'Fit deviation, % of face'
             name = getattr(shape, '_part_name', None)
             ref = getattr(shape, '_step_ref', None)
             metrics = getattr(shape, '_step_metrics', None)
-            shape = colored(shape, marker * 100, range=(100 * _FIT_SHADE_FROM, 100 * _FIT_SHADE_TO),
-                            label=label, colormap='fit')
+            # (the colour alone: no label, so no legend; the view draws none and reads nothing for this colour map)
+            shape = colored(shape, marker * 100, range=(100 * _FIT_SHADE_FROM, 100 * _FIT_SHADE_TO), colormap='fit')
             shape._fit_marker = marker
             if ref is not None:
                 shape._step_ref = ref
@@ -178,11 +194,15 @@ def _mark_poor_fits(parts, report):
     return out
 
 
-def _reconstructed_parts(path):
-    parts_ptr = lib.libfive_import_step_parts_reconstructed(path.encode())
+def _reconstructed_parts(path, only=None):
+    if only is None:
+        parts_ptr = lib.libfive_import_step_parts_reconstructed(path.encode())
+    else:
+        solids = (ctypes.c_int32 * max(1, len(only)))(*only)
+        parts_ptr = lib.libfive_import_step_parts_reconstructed_only(path.encode(), solids, len(only))
     message = lib.libfive_import_step_last_message().decode()
     if not parts_ptr:
-        raise RuntimeError('import_step_parts({!r}): {}'.format(path, message))
+        raise RuntimeError('reconstruct({!r}): {}'.format(path, message))
     _fit_reports[os.path.normcase(os.path.abspath(path))] = _read_fit_report()
     return _collect_parts(parts_ptr)
 
@@ -312,6 +332,8 @@ def _log_import(path, kind, parts, unit_mm, units, names=None):
         failed = isinstance(shape, FailedPart)
         entries.append({'index': i, 'ok': not failed,
                         'error': shape.error if failed else None,
+                        # (a body the file lists and gives no surface: nothing to import, which the tree shows quietly)
+                        'empty': bool(failed and 'has no surface to tessellate' in (shape.error or '')),
                         'name': (names[i] if names and i < len(names) else '') or '',
                         'bounds': [list(lo), list(hi)]})
         if not failed:
@@ -484,7 +506,9 @@ def roi_resolution(*items, cells=150, part_cells=64, detail_cells=4.0,
         digits = 1 - int(math.floor(math.log10(abs(r))))
         return math.floor(r * 10.0 ** digits) / 10.0 ** digits
 
-    parts = _import_parts(items)
+    # (a part drawn from its own triangles -- a tessellated one -- is not meshed: a wall as thin as you like needs no
+    # resolution, so it asks for none and costs none of the vertex budget; it still counts for the region)
+    parts = [p for p in _import_parts(items) if getattr(p[0], '_display_mesh', None) is None]
     if not parts:
         return round(r_old, 1 - int(math.floor(math.log10(abs(r_old)))))
     plo, phi = roi(*items)          # the region FielDes meshes: set_bounds(*roi(...)), padded
@@ -890,10 +914,12 @@ def _load_cache(cache_path, step_path, step_key, rev=None):
 # Main entry points
 # ---------------------------------------------------------------------------
 
-def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False,
-                      exclude_threshold=1.0, exclude_quality=64):
-    ''' Imports a STEP (.step/.stp) file as a separate Shape PER SOLID, using
-        FielDes's built-in reader -- no external CAD-kernel dependency.
+def _reconstruct_step(path, cache=True, units='mm', rev=None, auto_exclude=False,
+                      exclude_threshold=1.0, exclude_quality=64, only=None, log=True):
+    ''' reconstruct() (fieldes.stdlib.importing), whose text is this one: a STEP (.step/.stp) file as a separate
+        Shape PER SOLID, using FielDes's built-in reader -- no external CAD-kernel dependency.
+        `only`: the solids to rebuild (the others are FailedParts that say they were left out: the caller imports them
+        another way); `log`: False when the caller logs the import itself (see importing.import_model).
 
         Every solid is rebuilt as CSG by the reconstruction algorithm:
         analytic faces (plane, cylinder, cone, sphere, torus) as exact
@@ -916,7 +942,7 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
         Meshing each part returned here separately, over its own `bounds`,
         lets you pick a resolution matched to that part's own scale:
 
-            for i, (shape, bounds) in enumerate(import_step_parts(path)):
+            for i, (shape, bounds) in enumerate(reconstruct(path)):
                 shape.save_stl(f'part_{i}.stl', bounds[0], bounds[1],
                                 resolution=...)
 
@@ -964,6 +990,8 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
     step_path = os.path.abspath(path)
     factor, unit_mm = _output_factor(step_path, units)
     loaded = None
+    # (a cache that was made for other solids is another cache: the solids are part of what it is kept by)
+    rev_key = rev if only is None else '{}|only {}'.format(rev if rev is not None else 0, ','.join(str(s) for s in sorted(only)))
     if cache:
         cache_path = cache if isinstance(cache, str) else step_path + _CACHE_SUFFIX
         try:
@@ -971,26 +999,29 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
         except OSError:
             step_key = None                           # let the C reader report the error
         if step_key is not None:
-            loaded = _load_cache(cache_path, step_path, step_key, rev)
+            loaded = _load_cache(cache_path, step_path, step_key, rev_key)
             if loaded is None:
-                loaded = _reconstructed_parts(path)
+                loaded = _reconstructed_parts(path, only)
                 try:
-                    _write_cache(cache_path, step_path, step_key, loaded[0], loaded[1], rev,
+                    _write_cache(cache_path, step_path, step_key, loaded[0], loaded[1], rev_key,
                                  _fit_reports.get(os.path.normcase(step_path)))
                 except Exception:
                     pass                              # a cache is an optimisation only
     if loaded is None:
-        loaded = _reconstructed_parts(path)
+        loaded = _reconstructed_parts(path, only)
     parts, names = loaded
     parts = _scale_parts(parts, factor)
     _name_parts(parts, names)
-    _log_import(step_path, 'step', parts, unit_mm, units, names)
+    if log:
+        _log_import(step_path, 'step', parts, unit_mm, units, names)
     report = _fit_reports.get(os.path.normcase(step_path))
     _print_fit_report(step_path, report, factor, units)
     parts = _mark_poor_fits(parts, report)
     for shape, _ in parts:
+        if isinstance(shape, FailedPart):
+            continue
         ref = getattr(shape, '_step_ref', None)
-        if ref is not None and not isinstance(shape, FailedPart):
+        if ref is not None:
             scale = [[factor if r == c and r < 3 else (1.0 if r == c else 0.0) for c in range(4)]
                      for r in range(4)]
             shape._exact_source = _ExactSource(step_path, ref[0], ref[1], scale)
@@ -1002,7 +1033,7 @@ def import_step_parts(path, cache=True, units='mm', rev=None, auto_exclude=False
             shape._distance_of = _distance_getter(shape, bounds)
     if auto_exclude:
         parts = _auto_exclude(parts, exclude_threshold, exclude_quality)
-    return parts
+    return parts, names
 
 
 def _distance_getter(shape, bounds):
@@ -1016,44 +1047,6 @@ def _distance_getter(shape, bounds):
             cell.append(exact_distance(shape, bounds))
         return cell[0]
     return get
-
-
-def import_step(path, cache=True, units='mm', rev=None):
-    ''' Imports a STEP (.step/.stp) file as ONE Shape combining every solid
-        (the union of import_step_parts()), so it can be used with the rest
-        of fieldes.stdlib (union/difference/intersection with anything else,
-        transforms, etc). Cached exactly as import_step_parts() is.
-
-        Meshing a multi-part assembly as a single Shape forces one
-        resolution across the whole assembly's bounding box, driven by
-        whatever feature is smallest anywhere in the file; for a large
-        assembly, mesh each part from import_step_parts() over its own
-        bounds instead.
-
-        Raises RuntimeError (with a message describing why) if the file
-        can't be read, contains no importable solids, or ANY solid could
-        not be reconstructed as native CSG (unlike import_step_parts(),
-        which lets you still use the other, good parts of the same file by
-        index -- combining every part into one Shape here means one
-        FailedPart necessarily fails the whole union).
-    '''
-    parts = import_step_parts(path, cache=cache, units=units, rev=rev)
-    whole = parts[0][0]
-    for shape, _ in parts[1:]:
-        whole = whole.min(shape)
-    lo, hi = roi(parts, pad=0.0)
-    try:
-        whole._bounds = (lo, hi)
-        whole._exact_sources = [src for shape, _ in parts for src in _sources_of(shape)]
-    except AttributeError:
-        pass
-    return whole
-
-
-# Kept so existing scripts keep working: the reconstruction is now the
-# default, so this is simply the main function under its old name.
-import_step_parts_reconstructed = import_step_parts
-
 
 
 # ---------------------------------------------------------------------------
@@ -1104,7 +1097,7 @@ def _carry_exact(out, src, op=None):
 
 
 def _is_pair(item):
-    """ (Shape, (lower corner, upper corner)): one entry of what import_step_parts returns """
+    """ (Shape, (lower corner, upper corner)): one entry of what import_model returns """
     return (isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], Shape)
             and isinstance(item[1], (tuple, list)) and len(item[1]) == 2)
 
@@ -1187,7 +1180,7 @@ def exact_field(sources, quality=64):
 
 
 def _auto_exclude(parts, threshold, quality):
-    """ import_step_parts(auto_exclude=True): every part with poorly fitted places gets them excluded """
+    """ import_model(auto_exclude=True): every part with poorly fitted places gets them excluded """
     from fieldes.stdlib.excluded import exclude
     out = exclude(parts, quality=quality, threshold=threshold)
     changed = sum(1 for before, after in zip(parts, out) if after[0] is not before[0])

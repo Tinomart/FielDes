@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QProgressBar>
 #include <QLabel>
 #include <QElapsedTimer>
+#include <QTextCursor>
 
 #include "fieldes/documentation.hpp"
 #include "fieldes/formatter.hpp"
@@ -129,6 +130,13 @@ public slots:
     void setVarValues(QMap<libfive::Tree::Id, float> vs);
 
     /*
+     *  For the automation: sets the numbers of the var()s on a (0-based) line in steps that each move another set of them -- the
+     *  first, then the third, then the second and the fourth, then the first and the fourth -- the way a drag that moves a different
+     *  set of the numbers of a line at each step does.  Returns how many numbers the line has (those that exist are set)
+     */
+    int testVarSteps(int line0);
+
+    /*
      *  Applies a set of text replacements as one undoable step (used by
      *  the model tree, whose every action is a script edit)
      */
@@ -190,6 +198,10 @@ signals:
      */
     void sceneChanged(QString json);
 
+    /*  The script has an error: the last line of its traceback, and the 0-based line it is on (-1: not known); or it has none
+     *  (an empty text).  The viewport and the model tree show it, after a moment  */
+    void scriptErrorChanged(QString text, int line0);
+
     /*
      *  The model-tree description of what the statements of a script that is still running have made so far
      */
@@ -200,6 +212,9 @@ signals:
      *  rendered and listed is to go at once, not when the new one has run
      */
     void documentReplaced();
+
+    /*  The text of that script is in the editor now (it has not run yet): the model tree shows the tree it kept of that text  */
+    void scriptLoaded();
 
     /*  A short message for the status bar  */
     void notice(QString text);
@@ -291,6 +306,12 @@ protected:
     QTimer m_interpreterBusyDebounce;
     bool m_scriptRunning = false;
 
+    // The error the last run ended with: the line it was on (0-based, -1: none) and that line's text then.  An error that is shown
+    // goes the moment the run has got past that line, or the line has been rewritten: not when the whole run is done
+    int m_errorLine0 = -1;
+    QString m_errorLineText;
+    void clearErrorNow();
+
     // Another script has taken the place of the one that a run in flight is of: what that run delivers is not shown
     // (until the next run begins)
     bool m_discardResults = false;
@@ -320,7 +341,19 @@ protected:
     /*  Set while the program, not the user, changes the tab (showScriptTab): the editor does not take the keyboard  */
     bool m_quietTab=false;
 
-    QMap<libfive::Tree::Id, QRect> vars;
+    /*  Where the numbers that a drag in the viewport writes are in the text (the `0` of `var(0)`).  A run says where they are -- in the
+     *  text it was run on.  When the text has been edited since (a click of the tree that put a line above them, a key, undo, the drag's
+     *  own writes), those lines and columns are the places of ANOTHER text: a number written there goes into the middle of some other
+     *  line and eats a bracket.  So the places are kept as cursors of the document, which every edit of it moves along, whoever makes the
+     *  edit; a run's places are taken over only when its text is the text in the editor.  What stands at a place is checked before it is
+     *  written over: a number that is not there any more (its text was edited, the script was replaced) is not written  */
+    struct VarSpan
+    {
+        QTextCursor start, end;         // (the first character of the number, and the one after its last: the `)` is there)
+        QString text;                   // (what stands between them: what the run found there, or what the editor wrote there)
+    };
+    QMap<libfive::Tree::Id, VarSpan> varSpans;
+    void setVarSpans(const QMap<libfive::Tree::Id, QRect>& rects);
 };
 
 }   // namespace FielDes

@@ -324,8 +324,6 @@ protected:
     QWidget* m_comboRow;
     QWidget* m_body;
     QToolButton* m_axes[3];
-    QSlider* m_offsetSlider;
-    QDoubleSpinBox* m_offsetSpin;
     QSlider* m_radiusSlider;
     QDoubleSpinBox* m_radiusSpin;
     QSlider* m_opacity;

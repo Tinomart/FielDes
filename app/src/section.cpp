@@ -1093,7 +1093,6 @@ void SectionPanel::setSlice(FieldSlice s)
 FieldPanel::FieldPanel(QWidget* parent)
     : QFrame(parent),
       m_header(new QToolButton), m_combo(new QComboBox), m_comboRow(new QWidget), m_body(new QWidget),
-      m_offsetSlider(new QSlider(Qt::Horizontal)), m_offsetSpin(new QDoubleSpinBox),
       m_radiusSlider(new QSlider(Qt::Horizontal)), m_radiusSpin(new QDoubleSpinBox),
       m_opacity(new QSlider(Qt::Horizontal)),
       m_legend(new FieldLegend), m_info(new QLabel),
@@ -1176,20 +1175,8 @@ FieldPanel::FieldPanel(QWidget* parent)
     m_axes[2]->setChecked(true);
     axisRow->addStretch();
 
-    // Position along the way it faces
-    m_offsetSlider->setObjectName("fieldOffset");
-    m_offsetSlider->setRange(0, 1000);
-    m_offsetSpin->setDecimals(3);
-    m_offsetSpin->setRange(-1e6, 1e6);
-    m_offsetSpin->setKeyboardTracking(false);
-    m_offsetSpin->setFixedWidth(74);
-    m_offsetSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
-    m_offsetSpin->setToolTip("Where the disc is along the way it faces (the arrows in the viewport move it)");
-    auto offsetRow = new QHBoxLayout;
-    offsetRow->addWidget(label("Position"));
-    offsetRow->addWidget(m_offsetSlider, 1);
-    offsetRow->addWidget(m_offsetSpin);
-
+    // (no position slider: the disc is not kept inside anything -- the arrows in the viewport take it wherever it is to go, and a
+    // slider that spans the render region is no way to say where in space that is)
     // Radius
     m_radiusSlider->setObjectName("fieldRadius");
     m_radiusSlider->setRange(0, 1000);
@@ -1226,7 +1213,6 @@ FieldPanel::FieldPanel(QWidget* parent)
     body->setSpacing(6);
     body->addWidget(m_comboRow);
     body->addLayout(axisRow);
-    body->addLayout(offsetRow);
     body->addLayout(radiusRow);
     body->addLayout(opacityRow);
     body->addWidget(m_legend);
@@ -1262,19 +1248,6 @@ FieldPanel::FieldPanel(QWidget* parent)
     connect(m_opacity, &QSlider::valueChanged, this, [this](int v) {
         if (m_updating) return;
         m_settings.opacity = v / 100.f;
-        emitChange();
-    });
-    connect(m_offsetSlider, &QSlider::valueChanged, this, [this](int v) {
-        if (m_updating) return;
-        const int a = m_settings.axis;
-        m_settings.centre[a] = m_min[a] + (m_max[a] - m_min[a]) * v / 1000.f;
-        syncWidgets();
-        emitChange();
-    });
-    connect(m_offsetSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-        if (m_updating) return;
-        m_settings.centre[m_settings.axis] = float(v);
-        syncWidgets();
         emitChange();
     });
     connect(m_radiusSlider, &QSlider::valueChanged, this, [this](int v) {
@@ -1338,10 +1311,6 @@ void FieldPanel::syncWidgets()
 {
     m_updating = true;
     for (int i = 0; i < 3; ++i) m_axes[i]->setChecked(i == m_settings.axis);
-    const int a = m_settings.axis;
-    const float span = std::max(m_max[a] - m_min[a], 1e-6f);
-    m_offsetSlider->setValue(int(std::max(0.f, std::min(1.f, (m_settings.centre[a] - m_min[a]) / span)) * 1000));
-    m_offsetSpin->setValue(m_settings.centre[a]);
     const float lo = 0.02f * radiusMax() / 1.5f, hi = radiusMax();
     m_radiusSlider->setValue(int(std::max(0.f, std::min(1.f, (m_settings.radius - lo) / std::max(hi - lo, 1e-6f))) * 1000));
     m_radiusSpin->setValue(m_settings.radius);

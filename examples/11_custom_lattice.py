@@ -9,7 +9,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/Bracket.step")
+parts = import_model("step/Bracket.step")
 body, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))

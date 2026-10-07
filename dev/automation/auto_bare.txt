@@ -1,5 +1,0 @@
-wait 40000
-action view.std-front
-wait 5000
-grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/bare_front.png
-quit

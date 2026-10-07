@@ -189,7 +189,8 @@ void libfive_tree_delete(libfive_tree ptr)
 namespace {
 bool canKeep(const Tree& t)
 {
-    for (auto& n : t.walk())
+    const Tree flat = t.flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+    for (auto& n : flat.walk())
     {
         if (n->op() != Opcode::ORACLE) continue;
         if (!OracleClause::canSerialize(n->oracle_clause().name())) return false;
@@ -208,7 +209,8 @@ bool libfive_tree_can_save(libfive_tree ptr)
 int libfive_tree_axes(libfive_tree ptr)
 {
     int mask = 0;
-    for (auto& n : Tree(ptr).walk())
+    const Tree flat = Tree(ptr).flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+    for (auto& n : flat.walk())
     {
         switch (n->op())
         {
@@ -294,24 +296,6 @@ libfive_tree libfive_mesh_from_arrays(const float* xyz, uint32_t vertex_count,
     mesh::MeshImportInfo mi;
     Tree t = mesh::meshTreeFromArrays(xyz, vertex_count, tri, tri_count, scale, mi, ok, error);
     return finishMeshImport(std::move(t), ok, error, mi, info);
-}
-
-int64_t libfive_mesh_flood(const float* xyz, uint32_t vertex_count, const uint32_t* tri, uint32_t tri_count,
-                           const float* seed, float angle_degrees, int mode, float max_radius,
-                           uint8_t* selected, float* seed_distance)
-{
-    std::string error;
-    size_t count = 0;
-    double dist = 0;
-    const double s[3] = {seed[0], seed[1], seed[2]};
-    if (!mesh::floodSurface(xyz, vertex_count, tri, tri_count, s, angle_degrees, mode, max_radius,
-                            selected, count, dist, error))
-    {
-        g_mesh_last_message = error;
-        return -1;
-    }
-    if (seed_distance) *seed_distance = static_cast<float>(dist);
-    return static_cast<int64_t>(count);
 }
 
 libfive_tree libfive_mesh_patch(const float* xyz, uint32_t vertex_count, const uint32_t* tri,
@@ -410,13 +394,21 @@ void libfive_step_parts_delete(libfive_step_parts* parts)
 
 libfive_step_parts* libfive_import_step_parts_reconstructed(const char* filename)
 {
+    return libfive_import_step_parts_reconstructed_only(filename, nullptr, 0);
+}
+
+libfive_step_parts* libfive_import_step_parts_reconstructed_only(const char* filename, const int32_t* solids,
+                                                                 uint32_t count)
+{
     bool ok = false;
     std::string error;
     int numSolids = 0, numFacesResolved = 0, numFacesSkipped = 0;
     int numReconstructed = 0, numOracleFallback = 0;
+    std::vector<int> only;
+    if (solids) only.assign(solids, solids + count);
     std::vector<step::StepPart> parts = step::importStepTreePartsReconstructed(
         filename, ok, error, &numSolids, &numFacesResolved, &numFacesSkipped,
-        &numReconstructed, &numOracleFallback);
+        &numReconstructed, &numOracleFallback, solids ? &only : nullptr);
 
     std::ostringstream msg;
     if (ok) {
@@ -515,7 +507,16 @@ void libfive_step_brep_delete(libfive_step_brep* b)
 
 libfive_step_brep* libfive_step_brep_read(const char* filename, int turn_samples)
 {
-    const step::BrepParts parts = step::brepParts(filename, turn_samples > 0 ? turn_samples : 64);
+    return libfive_step_brep_read_only(filename, turn_samples, nullptr, 0);
+}
+
+libfive_step_brep* libfive_step_brep_read_only(const char* filename, int turn_samples, const int32_t* solids,
+                                               uint32_t count)
+{
+    std::vector<int> only;
+    if (solids) only.assign(solids, solids + count);
+    const step::BrepParts parts = step::brepParts(filename, turn_samples > 0 ? turn_samples : 64,
+                                                  solids ? &only : nullptr);
     if (!parts.error.empty()) {
         g_step_last_message = parts.error;
         return nullptr;
@@ -529,6 +530,7 @@ libfive_step_brep* libfive_step_brep_read(const char* filename, int turn_samples
         libfive_step_brep_solid& o = out->solids[i];
         o.faces = s.faces;
         o.bspline_faces = s.bsplineFaces;
+        o.surface = s.surface ? 1 : 0;
         o.error = copyString(s.mesh.error);
         o.mesh = nullptr;
         if (!s.mesh.error.empty()) {
@@ -567,6 +569,7 @@ libfive_step_brep* libfive_step_brep_read(const char* filename, int turn_samples
         o.detail = p.detail;
         o.area_flat = p.areaFlat;
         o.area_curved = p.areaCurved;
+        o.area_bspline = p.areaBSpline;
     }
     std::ostringstream msg;
     msg << "Tessellated " << parts.solids.size() << " solid(s), " << triangles << " triangle(s), as "
@@ -2415,8 +2418,9 @@ libfive_graph* libfive_lattice_points_graph(const float* points, int count, int 
 
 libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
                                      const double* lo3, const double* hi3, const double* direction3, int grid_offset,
+                                     int layout, libfive_tree region,
                                      double cell, const float* unit_beams, int unit_beam_count,
-                                     double depth, int layers, double radius, double height_dir, double* info)
+                                     double depth, int layers, double radius, double height_dir, double lift, double* info)
 {
     lattice_error.clear();
     lattice_warning.clear();
@@ -2437,10 +2441,13 @@ libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars
     libfive::lattice::SurfaceBeamsInfo stats;
     Eigen::Vector3d used = Eigen::Vector3d::Zero();
     std::string error;
+    std::unique_ptr<Tree> regionTree;
+    if (region) regionTree.reset(new Tree(region));
     if (!libfive::lattice::fieldCells(Tree(body), m, Eigen::Vector3d(lo3[0], lo3[1], lo3[2]),
                                       Eigen::Vector3d(hi3[0], hi3[1], hi3[2]),
-                                      Eigen::Vector3d(direction3[0], direction3[1], direction3[2]), grid_offset, cell,
-                                      beams, depth, layers, radius, height_dir, g.nodes, g.beams, stats, used, error))
+                                      Eigen::Vector3d(direction3[0], direction3[1], direction3[2]), grid_offset, layout,
+                                      regionTree.get(), cell,
+                                      beams, depth, layers, radius, height_dir, lift, g.nodes, g.beams, stats, used, error))
     {
         lattice_error = error;
         return nullptr;
@@ -2462,9 +2469,87 @@ libfive_graph* libfive_surface_cells(libfive_tree body, const libfive_tree* vars
     return toC(g);
 }
 
+libfive_surface_patch* libfive_surface_select(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
+                                              const double* lo3, const double* hi3, const double* seed3,
+                                              double angle_degrees, int mode, double max_radius, double spacing)
+{
+    lattice_error.clear();
+    if (!body || !lo3 || !hi3 || !seed3)
+    {
+        lattice_error = "no body, or no seed";
+        return nullptr;
+    }
+    std::map<Tree::Id, float> m;
+    for (int i = 0; i < var_count; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
+    libfive::lattice::SurfacePatch patch;
+    std::string error;
+    if (!libfive::lattice::selectSurfacePatch(Tree(body), m, Eigen::Vector3d(seed3[0], seed3[1], seed3[2]), angle_degrees, mode,
+                                              max_radius, spacing, Eigen::Vector3d(lo3[0], lo3[1], lo3[2]),
+                                              Eigen::Vector3d(hi3[0], hi3[1], hi3[2]), patch, error))
+    {
+        lattice_error = error;
+        return nullptr;
+    }
+    auto* out = new libfive_surface_patch;
+    out->count = uint32_t(patch.points.size());
+    out->points = new float[3 * patch.points.size()];
+    out->normals = new float[3 * patch.points.size()];
+    for (size_t i = 0; i < patch.points.size(); ++i)
+        for (int k = 0; k < 3; ++k)
+        {
+            out->points[3 * i + size_t(k)] = float(patch.points[i][k]);
+            out->normals[3 * i + size_t(k)] = float(patch.normals[i][k]);
+        }
+    for (int k = 0; k < 3; ++k) out->seed_point[k] = patch.seedPoint[k];
+    out->seed_distance = patch.seedDistance;
+    out->spacing = patch.spacing;
+    out->stopped = patch.stopped ? 1 : 0;
+    return out;
+}
+
+void libfive_surface_patch_delete(libfive_surface_patch* p)
+{
+    if (!p) return;
+    delete[] p->points;
+    delete[] p->normals;
+    delete p;
+}
+
+libfive_tree libfive_points_surface(const float* xyz, const float* normals, uint32_t count, double sigma)
+{
+    lattice_error.clear();
+    if (!xyz || !normals || count == 0 || !(sigma > 0))
+    {
+        lattice_error = "no points, or no width for the surface they make";
+        return nullptr;
+    }
+    std::vector<Eigen::Vector3d> pts(count), nrm(count);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        pts[i] = Eigen::Vector3d(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]);
+        nrm[i] = Eigen::Vector3d(normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]);
+    }
+    return libfive::lattice::orientedPointsTree(pts, nrm, sigma).release();
+}
+
+libfive_tree libfive_points_distance(const float* xyz, uint32_t count)
+{
+    lattice_error.clear();
+    if (!xyz || !count)
+    {
+        lattice_error = "there are no points";
+        return nullptr;
+    }
+    std::vector<Eigen::Vector3d> pts;
+    pts.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) pts.emplace_back(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]);
+    return libfive::lattice::pointsDistanceTree(pts).release();
+}
+
 libfive_tree libfive_surface_tpms(libfive_tree body, const libfive_tree* vars, const float* values, int var_count,
                                   const double* lo3, const double* hi3, const double* direction3, int grid_offset,
-                                  double cell, double depth, int layers, double height_dir, int kind, double thickness,
+                                  int layout, libfive_tree region,
+                                  double cell, double depth, int layers, double height_dir, double lift, int kind, double thickness,
                                   int style, double offset, double skin, double* info)
 {
     lattice_error.clear();
@@ -2480,10 +2565,13 @@ libfive_tree libfive_surface_tpms(libfive_tree body, const libfive_tree* vars, c
     Eigen::Vector3d used = Eigen::Vector3d::Zero();
     std::string error;
     std::vector<Tree> out;
+    std::unique_ptr<Tree> regionTree;
+    if (region) regionTree.reset(new Tree(region));
     if (!libfive::lattice::fieldCellTpms(Tree(body), m, Eigen::Vector3d(lo3[0], lo3[1], lo3[2]),
                                          Eigen::Vector3d(hi3[0], hi3[1], hi3[2]),
-                                         Eigen::Vector3d(direction3[0], direction3[1], direction3[2]), grid_offset, cell, depth, layers,
-                                         height_dir, kind, thickness, style, offset, skin, out, stats, used, error))
+                                         Eigen::Vector3d(direction3[0], direction3[1], direction3[2]), grid_offset, layout,
+                                         regionTree.get(), cell, depth, layers,
+                                         height_dir, lift, kind, thickness, style, offset, skin, out, stats, used, error))
     {
         lattice_error = error;
         return nullptr;

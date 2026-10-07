@@ -59,6 +59,7 @@ struct BrepSolid
 {
     ExactPiece mesh;                // in the solid's own coordinates (the file's units); `error` as for ExactPiece
     int faces = 0, bsplineFaces = 0;
+    bool surface = false;           // a surface body: an open sheet, not a solid (see Solid::surface)
 };
 
 struct BrepInstance
@@ -69,6 +70,7 @@ struct BrepInstance
     std::string name;
     Eigen::Vector3d boundMin = Eigen::Vector3d::Zero(), boundMax = Eigen::Vector3d::Zero();   // placed, mm
     double detail = 0, areaFlat = 0, areaCurved = 0;          // placed, mm (see SolidMetrics)
+    double areaBSpline = 0;
 };
 
 struct BrepParts
@@ -78,7 +80,8 @@ struct BrepParts
     std::string error;              // non-empty when the file could not be read at all
 };
 
-BrepParts brepParts(const std::string& path, int turnSamples);
+// `only`: tessellate only these solids (null: all); the others come back with mesh.error "left out"
+BrepParts brepParts(const std::string& path, int turnSamples, const std::vector<int>* only = nullptr);
 
 }   // namespace step
 }   // namespace libfive

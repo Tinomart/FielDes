@@ -30,7 +30,7 @@ Language::Language(Interpreter* interpreter,
     // Run halt() in the main thread when the script changes, then pass data
     // into the interpreter worker thread
     connect(this, &Language::onScriptChanged,
-            this, [=](QString){ m_interpreter->halt(); });
+            this, [=](QString){ m_interpreter->noteRequest(); m_interpreter->halt(); });
     connect(this, &Language::onScriptChanged,
             m_interpreter.data(), &Interpreter::eval);
     connect(this, &Language::onResume,

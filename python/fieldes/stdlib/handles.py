@@ -88,6 +88,24 @@ def _carry(out, shape):
     keep_kind(out, shape)
 
 
+def _placed_box(box, centre, move, rotate, scale):
+    ''' The box a part's box becomes when it is scaled about `centre`, rotated about it (x, then y, then z: a box that holds the part
+        whatever the direction of the turn) and moved; the numbers are plain, or var()s of the script being run.  None when a
+        number cannot be read '''
+    nums = _var_numbers(list(move) + list(rotate) + list(scale) + list(centre))
+    if nums is None:
+        return None
+    m, r, s, c = nums[0:3], nums[3:6], nums[6:9], nums[9:12]
+    lo = [c[i] + (float(box[0][i]) - c[i]) * s[i] for i in range(3)]
+    hi = [c[i] + (float(box[1][i]) - c[i]) * s[i] for i in range(3)]
+    lo, hi = [min(lo[i], hi[i]) for i in range(3)], [max(lo[i], hi[i]) for i in range(3)]
+    if any(abs(a) > 1e-12 for a in r):
+        reach = max(math.sqrt(sum((corner[i] - c[i]) ** 2 for i in range(3)))
+                    for corner in ((x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])))
+        lo, hi = [c[i] - reach for i in range(3)], [c[i] + reach for i in range(3)]
+    return tuple(tuple(v[i] + m[i] for i in range(3)) for v in (lo, hi))
+
+
 def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
@@ -125,11 +143,14 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
         # (a point that is moved is where it is moved to: its coordinates follow the move)
         out.xyz = tuple((c + m) if not (_is_number(c) and _is_number(m)) else float(c) + float(m)
                         for c, m in zip(shape.xyz, move))
-    # (the box of a part moved by plain numbers only follows them)
+    # (the box of a part follows the numbers it is placed by: plain numbers, or the numbers the var()s have in the script being
+    # run.  A placed part that lost its box would have to be searched for its extent by whatever is made from it -- a surface
+    # selected on it, a lattice on that -- and that search fails on a mesh)
     b = getattr(shape, '_bounds', None)
-    if b and all(_is_number(m) for m in move) and all(_is_number(r) and r == 0 for r in rotate) \
-            and all(_is_number(s) and s == 1 for s in scale):
-        out._bounds = tuple(tuple(float(b[k][i]) + move[i] for i in range(3)) for k in range(2))
+    if b:
+        placed = _placed_box(b, c, move, rotate, scale)
+        if placed is not None:
+            out._bounds = placed
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
     out._handles = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))

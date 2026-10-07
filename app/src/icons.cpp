@@ -48,6 +48,15 @@ QPen ink(double w = 1.6)
 
 }   // namespace
 
+QIcon newFile()
+{
+    return make([](QPainter& p) {
+        p.setPen(QPen(QColor(0xff, 0xff, 0xff), 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawLine(QPointF(12, 5), QPointF(12, 19));
+        p.drawLine(QPointF(5, 12), QPointF(19, 12));
+    });
+}
+
 QIcon open()
 {
     return make([](QPainter& p) {

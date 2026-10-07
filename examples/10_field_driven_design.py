@@ -9,7 +9,7 @@
 #
 from fieldes import *
 
-parts = import_step_parts("step/PivotBearingSupportBracket.STEP")
+parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))

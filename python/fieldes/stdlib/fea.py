@@ -999,6 +999,11 @@ def colored(shape, field, range=None, label=None, colormap='turbo'):
     b = getattr(shape, '_bounds', None)
     if b:
         out._bounds = b
+    # (the same geometry: a part drawn from its own triangles, or meshed at its own resolution, is drawn so coloured too)
+    for name in ('_display_mesh', '_render_hint'):
+        v = getattr(shape, name, None)
+        if v is not None:
+            setattr(out, name, v)
     return out
 
 

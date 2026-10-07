@@ -1,7 +1,7 @@
 '''
 exclude(): a region of a shape that stays exactly as it is
 
-    part = import_step_parts('bracket.step')[0][0]
+    part = import_model('bracket.step')[0][0]
     part = exclude(part, sphere(12, (0, 0, 6)))        # inside the sphere the part is locked
     light = shell(part, 2)                              # ... and nothing done to it afterwards touches that
 
@@ -182,11 +182,12 @@ REFUSES = {
 THROUGH = {
     'handles': ['handles', 'lock', 'exposed_values'],
     'render_cache': ['render_cache', 'render_cache_key'],
+    'custom_resolution': ['custom_resolution'],
     'fea': ['static_analysis', 'modal_analysis'],
     'thermal': ['thermal_analysis'],
     'fluid': ['fluid_analysis'],
     'boundary_conditions': ['static_boundary_conditions'],
-    'selection': ['select_surface'],
+    'selection': ['select_surface', 'surface_from_bodies'],
     'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom'],
     'conformal': ['lattice_surface_conform'],
     'fields': ['render_mesh', 'distance_to_surface', 'depth_below', 'signed_distance', 'clamp', 'ramp', 'remap_field',
@@ -194,21 +195,22 @@ THROUGH = {
                'field_range', 'volume_of', 'mass_properties', 'find_extent', 'exact_distance', 'gradient_field',
                'gradient_magnitude', 'normal_field', 'overhang_angle', 'overhang_mask', 'wall_thickness',
                'curvature_field', 'add_fields', 'subtract_fields', 'multiply_fields', 'divide_fields', 'power_field',
-               'min_fields', 'max_fields', 'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body'],
+               'min_fields', 'max_fields', 'abs_field', 'negate_field', 'sqrt_field', 'square_field', 'field_from_body',
+               'body_from_field', 'maximum', 'minimum'],
     'cad_import': ['roi', 'roi_resolution', 'poor_fit_region'],
     'excluded': ['exclude'],
     'fieldargs': ['is_field'],
 }
 
 # (modules whose functions never take a shape that could be excluded)
-NO_BODY_MODULES = ['text', 'tessellated_import', 'mesh_import', 'regression', 'surfaces']
+NO_BODY_MODULES = ['text', 'importing', 'tessellated_import', 'mesh_import', 'regression', 'surfaces']
 NO_BODY = {
     'shapes': ['circle', 'ring', 'polygon', 'rectangle', 'rounded_rectangle', 'rectangle_exact',
                'rectangle_centered_exact', 'triangle', 'box_mitered', 'box_mitered_centered', 'box_exact_centered',
                'box_exact', 'rounded_box', 'sphere', 'half_space', 'cylinder_z', 'cone_ang_z', 'cone_z', 'pyramid_z',
                'torus_z', 'gyroid', 'emptiness', 'cube', 'cube_centered', 'box', 'box_centered', 'rounded_cube',
                'cylinder', 'cone_ang', 'cone', 'torus'],
-    'cad_import': ['step_length_unit_mm', 'import_step_parts', 'import_step', 'import_step_parts_reconstructed',
+    'cad_import': ['step_length_unit_mm',
                    'exact_field'],
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],
     'points': ['point', 'surface', 'plane', 'sphere_surface', 'cylinder_surface', 'wave_surface'],
@@ -217,7 +219,8 @@ NO_BODY = {
     'fluid': ['inlet', 'outlet', 'wall', 'slip', 'symmetry'],
     'fields': ['x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'polar_field', 'distance_to_point',
                'distance_to_points', 'distance_to_line', 'distance_to_segment', 'distance_to_polyline',
-               'distance_to_plane', 'attractor', 'wave', 'field_from_points', 'field_from_csv', 'noise_field'],
+               'distance_to_plane', 'attractor', 'wave', 'field_from_points', 'field_from_csv', 'noise_field',
+               'low_level_field', 'low_level_body'],
     'lattices': ['cartesian', 'cylindrical', 'spherical', 'tpms', 'unit_cell_beams', 'strut_lattice', 'planar_lattice',
                  'cell_periodic', 'cell_non_periodic', 'cell_custom_truss', 'cell_custom_tpms', 'graph_lattice',
                  'points_graph'],
@@ -374,7 +377,7 @@ def exclude(shape, *regions, source=None, quality=64, threshold=1.0):
         the shape afterwards.  (See the top of this file for what that means; in the model tree's right-click menu it
         is Combining > exclude, with the shape first and the regions after it.)
 
-            part = import_step_parts('bracket.step')[0][0]
+            part = import_model('bracket.step')[0][0]
             part = exclude(part, sphere(12, (0, 0, 6)), box_exact((0, 0, 0), (5, 5, 5)))
             light = shell(part, 2)           # shelled everywhere but inside the sphere and the box
 
@@ -390,10 +393,10 @@ def exclude(shape, *regions, source=None, quality=64, threshold=1.0):
         Without a region, a STEP part's poorly fitted places are the region (poor_fit_region), in every part that has
         any:
 
-            kitchen = import_step_parts('step/kitchen.stp')
+            kitchen = import_model('step/kitchen.stp')
             kitchen = exclude(kitchen)
 
-        What you give it decides how much it works on.  The WHOLE IMPORT (what import_step_parts returns): the region
+        What you give it decides how much it works on.  The WHOLE IMPORT (what import_model returns): the region
         goes into every part it touches, and the same list comes back, the parts in the same places.  One entry of the
         import, kitchen[19], or one part, kitchen[19][0]: that part only.
 

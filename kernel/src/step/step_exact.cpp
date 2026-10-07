@@ -115,7 +115,7 @@ ExactPiece exactSurface(const ExactSpec& spec)
     return out;
 }
 
-BrepParts brepParts(const std::string& path, int turnSamples)
+BrepParts brepParts(const std::string& path, int turnSamples, const std::vector<int>* only)
 {
     BrepParts out;
     progress::begin(path);
@@ -148,6 +148,13 @@ BrepParts brepParts(const std::string& path, int turnSamples)
     const auto& solids = model->solids;
     const size_t N = solids.size();
     out.solids.resize(N);
+    std::vector<char> wanted(N, 1);
+    if (only) {
+        std::fill(wanted.begin(), wanted.end(), 0);
+        for (int si : *only) {
+            if (si >= 0 && size_t(si) < N) wanted[size_t(si)] = 1;
+        }
+    }
 
     // Every solid tessellated: the biggest first, a few at a time (each also refines its free-form faces on
     // all the threads there are)
@@ -169,6 +176,11 @@ BrepParts brepParts(const std::string& path, int turnSamples)
             BrepSolid& b = out.solids[si];
             b.faces = int(solids[si].faces.size());
             for (const Face& f : solids[si].faces) b.bsplineFaces += f.surface.kind == SurfaceKind::BSpline;
+            b.surface = solids[si].surface;
+            if (!wanted[si]) {
+                b.mesh.error = "solid " + std::to_string(si) + ": left out of the tessellation";
+                continue;
+            }
             try {
                 tess[si] = std::make_shared<const TessMesh>(tessellateSolid(solids[si], turnSamples, 0));
             } catch (const std::exception& e) {
@@ -228,6 +240,7 @@ BrepParts brepParts(const std::string& path, int turnSamples)
             p.detail = metrics.detail * unit;
             p.areaFlat = metrics.areaFlat * unit * unit;
             p.areaCurved = metrics.areaCurved * unit * unit;
+            p.areaBSpline = metrics.areaBSpline * unit * unit;
             (k == 0 ? out.instances : extra).push_back(p);
         }
     }

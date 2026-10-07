@@ -5,14 +5,22 @@ along it -- the "conformal" lattice of nTop.
     from fieldes import *
 
     # a thin shell of the part filled with strut cells 6 mm wide: the cells run through its thickness
-    skin = lattice_surface_conform(shell_outside(part, 4), cell_periodic('octet'), cell_size=6)
+    skin = lattice_surface_conform(shell_outside(part, 4), cell_periodic('octet'), cell_thickness=None, cell_size=6)
+
+    # a thin layer (3 mm, the default) of strut cells 6 mm wide on the surface of the part, standing out of it: the cells are
+    # flattened to fit (stretch_cell=True, the default)
+    layer = lattice_surface_conform(part, cell_periodic('octet'), side='outside', cell_size=6, radius=0.4)
+
+    # the same, but the cells keep their own proportions (as deep as they are wide): 3 mm of each stands out of the surface, and the
+    # rest of it, on the inside of the body, is cut off at the surface
+    rivets = lattice_surface_conform(part, cell_periodic('octet'), side='outside', stretch_cell=False, cell_size=6, radius=0.6)
 
     # strut cells standing 6 mm out of the surface of the part
-    ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', depth=6, cell_size=6, radius=0.6)
+    ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 
     # ... or only over a face you picked (right-click it in FielDes, or select_surface())
     top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
-    ribs = lattice_surface_conform(top, cell_periodic('bcc'), side='outside', depth=6, cell_size=6, radius=0.6)
+    ribs = lattice_surface_conform(top, cell_periodic('bcc'), cell_thickness=6, cell_size=6, radius=0.6)
 
     part_with_ribs = union(part, ribs)
 
@@ -20,20 +28,22 @@ along it -- the "conformal" lattice of nTop.
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
     layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box_exact((-30, -20, -14), (30, 20, 14)),
-                                    side='outside', depth=6)
+                                    side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
-    texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_size=6, thickness=1.0)
+    texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_thickness=None, cell_size=6, thickness=1.0)
 
 A body's surface is what the cells are laid on.  Where a plain lattice() cuts a straight grid off at the surface,
 here the grid is drawn on the surface itself: a row of cells runs along it and bends with it, round a cylinder,
 over a fillet, along an S-shaped surface, and every cell has its top and bottom face parallel to the surface and its
-sides along the surface normal -- the same face towards the normal everywhere.  By default (side='inside') the
-lattice FILLS the body: the cells run through its thickness, one layer for a thin shell or sheet, more where it is
-thicker (at most three cells deep, or `depth`).  With side='outside' the layers stand out of the surface instead
-(ribbing standing on the part), `depth` deep.  A *surface* -- a field that is only a surface, with no thickness (and so
-no other face, no rim) -- gets one layer, on the side `side` names (`'outside'` is the side the field is positive on),
-cut off at the edge of the region given as `within=`.
+sides along the surface normal -- the same face towards the normal everywhere.  The layer is `cell_thickness` thick (3 mm by
+default: a thin layer, for riveting and the like), measured from the surface: with side='inside' (the default for a body) it goes into
+the body, with side='outside' the cells stand out of the surface (ribbing standing on the part).  Its cells are flattened to fit
+(`stretch_cell=True`); with `stretch_cell=False` they keep their own proportions, and only `cell_thickness` of them stands out of the
+surface, the rest -- on the other side of it, the inside of the body -- being cut off there.  `cell_thickness=None` fills the body
+instead: the cells run through its thickness, one layer for a thin shell or sheet, more where it is thicker (at most three cells
+deep).  A *surface* -- a field that is only a surface, with no thickness (and so no other face, no rim) -- gets one layer, on the side
+`side` names (`'outside'` is the side the field is positive on), cut off at the edge of the region given as `within=`.
 
 It is made from the body's field and nothing else: the surface is where the field is zero, its normal the field's
 gradient.  No mesh of the body is made and no distance is taken to one; the mesh is only what is drawn at the end.
@@ -41,11 +51,11 @@ gradient.  No mesh of the body is made and no distance is taken to one; the mesh
 How the cells are laid out
     The surface is first covered by ONE MESH OF QUADS, one quad to a cell, before any cell is made: its rows follow the surface's own
     directions -- along a sharp edge, round a hole, along a handle -- and its quads are `cell_size` wide where the surface lets them be.
-    There are two layouts, because there are two kinds of surface; which one is used is found out from the field (does the surface go on
-    past the region it is wanted in?).
+    There are three layouts, for three kinds of surface, and which one is used is TOLD, never guessed from the field: a closed BODY, a
+    SURFACE that is only a surface (cut by the region you give it), and a SELECTION (a patch picked on a surface with select_surface()).
 
-    A BODY (a closed solid, or a selection of one): the surface ends inside its box, and the mesh is CLOSED and covers ALL of it.  It is made
-    from a cloud of points of the surface, in five steps, all from the field:
+    A BODY (a closed solid): the surface ends inside its box, and the mesh is CLOSED and covers ALL of it.  It is made from a cloud of
+    points of the surface, in five steps, all from the field:
 
     1. points of the surface a third of a spacing apart (the centres of the cubes the surface passes through, put onto the surface along the
        field's gradient); two points are neighbours when the SURFACE joins them, not when they are close in space -- a hop is accepted if its
@@ -84,6 +94,12 @@ How the cells are laid out
     region with k corners is made into k quads as above; the nodes are moved over the surface until the cells are even.  The sheet is laid
     out over a margin of two cells round the region, so that the region lies well inside it.
 
+    A SELECTION is a surface, and is laid out as one, by the same method as a sheet: from the surface the picked patch makes -- the points
+    the walk over it took, with their normals, as a field (the height above the patch along its normal) -- over the part of it that is by the
+    patch, and only there.  The body it was picked on is not looked at, nor its other faces, nor how thick it is: a shell, a plate and a solid
+    are the same to it, and the cells cover the patch and nothing else (their edge follows the patch's, to within a third of a cell).  The
+    lattice stands on the side the surface faces (side='outside', `cell_thickness` thick).
+
     Every node is on the surface, and every point of a cell is put back on it too, so no strut lies in a hole or outside the body.  Cells
     are distorted wherever the surface cannot be flattened -- over a fillet, round the lip of a rim, across a dome -- and none is left out
     for that: a cell is as stretched, squeezed or bent as the surface makes it, and the beams of the unit cell follow.  Where a narrow
@@ -113,6 +129,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import ctypes
+import math
 import numbers
 import os
 
@@ -150,8 +167,8 @@ def _say_doubts():
         print('lattice_surface_conform: ' + warning.decode('utf-8', 'replace'))
 
 
-def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0, radius=None, layers=None,
-                            side='inside', blend=0.0, direction=None, bounds=None, thickness=None,
+def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretch_cell=True, cell_size=5.0, radius=None,
+                            layers=None, side=None, blend=0.0, direction=None, bounds=None, thickness=None,
                             style='sheet', offset=0.0, invert=False, skin=0.0, within=None, grid_offset=0):
     ''' A lattice that follows a surface (see the module): its cells lie on it, as big as asked all along it, each
         with a face towards the surface normal -- filling the body the surface bounds (side='inside', the default) or
@@ -159,22 +176,32 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
 
         surface_field   the surface, as ONE argument whatever it is: a body (a closed solid: its surface), a surface
                         (a field that is zero on it, with no body behind it), or a select_surface(...) selection (the
-                        patch picked on a body: the lattice is laid on that patch only).  Which of them it is is found
-                        out, not told
+                        patch picked on a body: a SURFACE, laid out as one -- a method of its own, that has nothing to do
+                        with what is behind it or how thick that is -- the lattice is laid on that patch only)
         cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
                         TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
                         surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
-        depth           how deep the layers are together (mm).  Default: as deep as the body is under each cell (a thin
-                        shell: its thickness; at most three cells) for side='inside', one cell for 'outside'
+        cell_thickness  how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it
+                        (side='outside') or go into the body (side='inside').  Default 3 mm: the lattice is a thin layer,
+                        for riveting and the like.  None: for a body filled from inside, as deep as the body is under each
+                        cell (a thin shell: its thickness; at most three cells); for a surface, a selection or side='outside',
+                        one cell
+        stretch_cell    True (the default): the cells are deformed to fit the thickness -- `cell_size` along the surface,
+                        `cell_thickness` through it, so a thin layer has flat cells.  False: the cells keep their own
+                        proportions (as deep as they are wide), and `cell_thickness` of them stands out of the surface;
+                        the rest of each cell, on the other side of the surface (the inside of the body), is cut off there.
+                        (`layers` then counts whole cells through the depth; a thickness over one cell makes more of them)
         within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
         cell_size       mm along the surface
         thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
-                    the wall of a TPMS sheet (below).  Default: beams 24 % of the smaller of cell_size and the layer's
-                    depth across, a sheet 15 % of cell_size
+                    the wall of a TPMS sheet (below).  Default: beams 24 % of cell_size across (not more than half of the layer's
+                    thickness), a sheet 15 % of cell_size
         radius      the same for beams, as a radius (half of thickness; give one of the two): a number, or a field (the
-                    struts taper between the nodes).  Struts inside a body keep inside it
+                    struts taper between the nodes).  Struts inside a body keep inside it.  Default: 12 % of cell_size, but not
+                    more than a quarter of the layer's thickness (a thin layer has thin struts)
         layers      the number of cells through the depth (default: as many as fit, at least 1)
-        side        'inside' (the default: the lattice fills the body) or 'outside' (it stands out of the surface)
+        side        'inside' (the default for a body: the lattice fills it) or 'outside' (it stands out of the surface: the
+                    default for a selection or a surface, on the side its normal faces -- the side the field is positive on)
         blend       rounds the joints of struts
         direction   the way the rows of cells run where the surface gives them no way (a flat or smoothly curved part with
                     no edge to follow) (default: along x)
@@ -197,14 +224,21 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
         Returns the lattice alone, as a shape: add it to the part with union(). '''
     # the surface: a body, a surface, or a selection of one
     region = within
+    patch = None            # (the field that says where the patch of a selection is)
     if isinstance(surface_field, SurfaceSelection):
         if region is not None:
             raise ValueError('lattice_surface_conform: the selection is where the lattice goes: do not give within= as well')
+        # A selection is a SURFACE, and a surface is laid out as one: from the surface the picked patch makes (the points of the walk over
+        # it, with their normals), and nothing of the body it was picked on, its other faces or how thick it is
         region = surface_field
-        body = Shape.wrap(surface_field.shape)
+        body = Shape.wrap(surface_field.surface)
+        patch = surface_field.patch
     else:
         body = Shape.wrap(surface_field)
     surface = region
+    if side is None:
+        # (a surface has one side to stand on, the one it faces; a body is filled)
+        side = 'outside' if patch is not None else 'inside'
     cellobj = _L._need_cell(cell, 'lattice_surface_conform', default=lambda: _L.cell_periodic('octet'))
     if cellobj.family == 'shape':
         raise ValueError("lattice_surface_conform: a cell_custom(region, geometry) cell is a box of geometry: it repeats on "
@@ -214,9 +248,12 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
     if cellobj.family == 'planar':
         raise ValueError("lattice_surface_conform: a planar cell is not made of cells that can follow a surface: use "
                          "cell_periodic() with a strut cell or a TPMS, or cell_non_periodic()")
-    if depth is not None and not float(depth) > 0:
-        raise ValueError('lattice_surface_conform: depth must be positive')
-    if side not in ('inside', 'outside'):
+    if cell_thickness is not None and not float(cell_thickness) > 0:
+        raise ValueError('lattice_surface_conform: cell_thickness must be positive (or None)')
+    if not isinstance(stretch_cell, (bool, numbers.Integral)):
+        raise ValueError('lattice_surface_conform: stretch_cell is True or False')
+    stretch_cell = bool(stretch_cell)
+    if side not in (None, 'inside', 'outside'):
         raise ValueError("lattice_surface_conform: side is 'inside' or 'outside'")
     if int(grid_offset) != grid_offset or not 0 <= int(grid_offset) <= 3:
         raise ValueError('lattice_surface_conform: grid_offset is 0, 1, 2 or 3')
@@ -225,6 +262,20 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
     if not c > 0:
         raise ValueError('lattice_surface_conform: cell_size must be positive')
     n_layers = int(layers) if layers else 0
+    # How the layers sit: `depth` is the height the kernel gives the cells, `lift` how far from the surface their base is.  Stretched
+    # cells are as high as the layer is thick, on the surface.  Cells of their own proportions are whole cells (as high as they are wide)
+    # stacked so that the top of the stack is `cell_thickness` from the surface: they start on the other side of it, and are cut there
+    depth = None if cell_thickness is None else float(cell_thickness)
+    lift = 0.0
+    if not stretch_cell:
+        if depth is None:
+            raise ValueError("lattice_surface_conform: stretch_cell=False needs a cell_thickness: how much of the cells stands out of "
+                             "the surface (the rest of them, on the other side of it, is cut off)")
+        n_layers = max(n_layers, 1, int(math.ceil(depth / c - 1e-9)))
+        lift = depth - n_layers * c
+        depth = n_layers * c
+    elif patch is not None and depth is None:
+        depth = c           # (a surface that is not a body has no depth of its own: one cell)
     key = _L._plain(cellobj)
     if isinstance(key, _L.TPMSEquation):
         raise ValueError("lattice_surface_conform: your own TPMS equation cannot follow a surface; the TPMS cells are {}"
@@ -252,7 +303,7 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
         r = float(radius) if isinstance(radius, numbers.Number) else (radius if radius is not None else 0.12 * c)
         lat = _L._surface_lattice(body, c, radius=r, pattern='triangle' if cellobj.style == 'delaunay' else 'voronoi',
                                   seed=cellobj.seed, blend=blend, bounds=(flo, fhi))
-        return _finish(lat, body, surface, side, depth, c, flo, fhi)
+        return _finish(lat, body, surface, side, cell_thickness, c, flo, fhi, False)
     if tpms:
         if getattr(lib, 'libfive_surface_tpms', None) is None:
             raise RuntimeError('this FielDes library is too old for a TPMS on a surface (libfive_surface_tpms missing)')
@@ -262,13 +313,24 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
     if margin > 0 or getattr(_L.unit_cell_beams, 'radii', None):
         raise ValueError('lattice_surface_conform: a unit cell that is not mirror-symmetric, or whose beams have radii '
                          'of their own, cannot be carried over to the cells of a surface')
-    # the box the cells are wanted in: the body's (or, for a surface with no end, the region's, or `bounds`)
-    try:
-        lo, hi = _shape_bounds(body, bounds)
-    except ValueError:
-        if bounds is not None or surface is None:
-            raise
-        lo, hi = _shape_bounds(surface, None)
+    # Which layout lays the cells out is told to the kernel, not guessed from the field: a selection is a patch of a surface (2), a surface
+    # that has no extent of its own is cut by its region (1), a closed body is a body (0)
+    layout = 0
+    if patch is not None:
+        # (the box the patch lies in, a cell round it)
+        plo, phi = surface._bounds
+        lo = tuple(float(plo[i]) - c for i in range(3))
+        hi = tuple(float(phi[i]) + c for i in range(3))
+        layout = 2
+    else:
+        # the box the cells are wanted in: the body's (or, for a surface with no end, the region's, or `bounds`)
+        try:
+            lo, hi = _shape_bounds(body, bounds)
+        except ValueError:
+            if bounds is not None or surface is None:
+                raise
+            lo, hi = _shape_bounds(surface, None)
+            layout = 1
     lo3 = (ctypes.c_double * 3)(*[float(a) for a in lo])
     hi3 = (ctypes.c_double * 3)(*[float(b) for b in hi])
     d3 = (ctypes.c_double * 3)(*([float(x) for x in direction] if direction is not None else (0.0, 0.0, 0.0)))
@@ -280,7 +342,8 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
         if not wall > 0:
             raise ValueError('lattice_surface_conform: thickness must be positive')
         code_style = 0 if style == 'sheet' else (2 if invert else 1)
-        targs = (lo3, hi3, d3, grid_offset, c, float(depth) if depth else 0.0, n_layers, 1.0 if side == 'outside' else -1.0,
+        targs = (lo3, hi3, d3, grid_offset, layout, patch.ptr if patch is not None else None, c, float(depth) if depth else 0.0,
+                 n_layers, 1.0 if side == 'outside' else -1.0, lift,
                  _TPMS_CODES[key], wall, code_style, float(offset), float(skin), info)
         if known is not None:
             tptr = lib.libfive_surface_tpms(body.ptr, known[0], known[1], known[2], *targs)
@@ -298,10 +361,15 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
             print("lattice_surface_conform: its walls are {:g} mm thick: {:.1f} samples at the viewport's resolution "
                   "({:g} per mm), and a wall needs three or four to show: use a thicker wall or a finer "
                   "view.set_resolution() on a smaller region".format(wall, wall * view_res, view_res))
-        return _finish(lat, body, surface, side, depth, c, lo, hi)
+        return _finish(lat, body, surface, side, cell_thickness, c, lo, hi, not stretch_cell)
+    if radius is None and stretch_cell and depth:
+        # (the struts of a thin layer: a quarter of its thickness across, not more than 12 % of the cell -- thinner ones are finer than the
+        # viewport can draw, and come out as specks)
+        radius = min(0.12 * c, 0.25 * float(depth))
     radius_in = float(radius) if isinstance(radius, numbers.Number) else 0.0
-    args = (d3, grid_offset, c, unit, len(beams), float(depth) if depth else 0.0, n_layers, radius_in,
-            1.0 if side == 'outside' else -1.0, info)
+    args = (d3, grid_offset, layout, patch.ptr if patch is not None else None, c, unit, len(beams), float(depth) if depth else 0.0,
+            n_layers, radius_in,
+            1.0 if side == 'outside' else -1.0, lift, info)
     if known is not None:
         ptr = lib.libfive_surface_cells(body.ptr, known[0], known[1], known[2], lo3, hi3, *args)
     else:
@@ -324,26 +392,27 @@ def lattice_surface_conform(surface_field, cell=None, depth=None, cell_size=5.0,
                   "resolution ({:g} per mm), and a lattice needs three or four to show: use a larger radius or "
                   "cell_size, or a finer view.set_resolution() on a smaller region".format(
                       2.0 * radius, 2.0 * radius * view_res, view_res))
-    if thickness < 0.5 * c:
-        print("lattice_surface_conform: the cells are {:g} x {:g} x {:.2g} mm: the layer is {:.2g} mm deep and "
-              "'cell_size' is the size along the surface.  For cells as deep as they are wide give depth={:g}"
-              "{}.".format(c, c, thickness / max(1, used_layers), thickness, c * max(1, used_layers),
-                           " and side='outside'" if side == 'inside' else ''))
     lat = _L.graph_lattice(g.nodes, g.beams, radius, blend)
 
-    return _finish(lat, body, surface, side, depth, c, lo, hi)
+    return _finish(lat, body, surface, side, cell_thickness, c, lo, hi, not stretch_cell)
 
 
-def _finish(lat, body, surface, side, depth, c, lo, hi):
-    ''' The lattice cut to the part of the surface asked for, with the box it lies in '''
+def _finish(lat, body, surface, side, thickness, c, lo, hi, trim):
+    ''' The lattice cut to the part of the surface asked for, with the box it lies in.  `trim`: cells of their own proportions reach
+        through the surface to the side the layer does not go to, and are cut off there (at the inside of the body, for a layer that
+        stands out of it) '''
+    if trim:
+        # (the surface is where the field of `body` is zero, it is positive outside: an outward layer keeps what is outside)
+        lat = lat.max(-body) if side == 'outside' else lat.max(body)
     if isinstance(surface, SurfaceSelection):
-        # (where the nearest point of the surface is in the patch: the two distances are equal)
-        lat = lat.max(surface.patch - surface.whole - 1e-3)
+        # (nothing is cut: the cells were laid out over the patch and nowhere else, and stand on it -- a cut through a standing cell would
+        # leave its upper part in the air)
+        pass
     elif surface is not None:
         lat = lat.max(Shape.wrap(surface))
 
     box = getattr(surface, '_bounds', None) or getattr(body, '_bounds', None) or (lo, hi)
     if box:
-        pad = (float(depth) if depth else c) + c if side == 'outside' else c
+        pad = (float(thickness) if thickness else c) + c if side == 'outside' else c
         lat._bounds = (tuple(box[0][i] - pad for i in range(3)), tuple(box[1][i] + pad for i in range(3)))
     return lat

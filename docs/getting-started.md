@@ -82,20 +82,20 @@ offset(sphere(6), swell)
 See [Fields everywhere](fields.md#fields-everywhere), and [Custom blocks](blocks.md) for your own functions that are there in
 every script.
 
-## Importing a STEP file
+## Importing a model
 
-**File → Import model…** (`Ctrl+I`), or drag a `.step`/`.stp` file onto the window. FielDes writes
+**File → Import model…** (`Ctrl+I`), or drag a STEP file or a mesh onto the window. FielDes writes
 
 ```python
 # Imported model: part.step
-part = import_step_parts(r"C:\path\to\part.step")
+part = import_model(r"C:\path\to\part.step")
 view.set_bounds(*roi(part))
 view.set_resolution(roi_resolution(part))
 view.set_quality(8)
 ```
 
 with a variable named after the file. Once it has run, the parts appear under the import in the model tree
-and, one named line each, in the script and the viewport. The eye of the import shows or hides every part. See [Importing STEP files](step-import.md).
+and, one named line each, in the script and the viewport; every part has an eye of its own. See [Importing STEP files](step-import.md).
 
 ## Running a script without the window
 

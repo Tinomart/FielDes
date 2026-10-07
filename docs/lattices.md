@@ -50,7 +50,7 @@ lattice(part, cell_periodic('octet'), cell_size=10, radius=0.6)
 lattice(part, cell_non_periodic('voronoi', seed=4), cell_size=8, radius=0.5)
 lattice(part, cell_custom(box((0, 0, 0), (10, 10, 10)), my_geometry))
 lattice(part, cell_custom_tpms(my_equation), cell_size=8, thickness=0.8)
-lattice_surface_conform(part, cell_periodic('truncated_octahedron'), depth=2, cell_size=5)
+lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
 ```
 
 The cell is only *what* the lattice is made of. How thick it is (`thickness`, `radius`, `wall`, `offset`, `density`),
@@ -248,11 +248,11 @@ and cuts nothing out of the part — you add it with `union()`.
 skin = lattice_surface_conform(shell_outside(part, 4), cell_size=15)
 
 # strut cells 6 mm wide standing 6 mm out of the whole surface of the part
-ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', depth=6, cell_size=6, radius=0.6)
+ribs = lattice_surface_conform(part, cell_periodic('octet'), side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 
 # only on a face you picked (right-click it, or select_surface): the selection is the one argument
 top = select_surface(part, seed=(12.5, 40.0, -3.0), angle=10)
-ribs = lattice_surface_conform(top, cell_periodic('bcc'), side='outside', depth=6, cell_size=6, radius=0.6)
+ribs = lattice_surface_conform(top, cell_periodic('bcc'), cell_thickness=6, cell_size=6, radius=0.6)
 part_with_ribs = union(part, ribs, radius=1.0)       # blended into the part with a 1 mm fillet
 
 # an open surface of no thickness: where this field is zero (an S-shaped sheet); the lattice is one layer on one
@@ -260,7 +260,7 @@ part_with_ribs = union(part, ribs, radius=1.0)       # blended into the part wit
 # and it is cut off at the edge of the region `patch`: nothing goes round an edge, there is no other face
 wave = z_field() - 8 * (0.12 * x_field()).sin()
 patch = box_exact((-30, -20, -14), (30, 20, 14))
-layer = lattice_surface_conform(wave, cell_periodic('octet'), within=patch, side='outside', depth=6, cell_size=6, radius=0.6)
+layer = lattice_surface_conform(wave, cell_periodic('octet'), within=patch, side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 ```
 
 **A surface, and a body.** A body has an inside, and a lattice with `side='inside'` fills it (a thin sheet of material
@@ -270,19 +270,20 @@ and it ends at the edge of the `within=` shape — the lattice is cut off there.
 positive is `'outside'`. The extent of a field with no end is taken from the region (or from `bounds=`). See
 `examples/14_conformal_lattice.py` (a surface) and `examples/15_conformal_closed_body.py` (a closed body).
 
-`lattice_surface_conform(surface_field, cell='octet', depth=None, cell_size=5, radius=None, layers=None,
-side='inside', blend=0, direction=None, bounds=None, thickness=None, style='sheet', offset=0,
+`lattice_surface_conform(surface_field, cell='octet', cell_thickness=3, stretch_cell=True, cell_size=5, radius=None, layers=None,
+side=None, blend=0, direction=None, bounds=None, thickness=None, style='sheet', offset=0,
 invert=False, skin=0, within=None)`:
 
 | | |
 |---|---|
 | `surface_field` | the surface, as one argument: a body, a surface (a field that is zero on it), or a `select_surface()` selection (the lattice is laid on that patch only) |
 | `within` | where, besides: any shape; the lattice is kept inside it. Default: the whole surface |
-| `depth` | how deep the layers are together (mm). Default: as deep as the body is under each cell (a thin shell: its thickness; at most three cells) for `side='inside'`, one cell for `'outside'` |
+| `cell_thickness` | how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it, or go into the body. Default **3 mm**: a thin layer, for riveting and the like. `None`: for a body filled from inside, as deep as the body is under each cell (a thin shell: its thickness; at most three cells); for a surface, a selection or `side='outside'`, one cell |
+| `stretch_cell` | `True` (the default): the cells are **deformed to fit the thickness** -- `cell_size` along the surface, `cell_thickness` through it, so a thin layer has flat cells. `False`: the cells keep their own proportions (as deep as they are wide), **`cell_thickness` of them stands out** of the surface, and the rest of each cell, on the other side of the surface (the inside of the body), is **cut off** there |
 | `cell` | a **strut cell** (`cell_periodic('octet')`, `'bcc'`, `'cubic'`, `'kelvin'`, …; `radius` is the strut radius, by default 12 % of the smaller of `cell_size` and the layer's depth), a **periodic surface** (`cell_periodic('gyroid')`, `'schwarz_p'`, `'diamond'`, `'neovius'`, `'lidinoid'`, `'split_p'`, `'iwp'`, `'frd'`, `'fischer_koch_s'`; see below), `cell_custom_truss(nodes, beams)`, or `cell_non_periodic(…)` (a random graph on the surface). Default `cell_periodic('octet')` |
 | `thickness`, `style`, `offset`, `invert`, `skin` | for a periodic surface: the wall of a `'sheet'` in mm (default 15 % of `cell_size`), or `style='network'` (the solid on one side of the surface, grown by `offset` mm; `invert=True` takes the other side); `skin` mm of solid against the faces of the layers |
 | `cell_size`, `layers` | the cell along the surface; the number of cells through the depth (default: as many as fit, at least 1) |
-| `side` | `'inside'` (the lattice fills the body) or `'outside'` (it stands out of the surface) |
+| `side` | `'inside'` (the default for a body: the lattice goes into it) or `'outside'` (it stands out of the surface: the default for a surface or a selection, on the side its normal faces -- the side the field is positive on) |
 | `direction` | the way the rows of cells run where the surface gives them no way (a flat or smoothly curved part with no edge to follow). Default: along x |
 | `bounds` | `((x0, y0, z0), (x1, y1, z1))` of the body, if its extent cannot be found (a field with no end): the box the cells are laid out in |
 
@@ -295,7 +296,7 @@ on the surface and to a layer through the depth, on the same cells as the struts
 texture = lattice_surface_conform(shell_outside(part, 4), cell_periodic('gyroid'), cell_size=6, thickness=1.0)
 
 # the solid on one side of a diamond surface, standing 8 mm out of the part
-net = lattice_surface_conform(part, cell_periodic('diamond'), side='outside', depth=8, cell_size=8, style='network')
+net = lattice_surface_conform(part, cell_periodic('diamond'), side='outside', cell_thickness=8, cell_size=8, style='network')
 ```
 
 The periodic function is evaluated in the coordinates of the cell a point is in: `s` and `t` along the surface and `w`

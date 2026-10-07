@@ -13,14 +13,16 @@ FielDes models with fields, and moves between fields and triangle meshes in both
 
 ```python
 # Imported model: bracket.stl
-bracket, bracket_bounds = import_mesh(r"C:\models\bracket.stl", file_units="mm")
-bracket
-view.set_bounds(*roi(bracket_bounds))
-view.set_resolution(roi_resolution(bracket_bounds))
+bracket = import_model(r"C:\models\bracket.stl", file_units="mm")
+bracket_0 = bracket[0][0]
+bracket_0
+view.set_bounds(*roi(bracket))
+view.set_resolution(roi_resolution(bracket))
 view.set_quality(8)
 ```
 
-`import_mesh(path, units='mm', file_units=None, rev=None)` reads **STL** (binary or ASCII), **OBJ**, **PLY**
+`import_model(path, units='mm', file_units=None, rev=None)` is the one importer for every model (see
+[Importing models](step-import.md)); given a mesh it reads **STL** (binary or ASCII), **OBJ**, **PLY**
 (ASCII or binary), **3MF** and **glTF** (`.glb`, `.gltf`). The mesh becomes an **exact signed distance
 field** (negative inside), so it works with everything else: CSG with other shapes, `offset`, `shell`,
 blends, transforms, lattices, analyses.
@@ -55,7 +57,7 @@ part.save_stl("part.stl", lo, hi, resolution=4, quality=8)
 
 `lo`/`hi` are the corners of the region meshed, `resolution` is samples per mm (larger is finer and slower),
 `quality` is the negative order of magnitude of the maximum error. Use the file's own bounds from
-`import_step_parts` (`part, (lo, hi) = …`).
+`import_model` (`part, (lo, hi) = …`).
 
 STL carries no units: it is written in millimetres.
 
@@ -68,4 +70,4 @@ are slower but more robust on awkward fields).
 ## Round trip
 
 `examples/12_mesh_export_and_import.py` exports an imported STEP part as STL and reads it back with
-`import_mesh`.
+`import_model`.

@@ -45,6 +45,10 @@ public:
      *  This will be called from the main thread! */
     virtual void halt() {}
 
+    /*  Called from the main thread for every run that is asked for (the script changed), before it is queued: so that the worker can tell,
+     *  when a run comes to its turn, that a newer one is behind it  */
+    virtual void noteRequest() {}
+
     /*  Called from the main thread before the worker thread starts */
     virtual void preinit() {}
 

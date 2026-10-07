@@ -21,8 +21,10 @@ locked shape cannot be dragged at all, neither by the gizmo nor by its surfaces,
 there again when you unlock it.
 
 Selecting a shape makes it ready to be dragged: it gets the numbers its gizmo moves it by (a `handles(...)` line, in
-the mode it is in) and, when it has none, the numbers that place its surfaces (an `expose(...)` line), if they are few.
-A shape with many (an imported part) has **Make its surfaces draggable** in its right-click menu in the model tree.
+the mode it is in) and, when it has none, the numbers that place its surfaces (an `expose(...)` line), if they are no more than
+**120**: a bigger one (an imported part can have a thousand) would be pages of script. A model whose surfaces cannot be pulled
+has an **orange dot** in the model tree, right after its name, and the dot's tooltip says why: it is a mesh (tessellated: no faces
+to pull), or too many numbers place its faces. Its gizmo moves it all the same. Selecting such a model says it under the tree too.
 A primitive made from the viewport's right-click menu is selected as it is made, so it is ready at once.
 
 **Keys.** With the viewport (or the model tree) focused, `E` sets the gizmo mode of the selected models (round click,
@@ -44,10 +46,13 @@ joins the selection, in the mode it is in. `E` changes each model's own mode, wh
 is selected alone: the viewport shows the shared gizmo until the selection is one model, and then every model has its
 own mode again.
 
-**A locked model cannot be in a selection of several.** Adding one (Ctrl+click, a Shift range, a rectangle) leaves it
-out, with a warning that locked shapes cannot be multi selected (with a *do not show this message again* box;
-**Settings → Show hidden messages again** brings it back). A locked model on its own can be selected, which is how it is
-unlocked. `R` on several models locks them, and they leave the selection.
+**A locked model can be in a selection of several, but then the whole selection cannot be moved or edited.** Select
+them as any models (Ctrl+click, a Shift range, a rectangle): a warning says that *when a locked object is part of a multi
+select, the multi selection can no longer be moved or edited* (with a *do not show this message again* box;
+**Settings → Show hidden messages again** brings it back), and a line under the model tree says how many are locked. There is
+no shared gizmo and nothing is written for the selection until they are unlocked; it can still be combined, shown, hidden,
+isolated or deleted. To unlock a handful of parts: select them, press `R` (or the lock button of any of the selected
+rows): they are all unlocked, and still selected.
 
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
@@ -155,11 +160,15 @@ definition and deletes it again; it does not touch `handles()` or `expose()`, so
 numbers stay in the script and are there again when it is unlocked.
 `handles(mode='lock')`, from before the lock was a switch of its own, is refused: use `lock()`.
 
+A locked model that is selected on its own says why nothing can be dragged, in a line under the model tree; unlocking it
+makes it ready (it gets its gizmo line and, up to 120 numbers, its draggable surfaces). Imported parts are not locked when
+they come in: lock the ones that should stay where the file puts them.
+
 ## Reimport and hot reload
 
 | | |
 |---|---|
-| **⟳ on an import** (model tree) | Reimport: read the STEP file again. The `rev=` of the `import_step_parts` call goes up, which is part of the cache key. |
+| **⟳ on an import** (model tree) | Reimport: read the STEP file again. The `rev=` of the `import_model` call goes up, which is part of the cache key. |
 | **⟳ on a part** | Back to what the file says: the part's `handles()` and `expose()` lines are deleted and the file is read again. |
 | **Bin on an import** | Reset: delete the import's cache and the handle edits of all its parts; import afresh. |
 | **Hot reload** | The imported files are watched. Save the STEP file from your CAD program and the script re-runs by itself; the status bar says "Reloading: part.step changed on disk". |

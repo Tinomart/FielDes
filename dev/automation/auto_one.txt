@@ -1,7 +1,0 @@
-wait 60000
-waitrender 300
-action view.std-iso
-waitrender 300
-wait 3000
-grab C:/Users/tinmi/OneDrive/FielDes/FielDes/dev/grabs/ex16_iso.png
-quit

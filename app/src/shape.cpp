@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <thread>
 #include <QDateTime>
 #include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <unordered_map>
 #include <functional>
@@ -112,12 +113,77 @@ void Shape::setBoundarySymbols(std::vector<BcGlyph> glyphs, std::vector<BcLabel>
 
 void Shape::setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res)
 {
-    has_hint = res > 0 && side > 0 && scene_res > 0;
+    has_hint = res > 0 && side > 0 && scene_res != 0;          // (a scene resolution below 0: the resolution is absolute: custom_resolution)
     hint_lo = lo;
     hint_hi = hi;
     hint_res = res;
     hint_side = side;
     hint_scene_res = scene_res;
+}
+
+void Shape::setExactMesh(std::shared_ptr<const ExactMesh> mesh, const double* matrix)
+{
+    m_exact = std::move(mesh);
+    for (int i = 0; i < 12; ++i) m_exact_matrix[i] = matrix[i];
+    m_exact_vars = vars;
+}
+
+// The triangles are what the part is as long as the numbers it was made with are the ones it has: a var() that was dragged since
+// the script ran has moved it, and only the field knows where to
+bool Shape::exactCurrent() const
+{
+    if (!m_exact) return false;
+    for (const auto& v : m_exact_vars)
+    {
+        const auto it = vars.find(v.first);
+        if (it == vars.end()) return false;
+        if (std::fabs(it->second - v.second) > 1e-6f && usesVar(v.first)) return false;
+    }
+    return true;
+}
+
+// The exact triangles, placed, that touch the region (a triangle whose box meets it is whole: nothing is cut at its edge)
+std::unique_ptr<libfive::Mesh> Shape::exactMeshIn(const libfive::Region<3>& r) const
+{
+    auto out = std::make_unique<libfive::Mesh>();
+    const auto& E = *m_exact;
+    const double* A = m_exact_matrix;
+    const size_t nv = E.verts.size() / 3;
+    std::vector<Eigen::Vector3f> pos(nv);
+    for (size_t i = 0; i < nv; ++i)
+    {
+        const double x = E.verts[3 * i], y = E.verts[3 * i + 1], z = E.verts[3 * i + 2];
+        pos[i] = Eigen::Vector3f(float(A[0] * x + A[1] * y + A[2] * z + A[3]),
+                                 float(A[4] * x + A[5] * y + A[6] * z + A[7]),
+                                 float(A[8] * x + A[9] * y + A[10] * z + A[11]));
+    }
+    const double det = A[0] * (A[5] * A[10] - A[6] * A[9]) - A[1] * (A[4] * A[10] - A[6] * A[8]) +
+                       A[2] * (A[4] * A[9] - A[5] * A[8]);
+    const bool mirrored = det < 0;          // (a mirror turns the triangles inside out)
+    std::vector<uint32_t> number(nv, UINT32_MAX);
+    for (size_t t = 0; t + 2 < E.tris.size(); t += 3)
+    {
+        const uint32_t v[3] = {E.tris[t], E.tris[t + 1], E.tris[t + 2]};
+        if (v[0] >= nv || v[1] >= nv || v[2] >= nv) continue;
+        Eigen::Array3f lo = pos[v[0]].array().min(pos[v[1]].array()).min(pos[v[2]].array());
+        Eigen::Array3f hi = pos[v[0]].array().max(pos[v[1]].array()).max(pos[v[2]].array());
+        bool inside = true;
+        for (int a = 0; a < 3 && inside; ++a) inside = hi[a] >= r.lower[a] && lo[a] <= r.upper[a];
+        if (!inside) continue;
+        uint32_t id[3];
+        for (int k = 0; k < 3; ++k)
+        {
+            if (number[v[k]] == UINT32_MAX)
+            {
+                number[v[k]] = uint32_t(out->verts.size());
+                out->verts.push_back(pos[v[k]]);
+            }
+            id[k] = number[v[k]];
+        }
+        if (mirrored) std::swap(id[1], id[2]);
+        out->branes.push_back(Eigen::Matrix<uint32_t, 3, 1>(id[0], id[1], id[2]));
+    }
+    return out;
 }
 
 bool Shape::hasHandles() const
@@ -220,9 +286,79 @@ QMatrix4x4 Shape::handleRotation(const QVector3D& degrees)
 
 void Shape::placeHint()
 {
-    run_hint_lo = hint_lo;
-    run_hint_hi = hint_hi;
-    run_hint_side = hint_side;
+    placedHint(run_hint_lo, run_hint_hi, run_hint_side);
+}
+
+bool Shape::wouldRenderDifferently(const Settings& s) const
+{
+    return !m_geometry_known || !(renderGeometry(s) == m_geometry);
+}
+
+Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
+{
+    // (as renderMesh decides it)
+    RenderGeometry g;
+    g.lo = s.min;
+    g.hi = s.max;
+    g.res = s.res;
+    g.quality = s.quality;
+    if (exactCurrent())
+    {
+        // (drawn from its own triangles: no region of its own, no resolution to ask for; only what they are)
+        g.exact = m_exact->key;
+        for (int i = 0; i < 12; ++i) g.exact += "," + std::to_string(float(m_exact_matrix[i]));
+        g.res = 0;
+        g.quality = 0;
+        return g;
+    }
+    QVector3D lo, hi;
+    float side = 0;
+    placedHint(lo, hi, side);
+    QVector3D own_lo, own_hi;
+    double own_res = 0;
+    if (ownRegion(s, lo, hi, side, own_lo, own_hi, own_res))
+    {
+        g.lo = own_lo;
+        g.hi = own_hi;
+        g.res = own_res;
+    }
+    return g;
+}
+
+bool Shape::ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
+                      QVector3D& lo, QVector3D& hi, double& res) const
+{
+    // The region a shape with a resolution of its own is meshed over, and that resolution.  The shape's box (placed by its handles) in
+    // the scene's region: a cube round the box, `side` long (a power of two of cells of that resolution).  An absolute resolution
+    // (custom_resolution: the scene's resolution does not enter) is the shape's wherever it is: a body that reaches out of the scene's
+    // region is meshed at it over the part of the cube that is in the region (nothing outside the region is drawn, as for every shape)
+    // -- and not at the scene's resolution, which is what a body that only pokes out of the region by a little (the box of a lattice is
+    // an estimate) used to get without a word.  A resolution that follows the scene's (an import's part) is the part's only when the
+    // whole part is in the region
+    if (!has_hint) return false;
+    const bool inside = box_lo.x() >= s.min.x() && box_hi.x() <= s.max.x() &&
+                        box_lo.y() >= s.min.y() && box_hi.y() <= s.max.y() &&
+                        box_lo.z() >= s.min.z() && box_hi.z() <= s.max.z();
+    if (!inside && hint_scene_res > 0) return false;
+    const QVector3D c = 0.5f * (box_lo + box_hi);
+    const float h = 0.5f * side;
+    lo = QVector3D(c.x() - h, c.y() - h, c.z() - h);
+    hi = QVector3D(c.x() + h, c.y() + h, c.z() + h);
+    res = hint_scene_res > 0 ? double(hint_res) * (s.res / double(hint_scene_res)) : double(hint_res);
+    if (!inside)
+    {
+        lo = QVector3D(std::max(lo.x(), s.min.x()), std::max(lo.y(), s.min.y()), std::max(lo.z(), s.min.z()));
+        hi = QVector3D(std::min(hi.x(), s.max.x()), std::min(hi.y(), s.max.y()), std::min(hi.z(), s.max.z()));
+        if (!(hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z())) return false;     // (none of it is in the region)
+    }
+    return true;
+}
+
+void Shape::placedHint(QVector3D& out_lo, QVector3D& out_hi, float& out_side) const
+{
+    out_lo = hint_lo;
+    out_hi = hint_hi;
+    out_side = hint_side;
     if (!has_hint || !m_handles.present)
     {
         return;
@@ -250,9 +386,9 @@ void Shape::placeHint()
         side *= 1.75f;
     }
     c += handleMove();
-    run_hint_lo = c - half;
-    run_hint_hi = c + half;
-    run_hint_side = side;
+    out_lo = c - half;
+    out_hi = c + half;
+    out_side = side;
 }
 
 QString Shape::colorKey() const
@@ -422,7 +558,7 @@ bool Shape::probe(const QVector3D& p, float& value)
         value = probe_channel->value(q);
         return true;
     }
-    if (!probe_eval) probe_eval.reset(new libfive::ArrayEvaluator(color_field));
+    if (!probe_eval) probe_eval.reset(new libfive::ArrayEvaluator(color_field, vars));
     value = probe_eval->value(q);
     return true;
 }
@@ -1398,6 +1534,30 @@ bool Shape::updateFrom(const Shape* other)
     m_handles = other->m_handles;
     m_locked = other->m_locked;
     bool started = false;
+    // The part's own render (its cube and resolution) is what the script says NOW: roi_resolution gives other ones when the models
+    // of the scene change.  If that changes what is meshed, this render goes again with it -- and only then
+    // (a hint the script no longer gives -- the bin of a custom_resolution row -- goes: the shape is drawn at the scene's again)
+    if ((other->has_hint || has_hint) &&
+        (has_hint != other->has_hint || hint_lo != other->hint_lo || hint_hi != other->hint_hi || hint_res != other->hint_res ||
+         hint_side != other->hint_side || hint_scene_res != other->hint_scene_res))
+    {
+        setRenderHint(other->hint_lo, other->hint_hi, other->hint_res, other->hint_side, other->hint_scene_res);
+        if (m_geometry_known && wouldRenderDifferently(m_last_settings))
+        {
+            startRender(RenderSettings { m_last_settings, m_last_settings.defaultDiv(), m_last_alg });
+            started = true;
+        }
+    }
+    // The triangles a part is drawn from are what the script says NOW (moved, or the file imported again): if they changed, it is
+    // drawn again (after the numbers below are the script's: they are part of what the triangles are)
+    const bool exactChanged = other->m_exact != m_exact ||
+        (other->m_exact && std::memcmp(other->m_exact_matrix, m_exact_matrix, sizeof(m_exact_matrix)) != 0);
+    if (exactChanged)
+    {
+        m_exact = other->m_exact;
+        std::memcpy(m_exact_matrix, other->m_exact_matrix, sizeof(m_exact_matrix));
+        m_exact_vars = other->m_exact_vars;
+    }
     m_cache_forced.store(other->m_cache_forced.load());
     if (other->m_cache_on.load() != m_cache_on.load())
     {
@@ -1406,7 +1566,13 @@ bool Shape::updateFrom(const Shape* other)
         if (m_cache_on.load()) started = keepCurrent();
         emit(cacheStateChanged());
     }
-    return updateVars(other->vars) || started;
+    const bool varsChanged = updateVars(other->vars);
+    if (exactChanged && !varsChanged && !started && m_geometry_known && wouldRenderDifferently(m_last_settings))
+    {
+        startRender(RenderSettings { m_last_settings, m_last_settings.defaultDiv(), m_last_alg });
+        started = true;
+    }
+    return varsChanged || started;
 }
 
 void Shape::buildDeps() const
@@ -1416,7 +1582,10 @@ void Shape::buildDeps() const
         // (the variables inside an oracle -- a mesh moved by a gizmo -- are not walked with the tree)
         std::function<void(const libfive::Tree&)> add = [&](const libfive::Tree& t) {
             if (!t.is_valid()) return;
-            for (const auto* d : t.walk())
+            // (walk() of a tree that has remaps gives pointers into a flattened copy that is gone when it returns: it is flattened
+            // here and kept while its nodes are looked at -- a tree moved by a gizmo has remaps, and this read freed memory)
+            const libfive::Tree flat = t.flatten();
+            for (const auto* d : flat.walk())
             {
                 if (d->op() == libfive::Opcode::VAR_FREE) m_deps.insert(d);
                 else if (d->op() == libfive::Opcode::ORACLE)
@@ -1731,6 +1900,9 @@ void Shape::startRender(RenderSettings s)
             {
                 e.updateVars(vars);
             }
+            // (the colour field's evaluators hold the numbers too: made again with the new ones)
+            color_evals.clear();
+            probe_eval.reset();
             // (what the render cache's keys are of: the numbers the evaluators hold now)
             cache_vars = vars;
             ++cache_vars_gen;
@@ -1746,6 +1918,24 @@ void Shape::startRender(RenderSettings s)
         colour_progress.store(0.0);
 
         placeHint();
+        m_geometry = renderGeometry(s.settings);
+        m_geometry_known = true;
+        if (const char* log = std::getenv("FIELDES_SHAPE_LOG"))
+        {
+            // (for the tests: what this render is of -- the box and the resolution it is meshed at -- and the hint the script gave it)
+            if (FILE* f = std::fopen(log, "a"))
+            {
+                std::fprintf(f, "render line %d: box (%.1f %.1f %.1f)-(%.1f %.1f %.1f) at %.3g per mm, quality %.3g;  hint %s (%.1f %.1f %.1f)-(%.1f %.1f %.1f) res %.3g"
+                                " side %.1f scene %.3g\n",
+                             sourceLine(), m_geometry.lo.x(), m_geometry.lo.y(), m_geometry.lo.z(), m_geometry.hi.x(), m_geometry.hi.y(),
+                             m_geometry.hi.z(), double(m_geometry.res), double(m_geometry.quality), has_hint ? "yes" : "no", hint_lo.x(),
+                             hint_lo.y(), hint_lo.z(), hint_hi.x(), hint_hi.y(), hint_hi.z(), double(hint_res), double(hint_side),
+                             double(hint_scene_res));
+                std::fclose(f);
+            }
+        }
+        m_last_settings = s.settings;
+        m_last_alg = s.alg;
         timer.start();
         running = true;
 #if QT_VERSION >= 0x060000
@@ -2023,17 +2213,15 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     double res = s.settings.res;
     libfive::Region<3> mesh_region = r;
     bool own_render = false;
-    if (has_hint &&
-        run_hint_lo.x() >= s.settings.min.x() && run_hint_hi.x() <= s.settings.max.x() &&
-        run_hint_lo.y() >= s.settings.min.y() && run_hint_hi.y() <= s.settings.max.y() &&
-        run_hint_lo.z() >= s.settings.min.z() && run_hint_hi.z() <= s.settings.max.z())
     {
-        const QVector3D c = 0.5f * (run_hint_lo + run_hint_hi);
-        const float h = 0.5f * run_hint_side;
-        mesh_region = libfive::Region<3>({c.x() - h, c.y() - h, c.z() - h},
-                                         {c.x() + h, c.y() + h, c.z() + h});
-        res = double(hint_res) * (s.settings.res / double(hint_scene_res));
-        own_render = true;
+        QVector3D own_lo, own_hi;
+        double own_res = 0;
+        if (ownRegion(s.settings, run_hint_lo, run_hint_hi, run_hint_side, own_lo, own_hi, own_res))
+        {
+            mesh_region = libfive::Region<3>({own_lo.x(), own_lo.y(), own_lo.z()}, {own_hi.x(), own_hi.y(), own_hi.z()});
+            res = own_res;
+            own_render = true;
+        }
     }
     mesh_settings.min_feature = 1 / (res / (1 << s.div));
     mesh_settings.max_err = pow(10, -s.settings.quality);
@@ -2076,7 +2264,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         }
     }
 
-    auto m = libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+    auto m = exactCurrent() ? exactMeshIn(r) : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
     if (std::getenv("FIELDES_TIMING") && s.div == 0 && m && (own_render || m->verts.empty()))
     {   // (a shape meshed on its own, or one that came out empty)
         fprintf(stderr, "[fieldes] shape of line %d: %s, %zu vertices\n", source_line + 1,
@@ -2158,7 +2346,8 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
             color_evals.resize(std::max(color_evals.size(), T));
             std::atomic<size_t> next{0}, done{0};
             auto work = [&](size_t t) {
-                if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field));
+                // (with the script's numbers: a colour field may hold var()s -- a selection on a part placed with handles())
+                if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field, vars));
                 auto& e = *color_evals[t];
                 for (size_t b; (b = next.fetch_add(1)) < batches; )
                 {
@@ -2183,6 +2372,13 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         // the colour would run across them from one category to the other.  A triangle whose corners are in different
         // categories is cut into four (at the middles of its edges), again and again, until it is small, so that the
         // edge of the region is as sharp as the mesh is fine.  The shape of the surface does not change
+        //
+        // A patch of a surface (has_cutoff: the value is a distance, at most zero on the patch) is found the same way, but
+        // not by the categories of the corners: a patch in the middle of a big flat triangle -- the box's face inside a
+        // sphere -- has corners that are all far from it, and no category tells.  The value changes by at most two per mm
+        // (it is the difference of two distances), so a triangle whose nearest corner is further from the patch than
+        // that over its longest edge cannot hold any of it, and is left; one with all its corners on the patch is drawn
+        // as it is; every other triangle may hold the edge of the patch, and is cut
         if (color_map == "bc" && verts.size() > 1)
         {
             double extent = 0;
@@ -2212,7 +2408,20 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                     const int ca = category(out.values[t[0]]), cb = category(out.values[t[1]]), cc = category(out.values[t[2]]);
                     const float longest = std::max({(verts[t[0]] - verts[t[1]]).squaredNorm(), (verts[t[1]] - verts[t[2]]).squaredNorm(),
                                                     (verts[t[2]] - verts[t[0]]).squaredNorm()});
-                    if ((ca == cb && cb == cc) || longest <= smallest2)
+                    bool keep;
+                    if (has_cutoff)
+                    {
+                        const float v0 = out.values[t[0]] - color_cutoff, v1 = out.values[t[1]] - color_cutoff,
+                                    v2 = out.values[t[2]] - color_cutoff;
+                        const float vmin = std::min({v0, v1, v2}), vmax = std::max({v0, v1, v2});
+                        keep = !(std::isfinite(v0) && std::isfinite(v1) && std::isfinite(v2)) ||
+                               vmax <= 0.0f || vmin > 2.0f * std::sqrt(longest);
+                    }
+                    else
+                    {
+                        keep = ca == cb && cb == cc;
+                    }
+                    if (keep || longest <= smallest2)
                     {
                         cut.push_back(t);
                         continue;
@@ -2362,6 +2571,9 @@ std::string Shape::renderCacheTreeKey() const
         const std::string c = treePersistentKey(color_field, cache_vars);
         if (c.empty()) return c;
         out += "|colour|" + c;
+        // (a patch of a surface: its mesh is cut finer along the edge of the patch than the one the first version kept, whose
+        // triangles on a flat face were as big as the face)
+        if (has_cutoff) out += "|patch2";
     }
     return out;
 }

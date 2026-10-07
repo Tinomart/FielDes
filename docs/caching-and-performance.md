@@ -11,6 +11,8 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 - [The field cache](#the-field-cache)
 - [The result cache](#the-result-cache)
 - [The render cache](#the-render-cache)
+- [Editing while it runs](#editing-while-it-runs)
+- [The model tree](#the-model-tree)
 - [Resolution and quality](#resolution-and-quality)
 - [Long renders](#long-renders)
 - [Making things faster](#making-things-faster)
@@ -23,6 +25,7 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | **Any field a script builds** (`name = <expression>`: a lattice laid out on a part, an offset, a thickness field — [the field cache](#the-field-cache)) | in memory, and on disk when every part of the field can be saved | the statement's text, the exact content of every name it reads, the `var()` numbers, the code that builds it |
 | **Shapes already meshed in the viewport** | in memory, for the session | the shape's expression (structural identity) and its colouring |
 | **The finished mesh of a shape you asked for** ([render cache](#the-render-cache)) | on disk, in FielDes's cache folder | the shape's expression with the numbers it is drawn with, its colours, the render region, resolution and quality |
+| **The model tree of a script** ([the model tree](#the-model-tree)) | on disk, in FielDes's cache folder (`scene-cache`) | the md5 of the script's text, and the program and library that made the tree |
 | **Analyses** (static, modal, thermal, flow, all optimisations — [the result cache](#the-result-cache)) | in memory, and on disk: the solved problem with its mesh, fields, modes, iterations and steps | the whole problem as asked: the part by its expression, every condition, the material, the fluid, the element size, every setting |
 | **`exact_distance`** (and so `offset_exact`, `shell_exact`, `round_edges`, `fillet`) | in memory | the shape's expression and the bounds/resolution |
 | **Mesh imports** | in memory | path, size, modification time, units |
@@ -48,7 +51,7 @@ has the same key as before.
 **The import cache** is keyed to the **import algorithm's version**, not to the program's build. Rebuilding
 FielDes does not discard it; only a change to the algorithm's output does (and a new version says so in the
 changelog). Drop it by hand with the **bin** in the model tree (Reset), by deleting the
-`*.fieldes-cache.*` files, or with `import_step_parts(..., cache=False)`; `rev=` (the **⟳ Reimport** button)
+`*.fieldes-cache.*` files, or with `import_model(..., cache=False)`; `rev=` (the **⟳ Reimport** button)
 forces a fresh reconstruction.
 
 ## Controlling the caches
@@ -58,11 +61,11 @@ cache_info()        # {name: (entries, hits, misses)}
 clear_caches()      # forget everything held in memory (to measure, or to free it)
 ```
 
-The tessellating importer (`import_step_tessellated_parts`) keeps the tessellation of a file in the folder
+The tessellated import (`tessellate`, and `import_model` for the parts it tessellates) keeps the tessellation of a file in the folder
 `<file>.fieldes-tessellation` next to it, by the file's content, `quality` and the tessellation's version; `cache=False`
 does not, `rev=` makes it again.
 
-Analyses take `cache=False` to solve every time; `import_step_parts` takes `cache=False` or
+Analyses take `cache=False` to solve every time; `import_model`, `reconstruct` and `tessellate` take `cache=False` or
 `cache='path.py'`. Memory caches are bounded (least recently used goes first).
 
 Developers writing their own expensive construction can use the same machinery from
@@ -153,6 +156,41 @@ most 4 GB (`FIELDES_RENDER_CACHE_MB` changes that), oldest files first out; **Se
 deletes all of it (and the field cache's files). The mesher's output changes now and then; the cache then starts anew by a version number
 (`kRenderCacheVersion`), not on every build.
 
+## Editing while it runs
+
+The script runs again after every edit, and an edit usually has nothing to do with most of the shapes. Three things keep
+the work that does not need doing from being done:
+
+- **A shape that did not change is not meshed again.** Its numbers (`var(...)`) are told apart by the statement they are
+  written in and their place in it -- not by how many `var()`s come before them in the script. A new line above a shape, a
+  comment, a number changed in another statement, another variable added: the shapes stay as they are, and a render that is
+  going on goes on. (What does restart a render is what the render is made of: the shape's expression, its colours, the
+  region, the resolution, the quality.)
+- **Only the last of a row of edits runs.** The edits of a quick series (typing, several clicks in the model tree) each
+  ask for a run of the script as it was then; a run that a newer edit has replaced is not made, and the one that is running
+  is told to stop. A script that takes a minute to run does not run six times for six clicks.
+- **A part of the script that is stopped half-way shows its last whole result.** The viewport keeps what it had until a run
+  is done; an error in the middle of typing does not empty it.
+
+## The model tree
+
+The model tree itself is **kept**: after every run that worked, its rows are written to `scene-cache` in the cache folder
+(`FIELDES_SCENE_CACHE_DIR` moves it; the sixty newest are kept), by the md5 of the script's text and of the program and
+library that made it. Opening the same text again shows that tree **at once**, correct, and it can be clicked while the script
+runs for the first time; the run's own tree replaces it. A script that was changed since, or another version of FielDes, has no
+kept tree, and the rows fill in as the statements run.
+
+**The buttons of a row act at once.** The eye, the lock and the render cache write their lines into the script, and the tree
+changes in the same moment -- every row is on the line the edit gave it, the clicked model shows its new state -- without
+waiting for the script to run. Several clicks in a row are all made, one after the other, from the tree as it is, and answered by
+one run of the last text. The tree follows an edit only when it can be sure of what the edit did to the text (every line that
+the edit did not touch has to be the same afterwards); when it cannot, nothing is guessed, the edit is written, and the next
+click waits for the run, as it always did. The gizmo button changes its icon at once but its lines are the run's to say: a
+second click on it waits for the run. A model that is selected is made ready to be dragged (`expose`, `handles` lines) once the
+run is done, not while clicks are being followed.
+
+Building the tree is fast: 400 models take about 60 ms (the rows are made apart from the view and put into it once).
+
 ## Resolution and quality
 
 The viewport meshes the script's shapes over `view.set_bounds(...)` at `view.set_resolution(...)`
@@ -167,6 +205,13 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
 - For imports, prefer `roi_resolution(model)` — every part gets its own resolution. See
   [Region and resolution](step-import.md#region-and-resolution).
 - `view.set_quality(8)` is a good default; lower numbers are faster and rougher.
+- **One body that needs more (or less) than the scene**: `custom_resolution(body, 3)` meshes that body at 3 samples per mm
+  whatever `set_resolution` says, so a fine part does not make the whole scene fine. It is a **property row under the
+  variable** in the model tree (type the number, the bin takes the line away) and an entry of the right-click menu. It is the
+  body's wherever the body is: a body that reaches out of the scene's region (the box of a lattice is an estimate) is drawn at its
+  own resolution inside the region -- nothing outside the region is drawn, as for every shape. The finest a body can be drawn is
+  2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is, and the
+  row shows what is used (`8 → 7.63`, in amber, with the reason in its tooltip).
 - **Quality of the exact STEP surface** is separate: `exclude(..., quality=64)` (points per full turn of a
   circle). The locked field of an excluded STEP part (its tessellation and the distance structure of the
   triangles) is made once per part and kept in memory while the script is run again; the kernel keeps the
@@ -181,7 +226,7 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
 
 ## Making things faster
 
-1. **Import once, tune later.** The STEP import is the slowest step. Keep the `import_step_parts` line
+1. **Import once, tune later.** The STEP import is the slowest step. Keep the `import_model` line
    unchanged while you work on what comes after it.
 2. **Render only what you need.** Hide what you are not working on (the eye in the model tree), set the
    region with `view.set_bounds` around the part you are looking at.

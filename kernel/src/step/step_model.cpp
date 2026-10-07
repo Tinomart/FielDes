@@ -61,15 +61,48 @@ static std::vector<const ValueList*> solidShells(const Document& doc, const Enti
     return out;
 }
 
+/*  The shells of a SHELL_BASED_SURFACE_MODEL: each an OPEN_SHELL or a CLOSED_SHELL (or one of them oriented),
+ *  (name, cfs_faces) -- a surface body, as a CAD program exports a sheet or a skin of faces  */
+static std::vector<const ValueList*> surfaceModelShells(const Document& doc, const Entity* e)
+{
+    std::vector<const ValueList*> out;
+    auto* sbsm = e->find("SHELL_BASED_SURFACE_MODEL");
+    if (!sbsm || sbsm->size() < 2 || !(*sbsm)[1].isList()) return out;
+    for (auto& v : (*sbsm)[1].asList()) {
+        if (!v.isRef()) continue;
+        const Entity* shellE = doc.get(v.asRef());
+        if (!shellE) continue;
+        for (const char* oriented : {"ORIENTED_OPEN_SHELL", "ORIENTED_CLOSED_SHELL"}) {
+            if (auto* oa = shellE->find(oriented)) {
+                if (oa->size() >= 3 && (*oa)[2].isRef()) shellE = doc.get((*oa)[2].asRef());
+                break;
+            }
+        }
+        if (!shellE) continue;
+        auto* args = shellE->find("OPEN_SHELL");
+        if (!args) args = shellE->find("CLOSED_SHELL");
+        if (args && args->size() >= 2 && (*args)[1].isList()) out.push_back(args);
+    }
+    return out;
+}
+
+static Solid resolveShells(const Document& doc, const std::vector<const ValueList*>& shells, int manifoldSolidBrepId,
+                           int& facesResolved, int& facesSkipped);
+
 static Solid resolveSolid(const Document& doc, int manifoldSolidBrepId,
                            int& facesResolved, int& facesSkipped)
 {
-    Solid solid;
     const Entity* e = doc.get(manifoldSolidBrepId);
-    if (!e) return solid;
+    if (!e) return Solid();
     const auto shells = solidShells(doc, e);
-    if (shells.empty()) return solid;
+    if (shells.empty()) return Solid();
+    return resolveShells(doc, shells, manifoldSolidBrepId, facesResolved, facesSkipped);
+}
 
+static Solid resolveShells(const Document& doc, const std::vector<const ValueList*>& shells, int manifoldSolidBrepId,
+                           int& facesResolved, int& facesSkipped)
+{
+    Solid solid;
     bool dbgSkip = std::getenv("FIELDES_STEP_DEBUG_SKIPPED_FACES") != nullptr;
     bool dbgIds = std::getenv("FIELDES_STEP_DEBUG_FACE_IDS") != nullptr;
     int localSkipped = 0;
@@ -226,10 +259,16 @@ ImportResult importStepFile(const std::string& path)
             if (seen.insert(e->id).second) solidEntities.push_back(e);
         }
     }
+    // Surface bodies, after the solids (so those keep their numbers): the shells of the file's surface models
+    std::vector<const Entity*> surfaceModels;
+    for (auto* e : doc.ofType("SHELL_BASED_SURFACE_MODEL")) surfaceModels.push_back(e);
     {   // (progress: the faces to resolve)
         size_t faces = 0;
         for (auto* e : solidEntities) {
             for (const ValueList* shellArgs : solidShells(doc, e)) faces += (*shellArgs)[1].asList().size();
+        }
+        for (auto* e : surfaceModels) {
+            for (const ValueList* shellArgs : surfaceModelShells(doc, e)) faces += (*shellArgs)[1].asList().size();
         }
         progress::setFaces(faces);
     }
@@ -240,6 +279,22 @@ ImportResult importStepFile(const std::string& path)
             auto* args = e->find("MANIFOLD_SOLID_BREP");
             if (!args) args = e->find("BREP_WITH_VOIDS");
             if (args && !args->empty()) solid.name = (*args)[0].asString();
+            model->solids.push_back(std::move(solid));
+        }
+    }
+
+    for (auto* e : surfaceModels) {
+        auto* args = e->find("SHELL_BASED_SURFACE_MODEL");
+        const std::string modelName = args && !args->empty() ? (*args)[0].asString() : std::string();
+        const auto shells = surfaceModelShells(doc, e);
+        for (size_t k = 0; k < shells.size(); k++) {
+            Solid solid = resolveShells(doc, {shells[k]}, e->id, result.numFacesResolved, result.numFacesSkipped);
+            if (solid.faces.empty()) continue;
+            solid.entityId = e->id;               // (every shell of the model is placed where the model is)
+            solid.surface = true;
+            solid.name = !shells[k]->empty() ? (*shells[k])[0].asString() : std::string();
+            if (solid.name.empty()) solid.name = modelName;
+            if (shells.size() > 1) solid.name += (solid.name.empty() ? "" : " ") + std::to_string(k + 1);
             model->solids.push_back(std::move(solid));
         }
     }
@@ -271,7 +326,7 @@ ImportResult importStepFile(const std::string& path)
     result.numSolids = static_cast<int>(model->solids.size());
 
     if (result.numSolids == 0) {
-        result.error = "No importable solids found in file "
+        result.error = "No importable solids or surfaces found in file "
             "(it may contain only a wireframe/sketch, or use surface "
             "types this importer doesn't support yet)";
         return result;

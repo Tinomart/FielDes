@@ -69,6 +69,10 @@ struct Solid
     int entityId = -1;
     std::string name;
     std::vector<SolidInstance> instances;
+
+    // A surface body: the faces of one shell of a SHELL_BASED_SURFACE_MODEL, an open sheet that has no inside
+    // (entityId is then the model's).  It cannot be rebuilt as a solid; it is tessellated, and made a sheet.
+    bool surface = false;
 };
 
 struct Model

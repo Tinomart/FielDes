@@ -8,10 +8,12 @@ from fieldes.stdlib.text import *
 from fieldes.stdlib.transforms import *
 from fieldes.stdlib.handles import handles, expose, lock
 from fieldes.stdlib.render_cache import *
+from fieldes.stdlib.custom_resolution import *
 from fieldes.stdlib.cad_import import *
 from fieldes.stdlib.excluded import *
 from fieldes.stdlib.tessellated_import import *
 from fieldes.stdlib.mesh_import import *
+from fieldes.stdlib.importing import *
 from fieldes.stdlib.fea import *
 from fieldes.stdlib.boundary_conditions import *
 from fieldes.stdlib.selection import *

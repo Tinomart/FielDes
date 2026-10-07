@@ -58,6 +58,10 @@ struct Result {
     QList<FieldEntry> fields;
     QMap<libfive::Tree::Id, QRect> vars;
 
+    /*  The text of the script this result is of: the positions in `vars` (and in `scene`) are positions in THAT text.  The text in the editor
+     *  can be another one by the time the result is there (a click of the tree, a key): see Editor::setVarSpans  */
+    QString script;
+
     /*  Warnings to be drawn in the GUI, along with quick-fixes.  This is used
      *  when the script does not define bounds, resolution, etc. */
     QList<QPair<QString, QString>> warnings;

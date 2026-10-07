@@ -74,11 +74,12 @@ static PyObject* var_func(PyObject* host_mod, PyObject* args) {
             return NULL;
         }
     }
-    // Parse the argument, which should be patched in the AST by runner.run
+    // Parse the argument, which should be patched in the AST by runner.run (and the key that says where in the script it is)
     double value;
     int lineno, end_lineno, col_offset, end_col_offset;
-    if (!PyArg_ParseTuple(args, "d(iiii)", &value,
-        &lineno, &end_lineno, &col_offset, &end_col_offset))
+    const char* key = nullptr;
+    if (!PyArg_ParseTuple(args, "d(iiii)|s", &value,
+        &lineno, &end_lineno, &col_offset, &end_col_offset, &key))
     {
             return NULL;
     }
@@ -88,8 +89,43 @@ static PyObject* var_func(PyObject* host_mod, PyObject* args) {
     const auto num_vars = PyList_Size(vars);
     PyErr_Print();
 
-    PyObject* v;
-    if (num_vars < PyList_Size(prev_vars)) {
+    PyObject* v = nullptr;
+    if (key) {
+        // The variable of this place in the script, as the last run had it: the same Tree, so that a shape made with it is the same shape
+        // (its render goes on) however many variables were added or taken out above it.  The key is the statement it is in and its number
+        // in it; the one that asks for a key the n-th time in a run gets the n-th variable of that key (a loop makes many of one statement)
+        PyObject* by_key = PyObject_GetAttrString(host_mod, "__by_key");
+        PyObject* counts = PyObject_GetAttrString(host_mod, "__key_count");
+        if (by_key && counts && PyDict_Check(by_key) && PyDict_Check(counts)) {
+            PyObject* seen = PyDict_GetItemString(counts, key);         // borrowed
+            const long n = seen ? PyLong_AsLong(seen) : 0;
+            PyObject* next = PyLong_FromLong(n + 1);
+            PyDict_SetItemString(counts, key, next);
+            Py_DECREF(next);
+            const std::string full = std::string(key) + "#" + std::to_string(n);
+            PyObject* found = PyDict_GetItemString(by_key, full.c_str());   // borrowed
+            if (found) {
+                v = found;
+                Py_INCREF(v);
+            } else {
+                const auto shape_mod = PyImport_ImportModule("fieldes.shape");
+                const auto Shape = PyObject_GetAttrString(shape_mod, "Shape");
+                v = PyObject_CallMethod(Shape, "var", NULL);
+                Py_DECREF(shape_mod);
+                Py_DECREF(Shape);
+                if (v) {
+                    if (PyDict_Size(by_key) > 200000) PyDict_Clear(by_key);      // (the keys of scripts long gone)
+                    PyDict_SetItemString(by_key, full.c_str(), v);
+                }
+            }
+        }
+        Py_XDECREF(by_key);
+        Py_XDECREF(counts);
+        PyErr_Clear();
+    }
+    if (v) {
+        // (found by its key)
+    } else if (num_vars < PyList_Size(prev_vars)) {
         // Pull just the Shape object from the tuple
         auto item = PyList_GetItem(prev_vars, num_vars); // borrowed
         v = PyTuple_GetItem(item, 0); // borrowed
@@ -309,6 +345,13 @@ void Interpreter::init() {
     const auto empty_list = PyList_New(0);
     PyObject_SetAttrString(host_mod, "__vars", empty_list);
     Py_DECREF(empty_list);
+    // The variables found again by the place they are in (var_func), and how many times each key was asked for in this run
+    const auto by_key = PyDict_New();
+    PyObject_SetAttrString(host_mod, "__by_key", by_key);
+    Py_DECREF(by_key);
+    const auto key_count = PyDict_New();
+    PyObject_SetAttrString(host_mod, "__key_count", key_count);
+    Py_DECREF(key_count);
     Py_DECREF(host_mod);
 
     QStringList keywords;
@@ -519,7 +562,16 @@ void Interpreter::setBreakpoints(QList<int> lines)
 
 void Interpreter::eval(QString script)
 {
+    // Every edit of the script queues a run of the script as it was then.  Edits come faster than runs: a run that a newer edit has
+    // already taken the place of is not made (the one that is running was told to stop, but a run that has not started cannot be told
+    // anything: it would run to its end, one after another, for nothing).  Only the last of a row of edits runs
+    if (m_requests.fetch_sub(1) > 1) return;
     evaluate(script, false);
+}
+
+void Interpreter::noteRequest()
+{
+    m_requests.fetch_add(1);
 }
 
 void Interpreter::resume()
@@ -558,6 +610,10 @@ void Interpreter::evaluate(QString script, bool resuming)
         PyObject_SetAttrString(host_mod, "__quality", Py_None);
         PyObject_SetAttrString(host_mod, "__bounds", Py_None);
 
+        // (no variable has been asked for by a key yet in this run)
+        const auto fresh_counts = PyDict_New();
+        PyObject_SetAttrString(host_mod, "__key_count", fresh_counts);
+        Py_DECREF(fresh_counts);
         // Copy from __vars to __prev_vars, then reset __vars
         const auto prev_vars = PyObject_GetAttrString(host_mod, "__vars");
         PyObject_SetAttrString(host_mod, "__prev_vars", prev_vars);
@@ -596,6 +652,7 @@ void Interpreter::evaluate(QString script, bool resuming)
     Py_DECREF(breaks);
 
     Result out;
+    out.script = script;
     out.settings = Settings::defaultSettings();
     out.okay = ret && !PyErr_Occurred();
 
@@ -989,6 +1046,55 @@ void Interpreter::recordShape(
         }
         Py_XDECREF(hintOwner);
         PyErr_Clear();
+
+        // The exact triangles of a tessellated part (fieldes.stdlib.tessellated_import): (key, vertices as bytes of floats,
+        // triangles as bytes of unsigned ints, the 12 numbers of the 3 x 4 matrix that places them).  The part is drawn from them
+        // (Shape::setExactMesh); a mesh is kept by its key, so that the script's next run does not copy it again
+        if (PyObject_HasAttrString(obj, "_display_mesh"))
+        {
+            static std::map<std::string, std::shared_ptr<const Shape::ExactMesh>> kept;
+            static size_t keptBytes = 0;
+            PyObject* d = PyObject_GetAttrString(obj, "_display_mesh");
+            if (d && PyTuple_Check(d) && PyTuple_Size(d) == 4 && PyUnicode_Check(PyTuple_GetItem(d, 0)))
+            {
+                const std::string key = PyUnicode_AsUTF8(PyTuple_GetItem(d, 0));
+                std::shared_ptr<const Shape::ExactMesh> mesh;
+                const auto found = kept.find(key);
+                if (found != kept.end())
+                {
+                    mesh = found->second;
+                }
+                else
+                {
+                    char* vbuf = nullptr;
+                    char* tbuf = nullptr;
+                    Py_ssize_t vn = 0, tn = 0;
+                    if (PyBytes_AsStringAndSize(PyTuple_GetItem(d, 1), &vbuf, &vn) == 0 &&
+                        PyBytes_AsStringAndSize(PyTuple_GetItem(d, 2), &tbuf, &tn) == 0 && vn >= 36 && tn >= 12)
+                    {
+                        auto m = std::make_shared<Shape::ExactMesh>();
+                        m->key = key;
+                        m->verts.resize(size_t(vn) / sizeof(float));
+                        std::memcpy(m->verts.data(), vbuf, m->verts.size() * sizeof(float));
+                        m->tris.resize(size_t(tn) / sizeof(uint32_t));
+                        std::memcpy(m->tris.data(), tbuf, m->tris.size() * sizeof(uint32_t));
+                        if (keptBytes > (size_t(1) << 31)) { kept.clear(); keptBytes = 0; }     // (two gigabytes of triangles: start again)
+                        keptBytes += size_t(vn) + size_t(tn);
+                        kept[key] = m;
+                        mesh = m;
+                    }
+                }
+                PyObject* mt = PyTuple_GetItem(d, 3);
+                if (mesh && PyTuple_Check(mt) && PyTuple_Size(mt) == 12)
+                {
+                    double matrix[12];
+                    for (int i = 0; i < 12; ++i) matrix[i] = PyFloat_AsDouble(PyTuple_GetItem(mt, i));
+                    shape->setExactMesh(mesh, matrix);
+                }
+            }
+            Py_XDECREF(d);
+            PyErr_Clear();
+        }
 
         // Handles of a placed part (fieldes.stdlib.handles): (mode, about (3),
         // move (3), rotate (3), scale (3)), each number a var Shape or a plain float

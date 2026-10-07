@@ -3,7 +3,7 @@ Closed-form surfaces: cheap primitives beyond planes, spheres and cylinders.
 
 Each is a handful of arithmetic operations, so it meshes as fast as any
 other shape.  The general forms are what the STEP importer fits to B-spline
-faces (see import_step_parts); the named ones are for modeling:
+faces (see reconstruct); the named ones are for modeling:
 
     quadric(coefficients, center, scale)        any surface of degree 2
     extruded_curve(coefficients, direction, origin, scale)
