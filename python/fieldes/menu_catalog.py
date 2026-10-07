@@ -4,8 +4,7 @@ What the viewport's context menus create: the library's primitives and basic ope
 Right-clicking empty space in the viewport offers New 3D shape / 2D shape / point / surface / field (every primitive of the library, by kind, placed where the
 cursor is), New custom block and Add operation; right-clicking a body offers Operation (the same list, with that body passed in).  The
 menus are built from the two lists below, and the call each entry writes into the script comes from its template,
-so this file is the one place that says what the menus offer.  dev/tests/t_menu_catalog.py runs every template, so an
-entry whose function is renamed or whose arguments change fails there rather than in front of the user.
+so this file is the one place that says what the menus offer.
 
 A template is a Python format string.  For a primitive: {x} {y} {z} is the place (the point of the cursor's ray
 that is closest to the origin, rounded), {s} the size (about a hundred pixels on screen, a round number), {h} half

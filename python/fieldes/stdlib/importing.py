@@ -48,7 +48,7 @@ _STEP = ('.step', '.stp')
 _MESH = ('.stl', '.obj', '.ply', '.3mf', '.glb', '.gltf')
 
 # The share of a part's surface that is free-form (B-spline) from which it is tessellated rather than reconstructed.
-# Measured on the parts of the example and test files (dev/tests/t_import_choice.py): the reconstruction is exact for
+# Measured on the parts of the example files: the reconstruction is exact for
 # analytic faces and fits a free-form face to within a fraction of a percent of its size, so a part with a few
 # percent of free-form surface (a fillet, a blend) is still best rebuilt, while a part with a tenth of it or more
 # has fitted faces that show; the sculpted parts all have more than half.

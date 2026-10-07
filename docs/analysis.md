@@ -150,8 +150,8 @@ result = static_analysis(beam, conditions, material=graded, element_size=3)
 `examples/19_graded_material.py` runs it and compares with beam theory: the tip of a cantilever whose stiffness falls to a
 tenth along its length deflects as much as the beam-theory integral says; a load spread evenly along the top deflects 0.375 of
 the same load at the tip, and one spread in proportion to *x* deflects 0.55 of it — which is what the solver reproduces.
-(`dev/tests/t_solver_fields.py` checks a constant field against the number, those theories, topology optimization, modal
-analysis and the thermal conditions.)
+(The solver is checked against these theories, and a constant field against the number, also in topology optimization,
+modal analysis and the thermal conditions.)
 
 **Not fields:** Poisson's ratio and the yield strength (a number: the safety factor is one number), the
 components of a force (the profile is how a force is spread), and everything of the flow solver — its fluid, inlets, outlets and

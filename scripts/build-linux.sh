@@ -44,7 +44,7 @@ case "$REPO" in
         SRC="$HOME/fieldes-src"
         mkdir -p "$SRC"
         echo "== copying the sources to $SRC"
-        rsync -a --delete --exclude '/dist' --exclude '/dev/logs' --exclude '/dev/grabs' --exclude '/.git' --exclude '__pycache__' \
+        rsync -a --delete --exclude '/dist' --exclude '/.git' --exclude '__pycache__' \
               --exclude '*.fieldes-cache.*' --include '/examples/step/README.md' --include '/examples/step/PivotBearingSupportBracket.STEP' \
               --exclude '/examples/step/*' --exclude '/examples/meshes' "$REPO/" "$SRC/"
         ;;
@@ -53,7 +53,7 @@ esac
 # Manifold (the polygon triangulation of the kernel) needs Clipper2, which not every distribution packages (Fedora does not):
 # built once from its sources into ~/fieldes-deps when cmake cannot find it
 DEPS="$HOME/fieldes-deps"
-if ! cmake --find-package -DNAME=Clipper2 -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST >/dev/null 2>&1 \
+if ! (cd "$HOME" && cmake --find-package -DNAME=Clipper2 -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST) >/dev/null 2>&1 \
         && [ ! -f "$DEPS/lib64/cmake/Clipper2/Clipper2Config.cmake" ] && [ ! -f "$DEPS/lib/cmake/Clipper2/Clipper2Config.cmake" ]; then
     echo "== building Clipper2 into $DEPS"
     rm -rf "$HOME/clipper2-src"

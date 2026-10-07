@@ -148,5 +148,4 @@ to a text file of commands (`wait <ms>`, `action <name>`, `grab <file.png>`, `qu
 documentation are made. Among the commands: `treedump <file>` (the model tree as indented text, with each row's kind),
 `treedrop <source> > <target> > <above|on|below|end>` (a drag and drop in the tree, sent as the mouse events of a hand),
 `treerename <row> > <name>` (rename by double-click, or `f2`), `setting <fn> <index> <text>` (a render setting's field), `tour ...`
-(the guided tour, step by step), `treeclick`, `viewmouse`, `popup` (the context menus), `grabmenus`, `grabwidget`, `grabcrop`, `outdump` (the output pane), `blocksfolder <path>`. The tests that use
-them are in `dev/automation` and `dev/tests`.
+(the guided tour, step by step), `treeclick`, `viewmouse`, `popup` (the context menus), `grabmenus`, `grabwidget`, `grabcrop`, `outdump` (the output pane), `blocksfolder <path>`.

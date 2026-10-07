@@ -59,8 +59,7 @@ foam   = lattice(core, cell_periodic('gyroid'), cell_size=ramp(x_field(), (160, 
 number of modes, iterations, steps), resolutions and element sizes, tolerances, seeds, a Poisson's ratio or a yield
 strength, the numbers of a flow (its fluid, inlets, outlets and walls: the flow solver takes numbers). A function says so
 when it is given a field there (`TypeError: ... is a number`), never silently.
-`dev/tests/t_field_slots.py` runs a **constant field through every numeric slot of the library and checks that it gives
-exactly what the number gives** (98 slots).
+A **constant field through every numeric slot of the library gives exactly what the number gives** (checked on 98 slots).
 
 The kind of thing a value is — a 3D shape, a 2D shape, a field, a surface, a point — is shown by its colour and icon in
 the [model tree](interface.md#the-model-tree). A field is not a body, so **nothing of it is drawn in the viewport**: select it in
@@ -174,7 +173,7 @@ What an excluded shape does with the rest of the library:
 | analyses, `colored`, `render_cache`, `lock`, queries (`volume_of`, `evaluate`, ...) | see the whole shape; `colored` and `lock` keep it excluded |
 
 Raw field arithmetic (`a + b`, `a.min(b)`, `a.max(b)`) is not an operation of the library: it works on the whole field
-and gives a plain shape. The table lives in `fieldes/stdlib/excluded.py`, and `dev/tests/t_excluded.py` checks that every
+and gives a plain shape. The table lives in `fieldes/stdlib/excluded.py`, and every
 function of the library is in it.
 
 ## Exact distances

@@ -59,7 +59,7 @@ MODES = {'flat': 0, 'smooth': 1}
 SELECTION_CATEGORY = 6          # (its colour in the application's colour map "bc")
 
 # How far from a sample of the walk the surface of the patch can be, as a share of the spacing of the samples (the walk
-# steps one spacing, and takes no sample within 0.7 of another: measured by dev/tests/t_select_walk.py)
+# steps one spacing, and takes no sample within 0.7 of another)
 COVER = 0.85
 
 

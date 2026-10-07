@@ -23,7 +23,7 @@ tear the two apart -- copying the shape (arrays, symmetric_*, repeat, mirror_*) 
 attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisations (topology_optimization,
 thermal_topology_optimization, flow_topology_optimization) read the exclusions a shape carries as regions to keep: the
 locked field stays solid, as exact as it is, and the optimised shape is excluded the same way.  The tables below say, for every function of the
-library, what it does with an excluded shape; dev/tests/t_excluded.py checks that none is left out.
+library, what it does with an excluded shape; none is left out.
 
 The region is any shape (a field that is negative inside it), as it always was.
 
@@ -327,7 +327,7 @@ def _each_guarded():
                 continue
             for n in names:
                 raw = getattr(module, n, None)
-                if raw is None:         # (dev/tests/t_excluded.py fails on a name the library no longer has)
+                if raw is None:         # (a name the library no longer has)
                     continue
                 if (module_name, n) not in _wrapped or _wrapped[(module_name, n)][0] is not raw:
                     _wrapped[(module_name, n)] = (raw, make(n, raw))

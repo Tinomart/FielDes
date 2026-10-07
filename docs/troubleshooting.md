@@ -2,7 +2,7 @@
 
 | Symptom | Likely cause and what to do |
 |---|---|
-| **FielDes closed by itself** | A crash leaves a report in `%LOCALAPPDATA%\FielDes\FielDes\crash` (a text file with the exception and the places the program was at): send it with the script that was open. `dev/tools/crash_symbols.py` turns it into function names with the build's map files |
+| **FielDes closed by itself** | A crash leaves a report in `%LOCALAPPDATA%\FielDes\FielDes\crash` (a text file with the exception and the places the program was at): send it with the script that was open. |
 | **The viewport is empty** | Only top-level *expression statements* that evaluate to shapes are drawn; an assignment alone is not (it only appears in the model tree — click its eye). Check the region (`view.set_bounds`) contains the shape, and that it is not hidden (`# hidden:` lines, the eye). A model outside the render region is greyed in the tree. |
 | **Thin parts or a lattice are missing or ragged** | The resolution is too coarse for the thinnest feature. Raise `view.set_resolution` (a wall wants about three samples across it), or use `roi_resolution(model)` for imports, which names parts it cannot render properly. |
 | **Meshing takes minutes** | The resolution is too fine for the region. Press `Esc` to cancel the render, lower `view.set_resolution`, or shrink `view.set_bounds` to the part you are looking at. |

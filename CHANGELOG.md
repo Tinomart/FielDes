@@ -11,9 +11,8 @@
   document, which every edit moves along (the tree's, the keyboard's, undo, the drag's own); a run's places are taken over only when the
   run was of the text that is in the editor; and what stands at a place is checked to be the number before it is written over (a number
   that is not there is not written, and the script is run again). Also correct now for a line with an accent before a number (Python
-  counts bytes, the editor characters). The test `dev/tests/run_drag_after_edit.ps1` does the sequence and reads the script after each step;
-  on the keuken file (select a part and drag at once, lock another and drag, unlock and drag) every step parses and the numbers land in
-  the part's handles line.
+  counts bytes, the editor characters). Checked in a window on a part with handles (select a part and drag at once, lock another and drag, unlock and drag):
+  every step parses and the numbers land in the part's handles line.
 - **The viewport follows the tree's lines.** The tree moves to the new lines the moment a click edits the script, but the shapes in the viewport
   knew the lines they were made on only from a run -- so for the seconds the run took, selecting a model in the tree lit up another shape (or
   none, and no gizmo to drag), and a click on a shape selected another row. The tree now tells the viewport where each line went (the same
@@ -133,9 +132,9 @@
 - **`surface_from_bodies(body, *others, tolerance=None)`**: the surface of the first body where it meets the bodies that follow (inside
   them, or within `tolerance` of them); one body alone is its whole surface. A surface like `select_surface` makes -- a region for
   `fixed()`/`force()`, a surface for `lattice_surface_conform()` -- made from the fields alone. In the viewport: select several models,
-  right-click, **Operation → Surfaces → surface_from_bodies** (one model: its whole surface). Tested in `dev/tests/t_surface_from_bodies.py`
-  (the wall of a hole a bolt fills, a face under a block, a gap and `tolerance`, several bodies and a list, a sphere cut by a box, the menu, a lattice laid on the
-  patch) and in the window (`win_surface_bodies*.py`).
+  right-click, **Operation → Surfaces → surface_from_bodies** (one model: its whole surface). Checked on the wall of a hole a bolt fills,
+  a face under a block, a gap and `tolerance`, several bodies and a list, a sphere cut by a box, the menu, a lattice laid on the patch,
+  and in the window.
 - **A selection is drawn exactly, also in the middle of a big flat face.** The viewport showed the lit-up patch by the vertices of the part's
   mesh, and a flat face is a few huge triangles, so a patch lying in the middle of one -- the face of a box inside a sphere -- came out as skewed
   slivers between far-away corners (or not at all). A triangle that can hold the edge of the patch is now cut into four, again and again,
@@ -181,7 +180,7 @@
   tessellated one, a mesh, a CSG model, however thin. The selection is the distance to the walked samples (a kd-tree field) less half its
   thickness; `.samples`, `.spacing`, `.cover`, `.patch`, `.whole` (= |field|). `resolution` is steps per mm (default 150 along the
   longest side). Tested on a box, a plate thinner than a step, a sphere, a cylinder, moved shapes, the bracket reconstructed and
-  tessellated, and pump_2 (`dev/tests/t_select_walk.py`). The mesh flood (`libfive_mesh_flood`) is removed.
+  tessellated, and pump_2. The mesh flood (`libfive_mesh_flood`) is removed.
 
 ### Model tree and viewport
 - **An error leaves no shadow rows.** The `# hidden: name` lines that come after the line that failed (their models were never
@@ -223,7 +222,7 @@
   loads). Every walk of such a tree keeps the flattened copy alive now (the hover, the field walker, the save check, the axes, the
   serializer). The hover also checks the shape number it reads from the picking picture, as every other place did.
 - **A crash leaves a report**: `%LOCALAPPDATA%\FielDes\FielDes\crash\crash-<date>.txt` with the exception and the places the
-  program was at; `dev/tools/crash_symbols.py` names them with the build's map files.
+  program was at.
 - **A body with no surface is not a failure.** `pump.stp` lists a last body that has no surface to import: its row is dashed and dimmed
   with a tooltip, not red and struck through.
 - **A locked model can be in a selection of several again** -- to select a handful of parts and unlock them at once (`R`, or the
@@ -241,8 +240,8 @@
   an empty tree, a script just opened, fills row by row as the run goes on), and the button that was clicked changes at once.
 - **Dragging numbers no longer eats parentheses.** A drag writes the numbers of a line of `var(...)`s into the script as they
   change; the place of the numbers to the right of one that changed was moved along only when they changed in the same step,
-  so one that changed in a later step was written one character off (`var5.200222)` in `examples/dragging_causes_parenthesis_error.py`).
-  All of them move along now (`dev/tests/win_varsteps.py`).
+  so one that changed in a later step was written one character off (`var5.200222)`).
+  All of them move along now.
 - **`I` keeps the tree where it was**; **Fix All** puts
   fixes after `from fieldes import *`; a running render keeps going when something else changes (only a shape whose geometry
   changes starts again).
@@ -270,8 +269,8 @@
 ### Fields everywhere
 - **Wherever a number goes, a field goes.** A size, a radius, a thickness, a spacing, a blend, an offset, a scale ... of every
   function of the library can be a field instead of a number (`offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))`), and is
-  evaluated where it is needed, exactly: nothing is sampled onto a grid. `dev/tests/t_field_slots.py` runs a constant field
-  through 98 numeric slots and checks it gives what the number gives. Added or fixed: `ramp` / `normalize` ranges, `attractor`
+  evaluated where it is needed, exactly: nothing is sampled onto a grid. A constant field was run
+  through 98 numeric slots and gives what the number gives. Added or fixed: `ramp` / `normalize` ranges, `attractor`
   (the radius; a point or points as the centre), `smooth_union` / `smooth_intersection` / `smooth_difference`, `union_all`,
   `repeat`, `noise_field`, `distance_to_point` / `_plane`, `radial_field`, `angle_field`, `polar_field` (centres; a point works),
   `mass_properties` (a density field), `offset_exact`, `shell_exact`, `round_edges`, `fillet`, `smooth` (the radius),
@@ -282,7 +281,7 @@
 - **Fields in the analyses** (tetrahedral elements): `Material(E=field, density=field, conductivity=field, expansion=field)`, a
   load's `profile=field` (the total stays; it is spread over the surface in proportion to the profile), `fixed_temperature`
   with a field, `convection` with a field for the coefficient and the ambient temperature, `heat_input` / `heat_generation`
-  with a profile. Checked against beam theory and Fourier's law (`dev/tests/t_solver_fields.py`); topology optimization and
+  with a profile. Checked against beam theory and Fourier's law; topology optimization and
   the modal analysis take them too. The flow solver takes numbers and says so. The kernel evaluates each field at the centre
   of every element (`TetProblem::setStiffnessField`, `TetThermalProblem::setConductivityField`, ...); the result cache keys
   include them.
