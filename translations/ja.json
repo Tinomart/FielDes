@@ -268,7 +268,7 @@
  "Use %1 as the region of %2 (in place of its box %3)": "%1 を %2 の領域として使用（ボックス %3 の代わり）",
  "Add %1 to the regions of %2": "%1 を %2 の領域に追加",
  "An analysis is made of one material (or one fluid): drop one of %1 on it.": "解析には材料（または流体）を 1 つだけ指定します。%1 のうち 1 つだけをドロップしてください。",
- "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).": "'%1' は %2 で作られており、%2 には材料も流体も渡されません。渡されるのは解析です（static_analysis(part, supports, loads, material=steel)、fluid_analysis(part, inlets, outlets, boundaries, fluid=water)）。",
+ "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).": "'%1' は %2 で作られており、%2 には材料も流体も渡されません。渡されるのは解析です（static_analysis(part, supports, loads, material=steel)、fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)）。",
  "'%1' is already the %2 of '%3', so dropping it here changes nothing.": "'%1' はすでに '%3' の %2 です。ここにドロップしても何も変わりません。",
  "Use %1 as the %2 of %3": "%1 を %3 の %2 として使用",
  "'%1' is made by %2, which has no input for %3: they go in an analysis that takes them.": "'%1' は %2 によって作られており、%3 の入力がありません。条件はそれを受け付ける解析に入れてください。",

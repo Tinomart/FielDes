@@ -277,6 +277,10 @@ def _with_conditions(fn):
                 got = sig.bind_partial(*args, **kwargs).arguments
             except TypeError:
                 raise
+            if 'domain' in sig.parameters and 'domain' not in got:
+                raise TypeError('{fn}: the flow goes around a body inside a domain -- {fn}(body, domain, inlets, outlets, boundaries, ...), the inputs of '
+                                'flow_topology_optimization too: the fluid is the domain with the body cut out, and the force is the force on the body. '
+                                '{fn} was given only the fluid before; now give the body, then the domain that holds it.'.format(fn=fn.__name__)) from None
             kinds = [n for n in sig.parameters if n in _SLOTS]
             missing = [n for n in kinds if sig.parameters[n].default is sig.parameters[n].empty and n not in got]
             if not missing:

@@ -268,7 +268,7 @@
  "Use %1 as the region of %2 (in place of its box %3)": "将 %1 用作 %2 的区域（替换其长方体 %3）",
  "Add %1 to the regions of %2": "将 %1 添加到 %2 的区域",
  "An analysis is made of one material (or one fluid): drop one of %1 on it.": "一次分析只使用一种材料（或一种流体）：请只拖放 %1 中的一个。",
- "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).": "'%1' 由 %2 生成，%2 不接受材料或流体：接受它们的是各种分析（static_analysis(part, supports, loads, material=steel)、fluid_analysis(part, inlets, outlets, boundaries, fluid=water)）。",
+ "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).": "'%1' 由 %2 生成，%2 不接受材料或流体：接受它们的是各种分析（static_analysis(part, supports, loads, material=steel)、fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)）。",
  "'%1' is already the %2 of '%3', so dropping it here changes nothing.": "'%1' 已经是 '%3' 的 %2，因此放到这里不会有任何改变。",
  "Use %1 as the %2 of %3": "将 %1 用作 %3 的 %2",
  "'%1' is made by %2, which has no input for %3: they go in an analysis that takes them.": "'%1' 由 %2 创建，它没有 %3 的输入：它们应放入接受它们的分析中。",

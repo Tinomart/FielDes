@@ -64,7 +64,7 @@ each kind of condition it takes; a kind it has none of is `[]`:
 | `topology_optimization(part, supports, loads, material=steel, ...)` | `supports`, `loads` (or several load cases, see [Topology optimization](#topology-optimization)) |
 | `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, ...)` | those four |
 | `thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations, convections, ...)` | the same four |
-| `fluid_analysis(domain, inlets, outlets, boundaries, fluid=water, ...)` | those three (`boundaries` takes `wall(...)` and `slip(...)` items, one kind or both) |
+| `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, ...)` | those three (`boundaries` takes `wall(...)` and `slip(...)` items, one kind or both); the flow goes around the `body`, inside the `domain` |
 | `flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=water, ...)` | the same three |
 
 ```python
@@ -116,7 +116,7 @@ outlet, wall, slip) writes one, **with a placeholder where it acts** (`force_1 =
 model tree takes a body, a field or a surface dropped on it -- the menu makes no box of its own for a region). **Select the regions first** -- surfaces, fields or bodies -- and the same entries write the condition for what is selected:
 `fixed_1 = fixed(selection_1)`, or `force(a, b, (0, -100, 0))` for several. **Every condition takes any number of regions, one argument after the other**, and in the model tree a body, a surface or a field dropped on a
 condition is one more of them. **A force is written with its `vector`** (0, -100, 0 newtons to begin with), where it is changed. **Simulation -> static_analysis** (and modal, topology optimization, thermal, fluid) writes the simulation of the body selected, **with the conditions selected written in the input of their kind** and a placeholder
-for every other input (`fluid_analysis(domain, inlets=[inlet_1], outlets=..., boundaries=...)`): nothing is built for you, the run stops before the line until the placeholders are filled. A condition has **no body**: the simulation is given it.
+for every other input (`fluid_analysis(body, domain, inlets=[inlet_1], outlets=..., boundaries=...)`): nothing is built for you, the run stops before the line until the placeholders are filled. A condition has **no body**: the simulation is given it.
 
 **Dragging them in.** In the model tree, drag a condition -- or several, selected with Ctrl or Shift -- onto the simulation, onto its **boundary conditions** row or onto the placeholder of its kind: they go into
 the input of their kind **as a list** (`boundaries=[wall_1, slip_1, slip_2]`), a placeholder is replaced by it and a list already there gets them as more
@@ -373,15 +373,17 @@ deep inside would count as cooled like an open face. It designs on the voxel gri
 
 ## Fluid flow
 
-Incompressible, laminar flow of a fluid through a shape -- the inside of a pipe, a duct, a box with a part cut out of
-it -- steady or in time, on the same tetrahedra that follow the surface as the other analyses:
+Incompressible, laminar flow of a fluid **around a body**, inside a domain -- steady or in time, on the same tetrahedra that
+follow the surface as the other analyses. `fluid_analysis` takes what `flow_topology_optimization` takes (the body, the domain, the
+three kinds of boundary conditions, the fluid) and solves the flow once, around the body as it is: it is to
+`flow_topology_optimization` what `static_analysis` is to `topology_optimization`:
 
 ```python
 slab = box_exact((0, 0, 0), (80, 40, 4))                           # a thin slab of water, open at its sides...
 post = cylinder_z(5, 6, (24, 20, -1))                              # ...with a round post standing in it
 faces = union(box_exact((-1, -1, -1), (81, 41, 0.01)), box_exact((-1, -1, 3.99), (81, 41, 5)))
 sides = union(box_exact((-1, -1, -1), (81, 0.01, 5)), box_exact((-1, 39.99, -1), (81, 41, 5)))
-flow = fluid_analysis(difference(slab, post),
+flow = fluid_analysis(post, slab,
                       inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4.0)],       # Re = U D / nu = 40
                       outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],
                       boundaries=[slip(faces), slip(sides)],          # a two-dimensional flow (the post is a wall at rest: so is everything not named)
@@ -390,8 +392,10 @@ print(flow)                              # the flows, the pressure drop, the Rey
 flow                                     # shown: the speed on the fluid, streamlines, particles moving along them
 ```
 
-**The fluid domain is a shape**: the fluid is where its field is negative. The boundary conditions are regions on
-its surface, like the supports and loads of a static analysis, an input for each kind (`inlets`, `outlets`, `boundaries` for walls and slips):
+**The domain is a shape**: the fluid is where its field is negative, with the body's place in it -- the fluid is the domain with
+the body cut out (`difference(domain, body)`). The body is a wall at rest, like every surface in no region, unless a `wall(...)` moves
+it; the force on it is the force on the walls, `flow.wall_force`. The boundary conditions are regions on the fluid's surface, like
+the supports and loads of a static analysis, an input for each kind (`inlets`, `outlets`, `boundaries` for walls and slips):
 
 | Function | |
 |---|---|
@@ -404,7 +408,7 @@ its surface, like the supports and loads of a static analysis, an input for each
 predefined). `gravity=(gx, gy, gz)` (mm/s²) is a body force. A closed domain (no outlet: a lid-driven cavity) is
 allowed; its pressure is then relative, zero at one point.
 
-`fluid_analysis(domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
+`fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
 tolerance=1e-5, cache=True, time=None, store_every=1)`. The element size defaults to the longest
 side over 40; the passages should be four elements across or more (the result says how many there are). `stokes=True`
 leaves the convection out (creeping flow, one linear solve); otherwise the Navier-Stokes equations are solved by Picard

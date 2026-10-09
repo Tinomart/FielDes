@@ -27,7 +27,7 @@ can be deleted at any time.
 | `14_conformal_lattice.py` | none (an S-shaped surface, the zero of a field) | `lattice_surface_conform` on an open surface of no thickness with a cell of your own (`cell_custom_truss`): one layer on one side of it, cut off at the edge of a patch |
 | `15_conformal_closed_body.py` | `PivotBearingSupportBracket.STEP` | `lattice_surface_conform` on a closed body (a whole bracket): the cells fill its wall all the way round, over the faces, fillets and bores, with a row of nodes on every sharp edge |
 
-| `16_fluid_flow.py` | none (a slab of water with a round post cut out) | `fluid_analysis`: water past a post at Re 40, slip planes for a two-dimensional flow; the speed on the fluid, streamlines with moving particles, the wake behind the post, the drag; `time=` for the flow in time with the step slider |
+| `16_fluid_flow.py` | none (a round post in a slab of water) | `fluid_analysis(body, domain, ...)`: water past a post at Re 40, slip planes for a two-dimensional flow; the speed on the fluid, streamlines with moving particles, the wake behind the post, the drag; `time=` for the flow in time with the step slider |
 
 | `17_flow_topology_optimization.py` | none (the post of example 16 in its slab of water) | `flow_topology_optimization`: the post reshaped for the least drag with its volume kept; the body in the flow with its wake, iteration by iteration |
 

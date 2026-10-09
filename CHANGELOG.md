@@ -1,6 +1,12 @@
 # Changelog
 
-## Next — one import function, a field walk for surface selection, materials and conditions as models
+## 0.6.1 — the flow analysis takes a body, the guided tour works again, points are only their gizmo, one look for the planes
+
+### `fluid_analysis` is the flow around a body: the same inputs as `flow_topology_optimization`
+- **`fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, ...)`**: the flow goes around a body, inside a domain, and the analysis takes what the optimisation takes -- it is to `flow_topology_optimization` what
+  `static_analysis` is to `topology_optimization`: the same flow, solved once for the body as it is. It used to be given only the fluid (`fluid_analysis(difference(slab, post), ...)`), so there was no body for the flow to go around
+  and it could not be the analysis of what the optimiser designs. The old form is gone: `fluid_analysis(post, slab, ...)`. The result shows the fluid coloured by the speed with the body solid, `.wall_force` is the force on the walls (the body's: its drag),
+  and `.body` and `.domain` are what it was made of. The menu writes `body=...` and `domain=...` as placeholders, as for the optimisation; example 16 and the docs are migrated.
 
 ### One look for what a plane shows: the field viewer is drawn like the section view
 - **The field viewer uses the section view's colours and dark lines.** It had its own rainbow; now a field is blue, cream and orange on the same stops as the section view, with the same dark lines at round steps of its values, and a heavier
@@ -17,6 +23,8 @@
 - **The tour's Placeholders step shows a placeholder** (`washer = offset(drilled, ...)`, amber, with its row and the note under the tree) and puts it away when the step is left.
 - **A new tour step, *Move the point***: the point of the field is shown, selected with its gizmo, and the growth follows it as it is dragged.
 - **What a finished tour step says stays on the card** until *Next* is pressed: it moved on by itself after a second, before the note could be read.
+
+## 0.6.0 — one import function, a field walk for surface selection, materials and conditions as models
 
 ### Every kind of boundary condition is an input of its own; every condition is a model of its own
 - **One required input for each kind of condition**, for every analysis: `static_analysis(part, supports, loads, ...)`, `modal_analysis(part, supports, ...)`, `topology_optimization(part, supports, loads, ...)`,

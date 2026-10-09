@@ -1,23 +1,26 @@
 '''
-Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in time.
+Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in time, around a body.
 
     from fieldes import *
 
-    pipe = cylinder_z(5, 60)                             # the FLUID domain: a shape whose inside is the fluid
+    duct = box_exact((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
+    post = cylinder_z(5, 6, (24, 20, -1))                # the BODY the flow goes around
     result = fluid_analysis(
-        pipe,
-        inlets=[inlet(box_exact((-6, -6, -1), (6, 6, 0.5)), flow_rate=2000, profile='developed')],   # mm^3/s, in
-        outlets=[outlet(box_exact((-6, -6, 59.5), (6, 6, 61)), pressure=0)],                         # MPa
+        post,
+        duct,
+        inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
+        outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
         boundaries=[],                                                                               # (none: the rest of the surface is wall)
-        fluid=water, element_size=0.8)
+        fluid=water, element_size=1.0)
     result                                               # the flow (FielDes: the fluid coloured by the speed,
                                                          # streamlines with moving particles; the result card)
-    print(result.pressure_drop * 1e6, 'Pa')
+    print(result.wall_force[0], 'N')                     # the force on the walls, the body's: its drag
     thicker = part + 0.02 * result.pressure              # results are fields like any other
 
-The fluid domain is a shape, the fluid where its field is negative: the inside of a pipe or a
-duct, a box with a part cut out of it (difference(box, part)).  The boundary conditions are regions
-(shapes), on the surface of the fluid.  Each kind is an input of its own -- inlets, outlets, boundaries (walls and slips) -- that is needed (the call is written
+It takes what flow_topology_optimization takes -- the body, the domain, the three kinds of boundary conditions, the fluid -- and
+solves the flow once, around the body as it is (the way static_analysis is to topology_optimization).  The domain is a shape, the fluid
+where its field is negative, with the body's place in it: the fluid is the domain with the body cut out (difference(domain, body)).
+The boundary conditions are regions (shapes), on the surface of the fluid.  Each kind is an input of its own -- inlets, outlets, boundaries (walls and slips) -- that is needed (the call is written
 with a placeholder for each) and takes one item or a list ([] says there is none); each condition is a model of its own, with an eye, drawn on
 the fluid domain:
   inlet(region, velocity= | speed= | flow_rate=, profile='uniform' | 'developed')
@@ -297,6 +300,7 @@ class FluidResult:
         self.warning = w.decode('utf-8', 'replace') if w else ''
         self.min_pressure, self.max_pressure = self._ranges['pressure']
         self._items = items
+        self.body = self.domain = None          # (what the flow is around, and in: set by fluid_analysis)
         self.steps = []
         self.times = []
 
@@ -373,7 +377,12 @@ class FluidResult:
         out = colored(self.shape, self.speed, range=self._ranges['speed'], label=_LABELS['speed'], colormap='turbo')
         out.__dict__.update(shown)
         out._color_detail = float(getattr(self, 'element_size', 0) or 0)
-        return out
+        if self.body is None:
+            return out
+        # (the body the flow goes around, solid, with the fluid: as the flow optimisation shows its body)
+        solid = Shape(lib.libfive_tree_copy(self.body.ptr))
+        solid._bounds = getattr(self.shape, '_bounds', None)
+        return [out, solid]
 
     def __repr__(self):
         if getattr(self, 'times', None):
@@ -504,16 +513,17 @@ _cache = OrderedDict()
 
 
 @_with_conditions
-def fluid_analysis(shape, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
+def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
                    tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
-    ''' Laminar flow of `fluid` through `shape` (the fluid domain: a Shape whose inside is the
-        fluid) with the boundary conditions, one input for each kind (each one item or a list, [] for none):
+    ''' Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
+        fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
+        inputs as flow_topology_optimization, one for each kind (each one item or a list, [] for none):
         inlets    inlet(...) items -- where the fluid comes in (as many as the flow has)
         outlets   outlet(...) items -- where it leaves (one is needed, or a moving wall)
         boundaries  wall(...) items -- moving walls (every surface in no region is a wall at rest) -- and slip(...) items -- symmetry planes
                     and frictionless walls: one or both, in one list
         (see the module's description) -- the steady flow, or the flow in time (time=).  Each condition
-        is a model of its own, drawn on `shape`.
+        is a model of its own, drawn on `domain`.  Every surface in no region is a wall at rest: the body's is, unless a wall(...) moves it.
 
         element_size   mm (default: 40 elements along the longest side); the passages should be
                        four elements across or more
@@ -530,14 +540,20 @@ def fluid_analysis(shape, inlets, outlets, boundaries, fluid=water, element_size
         bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
 
         Returns a FluidResult: the fields (speed, pressure, ...), the flows and the pressure drop,
-        the wall force, streamlines().  An unchanged problem is cached (as a static analysis is).
+        the wall force (on every wall, the body's: its drag is the part along the flow), streamlines(), .body and .domain.  An unchanged problem is cached (as a static analysis is).
         Raises FeaError when the problem cannot be solved as given (a region that touches no
         surface, no outlet and no moving wall, a flow that does not converge). '''
     max_iterations = 60         # (the nonlinear iterations at most: a flow that has not settled by then is unsteady or its mesh too coarse, which the error says)
     conditions = _flow_conditions(inlets, outlets, boundaries, 'fluid_analysis')
-    _use_conditions(conditions, shape)
-    return _fluid_analysis(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
-                           time, store_every)
+    if not isinstance(body, Shape) or not isinstance(domain, Shape):
+        raise TypeError('fluid_analysis: the body and the domain must be Shapes (the flow goes around the body, inside the domain)')
+    _use_conditions(conditions, domain)
+    around = _difference(domain, body)
+    around._bounds = bounds if bounds is not None else _bounds(domain)
+    result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
+                             time, store_every)
+    result.body, result.domain = body, domain
+    return result
 
 
 def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,

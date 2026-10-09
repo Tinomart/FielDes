@@ -268,7 +268,7 @@
  "Use %1 as the region of %2 (in place of its box %3)": "Usar %1 como región de %2 (en lugar de su caja %3)",
  "Add %1 to the regions of %2": "Añadir %1 a las regiones de %2",
  "An analysis is made of one material (or one fluid): drop one of %1 on it.": "Un análisis se hace con un material (o un fluido): suelte uno de %1 sobre él.",
- "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).": "'%1' se crea con %2, que no recibe un material ni un fluido: los análisis sí (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).",
+ "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).": "'%1' se crea con %2, que no recibe un material ni un fluido: los análisis sí (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).",
  "'%1' is already the %2 of '%3', so dropping it here changes nothing.": "'%1' ya está en uso como %2 de '%3', así que soltarlo aquí no cambia nada.",
  "Use %1 as the %2 of %3": "Usar %1 como %2 de %3",
  "'%1' is made by %2, which has no input for %3: they go in an analysis that takes them.": "'%1' lo crea %2, que no tiene una entrada para %3: van en un análisis que las admita.",

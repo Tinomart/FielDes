@@ -422,7 +422,7 @@ def _selection_fits(kind, name, models):
         return True
     if name in _SIMULATIONS:
         # (one input takes one part and one material: a second one has nowhere to go -- the conditions are lists, they take any number)
-        if sum(t in _PART for t in tags) > (2 if name == 'flow_topology_optimization' else 1):
+        if sum(t in _PART for t in tags) > (2 if name in _FLOWS else 1):
             return False
         if sum(t in ('material', 'fluid') for t in tags) > 1:
             return False
@@ -470,7 +470,7 @@ def _build_operation(name, v, others):
             params = []
         parts = ([body] if body else []) + [o['name'] for o in others if o.get('type') in ('solid', 'profile', 'import', 'simulation')]
         args, missing = [], False
-        for k in range(2 if name == 'flow_topology_optimization' else 1):
+        for k in range(2 if name in _FLOWS else 1):
             if k < len(parts):
                 args.append(parts[k] if not missing else '%s=%s' % (params[k] if k < len(params) else 'part', parts[k]))
             else:

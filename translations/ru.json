@@ -268,7 +268,7 @@
  "Use %1 as the region of %2 (in place of its box %3)": "Использовать %1 как область %2 (вместо её параллелепипеда %3)",
  "Add %1 to the regions of %2": "Добавить %1 к областям %2",
  "An analysis is made of one material (or one fluid): drop one of %1 on it.": "Анализ использует один материал (или одну жидкость): перетащите на него один из %1.",
- "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).": "'%1' создан функцией %2, которой не передаются материал или жидкость: их получают анализы (static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).",
+ "'%1' is made by %2, which is not given a material or a fluid: the analyses are (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).": "'%1' создан функцией %2, которой не передаются материал или жидкость: их получают анализы (static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).",
  "'%1' is already the %2 of '%3', so dropping it here changes nothing.": "'%1' уже задан как %2 для '%3', поэтому перетаскивание сюда ничего не изменит.",
  "Use %1 as the %2 of %3": "Использовать %1 как %2 для %3",
  "'%1' is made by %2, which has no input for %3: they go in an analysis that takes them.": "'%1' создаётся функцией %2, у которой нет входа %3: они помещаются в анализ, который их принимает.",

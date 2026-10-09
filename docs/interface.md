@@ -175,7 +175,7 @@ the empty viewport), with only its conditions or only its material selected, it 
 menus take the surfaces, fields or bodies they act on -- **a condition has no body of its own**: the simulation is given the body. A model that has not run yet has no known kind and fits everything; your own [custom blocks](blocks.md) say nothing about what they take, so they are always offered.
 
 The **Simulation** menu lists *static_analysis*, *modal_analysis*, *topology_optimization*, *thermal_analysis*, *thermal_topology_optimization*,
-*fluid_analysis* (a plain analysis: it solves the flow, it does not change a body) and *flow_topology_optimization*. Each is written with the model you right-clicked as the part (the first argument of every simulation; the boundary
+*fluid_analysis* (the flow around a body in a domain, as it is: the same inputs as *flow_topology_optimization*, which changes the body) and *flow_topology_optimization*. Each is written with the model you right-clicked as the part (the first argument of every simulation; the boundary
 conditions have no body in them) -- or, when you right-clicked the empty viewport or selected only conditions, with `shape=...` in its place -- with **`parameter_name=...` for everything the call cannot do without** -- **one input for each kind of boundary condition it takes**, all of them
 required -- and the library's own default for every other argument. A menu never makes up a region, a number, a text
 or a call of its own to put there:

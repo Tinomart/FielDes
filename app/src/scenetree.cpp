@@ -6553,7 +6553,7 @@ ScenePanel::OnPlan ScenePanel::planDropOn(const QList<QJsonObject>& models, cons
             if (param.isEmpty())
             {
                 p.why = T("'%1' is made by %2, which is not given a material or a fluid: the analyses are "
-                        "(static_analysis(part, supports, loads, material=steel), fluid_analysis(part, inlets, outlets, boundaries, fluid=water)).")
+                        "(static_analysis(part, supports, loads, material=steel), fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water)).")
                             .arg(tname, fnText);
                 return p;
             }
