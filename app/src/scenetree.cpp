@@ -7936,6 +7936,26 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
         notify(why);
         return;
     }
+    // A model that was inside a call and is dragged out to the top level stands there on its own: the other statements that use it hold a
+    // reference to it (`# shadow: name`) instead of becoming its owner and taking its row under theirs (the next of them would have it, and the
+    // model would still be nested in a call -- only another one)
+    if (!m_dropShadow)
+    {
+        for (const auto& m : moving)
+        {
+            if (!m.contains("owner") || !m.contains("var")) continue;
+            const QString name = m["var"].toString();
+            const QString from = sourceStatement(m)["var"].toString();
+            for (const auto v : m_scene["items"].toArray())
+            {
+                const auto u = v.toObject();
+                const QString uname = u["var"].toString();
+                if (uname.isEmpty() || uname == name || uname == from || !directInputs(u).contains(name)) continue;
+                const int last = u["end_line"].toInt() - 1;
+                if (last >= 0 && last < lines.size()) lines[last] = markShadow(lines[last], name);
+            }
+        }
+    }
     QList<Dissolve> dissolve;
     if (!moving.isEmpty())
     {
@@ -8000,10 +8020,23 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
                 }
             }
         }
-        if (!rest.isEmpty() && !moveGroups(lines, &origin, rest, place, false, &why))
+        if (!rest.isEmpty())
         {
-            notify(why);
-            return;
+            // What was taken out of a call is out of it, whatever its new place: a place that would put its definition below a statement
+            // that uses it (or that the script cannot have it at) leaves the model where its definition is and the call a placeholder.
+            // Only a plain move, with nothing taken out of a call, is refused
+            QStringList moved = lines;
+            QVector<int> movedOrigin = origin;
+            if (moveGroups(moved, &movedOrigin, rest, place, false, &why))
+            {
+                lines = moved;
+                origin = movedOrigin;
+            }
+            else if (w.edits.isEmpty())
+            {
+                notify(why);
+                return;
+            }
         }
         if (!dissolve.isEmpty() && !confirmDissolve(dissolve)) return;
         for (const auto& d : dissolve)

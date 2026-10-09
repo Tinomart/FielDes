@@ -190,6 +190,24 @@ ResultPanel::ResultPanel(QWidget* parent)
     bottom->addWidget(m_flow);
     bottom->addStretch();
     layout->addLayout(bottom);
+    {
+        // (a flow is drawn translucent when the body in it is to be seen: the same slider as the field viewer's)
+        m_opacityRow = new QWidget;
+        m_opacity = new QSlider(Qt::Horizontal);
+        m_opacity->setObjectName("resultOpacity");
+        m_opacity->setRange(5, 100);
+        m_opacity->setValue(100);
+        m_opacity->setToolTip(T("How opaque the fluid is drawn: lower it to see the body in the flow"));
+        auto row = new QHBoxLayout(m_opacityRow);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->addWidget(new QLabel(T("Opacity")));
+        row->addWidget(m_opacity, 1);
+        m_opacityRow->hide();
+        layout->addWidget(m_opacityRow);
+        connect(m_opacity, &QSlider::valueChanged, this, [this](int v) {
+            if (!m_updating) emit(opacityChanged(v / 100.0f));
+        });
+    }
     layout->addWidget(m_info);
     setMinimumWidth(220);
     resize(240, 100);
@@ -303,6 +321,8 @@ void ResultPanel::setState(const State& s)
     m_elements->setChecked(s.showElements);
     m_flow->setVisible(s.hasFlow);
     m_flow->setChecked(s.showFlow);
+    m_opacityRow->setVisible(s.hasFlow);
+    m_opacity->setValue(int(std::lround(s.opacity * 100.0f)));
     m_stepRow->setVisible(s.steps > 0);
     m_step->setRange(0, std::max(0, s.steps - 1));
     m_step->setValue(s.step);

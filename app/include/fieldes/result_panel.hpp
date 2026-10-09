@@ -66,6 +66,7 @@ public:
         float playSpeed = 1;         // 1 = ten steps a second
         bool hasFlow = false;        // a flow with streamlines...
         bool showFlow = true;        // ...drawn over it
+        float opacity = 1;           // how opaque the flow is drawn (a lower one shows the body in it)
     };
     void setState(const State& s);
     // The width the name of the field shown needs, so that a long one (in another language) is not cut off at the card's usual width
@@ -85,6 +86,7 @@ signals:
     void playModeChanged(int mode);
     void playSpeedChanged(float speed);
     void flowToggled(bool on);
+    void opacityChanged(float opacity);
 
 protected:
     void updateScaleLabel(float scale);
@@ -98,6 +100,8 @@ protected:
     QToolButton* m_trueScale;
     QToolButton* m_elements;
     QToolButton* m_flow;
+    QWidget* m_opacityRow = nullptr;
+    QSlider* m_opacity = nullptr;
     QWidget* m_stepRow;
     QToolButton* m_play;
     QToolButton* m_stepBack;

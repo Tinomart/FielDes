@@ -119,6 +119,12 @@ public:
     bool noPaint() const { return no_paint; }
 
     /*
+     *  How opaque a result is drawn (1: opaque): a flow is drawn translucent when the body in it is to be seen through it
+     */
+    void setOpacity(float a) { opacity = std::max(0.05f, std::min(1.0f, a)); }
+    float opacityValue() const { return opacity; }
+
+    /*
      *  Bounds of the current mesh (empty region if not meshed yet)
      */
     const libfive::Region<3>& getMeshBounds() const { return mesh_bounds; }
@@ -534,6 +540,7 @@ protected:
     bool hover=false;
     bool selected=false;
     bool no_paint=false;
+    float opacity=1.0f;
     int source_line=-1;
 
     QFuture<BoundedMesh> mesh_future;

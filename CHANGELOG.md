@@ -2,6 +2,14 @@
 
 ## 0.6.1 — the flow analysis takes a body, the guided tour works again, points are only their gizmo, one look for the planes
 
+### The flow result card has an Opacity slider; a model dragged out of a call that needs it leaves a placeholder
+- **A flow can be drawn translucent**, so that the body in it shows: the result card of `fluid_analysis` and of `flow_topology_optimization` has an **Opacity** slider (as the field viewer's), and the body stays solid inside the fluid. The
+  setting is kept while you edit and run again. (The fluid used to be opaque, and a body inside a box of fluid was hidden by it.)
+- **Dragging a model out of the call it is in always works.** `select_surface(cube, ...)` dragged out of its selection used to be refused when the place it was dropped at would have put its definition below another statement that uses it
+  (the cube is used by every selection of it): the whole drag failed, so nothing could be taken out. The model is now taken out of the call (`select_surface(..., seed=...)`, a placeholder where it was) and stays where its definition is when
+  the place cannot be had; **the other statements that use it hold a reference to it** (`# shadow: cube`), so the model stands at the top level instead of moving under the next statement that uses it (it used to land in
+  another selection, nested again). Only a plain move that takes nothing out of a call is still refused, with the reason.
+
 ### `fluid_analysis` is the flow around a body: the same inputs as `flow_topology_optimization`
 - **`fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, ...)`**: the flow goes around a body, inside a domain, and the analysis takes what the optimisation takes -- it is to `flow_topology_optimization` what
   `static_analysis` is to `topology_optimization`: the same flow, solved once for the body as it is. It used to be given only the fluid (`fluid_analysis(difference(slab, post), ...)`), so there was no body for the flow to go around

@@ -141,6 +141,10 @@ View::View(QWidget* parent)
     connect(m_resultPanel, &ResultPanel::flowToggled, this, [=](bool on) {
         forResults([on](Shape* s) { s->setShowFlowLines(on); }, false);
     });
+    connect(m_resultPanel, &ResultPanel::opacityChanged, this, [=](float a) {
+        m_flowOpacity = a;
+        forResults([a](Shape* s) { if (s->hasFlowLines()) s->setOpacity(a); }, false);
+    });
     connect(m_resultPanel, &ResultPanel::playToggled, this, [=](bool on) {
         if (on)
         {
@@ -252,6 +256,10 @@ View::~View()
 
 void View::setShapes(QList<Shape*> new_shapes)
 {
+    for (auto s : new_shapes)
+    {
+        if (s->hasFlowLines()) s->setOpacity(m_flowOpacity);        // (a flow keeps how opaque it was made, run after run)
+    }
     // We're going to co-optimize every single new and old tree together,
     // so that we can deduplicate them.  This could be expensive; if we
     // notice the main thread lagging, we could do the new_shapes half of this
@@ -681,18 +689,43 @@ void View::paintGL()
 
     const bool clipping = section.enabled && section.clip;
     setClipUniform(clipping);
-    for (auto& s : shapes)
+    // (the opaque shapes first; then the translucent ones -- a flow with a body in it -- blended over them.  A translucent shape is drawn
+    // twice: first for its depth alone, so that only its nearest layer is left, then in colour over that layer.  Blending every triangle in
+    // the order the mesh has them would paint the far side and the inner surfaces over the near ones, in patches)
+    for (int pass = 0; pass < 3; ++pass)
     {
-        // The boundary conditions are drawn on the part's own surface: pulled a hair towards the eye, they win over the part when both are shown
-        // (a patch of a surface is on the part's surface too)
-        const bool onTheSurface = !s->boundaryGlyphs().empty() || s->isSurfacePatch();
-        if (onTheSurface)
+        if (pass == 1)
         {
-            glEnable(GL_POLYGON_OFFSET_FILL);
-            glPolygonOffset(-1.0f, -1.0f);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);        // (the nearest layer of the translucent shapes: depth only)
         }
-        if (!s->noPaint()) s->draw(m);
-        if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
+        if (pass == 2)
+        {
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthMask(GL_FALSE);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+        }
+        for (auto& s : shapes)
+        {
+            if ((s->opacityValue() < 0.999f) != (pass >= 1)) continue;
+            // The boundary conditions are drawn on the part's own surface: pulled a hair towards the eye, they win over the part when both are shown
+            // (a patch of a surface is on the part's surface too)
+            const bool onTheSurface = !s->boundaryGlyphs().empty() || s->isSurfacePatch();
+            if (onTheSurface)
+            {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.0f, -1.0f);
+            }
+            if (!s->noPaint()) s->draw(m);
+            if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
+        }
+        if (pass == 2)
+        {
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glDisable(GL_BLEND);
+        }
     }
     if (clipping)
     {
@@ -1422,6 +1455,7 @@ void View::updateResultPanel()
     st.playSpeed = m_playSpeed;
     st.hasFlow = r->hasFlowLines();
     st.showFlow = r->showFlowLines();
+    st.opacity = r->opacityValue();
     bool flowing = false;
     for (auto s : shapes) if (s->showsFlowLines()) flowing = true;
     if (flowing && !m_flowTimer.isActive()) m_flowTimer.start();

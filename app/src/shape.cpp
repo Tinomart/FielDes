@@ -1862,7 +1862,7 @@ void Shape::draw(const QMatrix4x4& M)
         if (colored)
         {   // The field's colours, lit; hover / selection brighten a little
             const float k = selected ? 1.0f : s;
-            glUniform4f(Shader::basic->uniformLocation("color_mul"), k, k, k, 1.0f);
+            glUniform4f(Shader::basic->uniformLocation("color_mul"), k, k, k, opacity);
             glUniform4f(Shader::basic->uniformLocation("color_add"),
                         selected ? 0.12f : 0.0f, selected ? 0.10f : 0.0f, 0.0f, 0.0f);
         }

@@ -507,6 +507,7 @@ public:
 private:
     int m_playMode = 0;                 // 0 loop, 1 back and forth, 2 once (stop at the end)
     float m_playSpeed = 1.0f;           // steps per second = 10 x this
+    float m_flowOpacity = 1.0f;         // how opaque a flow is drawn (the result card's slider): the body in it shows through a lower one
     int m_playDir = 1;                  // (back and forth: which way)
 
     /*  For click-to-select: where the press happened and what it hit  */
