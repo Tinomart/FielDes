@@ -102,6 +102,7 @@ bool Automation::load(const QString& path)
         return false;
     }
     QTextStream in(&f);
+    in.setCodec("UTF-8");           // (a script may name a menu or a row in any language)
     while (!in.atEnd())
     {
         const QString line = in.readLine().trimmed();

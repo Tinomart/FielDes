@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <functional>
 #include <iostream>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/carddrag.hpp"
 #include "fieldes/color.hpp"
 #include "fieldes/view.hpp"
@@ -116,6 +117,8 @@ View::View(QWidget* parent)
     // Analysis results: which field, how much deformation, elements
     m_resultPanel = new ResultPanel(this);
     m_resultPanel->hide();
+    m_livePanel = new LivePanel(this);
+    m_livePanel->hide();
     auto forResults = [this](auto fn, bool resample) {
         for (auto s : shapes) if (s->hasResult() || s->stepCount() > 0) fn(s);
         updateResultPanel();
@@ -210,6 +213,11 @@ View::View(QWidget* parent)
         if (any) update(); else m_flowTimer.stop();
     });
 
+    // An optimisation that runs shows its design as it goes (a few times a second: the picture is only looked at when it is new)
+    m_liveTimer.setInterval(120);
+    connect(&m_liveTimer, &QTimer::timeout, this, &View::pollLive);
+    m_liveTimer.start();
+
     // Section field sampling, and the field viewer's disc: each debounced, in a worker thread of its own
     for (Plane* plane : {&m_sec, &m_fld})
     {
@@ -251,14 +259,16 @@ void View::setShapes(QList<Shape*> new_shapes)
     // the map from the thread.
     std::unordered_map<libfive::TreeDataKey, libfive::Tree> canonical;
 
-    // Pack tree IDs into a pair of sets for fast checking
-    std::map<libfive::Tree::Id, Shape*> new_shapes_map;
-    std::map<libfive::Tree::Id, libfive::Tree::Id> new_shapes_canonical;
+    // Pack tree IDs into a pair of sets for fast checking.  A shape is its geometry AND its colours: the same geometry coloured
+    // differently is another shape (a body, and the same body tinted where a condition acts on it, are both drawn)
+    using ShapeKey = std::pair<libfive::Tree::Id, QString>;
+    std::map<ShapeKey, Shape*> new_shapes_map;
+    std::map<Shape*, ShapeKey> new_shapes_key;
     for (auto& s : new_shapes)
     {
-        auto c = s->getUniqueId(canonical);
-        new_shapes_canonical.insert({s->id(), c});
-        new_shapes_map.insert({c, s});
+        const ShapeKey key{s->getUniqueId(canonical), s->colorKey()};
+        new_shapes_key.insert({s, key});
+        new_shapes_map.insert({key, s});
     }
 
     // Erase all existing shapes that aren't in the new_shapes list
@@ -266,13 +276,8 @@ void View::setShapes(QList<Shape*> new_shapes)
     bool any_running = false;
     for (auto itr=shapes.begin(); itr != shapes.end(); /* no update */ )
     {
-        auto n = new_shapes_map.find((*itr)->getUniqueId(canonical));
-        // Same geometry coloured differently (another field or range) is a
-        // different shape: its colours are computed while meshing
-        if (n != new_shapes_map.end() && n->second->colorKey() != (*itr)->colorKey())
-        {
-            n = new_shapes_map.end();
-        }
+        // (same geometry coloured differently -- another field or range -- is a different shape: its colours are computed while meshing)
+        auto n = new_shapes_map.find(ShapeKey{(*itr)->getUniqueId(canonical), (*itr)->colorKey()});
         if (n == new_shapes_map.end())
         {
             if (*itr == drag_target)
@@ -313,7 +318,7 @@ void View::setShapes(QList<Shape*> new_shapes)
     // Connect all new shapes
     for (auto s : new_shapes)
     {
-        if (new_shapes_map.count(new_shapes_canonical[s->id()]))
+        if (new_shapes_map.count(new_shapes_key[s]))
         {
             connect(s, &Shape::redraw, this, &View::update);
             connect(s, &Shape::gotMesh, this, &View::checkMeshes);
@@ -345,7 +350,7 @@ void View::setShapes(QList<Shape*> new_shapes)
         static int number = 0;
         size_t fresh = 0;
         for (auto s : new_shapes)
-            if (new_shapes_map.count(new_shapes_canonical[s->id()])) ++fresh;
+            if (new_shapes_map.count(new_shapes_key[s])) ++fresh;
         if (FILE* f = std::fopen(log, "a"))
         {
             std::fprintf(f, "run %d: %d shapes shown, %d new (render starts), %d kept\n", ++number, int(shapes.size()), int(fresh),
@@ -353,6 +358,8 @@ void View::setShapes(QList<Shape*> new_shapes)
             std::fclose(f);
         }
     }
+    m_liveDrawn = false;
+    updateResultPanel();            // (shapes that went take their legend with them; new ones bring theirs when they have meshes)
     update();
     requestSlice();
 }
@@ -647,8 +654,7 @@ void View::paintGL()
                 (fmt.majorVersion() == def.majorVersion() &&
                  fmt.minorVersion() < def.minorVersion()))
         {
-            auto err = QString(
-                    "Error:<br><br>"
+            auto err = T("Error:<br><br>"
                     "OpenGL context is too old<br>"
                     "(got %1.%2, need %3.%4)<br><br>"
                     "The application will now exit.<br>")
@@ -721,7 +727,8 @@ void View::paintGL()
             float r = 0.8f, gr = 0.8f, b = 0.8f;
             bcCategoryRGB(g.kind, r, gr, b);
             const QColor color = QColor::fromRgbF(r, gr, b);
-            if (g.kind == 1 || g.kind == 2)
+            // (a pad lies on the surface: a support, a wall, a slip, a fixed temperature, a convection; the rest are arrows)
+            if (g.kind == 1 || g.kind == 2 || g.kind == 9 || g.kind == 10 || g.kind == 11 || g.kind == 12)
                 glyphs.drawPad(m, g.pos, g.size, g.dir, color);
             else
                 glyphs.drawArrow(m, g.pos, g.size, g.dir, color, g.tip);
@@ -839,7 +846,7 @@ void View::paintOverlay(QPainter& painter)
         QFont font = painter.font();
         font.setPointSizeF(9);
         painter.setFont(font);
-        const QString text = (probe_label.isEmpty() ? QString("value") : probe_label) +
+        const QString text = (probe_label.isEmpty() ? T("value") : probe_label) +
                              ":  " + QString::number(probe_value, 'g', 5);
         const QFontMetrics fm(font);
         const QRectF box(probe_pos + QPointF(16, 12),
@@ -872,6 +879,188 @@ void View::paintOverlay(QPainter& painter)
     }
 }
 
+void View::pollLive()
+{
+    swapLive();                 // (a picture whose meshes came in between two looks)
+    const auto now = libfive::run_progress::liveView();
+    if (!now && !m_live) return;
+    if (now && m_live && now->serial == m_live->serial) return;
+    m_live = now;
+    if (!now)
+    {
+        // (the optimisation is over: what is shown stays until the run makes its result, which replaces it)
+        for (auto s : m_livePending) s->deleteLater();
+        m_livePending.clear();
+        m_liveWaiting = false;
+        m_livePanel->hide();
+        update();
+        return;
+    }
+    m_livePanel->setView(*now);
+    if (!m_livePanel->isVisible())
+    {
+        m_livePanel->show();
+        placeLivePanel();
+    }
+    // The picture is of the model the statement that runs makes: when that model is not shown (its eye is off) none of it is drawn, and its
+    // legend is not there -- only the card says how the optimisation is doing
+    const int running = libfive::run_progress::current().line;
+    if (m_scene && running > 0 && !m_scene->shownAtLine(running))
+    {
+        for (auto s : m_livePending) s->deleteLater();
+        m_livePending.clear();
+        m_liveWaiting = false;
+        if (m_liveDrawn)
+        {
+            // (it was shown until its eye was turned off)
+            for (auto s : shapes)
+            {
+                disconnect(s, &Shape::redraw, this, &View::update);
+                s->deleteLater();
+            }
+            shapes.clear();
+            m_liveDrawn = false;
+            updateResultPanel();
+        }
+        update();
+        return;
+    }
+    // A picture that is still being meshed is not thrown away for the newer one: a part whose picture takes longer to mesh than an iteration
+    // takes would never be shown at all.  It is shown when it is done, and the newest picture is meshed next
+    bool meshing = false;
+    for (auto s : m_livePending)
+        if (!s->done()) meshing = true;
+    if (meshing)
+    {
+        m_liveWaiting = true;
+        update();
+        return;
+    }
+    startLive();
+    update();
+}
+
+// The shapes of a picture of an optimisation, made as the shapes of a result are (see Interpreter::recordShape) and rendered as any:
+// they replace the ones shown (swapLive) when every one of them has its mesh
+void View::startLive()
+{
+    for (auto s : m_livePending) s->deleteLater();
+    m_livePending.clear();
+    // The render settings the script has given by now (it is still running: they are read from it), else those of the run before, over
+    // what the picture covers
+    Settings live = settings;
+    if (m_liveSettings)
+    {
+        const auto o = QJsonDocument::fromJson(m_liveSettings().toUtf8()).object();
+        const auto lo = o["min"].toArray(), hi = o["max"].toArray();
+        if (lo.size() == 3 && hi.size() == 3)
+        {
+            live.min = QVector3D(float(lo[0].toDouble()), float(lo[1].toDouble()), float(lo[2].toDouble()));
+            live.max = QVector3D(float(hi[0].toDouble()), float(hi[1].toDouble()), float(hi[2].toDouble()));
+        }
+        if (o["res"].isDouble()) live.res = float(o["res"].toDouble());
+        if (o["quality"].isDouble()) live.quality = float(o["quality"].toDouble());
+    }
+    m_liveMin = live.min;
+    m_liveMax = live.max;
+    // (the numbers of the script -- var() -- the trees may hold: those of the shapes shown)
+    std::map<libfive::Tree::Id, float> vars;
+    for (auto s : shapes)
+        for (const auto& kv : s->getVars()) vars.insert(kv);
+    for (const auto& ls : m_live->shapes)
+    {
+        auto* s = new Shape(ls.tree, vars);
+        if (ls.surfaceTris.size() >= 3)
+        {
+            // (the surface of the design, drawn as it is: see LiveShape)
+            auto surface = std::make_shared<Shape::ExactMesh>();
+            surface->key = "live:" + std::to_string(m_live->serial);
+            surface->verts = ls.surfaceVerts;
+            surface->tris = ls.surfaceTris;
+            s->setSurfaceMesh(surface);
+        }
+        if (!ls.channels.empty())
+        {
+            std::vector<Shape::FieldChannel> channels;
+            for (const auto& c : ls.channels)
+            {
+                Shape::FieldChannel fc;
+                fc.name = QString::fromStdString(c.name);
+                fc.label = T(QString::fromStdString(c.label));
+                fc.tree = c.tree;
+                fc.lo = c.lo;
+                fc.hi = c.hi;
+                channels.push_back(fc);
+            }
+            const auto& first = channels.front();
+            s->setColorField(first.tree, first.lo, first.hi, false, first.label, "turbo");
+            if (!ls.lines.empty())
+            {
+                std::vector<Shape::FlowLine> lines;
+                for (const auto& l : ls.lines) lines.push_back(Shape::FlowLine(l.begin(), l.end()));
+                s->setFlowLines(std::move(lines), ls.linesLo, ls.linesHi);
+            }
+            s->setResult(channels, 0, libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid(), 0.0f, 1.0f,
+                         Shape::ElementGrid());
+            s->setColorDetail(ls.detail);
+        }
+        s->setParent(this);
+        connect(s, &Shape::gotMesh, this, &View::swapLive);
+        m_livePending.push_back(s);
+    }
+    for (auto s : m_livePending) s->startRender(live, alg);
+}
+
+void View::swapLive()
+{
+    if (m_livePending.isEmpty()) return;
+    for (auto s : m_livePending)
+        if (!s->done() || !s->getMesh()) return;
+    // The picture is meshed: it takes the place of what is shown
+    const bool framed = !shapes.isEmpty();
+    for (auto s : shapes)
+    {
+        if (s == drag_target)
+        {
+            drag_target->setGrabbed(false);
+            drag_target = nullptr;
+            emit(dragEnd());
+            mouse.state = mouse.RELEASED;
+        }
+        if (s == hover_target)
+        {
+            hover_target->setHover(false);
+            hover_target = nullptr;
+        }
+        disconnect(s, &Shape::redraw, this, &View::update);
+        s->deleteLater();
+    }
+    shapes.clear();
+    m_liveDrawn = true;
+    for (auto s : m_livePending)
+    {
+        disconnect(s, &Shape::gotMesh, this, &View::swapLive);
+        connect(s, &Shape::redraw, this, &View::update);
+        connect(s, &Shape::gotMesh, this, &View::checkMeshes);
+        connect(s, &Shape::gotMesh, this, &View::updateResultPanel);
+        connect(s, &Shape::gotMesh, &pick_timer, QOverload<>::of(&QTimer::start));
+        connect(this, &View::startRender, s, [=](Settings st) { s->startRender(st, this->alg); });
+        shapes.push_back(s);
+    }
+    m_livePending.clear();
+    // (the first picture of a run that had nothing shown: the camera looks at it)
+    if (!framed) camera.zoomTo(m_liveMin, m_liveMax);
+    updateResultPanel();
+    pick_timer.start();
+    update();
+    // (a newer picture came while this one was meshing: its turn)
+    if (m_liveWaiting && m_live)
+    {
+        m_liveWaiting = false;
+        startLive();
+    }
+}
+
 void View::drawRenderProgress(QPainter& painter)
 {
     // The render's progress, small, bottom right (where the busy spinner
@@ -894,7 +1083,7 @@ void View::drawRenderProgress(QPainter& painter)
     }
     const double e = m_renderClock.elapsed() / 1000.0;
     m_renderShown = std::max(m_renderShown, std::min(0.99, renderFraction()));
-    const QString text = "Rendering";
+    const QString text = T("Rendering");
     if (qEnvironmentVariableIsSet("FIELDES_TIMING") && int(e) != m_renderLogged)
     {
         m_renderLogged = int(e);
@@ -1071,15 +1260,16 @@ void View::drawLegends(QPainter& painter)
     int right = (m_resultPanel && m_resultPanel->isVisible()) ? m_resultPanel->geometry().left() - 10 : width() - 14;
 
     // (only selected surfaces shown: the key is called so)
-    const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";
+    const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";     // (the key of the legend: shown through T())
     if (!bcCategories.isEmpty() && !hidden_legends.contains(bcTitle))
     {
-        static const char* names[7] = {"", "Fixed support", "Sliding support", "Force", "Gravity", "Heat",
-                                       "Selected surface"};
+        static const QString names[kBcCategories + 1] = {"", T("Fixed support"), T("Sliding support"), T("Force"), T("Gravity"), T("Heat"),
+                                         T("Selected surface"), T("Inlet"), T("Outlet"), T("Wall"), T("Slip"), T("Fixed temperature"),
+                                         T("Convection"), T("Heat generated")};
         QList<int> cats = bcCategories.values();
         std::sort(cats.begin(), cats.end());
-        int textW = fm.horizontalAdvance(bcTitle) + 16;
-        for (int c : cats) textW = std::max(textW, 18 + fm.horizontalAdvance(names[std::max(0, std::min(6, c))]));
+        int textW = fm.horizontalAdvance(T(bcTitle)) + 16;
+        for (int c : cats) textW = std::max(textW, 18 + fm.horizontalAdvance(names[std::max(0, std::min(kBcCategories, c))]));
         const int rowH = fm.height() + 4;
         const int boxW = textW + 20, boxH = fm.height() + 20 + rowH * cats.size();
         const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
@@ -1088,7 +1278,7 @@ void View::drawLegends(QPainter& painter)
         painter.drawRoundedRect(box, 6, 6);
         painter.setPen(QColor(0xee, 0xe8, 0xd5));
         painter.drawText(QRect(box.left() + 10, box.top() + 6, boxW - 20, fm.height()),
-                         Qt::AlignLeft | Qt::AlignVCenter, bcTitle);
+                         Qt::AlignLeft | Qt::AlignVCenter, T(bcTitle));
         bottom_items.push_back(QRectF(box));
         const QRect close(box.right() - 18, box.top() + 4, 14, 14);
         painter.setPen(QColor(0xee, 0xe8, 0xd5, 170));
@@ -1104,7 +1294,7 @@ void View::drawLegends(QPainter& painter)
             painter.drawRect(QRect(box.left() + 10, y + 2, 12, fm.height() - 2));
             painter.setPen(QColor(0xee, 0xe8, 0xd5));
             painter.drawText(QRect(box.left() + 28, y, textW, rowH), Qt::AlignLeft | Qt::AlignVCenter,
-                             names[std::max(0, std::min(6, c))]);
+                             names[std::max(0, std::min(kBcCategories, c))]);
             y += rowH;
         }
         right = box.left() - 8;
@@ -1162,6 +1352,7 @@ void View::drawLegends(QPainter& painter)
 
 void View::resizeGL(int width, int height)
 {
+    QTimer::singleShot(0, this, [this] { placeLivePanel(); });
     camera.size = {width, height};
     pick_timer.start();
     if (m_overlay)
@@ -1171,6 +1362,17 @@ void View::resizeGL(int width, int height)
     placeResultPanel();
 }
 
+void View::placeLivePanel()
+{
+    if (!m_livePanel || !m_livePanel->isVisible()) return;
+    // (a card the user sized keeps its size, and one the user moved keeps its place: see CardController)
+    if (!CardController::sized(m_livePanel))
+        m_livePanel->resize(std::max(260, std::min(m_livePanel->textWidth(), width() - 40)), m_livePanel->sizeHint().height() + 24);
+    if (!CardController::moved(m_livePanel))
+        m_livePanel->move((width() - m_livePanel->width()) / 2, 10);
+    m_livePanel->raise();
+}
+
 void View::placeResultPanel()
 {
     if (!m_resultPanel || !m_resultPanel->isVisible()) return;
@@ -1178,7 +1380,7 @@ void View::placeResultPanel()
     if (!CardController::sized(m_resultPanel))
     {
         const int h = std::min(m_resultPanel->sizeHint().height(), std::max(160, height() - 180));
-        m_resultPanel->resize(240, h);
+        m_resultPanel->resize(std::max(240, std::min(m_resultPanel->labelsWidth(), width() / 2)), h);
     }
     if (!CardController::moved(m_resultPanel))
         m_resultPanel->move(width() - m_resultPanel->width() - 12, height() - m_resultPanel->height() - 44);
@@ -1186,8 +1388,10 @@ void View::placeResultPanel()
 
 void View::updateResultPanel()
 {
+    // The legend of a result is there when the result is: a shape that has its mesh (what is drawn), not one that is still being meshed or
+    // one that has gone
     Shape* r = nullptr;
-    for (auto s : shapes) if (s->hasResult()) { r = s; break; }
+    for (auto s : shapes) if (s->hasResult() && s->getMesh()) { r = s; break; }
     if (!r)
     {
         m_resultPanel->hide();
@@ -1776,10 +1980,10 @@ bool isSimulationOperation(const QString& group)
 void View::addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale)
 {
     const int generation = m_scene ? m_scene->generation() : -1;
-    auto action = menu->addAction(TypeIcons::icon("solid"), "Body from field", this,
+    auto action = menu->addAction(TypeIcons::icon("solid"), T("Body from field"), this,
                                   [=]{ emit(createRequested("operation", "body_from_field", point, scale, line, generation)); });
-    action->setToolTip("A body where the field is below 0: body_from_field(field, level) -- change the level in the script to take "
-                       "another surface of it.  (Operation > Field math has it too, with the rest of the field math.)");
+    action->setToolTip(T("A body where the field is below 0: body_from_field(field, level) -- change the level in the script to take "
+                       "another surface of it.  (Operation > Field math has it too, with the rest of the field math.)"));
 }
 
 void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine)
@@ -1787,8 +1991,8 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     // New material, New fluid, New support or load, New thermal condition, New flow condition: each a menu of its own, in the
     // order the catalog has them
     static const QHash<QString, QString> titles = {
-        {"Materials", "New material"}, {"Fluids", "New fluid"}, {"Supports and loads", "New support or load"},
-        {"Thermal conditions", "New thermal condition"}, {"Flow conditions", "New flow condition"}};
+        {"Materials", T("New material")}, {"Fluids", T("New fluid")}, {"Supports and loads", T("New support or load")},
+        {"Thermal conditions", T("New thermal condition")}, {"Flow conditions", T("New flow condition")}};
     static const QStringList order = {"Materials", "Fluids", "Supports and loads", "Thermal conditions", "Flow conditions"};
     QHash<QString, QList<QJsonObject>> groups;
     for (const auto v : m_catalog["primitives"].toArray())
@@ -1802,13 +2006,21 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
         if (!groups.contains(g)) continue;
         const auto& entries = groups[g];
         const QString type = entries.first()["type"].toString("conditions");
-        auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, g));
+        auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
         sub->setToolTipsVisible(true);
         for (const auto& p : entries)
         {
             const QString name = p["name"].toString();
-            sub->addAction(TypeIcons::icon(p["type"].toString(type)), name,
-                           this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
+            auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type)), name,
+                                         this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
+            // (a condition made of the models selected: not offered for a selection the library cannot write it for)
+            if (p["with_bodies"].toBool() && m_scene && !m_scene->entryAllowed("primitive", name, atLine)) action->setEnabled(false);
+            if (p["with_bodies"].toBool())
+            {
+                action->setToolTip(T("With several models selected: the first is the body, the others are where it acts (bodies, fields, "
+                                   "selected surfaces) -- written with the surface of the body there.  With one model, or none: a placeholder for "
+                                   "where it acts, to drop a body, a field or a surface on."));
+            }
         }
     }
 }
@@ -1818,11 +2030,12 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
     QJsonArray ops;
     for (const auto v : m_catalog["operations"].toArray())
     {
+        if (v.toObject()["quick"].toBool()) continue;          // (in the first menu: see addQuickOperations)
         if (isSimulationOperation(v.toObject()["group"].toString()) == simulations) ops.append(v);
     }
     if (ops.isEmpty())
     {
-        menu->addAction("(not loaded yet: run the script first)")->setEnabled(false);
+        menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
         return;
     }
     const bool haveOther = m_scene && m_scene->hasOtherModel(line);
@@ -1844,7 +2057,7 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         else if (!sub || o["group"].toString() != group)
         {
             group = o["group"].toString();
-            sub = group == "Custom blocks" ? menu->addMenu(TypeIcons::icon("block"), group) : menu->addMenu(group);
+            sub = group == "Custom blocks" ? menu->addMenu(TypeIcons::icon("block"), T(group)) : menu->addMenu(T(group));
             sub->setToolTipsVisible(true);
         }
         const QString name = o["name"].toString();
@@ -1852,11 +2065,35 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
         if (simulations) action->setIcon(TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation"));
         if (!o["doc"].toString().isEmpty()) action->setToolTip(o["doc"].toString());
+        else if (o["other"].toBool() && !o["needs_other"].toBool(true))
+        {
+            action->setToolTip(T("With several models selected: the first is the one this is made for, the others are what it uses -- where it "
+                               "acts, its conditions, its material.  With one model: a first version to change in the script."));
+        }
         if (o["needs_other"].toBool(o["other"].toBool()) && !haveOther)
         {
             action->setEnabled(false);
-            action->setToolTip("Needs a second model");
+            action->setToolTip(T("Needs a second model"));
         }
+        // (what is selected cannot make it: the library refuses the call for this selection -- a part with supports and loads for a set of
+        // conditions, conditions with no part for a simulation ...)
+        if (m_scene && action->isEnabled() && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
+    }
+}
+
+void View::addQuickOperations(QMenu* menu, int line, const QVector3D& point, double scale)
+{
+    const int generation = m_scene ? m_scene->generation() : -1;
+    for (const auto v : m_catalog["operations"].toArray())
+    {
+        const auto o = v.toObject();
+        if (!o["quick"].toBool()) continue;
+        const QString name = o["name"].toString();
+        auto action = menu->addAction(TypeIcons::icon(name == "center" ? "point" : "solid"), name, this,
+                                      [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
+        action->setToolTip(name == "center" ? T("The middle of the model's bounding box, as a point")
+                                            : T("The smallest box, aligned with the axes, that holds the model: a body of its own"));
+        if (m_scene && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
     }
 }
 
@@ -1904,11 +2141,11 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     // fields, and the custom blocks that need no model.  (A kind with one entry is that entry.)  What a simulation is made of --
     // materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu, not here
     const QJsonArray list = m_catalog["primitives"].toArray();
-    if (list.isEmpty()) menu->addAction("(not loaded yet: run the script first)")->setEnabled(false);
+    if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
     {
         static const QHash<QString, QString> titles = {
-            {"3D", "New 3D shape"}, {"2D", "New 2D shape"}, {"Points", "New point"}, {"Surfaces", "New surface"},
-            {"Fields", "New field"}, {"Custom blocks", "New custom block"}};
+            {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
+            {"Fields", T("New field")}, {"Custom blocks", T("New custom block")}};
         QStringList order;
         QHash<QString, QList<QJsonObject>> groups;
         for (const auto v : list)
@@ -1933,22 +2170,22 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
             if (entries.size() == 1 && g != "Custom blocks")
             {
                 auto a = make(menu, entries.first());
-                a->setText(titles.value(g, "New " + entries.first()["name"].toString()));
+                a->setText(titles.value(g, T("New %1").arg(entries.first()["name"].toString())));
                 continue;
             }
-            auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, g));
+            auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
             sub->setToolTipsVisible(true);
             for (const auto& p : entries) make(sub, p);
         }
     }
     menu->addSeparator();
     {
-        auto imp = menu->addAction("Import model...", this, [=]{ emit(importRequested()); });
-        imp->setToolTip("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
-                        "whichever suits it.");
+        auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
+        imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
+                        "whichever suits it."));
     }
-    auto ops = menu->addMenu("Add operation");
-    auto sims = menu->addMenu(TypeIcons::icon("simulation"), "Add simulation");
+    auto ops = menu->addMenu(T("Add operation"));
+    auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Add simulation"));
     sims->setToolTipsVisible(true);
     // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
     fillSimulationPrimitives(sims, point, scale, atLine);
@@ -1956,15 +2193,15 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     if (m_scene && !m_scene->hasModel())
     {
         ops->menuAction()->setEnabled(false);
-        ops->menuAction()->setToolTip("There is no model to work on yet");
-        auto none = sims->addAction("Boundary conditions and analyses need a model");
-        none->setEnabled(false);
+        ops->menuAction()->setToolTip(T("There is no model to work on yet"));
     }
     else
     {
+        addQuickOperations(ops, -1, point, scale);
         fillOperations(ops, -1, point, scale);
-        fillOperations(sims, -1, point, scale, true);
     }
+    // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
+    fillOperations(sims, -1, point, scale, true);
     menu->popup(globalPos);
 }
 
@@ -1980,8 +2217,9 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         addBodyFromField(menu, line, point, scale);
         menu->addSeparator();
     }
-    fillOperations(menu->addMenu("Operation"), line, point, scale);
-    auto sims = menu->addMenu(TypeIcons::icon("simulation"), "Simulation");
+    addQuickOperations(menu, line, point, scale);
+    fillOperations(menu->addMenu(T("Operation")), line, point, scale);
+    auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Simulation"));
     sims->setToolTipsVisible(true);
     fillSimulationPrimitives(sims, point, scale, line);
     sims->addSeparator();
@@ -1989,16 +2227,16 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     {
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
         const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
-        auto own = menu->addAction("Custom resolution", this, [=]{ if (m_scene) m_scene->addCustomResolution(line); });
-        own->setToolTip("Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolution(x, number) under its "
-                        "definition; the number is a field under the model in the tree");
+        auto own = menu->addAction(T("Custom resolution"), this, [=]{ if (m_scene) m_scene->addCustomResolution(line); });
+        own->setToolTip(T("Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolution(x, number) under its "
+                        "definition; the number is a field under the model in the tree"));
         if (type == "field" || type == "point" || type.isEmpty())
         {
             own->setEnabled(false);
-            own->setToolTip("A resolution of its own is for a model that is drawn: a shape, a surface");
+            own->setToolTip(T("A resolution of its own is for a model that is drawn: a shape, a surface"));
         }
     }
-    auto select = menu->addAction("Select Surface", this, [=]{
+    auto select = menu->addAction(T("Select Surface"), this, [=]{
         // (after this menu has closed: the menu of the surface selection takes its place)
         QTimer::singleShot(0, this, [=]{ showSelectMenu(globalPos, line, point); });
     });
@@ -2006,13 +2244,13 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     {
         // (opened from the text editor or the model tree: no place on the surface was clicked)
         select->setEnabled(false);
-        select->setToolTip("The selection spreads from the place you click on the surface, so it is started by right-clicking "
-                           "the surface in the viewport.");
+        select->setToolTip(T("The selection spreads from the place you click on the surface, so it is started by right-clicking "
+                           "the surface in the viewport."));
     }
     if (m_scene)
     {
         menu->addSeparator();
-        menu->addAction("Delete", this, [=]{ m_scene->deleteByLine(line); });
+        menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); });
     }
     menu->popup(globalPos);
 }
@@ -2028,7 +2266,7 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
 
     // (the title and the form are widgets in the menu: they are styled like the cards of the viewport, bright
     // text on the dark menu -- they would otherwise take the default dark text)
-    auto titleLabel = new QLabel("Select surface (flood fill)");
+    auto titleLabel = new QLabel(T("Select surface (flood fill)"));
     titleLabel->setStyleSheet("QLabel { color: #eee8d5; font-weight: bold; padding: 6px 12px 2px 12px; }");
     auto titleAction = new QWidgetAction(&menu);
     titleAction->setDefaultWidget(titleLabel);
@@ -2051,17 +2289,17 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     auto form = new QFormLayout(holder);
     form->setContentsMargins(10, 4, 10, 6);
     auto mode = new QComboBox;
-    mode->addItem("Flat face", "flat");
-    mode->addItem("Round / smooth faces", "smooth");
-    mode->setToolTip("Flat: spreads while the surface faces the way it does at the click.\n"
-                     "Smooth: spreads over round faces (cylinders, fillets) until the surface bends tighter than the angle allows, or to a sharp edge.");
+    mode->addItem(T("Flat face"), "flat");
+    mode->addItem(T("Round / smooth faces"), "smooth");
+    mode->setToolTip(T("Flat: spreads while the surface faces the way it does at the click.\n"
+                     "Smooth: spreads over round faces (cylinders, fillets) until the surface bends tighter than the angle allows, or to a sharp edge."));
     mode->setCurrentIndex(store.value("select/mode", "flat").toString() == "smooth" ? 1 : 0);
     auto angle = new QDoubleSpinBox;
     angle->setRange(0.5, 90.0);
-    angle->setSuffix(" deg");
+    angle->setSuffix(T(" deg"));
     angle->setDecimals(1);
-    angle->setToolTip("Flat: how far from the click's direction the surface may face.\n"
-                      "Smooth: how much the surface may turn within 10 mm: a tighter bend stops the selection.");
+    angle->setToolTip(T("Flat: how far from the click's direction the surface may face.\n"
+                      "Smooth: how much the surface may turn within 10 mm: a tighter bend stops the selection."));
     // (the smooth angle is per 10 mm of the surface now, not per step of the walk: the value remembered from before means
     // something else, so it is kept under another name)
     auto defaultAngle = [](const QString& m) { return m == "smooth" ? 35.0 : 10.0; };
@@ -2074,18 +2312,18 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     auto radius = new QDoubleSpinBox;
     radius->setRange(0.0, 100000.0);
     radius->setDecimals(1);
-    radius->setSuffix(" mm");
-    radius->setSpecialValueText("no limit");
+    radius->setSuffix(T(" mm"));
+    radius->setSpecialValueText(T("no limit"));
     radius->setValue(store.value("select/radius", 0.0).toDouble());
-    radius->setToolTip("Stop this far from the click.");
-    form->addRow("Spread", mode);
-    form->addRow("Angle", angle);
-    form->addRow("Radius", radius);
+    radius->setToolTip(T("Stop this far from the click."));
+    form->addRow(T("Spread"), mode);
+    form->addRow(T("Angle"), angle);
+    form->addRow(T("Radius"), radius);
     auto buttons = new QHBoxLayout;
-    auto select = new QPushButton("Select");
+    auto select = new QPushButton(T("Select"));
     select->setObjectName("selectSurfaceConfirm");
     select->setDefault(true);
-    auto cancel = new QPushButton("Cancel");
+    auto cancel = new QPushButton(T("Cancel"));
     cancel->setObjectName("selectSurfaceCancel");
     buttons->addStretch();
     buttons->addWidget(cancel);
@@ -2344,7 +2582,7 @@ void View::drawErrorBanner(QPainter& painter)
         m_errorRect = QRect();
         return;
     }
-    const QColor red(255, 110, 100);
+    const QColor red(255, 56, 56);          // (red is for what is wrong: what only waits for the user is orange)
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
     // A frame round the whole viewport: it is seen with the eyes on the model, which is where the work is
@@ -2360,8 +2598,8 @@ void View::drawErrorBanner(QPainter& painter)
     QFont hintFont = body;
     hintFont.setPointSizeF(8.0);
     const QFontMetrics fmHead(head), fmBody(body), fmHint(hintFont);
-    const QString title = (m_errorLine >= 0 ? QString("Error in line %1").arg(m_errorLine + 1) : QString("Error in the script"));
-    const QString hint = "The picture is the last one that worked.  Click to go to the error.";
+    const QString title = (m_errorLine >= 0 ? T("Error in line %1").arg(m_errorLine + 1) : T("Error in the script"));
+    const QString hint = T("The picture shows what ran before the error, or the last one that worked.  Click to go to the error.");
     const int maxWidth = std::max(260, std::min(width() - 40, 640));
     const QString message = fmBody.elidedText(m_errorText, Qt::ElideRight, maxWidth - 28);
     const int w = std::max({fmHead.horizontalAdvance(title), fmBody.horizontalAdvance(message), fmHint.horizontalAdvance(hint)}) + 28;
@@ -2375,7 +2613,7 @@ void View::drawErrorBanner(QPainter& painter)
     painter.setBrush(QColor(92, 24, 24, 235));
     painter.drawRoundedRect(m_errorRect, 8, 8);
     int y = m_errorRect.top() + 7;
-    painter.setPen(QColor(255, 160, 150));
+    painter.setPen(QColor(255, 96, 96));
     painter.setFont(head);
     painter.drawText(QRect(x + 14, y, w - 28, fmHead.height()), Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(0x26a0)) + "  " + title);
     y += fmHead.height();
@@ -3820,7 +4058,7 @@ void View::updateSectionReadout(QPoint pos)
                 du > 0 && dv > 0 && i >= 0 && j >= 0 && i < slice.w && j < slice.h &&
                 std::isfinite(slice.color[j * slice.w + i]))
             {
-                fieldText = QString("%1 = %2").arg(m_fieldKey.startsWith("line:") ? QString("field") : m_fieldKey)
+                fieldText = QString("%1 = %2").arg(m_fieldKey.startsWith("line:") ? T("field") : m_fieldKey)
                                 .arg(slice.color[j * slice.w + i], 0, 'g', 5);
             }
         }

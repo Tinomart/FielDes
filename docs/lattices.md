@@ -146,8 +146,7 @@ lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0, cell_map=sphe
 The reason the whole program exists. Any field can be a size:
 
 ```python
-conditions = static_boundary_conditions(bracket, [fixed(plates)], [force(lugs, (0, -2000, 0))])
-result = static_analysis(bracket, conditions, material=aluminium)
+result = static_analysis(bracket, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium)
 peak = result.max_von_mises
 density = ramp(result.von_mises, (0, 0.4 * peak), (0.15, 0.5))       # stress -> relative density
 graded = lattice(bracket, cell_periodic('gyroid'), cell_size=8, density=density, skin=1.5)

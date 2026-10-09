@@ -9,6 +9,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #include "libfive/eval/eval_interval.hpp"
 #include "libfive/eval/deck.hpp"
+#include "libfive/eval/default_vars.hpp"
 #include "libfive/eval/tape.hpp"
 #include "libfive/render/brep/region.hpp"
 
@@ -43,7 +44,10 @@ IntervalEvaluator::IntervalEvaluator(
     for (auto& v : d->vars.right)
     {
         auto var = vars.find(v.first);
-        store((var != vars.end()) ? var->second : 0, v.second);
+        float value = 0;
+        if (var != vars.end()) value = var->second;
+        else DefaultVars::find(v.first, value);         // (the script's number for it, when it was not given one)
+        store(value, v.second);
     }
 
     // Unpack constants into result array
@@ -55,6 +59,10 @@ IntervalEvaluator::IntervalEvaluator(
     // (see ArrayEvaluator: the oracles with expressions of their own read the variables too)
     for (auto& o : d->oracles)
     {
+        if (vars.empty())
+        {
+            DefaultVars::forEach([&](Tree::Id id, float value) { o->setVar(id, value); });
+        }
         for (auto& var_ : vars)
         {
             o->setVar(var_.first, var_.second);

@@ -596,6 +596,11 @@ bool ThermalProblem::pcg(const std::vector<double>& mult, const std::vector<doub
     double rz = dot(r, z);
     for (; its < maxIterations && rel > tolerance; ++its)
     {
+        if ((its & 15) == 0 && run_progress::cancelFlag().load())
+        {
+            error = "cancelled";
+            return false;
+        }
         conduct(mult, conv, p, Ap);
         for (size_t u = 0; u < n; ++u) if (P.fixed[u]) Ap[u] = 0.0;
         const double pAp = dot(p, Ap);
@@ -1022,6 +1027,11 @@ bool ThermalProblem::optimize(const TopOpt& s, std::string& error)
     int it = 0;
     for (; it < s.iterations; ++it)
     {
+        if (run_progress::cancelFlag().load())
+        {
+            error = "cancelled";
+            return false;
+        }
         {
             char buf[64];
             snprintf(buf, sizeof(buf), "optimising, iteration %d of ~%d", it + 1, expected);

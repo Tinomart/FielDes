@@ -68,6 +68,8 @@ public:
         bool showFlow = true;        // ...drawn over it
     };
     void setState(const State& s);
+    // The width the name of the field shown needs, so that a long one (in another language) is not cut off at the card's usual width
+    int labelsWidth() const;
 
     /*  Magnification <-> slider position (quadratic: fine control near
      *  zero; the middle is the automatic scale, the end four times it)  */

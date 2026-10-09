@@ -18,6 +18,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <algorithm>
+#include <cmath>
 
 #include <QAbstractItemView>
 #include <QCompleter>
@@ -31,7 +32,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QStringListModel>
 #include <QTextBlock>
 #include <QToolTip>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/formatter.hpp"
 #include "fieldes/color.hpp"
@@ -110,6 +115,10 @@ Script::Script(QWidget* parent)
             this, &Script::updateGutter);
     connect(this, &QPlainTextEdit::cursorPositionChanged,
             this, &Script::onCursorMoved);
+    connect(document(), &QTextDocument::contentsChange, this, &Script::trackBreakpoints);
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        if (!m_holes.isEmpty() && (textCursor().blockNumber() < m_holeFirst || textCursor().blockNumber() > m_holeLast)) m_holes.clear();
+    });
     connect(document(), &QTextDocument::contentsChange,
             this, &Script::onContentsChange);
     updateGutterWidth();
@@ -182,9 +191,10 @@ void Script::setErrorLine(int line)
 QList<int> Script::breakpoints() const
 {
     QList<int> lines;
-    for (const auto& c : m_breakpoints)
+    for (const auto& b : m_breakpoints)
     {
-        const int line = c.blockNumber() + 1;
+        if (b.dormant) continue;
+        const int line = b.cursor.blockNumber() + 1;
         if (!lines.contains(line))
         {
             lines << line;
@@ -196,14 +206,135 @@ QList<int> Script::breakpoints() const
 
 bool Script::hasBreakpoint(int block) const
 {
-    for (const auto& c : m_breakpoints)
+    for (const auto& b : m_breakpoints)
     {
-        if (c.blockNumber() == block)
+        if (!b.dormant && b.cursor.blockNumber() == block)
         {
             return true;
         }
     }
     return false;
+}
+
+Script::Breakpoint Script::makeBreakpoint(const QTextBlock& block) const
+{
+    Breakpoint b;
+    b.cursor = QTextCursor(block);
+    b.cursor.setKeepPositionOnInsert(true);
+    b.text = block.text().trimmed();
+    b.pos = block.position();
+    b.length = block.length() - 1;
+    return b;
+}
+
+// A breakpoint is about the code on its line.  A cursor at the start of the line follows the line through most edits, and three kinds
+// of edit it gets wrong, which this puts right (it runs after the document has moved the cursors):
+//  - text typed at the very start of the line that holds a line break (Enter, a pasted line): the cursor stays before it, on the
+//    new blank line, while the code is below it: the breakpoint goes down to the line the code is on;
+//  - the line is deleted: the cursor lands on the line below, and the breakpoint was on that other statement: it is put away
+//    instead, to wait a while -- for an undo, which puts the same text back, or for the line pasted somewhere else (cut and paste
+//    moves a line, with its breakpoint);
+//  - a stretch of lines is replaced by the same lines in another order (moving a line up or down): all the cursors in it land
+//    at the start: each goes to the line that says what it said.
+// Editing the text of the line, even deleting all of it, leaves the breakpoint where it is: the line is still there.
+void Script::trackBreakpoints(int position, int removed, int added)
+{
+    if (m_breakpoints.isEmpty()) return;
+    QTextDocument* doc = document();
+    const int last = std::max(0, doc->characterCount() - 1);
+    auto blockAt = [&](int p) { return doc->findBlock(std::max(0, std::min(p, last))); };
+
+    // The first line (from `from`, to the end of what was added) that says `text`, the one nearest `near` (0..1 through the stretch)
+    auto find = [&](const QString& text, double near) -> QTextBlock {
+        QTextBlock best;
+        double bestGap = 2.0;
+        for (QTextBlock blk = blockAt(position); blk.isValid() && blk.position() <= position + added; blk = blk.next())
+        {
+            if (blk.text().trimmed() != text) continue;
+            const double at = added > 0 ? double(blk.position() - position) / added : 0.0;
+            if (std::abs(at - near) < bestGap)
+            {
+                bestGap = std::abs(at - near);
+                best = blk;
+            }
+        }
+        return best;
+    };
+
+    bool changed = false;
+    for (Breakpoint& b : m_breakpoints)
+    {
+        if (b.dormant)
+        {
+            ++b.age;
+            continue;
+        }
+        const int p0 = b.pos, end0 = b.pos + b.length;
+        if (removed == 0 && added > 0 && p0 == position)
+        {
+            // (the code is on the line the end of what was added is on)
+            b.cursor.setPosition(blockAt(position + added).position());
+        }
+        else if (removed > 0 && p0 >= position && p0 < position + removed
+                 && b.cursor.position() == position && b.cursor.block().text().trimmed() != b.text)
+        {
+            // The line was in what was removed, and the cursor, which the document has put at the start of what was removed, is not
+            // on it.  (A cursor anywhere else, in a stretch that several edits made at once -- the model tree's -- was moved by each of
+            // them as it should be: it is left alone)
+            const bool textGone = position <= p0 && position + removed >= end0;
+            const bool breakGone = position <= p0 - 1 || position + removed >= end0 + 1;
+            if (textGone && breakGone)
+            {
+                if (added == 0)
+                {
+                    b.dormant = true;
+                    b.age = 0;
+                    changed = true;
+                    continue;
+                }
+                if (!b.text.isEmpty())
+                {
+                    const QTextBlock to = find(b.text, removed > 0 ? double(p0 - position) / removed : 0.0);
+                    if (to.isValid()) b.cursor.setPosition(to.position());
+                }
+            }
+        }
+    }
+
+    // The ones put away come back when their line does: the same text on a line made by this change
+    if (added > 0)
+    {
+        for (Breakpoint& b : m_breakpoints)
+        {
+            if (!b.dormant || b.age == 0 || b.text.isEmpty()) continue;
+            const QTextBlock to = find(b.text, 0.0);
+            if (!to.isValid()) continue;
+            b.cursor.setPosition(to.position());
+            b.dormant = false;
+            changed = true;
+        }
+    }
+
+    // Every cursor at the start of its line again, and the line as it is now
+    for (int i = m_breakpoints.size() - 1; i >= 0; --i)
+    {
+        Breakpoint& b = m_breakpoints[i];
+        if (b.dormant)
+        {
+            if (b.age > 8) m_breakpoints.removeAt(i);
+            continue;
+        }
+        const QTextBlock blk = blockAt(b.cursor.position());
+        b.cursor.setPosition(blk.position());
+        b.text = blk.text().trimmed();
+        b.pos = blk.position();
+        b.length = blk.length() - 1;
+    }
+    if (changed)
+    {
+        m_gutter->update();
+        emit breakpointsChanged();
+    }
 }
 
 void Script::toggleBreakpoint(int block)
@@ -216,7 +347,7 @@ void Script::toggleBreakpoint(int block)
     {
         for (int i = m_breakpoints.size() - 1; i >= 0; --i)
         {
-            if (m_breakpoints[i].blockNumber() == block)
+            if (!m_breakpoints[i].dormant && m_breakpoints[i].cursor.blockNumber() == block)
             {
                 m_breakpoints.removeAt(i);
             }
@@ -224,9 +355,7 @@ void Script::toggleBreakpoint(int block)
     }
     else
     {
-        QTextCursor c(document()->findBlockByNumber(block));
-        c.setKeepPositionOnInsert(true);
-        m_breakpoints << c;
+        m_breakpoints << makeBreakpoint(document()->findBlockByNumber(block));
     }
     m_gutter->update();
     emit breakpointsChanged();
@@ -240,6 +369,18 @@ void Script::clearBreakpoints()
         m_gutter->update();
         emit breakpointsChanged();
     }
+}
+
+void Script::setBreakpoints(const QList<int>& lines)
+{
+    m_breakpoints.clear();
+    for (const int line : lines)
+    {
+        if (line < 1 || line > blockCount()) continue;
+        m_breakpoints << makeBreakpoint(document()->findBlockByNumber(line - 1));
+    }
+    m_gutter->update();
+    emit breakpointsChanged();
 }
 
 void Script::setPausedLine(int line)
@@ -260,9 +401,11 @@ void Script::setPausedLine(int line)
         }
     }
     setSelections(SEL_PAUSE, sels);
-    if (line >= 0)
+    // (The text cursor is not moved: every edit runs the script again, and a run that stops at a breakpoint used to put the cursor on
+    // the stop after every key typed.  The view goes to the stop only when the script is not the widget in use)
+    if (line >= 0 && !hasFocus())
     {
-        goToLine(line, false);
+        revealLine(line);
     }
     m_gutter->update();
 }
@@ -752,7 +895,7 @@ void Script::paintEvent(QPaintEvent* e)
             int end = block.blockNumber();
             foldRange(block.blockNumber(), &end);
             const int hidden = std::max(0, end - block.blockNumber());
-            const QString label = hidden > 1 ? QString("... %1 lines").arg(hidden) : QString("...");
+            const QString label = hidden > 1 ? T("... %1 lines").arg(hidden) : QString("...");
             const int x = int(r.left()) + fm.horizontalAdvance(block.text()) +
                           document()->documentMargin() + 6;
             QRect box(x, int(r.top()) + 2, fm.horizontalAdvance(" " + label + " "), fm.height() - 4);
@@ -904,6 +1047,25 @@ void Script::scrollToLine(int line)
     setTextCursor(keep);
 }
 
+void Script::revealLine(int line)
+{
+    const QTextBlock b = document()->findBlockByNumber(std::max(0, line));
+    if (!b.isValid()) return;
+    ensureBlockVisible(b);                  // (opens a fold that hides it)
+    // The scroll bar counts lines: moved by the distance the line is from the middle, measured, until it is there
+    const int lineHeight = std::max(1, fontMetrics().lineSpacing());
+    const int height = viewport()->height();
+    QRectF r = blockBoundingGeometry(b).translated(contentOffset());
+    if (r.top() >= 0 && r.bottom() <= height) return;
+    for (int i = 0; i < 6; ++i)
+    {
+        r = blockBoundingGeometry(b).translated(contentOffset());
+        const int delta = qRound((r.top() - (height - lineHeight) / 2.0) / lineHeight);
+        if (delta == 0) break;
+        verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
+    }
+}
+
 void Script::selectRange(int line0, int col0, int line1, int col1)
 {
     QTextBlock b0 = document()->findBlockByNumber(line0);
@@ -925,7 +1087,7 @@ void Script::promptGoToLine()
 {
     bool ok = false;
     const int line = QInputDialog::getInt(
-            this, "Go to line", QString("Line (1 - %1):").arg(blockCount()),
+            this, T("Go to line"), T("Line (1 - %1):").arg(blockCount()),
             textCursor().blockNumber() + 1, 1, blockCount(), 1, &ok);
     if (ok)
     {
@@ -1131,6 +1293,7 @@ void Script::copyVocabularyFrom(const Script& other)
     m_memberWords = other.m_memberWords;
     m_callTips = other.m_callTips;
     m_libraryDefs = other.m_libraryDefs;
+    m_support = other.m_support;
 }
 
 void Script::rescanScriptWords()
@@ -1175,6 +1338,51 @@ QString Script::textUnderCursorForCompletion(QString* owner) const
     return line.mid(start, col - start);
 }
 
+// How many arguments a call cannot do without, from the signature at the head of its documentation ("offset(shape, distance=1.0)": one):
+// those with no default, not counting self, *args, **kwargs and the keyword-only ones
+static int requiredArguments(const QString& tip)
+{
+    const int open = tip.indexOf('(');
+    if (open < 0) return 0;
+    QStringList params;
+    QString current;
+    QChar quote;
+    int depth = 0;
+    for (int i = open + 1; i < tip.size(); ++i)
+    {
+        const QChar c = tip[i];
+        if (!quote.isNull())
+        {
+            current += c;
+            if (c == quote) quote = QChar();
+            continue;
+        }
+        if (c == '"' || c == '\'') { quote = c; current += c; continue; }
+        if (c == '(' || c == '[' || c == '{') { ++depth; current += c; continue; }
+        if (c == ')' || c == ']' || c == '}')
+        {
+            if (depth == 0) break;
+            --depth;
+            current += c;
+            continue;
+        }
+        if (c == ',' && depth == 0) { params << current; current.clear(); continue; }
+        current += c;
+    }
+    params << current;
+    int n = 0;
+    bool keywordOnly = false;
+    for (QString p : params)
+    {
+        p = p.trimmed();
+        if (p.isEmpty() || p == "/") continue;
+        if (p.startsWith('*')) { keywordOnly = true; continue; }
+        if (keywordOnly || p == "self" || p.contains('=') || p.contains("...")) continue;
+        ++n;
+    }
+    return n;
+}
+
 void Script::insertCompletion(const QString& completion)
 {
     if (m_completer->widget() != this)
@@ -1212,13 +1420,44 @@ void Script::insertCompletion(const QString& completion)
     const int col = tc.positionInBlock();
     const bool opens = col < line.size() && line[col] == '(';
     bool call = false;
+    QTextCursor firstHole;          // (the first placeholder of the call that was just written: selected, so that typing replaces it)
     if (known && !onlyAVariable && !opens && !inStringOrComment(line, col))
     {
-        tc.insertText("()");
         call = true;
+        // The call as the library writes it (fieldes.completion): what it cannot do without is a placeholder after its name (`region=...`), every
+        // other argument is there with its default, and one argument to a line when it does not fit -- the same call a menu entry writes
+        QString written;
+        if (m_support && tip != m_callTips.constEnd())
+        {
+            int indent = 0;
+            while (indent < line.size() && line[indent] == ' ') ++indent;
+            QJsonObject request;
+            request["name"] = completion;
+            request["column"] = col - int(completion.size());              // (where the name starts: it was just written)
+            request["indent"] = indent;
+            written = m_support("complete_call", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+        }
         // "name()" or "name(self)" in the tip: nothing to type inside
         bool noArguments = false;
-        if (tip != m_callTips.constEnd())
+        int required = 0;
+        if (!written.isEmpty())
+        {
+            tc.movePosition(QTextCursor::Left, QTextCursor::KeepAnchor, int(completion.size()));
+            const int startPos = tc.selectionStart();
+            tc.insertText(written);
+            m_holes.clear();
+            m_holeFirst = document()->findBlock(startPos).blockNumber();
+            m_holeLast = tc.blockNumber();
+            for (int at = written.indexOf("..."); at >= 0; at = written.indexOf("...", at + 3))
+            {
+                QTextCursor h(document());
+                h.setPosition(startPos + at);
+                h.setPosition(startPos + at + 3, QTextCursor::KeepAnchor);
+                m_holes << h;
+            }
+            if (!m_holes.isEmpty()) firstHole = m_holes.first();
+        }
+        else if (tip != m_callTips.constEnd())
         {
             const QString t = tip.value();
             const int open = t.indexOf('(');
@@ -1227,11 +1466,39 @@ void Script::insertCompletion(const QString& completion)
                 const QString rest = t.mid(open + 1).trimmed();
                 noArguments = rest.startsWith(')') || rest.startsWith("self)");
             }
+            required = requiredArguments(t);
         }
-        if (!noArguments) tc.movePosition(QTextCursor::Left);
+        if (!written.isEmpty())
+        {
+            // (written above)
+        }
+        else if (required > 0)
+        {
+            // Every argument the call cannot do without is written as a placeholder, `...`: the call reads complete, nothing throws an
+            // error, and the run stops before it until each is replaced.  The first is selected; Tab goes to the next
+            QStringList holes;
+            for (int i = 0; i < required; ++i) holes << "...";
+            const int open = tc.position();
+            tc.insertText("(" + holes.join(", ") + ")");
+            m_holes.clear();
+            m_holeFirst = m_holeLast = tc.blockNumber();
+            for (int i = 0; i < required; ++i)
+            {
+                QTextCursor h(document());
+                h.setPosition(open + 1 + i * 5);
+                h.setPosition(open + 1 + i * 5 + 3, QTextCursor::KeepAnchor);
+                m_holes << h;
+            }
+            firstHole = m_holes.first();
+        }
+        else
+        {
+            tc.insertText("()");
+            if (!noArguments) tc.movePosition(QTextCursor::Left);
+        }
     }
     tc.endEditBlock();
-    setTextCursor(tc);
+    setTextCursor(firstHole.hasSelection() ? firstHole : tc);
     if (call && tip != m_callTips.constEnd()) showCallTip(completion);
 }
 
@@ -1641,6 +1908,23 @@ bool Script::handleMultiCursorKey(QKeyEvent* e)
 ////////////////////////////////////////////////////////////////////////////////
 // Events
 
+bool Script::nextHole()
+{
+    // The placeholders of the call that was just completed that are still there, in the order of the text; the next one after the cursor
+    for (int i = m_holes.size() - 1; i >= 0; --i)
+        if (m_holes[i].selectedText() != "...") m_holes.removeAt(i);
+    std::sort(m_holes.begin(), m_holes.end(), [](const QTextCursor& a, const QTextCursor& b) { return a.selectionStart() < b.selectionStart(); });
+    const int here = textCursor().selectionEnd();
+    for (const QTextCursor& h : m_holes)
+    {
+        if (h.selectionStart() < here) continue;
+        setTextCursor(h);
+        return true;
+    }
+    m_holes.clear();
+    return false;
+}
+
 void Script::keyPressEvent(QKeyEvent* e)
 {
     // Keys that the completion popup handles itself
@@ -1658,6 +1942,12 @@ void Script::keyPressEvent(QKeyEvent* e)
             default:
                 break;
         }
+    }
+
+    // Tab goes on to the next placeholder of the call that was just completed
+    if (e->key() == Qt::Key_Tab && e->modifiers() == Qt::NoModifier && !m_holes.isEmpty() && nextHole())
+    {
+        return;
     }
 
     if (handleMultiCursorKey(e))
@@ -1693,6 +1983,9 @@ void Script::keyPressEvent(QKeyEvent* e)
             (next.isSpace() || closes.contains(next) || next == ',' || next == ':'))
         {
             c.beginEditBlock();
+            // (a placeholder that is selected is what typing replaces: `vector=...` + typing `(` is `vector=(`, not `vector=(...)`)
+            if (c.hasSelection() && c.selectedText() == QString("..."))
+                c.removeSelectedText();
             if (c.hasSelection())
             {   // Wrap the selection
                 const QString s = c.selectedText();
@@ -1879,6 +2172,42 @@ void Script::focusOutEvent(QFocusEvent* e)
     QPlainTextEdit::focusOutEvent(e);
 }
 
+bool Script::reformatCall(bool join)
+{
+    if (!m_support) return false;
+    const QTextCursor c = textCursor();
+    QJsonObject request;
+    request["source"] = toPlainText();
+    request["line"] = c.blockNumber();
+    request["col"] = c.positionInBlock();
+    request["mode"] = join ? "join" : "split";
+    const QString answer = m_support("reformat_call", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+    const QJsonObject o = QJsonDocument::fromJson(answer.toUtf8()).object();
+    if (o.isEmpty()) return false;
+    const QJsonArray a = o["start"].toArray(), b = o["end"].toArray();
+    const QTextBlock first = document()->findBlockByNumber(a[0].toInt()), last = document()->findBlockByNumber(b[0].toInt());
+    if (!first.isValid() || !last.isValid()) return false;
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    edit.setPosition(first.position() + a[1].toInt());
+    edit.setPosition(last.position() + b[1].toInt(), QTextCursor::KeepAnchor);
+    edit.insertText(o["text"].toString());
+    edit.endEditBlock();
+    return true;
+}
+
+void Script::selectRange(int line0, int col0, int length)
+{
+    const QTextBlock b = document()->findBlockByNumber(line0);
+    if (!b.isValid()) return;
+    QTextCursor c(document());
+    c.setPosition(b.position() + col0);
+    c.setPosition(b.position() + col0 + length, QTextCursor::KeepAnchor);
+    setTextCursor(c);
+    ensureCursorVisible();
+    setFocus();
+}
+
 bool Script::event(QEvent* e)
 {
     // Keep Escape for ourselves (not the window's "cancel render") while
@@ -1898,17 +2227,41 @@ bool Script::event(QEvent* e)
     {
         auto he = static_cast<QHelpEvent*>(e);
         const QPoint vp = viewport()->mapFrom(this, he->pos());
-        const QString w = wordAt(vp);
+        QTextCursor range;
+        const QString w = wordAt(vp, &range);
         const auto tip = m_callTips.find(w);
         if (tip != m_callTips.end())
         {
             QToolTip::showText(he->globalPos(),
                                "<tt>" + tip.value().toHtmlEscaped() + "</tt>", this);
+            return true;
         }
-        else
+        // The name of an argument written in a call (`seed=` ...): what the documentation says of it, the default beside it
+        if (m_support && !w.isEmpty())
         {
-            QToolTip::hideText();
+            const QTextBlock block = range.block();
+            const int end = range.selectionEnd() - block.position();
+            static const QRegularExpression equals(R"(^\s*=(?!=))");
+            if (equals.match(block.text().mid(end)).hasMatch())
+            {
+                QJsonObject request;
+                request["source"] = toPlainText();
+                request["line"] = block.blockNumber();
+                request["col"] = range.selectionStart() - block.position() + 1;
+                const QString answer = m_support("argument_doc", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+                const QJsonObject o = QJsonDocument::fromJson(answer.toUtf8()).object();
+                if (!o.isEmpty())
+                {
+                    QString html = "<b>" + o["function"].toString().toHtmlEscaped() + "</b>(<b>" + o["name"].toString().toHtmlEscaped() + "</b>";
+                    if (!o["default"].toString().isEmpty()) html += " = <tt>" + o["default"].toString().toHtmlEscaped() + "</tt>";
+                    html += ")";
+                    if (!o["text"].toString().isEmpty()) html += "<br>" + o["text"].toString().toHtmlEscaped();
+                    QToolTip::showText(he->globalPos(), "<div style='max-width: 420px'>" + html + "</div>", this);
+                    return true;
+                }
+            }
         }
+        QToolTip::hideText();
         return true;
     }
     if (e->type() == QEvent::KeyRelease &&

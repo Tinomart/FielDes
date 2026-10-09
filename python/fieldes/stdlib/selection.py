@@ -23,9 +23,9 @@ What comes back is a SURFACE -- the patch of the part's surface, nothing thicker
 It is a region you can give to `fixed()` and `force()`, show on the part, combine with other shapes, or hand to
 `lattice_surface_conform()` as the surface to put a lattice on:
 
-    conditions = static_boundary_conditions(part, [fixed(select_surface(part, (0, 0, 0)))],
-                                            [force(top, (0, -100, 0))])
-    result = static_analysis(part, conditions, material=aluminium)
+    base = fixed(select_surface(part, (0, 0, 0)))
+    push = force(top, (0, -100, 0))
+    result = static_analysis(part, supports=[base], loads=[push], material=aluminium)
 
 In FielDes, right-click a surface in the viewport: the menu holds the mode, the angle and the radius, and
 writes the `select_surface(...)` line into the script under the part, like everything else the program does.
@@ -56,7 +56,8 @@ from fieldes.stdlib.fields import _s, _shape_bounds, _script_vars, _vars_key
 __all__ = ['select_surface', 'surface_from_bodies', 'SurfaceSelection']
 
 MODES = {'flat': 0, 'smooth': 1}
-SELECTION_CATEGORY = 6          # (its colour in the application's colour map "bc")
+SELECTION_CATEGORY = 6          # (its colour in the application's colour map "bc", which has this many categories:)
+BC_CATEGORIES = 13
 
 # How far from a sample of the walk the surface of the patch can be, as a share of the spacing of the samples (the walk
 # steps one spacing, and takes no sample within 0.7 of another)
@@ -83,7 +84,7 @@ class SurfaceSelection(Shape):
             to the patch equals its distance to the whole surface (to within the cover of the samples). '''
         from fieldes.stdlib.fea import colored
         value = self.patch - self.whole                 # (<= 0 on the patch)
-        shown = colored(self.shape, value, range=(0.0, float(SELECTION_CATEGORY)),
+        shown = colored(self.shape, value, range=(0.0, float(BC_CATEGORIES)),
                         label='bc:{}'.format(SELECTION_CATEGORY), colormap='bc')
         shown._color_cutoff = 0.0              # (where the value is above this, the surface is not drawn)
         return shown
@@ -183,7 +184,7 @@ def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution
 def _light_up(selection):
     ''' A selection is shown lit up (the colour of the "selected" category of the application's boundary-condition colours) '''
     selection._color_field = Shape.wrap(float(SELECTION_CATEGORY))
-    selection._color_range = (0.0, float(SELECTION_CATEGORY))
+    selection._color_range = (0.0, float(BC_CATEGORIES))
     selection._color_label = 'bc:{}'.format(SELECTION_CATEGORY)
     selection._color_map = 'bc'
 
@@ -283,3 +284,8 @@ def surface_from_bodies(body, *others, tolerance=None, bounds=None):
     out._bounds = (tuple(box_lo[i] - layer for i in range(3)), tuple(box_hi[i] + layer for i in range(3)))
     _light_up(out)
     return out
+
+
+# (what these make is not something to drag: the model tree knows it before they have run, from the function that makes it)
+select_surface._makes_no_handles = True
+surface_from_bodies._makes_no_handles = True

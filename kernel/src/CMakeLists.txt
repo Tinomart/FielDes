@@ -4,6 +4,7 @@ endif()
 
 add_library(libfive SHARED
     eval/base.cpp
+    eval/default_vars.cpp
     eval/deck.cpp
     eval/eval_interval.cpp
     eval/eval_jacobian.cpp

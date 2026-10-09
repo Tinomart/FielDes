@@ -4,12 +4,10 @@ Static finite element analysis (linear elasticity) of FielDes shapes.
     from fieldes import *
 
     bracket = ...                                        # any Shape, in mm
-    conditions = static_boundary_conditions(
-        bracket,
-        supports=[fixed(box((0, 0, 0), (5, 40, 20)))],   # clamp the left end
-        loads=[force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))])   # 200 N down
-    conditions                                           # shown on the part: held (blue), pushed (red)
-    result = static_analysis(bracket, conditions, material=aluminium, element_size=1.0)
+    base = fixed(box((0, 0, 0), (5, 40, 20)))            # clamp the left end
+    push = force(box((95, 0, 0), (100, 40, 20)), (0, 0, -200))   # 200 N down
+    result = static_analysis(bracket, supports=[base], loads=[push], material=aluminium, element_size=1.0)
+    base, push                                           # each is drawn on the part the analysis was given: held (blue), pushed (red)
     result                                   # the stress on the deformed part (FielDes: the result card)
     stiffer = bracket - 0.002 * result.von_mises   # results are fields like any other
 
@@ -49,9 +47,11 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 import ctypes
 import math
 import time
+import weakref
 from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
+from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
@@ -146,22 +146,60 @@ abs_plastic = Material('ABS', 2.2e3, 0.35, 1.04e-9, 40, 0.00017, 90e-6)
 nylon = Material('nylon (PA12)', 1.7e3, 0.39, 1.01e-9, 45, 0.00024, 100e-6)
 
 
-class _Support:
+_PARTS = weakref.WeakKeyDictionary()      # (condition -> the bodies the simulations that have it were given: kept out of the condition, which is hashed by what it holds)
+
+
+class _Condition:
+    ''' What every boundary condition is -- a support, a load, a temperature, an inlet ...: a model of its own (a row of the model tree with an
+        eye), that shows itself the way it acts: the surface it acts on, tinted, with the pads or arrows and what it says (see
+        boundary_conditions).  It is drawn on the body of the simulation it was given to, or -- while no simulation has it yet -- on the body
+        its surfaces were picked on.  It has no body in it: the simulation is given the body '''
+
+    _no_handles = True                # (not something to drag: FielDes hides the handles button)
+
+    def __repr__(self):
+        # (what the result line shows when a condition is the last thing a script made: what it is, not where it is in memory)
+        try:
+            from fieldes.stdlib.boundary_conditions import describe
+            return describe(self)
+        except Exception:
+            return '<%s>' % type(self).__name__
+
+    def _used_for(self, part):
+        ''' A simulation was given this condition for `part`: it is drawn on it '''
+        parts = _PARTS.setdefault(self, [])
+        if isinstance(part, Shape) and not any(p is part for p in parts):
+            parts.append(part)
+
+    def _display(self):
+        from fieldes.stdlib.boundary_conditions import display_condition
+        return display_condition(self)
+
+
+class _Support(_Condition):
+    _call = 'fixed(...)'
+
     def __init__(self, region, x, y, z):
         self.region, self.axes = region, (x, y, z)
 
 
-class _Force:
+class _Force(_Condition):
+    _call = 'force(...)'
+
     def __init__(self, region, vector, profile=None):
         self.region, self.vector, self.profile = region, vector, profile
 
 
-class _Gravity:
+class _Gravity(_Condition):
+    _call = 'gravity(...)'
+
     def __init__(self, g):
         self.g = g
 
 
-class _Thermal:
+class _Thermal(_Condition):
+    _call = 'thermal_expansion(...)'
+
     def __init__(self, temperature, reference):
         self.temperature, self.reference = temperature, reference
 
@@ -172,53 +210,176 @@ def _shape(x, what):
     return x
 
 
-class _PlainConditions:
-    ''' The supports and loads of an analysis made inside the library (what static_boundary_conditions() gives,
-        without the picture) '''
-    static_conditions = True
-
-    def __init__(self, supports, loads):
-        self.supports, self.loads = list(supports), loads
+# The conditions an analysis is given, one input for each kind (the name of the input is the name of the kind: a force goes in `loads`).  Every
+# input is needed -- the call is written with a placeholder for each -- and takes one item, or a list of them (an empty list says there is none).
+# Each module that makes conditions says its kinds: slot name -> (the classes, what they are written as)
+_SLOTS = {}
 
 
-def _conditions(conditions, what):
-    ''' (supports, loads) of the boundary conditions an analysis is given -- the one way to give them:
-
-            conditions = static_boundary_conditions(part, supports=[fixed(base)], loads=[force(lug, (0, -2000, 0))])
-            result = static_analysis(part, conditions, material=aluminium)
-        '''
-    if not getattr(conditions, 'static_conditions', False):
-        raise TypeError(
-            '{0}: the supports and loads are boundary conditions that are given to it, no longer lists of '
-            'fixed(...) and force(...) items: {0}(part, static_boundary_conditions(part, supports=[fixed(...)], '
-            'loads=[force(...)]), ...) -- and show them with `conditions` on a line of its own'.format(what))
-    return list(conditions.supports), conditions.loads
+def _register_slots(slots):
+    _SLOTS.update(slots)
 
 
-def fixed(region, x=True, y=True, z=True):
-    ''' A support: the part is held in place wherever it lies inside
-        `region` (a Shape).  x / y / z = False leave that direction free
-        (a sliding support). '''
-    return _Support(_shape(region, 'fixed(region)'), bool(x), bool(y), bool(z))
+_register_slots({'supports': ((_Support,), 'fixed(...) items'),
+                 'loads': ((_Force, _Gravity, _Thermal), 'force(...), gravity(...) and thermal_expansion(...) items')})
 
 
-def force(region, fx, fy=None, fz=None, profile=None):
+def _slot_of(item):
+    ''' The input a condition goes in (`supports`, `loads`, `inlets` ...), or None '''
+    for name, (classes, _) in _SLOTS.items():
+        if isinstance(item, classes):
+            return name
+    return None
+
+
+def _given(value, slot, what):
+    ''' The conditions given to the input `slot` of the analysis `what`, as a list: one item, or a list (a list in a list is the same list) '''
+    classes, text = _SLOTS[slot]
+    out = []
+
+    def add(v):
+        if isinstance(v, (list, tuple)):
+            for x in v:
+                add(x)
+        elif isinstance(v, classes):
+            out.append(v)
+        else:
+            where = _slot_of(v)
+            raise TypeError('{what}: {slot} are {text}, and {got} is not one{where}'.format(
+                what=what, slot=slot, text=text, got='a ' + getattr(v, '_call', type(v).__name__) if where else repr(v)[:40],
+                where=' -- it goes in %s=' % where if where else ''))
+
+    add(value)
+    return out
+
+
+def _with_conditions(fn):
+    ''' An analysis that has an input for each kind of condition.  A call that leaves some out says which, and why: the form there was before gave
+        all of them as one list, which is not an input any more -- each kind has its own, so that every kind is in front of you '''
+    import functools
+    import inspect
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        old = [k for k in ('walls', 'slips') if k in kwargs and 'boundaries' in sig.parameters]
+        if old:
+            raise TypeError('{fn}: {old} {is_} not an input any more -- the walls and the slips are one input, boundaries, that takes wall(...) and slip(...) '
+                            'items, one kind or both, in one list: boundaries=[wall(...), slip(...)]'.format(
+                                fn=fn.__name__, old=' and '.join(old), is_='is' if len(old) == 1 else 'are'))
+        if 'max_iterations' in kwargs:
+            raise TypeError('{fn}: max_iterations is not an argument any more -- the equation solvers stop by themselves when the residual is below `tolerance` '
+                            '(and say so when they cannot get there), so a limit was never something to set: remove it from the call'.format(fn=fn.__name__))
+        try:
+            sig.bind(*args, **kwargs)
+        except TypeError:
+            try:
+                got = sig.bind_partial(*args, **kwargs).arguments
+            except TypeError:
+                raise
+            kinds = [n for n in sig.parameters if n in _SLOTS]
+            missing = [n for n in kinds if sig.parameters[n].default is sig.parameters[n].empty and n not in got]
+            if not missing:
+                raise
+            first = next(iter(sig.parameters))
+            raise TypeError(
+                '{fn}: every kind of boundary condition is an input of its own, and {missing} {was} not given -- give each kind its own list ([] for none): '
+                '{fn}({first}, {example}, ...). One list that holds conditions of several kinds is not an input any more.'.format(
+                    fn=fn.__name__, missing=', '.join(missing), was='was' if len(missing) == 1 else 'were', first=first,
+                    example=', '.join('%s=[...]' % n for n in kinds))) from None
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def _use_conditions(items, part):
+    ''' The simulation was given `part` with these conditions: they are drawn on it '''
+    for c in items:
+        use = getattr(c, '_used_for', None)
+        if use is not None:
+            use(part)
+
+
+def _united(regions):
+    ''' Several regions as one: the places where any of them is (the smallest of their fields), in the box all of them lie in '''
+    out = regions[0]
+    for r in regions[1:]:
+        out = out.min(r)
+    if len(regions) > 1:
+        out._members = list(regions)            # (what the one region is made of: the body a surface of it was picked on is found there)
+    boxes = [getattr(r, '_bounds', None) for r in regions]
+    if len(regions) > 1 and all(boxes):
+        out._bounds = (tuple(min(b[0][i] for b in boxes) for i in range(3)), tuple(max(b[1][i] for b in boxes) for i in range(3)))
+    return out
+
+
+def _regions(args, region, what):
+    ''' The regions a condition is given -- ANY NUMBER of them, bodies, fields or selected surfaces, one argument after the other (a list of
+        them is the same) -- as one region, and the arguments that follow them: (region, rest).  `region=` is the same as one of them '''
+    found = []
+    for r in (region if isinstance(region, (list, tuple)) else [region]):
+        if r is not None:
+            found.append(_shape(r, what + ' region'))
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if isinstance(a, Shape):
+            found.append(a)
+        elif isinstance(a, (list, tuple)) and a and all(isinstance(x, Shape) for x in a):
+            found.extend(a)
+        else:
+            break
+        i += 1
+    if not found:
+        raise TypeError('{} needs the region it acts on first -- a body, a field or a selected surface; any number of them, '
+                        'one argument after the other'.format(what))
+    return _united(found), tuple(args[i:])
+
+
+def fixed(*regions, region=None, x=True, y=True, z=True):
+    ''' A support: the part is held in place wherever it lies inside `region` (a Shape: a body, a field, a selected surface).  Any number
+        of regions can be given, one argument after the other -- fixed(a, b) holds the part where either is.
+
+        region  where the part is held: a body, a field or a selected surface (the same as the first argument)
+        x, y, z  False leaves that direction free (a sliding support) '''
+    found, rest = _regions(regions, region, 'fixed()')
+    if len(rest) > 3:
+        raise TypeError('fixed(region, ..., x=, y=, z=): after the regions only the directions that are held can follow')
+    flags = list(rest) + [x, y, z][len(rest):]
+    return _Support(found, bool(flags[0]), bool(flags[1]), bool(flags[2]))
+
+fixed._required = ('region',)
+
+
+def force(*args, region=None, vector=None, profile=None):
     ''' A load: the total force (fx, fy, fz) in N, spread evenly over the
-        part's surface inside `region` (a Shape).  force(region, (0, 0, -100))
-        works too.
+        part's surface inside `region` (a Shape).  force(region, (0, 0, -100)) and
+        force(region, 0, 0, -100) and force(region=region, vector=(0, 0, -100)) are the same.  Any number of regions can be given, one
+        argument after the other, before the force: force(a, b, (0, 0, -100)) loads the part where either is.
 
+        region   where the part is loaded: a body, a field or a selected surface (the same as the first argument)
+        vector   the total force (fx, fy, fz) in newtons: its direction and its size
         profile  a field: the total is spread over the surface in proportion to it (not negative) instead of evenly --
                  a pressure that is not the same everywhere, e.g. `profile=ramp(x_field(), (0, 80), (0.2, 1.0))` loads
                  the end of a beam five times harder at x = 80 than at x = 0, with the same total.  (Tetrahedral
                  elements.) '''
-    if fy is None and fz is None:
-        fx, fy, fz = fx
+    found, rest = _regions(args, region, 'force()')
+    if vector is not None:
+        if rest:
+            raise TypeError('force(): the force is given once -- as the argument after the regions, or as vector=')
+        rest = (vector,)
+    if len(rest) == 1 and isinstance(rest[0], (list, tuple)):
+        rest = tuple(rest[0])
+    if len(rest) != 3:
+        raise TypeError('force(region, ..., (fx, fy, fz)): the force is three numbers (N), after the regions it acts on')
+    fx, fy, fz = rest
     if any(isinstance(v, Shape) for v in (fx, fy, fz)):
         raise TypeError('force(): the components of a force are numbers (N); to spread it unevenly over the region give '
                         'profile=<a field>')
     if profile is not None and not isinstance(profile, Shape):
         raise TypeError('force(): profile is a field (a Shape)')
-    return _Force(_shape(region, 'force(region)'), (float(fx), float(fy), float(fz)), profile)
+    return _Force(found, (float(fx), float(fy), float(fz)), profile)
+
+force._required = ('region', 'vector')
 
 
 def gravity(g=(0.0, 0.0, -9810.0)):
@@ -289,13 +450,13 @@ _MAX_DRAWN_VALUES = 1500000
 _FIELDS = ['von_mises', 'displacement', 'ux', 'uy', 'uz',
            'sxx', 'syy', 'szz', 'sxy', 'syz', 'szx',
            'max_principal', 'min_principal', 'strain_energy']
-_LABELS = {'von_mises': 'von Mises stress (MPa)', 'displacement': 'displacement (mm)',
-           'ux': 'displacement x (mm)', 'uy': 'displacement y (mm)', 'uz': 'displacement z (mm)',
-           'sxx': 'stress xx (MPa)', 'syy': 'stress yy (MPa)', 'szz': 'stress zz (MPa)',
-           'sxy': 'stress xy (MPa)', 'syz': 'stress yz (MPa)', 'szx': 'stress zx (MPa)',
-           'max_principal': 'max principal stress (MPa)',
-           'min_principal': 'min principal stress (MPa)',
-           'strain_energy': 'strain energy density (mJ/mm^3)'}
+_LABELS = {'von_mises': _tr('von Mises stress (MPa)'), 'displacement': _tr('displacement (mm)'),
+           'ux': _tr('displacement x (mm)'), 'uy': _tr('displacement y (mm)'), 'uz': _tr('displacement z (mm)'),
+           'sxx': _tr('stress xx (MPa)'), 'syy': _tr('stress yy (MPa)'), 'szz': _tr('stress zz (MPa)'),
+           'sxy': _tr('stress xy (MPa)'), 'syz': _tr('stress yz (MPa)'), 'szx': _tr('stress zx (MPa)'),
+           'max_principal': _tr('max principal stress (MPa)'),
+           'min_principal': _tr('min principal stress (MPa)'),
+           'strain_energy': _tr('strain energy density (mJ/mm^3)')}
 
 
 class _Handle:
@@ -396,9 +557,9 @@ class Result:
             for k in range(1, 21):
                 f = k / 20.0
                 if k == 20:
-                    steps.append({'label': 'load 100 %'})
+                    steps.append({'label': _tr('load 100 %')})
                 else:
-                    steps.append({'label': 'load %d %%' % (5 * k),
+                    steps.append({'label': _tr('load %d %%') % (5 * k),
                                   'channels': [(name, _LABELS[name], f * getattr(self, name)) + tuple(self._ranges[name])
                                                for name in _FIELDS],
                                   'deform': (f * self.ux, f * self.uy, f * self.uz)})
@@ -417,8 +578,8 @@ class Result:
     def element_text(self):
         ''' What the analysis is made of, and how many of them '''
         if self.element == 'tet':
-            return '{:,} tetrahedra'.format(self.elements)
-        return '{:,} hexahedra'.format(self.elements)
+            return _tr('%s tetrahedra') % '{:,}'.format(self.elements)
+        return _tr('%s hexahedra') % '{:,}'.format(self.elements)
 
     def _element_grid(self):
         ''' What FielDes draws for "Elements": (corner, cell size, cell counts, fill fractions,
@@ -461,13 +622,12 @@ class Result:
         return s.remap(x - scale * self.ux, y - scale * self.uy, z - scale * self.uz)
 
     def __repr__(self):
-        text = ('Static analysis: {} ({:.1f} s)\n'
-                '  von Mises max {:.4g} MPa \u00b7 displacement max {:.3g} mm').format(
-                    self.element_text(), self.seconds, self.max_von_mises, self.max_displacement)
+        text = _tr('Static analysis: %s (%.1f s)\n  von Mises max %.4g MPa \u00b7 displacement max %.3g mm') % (
+            self.element_text(), self.seconds, self.max_von_mises, self.max_displacement)
         if self.safety_factor is not None:
-            text += '\n  safety factor {:.3g} ({})'.format(self.safety_factor, self.material.name)
+            text += '\n' + _tr('  safety factor %.3g (%s)') % (self.safety_factor, self.material.name)
         if self.loose_elements:
-            text += '\n  {} loose elements (connected to no support) left out'.format(self.loose_elements)
+            text += '\n' + _tr('  %d loose elements (connected to no support) left out') % self.loose_elements
         return text
 
 
@@ -500,13 +660,14 @@ def _bounds(shape):
     return found
 
 
-def static_analysis(shape, conditions, material=steel, element_size=None,
-                    bounds=None, max_iterations=20000, tolerance=1e-6, cache=True, element='tet'):
+@_with_conditions
+def static_analysis(shape, supports, loads, material=steel, element_size=None,
+                    bounds=None, tolerance=1e-6, cache=True, element='tet'):
     ''' Linear static analysis of `shape` (a Shape, in mm).
 
-        conditions the boundary conditions: static_boundary_conditions(part, supports, loads) -- the
-                   supports are fixed(...) items (at least one), the loads force(...) / gravity(...) /
-                   thermal_expansion(...) items.  They are a shape of their own, drawn on the part
+        supports   what holds the part: fixed(...) items (at least one), one or a list
+        loads      what pushes it: force(...) / gravity(...) / thermal_expansion(...) items, one or a list ([] for none).
+                   The conditions have no body in them (this function is given it); each is a model of its own and is drawn on the part
         material   a Material (default steel); E in MPa
         element_size   the element edge in mm (default: the part's longest
                    side over 60)
@@ -519,13 +680,15 @@ def static_analysis(shape, conditions, material=steel, element_size=None,
         Returns a Result (see its fields).  Raises FeaError if the problem
         can't be solved as given (no support touching the part, supports
         that don't hold it in place, ...). '''
+    max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     if not isinstance(shape, Shape):
         raise TypeError('static_analysis: the part must be a Shape')
-    supports, loads = _conditions(conditions, 'static_analysis')
     if _is_cases(loads):
         raise FeaError('a static analysis has one set of loads: load cases (a list of lists) are for '
                        'topology_optimization')
-    loads = list(loads if isinstance(loads, (list, tuple)) else [loads])
+    supports = _given(supports, 'supports', 'static_analysis')
+    loads = _given(loads, 'loads', 'static_analysis')
+    _use_conditions(supports + loads, shape)
     # The whole problem by its content, before anything is built: a problem asked again (a script run
     # again, a section moving over its fields) is neither meshed nor solved again
     ekey = problem_key('static', shape=shape, part_bounds=getattr(shape, '_bounds', None),
@@ -675,7 +838,7 @@ class TetResult(Result):
         return self._size
 
     def element_text(self):
-        return '{:,} tetrahedra \u00b7 {:,} nodes'.format(self.elements, self.nodes)
+        return _tr('%s tetrahedra \u00b7 %s nodes') % ('{:,}'.format(self.elements), '{:,}'.format(self.nodes))
 
     def _element_grid(self):
         return None
@@ -805,16 +968,16 @@ class Mode:
             steps = []
             for k in range(n):
                 s = math.sin(2 * math.pi * k / n)
-                steps.append({'label': 'phase %d\u00b0' % (360 * k // n),
+                steps.append({'label': _tr('phase %d\u00b0') % (360 * k // n),
                               'deform': (s * self.ux, s * self.uy, s * self.uz)})
             auto = 0.05 * self._model_size()
-            shown = {'_color_fields': [(name, 'mode %d %s' % (self.index + 1, name), getattr(self, name)) +
+            shown = {'_color_fields': [(name, _tr('mode %d %s') % (self.index + 1, name), getattr(self, name)) +
                                        tuple(self._ranges[name]) for name in ('displacement', 'ux', 'uy', 'uz')],
                      '_color_field_name': 'displacement', '_deform': (self.ux, self.uy, self.uz),
                      '_deform_auto': auto, '_deform_scale': auto,
                      '_color_steps': steps, '_color_step': n // 4}
             self._shown = shown
-        label = 'mode %d, %.4g Hz (displacement)' % (self.index + 1, self.frequency)
+        label = _tr('mode %d, %.4g Hz (displacement)') % (self.index + 1, self.frequency)
         out = colored(self.shape, self.displacement, range=self._ranges['displacement'], label=label)
         out.__dict__.update(shown)
         out._color_detail = float(getattr(self, 'element_size', 0) or 0)
@@ -877,19 +1040,19 @@ class ModalResult:
         return self.modes[0]._display()
 
     def __repr__(self):
-        return 'Modal analysis: %s Hz (%s, %.1f s)' % (
+        return _tr('Modal analysis: %s Hz (%s, %.1f s)') % (
             ' \u00b7 '.join('%.4g' % f for f in self.frequencies), self.material.name, self.seconds)
 
 
 _modal_cache = OrderedDict()
 
 
-def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None, bounds=None,
-                   max_iterations=100, tolerance=1e-6, cache=True, element='tet'):
+@_with_conditions
+def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, bounds=None,
+                   tolerance=1e-6, cache=True, element='tet'):
     ''' The natural frequencies and mode shapes of `shape` (a Shape, in
-        mm), held by the supports of the boundary conditions
-        (static_boundary_conditions(part, supports=[fixed(...)]) -- how it
-        vibrates.  No loads are needed (any given are not used); the
+        mm), held by `supports` (fixed(...) items, one or a list) -- how it
+        vibrates.  No loads are needed; the
         material's E and density are used.
 
         modes        how many (the lowest first)
@@ -901,12 +1064,14 @@ def modal_analysis(shape, conditions, material=steel, modes=6, element_size=None
         fields -- displacement, ux, uy, uz).  The shapes are fields like any
         other: e.g. stiffen the part where the first mode moves most.  An
         unchanged problem is cached. '''
+    max_iterations = 100        # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     if not isinstance(shape, Shape):
         raise TypeError('modal_analysis: the part must be a Shape')
     if not _density_given(material):
         raise FeaError('modal_analysis needs a material with a density')
     _refuse_fields(material, (), element, 'modal_analysis')
-    supports = _conditions(conditions, 'modal_analysis')[0]
+    supports = _given(supports, 'supports', 'modal_analysis')
+    _use_conditions(supports, shape)
     if not supports:
         raise FeaError('modal_analysis needs supports (fixed(...))')
     # The whole problem by its content, before anything is built (see static_analysis)
@@ -1021,6 +1186,7 @@ class TopologyResult:
         .volume_fraction, .iterations, .seconds
         .pieces      how many separate pieces the optimized part is in (tetrahedral optimizations; more than
                      one is warned about when the result is made: try a higher volume_fraction)
+        .symmetry    the planes the design was kept symmetric about: {'z': 0.0} (see the symmetry argument), {} if none
         .verify()    a static analysis of the optimized part (stresses) --
                      a list, one per load case, when there are several
         Stated on its own, FielDes shows the optimized part coloured by the
@@ -1040,6 +1206,8 @@ class TopologyResult:
         self.volume_fraction = stats['volume_fraction']
         self.iterations = stats['iterations']
         self.seconds = stats['seconds']
+        self.domain = part                      # (what the design may fill: the part, or the part grown outwards)
+        self.grow = 0.0
 
     def keep_threshold(self, samples=40):
         ''' The density above which the part keeps the volume fraction that
@@ -1052,10 +1220,16 @@ class TopologyResult:
         lo, hi = self.bounds
         _, part = sample_grid(self.part, lo, hi, samples)
         _, dens = sample_grid(self.density, lo, hi, samples)
-        inside = [d for pv, d in zip(part, dens) if pv < 0]
+        if self.domain is self.part:
+            inside = [d for pv, d in zip(part, dens) if pv < 0]
+            of_part = len(inside)
+        else:
+            _, space = sample_grid(self.domain, lo, hi, samples)
+            inside = [d for sv, d in zip(space, dens) if sv < 0]
+            of_part = sum(1 for pv in part if pv < 0)           # (the volume fraction is of the part's volume)
         t = 0.5
         if inside:
-            target = self.settings['volume_fraction'] * len(inside)
+            target = self.settings['volume_fraction'] * of_part
             a, b = 0.0, 1.0
             for _ in range(40):
                 t = 0.5 * (a + b)
@@ -1077,7 +1251,7 @@ class TopologyResult:
         # the density rises from 0 to 1 over about two filter widths: scale
         # it to roughly mm near the threshold so offsets behave
         width = 2.0 * (self.settings['filter_radius'] or 1.5 * self.element_size)
-        out = ((threshold - self.density) * width).max(self.part)
+        out = ((threshold - self.density) * width).max(self.domain)
         out._bounds = self.bounds
         return carry_locks(out, self.part)
 
@@ -1086,7 +1260,7 @@ class TopologyResult:
             loads and material -- with several load cases, a list of them,
             one per case '''
         cases = self._loads if _is_cases(self._loads) else [self._loads]
-        out = [static_analysis(self.shape(threshold), _PlainConditions(self._supports, list(case)), self.material,
+        out = [static_analysis(self.shape(threshold), self._supports, list(case), self.material,
                                element_size=element_size or self.element_size, bounds=self.bounds,
                                element=self.settings.get('element', 'hex'))
                for case in cases]
@@ -1101,31 +1275,37 @@ class TopologyResult:
             width = 2.0 * (self.settings['filter_radius'] or 1.5 * self.element_size)
             densities = getattr(self, 'densities', None) or []
             steps = []
+            # (a tetrahedral optimisation can say each step's surface itself, from its own densities: the viewer draws those triangles
+            # instead of meshing the field of every step.  The field stays what sections and probes read)
+            handle = getattr(self, '_handle', None)
+            tet_ptr = None
+            if isinstance(handle, _TetHandle) and handle.ptr and getattr(lib, 'libfive_tetfea_density_at', None):
+                tet_ptr = ctypes.cast(handle.ptr, ctypes.c_void_p).value
             for k, d in enumerate(densities):
-                step = {'label': 'iteration %d of %d' % (k + 1, len(densities)),
-                        'channels': [('density', 'density', d, 0.0, 1.0)]}
+                step = {'label': _tr('iteration %d of %d') % (k + 1, len(densities)),
+                        'channels': [('density', _tr('density'), d, 0.0, 1.0)]}
                 if k + 1 < len(densities):
-                    body = ((threshold - d) * width).max(self.part)
+                    body = ((threshold - d) * width).max(self.domain)
                     body._bounds = self.bounds
                     step['shape'] = body
+                    if tet_ptr:
+                        step['surface'] = (tet_ptr, k, float(threshold))
                 steps.append(step)
-            shown = {'_color_fields': [('density', 'density', self.density, 0.0, 1.0)],
+            shown = {'_color_fields': [('density', _tr('density'), self.density, 0.0, 1.0)],
                      '_color_field_name': 'density', '_shape': self.shape(threshold)}
             if steps:
                 shown['_color_steps'] = steps
                 shown['_color_step'] = len(steps) - 1
             self._shown = shown
-        out = colored(shown['_shape'], self.density, range=(0.0, 1.0), label='density')
+        out = colored(shown['_shape'], self.density, range=(0.0, 1.0), label=_tr('density'))
         out.__dict__.update({k: v for k, v in shown.items() if k != '_shape'})
         out._color_detail = float(getattr(self, 'element_size', 0) or 0)
         return out
 
     def __repr__(self):
         c = self.compliance
-        return ('Topology optimization: {:.0f} % of the part kept, compliance {:.4g} -> {:.4g} N mm '
-                '({} iterations, {:.1f} s)').format(100 * self.volume_fraction,
-                                                  c[0] if c else 0, c[-1] if c else 0,
-                                                  self.iterations, self.seconds)
+        return _tr('Topology optimization: %.0f %% of the part kept, compliance %.4g -> %.4g N mm (%d iterations, %.1f s)') % (
+            100 * self.volume_fraction, c[0] if c else 0, c[-1] if c else 0, self.iterations, self.seconds)
 
 
 _topo_cache = OrderedDict()
@@ -1137,47 +1317,133 @@ def _is_cases(loads):
             all(isinstance(c, (list, tuple)) for c in loads))
 
 
-def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
-                          element_size=None, iterations=60, filter_radius=None, keep=None,
-                          avoid=None, extrude=None, penalty=3.0, move=0.2, bounds=None,
-                          max_iterations=20000, tolerance=1e-5, cache=True, element='tet'):
+def _grown_space(part, grow, supports, loads, element_size):
+    ''' The design space of a part that may grow outwards: the part, and the part offset by `grow` mm -- except round the places
+        where the supports and loads act, which stay on the part's own surface (a bolt hole that carries a load stays open) '''
+    from fieldes.stdlib.fields import _dist
+    reach = grow + 2.0 * element_size
+    regions = [s.region for s in supports] + [l.region for case in (loads if _is_cases(loads) else [loads]) for l in case
+                                              if isinstance(l, _Force)]
+    skin = _dist(part) - grow
+    if regions:
+        away = None
+        for r in regions:
+            r = _united(r) if isinstance(r, (list, tuple)) else r
+            near = r - reach
+            away = near if away is None else away.min(near)
+        skin = skin.max(-away)
+    return part.min(skin)
+
+
+def _symmetry_request(symmetry, element, what='topology_optimization'):
+    ''' The symmetry argument of an optimisation (`what`) as (look for planes by itself, [(axis, position or None)], text for the key) '''
+    if symmetry is None or symmetry is False:
+        return False, [], 'none'
+    if symmetry is True or (isinstance(symmetry, str) and symmetry.lower() == 'auto'):
+        return element == 'tet', [], 'auto' if element == 'tet' else 'none'
+    if isinstance(symmetry, dict):
+        items = list(symmetry.items())
+    elif isinstance(symmetry, str):
+        items = [(c, None) for c in symmetry.lower()]
+    elif isinstance(symmetry, (list, tuple)):
+        items = [(c, None) for c in symmetry]
+    else:
+        raise TypeError("%s: symmetry is None, 'auto', 'x', 'y', 'z' (or several of them: 'xz'), or {'z': 0.0}" % what)
+    planes = []
+    for name, at in items:
+        name = str(name).lower()
+        if name not in ('x', 'y', 'z'):
+            raise ValueError("%s: symmetry is None, 'auto', 'x', 'y', 'z' (or several of them: 'xz'), or {'z': 0.0}" % what)
+        planes.append(('xyz'.index(name), None if at is None else float(at)))
+    if element != 'tet':
+        raise FeaError("%s: symmetry needs the tetrahedral optimization (element='tet')" % what)
+    planes.sort(key=lambda p: p[0])
+    return False, planes, ','.join('%s%s' % ('xyz'[a], '' if at is None else '@%.6g' % at) for a, at in planes)
+
+
+@_with_conditions
+def topology_optimization(part, supports, loads, material=steel, volume_fraction=0.3,
+                          element_size=None, iterations=100, filter_radius=None, keep=None,
+                          avoid=None, grow=0.0, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', bounds=None,
+                          tolerance=1e-5, cache=True, element='tet'):
     ''' Topology optimization: the stiffest part that uses `volume_fraction`
-        of the material of `part` (the design space), for the supports and
-        loads of the boundary conditions (as in static_analysis).
+        of the material of `part` (the design space), for the `supports` and
+        `loads` (as in static_analysis).
+
+        loads: force(...) / gravity(...) items, one or a list -- or several LOAD CASES, a list of such lists:
+                loads=[[push], [pull, gravity()]].  Each case acts on its own and the part is made stiff for all of them at once
+                (the sum of their compliances is minimised): a part that is pushed in use and pulled in assembly.
+        supports: fixed(...) items, one or a list -- the same for every load case; or a list of lists, one for each load case
+                (a part that is held here in one use and there in another): topology_optimization(part,
+                supports=[[base_a], [base_b]], loads=[[push], [pull]]).
+        symmetry: 'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'z': 0.0} with the plane's position.  A
+                design is kept symmetric about a plane when the part is, and so are its supports, its loads and its keep /
+                avoid regions: left to itself a symmetric problem does not stay symmetric -- the mesh of a symmetric part is
+                never exactly symmetric, the small difference grows, and one of two members that do the same job takes the
+                other's material.  'auto' finds the planes through the middle of the part (x, y, z) that the whole problem is
+                symmetric about and keeps the design symmetric about them (the output says which); None leaves it alone; 'z' asks
+                for the plane z = the middle of the part, a dict for a plane of your own.  (Tetrahedral optimizations.)
 
         keep:   regions (Shapes, or a list) that must stay solid -- e.g. bolt
                 bosses, mounting faces; the material around supports and
                 loads always stays
         avoid:  regions that must stay empty
+        grow:   mm (default 0: the design stays inside the part).  The part may
+                also thicken OUTWARDS by up to this much, wherever that makes it
+                stiffer -- sections that are too thin grow, material that carries
+                nothing goes.  The design then starts as the part, and the
+                volume_fraction is of the part's own volume (1 spends the same
+                material, 1.2 spends 20 % more; the part is not grown round the
+                supports and loads, which stay where they are)
         extrude: 'x', 'y' or 'z' -- the design is the same all along that
                 axis (outside the keep / avoid regions): a profile to
                 extrude, or to cut right through from one side
+        iterations: at most this many design updates (default 100): it stops sooner when the
+                design has settled (from the 15th on, once the sharpness has been reached, when the design hardly
+                changes or the compliance stays flat for 5 iterations).  It also sets the pace of the sharpening
+                (it reaches its full steepness at three quarters of the iterations, however many there are, so even a
+                short run ends with a crisp design).  It sets the size of the steps too (there is no step to
+                choose): how far a density may move in one iteration starts large -- the fewer the iterations, the larger -- and is
+                smaller as they go, and within that it grows while the compliance falls as the sensitivities predicted and
+                shrinks when it does not
+        tolerance: how exactly each solve is made (default 1e-5)
+        sharpness: how crisp the design is (default 16; tetrahedral
+                optimizations).  The density is pushed towards 0 and 1 more and
+                more as the iterations go on, up to this much: the part ends up
+                solid or empty, not grey, and nothing wanders in at the end.
+                1 leaves the density as the filter makes it (soft edges, a
+                third of the part grey)
         element_size:  mm (default: 40 elements along the longest side; the
-                optimization solves the analysis ~30-60 times)
+                optimization solves the analysis ~30-100 times)
         filter_radius: the smallest member size scale, mm (default 1.5
                 elements)
         element: 'tet' (default: tetrahedra that follow the part's surface, a density in each),
                 'hex' or 'hex_basic' (a regular grid of hexahedra)
 
-        conditions: static_boundary_conditions(part, supports, loads): the loads
-                a list of loads -- or several load cases, a list of such
-                lists: loads=[[force(a, ...)], [force(b, ...), gravity()]].
-                Each case acts on its own and the part is made stiff for all
-                of them (the sum of their compliances is minimised) -- e.g. a
-                bracket pushed down in use and sideways in assembly.
-
         Returns a TopologyResult: .density (a field), .shape() (the
         optimized part), .compliance, .verify().  An unchanged problem is
         cached, so re-running a script is instant. '''
+    max_iterations = 20000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
     if not isinstance(part, Shape):
         raise TypeError('topology_optimization: the part must be a Shape')
     if getattr(lib, 'libfive_fea_optimize', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization')
-    supports, loads = _conditions(conditions, 'topology_optimization')
-    if _is_cases(loads):
-        cases = [list(c) for c in loads]
+    cases = [_given(c, 'loads', 'topology_optimization') for c in loads] if _is_cases(loads) else [
+        _given(loads, 'loads', 'topology_optimization')]
+    case_supports = None            # (one list of supports for each load case when each case has its own)
+    if _is_cases(supports):
+        case_supports = [_given(s, 'supports', 'topology_optimization') for s in supports]
+        if len(case_supports) != len(cases):
+            raise FeaError('topology_optimization: supports is a list of lists, one for each load case: {} lists of supports for {} load '
+                           'cases'.format(len(case_supports), len(cases)))
+        if element != 'tet':
+            raise FeaError("topology_optimization: load cases, each with its own supports, need the tetrahedral optimization "
+                           "(element='tet')")
+        supports = case_supports[0]
     else:
-        cases = [list(loads if isinstance(loads, (list, tuple)) else [loads])]
+        supports = _given(supports, 'supports', 'topology_optimization')
+    _use_conditions(supports + [l for c in cases for l in c] + [s for cs in (case_supports or []) for s in cs], part)
+    mirrors = _symmetry_request(symmetry, element)
     for i, case in enumerate(cases):
         if not case:
             raise FeaError('load case {} has no loads'.format(i + 1))
@@ -1188,10 +1454,10 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     keep = keep + keep_regions(part)
     # The whole problem by its content, before anything is built (see static_analysis)
     ekey = problem_key('topology', part=part, part_bounds=getattr(part, '_bounds', None),
-                       supports=supports, loads=loads, material=material,
+                       supports=supports, case_supports=case_supports, symmetry=mirrors[2], loads=loads, material=material,
                        volume_fraction=float(volume_fraction), element_size=element_size,
-                       iterations=int(iterations), filter_radius=filter_radius, keep=keep, avoid=avoid,
-                       extrude=extrude, penalty=float(penalty), move=float(move), bounds=bounds,
+                       iterations=int(iterations), filter_radius=filter_radius, keep=keep, avoid=avoid, grow=float(grow or 0.0),
+                       extrude=extrude, penalty=float(penalty), sharpness=float(sharpness), bounds=bounds,
                        max_iterations=max_iterations, tolerance=tolerance,
                        element=element) if cache else None
     if ekey is not None and ekey in _topo_cache:
@@ -1203,11 +1469,22 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
         r.__dict__.update(cached.__dict__)
         r.part = part
         return r
+    grow = float(grow or 0.0)
+    if grow < 0:
+        raise ValueError('topology_optimization: grow is a distance of 0 or more')
+    if grow > 0 and element != 'tet':
+        raise FeaError("topology_optimization: grow needs the tetrahedral optimization (element='tet')")
     lo, hi = bounds if bounds is not None else _bounds(part)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
         element_size = max(size) / 40.0
     element_size = float(element_size)
+    domain = part
+    if grow > 0:
+        domain = _grown_space(part, grow, supports, loads, element_size)
+        lo, hi = [lo[i] - grow for i in range(3)], [hi[i] + grow for i in range(3)]
+        domain._bounds = (tuple(lo), tuple(hi))
+        size = [hi[i] - lo[i] for i in range(3)]
     pad = 1e-6 * max(max(size), 1e-9)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
@@ -1221,10 +1498,11 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
     settings = {'volume_fraction': float(volume_fraction), 'penalty': float(penalty),
                 'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
-                'move': float(move), 'extrude': axes[extrude], 'element': element}
+                'extrude': axes[extrude], 'element': element, 'sharpness': float(sharpness),
+                'symmetry': mirrors[2]}
 
-    def finish(handle, ptr, seconds):
-        ''' The result from a solved problem (just optimised, or read back from its file) '''
+    def finish(handle, ptr, seconds, symmetric=None):
+        ''' The result from a solved problem (just optimised, or read back from its file: `symmetric`, what the file says) '''
         density = Shape(fn('density')(ptr))
         hist = (ctypes.c_double * 1000)()
         m = fn('history')(ptr, hist, 1000)
@@ -1238,9 +1516,32 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
                 break
             densities.append(Shape(p))
         stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history), 'seconds': seconds}
+        if len(history) >= settings['iterations'] and len(history) > 12 and history[-1] > 0:
+            # (the last iteration was the limit, not a design that had settled: say how far from it the part still was)
+            gain = (history[-11] - history[-1]) / history[-1]
+            if gain > 0.005:
+                print('topology_optimization: stopped at the limit of %d iterations with the part still getting stiffer '
+                      '(%.1f %% over the last 10): more iterations settle it.' % (settings['iterations'], 100 * gain))
         result = TopologyResult(handle, part, density, history, settings, element_size, (lo, hi),
                                 supports, loads, material, stats)
+        result.domain = domain
+        result.grow = grow
         result.densities = densities
+        # The planes the design was kept symmetric about: {'x': [position, how]} -- asked for (1), or found (2: and then said)
+        if symmetric is None:
+            symmetric = {}
+            probe = getattr(lib, 'libfive_tetfea_mirror', None) if tet else None
+            for k, name in enumerate('xyz'):
+                at = ctypes.c_double()
+                how = probe(ptr, k, ctypes.byref(at)) if probe else 0
+                if how:
+                    symmetric[name] = [float(at.value), int(how)]
+        found = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
+        if found:
+            print('topology_optimization: the part, its supports and its loads are symmetric about %s: the design is kept symmetric '
+                  '(symmetry=None leaves it alone).' % ' and '.join(found))
+        result.symmetry = {n: v[0] for n, v in symmetric.items()}
+        result._symmetry_info = symmetric
         # A part that falls into pieces cannot do what a part is for: say so, and what to try.  (The scraps are left
         # in the result on purpose: they show what the part would become with more volume.)
         count = getattr(lib, 'libfive_tetfea_pieces', None) if tet else None
@@ -1257,14 +1558,22 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load(kind, ekey, 'topology optimization')
     if loaded is not None:
-        result = finish(_TetHandle(loaded[0]) if tet else _Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)))
+        result = finish(_TetHandle(loaded[0]) if tet else _Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)),
+                        dict(loaded[1].get('symmetry') or {}))
         _topo_cache[ekey] = result
         return result
     if tet:
         if getattr(lib, 'libfive_tetfea_optimize', None) is None:
             raise FeaError('this FielDes library is too old for tetrahedral topology optimization')
-        ptr = lib.libfive_tetfea_new(part.ptr, region, element_size, _number(material.E, 1.0), material.nu)
+        ptr = lib.libfive_tetfea_new(domain.ptr, region, element_size, _number(material.E, 1.0), material.nu)
         handle = _TetHandle(ptr)
+        if grow > 0:
+            lib.libfive_tetfea_set_origin(ptr, part.ptr)
+        lib.libfive_tetfea_set_sharpness(ptr, float(sharpness))
+        if mirrors[0]:
+            lib.libfive_tetfea_set_symmetry_auto(ptr, 1)
+        for axis, at in mirrors[1]:
+            lib.libfive_tetfea_add_mirror(ptr, axis, 0.0 if at is None else float(at), 1 if at is None else 0)
         _material_fields(ptr, material)
     else:
         _refuse_fields(material, [l for case in cases for l in case], element, 'topology_optimization')
@@ -1276,6 +1585,11 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
         if not isinstance(s, _Support):
             raise TypeError('supports must be fixed(...) items')
         fn('add_support')(ptr, s.region.ptr, *[int(a) for a in s.axes])
+    for case_index, held in enumerate(case_supports or []):
+        for s in held:
+            if not isinstance(s, _Support):
+                raise TypeError('supports must be fixed(...) items')
+            lib.libfive_tetfea_add_support_case(ptr, s.region.ptr, *[int(a) for a in s.axes], case_index)
     gravity_set = False
     for case_index, case in enumerate(cases):
         for l in case:
@@ -1351,18 +1665,36 @@ def topology_optimization(part, conditions, material=steel, volume_fraction=0.3,
     if ekey is not None:
         fn('set_salt')(ptr, result_cache.salt(kind, ekey))
     t0 = time.time()
-    ok = fn('optimize')(ptr, settings['volume_fraction'], settings['penalty'],
-                        settings['filter_radius'], settings['iterations'],
-                        settings['move'], keep_arr, len(keep), avoid_arr, len(avoid),
-                        int(max_iterations), float(tolerance), settings['extrude'])
+    # (the tetrahedral optimiser sets its own step from the iterations and from how the design improves; the voxel one has a fixed one)
+    step = [] if tet else [0.2]
+
+    def keep_result(result):
+        result_cache.save(kind, ekey, ptr, 'topology optimization', {'seconds': result.seconds, 'symmetry': result._symmetry_info})
+        if cache:
+            _topo_cache[key] = result
+        if ekey is not None:
+            _topo_cache[ekey] = result
+        while len(_topo_cache) > 8:
+            _topo_cache.popitem(last=False)
+
+    try:
+        ok = fn('optimize')(ptr, settings['volume_fraction'], settings['penalty'],
+                            settings['filter_radius'], settings['iterations'], *step,
+                            keep_arr, len(keep), avoid_arr, len(avoid),
+                            int(max_iterations), float(tolerance), settings['extrude'])
+    except BaseException:
+        # An edit of the script stopped this run.  The stop reaches Python only as the solver returns -- so a solution that is whole is
+        # there, and is kept for the run of the edited text (the same problem, unless the edit changed it): minutes of work must not be
+        # thrown away, to be done again, by a click on an eye.  (A solver that was cancelled has a message, and is not kept.)
+        try:
+            hist = (ctypes.c_double * 1000)()
+            if not fn('message')(ptr) and fn('history')(ptr, hist, 1000) > 0:
+                keep_result(finish(handle, ptr, time.time() - t0))
+        except Exception:
+            pass
+        raise
     if not ok:
         raise FeaError(fn('message')(ptr).decode('utf-8', 'replace'))
     result = finish(handle, ptr, time.time() - t0)
-    result_cache.save(kind, ekey, ptr, 'topology optimization', {'seconds': result.seconds})
-    if cache:
-        _topo_cache[key] = result
-    if ekey is not None:
-        _topo_cache[ekey] = result
-    while len(_topo_cache) > 8:
-        _topo_cache.popitem(last=False)
+    keep_result(result)
     return result

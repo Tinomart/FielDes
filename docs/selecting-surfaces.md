@@ -99,8 +99,7 @@ foot = select_surface(part, seed=(57.8, 20.4, -60.0), angle=5)
 top = select_surface(part, seed=(30.7, -10.0, 28.0), angle=5)
 
 # supports and loads act on it
-conditions = static_boundary_conditions(part, [fixed(foot)], [force(top, (0, 0, -500))])
-result = static_analysis(part, conditions, material=aluminium, element_size=4)
+result = static_analysis(part, supports=[fixed(foot)], loads=[force(top, (0, 0, -500))], material=aluminium, element_size=4)
 
 # a lattice standing on it, following it: the selection is the surface
 ribs = lattice_surface_conform(foot, cell_periodic('octet'), cell_thickness=5, cell_size=5, radius=0.5)

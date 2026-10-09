@@ -2240,6 +2240,162 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         return cnt > 0 ? sum / cnt : 1.0;
     };
 
+    // Mirror symmetry (as the structural optimiser has it).  For each plane the design is kept symmetric about, every node's partner: the
+    // tetrahedron that holds the mirror image of the node, with the barycentric weights there.  The sensitivities are averaged over the pairs,
+    // which keeps a design that starts symmetric symmetric -- left to itself it does not: the mesh of a symmetric domain is never exactly
+    // symmetric, the small difference grows, and one flank of a nose gets a lump the other has not
+    struct NodeMirror { int axis; double at; bool found; std::vector<std::array<int32_t, 4>> from; std::vector<std::array<double, 4>> w; };
+    std::vector<NodeMirror> mirrorMaps;
+    m_mirrorsUsed.clear();
+    if (s.symmetryAuto || !s.mirrors.empty())
+    {
+        auto mirrorOf = [](const Vec3& c, int axis, double at) {
+            Vec3 q = c;
+            q[axis] = 2 * at - c[axis];
+            return q;
+        };
+        // (the locator the solver keeps is made by its first solve, which has not been made yet)
+        std::shared_ptr<const TetLocator> mirrorLocator = m_locator;
+        if (!mirrorLocator) mirrorLocator = std::make_shared<TetLocator>(mesh);
+        auto makeMap = [&](int axis, double at, bool found) {
+            NodeMirror mm{axis, at, found, std::vector<std::array<int32_t, 4>>(nv), std::vector<std::array<double, 4>>(nv)};
+            parallelRange(nv, [&](size_t b0, size_t b1) {
+                for (size_t i = b0; i < b1; ++i)
+                {
+                    double lam[4];
+                    const int t = mirrorLocator->locate(mirrorOf(mesh.pos[i], axis, at), lam);
+                    if (t < 0)
+                    {
+                        mm.from[i] = {int32_t(i), int32_t(i), int32_t(i), int32_t(i)};
+                        mm.w[i] = {1.0, 0.0, 0.0, 0.0};
+                        continue;
+                    }
+                    for (int q = 0; q < 4; ++q)
+                    {
+                        mm.from[i][size_t(q)] = int32_t(mesh.tets[size_t(t)][size_t(q)]);
+                        mm.w[i][size_t(q)] = lam[q];
+                    }
+                }
+            }, 512);
+            return mm;
+        };
+        // Is the whole problem symmetric about this plane?  The flow along it; the domain and the regions the same at the mirror image of every
+        // element's centre; the body the same at the mirror image of every node near its boundary; each kind of boundary (an inlet, an outlet, a
+        // wall, a slip) of the same area and in the same place on the two sides
+        auto problemSymmetric = [&](int axis, double at, std::string& why) -> bool {
+            if (std::abs(d[axis]) > 0.05) { why = "the flow does not run along the plane"; return false; }
+            std::vector<Eigen::Vector3f> mc(na);
+            for (size_t a = 0; a < na; ++a) mc[a] = mirrorOf(cen[a], axis, at).cast<float>();
+            double total = 0, badDomain = 0, badRegion = 0;
+            std::vector<float> v1, v2;
+            evalTreePoints(m_shape, mc, v1);
+            for (size_t a = 0; a < na; ++a)
+            {
+                total += vol[a];
+                if (!(v1[a] <= 0.25f * float(h))) badDomain += vol[a];
+            }
+            if (badDomain > 0.04 * total) { why = "the fluid domain is not symmetric"; return false; }
+            std::vector<Tree> trees;
+            if (s.region.is_valid()) trees.push_back(s.region);
+            for (const auto& t : s.keep) trees.push_back(t);
+            for (const auto& t : s.avoid) trees.push_back(t);
+            for (const auto& t : trees)
+            {
+                evalTreePoints(t, centres, v1);
+                evalTreePoints(t, mc, v2);
+                for (size_t a = 0; a < na; ++a)
+                    if ((v1[a] < 0) != (v2[a] < 0)) badRegion += vol[a];
+            }
+            if (badRegion > 0.04 * total) { why = "the region, or the regions to keep or to avoid, are not symmetric"; return false; }
+            {
+                std::vector<Eigen::Vector3f> mp(nv);
+                for (size_t i = 0; i < nv; ++i) mp[i] = mirrorOf(mesh.pos[i], axis, at).cast<float>();
+                evalTreePoints(s.body, nodePts, v1);
+                evalTreePoints(s.body, mp, v2);
+                size_t near = 0, bad = 0;
+                for (size_t i = 0; i < nv; ++i)
+                    if (std::abs(v1[i]) < 2.0 * h)
+                    {
+                        ++near;
+                        if ((v1[i] < 0) != (v2[i] < 0)) ++bad;
+                    }
+                if (near > 0 && double(bad) > 0.06 * double(near)) { why = "the body is not symmetric"; return false; }
+            }
+            {
+                struct Side { double a = 0; Vec3 c = Vec3::Zero(); };
+                Side sd[5][2];                                  // (the kind of boundary + 1: -1 a wall at rest ... 3 a slip; above the plane, below it)
+                for (size_t f = 0; f < nf; ++f)
+                {
+                    const int kind = m_faceKind[f];
+                    if (kind < -1 || kind > 3) continue;
+                    const auto& fn = mesh.faces[f];
+                    const Vec3 c = (mesh.pos[size_t(fn[0])] + mesh.pos[size_t(fn[1])] + mesh.pos[size_t(fn[2])]) / 3.0;
+                    const double dd = c[axis] - at;
+                    if (std::abs(dd) < 0.25 * h) continue;      // (on the plane)
+                    Vec3 q = c;
+                    q[axis] = std::abs(dd);                     // (the distance from the plane: the same for a point and its image)
+                    Side& sdk = sd[kind + 1][dd > 0 ? 0 : 1];
+                    sdk.a += m_faceArea[f];
+                    sdk.c += m_faceArea[f] * q;
+                }
+                for (int k = 0; k < 5; ++k)
+                {
+                    const double a0 = sd[k][0].a, a1 = sd[k][1].a;
+                    if (a0 + a1 <= 0) continue;
+                    if (std::abs(a0 - a1) > 0.06 * std::max(a0, a1)) { why = "the boundary conditions differ between the two sides"; return false; }
+                    if (a0 > 0 && a1 > 0 && (sd[k][0].c / a0 - sd[k][1].c / a1).norm() > 0.5 * h)
+                    {
+                        why = "the boundary conditions are in other places on the two sides";
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        for (const auto& m : s.mirrors)
+        {
+            if (m.axis < 0 || m.axis > 2) continue;
+            const double at = m.atCentre ? 0.5 * (m_lo[m.axis] + m_hi[m.axis]) : m.at;
+            mirrorMaps.push_back(makeMap(m.axis, at, false));
+            m_mirrorsUsed.push_back({m.axis, at, false});
+        }
+        if (s.symmetryAuto)
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                bool asked = false;
+                for (const auto& mm : mirrorMaps) asked = asked || mm.axis == axis;
+                if (asked) continue;
+                const double at = 0.5 * (m_lo[axis] + m_hi[axis]);
+                std::string why;
+                if (!problemSymmetric(axis, at, why))
+                {
+                    if (debug) fprintf(stderr, "[tetflow opt] not symmetric about axis %d: %s\n", axis, why.c_str());
+                    continue;
+                }
+                mirrorMaps.push_back(makeMap(axis, at, true));
+                m_mirrorsUsed.push_back({axis, at, true});
+            }
+    }
+    auto symmetrise = [&](std::vector<double>& v) {
+        std::vector<double> before;
+        for (const auto& mm : mirrorMaps)
+        {
+            before = v;
+            for (size_t i = 0; i < nv; ++i)
+            {
+                if (nodeState[i]) continue;
+                double m = 0;
+                for (size_t q = 0; q < 4; ++q) m += mm.w[i][q] * before[size_t(mm.from[i][q])];
+                v[i] = 0.5 * (before[i] + m);
+            }
+        }
+    };
+    if (!mirrorMaps.empty())
+    {
+        symmetrise(phi);
+        alongColumns(phi, true);
+    }
+
     phiTilde = phi;
     fractions(phiTilde, rho);
     const double bodyVolume = solidVolume(rho);
@@ -2285,8 +2441,19 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
     m_u.clear();
     m_p.clear();
     run_progress::Task task("optimising the body in the flow");
-    const double stepLength = std::max(0.01, s.move) * h;
-    double step = stepLength;
+    // (the picture of the body that the viewport draws as it goes comes down when the optimisation ends, however it ends)
+    struct LivePicture { ~LivePicture() { run_progress::publishLive(nullptr); } } livePicture;
+    std::vector<float> liveObjective;
+
+    // The boundary's step: the most it moves in one iteration, in mm.  It is as large as the iterations asked for allow (a short run has to go the
+    // whole way, a long one can be careful: one element at most, half an element at 48 iterations and more) and the same all the way -- a cap that
+    // shrinks as the run goes (it did) leaves the last iterations too small to move a nose or a tail the few millimetres they still have to go, and
+    // the design creeps.  Within the cap the step grows while the objective falls as the sensitivities predicted, and is halved when a step made it
+    // worse (taken back, below): the objective never rises, so there is nothing else to hold it back
+    const double stepStart = std::max(0.5, std::min(1.0, 24.0 / std::max(1, s.iterations))) * h;
+    std::vector<double> accepted;                           // (the objective of each design that was kept, for the stop below)
+    double step = stepStart, predicted = 0;
+    bool havePrediction = false;
     int it = 0, rejected = 0;
     bool ok = true;
     std::vector<double> dc(na), gN, gPhi, gPrev, phiPrev, phiNew(nv), phiS(nv), phiT2, rho2;
@@ -2414,6 +2581,7 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
             fraction(u, gr);
             for (int p = 0; p < 4; ++p) gN[size_t(tv[size_t(p)])] += dc[a] * gr[p];
         }
+        if (!mirrorMaps.empty()) symmetrise(gN);
         if (std::getenv("FIELDES_FLOW_FDCHECK") && it == (std::getenv("FIELDES_FLOW_FDCHECK_IT") ? std::atoi(std::getenv("FIELDES_FLOW_FDCHECK_IT")) : 0))
         {
             // dJ/dphiTilde_i against a finite difference: a node of the smoothed level set moved, the fractions
@@ -2471,6 +2639,7 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
                 fraction(u, gr);
                 for (int p = 0; p < 4; ++p) vN[size_t(tv[size_t(p)])] += vol[a] * gr[p];
             }
+            if (!mirrorMaps.empty()) symmetrise(vN);
             filter(vN, vS);
             filterT(vS, vPhi);
             for (size_t i = 0; i < nv; ++i) if (nodeState[i]) vPhi[i] = 0.0;
@@ -2490,9 +2659,15 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         }
         phiPrev = phi;
         gPrev = gPhi;
+        if (havePrediction && predicted < 0 && std::isfinite(Jprev))
+        {
+            const double ratio = (J - Jprev) / predicted;       // 1: the objective fell as predicted; below 0: it rose
+            if (ratio > 0.75) step *= 1.5;
+        }
         Jprev = J;
-        if (it > 0) step = std::min(stepLength, step * 1.25);
+        accepted.push_back(J);
         }   // (a fresh gradient)
+        step = std::min(step, stepStart);
         double gmax = 0;
         for (size_t i = 0; i < nv; ++i) gmax = std::max(gmax, std::abs(gPhi[i]));
         if (!(gmax > 0))
@@ -2535,12 +2710,116 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         double change = 0;
         for (size_t i = 0; i < nv; ++i)
             if (!nodeState[i] && std::abs(phi[i]) < 2.0 * h) change = std::max(change, std::abs(phiNew[i] - phi[i]));
+        // (what the sensitivities say this step changes the objective by: for the next iteration to compare with what it did)
+        predicted = 0;
+        for (size_t i = 0; i < nv; ++i)
+            if (!nodeState[i]) predicted += gN[i] * (phiNew[i] - phi[i]);
+        havePrediction = true;
         phi.swap(phiNew);
         if (debug && !backtrack)
             fprintf(stderr, "[tetflow opt] iteration %d: drag %.6g lift %.6g J %.6g, body volume %.4g of %.4g (%.3f), slope %.3f, step %.3f mm, moved %.3f mm; flow+adjoint %.1f s, sensitivities+step %.1f s\n",
                     it, m_history.back(), m_dropHistory.back(), J, solidVolume(rho), bodyVolume, solidVolume(rho) / bodyVolume, slope, step, change,
                     tSolve, std::chrono::duration<double>(std::chrono::steady_clock::now() - tStep).count());
-        if (it >= 5 && !backtrack && change < 0.01 * h) { m_optStop = 1; ++it; break; }
+        if (!backtrack)
+        {
+            // The body as it is, for the viewport: where the smoothed level set of this iteration is above zero
+            auto view = std::make_shared<run_progress::LiveView>();
+            view->kind = "flow";
+            view->quantity = s.wLift != 0 ? "objective" : "drag";
+            view->iteration = it + 1;
+            view->iterations = s.iterations;
+            view->objective = J;
+            liveObjective.push_back(float(J));
+            view->history = liveObjective;
+            view->volume = solidVolume(rho) / bodyVolume;
+            view->volumeLow = s.volumeMin;
+            view->volumeHigh = s.volumeMax;
+            view->change = change;
+            // The body and the fluid around it as the result shows them (this level set is positive inside the body): the fluid is
+            // the domain with the body taken out, coloured by the speed of this iteration's flow (every field, as the result has them),
+            // with the streamlines of that flow; the body is a shape of its own
+            const auto flow = m_steps.empty() ? nullptr : m_steps.back().result;
+            if (flow)
+            {
+                auto level = std::make_shared<MeshResult>();
+                level->mesh = flow->mesh;
+                level->locator = flow->locator;
+                for (auto& f : level->fields) f.assign(nv, 0.0f);
+                level->fields[0] = m_densityHistory.back();
+                {
+                    // (the field says how far it reaches: the evaluation of the tree takes its bounds from these)
+                    float mn = 0, mx = 0;
+                    for (float v : level->fields[0]) { mn = std::min(mn, v); mx = std::max(mx, v); }
+                    level->minValue[0] = mn;
+                    level->maxValue[0] = mx;
+                }
+                const Tree levelTree = meshFieldTree(level, 0);
+                Tree bodyTree = max(-levelTree, m_shape);
+                if (s.region.is_valid()) bodyTree = max(bodyTree, s.region);
+                static const char* names[FLOW_FIELD_COUNT] = {"speed", "vx", "vy", "vz", "pressure", "total_pressure", "shear_rate",
+                                                              "vorticity"};
+                static const char* labels[FLOW_FIELD_COUNT] = {"speed (mm/s)", "velocity x (mm/s)", "velocity y (mm/s)",
+                                                               "velocity z (mm/s)", "pressure (MPa)", "total pressure (MPa)",
+                                                               "shear rate (1/s)", "vorticity (1/s)"};
+                run_progress::LiveShape fluid;
+                fluid.tree = max(m_shape, -bodyTree);
+                for (int f = 0; f < FLOW_FIELD_COUNT; ++f)
+                    fluid.channels.push_back({names[f], labels[f], meshFieldTree(flow, f), flow->minValue[f], flow->maxValue[f]});
+                fluid.linesLo = flow->minValue[SPEED];
+                fluid.linesHi = flow->maxValue[SPEED];
+                fluid.detail = float(h);
+                {
+                    // the streamlines from the inlets, cut where they would enter the body (in this flow the body is a friction and a little
+                    // fluid creeps through it)
+                    Vec3 lo = mesh.pos[0], hi = mesh.pos[0];
+                    for (const auto& p : mesh.pos)
+                    {
+                        lo = lo.cwiseMin(p);
+                        hi = hi.cwiseMax(p);
+                    }
+                    const double size = (hi - lo).maxCoeff();
+                    const double maxTime = 3.0 * size / std::max(double(flow->maxValue[SPEED]), 1e-12);
+                    std::vector<std::vector<std::array<double, 5>>> lines;
+                    streamlines(flow, inletSeeds(40), maxTime, 4000, false, lines);
+                    const std::vector<float>& phiNodes = m_densityHistory.back();
+                    for (const auto& line : lines)
+                    {
+                        std::vector<std::array<float, 5>> run;
+                        auto close = [&]() {
+                            if (run.size() >= 2) fluid.lines.push_back(run);
+                            run.clear();
+                        };
+                        for (const auto& p : line)
+                        {
+                            double lam[4];
+                            const int t = flow->locator->locateInside(Vec3(p[0], p[1], p[2]), lam);
+                            double inside = -1;
+                            if (t >= 0)
+                            {
+                                inside = 0;
+                                for (int q = 0; q < 4; ++q) inside += lam[q] * phiNodes[size_t(mesh.tets[size_t(t)][size_t(q)])];
+                            }
+                            if (inside > 0) close();
+                            else run.push_back({float(p[0]), float(p[1]), float(p[2]), float(p[3]), float(p[4])});
+                        }
+                        close();
+                    }
+                }
+                view->shapes.push_back(std::move(fluid));
+                run_progress::LiveShape body;
+                body.tree = bodyTree;
+                view->shapes.push_back(std::move(body));
+            }
+            run_progress::publishLive(view);
+        }
+        // The objective has stopped improving: over the last five designs that were kept it fell by less than half a percent.  (The boundary's
+        // own motion is no measure: the step is the way the direction is scaled, so the boundary always moves by about it)
+        if (!backtrack && accepted.size() > 7 && accepted[accepted.size() - 6] - accepted.back() < 0.005 * std::abs(accepted.back()))
+        {
+            m_optStop = 1;
+            ++it;
+            break;
+        }
         if (step <= 0.02 * h) { m_optStop = 2; ++it; break; }     // (steps this short make no progress)
     }
     m_optRejected = rejected;

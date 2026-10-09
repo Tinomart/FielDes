@@ -40,6 +40,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/shape.hpp"
 #include "fieldes/shader.hpp"
 #include "fieldes/colormap.hpp"
@@ -49,6 +50,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
+#include "libfive/fea/tetfea.hpp"
 
 namespace FielDes {
 
@@ -145,9 +147,50 @@ bool Shape::exactCurrent() const
 // The exact triangles, placed, that touch the region (a triangle whose box meets it is whole: nothing is cut at its edge)
 std::unique_ptr<libfive::Mesh> Shape::exactMeshIn(const libfive::Region<3>& r) const
 {
+    return exactMeshOf(*m_exact, m_exact_matrix, r);
+}
+
+Shape::StepSurface::StepSurface(std::shared_ptr<libfive::fea::TetProblem> p, double lvl, int n)
+    : problem(std::move(p)), level(lvl), count(n), m_made(size_t(std::max(0, n)))
+{
+}
+
+Shape::StepSurface::~StepSurface() {}
+
+std::shared_ptr<const Shape::ExactMesh> Shape::StepSurface::mesh(int k)
+{
+    if (k < 0 || k >= count || !problem) return nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_made[size_t(k)]) return m_made[size_t(k)];
+    }
+    auto m = std::make_shared<ExactMesh>();
+    if (!problem->densitySurface(size_t(k), level, m->verts, m->tris) || m->tris.size() < 3) return nullptr;
+    m->key = "step:" + std::to_string(reinterpret_cast<uintptr_t>(this)) + ":" + std::to_string(k);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_made[size_t(k)])
+    {
+        m_bytes += m->verts.size() * sizeof(float) + m->tris.size() * sizeof(uint32_t);
+        m_made[size_t(k)] = m;
+    }
+    return m_made[size_t(k)];
+}
+
+void Shape::StepSurface::prepareAll()
+{
+    for (int k = 0; k < count; ++k)
+    {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_bytes > (size_t(600) << 20)) return;      // (the rest is made when it is wanted)
+        }
+        mesh(k);
+    }
+}
+
+std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const double* A, const libfive::Region<3>& r)
+{
     auto out = std::make_unique<libfive::Mesh>();
-    const auto& E = *m_exact;
-    const double* A = m_exact_matrix;
     const size_t nv = E.verts.size() / 3;
     std::vector<Eigen::Vector3f> pos(nv);
     for (size_t i = 0; i < nv; ++i)
@@ -302,6 +345,14 @@ Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
     g.hi = s.max;
     g.res = s.res;
     g.quality = s.quality;
+    if (m_step_exact)
+    {
+        // (a step of an optimisation, drawn from its own triangles)
+        g.exact = m_step_exact->key;
+        g.res = 0;
+        g.quality = 0;
+        return g;
+    }
     if (exactCurrent())
     {
         // (drawn from its own triangles: no region of its own, no resolution to ask for; only what they are)
@@ -420,7 +471,8 @@ QString Shape::colorKeyBase() const
         if (st.tree.is_valid()) steps += QString("|g%1").arg(quintptr(st.tree.id()));
     return QString("%1|%2|%3|%4|%5|%6|%7").arg(quintptr(color_field.id()))
         .arg(color_auto).arg(color_lo).arg(color_hi).arg(color_label, color_map, bc_key) + lines + steps +
-        (has_cutoff ? QString("|patch %1").arg(color_cutoff) : QString());
+        (has_cutoff ? QString("|patch %1").arg(color_cutoff) : QString()) +
+        (has_floor ? QString("|floor %1").arg(color_floor) : QString());
 }
 
 namespace {
@@ -812,6 +864,18 @@ void Shape::setSteps(std::vector<Step> steps, int current)
     step_disp.clear();
     m_step = m_steps.empty() ? -1 : std::max(0, std::min(int(m_steps.size()) - 1, current));
     applyStepState();
+    applyStepExact();
+    {
+        // The surfaces of the steps that have them are made ahead, by a thread of their own: stepping through the iterations then
+        // finds them made (the first one shown is made at once if it is wanted before)
+        std::set<StepSurface*> started;
+        for (const auto& st : m_steps)
+            if (st.surface && started.insert(st.surface.get()).second)
+            {
+                auto surface = st.surface;
+                std::thread([surface] { surface->prepareAll(); }).detach();
+            }
+    }
     // (a step with its own geometry shown first: the first render is of it)
     const Step* st = currentStep();
     const libfive::Tree want = (st && st->tree.is_valid()) ? st->tree : base_tree;
@@ -821,6 +885,12 @@ void Shape::setSteps(std::vector<Step> steps, int current)
         rebuildEvaluators();
     }
     applyChannel();
+}
+
+void Shape::applyStepExact()
+{
+    const Step* st = currentStep();
+    m_step_exact = (st && st->surface) ? st->surface->mesh(st->surfaceStep) : nullptr;
 }
 
 QString Shape::stepLabel() const
@@ -847,6 +917,7 @@ void Shape::setStep(int k)
     stashStepMesh();
     m_step = k;
     applyStepState();
+    applyStepExact();
     const Step& st = m_steps[size_t(k)];
     const libfive::Tree want = st.tree.is_valid() ? st.tree : base_tree;
     if (want.id() != tree.id())
@@ -1411,8 +1482,8 @@ QString Shape::valueNote() const
 {
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return QString();
     const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
-    if (m_show_elements && hasElements()) return "Element values";
-    return solved ? "Solver values at nodes" : "Nodal average";
+    if (m_show_elements && hasElements()) return T("Element values");
+    return solved ? T("Solver values at nodes") : T("Nodal average");
 }
 
 QString Shape::valueNoteHelp() const
@@ -1420,11 +1491,11 @@ QString Shape::valueNoteHelp() const
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return QString();
     const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
     if (m_show_elements && hasElements())
-        return solved ? "Each element's value at its centre, from its solved node values."
-                      : "Each element's own value, not averaged.";
-    return solved ? "The solver's values at the nodes, interpolated between them."
-                  : "The elements' values averaged at each node and interpolated between them. "
-                    "Peaks are lower than the elements' own: switch on Elements to see those.";
+        return solved ? T("Each element's value at its centre, from its solved node values.")
+                      : T("Each element's own value, not averaged.");
+    return solved ? T("The solver's values at the nodes, interpolated between them.")
+                  : T("The elements' values averaged at each node and interpolated between them. "
+                    "Peaks are lower than the elements' own: switch on Elements to see those.");
 }
 
 QString Shape::probeLabel() const
@@ -1717,6 +1788,7 @@ void Shape::draw(const QMatrix4x4& M)
                 verts[i++] = g;
                 verts[i++] = b;
                 if (has_cutoff) outside = color_values[vi] - color_cutoff;
+                else if (has_floor) outside = color_floor - color_values[vi];      // (above zero below the floor: not drawn)
             }
             else
             {
@@ -1812,7 +1884,7 @@ void Shape::draw(const QMatrix4x4& M)
         glUniformMatrix4fv(Shader::basic->uniformLocation("M"),
                            1, GL_FALSE, M.data());
         glUniform1i(Shader::basic->uniformLocation("use_rest"), 1);
-        glUniform1i(Shader::basic->uniformLocation("patch_mode"), has_cutoff ? 1 : 0);
+        glUniform1i(Shader::basic->uniformLocation("patch_mode"), (has_cutoff || has_floor) ? 1 : 0);
         vao.bind();
         glDrawElements(GL_TRIANGLES, mesh->branes.size() * 3, GL_UNSIGNED_INT, NULL);
         vao.release();
@@ -1839,7 +1911,7 @@ void Shape::drawMonochrome(const QMatrix4x4& M, QColor color)
                 color.redF(), color.greenF(), color.blueF(), 1.0f);
         glUniform4f(Shader::basic->uniformLocation("color_mul"), 0, 0, 0, 0);
         glUniform1i(Shader::basic->uniformLocation("use_rest"), 1);
-        glUniform1i(Shader::basic->uniformLocation("patch_mode"), has_cutoff ? 1 : 0);
+        glUniform1i(Shader::basic->uniformLocation("patch_mode"), (has_cutoff || has_floor) ? 1 : 0);
 
         vao.bind();
         glDrawElements(GL_TRIANGLES, mesh->branes.size() * 3, GL_UNSIGNED_INT, NULL);
@@ -1892,6 +1964,7 @@ void Shape::startRender(RenderSettings s)
             run_has_deform = has_deform;
             run_color_detail = color_detail;
             step_rendering = geometryKey();
+            run_step_exact = m_step_exact;
         }
         if (s.div == MESH_DIV_NEW_VARS ||
             s.div == MESH_DIV_NEW_VARS_SMALL)
@@ -2264,7 +2337,9 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         }
     }
 
-    auto m = exactCurrent() ? exactMeshIn(r) : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+    static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    auto m = run_step_exact ? exactMeshOf(*run_step_exact, identity, r)
+           : exactCurrent() ? exactMeshIn(r) : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
     if (std::getenv("FIELDES_TIMING") && s.div == 0 && m && (own_render || m->verts.empty()))
     {   // (a shape meshed on its own, or one that came out empty)
         fprintf(stderr, "[fieldes] shape of line %d: %s, %zu vertices\n", source_line + 1,
@@ -2549,13 +2624,13 @@ QString Shape::renderCacheState() const
     if (!m_cache_on.load()) return QString();
     switch (cache_state.load())
     {
-        case CACHE_KEPT:    return "meshed, and kept in the render cache";
-        case CACHE_READ:    return "read from the render cache";
-        case CACHE_NO_KEY:  return "cannot be kept: it depends on something no other run can recognise "
-                                   "(a variable it has no value for, or a solved analysis)";
-        case CACHE_RESULT:  return "a result shown with its fields is not kept";
-        case CACHE_FAILED:  return "the mesh could not be written to the cache folder";
-        default:            return "on: kept once it has been meshed";
+        case CACHE_KEPT:    return T("meshed, and kept in the render cache");
+        case CACHE_READ:    return T("read from the render cache");
+        case CACHE_NO_KEY:  return T("cannot be kept: it depends on something no other run can recognise "
+                                   "(a variable it has no value for, or a solved analysis)");
+        case CACHE_RESULT:  return T("a result shown with its fields is not kept");
+        case CACHE_FAILED:  return T("the mesh could not be written to the cache folder");
+        default:            return T("on: kept once it has been meshed");
     }
 }
 
@@ -2574,6 +2649,7 @@ std::string Shape::renderCacheTreeKey() const
         // (a patch of a surface: its mesh is cut finer along the edge of the patch than the one the first version kept, whose
         // triangles on a flat face were as big as the face)
         if (has_cutoff) out += "|patch2";
+        if (has_floor) out += "|floor1";
     }
     return out;
 }

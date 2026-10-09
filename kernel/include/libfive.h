@@ -327,6 +327,8 @@ libfive_tree libfive_tree_copy(libfive_tree t);
  */
 void libfive_run_begin(int steps);
 void libfive_run_step(int index, const char* label);
+/*  The (1-based) line the step just begun starts on  */
+void libfive_run_step_line(int line);
 void libfive_run_end(void);
 void libfive_run_task_begin(const char* name);
 void libfive_run_task_set(double fraction, const char* detail);
@@ -456,6 +458,22 @@ uint64_t libfive_tetfea_hash(libfive_tetfea* f);
 int libfive_tetfea_save(libfive_tetfea* f, const char* path);
 libfive_tetfea* libfive_tetfea_load(const char* path);
 void libfive_tetfea_set_salt(libfive_tetfea* f, uint64_t salt);
+/*  Before libfive_tetfea_optimize: the design space (the shape the problem was made of) is the part grown outwards, and
+ *  `origin` is the part: the volume fraction is then of the part's volume and material may go outside it  */
+void libfive_tetfea_set_origin(libfive_tetfea* f, libfive_tree origin);
+/*  Before libfive_tetfea_optimize: how crisp the design is -- the density is projected towards 0 and 1 with a step that grows
+ *  steeper up to this number (default 16; 1 or less: not projected, grey regions stay)  */
+void libfive_tetfea_set_sharpness(libfive_tetfea* f, double sharpness);
+/*  A support that holds the part only in one load case (0, 1, ...) -- optimising against several sets of boundary conditions, each with its
+ *  own supports.  Supports added with libfive_tetfea_add_support hold it in every case  */
+void libfive_tetfea_add_support_case(libfive_tetfea* f, libfive_tree region, int x, int y, int z, int load_case);
+/*  Before libfive_tetfea_optimize: keep the design symmetric about the plane axis (0, 1, 2 = x, y, z) = at, or (at_centre) through the middle
+ *  of the part's extent along that axis; or (set_symmetry_auto) about every plane the whole problem is symmetric about  */
+void libfive_tetfea_add_mirror(libfive_tetfea* f, int axis, double at, int at_centre);
+void libfive_tetfea_set_symmetry_auto(libfive_tetfea* f, int on);
+/*  After libfive_tetfea_optimize: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it
+ *  was found to be symmetric and kept so; *at is the plane's coordinate  */
+int libfive_tetfea_mirror(libfive_tetfea* f, int axis, double* at);
 int libfive_tetfea_solve(libfive_tetfea* f, int max_iterations, float tolerance);
 const char* libfive_tetfea_message(libfive_tetfea* f);
 libfive_tree libfive_tetfea_field(libfive_tetfea* f, int field);
@@ -487,7 +505,7 @@ void libfive_tetfea_add_force_case(libfive_tetfea* f, libfive_tree region, float
  *  volume-weighted filter and optimality-criteria updates.  Then libfive_tetfea_density (a field) and
  *  libfive_tetfea_history (the compliance per iteration).  */
 int libfive_tetfea_optimize(libfive_tetfea* f, float volume_fraction, float penalty, float filter_radius,
-                            int iterations, float move, const libfive_tree* keep, int keep_count,
+                            int iterations, const libfive_tree* keep, int keep_count,
                             const libfive_tree* avoid, int avoid_count, int solver_iterations, float tolerance,
                             int extrude);
 libfive_tree libfive_tetfea_density(libfive_tetfea* f);
@@ -616,8 +634,15 @@ int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out);
  *  which is also libfive_tetflow_field.  libfive_tetflow_direction gives d (kind 0) or l (kind 1).  */
 int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree region, float w_drag, float w_lift,
                              float dx, float dy, float dz, float lx, float ly, float lz, float v_min, float v_max,
-                             float filter_radius, int iterations, float move, const libfive_tree* keep, int keep_count,
+                             float filter_radius, int iterations, const libfive_tree* keep, int keep_count,
                              const libfive_tree* avoid, int avoid_count, int extrude, float darcy);
+/*  Before libfive_tetflow_optimize: keep the design symmetric about the plane axis (0, 1, 2 = x, y, z) = at, or (at_centre) through the middle of
+ *  the domain's extent along that axis; or (set_symmetry_auto) about every plane the whole problem is symmetric about  */
+void libfive_tetflow_add_mirror(libfive_tetflow* f, int axis, double at, int at_centre);
+void libfive_tetflow_set_symmetry_auto(libfive_tetflow* f, int on);
+/*  After libfive_tetflow_optimize: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it
+ *  was found to be symmetric and kept so; *at is the plane's coordinate  */
+int libfive_tetflow_mirror(libfive_tetflow* f, int axis, double* at);
 libfive_tree libfive_tetflow_level(libfive_tetflow* f);
 int libfive_tetflow_history(libfive_tetflow* f, int kind, double* out, int max);
 void libfive_tetflow_direction(libfive_tetflow* f, int kind, double* out3);

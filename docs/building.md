@@ -61,6 +61,7 @@ runtime\python3\        the private Python runtime
 python\fieldes\         the Python library
 examples\               the examples and their STEP files (without caches)
 blocks\                 the custom blocks folder (the sample blocks; see docs\blocks.md)
+translations\           the program's texts in Spanish, French, German, Japanese, Chinese and Russian (see translations\README.md)
 docs\                   these documents
 README.md, LICENSE, LICENSE-MPL-2.0, NOTICE.md, CHANGELOG.md
 ```
@@ -68,6 +69,20 @@ README.md, LICENSE, LICENSE-MPL-2.0, NOTICE.md, CHANGELOG.md
 plus the MSVC runtime DLLs, so it runs without the VC++ redistributable. Zip the folder to distribute it.
 (Importing a STEP file writes its cache next to the file; if the folder is read-only the import still
 works, just without a cache.)
+
+## The installer
+
+```
+powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
+```
+
+turns the portable folder into one `dist\FielDes-<version>-windows-x64-setup.exe` (about 30 MB): it asks for the language (Windows' by default) and the
+folder, installs for the current user (no administrator rights), makes the Start menu shortcut and the entry in Settings → Apps, and uninstalls
+(`uninstall.exe`, which removes only the files the installation wrote, listed in `install.manifest`; what you added to the folder stays). `/S` installs silently;
+the switches are at the top of `installer\Setup.cs` (`/language=xx`, `/dir=…`, `/nodesktop`, `/nolaunch`). It is built with the C# compiler of the
+Visual Studio Build Tools (or the .NET Framework's `csc.exe`: nothing to download) from the portable folder as `dist\FielDes` is after `-Package`; the version is
+the one of `CMakeLists.txt`. It is **not code-signed**: Windows SmartScreen shows "unknown publisher" the first time it runs (*More info → Run anyway*); a
+code-signing certificate and `signtool` at the end of `build-installer.ps1` would remove that.
 
 ## What the build needs
 

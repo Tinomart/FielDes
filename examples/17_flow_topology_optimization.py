@@ -1,7 +1,7 @@
 # Flow topology optimization: a body in a stream made best for the force the flow puts on it.
 #
-# The post of 16_fluid_flow.py sits in the same slab of water.  flow_topology_optimization(body, domain, conditions,
-# fluid, objective, volume, region, ...) describes the body by a level set on the mesh (a smooth field whose zero level
+# The post of 16_fluid_flow.py sits in the same slab of water.  flow_topology_optimization(body, domain, inlets,
+# outlets, boundaries, fluid, objective, volume, region, ...) describes the body by a level set on the mesh (a smooth field whose zero level
 # is the body's boundary) starting from the body as it is, solves the real flow (Navier-Stokes, with the body as a
 # friction set by each element's share of it) once per iteration with its exact adjoint, and moves the boundary to
 # make the objective best: 'drag' (the least force along the flow), 'lift' (the most force across it), or
@@ -19,8 +19,8 @@
 #
 # extrude='z' makes the body the same through the thickness (a 2D shape in a 2D flow).  Try: objective='lift' with
 # volume=(0.8, 1.2); a square post; a smaller region so the body can only be reshaped where it is.
-# About four minutes at 1.5 mm elements (one flow and one adjoint solve per iteration, then the real flow around the
-# final body); the next run reads it back from the result cache at once.
+# About two minutes at 1.5 mm elements (one flow and one adjoint solve per iteration, then the real flow around the
+# final body); it stops by itself when the drag has stopped improving, and the next run reads it back from the result cache at once.
 #
 from fieldes import *
 
@@ -42,9 +42,11 @@ faces = union(box_exact((-1, -1, -1), (W + 1, H + 1, 0.01)), box_exact((-1, -1, 
 sides = union(box_exact((-1, -1, -1), (W + 1, 0.01, T + 1)), box_exact((-1, H - 0.01, -1), (W + 1, H + 1, T + 1)))
 inlet_face = box_exact((-1, -1, -1), (0.01, H + 1, T + 1))
 outlet_face = box_exact((W - 0.01, -1, -1), (W + 1, H + 1, T + 1))
-conditions = [slip(faces), slip(sides), inlet(inlet_face, speed=U), outlet(outlet_face, pressure=0)]
 
-design = flow_topology_optimization(post, slab, conditions, fluid=water, objective='drag', volume=1.0, region=region,
+design = flow_topology_optimization(post, slab,
+                                    inlets=[inlet(inlet_face, speed=U)], outlets=[outlet(outlet_face, pressure=0)],
+                                    boundaries=[slip(faces), slip(sides)],
+                                    fluid=water, objective='drag', volume=1.0, region=region,
                                     element_size=1.5, iterations=24, extrude='z')
 print('drag %.3g -> %.3g N in the optimiser over %d iterations; the body keeps %.0f mm^3; '
       'the real flow around the final body: drag %.3g N (the round post: 8.2e-7 N, example 16)' % (

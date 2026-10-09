@@ -17,6 +17,7 @@ of the License, or (at your option) any later version.
 #include <QPolygonF>
 #include <QRadialGradient>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/typeicons.hpp"
 
 namespace FielDes {
@@ -236,7 +237,7 @@ QColor color(const QString& type)
 QString label(const QString& type)
 {
     auto it = kinds().constFind(type);
-    return it == kinds().constEnd() ? type : it->label;
+    return it == kinds().constEnd() ? type : T(it->label);
 }
 
 QIcon icon(const QString& type, bool block)

@@ -32,6 +32,9 @@ A test suite that automates those is the most useful contribution there is.
 - Docstrings in `python/fieldes/stdlib` become [docs/reference.md](docs/reference.md): run
   `python scripts/gen_reference.py` after changing one.
 - The documents in `docs/` describe behaviour; change them with the behaviour.
+- Text the user reads is `T("English text")` in `app/src` and `tr('English text')` in `python/fieldes` (the English *is* the key; `%1`, `%2` / `%s` for what
+  varies). After adding or changing one, run `python scripts/translations.py check`: it lists what the six translations lack.
+  Better translations are welcome: see [translations/README.md](translations/README.md).
 
 ## Ideas that would help
 

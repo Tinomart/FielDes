@@ -41,7 +41,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/section.hpp"
 #include "fieldes/result.hpp"
 #include "fieldes/result_panel.hpp"
+#include "fieldes/live_panel.hpp"
 #include "fieldes/settings.hpp"
+#include "libfive/run_progress.hpp"
 
 class QMenu;
 namespace FielDes { class ScenePanel; }
@@ -481,6 +483,28 @@ protected:
     void placeResultPanel();
     QTimer m_stepTimer;                 // play: the next step of the results
     QTimer m_flowTimer;                 // the particles on the streamlines of a flow move
+    /*  An optimisation that is running: the kernel puts a picture of the design after every iteration (run_progress::liveView) -- the
+     *  shapes its result is made of (the part cut from the density, the fluid and the body ...) -- and the view shows them as it shows
+     *  the result: they are made into shapes, rendered like any others, and put in place of the ones shown when they have their
+     *  meshes (what is shown stays until then).  A card says how it goes: the iteration, the objective (is it falling?), the material
+     *  against what is asked for, and how much the design still moves.  What the run makes replaces them when it is done  */
+    QTimer m_liveTimer;
+    std::shared_ptr<const libfive::run_progress::LiveView> m_live;
+    QList<Shape*> m_livePending;                // the shapes of the picture being meshed
+    bool m_liveDrawn = false;                   // (the shapes shown are the live picture's)
+    bool m_liveWaiting = false;                 // a newer picture has been published while those were meshing: it is next
+    QVector3D m_liveMin, m_liveMax;             // the region they are rendered over
+    std::function<QString()> m_liveSettings;    // the render settings the script has given so far (JSON), asked for while it runs
+    void pollLive();
+    void startLive();
+    void swapLive();
+    LivePanel* m_livePanel = nullptr;           // (the card of the optimisation that runs: a card like the others)
+    void placeLivePanel();
+    /*  The entries of the first menu of a body that are used all the time -- center, bounding_box: not under a group  */
+    void addQuickOperations(QMenu* menu, int line, const QVector3D& point, double scale);
+public:
+    void setLiveSettings(std::function<QString()> probe) { m_liveSettings = std::move(probe); }
+private:
     int m_playMode = 0;                 // 0 loop, 1 back and forth, 2 once (stop at the end)
     float m_playSpeed = 1.0f;           // steps per second = 10 x this
     int m_playDir = 1;                  // (back and forth: which way)

@@ -2,6 +2,324 @@
 
 ## Next — one import function, a field walk for surface selection, materials and conditions as models
 
+### Every kind of boundary condition is an input of its own; every condition is a model of its own
+- **One required input for each kind of condition**, for every analysis: `static_analysis(part, supports, loads, ...)`, `modal_analysis(part, supports, ...)`, `topology_optimization(part, supports, loads, ...)`,
+  `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, ...)`, `fluid_analysis(domain, inlets, outlets, boundaries, ...)` and the two optimisations of heat and flow. A kind the analysis has none of
+  is `[]`. A menu writes the analysis with **a placeholder for each of them** (`inlets=...`, `outlets=...`, `boundaries=...`), so every kind is in front of you. A condition in the wrong input says where it goes
+  (`supports=[force(...)]`: "supports are fixed(...) items, and a force(...) is not one -- it goes in loads=").
+- **`static_boundary_conditions` is gone** (no body in it, no set): the supports and loads are given to the analysis, and each is a model of its own. Scripts that used it fail with a `NameError`; the examples are migrated.
+- **A "boundary conditions" row under every simulation in the model tree**, with a placeholder for each kind it still waits for and its conditions under them. **Its eye shows or hides all of them at once**; every condition keeps
+  its own eye and **renders on its own**, the same everywhere: the surface it acts on in its colour, the pads or arrows, the label ("20 °C", "Inlet 10 mm/s", "Wall", "Slip" ...) and the legend. New colours for temperatures, convections, heat generated, inlets, outlets, walls and slips.
+- **Dragging several conditions at once works.** Select them (Ctrl or Shift) and drop them on a placeholder, on the simulation or on its *boundary conditions* row: they all go into the input of their kind as a list (`slips=[slip_1, slip_2]`); a list that is there gets them as more items; **conditions of different kinds dropped on the simulation
+  or its row each go into their own input, in one edit** (undone by one Ctrl+Z); on a placeholder only its own kind is taken, another kind is refused with the reason. A condition defined below the simulation is moved above it.
+- **No body in a condition, ever**: the menus' **New support or load**, **New thermal condition** and **New flow condition** take the surfaces, fields or bodies they act on -- the simulation is given the body.
+- **A flow that has nowhere to go says so before it solves**: an inlet with no outlet and no moving wall stops with "give the flow an outlet" instead of iterating until it diverges.
+- **Locked models are still draggable, but a drag never moves them: it always makes a shadow reference** (as with Ctrl). Locking is how you say that a model is read-only; a reference to it is allowed.
+- **A condition shown after the body was already shown now appears.** The viewport matched shapes by their geometry alone, so a body tinted where a condition acts (the same geometry, other colours) was taken for the body itself and dropped.
+- The model tree's card is a little wider by default (360) so that "boundary conditions" fits.
+- **The flow optimiser makes pointed bodies again, and stops when it is done.** The step it moved the boundary by had become a cap that shrank as the run went, and shrank again whenever the objective did not fall as predicted
+  (noisy sensitivities made that every few iterations): by the tenth iteration the boundary moved 0.1-0.3 mm at a time, the nose and the tail never got where they were going -- a round, stubby body -- and the
+  objective crept down 0.1 % an iteration to the iteration limit with nothing to see. The cap is now one element at most (half an element when 48 or more iterations are allowed) the whole way, and a step that makes the
+  objective worse is taken back and halved, so it never rises. **The run stops when the objective has stopped improving** (less than half a percent over the last five designs kept). The example (a round post, 24 iterations asked): the real drag
+  of the final body 4.0e-7 N (it was 4.5), the body 22 mm long with pointed ends (it was 19, blunt), stopped after 22 iterations instead of running to the limit; a square post nobody tuned for: 4.1e-7 (it was 4.4), 22 iterations of the 30 allowed.
+- **The flow optimiser keeps a symmetric problem symmetric** (`symmetry='auto'`, as in `topology_optimization`). A symmetric domain with a symmetric body and symmetric conditions came out with a crooked nose: the mesh is never
+  exactly mirror-symmetric, the difference grew with the iterations, and one flank ran ahead of the other. When the domain, the body, the regions and the boundary conditions are symmetric about a plane through the middle of the domain,
+  the sensitivities and the level set are averaged with their mirror images every iteration, and the output says so. `symmetry=None` leaves it alone, `'y'` / `'xz'` / `{'y': 20.0}` ask for planes. On the example
+  the flanks of the final body agree to 0.12 mm, the real drag is 4.08e-7 N, `result.symmetry` says what was used.
+- **`walls` and `slips` are one input, `boundaries`**: a flow has wall(...) items, slip(...) items or both (`boundaries=[wall_1, slip_1, slip_2]`) -- a flow with only slips no longer needs a `walls=[]` beside them. The old keywords are refused with that reason.
+- **The Simulation menu is never greyed out for lack of something.** Right-click the empty viewport, or select only conditions or only a material, and every simulation is written with a placeholder for the part and everything else that is missing.
+  (An entry is greyed out only when the selection has something it does not take: a thermal condition for *static_analysis*, a surface or a point for any of them, a second part or material for an input that takes one.) **The menu now lists the two optimisations, `thermal_topology_optimization` and `flow_topology_optimization`**, which it never did;
+  *fluid_analysis* is a plain analysis.
+- **Several selected rows now survive a press and hold.** Pressing the mouse on one of several selected rows of the model tree cut the selection down to that row at the first tremor of the hand
+  (the tree does its own drag, so Qt took the slightest move for the start of a rubber band): a drag of four slips onto `boundaries=...` carried one, and `boundaries=[slip_1]` was all that came of it. A selection now changes only when
+  the button comes up without a drag; a drag carries everything selected (`boundaries=[slip_1, slip_2, slip_3, slip_4]`).
+- **`max_iterations` is gone from every simulation** (static, modal, thermal, topology optimisation, thermal optimisation, flow). It was the equation solver's own step limit -- 20000, 50000, 60 --
+  which a problem that has a solution never reaches, so it did nothing that anyone could see, and next to `iterations` (the design updates) it only confused. The solvers stop when the residual is below `tolerance`
+  and say so when they cannot get there. A call that still gives it is refused with that reason.
+- **Deleting a model that a call is given by keyword rewrites the call** (`boundaries=[slip_1, slip_2]`, `material=steel_1`): the model leaves the list and the call keeps the rest, and when it was the last one the input is a placeholder again (`slips=...`). It used to leave a `NameError`.
+- **An old call that gives all the conditions as one list says why it does not work**: "every kind of boundary condition is an input of its own, and heat_inputs, convections were not given ...", instead of Python's "missing 3 required positional arguments".
+- A condition shown as the last statement prints what it is (`outlet 0 MPa`), not its place in memory; conditions have no gizmo even before they have run; selecting several conditions no longer says that one gizmo moves them.
+
+### Errors are red, placeholders orange, edits do not lose the solver
+- **Errors are red, what waits for you is orange.** The frame, the banner, the card's header and its note of an error are red; a placeholder (the row, the note under the tree, the line in the editor) is orange. An error also **goes the moment the script is edited** (what the run of the new text finds out comes back after a moment of quiet): it no longer stays on screen through a run that takes a minute.
+- **An edit no longer waits for the whole solver, and no longer loses it.** An edit at or above the statement that runs (its call, a line above it) stops a running optimisation at once; an edit below it (an eye toggled under it) lets it finish. A solution that was whole when the edit arrived is kept, so the next run does not start the optimisation again.
+- **Typing a bracket over a selected placeholder replaces it** (`vector=...` + `(0, -100, 0)` is `vector=(0, -100, 0)`, it used to give `vector=(...)0, -100, 0)`).
+- **Deleting a model that others are made of leaves a placeholder in them** (`move(..., v=(5, 0, 0))`; a list loses it) instead of a `NameError` that says nothing about what to do. Undo brings it all back.
+- **The render region is no longer rewritten from a guess.** A new model that reaches out of the region makes the region grow -- but while the run that makes it was still on its way, the region it sets was not known yet, the default one was taken instead, and `view.set_bounds(...)` was replaced by a smaller region of its own. It now waits for the run to be done.
+- **A surface selection gets no `handles(...)` line** (and an analysis neither): the tree did not know before the first run that they cannot be moved.
+- Automation: `seltext <text>` selects the first place of the script with that text (what a click does), for the tests that type like a hand.
+### A run that fails still draws what ran
+- **A placeholder no longer stops the run: it blocks only its own statement.** `force(region=..., vector=...)` written by a menu used to end the run at its line -- the part
+  (displayed below it) and the render settings (below it too) were never reached, so the viewport was empty and the region was the default one. Now the statement with a placeholder is
+  skipped, and so is every statement that uses a name it would have made (`force_1`, the conditions made of it, the simulation made of those); **everything else runs and is drawn**.
+  The line that waits is marked as before, the tree lists what waits in orange, and the output says which line is waiting for what.
+- **No `handles(...)` line is written under an analysis or an optimisation any more.** The tree predicts what a statement that has not run makes; it knew a new `topology_optimization(...)` was a simulation but not that its result cannot be moved, so the first selection wrote the gizmo line under it -- and the run then failed on it (below). It is a result from the moment it is written.
+- **When a line of the script fails, everything that ran before it is drawn** -- the shapes, the boundary conditions, the results of the lines above the error -- and the error is shown beside the picture. Until now a run that failed drew nothing at all and left the last picture that worked (a file that had never run cleanly showed nothing; the live picture of an optimisation was the only thing on screen). A script that does not parse ran nothing, so its picture stays as it was.
+- **`handles()` on the result of an analysis or an optimisation** (a line `result = handles(result, ...)`) **no longer fails** with "Cannot convert Topology optimization ... into a Shape": a result has no surface of its own to move, so it is the result itself when nothing is placed, and a message says why when something is.
+- **A menu never writes a number or a text of its own into a call.** The simulation entries of a model's menu used to write `box_exact(...)` regions on the ends of its bounds, and others a made-up load (`vector=(0, -100, 0)`), temperature, offset distance, element size ...: now **what a call cannot do without is a named placeholder** (`region=...`, `vector=...`, `value=...`, `o=...`, `nx=...`) **and every other argument has the library's own default** -- exactly what the completion writes. The menu writes the models you selected and nothing built for you: `static_analysis(part, conditions=...)`, not conditions of its own; the numbers and the conditions are for you to say, in the script. (Shapes made at a click -- a box, a sphere -- keep the place and size of the click.) The transforms (`move`, `rotate_*`, `scale_*`, `reflect_*`) now show their real arguments to the completion and the hover.
+
+### Code first: nothing is asked, everything is written, and what is missing is a named placeholder
+- **The popups that asked for arguments are gone.** A menu entry no longer opens a form for the force, the volume fraction, the element size ...: it writes the call with **every argument it has --
+  what is missing as a placeholder after the argument's name, the rest with its default** -- and the numbers are changed in the code editor, where the call is. A `force` is written
+  `force(region=..., vector=(0, -100, 0), profile=None)`; a topology optimisation with its volume fraction, element size, iterations, penalty, sharpness ... (the visual jobs stay visual: dragging a surface or
+  a gizmo, picking a surface with *Select Surface*, which keeps its mode, angle and radius -- it is a tool for picking an area, and shows the patch as you set them).
+- **The completion writes the same call.** One function (`fieldes.completion.complete_call`) writes a call for the right-click menus and for the completion list alike: placeholders after their
+  names for what a call cannot do without (`select_surface(shape=..., seed=..., angle=15.0, mode='flat', ...)`), every other argument with its default, and **one argument to a line** when the call does not fit on one (88 columns),
+  nested calls and lists laid out the same way. `Tab` goes to the next placeholder. **Hover an argument's name and the documentation says what it is** (with its default). New in Edit > Lines:
+  **Split the call over lines** (`Ctrl+Alt+Enter`) and **Join the call onto one line** (`Ctrl+Alt+J`) for a call that is already in a script.
+- **Placeholders are amber, not red** (they are no error: they are what has to be done for the script to run) -- in the editor, in the tree, and in the note **under the model tree, which lists them (statement and argument)
+  and goes to the one you click, selected in the code editor**. The rows of placeholders in the tree are named by their argument.
+- **The condition functions take named arguments**, so that a placeholder has a name to carry: `force(region=, vector=)`, `fixed_temperature(region=, value=)`, `heat_input(region=, watts=)`, `heat_generation(region=, watts=)`,
+  `convection(region=, coefficient=, ambient=)` (the positional forms work as before), and the menus write the named forms.
+- **The render settings are read in the tree and written in the code editor.** The Render settings row shows the region, the resolution and the quality as read-only rows (a click goes to the line); the number fields are gone.
+  (The region still grows by itself when a model comes out of it: that is the program writing code, not typing numbers.)
+- **`center(body)` and `bounding_box(body)`** -- the middle of a body's box as a point, and the smallest axis-aligned box that holds it as a body -- are library functions, and the first two entries of the right-click menu of a body.
+  The numbers are the extent the body knows (a box, an imported part) or the one found by searching its field, rounded to the shortest number within the search's tolerance: a box 60 long says 60.
+- **A number you change in a call wins.** The numbers of a shape that has been dragged are kept in a list under its call (`expose(...)`), and editing the `15` of `cylinder(15, ...)` changed nothing: the list still said what the shape was.
+  A run that finds a number of the call changed while the list is as it was now takes the number of the call, and the editor rewrites the list to say so (one `Ctrl+Z`); dragging, and editing the list, work as before.
+- **The card of the optimisation that runs is a card like the others**: dragged by any empty place, resized from its edges, with the same margin on every side (the graph fills what is left), and kept where you left it.
+- **Hiding and showing is fast again**: every run searched the extent of the part again for each `select_surface` (a third of a second or more each, three of them on a small bracket: 2.5 s a click); the search is remembered by what the shape is made of
+  (a click on an eye of a small script: 2.7 s -> 0.01 s of script).
+- **The legend of a result is there only when the result is on screen.** The colour bar of an optimisation (and its step controls) stayed when nothing of it was drawn -- while the run started over, or after its eye was turned off. It follows what is
+  drawn now; and **the picture of an optimisation that runs is drawn only if its eye is on** (turn it off while it runs and the picture and its legend go at once; the card still says how it is doing).
+- The tour's render-settings step and its placeholder step say how it is now.
+
+
+### Conditions are drawn as their surfaces and symbols only; the menu makes no box of its own
+- **A condition made from the menu with nothing to say where it acts has a placeholder there, not a box of the menu's own.** Every **New support or load / thermal condition / flow condition** entry used to write a 5 mm
+  `box_exact` region at the cursor as a model of its own and use it (`force_2_region = box_exact(...)`, `force_2 = force(force_2_region, (0, -100, 0))`); a box nobody had asked for was then a region of the conditions
+  and showed as a patch. Now it writes `force_1 = force(..., (0, -100, 0))`, like every call that is missing an argument: that statement waits for the placeholder, and a body, a field or a surface is dropped on its
+  row of the model tree (a region can be a body as well as a surface). With a body and regions selected, or a surface or field alone, the condition is made of them as before. (The simulations'
+  first `static_boundary_conditions` boxes on the ends of the model are unchanged.)
+- **A set of conditions draws only what it is: the held and loaded surfaces, flat in their colour, with the pads and arrows on them.** It no longer draws a copy of the whole body (the body has its own row: show it
+  with its eye to see both), so two sets shown together cannot fight over the same surface. A set that no simulation has been given used to draw its *regions* instead -- meshed boxes, and thin layers
+  that came out speckled -- because it had no body to draw on; it now finds the body their surfaces were picked on (`select_surface`, `surface_from_bodies`), else the biggest solid of the script that the regions
+  reach, and draws exactly the picture of a set used by an analysis. Pads are kept inside their face (they used to hang over the edge of a narrow one).
+
+- **A stop is no error.** Hiding or showing something while a script runs stops that run (an empty `Exception` raised in it) and starts the next; the stop was shown as "Error in line N: Exception" on the
+  line that was running (an optimisation's, say). A run stopped by an edit now shows nothing -- the picture of the last finished run stays until the next one is done.
+- **Hide and show no longer pay for the symbols of the conditions again.** Where the pads and arrows of a set of conditions go is found by evaluating the part at thousands of points, and every run did
+  it again, for hidden sets too; it is remembered now by what it is made of (the part, the region, the numbers). A run that changes none of them reads it back (measured on a bracket with two sets: 9.7 s the
+  first time, 0.23 s after a hide). An edit made while an optimisation runs still waits for the solver to hand control back before the next run starts.
+- **The picture of a running topology optimisation is shown for a part that takes long to mesh, and shown fast.** A new picture is published every iteration, and each one threw away the render of the one before
+  it before it was done -- a bracket (an imported surface, cut by cylinders) takes seconds to mesh from its field, longer than an iteration, so nothing was ever shown (only the card). A render in progress now
+  finishes and is shown, and the newest picture is meshed next. The picture is also no longer meshed from the field at all: the optimiser hands over the surface of the design itself (the density surface
+  of its own mesh, as the iteration steps use), drawn as it is and coloured by the density -- the bracket shows from the first iterations.
+
+### Menu entries a selection cannot make are greyed out, and conditions made of a multi-selection keep every model
+- **Selecting a force and a fixed support and choosing *static_boundary_conditions* wrote a call without the force** (and sometimes opened an input form): the first model selected was taken to be the body whatever it was,
+  so a force or a support selected first was dropped from the call. A set of conditions, a material, a support or a load selected first is now what it is -- the call keeps all of them, in whatever order they were
+  selected (`static_boundary_conditions(supports=[fixed_1], loads=[force_1])`), and a simulation takes the part from among the other models.
+- **An entry the selection does not fit is greyed out, with no message.** Every selected model is classified once (part, profile, field, surface, point, lattice cell, result, support, load, set of conditions, thermal or
+  flow condition, material, fluid) and every entry declares what it takes (`menu_catalog._TAKES`: signatures of accepted kinds and needed kinds); the one check compares them for every entry of the Operation and Simulation
+  menus and for the conditions made of several models, so there is no rule per operation. A part selected with supports and loads cannot make a set of boundary conditions (the part is given to the simulation);
+  *move*, *offset* ... are greyed out on a force or a material; simulations without a part, a *modal_analysis* with a load, a *thermal_analysis* with a structural support are too. A model that has not run yet fits everything;
+  custom blocks are always offered. The check of the whole menu takes about 3 ms.
+
+### Both optimisers set their own step: no `move`
+- **`move` is gone from `topology_optimization` and `flow_topology_optimization`.** It was a fixed cap on how far a density (or the flow body's boundary) may change in one iteration -- the same step whether the
+  optimisation had 10 iterations or 100 -- so a short run could never go the whole way. Now **`iterations` sets the pace**: the step starts large (the fewer the iterations, the larger: up to 0.5 of a density,
+  up to one element of boundary), its cap falls towards the last iteration so that the design has settled by then, and within that cap it follows how the design improves, like a trust region -- the change
+  that the sensitivities predict for the step taken is compared with the change the next iteration shows (the compliance, the drag): it grows while the objective falls as predicted, shrinks when it falls
+  much less or rises. The flow optimiser's step that made the objective worse is still taken back and halved. The voxel (`element='hex'`) and thermal optimisations keep their fixed step.
+  A script that passes `move=` gets an error that says it is not an argument.
+- **The sharpening of the topology optimisation is tied to `iterations` as well**: it reaches its full steepness at three quarters of the run, however long it is. It used to start at the 10th iteration
+  and step every 5th at least, so a run of 30 iterations or fewer never finished sharpening and its design stayed grey; now even 18 iterations end crisp (the optimiser's own compliance after 30 iterations
+  is 4.55, what 60 or 100 iterations reach, against 4.83 before).
+- **What was measured** (a beam, 40 % of the volume kept, 10 / 18 / 30 iterations, the stiffness of the cut part, lower is stiffer): original 5.71 / 5.62 / 5.63, now 5.78 / 5.35 / 5.26 -- within the noise at 10,
+  5-6 % stiffer at 18 and 30; the step control alone changed nothing that the noise (the volumes of the cut parts differ by 1-2 %) does not explain, because the step is rarely what limits an iteration of a topology
+  optimisation. The flow optimiser gained a little (12 iterations: drag -31.0 % against -29.9 %, one step taken back against two, a take-back being a wasted flow solve).
+
+### The live views look like the result; the flow optimisation draws itself; stepping through iterations is quick
+- **What an optimisation draws while it runs is its result's own picture.** The optimisers hand the viewer the shapes the result is made of -- the topology optimisation the part cut from the density
+  (coloured by it, with the colour bar and the result card), the flow optimisation the fluid around the body coloured by the speed of that iteration's flow, with the streamlines from the inlets and the
+  particles moving along them, and the body solid -- and the viewer renders them with the code that renders the result, in the render settings the script has given so far (they are read from it while it
+  runs); a new picture replaces the one shown when it has its meshes, so nothing blinks. A first version drew triangles of the mesh itself: jagged edges, no flow lines.
+- **The flow topology optimisation draws itself** (it showed nothing until it had finished): the body after every accepted iteration, with a card with the drag (or objective) and its graph, the body's volume
+  against what is allowed, and how far the boundary moved. A first version drew the fluid instead of the body (this level set is positive inside the body): fixed.
+- **Stepping through the iterations of a tetrahedral topology optimisation is quicker.** The result card used to mesh the density field of each iteration the first time it was shown (0.23-0.36 s each on a small
+  part, much more on a fine one); the surface of each iteration is now made from the optimisation's own densities (exactly where the optimised part is cut) in a thread of its own as soon as the result is there --
+  also when the optimisation was read back from the result cache -- and the viewer draws those triangles. The field stays what sections and probes read, and the last step is still the real mesh.
+
+### Watching a topology optimisation as it runs
+- **The viewport shows the design after every iteration.** A long optimisation used to show nothing until it had finished, so there was no telling whether it was doing something useful or the input was off. Now the
+  kernel puts a picture of the design after each iteration (`run_progress.liveView`: the part where the density is above the level that keeps the volume asked for -- marching tetrahedra through the mesh, and the faces of
+  its boundary cut where the density crosses the level) and the viewport draws it in place of the pictures of the run before, camera framed on it when nothing was drawn yet. It is only a picture: nothing is computed from it, and
+  it goes when the optimisation ends and the result takes its place.
+- **A card at the top says how it goes**: the iteration of the most there will be, the compliance and its change since the first iteration with a small graph of every iteration so far, the material the design has against
+  what was asked for, and the biggest change of a density in the iteration. A compliance that does not fall, a part that stays whole or goes empty, point at the input (supports, loads, volume fraction, element size).
+  Tetrahedral optimisations only: the voxel (`element='hex'`) and flow optimisations do not draw themselves yet.
+- **`topology_optimization` documents `iterations`**, the number of design updates (the equation solver's own step limit is no argument: see `max_iterations` below).
+
+### The model tree is read from the script, not made by running it
+- **The tree shows what the code says, always.** It used to be built from what the statements of a run had made, so while a script was calculating, stuck, or stopped at a breakpoint or a
+  placeholder, the tree showed only what had been made up to that point; and a line whose assignment threw an error left a "ghost" (a variable the tree knew, with no model behind it). Now the tree is
+  read from the **text** of the script (`python/fieldes/outline.py`), a moment after the last key: every statement that makes a model has its row, whatever the run is doing. A statement that
+  threw an error has a red cross row and the error in the note; the rows below it stay. A line that does not parse leaves the tree as it was.
+- **What a run adds is laid over the rows, never a row of its own.** The exact kind of what a statement made, its extent (what the viewport frames and the region of interest is made from), whether it can
+  be dragged, are remembered statement by statement as the run goes, and for a statement that was edited, what its function made before. A statement that never ran has its kind guessed from its
+  function (the menus' groups, what the library declares, name patterns): `time.sleep(25)`, a module's function or a name defined nowhere is no model.
+- **No more waiting for a run to edit the tree.** The edits of the tree (drag, remove, replace, the eye and the lock) work from the rows of the text, so they work while a script runs. The note
+  "Rows: the last run that worked" is gone; a script whose text cannot be read says so when an edit of the tree is tried.
+- **Placeholders are announced.** A note under the tree says which statements wait for something (`A placeholder (...) waits in thick: ...`, with what to do), as does each placeholder row's tooltip.
+- **The last model of any list leaves a placeholder, not an empty list**: `loads=[force_1]` without `force_1` is `loads=[...]` (an empty `[]` would only fail later, when the analysis runs).
+- **`convection(region, h, ambient=20)` works again.** The `ambient=` keyword that the documentation, the example and the error message all name had been lost when the function took any number of regions.
+
+### Placeholders instead of deletion, replacing by dropping, completion with placeholders
+- **A model taken out of a call that cannot do without it no longer deletes the call.** The old rule -- the call is deleted, after a question that said why, and what is made of it loses it in turn -- was
+  in the way of every move in the tree (the call a model is dragged out of, a model dropped on another). Now **a placeholder, `...`, takes the model's place**: `thick = offset(..., 1.0)`. Nothing is
+  deleted, nothing is asked (the question and its "do not show again" are gone, with the rule), and `Ctrl+Z` undoes it. Operations that take any number of models still just lose the argument, and a
+  model in a list keeps the rest of the list.
+- **A statement with a placeholder does not run and does not throw an error: it waits** (and what is made from it; the rest of the script runs, see "A placeholder no longer stops the run"), and says so --
+  *Line N is waiting for what goes in place of its placeholder (...)*. **Continue is not offered** (F8 and the button do nothing there; the pause button is
+  off); the statement runs by itself once every placeholder in it is filled in, since every edit runs the script again. `...` that is no argument (a stub function's body, `x[..., 0]`) is plain Python and does not stop anything.
+  Placeholders are drawn bold red in the editor.
+- **The model tree keeps the statement and shows its placeholders**: a **placeholder row** under it for each `...` (what is below the stop is not built yet, so its rows wait, as at a breakpoint).
+  **Dropping any model on a placeholder row replaces it at once**, no menu; dropping on the statement's row fills its first one. One `Ctrl+Z` undoes it.
+- **Replacing a model by dropping a model of its kind on it, without a question.** Drag a model onto one of a call's arguments that is of its kind -- a part on a part, a force on a force, a field on a
+  field, a support on a support -- and it takes that one's place in the call; the replaced model is not deleted (it goes out to the top level, or to the next statement that uses it). Dropped on a
+  **shadow**, only that reference goes. The dragged model leaves its old call as always (a placeholder there if that call needs it; `Ctrl` makes a copy). Dropping on an operation that takes the model
+  in as an argument still adds it to the operation.
+- **Completion and the creation menus write placeholders.** A function picked from the completion list is written with a `...` for each argument it cannot do without, the first selected so that
+  typing replaces it, `Tab` going on to the next; an operation created from a menu with no model selected is written with `...` for its model, instead of being refused.
+
+### Model tree: a model taken out of a list does not delete the call
+- **Deleting `force_1` from `static_boundary_conditions_2` (with `force_2` still in it) deleted the whole set of conditions.** The tree takes a model out of a call by editing the call, and it knew how
+  only for a model written as a plain argument (`union(a, b)`) or in a list written positionally (`union_all([a, b])`); a model inside `loads=[force_1, force_2]` -- a list given as a *keyword* -- counted as "used inside an
+  expression", which a call "cannot do without", so the statement went (after a question, which *Do not show this message again* had turned off, hence no warning). Now a model that is one of the elements of a
+  list the call is given -- positional or keyword, also a list inside a list -- is taken out of that list and the call keeps the rest: `loads=[force_2]`. The same holds for `topology_optimization(part, [push, pull])`,
+  where taking out `pull` used to delete the whole optimisation. When the last model of a list goes it leaves a placeholder (`loads=[...]`): the conditions and their supports stay and the script stops at the placeholder until
+  something is written. A list inside a list goes whole when its last model goes, and a tuple of one element keeps its comma. A call given one *positional* list of models still cannot lose the
+  last one, and the fixed-input operations (`offset(plate, 1.0)`) still go with the model they work on, after the question: checked in the real window, as are `union(a, b)` and `union_all([a, b, c])`.
+
+### Editor: typing next to a breakpoint, pause / run again / terminate, breakpoints that are kept
+- **Breakpoints are bound to the code on their line, not to the line's number.** A breakpoint used to be a text cursor at the start of its line, which got three edits wrong: deleting
+  its line put it on the statement below (a different one); `Enter` at the start of its line left it on the new blank line while the code went down; moving a line down (`Alt+↓`) left it behind.
+  Now it follows the code: deleting the line removes the breakpoint (undo brings it back, and a line cut and pasted elsewhere takes its breakpoint along), `Enter` or a pasted line in front of the code
+  moves it down with the code, moving a line moves the breakpoint with it, and typing in the line -- even clearing its text -- leaves it on the line.
+- **A breakpoint no longer takes the cursor away.** Every edit runs the script again, a run that reaches a breakpoint stops there, and the stop used to move the text cursor to its line --
+  after every key, so typing anywhere else was impossible. The cursor now stays where it is; the view follows the stop only when the script is not the widget in use (after `F8`, say, with
+  the viewport clicked last).
+- **Three buttons at the bottom right of the editor: pause / continue, run again, terminate** (also under **Edit**; no button says "Stop").
+  - **⏸ / ▶ pause / continue** (`F6`): the running script *freezes* where it is and goes on from there (nothing is lost or recomputed). It waits at the next *checkpoint* -- every place that
+    reports progress: an iteration of a solver or an optimisation, a step of a STEP import, the start of the next statement. (Freezing a thread at an arbitrary instant is not safe: it
+    may hold the memory allocator's or the interpreter's lock and take the whole program with it.) The bar says *Pausing...* until the script has reached one, then *Paused*; a step that
+    reports nothing (a long meshing) runs to its end first, and a script that ends before it reaches one simply ends. At a breakpoint the button is ▶ and does what `F8` does.
+    Editing a paused script lets it go on, to end, and starts the new run.
+  - **↻ run again** (`Ctrl+Shift+F5`): the script runs again from the beginning; a run in flight, or paused, is terminated first.
+  - **● terminate** (red dot, `Shift+F5`): the long solvers -- static, modal, thermal and flow analyses, the structural, thermal and flow topology optimisations -- look at a termination flag as they iterate and
+    give up ("cancelled") within an iteration; the script itself is interrupted with an exception that a script's own `except Exception` does not swallow (sent again every second, up to five times).
+    Nothing of a terminated run is shown -- the viewport keeps what the last run that finished made -- and the result line says the script was terminated (it is not reported as an error of
+    the script). **Limit:** a STEP or mesh import, the cell layout of a lattice and a meshing are not interruptible: they finish first, and the bar says *Terminating the script...* until they have.
+- **Breakpoints are remembered per file.** They are written down (in the user's settings, with the text on their lines) at every change and at the end of the program, and come back when the
+  file is opened again -- also after Revert and after the file was changed outside FielDes: each one goes to the line that still holds its text, the nearest within 30 lines of where it was,
+  or is dropped when the text is gone. Save as takes them along to the new name. The last 300 files are kept.
+
+### Boundary conditions without a body, several sets of them, and a symmetric design for a symmetric part
+- **`static_boundary_conditions(supports=[...], loads=[...])` takes no body.** The supports and loads are described on their own, and the **simulation is given the body**,
+  as its first argument: `static_analysis(part, conditions)`, `modal_analysis(part, conditions)`, `topology_optimization(part, conditions)`. One set of
+  conditions fits any simulation, and several sets given to one optimisation cannot disagree about "their" body. The old form, with the body in front, is refused with a message that says
+  why and what to remove. **The conditions are drawn on the body of the simulation that uses them** (blue pads, red arrows, as before); conditions no simulation
+  uses are drawn as the regions themselves. The menus write the new form (**Simulation -> static_analysis** with a body and a set of conditions selected makes the analysis of the body; a set
+  alone says it needs its body), and the model tree no longer has a body to drop on a set of conditions. Migrate: `static_boundary_conditions(part, supports=[...])` -> `static_boundary_conditions(supports=[...])`.
+- **`topology_optimization(part, [push, pull], ...)`: several sets of boundary conditions, optimised against all at once.** Each set has **its own supports and loads** (a part that is pushed and
+  pulled; held one way in one use and another way in another); the sum of their compliances is minimised. Dropping a second set on an optimisation in the model tree makes the list; selecting the
+  body with several sets and choosing **Simulation -> topology_optimization** writes it. (Several load cases of one set, `loads=[[...], [...]]`, still work.) A set that holds the part nowhere, or one
+  whose loads cannot act, is refused with the set's number.
+- **A symmetric problem gets a symmetric design.** A bracket test -- an exactly symmetric part, loads that are mirror images of each other -- ended up with a strut on one side and none on the other: the
+  optimiser does not keep a symmetric problem symmetric (the mesh of a symmetric part is never exactly symmetric, the small difference grows round two members that do the same job, and one takes the
+  other's material -- the asymmetry of the material grew from 0.4 % to 13 % over the run). New `symmetry='auto'` (default): the planes through the middle of the part (x, y, z) are tried; when the part, the supports,
+  the loads (what acts on one side is what acts on the other, mirrored) and the keep / avoid regions are all symmetric about one, the sensitivities are averaged over the mirror pairs, so the design stays symmetric
+  (the output says about which plane; on your bracket the two halves differ by 2 % instead of 13 %). `symmetry=None` turns it off, `'z'` or `{'z': 0.0}` asks for a plane whatever the loads.
+  Compliance of a symmetric design is a little higher than that of the lucky asymmetric one (3.16 against 3.09 on the bracket): that is the price of the symmetry you asked for.
+- **Loose material is taken out of the design as the optimisation goes.** From the tenth iteration on, material (density above 0.3) that no chain of elements sharing faces joins to a support, a load or a
+  region to keep is removed -- it carries nothing, and used the volume of a member that would be of use. On your bracket a few elements at a time were found (most before iteration 50). What is left
+  of the "useless" material in the final design -- thin, grey fragments (density 0.3-0.5) along the outer edges, where a strut from the wall's corner to the ring would go -- is attached to the design and
+  sits at the margin of being useful: it neither grows nor goes. With `symmetry` it is the same on both sides.
+
+### Seven languages, and an installer (0.6.0)
+- **FielDes speaks English, Spanish, French, German, Japanese, Simplified Chinese and Russian.** The menus, dialogs, tooltips, notes and questions, the guided tour, the
+  guide, the creation forms, the result legends and step labels, and the words Qt itself shows (*Yes*, *Cancel*, *Copy*, *Paste*) -- about 940 texts. The language is the one of
+  Windows (the first of the computer's preferred languages that FielDes has), or the one chosen under **Settings → Language**, which offers **Restart now**
+  (the language is read when the program starts). The English text of the program is the key of each translation, so a text that has none reads in English: nothing is ever blank.
+  The translations are plain files, `translations/<code>.json`; `translations/README.md` says how to improve one or add a language, and
+  `python scripts/translations.py check` lists what a file lacks and the texts whose `%1` places differ from the English.
+  **Stays in English:** the names of functions and arguments (they are code), the errors and notes the Python library prints about a script, the written documentation
+  (`docs/`) and the command line help.
+- **A Windows installer**, `FielDes-0.6.0-windows-x64-setup.exe`, for people who would rather not unpack a zip: it asks for the **language** (Windows' by default) and the folder,
+  installs **for the current user** (no administrator rights, `%LOCALAPPDATA%\Programs\FielDes`), makes the Start menu shortcut (and a desktop one if you want), the entry in
+  **Settings → Apps** with its uninstaller, sets the program's language, and starts FielDes. Installing a newer version over an old one replaces the program's files and
+  leaves yours. `/S` installs silently (`/language=de /dir=… /nodesktop /nolaunch`). It is **not code-signed**, so Windows SmartScreen says "unknown publisher" the first time
+  (*More info → Run anyway*). Built by `installer\build-installer.ps1` (the compiler of the Visual Studio Build Tools, nothing to download). The portable zip stays.
+- The version is 0.6.0 (one place: `CMakeLists.txt`; the **About** box reads it).
+
+### Results that survive, and optimisations that settle
+- **An analysis or optimisation is found again when you reopen the file.** The result cache was keyed by the memory address of the part's expression, so it was written to disk but
+  never found again in the next session (a topology optimisation of 20 minutes solved again every time). The key is now the part's expression with the **numbers of the script's
+  `var()`s** in it, which does not change between sessions; a part the library cannot key that way is kept in memory only, never written under a key that could not be found.
+  Results solved by an older version are solved once more (the cache version went up).
+- **Every menu entry that writes numbers asks first.** Creating a *topology_optimization* from the menus used to write `volume_fraction` and `element_size` you had not seen. Now every
+  entry of the creation menus (New 3D shape / 2D shape / point / surface / field, Add operation, Add simulation, conditions and materials) that has to put values into the call
+  opens a small form where the mouse is, with **each value, its unit and a hint**, the defaults in place and the first one selected; **Create** (or `Enter`) writes the call, Cancel
+  writes nothing, and a value that is not a number turns red. What is shown is what is written (the form is made from the same call the menu would have written). A box, a sphere or a
+  union needs nothing asked and is written at once.
+- **`topology_optimization`: crisp, settled, and it can grow.** Analysing a bracket test -- material removed on one side that **came back** on the other late in the run -- found no
+  bug but three causes: the loads and the part are not symmetric (so the two sides rightly differ), the run was cut at 60 iterations while still changing, and a third of the part was
+  grey, so which grey became solid depended on the threshold the end result was cut at. Now:
+  - `sharpness=16` (new): the density is pushed towards 0 and 1 (a Heaviside projection that sharpens as the run goes on), so the part ends up solid or empty and nothing wanders in at the end.
+    On that bracket the compliance is 21 % lower and the late regrowth is gone. `sharpness=1` gives the old soft density.
+  - `iterations=100` (was 60), and the run stops when the design has settled; if it stops at the limit while still improving, the output says so and suggests more.
+  - `grow=` (new, mm): the part may also **thicken outwards** by up to that much where that makes it stiffer -- sections that are too thin grow, material that carries nothing goes. The
+    design starts as the part, `volume_fraction` is of the part's own volume, and the part is not grown round the supports and loads.
+- Result legends, step labels, the one-line summary of each analysis in the output pane and the progress bar's texts (*Optimierung, Iteration 7 von 100*) are in the language of the program (*von Mises stress (MPa)*, *iteration 7 of 100*,
+  *load 35 %*, *Statische Analyse: 9,956 Tetraeder …*). The **result card widens** to the longest field name instead of cutting it off.
+
+### Regions, fields and conditions from the viewport
+- **Boundary conditions are made for a body and its regions.** Select several models -- the first is the body, the others are where the condition acts -- and
+  **New support or load / thermal condition / flow condition** write `fixed(surface_from_bodies(part, base, lug))` (and `force`, `fixed_temperature`,
+  `heat_input`, `convection`, `inlet`, `outlet`, `wall`, `slip`; `heat_generation` takes the regions themselves, it is a heat in a volume) instead of spawning a box. A region is a body, any field, or a
+  selected surface (which stands for itself). **One model selected, or none: the box at the cursor, as before.**
+- **The same for what takes conditions.** `static_boundary_conditions` and the five analyses, with several models selected, use them instead of boxes on the ends of
+  the part: regions (the first a support, the others loads; a temperature then heat; inlet, outlet, walls), conditions that are models of the script
+  (`supports=[fixed_1], loads=[force_1]`), a set of conditions, a material or a fluid. Without anything usable among them they write the boxes as before.
+  The element size of an analysis is a twentieth of the first model's size, not of the last one selected.
+- **The render region grows by itself** when a new model comes into the script and reaches out of it (a new object, an array, a moved copy, a typed line):
+  `view.set_bounds` is rewritten (or added) with whole numbers and a little room. A region that comes from `roi(...)` stays that, the model given to it as a box. Opening a file
+  and models that were there already do not change the region.
+- **The corners of the region are whole numbers** in the tree and the status bar (a minimum rounded down, a maximum up; two decimals only under 1), and typing allows two
+  decimals. A region that is not set shows the default one, -10 to 10, not zeros.
+- **Every condition takes any number of regions as arguments.** `fixed(a, b)`, `force(a, b, (0, -100, 0))`, `fixed_temperature(a, b, 20)`, `heat_input`, `heat_generation`, `convection`,
+  `inlet`, `outlet`, `wall` and `slip` / `symmetry` take their regions -- bodies, fields, selected surfaces -- one argument after the other, and make the one region of them themselves
+  (a list of them, or `region=[...]`, is the same). The menus write them that way: no `union(...)` made by hand in the script (`fixed(selection_1, surface_from_bodies(part, base))`).
+  A body, surface or field **dropped on a condition in the model tree** is one more argument (`fixed(lug)` + extra -> `fixed(lug, extra)`; the box the menu made for it is swapped for
+  the model); a body dropped on a set of conditions becomes its part. `lattice_surface_conform(within=[a, b])` takes a list too.
+- **A selected surface or field is passed in, not replaced by a box.** Right-click a surface you picked (or select it) and choose **New support or load / thermal condition / flow condition**:
+  `fixed_2 = fixed(selection_1)` -- the model itself is the region, the condition acts where the part meets it. The same for one selected field (`fixed(swell)`: where the field is below 0).
+  One body, or none, is still the box at the cursor. With a surface picked on a part alone selected, **Simulation -> static_boundary_conditions** writes
+  `static_boundary_conditions(bracket_0, supports=[fixed(selection_1)])` -- the part is the one it was picked on.
+- **A field selected with a body goes into the number of the call.** *offset, shell, thicken, shell_inside / outside / centered, offset_exact, shell_exact, smooth, round_edges, fillet* and
+  *lattice* (its thickness) take a selected field in the place of their number: `offset(plate, swell)`, `lattice(plate, cell_periodic('gyroid'), cell_size=5, thickness=swell)` --
+  what dropping the field on the call in the tree does.
+- **A force asks what it is.** Choosing a force from a menu -- **New support or load -> force**, or any entry that writes one (`static_boundary_conditions` and the
+  analyses with regions) -- opens a menu where the mouse is, of the style of the surface selection's, for the force in newtons, x, y and z, **0, -100, 0** to begin with, with the first
+  number selected so that typing replaces it; **Create** writes it into the call, Cancel (or a click elsewhere) writes nothing. **Nothing is asked when the force is given**: with a load
+  that is a model among the ones you selected (`force_1`), *static_boundary_conditions* and the analyses use it, and the regions next to it become supports instead of loads with a force of their own.
+- **An analysis made from a set of boundary conditions uses it.** With a `static_boundary_conditions(...)` model selected -- alone or with a material -- *static_analysis*,
+  *modal_analysis* and *topology_optimization* are written for ITS part with it as the conditions:
+  `static_analysis(bracket_0, static_boundary_conditions_1, element_size=2)`. They used to take the set as the part and lay the boxes of the menu's own on it, so a side of
+  the part was held by a box and carried no stress, and the surfaces you had selected were not used.
+- **Force arrows show on the surfaces you loaded.** A force on the wall of a bore, or on a surface it only grazes, got no arrows and the note "a force acts where the part is not":
+  the arrows are shown now, as long as the bore leaves room for them (shorter in a bore), and the note is for a region that really holds no surface.
+- **An analysis of a part that is ready to be dragged works.** Selecting a model writes the `expose(...)` and `handles(...)` lines that make it draggable, and every analysis of
+  such a part (static, modal, thermal, flow, topology) failed with "the part has no material inside the analysis region": the kernel's evaluators that are made without
+  the script's `var()` numbers read every variable as 0, and the part collapsed. The program now tells the kernel the number of each variable as the script makes it
+  (`DefaultVars`), and an evaluator that is not given a variable's number takes it from there (a number it is given always wins; the table is cleared when a run begins).
+  This is for every kernel function that evaluates a tree of its own, not only the analyses; the oracles of a field read the numbers too.
+- **The extent of a model in the scene is right under load.** The quick estimate (80 ms) came back as a coarse box when it was cut short -- 500 mm round a part of 30 mm -- and the
+  element size and the boxes a simulation of the menu is written with were sized by it. It is searched again inside a cube round the box it found, and the extent is kept by
+  the model's expression and the script's numbers, so a part that is ready to be dragged is searched once.
+- **Clicking into any field selects all of it** (the render settings, the resolution of a model, the spin boxes of the menus, name fields), so that typing replaces it.
+
 ### Speed and feel
 - **Dragging never writes a number into the wrong place (the "unclosed bracket" error).** A drag writes its numbers into the `var(...)`
   calls of the script at the lines and columns that the last finished run recorded -- and the script can be another text by then: selecting a

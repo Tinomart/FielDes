@@ -42,6 +42,12 @@ struct FieldEntry {
     bool hasCentre = false;         // ... when it is known; else the field viewer starts at the origin
 };
 
+/*  A number of the script that a run put right: replace this span of the text (0-based) by `text` -- the editor does, once the run is over  */
+struct Resync {
+    int line0, col0, line1, col1;
+    QString text;
+};
+
 struct Result {
     /*  Sets whether result or error is valid */
     bool okay;
@@ -66,14 +72,23 @@ struct Result {
      *  when the script does not define bounds, resolution, etc. */
     QList<QPair<QString, QString>> warnings;
 
-    /*  JSON description of the script for the model tree (see
-     *  fieldes/app_support.py:scene_json), or empty  */
-    QString scene;
-
     /*  The (1-based) line of the breakpoint the script stopped before, or -1
      *  when it ran to the end.  The rest of the result is what the
      *  statements before it produced. */
     int pausedLine = -1;
+
+    /*  When the script stopped before a statement that has a placeholder (`...` where an argument goes): how many it has (pausedLine is
+     *  its line) and the statement's first line.  Such a run cannot be continued: the placeholder has to be filled in  */
+    int holeCount = 0;
+    QString holeText;
+
+    /*  The run was stopped by an edit of the script (the empty Exception that halt() raises in it): a newer run is on its way, and this one
+     *  shows nothing -- not even that stop as an error  */
+    bool replaced = false;
+
+    /*  Numbers of the script the run put right: a number edited in the call of a shape whose dragged numbers are listed below it is the number
+     *  the shape has, and the list says so (see Resync)  */
+    QList<Resync> resync;
 };
 
 } // namespace FielDes

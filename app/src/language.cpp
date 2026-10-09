@@ -18,6 +18,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include "fieldes/language.hpp"
+#include "libfive/run_progress.hpp"
 
 namespace FielDes {
 
@@ -30,7 +31,16 @@ Language::Language(Interpreter* interpreter,
     // Run halt() in the main thread when the script changes, then pass data
     // into the interpreter worker thread
     connect(this, &Language::onScriptChanged,
-            this, [=](QString){ m_interpreter->noteRequest(); m_interpreter->halt(); });
+            this, [=](QString text){
+                m_interpreter->noteRequest();
+                // An edit at or above the statement that runs changes what it makes: a solver that works on it is stopped now, not waited for
+                // (minutes of an optimisation for a script that is not the one asked for).  An edit below it leaves it alone: it finishes, and
+                // its result is kept for the run of the edited text
+                QString error;
+                if (m_interpreter->callSupport("edit_reaches_running", text, &error) == "1")
+                    libfive::run_progress::requestCancel();
+                m_interpreter->halt();
+            });
     connect(this, &Language::onScriptChanged,
             m_interpreter.data(), &Interpreter::eval);
     connect(this, &Language::onResume,

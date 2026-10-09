@@ -21,6 +21,7 @@ MODULES = [
     ('mesh_import', 'Triangle meshes', 'fieldes.stdlib.mesh_import'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
     ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
+    ('measure', 'Measuring a body', 'fieldes.stdlib.measure'),
     ('fields', 'Fields', 'fieldes.stdlib.fields'),
     ('regression', 'Regressions and data', 'fieldes.stdlib.regression'),
     ('surfaces', 'Surfaces and offsets', 'fieldes.stdlib.surfaces'),

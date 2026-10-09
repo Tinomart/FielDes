@@ -174,18 +174,18 @@ the work that does not need doing from being done:
 
 ## The model tree
 
-The model tree itself is **kept**: after every run that worked, its rows are written to `scene-cache` in the cache folder
-(`FIELDES_SCENE_CACHE_DIR` moves it; the sixty newest are kept), by the md5 of the script's text and of the program and
-library that made it. Opening the same text again shows that tree **at once**, correct, and it can be clicked while the script
-runs for the first time; the run's own tree replaces it. A script that was changed since, or another version of FielDes, has no
-kept tree, and the rows fill in as the statements run.
+The model tree is **read from the script's text**, so it is there at once, whatever the script is doing (see *The model tree* in
+the interface chapter). What only a run can tell it -- the exact kind of what a statement made, how far it reaches -- is **kept**:
+after every run that worked, it is written to `scene-cache` in the cache folder (`FIELDES_SCENE_CACHE_DIR` moves it; the sixty
+newest are kept), by the md5 of the script's text and of the program and library that made it. Opening the same text again lays
+that on the rows **at once**, and they can be clicked while the script runs for the first time. A script that was changed since, or
+another version of FielDes, has no kept facts: the rows show a guess from the function names until the statements have run.
 
 **The buttons of a row act at once.** The eye, the lock and the render cache write their lines into the script, and the tree
 changes in the same moment -- every row is on the line the edit gave it, the clicked model shows its new state -- without
 waiting for the script to run. Several clicks in a row are all made, one after the other, from the tree as it is, and answered by
-one run of the last text. The tree follows an edit only when it can be sure of what the edit did to the text (every line that
-the edit did not touch has to be the same afterwards); when it cannot, nothing is guessed, the edit is written, and the next
-click waits for the run, as it always did. The gizmo button changes its icon at once but its lines are the run's to say: a
+one run of the last text. The tree then reads the text again, a moment later, and that is the tree that stays: a click made in
+that moment follows when it is there. The gizmo button changes its icon at once but its lines are the run's to say: a
 second click on it waits for the run. A model that is selected is made ready to be dragged (`expose`, `handles` lines) once the
 run is done, not while clicks are being followed.
 
@@ -207,7 +207,7 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
 - `view.set_quality(8)` is a good default; lower numbers are faster and rougher.
 - **One body that needs more (or less) than the scene**: `custom_resolution(body, 3)` meshes that body at 3 samples per mm
   whatever `set_resolution` says, so a fine part does not make the whole scene fine. It is a **property row under the
-  variable** in the model tree (type the number, the bin takes the line away) and an entry of the right-click menu. It is the
+  variable** in the model tree (the number is a field of the tree, the bin takes the line away) and an entry of the right-click menu. It is the
   body's wherever the body is: a body that reaches out of the scene's region (the box of a lattice is an estimate) is drawn at its
   own resolution inside the region -- nothing outside the region is drawn, as for every shape. The finest a body can be drawn is
   2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is, and the

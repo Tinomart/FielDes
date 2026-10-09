@@ -11,6 +11,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "libfive/eval/base.hpp"
 #include "libfive/eval/deck.hpp"
+#include "libfive/eval/default_vars.hpp"
 
 namespace libfive {
 
@@ -20,7 +21,8 @@ BaseEvaluator::BaseEvaluator(std::shared_ptr<Deck> deck,
 {
     for (auto& v : deck->vars.right)
     {
-        if (vars.find(v.first) == vars.end())
+        float known;
+        if (vars.find(v.first) == vars.end() && !DefaultVars::find(v.first, known))
         {
             std::cerr << "BaseEvaluator::BaseEvaluator: "
                       << "uninitialized variable." << std::endl;

@@ -1868,6 +1868,7 @@ bool StaticProblem::modal(int count, double density, int maxIterations, double t
         double rel = std::sqrt(dot(r, r)) / bnorm;
         for (int it = 0; it < 20000 && rel > tolerance; ++it)
         {
+            if ((it & 15) == 0 && run_progress::cancelFlag().load()) return false;      // (the stop flag: modal() says "cancelled")
             matvec(p, Ap);
             for (size_t i = 0; i < n; ++i) if (m_fixed[i]) Ap[i] = 0;
             const double pAp = dot(p, Ap);
@@ -1933,7 +1934,8 @@ bool StaticProblem::modal(int count, double density, int maxIterations, double t
             for (size_t d = 0; d < n; ++d) y[d] = l > 0 ? X[size_t(j)][d] / l : 0.0;
             if (!pcg(mx, y))
             {
-                error = "the solver failed: the supports may not hold the part in place";
+                error = run_progress::cancelFlag().load() ? "cancelled"
+                                                          : "the solver failed: the supports may not hold the part in place";
                 return false;
             }
         }

@@ -4,9 +4,11 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
     from fieldes import *
 
     pipe = cylinder_z(5, 60)                             # the FLUID domain: a shape whose inside is the fluid
-    result = fluid_analysis(pipe, [
-        inlet(box_exact((-6, -6, -1), (6, 6, 0.5)), flow_rate=2000, profile='developed'),   # mm^3/s, in
-        outlet(box_exact((-6, -6, 59.5), (6, 6, 61)), pressure=0)],                           # MPa
+    result = fluid_analysis(
+        pipe,
+        inlets=[inlet(box_exact((-6, -6, -1), (6, 6, 0.5)), flow_rate=2000, profile='developed')],   # mm^3/s, in
+        outlets=[outlet(box_exact((-6, -6, 59.5), (6, 6, 61)), pressure=0)],                         # MPa
+        boundaries=[],                                                                               # (none: the rest of the surface is wall)
         fluid=water, element_size=0.8)
     result                                               # the flow (FielDes: the fluid coloured by the speed,
                                                          # streamlines with moving particles; the result card)
@@ -15,7 +17,9 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
 
 The fluid domain is a shape, the fluid where its field is negative: the inside of a pipe or a
 duct, a box with a part cut out of it (difference(box, part)).  The boundary conditions are regions
-(shapes), on the surface of the fluid:
+(shapes), on the surface of the fluid.  Each kind is an input of its own -- inlets, outlets, boundaries (walls and slips) -- that is needed (the call is written
+with a placeholder for each) and takes one item or a list ([] says there is none); each condition is a model of its own, with an eye, drawn on
+the fluid domain:
   inlet(region, velocity= | speed= | flow_rate=, profile='uniform' | 'developed')
                             the fluid comes in: a velocity vector (mm/s), or a mean speed along the
                             inward normal, or a flow rate (mm^3/s).  The speed is the MEAN over the
@@ -53,9 +57,11 @@ import time
 from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
+from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.excluded import keep_regions, carry_locks
-from fieldes.stdlib.fea import FeaError, colored, _bounds, _shape
+from fieldes.stdlib.fea import (FeaError, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given, _use_conditions, _with_conditions,
+                                _symmetry_request)
 from fieldes.stdlib.csg import difference as _difference
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key
 from fieldes.stdlib import result_cache
@@ -98,38 +104,60 @@ oil = Fluid('oil (SAE 30)', 0.87e-9, 0.2e-6)
 glycerol = Fluid('glycerol', 1.26e-9, 1.4e-6)
 
 
-class _Inlet:
+class _Inlet(_Condition):
+    _call = 'inlet(...)'
+
     def __init__(self, region, direction, speed, flow_rate, profile):
         self.region, self.direction, self.speed, self.flow_rate, self.profile = region, direction, speed, flow_rate, profile
 
 
-class _Outlet:
+class _Outlet(_Condition):
+    _call = 'outlet(...)'
+
     def __init__(self, region, pressure):
         self.region, self.pressure = region, pressure
 
 
-class _Wall:
+class _Wall(_Condition):
+    _call = 'wall(...)'
+
     def __init__(self, region, velocity):
         self.region, self.velocity = region, velocity
 
 
-class _Slip:
+class _Slip(_Condition):
+    _call = 'slip(...)'
+
     def __init__(self, region):
         self.region = region
+
+
+_register_slots({'inlets': ((_Inlet,), 'inlet(...) items'), 'outlets': ((_Outlet,), 'outlet(...) items'),
+                 'boundaries': ((_Wall, _Slip), 'wall(...) and slip(...) items')})
+
+
+def _flow_conditions(inlets, outlets, boundaries, what):
+    ''' The conditions of a flow, one list: what each input is given '''
+    return _given(inlets, 'inlets', what) + _given(outlets, 'outlets', what) + _given(boundaries, 'boundaries', what)
 
 
 _PROFILES = {'uniform': 0, 'developed': 1}
 
 
-def inlet(region, velocity=None, speed=None, flow_rate=None, profile='uniform'):
-    ''' The fluid comes in through the surface inside `region` (a Shape).  One of:
+def inlet(*regions, region=None, velocity=None, speed=None, flow_rate=None, profile='uniform'):
+    ''' The fluid comes in through the surface inside `region` (a Shape; any number of regions, one argument after the other).  One of:
         velocity   a vector (mm/s): the direction, and the mean speed over the inlet
         speed      a mean speed (mm/s) along the inlet's inward normal
         flow_rate  a flow rate (mm^3/s) along the inward normal
         profile    'uniform' (a plug, zero on the no-slip rim) or 'developed' (the fully developed
                    profile of the inlet's cross-section: parabolic in a round pipe)
         The speed or flow rate is matched exactly on the mesh (the flux through the inlet's triangles). '''
-    region = _shape(region, 'inlet(region)')
+    region, rest = _regions(regions, region, 'inlet()')
+    if rest:
+        if len(rest) == 1 and velocity is None:
+            velocity = rest[0]
+        else:
+            raise TypeError('inlet(region, ..., velocity=, speed= or flow_rate=): only the velocity can follow the regions')
     if profile not in _PROFILES:
         raise ValueError("inlet: profile is 'uniform' or 'developed'")
     given = sum(x is not None for x in (velocity, speed, flow_rate))
@@ -148,34 +176,55 @@ def inlet(region, velocity=None, speed=None, flow_rate=None, profile='uniform'):
         raise ValueError('inlet: the flow rate must be positive (it is into the fluid)')
     return _Inlet(region, direction, s, q, profile)
 
+inlet._required = ('region', 'speed')
 
-def outlet(region, pressure=0.0):
-    ''' The fluid leaves through the surface inside `region` at `pressure` (MPa, 0 by default; the
+
+def outlet(*regions, region=None, pressure=0.0):
+    ''' The fluid leaves through the surface inside `region` (any number of regions, one argument after the other) at `pressure` (MPa, 0 by default; the
         pressure field is relative to it).  Put it where the flow leaves parallel to the walls. '''
-    return _Outlet(_shape(region, 'outlet(region)'), _scalar(pressure, 'outlet: pressure'))
+    found, rest = _regions(regions, region, 'outlet()')
+    if len(rest) > 1:
+        raise TypeError('outlet(region, ..., pressure=): only the pressure can follow the regions')
+    if rest:
+        pressure = rest[0]
+    return _Outlet(found, _scalar(pressure, 'outlet: pressure'))
+
+outlet._required = ('region',)
 
 
-def wall(region, velocity=(0.0, 0.0, 0.0)):
-    ''' A wall moving with `velocity` (mm/s; no-slip).  Surfaces in no region are walls at rest, so
+def wall(*regions, region=None, velocity=(0.0, 0.0, 0.0)):
+    ''' A wall moving with `velocity` (mm/s; no-slip) inside `region` (any number of regions, one argument after the other).  Surfaces in no region are walls at rest, so
         this is for moving walls, and for naming a wall whose force is wanted (wall_forces). '''
+    found, rest = _regions(regions, region, 'wall()')
+    if len(rest) > 1:
+        raise TypeError('wall(region, ..., velocity=): only the velocity can follow the regions')
+    if rest:
+        velocity = rest[0]
     v = tuple(_scalar(x, 'wall: velocity') for x in velocity)
     if len(v) != 3:
         raise ValueError('wall: velocity must be (vx, vy, vz)')
-    return _Wall(_shape(region, 'wall(region)'), v)
+    return _Wall(found, v)
+
+wall._required = ('region',)
 
 
-def slip(region):
-    ''' A symmetry plane or frictionless wall inside `region`: nothing flows through it, the fluid
-        slides along it '''
-    return _Slip(_shape(region, 'slip(region)'))
+def slip(*regions, region=None):
+    ''' A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
+        the fluid slides along it '''
+    found, rest = _regions(regions, region, 'slip()')
+    if rest:
+        raise TypeError('slip(region, ...): only regions can be given')
+    return _Slip(found)
+
+slip._required = ('region',)
 
 
 symmetry = slip
 
 _FIELDS = ['speed', 'vx', 'vy', 'vz', 'pressure', 'total_pressure', 'shear_rate', 'vorticity']
-_LABELS = {'speed': 'speed (mm/s)', 'vx': 'velocity x (mm/s)', 'vy': 'velocity y (mm/s)', 'vz': 'velocity z (mm/s)',
-           'pressure': 'pressure (MPa)', 'total_pressure': 'total pressure (MPa)', 'shear_rate': 'shear rate (1/s)',
-           'vorticity': 'vorticity (1/s)'}
+_LABELS = {'speed': _tr('speed (mm/s)'), 'vx': _tr('velocity x (mm/s)'), 'vy': _tr('velocity y (mm/s)'), 'vz': _tr('velocity z (mm/s)'),
+           'pressure': _tr('pressure (MPa)'), 'total_pressure': _tr('total pressure (MPa)'), 'shear_rate': _tr('shear rate (1/s)'),
+           'vorticity': _tr('vorticity (1/s)')}
 
 
 class _Handle:
@@ -328,22 +377,23 @@ class FluidResult:
 
     def __repr__(self):
         if getattr(self, 'times', None):
-            s = ('Flow in time: {:,} elements, {:,} nodes, {} steps to t = {:.4g} s ({:.1f} s to solve)\n'
-                 '  at the end: flow in {:.4g} mm^3/s, out {:.4g} mm^3/s \u00b7 pressure drop {:.4g} MPa \u00b7 max speed {:.4g} mm/s\n'
-                 '  Reynolds number {:.0f} \u00b7 {:.1f} elements across the passages').format(
-                     self.elements, self.nodes, len(self.steps), self.times[-1], self.seconds, self.inlet_flow, self.outlet_flow,
-                     self.pressure_drop, self.max_speed, self.reynolds, self.elements_across)
+            s = _tr('Flow in time: %s elements, %s nodes, %d steps to t = %.4g s (%.1f s to solve)\n'
+                    '  at the end: flow in %.4g mm^3/s, out %.4g mm^3/s \u00b7 pressure drop %.4g MPa \u00b7 max speed %.4g mm/s\n'
+                    '  Reynolds number %.0f \u00b7 %.1f elements across the passages') % (
+                        '{:,}'.format(self.elements), '{:,}'.format(self.nodes), len(self.steps), self.times[-1], self.seconds,
+                        self.inlet_flow, self.outlet_flow, self.pressure_drop, self.max_speed, self.reynolds, self.elements_across)
             if self.warning:
-                s += '\n  warning: ' + self.warning
+                s += '\n' + _tr('  warning: %s') % self.warning
             return s
-        s = ('Flow analysis: {:,} elements, {:,} nodes ({} iterations, {:.1f} s{})\n'
-             '  flow in {:.4g} mm^3/s, out {:.4g} mm^3/s · pressure drop {:.4g} MPa · max speed {:.4g} mm/s\n'
-             '  Reynolds number {:.0f} · {:.1f} elements across the passages · dissipation {:.4g} W').format(
-                 self.elements, self.nodes, self.iterations, self.seconds, '' if self.converged else ', NOT converged',
-                 self.inlet_flow, self.outlet_flow, self.pressure_drop, self.max_speed, self.reynolds,
-                 self.elements_across, self.dissipation)
+        s = _tr('Flow analysis: %s elements, %s nodes (%d iterations, %.1f s%s)\n'
+                '  flow in %.4g mm^3/s, out %.4g mm^3/s \u00b7 pressure drop %.4g MPa \u00b7 max speed %.4g mm/s\n'
+                '  Reynolds number %.0f \u00b7 %.1f elements across the passages \u00b7 dissipation %.4g W') % (
+                    '{:,}'.format(self.elements), '{:,}'.format(self.nodes), self.iterations, self.seconds,
+                    '' if self.converged else _tr(', NOT converged'),
+                    self.inlet_flow, self.outlet_flow, self.pressure_drop, self.max_speed, self.reynolds,
+                    self.elements_across, self.dissipation)
         if self.warning:
-            s += '\n  warning: ' + self.warning
+            s += '\n' + _tr('  warning: %s') % self.warning
         return s
 
 
@@ -362,8 +412,8 @@ class FluidStep:
         it = lib.libfive_tetflow_step_iteration(p, k)
         self.iteration = None if it < 0 else int(it)
         self.time = None if self.iteration is not None else lib.libfive_tetflow_step_time(p, k)
-        self.label = ('t = %.4g s' % self.time) if self.iteration is None else \
-            ('Stokes start' if self.iteration == 0 else 'iteration %d' % self.iteration)
+        self.label = (_tr('t = %.4g s') % self.time) if self.iteration is None else \
+            (_tr('Stokes start') if self.iteration == 0 else _tr('iteration %d') % self.iteration)
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
             setattr(self, name, Shape(lib.libfive_tetflow_step_field(p, k, i)))
@@ -434,6 +484,13 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
             lib.libfive_tetflow_add_slip(ptr, b.region.ptr)
         else:
             raise TypeError('{}: the conditions are inlet(...), outlet(...), wall(...) and slip(...) items'.format(what))
+    n_out = sum(isinstance(b, _Outlet) for b in items)
+    moving = any(isinstance(b, _Wall) and any(abs(v) > 0 for v in b.velocity) for b in items)
+    if n_in and not n_out and not moving:
+        raise FeaError('{}: the fluid comes in at an inlet and has nowhere to leave -- give the flow an outlet (outlets=[outlet(...)]): with no '
+                       'outlet and no moving wall the pressure has nothing to settle against, and the solver would only go round'.format(what))
+    if not n_in and not n_out and not moving:
+        raise FeaError('{}: nothing drives the flow -- it needs an inlet, an outlet (at another pressure) or a moving wall'.format(what))
     if gravity is not None:
         g = tuple(float(x) for x in gravity)
         if len(g) != 3:
@@ -446,11 +503,17 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
 _cache = OrderedDict()
 
 
-def fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-                   max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
+@_with_conditions
+def fluid_analysis(shape, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
+                   tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
     ''' Laminar flow of `fluid` through `shape` (the fluid domain: a Shape whose inside is the
-        fluid) with the boundary conditions: inlet(...), outlet(...), wall(...), slip(...) items
-        (see the module's description) -- the steady flow, or the flow in time (time=).
+        fluid) with the boundary conditions, one input for each kind (each one item or a list, [] for none):
+        inlets    inlet(...) items -- where the fluid comes in (as many as the flow has)
+        outlets   outlet(...) items -- where it leaves (one is needed, or a moving wall)
+        boundaries  wall(...) items -- moving walls (every surface in no region is a wall at rest) -- and slip(...) items -- symmetry planes
+                    and frictionless walls: one or both, in one list
+        (see the module's description) -- the steady flow, or the flow in time (time=).  Each condition
+        is a model of its own, drawn on `shape`.
 
         element_size   mm (default: 40 elements along the longest side); the passages should be
                        four elements across or more
@@ -463,7 +526,6 @@ def fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=Non
                        (its time, fields and numbers) instead of the steady solve's iterations, the
                        result's own fields are the last step's, and the result card steps through them.
                        A wake that sheds vortices needs this: it has no steady state
-        max_iterations the nonlinear (Picard / Newton) iterations at most
         tolerance      the relative residual of the discrete equations at which to stop
         bounds         ((x0, y0, z0), (x1, y1, z1)) of the domain (found if not given)
 
@@ -471,6 +533,15 @@ def fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=Non
         the wall force, streamlines().  An unchanged problem is cached (as a static analysis is).
         Raises FeaError when the problem cannot be solved as given (a region that touches no
         surface, no outlet and no moving wall, a flow that does not converge). '''
+    max_iterations = 60         # (the nonlinear iterations at most: a flow that has not settled by then is unsteady or its mesh too coarse, which the error says)
+    conditions = _flow_conditions(inlets, outlets, boundaries, 'fluid_analysis')
+    _use_conditions(conditions, shape)
+    return _fluid_analysis(shape, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
+                           time, store_every)
+
+
+def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
+                    max_iterations=60, tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
     if time is not None:
         try:
             duration, dt = float(time[0]), float(time[1])
@@ -617,7 +688,7 @@ class FlowTopologyResult:
         self.volume = lib.libfive_tetflow_stat(model_flow._handle.ptr, 22) if getattr(lib, 'libfive_tetflow_stat', None) else 0.0
         # how it ended: the steps taken back (each halved the step), and why it stopped
         self.steps_back = int(lib.libfive_tetflow_stat(model_flow._handle.ptr, 23))
-        self.stopped = ('the iteration limit', 'converged: the boundary stopped moving',
+        self.stopped = ('the iteration limit', 'converged: the objective stopped improving',
                         'converged: no step lowers the objective any more', 'no sensitivity left')[
                             max(0, min(3, int(lib.libfive_tetflow_stat(model_flow._handle.ptr, 24))))]
 
@@ -649,7 +720,7 @@ class FlowTopologyResult:
             n = len(self.levels)
             fluid_steps, body_steps = [], []
             for k in range(n):
-                label = 'the body as given' if k == 0 else 'iteration %d' % k
+                label = _tr('the body as given') if k == 0 else _tr('iteration %d') % k
                 last = k == n - 1
                 step = {'label': label}
                 if last:
@@ -687,24 +758,25 @@ class FlowTopologyResult:
 
     def __repr__(self):
         d, l = self.drag, self.lift
-        s = ('Flow topology optimization: drag {:.4g} -> {:.4g} N, lift {:.4g} -> {:.4g} N in the optimiser\'s model '
-             '({} iterations{}, {}; {:.1f} s)').format(
-                 d[0] if d else 0, d[-1] if d else 0, l[0] if l else 0, l[-1] if l else 0, self.iterations,
-                 ', %d steps taken back' % self.steps_back if self.steps_back else '', self.stopped, self.seconds)
+        s = _tr("Flow topology optimization: drag %.4g -> %.4g N, lift %.4g -> %.4g N in the optimiser's model "
+                '(%d iterations%s, %s; %.1f s)') % (
+                    d[0] if d else 0, d[-1] if d else 0, l[0] if l else 0, l[-1] if l else 0, self.iterations,
+                    _tr(', %d steps taken back') % self.steps_back if self.steps_back else '', self.stopped, self.seconds)
         if self.real_drag is not None:
-            s += '\n  the real flow around the final body: drag {:.4g} N, lift {:.4g} N'.format(self.real_drag, self.real_lift)
+            s += '\n' + _tr('  the real flow around the final body: drag %.4g N, lift %.4g N') % (self.real_drag, self.real_lift)
         return s
 
 
 _shape_cache = OrderedDict()
 
 
-def flow_topology_optimization(body, domain, conditions, fluid=water, objective='drag', volume=1.0, region=None, keep=None,
-                            avoid=None, element_size=None, iterations=40, filter_radius=None, move=0.5, darcy=0.1,
-                            extrude=None, flow_direction=None, lift_direction=None, bounds=None, cache=True):
+@_with_conditions
+def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=water, objective='drag', volume=1.0, region=None, keep=None,
+                            avoid=None, element_size=None, iterations=40, filter_radius=None, darcy=0.1,
+                            extrude=None, symmetry='auto', flow_direction=None, lift_direction=None, bounds=None, cache=True):
     ''' Shape optimisation of a body in a flow: `body` (a Shape, the solid) sits in `domain` (the fluid domain
-        it is in, a Shape that holds the body's place too) with the flow's `conditions` (inlet(...),
-        outlet(...), slip(...), wall(...) as for fluid_analysis); the optimiser changes the body's shape, and
+        it is in, a Shape that holds the body's place too) with the flow's `inlets`, `outlets` and
+        `boundaries` (inlet(...), outlet(...), wall(...) and slip(...) items, as for fluid_analysis); the optimiser changes the body's shape, and
         topology, to make it best in the stream.
 
         objective   'drag' (the least force along the flow), 'lift' (the most force across it), or
@@ -717,13 +789,20 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
         avoid       regions that stay fluid
         element_size  mm (default 40 elements along the longest side); the flow is solved once per iteration,
                     with its adjoint, so it costs about two flow analyses per iteration
-        iterations  at most (it stops when the design stops moving)
+        iterations  at most.  It stops sooner when the objective has stopped improving (over the last five designs that were kept it
+                    fell by less than half a percent).  It sets the size of the steps too (there is no step to choose): how far the
+                    boundary may move in one iteration is one element at most -- half an element when 48 iterations or more are
+                    allowed -- and grows while the objective falls as the sensitivities predicted; a step that raises the objective
+                    is taken back and halved, so the objective never rises
         filter_radius  the level set's smoothing radius, mm (default 1.5 elements): the smallest feature
-        move        the most the boundary moves in one iteration, in elements (0.5 by default; a step that
-                    raises the objective is taken back and halved)
         darcy       the solid's permeability relative to the element: its friction is mu / (darcy h^2), the
                     flow penetrates it by about sqrt(darcy) elements (0.1 by default: a third of an element)
         extrude     'x', 'y' or 'z': the body is the same all along that axis (a 2D shape through a slab)
+        symmetry    'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'y': 20.0} with the plane's position.  A design is kept
+                    symmetric about a plane when the whole problem is -- the fluid domain, the body, the regions and the boundary conditions,
+                    with the flow along the plane: left to itself a symmetric problem does not stay symmetric (the mesh of a symmetric domain
+                    is never exactly symmetric, and the small difference grows into a crooked nose).  'auto' tries the planes through the
+                    middle of the domain
         flow_direction, lift_direction  (dx, dy, dz): the drag and lift directions (default: the inlets' mean
                     direction, and perpendicular to it in the plane of the domain's two long axes)
 
@@ -738,6 +817,8 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
         problem is cached. '''
     if getattr(lib, 'libfive_tetflow_optimize', None) is None:
         raise FeaError('this FielDes library is too old for flow shape optimization')
+    conditions = _flow_conditions(inlets, outlets, boundaries, 'flow_topology_optimization')
+    _use_conditions(conditions, domain)
     if not isinstance(body, Shape) or not isinstance(domain, Shape):
         raise TypeError('flow_topology_optimization: the body and the domain must be Shapes')
     if region is not None and not isinstance(region, Shape):
@@ -768,6 +849,7 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
     axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
     if extrude not in axes:
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
+    mirrors = _symmetry_request(symmetry, 'tet', 'flow_topology_optimization')
     fd = tuple(float(v) for v in flow_direction) if flow_direction is not None else (0.0, 0.0, 0.0)
     ld = tuple(float(v) for v in lift_direction) if lift_direction is not None else (0.0, 0.0, 0.0)
     if len(fd) != 3 or len(ld) != 3:
@@ -775,8 +857,9 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
     ekey = problem_key('flow_topology', body=body, domain=domain, part_bounds=getattr(domain, '_bounds', None),
                        conditions=conditions, fluid=fluid, weights=weights, volume=(vmin, vmax), region=region,
                        keep=keep, avoid=avoid, element_size=element_size, iterations=int(iterations),
-                       filter_radius=filter_radius, move=float(move), darcy=float(darcy), extrude=extrude,
-                       directions=(fd, ld), bounds=bounds) if cache else None
+                       filter_radius=filter_radius, darcy=float(darcy), extrude=extrude,
+                       directions=(fd, ld), bounds=bounds, symmetry=mirrors[2],
+                       algorithm=3) if cache else None        # (what the optimiser gives for the same problem: bumped when it changes -- 2: the step cap that does not shrink, the stop on a plateau; 3: symmetry)
     if ekey is not None and ekey in _shape_cache:
         _shape_cache.move_to_end(ekey)
         cached = _shape_cache[ekey]
@@ -789,10 +872,11 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
     handle, element_size, (lo, hi), items = _problem(domain, conditions, fluid, element_size, bounds, None, False, 60, 1.0,
                                                      'flow_topology_optimization')
     settings = {'weights': weights, 'volume': (vmin, vmax), 'filter_radius': float(filter_radius or 0.0),
-                'iterations': int(iterations), 'move': float(move), 'extrude': axes[extrude], 'darcy': float(darcy)}
+                'iterations': int(iterations), 'extrude': axes[extrude], 'darcy': float(darcy)}
 
-    def finish(handle, ptr, seconds):
-        ''' The result from a solved problem (just optimised, or read back from its file) '''
+    def finish(handle, ptr, seconds, symmetric=None):
+        ''' The result from a solved problem (just optimised, or read back from its file); `symmetric`: the planes the design was kept symmetric
+            about, when they were kept with it ({'y': [position, how]}: asked for (1), or found (2: and then said)) '''
         level = Shape(lib.libfive_tetflow_level(ptr))
         buf = (ctypes.c_double * 1000)()
         m = lib.libfive_tetflow_history(ptr, 0, buf, 1000)
@@ -817,17 +901,31 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
         result = FlowTopologyResult(flow, body, domain, region, level, levels, drag, lift, (fdir, ldir), settings,
                                     element_size, (lo, hi), seconds)
         # the real flow around the final body: the body a wall at rest, the same conditions (cached like any flow)
-        result.flow = fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi),
+        result.flow = _fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi),
                                      cache=cache)
         wf = result.flow.wall_force
         result.real_drag = sum(wf[i] * fdir[i] for i in range(3))
         result.real_lift = sum(wf[i] * ldir[i] for i in range(3))
+        if symmetric is None:
+            symmetric = {}
+            probe = getattr(lib, 'libfive_tetflow_mirror', None)
+            for k, name in enumerate('xyz'):
+                at = ctypes.c_double()
+                how = probe(ptr, k, ctypes.byref(at)) if probe else 0
+                if how:
+                    symmetric[name] = [float(at.value), int(how)]
+        found = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
+        if found:
+            print('flow_topology_optimization: the domain, the body and the boundary conditions are symmetric about %s: the design is kept symmetric '
+                  '(symmetry=None leaves it alone).' % ' and '.join(found))
+        result.symmetry = {n: v[0] for n, v in symmetric.items()}
+        result._symmetry_info = symmetric
         return result
 
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetflow', ekey, 'flow topology optimization')
     if loaded is not None:
-        result = finish(_Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)))
+        result = finish(_Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)), dict(loaded[1].get('symmetry') or {}))
         _shape_cache[ekey] = result
         return result
     ptr = handle.ptr
@@ -835,17 +933,29 @@ def flow_topology_optimization(body, domain, conditions, fluid=water, objective=
         raise FeaError('flow_topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[_shape(r, 'keep').ptr for r in keep])
     avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[_shape(r, 'avoid').ptr for r in avoid])
+    if mirrors[0] and getattr(lib, 'libfive_tetflow_set_symmetry_auto', None):
+        lib.libfive_tetflow_set_symmetry_auto(ptr, 1)
+    for axis, at in mirrors[1]:
+        lib.libfive_tetflow_add_mirror(ptr, axis, 0.0 if at is None else float(at), 1 if at is None else 0)
     if ekey is not None:
         lib.libfive_tetflow_set_salt(ptr, result_cache.salt('tetflow', ekey))
     t0 = time.time()
     ok = lib.libfive_tetflow_optimize(ptr, body.ptr, region.ptr if region is not None else None, weights[0], weights[1],
                                       fd[0], fd[1], fd[2], ld[0], ld[1], ld[2], vmin, vmax, settings['filter_radius'],
-                                      settings['iterations'], settings['move'], keep_arr, len(keep), avoid_arr, len(avoid),
+                                      settings['iterations'], keep_arr, len(keep), avoid_arr, len(avoid),
                                       settings['extrude'], settings['darcy'])
     if not ok:
         raise FeaError('flow_topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     result = finish(handle, ptr, time.time() - t0)
-    result_cache.save('tetflow', ekey, ptr, 'flow topology optimization', {'seconds': result.seconds})
+    # (as topology_optimization does: when the iterations ran out while the objective was still falling, say so)
+    drag = result.drag
+    span = max(3, settings['iterations'] // 4)
+    if weights[1] == 0 and result.stopped == 'the iteration limit' and len(drag) > span + 1 and drag[-1] > 0:
+        gain = (drag[-1 - span] - drag[-1]) / drag[-1]
+        if gain > 0.01:
+            print('flow_topology_optimization: stopped at the limit of %d iterations with the drag still falling (%.1f %% over the last %d): '
+                  'more iterations lower it further.' % (settings['iterations'], 100 * gain, span))
+    result_cache.save('tetflow', ekey, ptr, 'flow topology optimization', {'seconds': result.seconds, 'symmetry': result._symmetry_info})
     if ekey is not None:
         _shape_cache[ekey] = result
         while len(_shape_cache) > 8:

@@ -34,6 +34,7 @@ of the License, or (at your option) any later version.
 
 #include "libfive/eval/eval_array.hpp"
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/carddrag.hpp"
 #include "fieldes/section.hpp"
 #include "fieldes/colormap.hpp"
@@ -540,7 +541,7 @@ void FieldView::paintEvent(QPaintEvent*)
     if (!m_slice.valid())
     {
         p.setPen(kDim);
-        p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap, "No field yet");
+        p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap, T("No field yet"));
         return;
     }
     const QRect r = imageRect();
@@ -647,9 +648,9 @@ void FieldLegend::paintEvent(QPaintEvent*)
     if (m_valid)
     {
         p.drawText(labels, Qt::AlignLeft | Qt::AlignVCenter,
-                   QString("%1%2 inside").arg(QChar(0x2212)).arg(m_in, 0, 'g', 3));
+                   T("%1%2 inside").arg(QChar(0x2212)).arg(m_in, 0, 'g', 3));
         p.drawText(labels, Qt::AlignRight | Qt::AlignVCenter,
-                   QString("+%1 outside").arg(m_out, 0, 'g', 3));
+                   T("+%1 outside").arg(m_out, 0, 'g', 3));
     }
     p.drawText(labels, Qt::AlignHCenter | Qt::AlignVCenter, "surface");
 }
@@ -708,16 +709,16 @@ SectionPanel::SectionPanel(QWidget* parent)
 
     // Header: collapse, on / off, close
     m_header->setObjectName("SectionHeader");
-    m_header->setText(QString(QChar(0x25be)) + "  Section");
+    m_header->setText(QString(QChar(0x25be)) + "  " + T("Section"));
     m_header->setCursor(Qt::PointingHandCursor);
-    m_header->setToolTip("Collapse / expand");
+    m_header->setToolTip(T("Collapse / expand"));
     m_enable->setObjectName("sectionEnable");
     m_enable->setCheckable(true);
-    m_enable->setText("Off");
-    m_enable->setToolTip("Section on / off");
+    m_enable->setText(T("Off"));
+    m_enable->setToolTip(T("Section on / off"));
     m_close->setObjectName("SectionClose");
     m_close->setText(QString(QChar(0x2715)));
-    m_close->setToolTip("Close");
+    m_close->setToolTip(T("Close"));
     auto head = new QHBoxLayout;
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(4);
@@ -735,7 +736,7 @@ SectionPanel::SectionPanel(QWidget* parent)
     // Plane normal (segmented X / Y / Z) and flip
     auto axisRow = new QHBoxLayout;
     axisRow->setSpacing(2);
-    axisRow->addWidget(label("Plane"));
+    axisRow->addWidget(label(T("Plane")));
     auto group = new QButtonGroup(this);
     group->setExclusive(true);
     static const char* names[3] = {"X", "Y", "Z"};
@@ -746,7 +747,7 @@ SectionPanel::SectionPanel(QWidget* parent)
         m_axes[i]->setCheckable(true);
         m_axes[i]->setFixedWidth(30);
         m_axes[i]->setObjectName(QString("sectionAxis") + names[i]);
-        m_axes[i]->setToolTip(QString("Plane normal along %1").arg(names[i]));
+        m_axes[i]->setToolTip(T("Plane normal along %1").arg(names[i]));
         group->addButton(m_axes[i], i);
         axisRow->addWidget(m_axes[i]);
     }
@@ -754,8 +755,8 @@ SectionPanel::SectionPanel(QWidget* parent)
     axisRow->addSpacing(8);
     m_flip->setObjectName("sectionFlip");
     m_flip->setCheckable(true);
-    m_flip->setText(QString(QChar(0x21c5)) + " Flip");
-    m_flip->setToolTip("Keep the other side");
+    m_flip->setText(QString(QChar(0x21c5)) + " " + T("Flip"));
+    m_flip->setToolTip(T("Keep the other side"));
     axisRow->addWidget(m_flip);
     axisRow->addStretch();
 
@@ -768,9 +769,9 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_offsetSpin->setKeyboardTracking(false);
     m_offsetSpin->setFixedWidth(74);
     m_offsetSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
-    m_offsetSpin->setToolTip("Plane position");
+    m_offsetSpin->setToolTip(T("Plane position"));
     auto offsetRow = new QHBoxLayout;
-    offsetRow->addWidget(label("Position"));
+    offsetRow->addWidget(label(T("Position")));
     offsetRow->addWidget(m_offsetSlider, 1);
     offsetRow->addWidget(m_offsetSpin);
 
@@ -778,20 +779,20 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_clip->setObjectName("sectionClip");
     m_clip->setCheckable(true);
     m_clip->setChecked(true);
-    m_clip->setText("Cut model");
-    m_clip->setToolTip("Cut the model at the plane");
+    m_clip->setText(T("Cut model"));
+    m_clip->setToolTip(T("Cut the model at the plane"));
     m_field->setObjectName("sectionField");
     m_field->setCheckable(true);
     m_field->setChecked(true);
-    m_field->setText("Field");
-    m_field->setToolTip("Colour the plane: distance, or the analysis result");
+    m_field->setText(T("Field"));
+    m_field->setToolTip(T("Colour the plane: distance, or the analysis result"));
     m_whole = new QToolButton;
     m_whole->setObjectName("sectionWhole");
     m_whole->setCheckable(true);
-    m_whole->setText("Whole elements");
-    m_whole->setToolTip("Keep elements whole at the plane");
+    m_whole->setText(T("Whole elements"));
+    m_whole->setToolTip(T("Keep elements whole at the plane"));
     auto showRow = new QHBoxLayout;
-    showRow->addWidget(label("Show"));
+    showRow->addWidget(label(T("Show")));
     showRow->addWidget(m_clip);
     showRow->addWidget(m_field);
     showRow->addStretch();
@@ -806,23 +807,23 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_opacity->setRange(10, 100);
     m_opacity->setValue(90);
     auto opacityRow = new QHBoxLayout;
-    opacityRow->addWidget(label("Opacity"));
+    opacityRow->addWidget(label(T("Opacity")));
     opacityRow->addWidget(m_opacity, 1);
 
     // Colour scale
     m_autoRange->setCheckable(true);
     m_autoRange->setChecked(true);
-    m_autoRange->setText("Auto");
-    m_autoRange->setToolTip("Colour scale from the model");
+    m_autoRange->setText(T("Auto"));
+    m_autoRange->setToolTip(T("Colour scale from the model"));
     m_range->setDecimals(4);
     m_range->setRange(1e-6, 1e6);
     m_range->setValue(1);
     m_range->setEnabled(false);
     m_range->setKeyboardTracking(false);
     m_range->setButtonSymbols(QDoubleSpinBox::NoButtons);
-    m_range->setToolTip(QString("Manual colour range (") + QChar(0x00b1) + ")");
+    m_range->setToolTip(T("Manual colour range (±)"));
     auto rangeRow = new QHBoxLayout;
-    rangeRow->addWidget(label("Colours"));
+    rangeRow->addWidget(label(T("Colours")));
     rangeRow->addWidget(m_autoRange);
     rangeRow->addWidget(m_range, 1);
 
@@ -831,8 +832,8 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_info->setMinimumHeight(16);
 
     m_show2d->setCheckable(true);
-    m_show2d->setText("2D view");
-    m_show2d->setToolTip("Flat 2D plot of the plane");
+    m_show2d->setText(T("2D view"));
+    m_show2d->setToolTip(T("Flat 2D plot of the plane"));
     m_view->hide();
     auto viewRow = new QHBoxLayout;
     viewRow->addWidget(m_info, 1);
@@ -863,13 +864,13 @@ SectionPanel::SectionPanel(QWidget* parent)
     connect(m_header, &QToolButton::clicked, this, [this]{
         m_collapsed = !m_collapsed;
         m_body->setVisible(!m_collapsed);
-        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  Section");
+        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Section"));
         CardController::collapse(this, m_collapsed, m_header->sizeHint().height() + 14);
         place();
     });
     connect(m_close, &QToolButton::clicked, this, &SectionPanel::closeRequested);
     connect(m_enable, &QToolButton::toggled, this, [this](bool b){
-        m_enable->setText(b ? "On" : "Off");
+        m_enable->setText(b ? T("On") : T("Off"));
         m_settings.enabled = b;
         emitChange();
     });
@@ -1006,18 +1007,18 @@ void SectionPanel::updateInfo()
     }
     else if (m_slice.valid() && m_settings.field && m_slice.hasColor)
     {
-        m_info->setText(QString("Inside: %1")
-                            .arg(m_slice.colorLabel.isEmpty() ? QString("result") : m_slice.colorLabel));
+        m_info->setText(T("Inside: %1")
+                            .arg(m_slice.colorLabel.isEmpty() ? T("result") : m_slice.colorLabel));
     }
     else if (m_slice.valid() && m_settings.field)
     {
-        m_info->setText(QString("%1 to %2, lines every %3")
+        m_info->setText(T("%1 to %2, lines every %3")
                             .arg(m_slice.lo, 0, 'g', 3).arg(m_slice.hi, 0, 'g', 3)
                             .arg(m_slice.spacing, 0, 'g', 3));
     }
     else
     {
-        m_info->setText(m_settings.enabled ? "Drag the arrow to move the plane" : "Section off");
+        m_info->setText(m_settings.enabled ? T("Drag the arrow to move the plane") : T("Section off"));
     }
 }
 
@@ -1129,9 +1130,9 @@ FieldPanel::FieldPanel(QWidget* parent)
 
     // Header: collapse only (the card is there while a field is selected: it has no close button)
     m_header->setObjectName("FieldHeader");
-    m_header->setText(QString(QChar(0x25be)) + "  Field viewer");
+    m_header->setText(QString(QChar(0x25be)) + "  " + T("Field viewer"));
     m_header->setCursor(Qt::PointingHandCursor);
-    m_header->setToolTip("Collapse / expand");
+    m_header->setToolTip(T("Collapse / expand"));
     auto head = new QHBoxLayout;
     head->setContentsMargins(0, 0, 0, 0);
     head->addWidget(m_header);
@@ -1147,9 +1148,9 @@ FieldPanel::FieldPanel(QWidget* parent)
     {
         auto row = new QHBoxLayout(m_comboRow);
         row->setContentsMargins(0, 0, 0, 0);
-        row->addWidget(label("Field"));
+        row->addWidget(label(T("Field")));
         m_combo->setObjectName("fieldChoice");
-        m_combo->setToolTip("The selected fields: choose the one that is shown");
+        m_combo->setToolTip(T("The selected fields: choose the one that is shown"));
         row->addWidget(m_combo, 1);
         m_comboRow->hide();
     }
@@ -1157,7 +1158,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     // The way the disc faces
     auto axisRow = new QHBoxLayout;
     axisRow->setSpacing(2);
-    axisRow->addWidget(label("Plane"));
+    axisRow->addWidget(label(T("Plane")));
     auto group = new QButtonGroup(this);
     group->setExclusive(true);
     static const char* names[3] = {"X", "Y", "Z"};
@@ -1168,7 +1169,7 @@ FieldPanel::FieldPanel(QWidget* parent)
         m_axes[i]->setCheckable(true);
         m_axes[i]->setFixedWidth(30);
         m_axes[i]->setObjectName(QString("fieldAxis") + names[i]);
-        m_axes[i]->setToolTip(QString("The disc faces along %1").arg(names[i]));
+        m_axes[i]->setToolTip(T("The disc faces along %1").arg(names[i]));
         group->addButton(m_axes[i], i);
         axisRow->addWidget(m_axes[i]);
     }
@@ -1185,24 +1186,24 @@ FieldPanel::FieldPanel(QWidget* parent)
     m_radiusSpin->setKeyboardTracking(false);
     m_radiusSpin->setFixedWidth(74);
     m_radiusSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
-    m_radiusSpin->setToolTip("Radius of the disc");
+    m_radiusSpin->setToolTip(T("Radius of the disc"));
     auto radiusRow = new QHBoxLayout;
-    radiusRow->addWidget(label("Radius"));
+    radiusRow->addWidget(label(T("Radius")));
     radiusRow->addWidget(m_radiusSlider, 1);
     radiusRow->addWidget(m_radiusSpin);
 
     m_opacity->setRange(10, 100);
     m_opacity->setValue(90);
     auto opacityRow = new QHBoxLayout;
-    opacityRow->addWidget(label("Opacity"));
+    opacityRow->addWidget(label(T("Opacity")));
     opacityRow->addWidget(m_opacity, 1);
 
     m_info->setObjectName("FieldInfo");
     m_info->setWordWrap(true);
     m_info->setMinimumHeight(16);
     m_show2d->setCheckable(true);
-    m_show2d->setText("2D view");
-    m_show2d->setToolTip("Flat 2D plot of the disc");
+    m_show2d->setText(T("2D view"));
+    m_show2d->setToolTip(T("Flat 2D plot of the disc"));
     m_view->hide();
     auto viewRow = new QHBoxLayout;
     viewRow->addWidget(m_info, 1);
@@ -1231,7 +1232,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     connect(m_header, &QToolButton::clicked, this, [this]{
         m_collapsed = !m_collapsed;
         m_body->setVisible(!m_collapsed);
-        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  Field viewer");
+        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Field viewer"));
         CardController::collapse(this, m_collapsed, m_header->sizeHint().height() + 14);
         place();
     });
@@ -1374,7 +1375,7 @@ void FieldPanel::setReadout(const QString& text)
 void FieldPanel::updateInfo()
 {
     if (!m_readout.isEmpty()) m_info->setText(m_readout);
-    else m_info->setText(m_name.isEmpty() ? QString("Drag the arrows to move the disc") : m_name + ": drag the arrows to move the disc");
+    else m_info->setText(m_name.isEmpty() ? T("Drag the arrows to move the disc") : T("%1: drag the arrows to move the disc").arg(m_name));
 }
 
 }   // namespace FielDes

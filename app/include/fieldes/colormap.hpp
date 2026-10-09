@@ -20,18 +20,27 @@ of the License, or (at your option) any later version.
 namespace FielDes {
 
 /*  The categories of the colour map "bc" (boundary conditions, a selected surface): the field's value over
- *  (0, 6) is the number of the category, 0 being the part itself  */
+ *  (0, kBcCategories) is the number of the category, 0 being the part itself  */
+constexpr int kBcCategories = 13;
+
 inline void bcCategoryRGB(int k, float& r, float& g, float& b)
 {
-    static const float table[7][3] = {
+    static const float table[kBcCategories + 1][3] = {
         {0.80f, 0.80f, 0.77f},      // the part
         {0.149f, 0.545f, 0.824f},   // 1 fixed support (blue)
         {0.165f, 0.631f, 0.596f},   // 2 sliding support (cyan)
         {0.863f, 0.196f, 0.184f},   // 3 force (red)
         {0.796f, 0.294f, 0.086f},   // 4 gravity (orange)
-        {0.710f, 0.537f, 0.000f},   // 5 heat (yellow)
-        {0.827f, 0.212f, 0.510f}};  // 6 a selected surface (magenta)
-    k = std::max(0, std::min(6, k));
+        {0.710f, 0.537f, 0.000f},   // 5 heat in (yellow)
+        {0.827f, 0.212f, 0.510f},   // 6 a selected surface (magenta)
+        {0.520f, 0.600f, 0.000f},   // 7 inlet (green)
+        {0.420f, 0.443f, 0.769f},   // 8 outlet (violet)
+        {0.576f, 0.631f, 0.631f},   // 9 wall (grey)
+        {0.550f, 0.800f, 0.950f},   // 10 slip (light blue)
+        {0.950f, 0.550f, 0.150f},   // 11 fixed temperature (bright orange)
+        {0.700f, 0.450f, 0.800f},   // 12 convection (purple)
+        {0.950f, 0.780f, 0.250f}};  // 13 heat generated (gold)
+    k = std::max(0, std::min(kBcCategories, k));
     r = table[k][0];
     g = table[k][1];
     b = table[k][2];
@@ -40,7 +49,7 @@ inline void bcCategoryRGB(int k, float& r, float& g, float& b)
 /*  t in [0, 1] -> colour.  "turbo" (Google's rainbow, polynomial fit by
  *  Mikhailov), "viridis" (polynomial fit), "fit" (a part's own light grey
  *  turning red: shades where an import is approximate), "bc" (the nearest
- *  of the seven categories of boundary conditions and selections), anything else
+ *  of the categories of boundary conditions and selections), anything else
  *  grey.  */
 inline void colormapRGB(const QString& map, float t, float& r, float& g, float& b)
 {
@@ -48,7 +57,7 @@ inline void colormapRGB(const QString& map, float t, float& r, float& g, float& 
     t = std::max(0.f, std::min(1.f, t));
     if (map == "bc")
     {
-        bcCategoryRGB(int(std::lround(t * 6.0f)), r, g, b);
+        bcCategoryRGB(int(std::lround(t * float(kBcCategories))), r, g, b);
         return;
     }
     if (map == "viridis")

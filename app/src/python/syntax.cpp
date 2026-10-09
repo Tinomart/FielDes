@@ -30,6 +30,17 @@ namespace Python {
 Syntax::Syntax(QTextDocument* doc)
     : ::FielDes::Syntax(doc)
 {
+    {   // A placeholder, `...`, where an argument goes: the run stops before the statement until it is filled in.  (First, so that a
+        // string or a comment that holds three dots is a string or a comment)
+        QTextCharFormat hole_format;
+        hole_format.setForeground(Color::amber);          // (not red: it is no error, it is what has to be done for the script to run)
+        hole_format.setFontWeight(QFont::Bold);
+        hole_format.setBackground(QColor(Color::amber.red(), Color::amber.green(), Color::amber.blue(), 45));
+        // (only where an argument goes: after a bracket, a comma, an `=` or the indentation of its own line, and before a comma or a closing
+        // bracket -- not the `...` that is the whole body of a stub function)
+        m_rules << Rule(R"((?:(?<=[(\[,=])|(?<=\s))\.\.\.(?=\s*[,)\]]))", hole_format);
+    }
+
     {   // Strings
         QTextCharFormat string_format;
         string_format.setForeground(Color::green);

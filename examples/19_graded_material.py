@@ -27,8 +27,7 @@ deflection = lambda r: -evaluate(r.uz, (100, 10, 5))
 
 
 def analyse(loads, material=aluminium):
-    conditions = static_boundary_conditions(beam, supports=[fixed(wall)], loads=loads)
-    return static_analysis(beam, conditions, material=material, element_size=3)
+    return static_analysis(beam, supports=[fixed(wall)], loads=loads, material=material, element_size=3)
 
 
 # 1. the load at the tip

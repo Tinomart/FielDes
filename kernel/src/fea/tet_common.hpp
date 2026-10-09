@@ -97,6 +97,14 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
             int maxIterations, double tolerance, const std::atomic<bool>* cancel, std::vector<double>& lambda,
             std::vector<std::vector<double>>& vectors, int& iterations, std::string& error);
 
+/*  The surface of a design: of the part where the value `d` at the nodes is above `level` -- it is linear in each tetrahedron, so the surface is exact: marching tetrahedra for what runs through the
+ *  mesh and, with `caps`, the faces of the mesh's boundary cut where the value crosses the level.  Triangles, three vertices each (x y z),
+ *  counter-clockwise seen from outside, appended to `triangles`  */
+void liveSurface(const TetMesh& mesh, const std::vector<float>& d, double level, bool caps, std::vector<float>& triangles);
+/*  The same surface as an indexed mesh: the vertices that coincide are one (x y z each; three vertex numbers per triangle)  */
+void liveSurfaceIndexed(const TetMesh& mesh, const std::vector<float>& d, double level, bool caps, std::vector<float>& verts,
+                        std::vector<uint32_t>& tris);
+
 }   // namespace tet
 }   // namespace fea
 }   // namespace libfive

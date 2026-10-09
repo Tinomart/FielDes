@@ -75,14 +75,14 @@ if [ "$PACKAGE" = 1 ]; then
     echo "== packaging into $OUT"
     rm -rf "$OUT"
     mkdir -p "$OUT"
-    # (the kernel's libraries, the application, the Python package, the examples with one sample STEP file (the others are not distributed), the blocks, the docs)
+    # (the kernel's libraries, the application, the Python package, the examples with one sample STEP file (the others are not distributed), the blocks, the docs, the translations)
     cp -f "$BUILD"/kernel/src/fieldes.so "$BUILD"/kernel/stdlib/fieldes-stdlib.so "$OUT"/
     [ "$APP" = ON ] && cp -f "$BUILD"/app/FielDes "$OUT"/
     rsync -a --exclude '__pycache__' "$SRC/python" "$OUT/"
     mkdir -p "$OUT/examples"
     rsync -a --exclude '__pycache__' --include 'step/PivotBearingSupportBracket.STEP' --exclude 'step/*.s*p' --exclude 'step/*.STEP' --exclude 'step/*.STP' --exclude '*.fieldes-cache.*' \
           --exclude 'meshes' "$SRC/examples/" "$OUT/examples/"
-    rsync -a "$SRC/blocks" "$SRC/docs" "$OUT/"
+    rsync -a "$SRC/blocks" "$SRC/docs" "$SRC/translations" "$OUT/"
     cp -f "$SRC"/README.md "$SRC"/CHANGELOG.md "$SRC"/LICENSE-GPL-2.0 "$SRC"/LICENSE-MPL-2.0 "$SRC"/NOTICE.md "$OUT"/
     # (what was built here and is not a system library: Clipper2)
     cp -fa "$DEPS"/lib*/libClipper2*.so* "$OUT"/ 2>/dev/null || true

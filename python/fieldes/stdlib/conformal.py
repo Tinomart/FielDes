@@ -191,7 +191,7 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
                         proportions (as deep as they are wide), and `cell_thickness` of them stands out of the surface;
                         the rest of each cell, on the other side of the surface (the inside of the body), is cut off there.
                         (`layers` then counts whole cells through the depth; a thickness over one cell makes more of them)
-        within          where, besides: any shape, the lattice is kept inside it (default: everywhere on the surface)
+        within          where, besides: any shape, or a list of them, the lattice is kept inside it (default: everywhere on the surface)
         cell_size       mm along the surface
         thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
                     the wall of a TPMS sheet (below).  Default: beams 24 % of cell_size across (not more than half of the layer's
@@ -224,6 +224,12 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
         Returns the lattice alone, as a shape: add it to the part with union(). '''
     # the surface: a body, a surface, or a selection of one
     region = within
+    if isinstance(region, (list, tuple)):
+        # (several shapes are several places: the lattice is kept where any of them is)
+        parts = [Shape.wrap(r) for r in region]
+        region = parts[0]
+        for r in parts[1:]:
+            region = region.min(r)
     patch = None            # (the field that says where the patch of a selection is)
     if isinstance(surface_field, SurfaceSelection):
         if region is not None:

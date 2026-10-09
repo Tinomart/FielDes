@@ -88,26 +88,56 @@ def shape_key(shape):
     ''' An exact key of a shape's expression: the same expression built again -- a script run again -- has
         the same key, and a different one does not (a constant differing in the seventh digit, another
         imported mesh, another data field: all different).  It is the library's structural hash of the
-        tree, not its printed text.  (Raises Uncacheable when the library has no such key.) '''
+        tree, not its printed text.  A var() of the script is its number there (the key is then the same in every
+        session, and another when the number is another); a tree with anything else no run could recognise -- a
+        variable of its own, an oracle with no key of its own -- gets a key that is good in this session only
+        ('local': nothing is kept under it for another session).  (Raises Uncacheable when the library has no
+        such key.) '''
     from fieldes.ffi import lib
+    known = None
+    try:
+        from fieldes.stdlib.fields import _script_vars
+        known = _script_vars()
+    except Exception:
+        pass
+    numbers = None if known is None else tuple(known[1][i] for i in range(known[2]))
     mine = getattr(shape, '_content_key', None)
-    if mine is not None and mine[0] == shape.ptr:
+    if mine is not None and mine[0] == shape.ptr and mine[2] == numbers:
         return mine[1]
-    fn = getattr(lib, 'libfive_tree_content_key', None)
-    if fn is None:
-        raise Uncacheable()
-    p = fn(shape.ptr)
-    if not p:
-        raise Uncacheable()
+    key = None
+    persistent = getattr(lib, 'libfive_tree_persistent_key', None)
+    if persistent is not None:
+        p = persistent(shape.ptr, *known) if known is not None else persistent(shape.ptr, None, None, 0)
+        if p:
+            try:
+                key = ('shape', ctypes.string_at(p).decode('ascii'))
+            finally:
+                lib.libfive_free_str(ctypes.cast(p, ctypes.c_char_p))
+    if key is None:
+        fn = getattr(lib, 'libfive_tree_content_key', None)
+        if fn is None:
+            raise Uncacheable()
+        p = fn(shape.ptr)
+        if not p:
+            raise Uncacheable()
+        try:
+            key = (LOCAL, ctypes.string_at(p).decode('ascii'))
+        finally:
+            lib.libfive_free_str(ctypes.cast(p, ctypes.c_char_p))
     try:
-        key = ('shape', ctypes.string_at(p).decode('ascii'))
-    finally:
-        lib.libfive_free_str(ctypes.cast(p, ctypes.c_char_p))
-    try:
-        shape._content_key = (shape.ptr, key)      # (asked once per shape)
+        shape._content_key = (shape.ptr, key, numbers)      # (asked once per shape and set of numbers)
     except Exception:
         pass
     return key
+
+
+# the tag of a key that is good in this session only (see shape_key)
+LOCAL = 'shape-local'
+
+
+def is_local(key):
+    ''' Whether a problem key holds a part that only this session can recognise (nothing is kept under it for another) '''
+    return LOCAL in repr(key)
 
 
 def value_key(v):

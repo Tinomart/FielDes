@@ -36,6 +36,7 @@ of the License, or (at your option) any later version.
 #include <QTextCursor>
 #include <QVBoxLayout>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/editor.hpp"
 #include "fieldes/scenetree.hpp"
 #include "fieldes/script.hpp"
@@ -45,6 +46,14 @@ of the License, or (at your option) any later version.
 namespace FielDes {
 
 static const QColor kAmber(0xff, 0xcc, 0x33);
+
+// The text of a menu of the menu bar without its mnemonic, in the language of the program (the menus are made with T("&View"))
+static QString menuBarText(const QString& english)
+{
+    QString t = T(QString("&") + english);
+    t.remove('&');
+    return t;
+}
 
 // What stops the user from touching what the step is not about: it covers the window, and has holes where the step
 // is about something.  It paints nothing (the layer above it does), and takes every mouse event that is not in a hole
@@ -276,8 +285,8 @@ struct Tutorial::Step
     std::function<void()> enter;
     std::function<bool()> done;                         // what the step asks of the user is done
     std::function<void(std::function<void()>)> show;    // "Show me": the program does it, once, and says when it is over
-    QString showLabel = "Show me";
-    QString doneNote = "Nice.";
+    QString showLabel = T("Show me");
+    QString doneNote = T("Nice.");
     bool welcome = false;
     bool last = false;
 };
@@ -324,11 +333,11 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
     col->addSpacing(4);
     auto buttons = new QHBoxLayout;
     buttons->setSpacing(6);
-    m_skipTour = new QPushButton("Skip the tour");
+    m_skipTour = new QPushButton(T("Skip the tour"));
     m_skipTour->setObjectName("TourSkip");
     m_skipTour->setCursor(Qt::PointingHandCursor);
-    m_back = new QPushButton("Back");
-    m_show = new QPushButton("Show me");
+    m_back = new QPushButton(T("Back"));
+    m_show = new QPushButton(T("Show me"));
     m_next = new QPushButton;
     m_next->setObjectName("TourNext");
     m_next->setMinimumWidth(118);
@@ -359,7 +368,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
             m_note->setText(s.doneNote);
             m_note->setStyleSheet("font-size: 9.5pt; color: #82cc58; font-weight: bold;");
             m_show->hide();
-            m_next->setText(m_index + 1 < m_steps->size() ? "Next  ▸" : "Finish");
+            m_next->setText(m_index + 1 < m_steps->size() ? T("Next  ▸") : T("Finish"));
             // (a moment to see what the user did, then on; not when what the step asks was done already when it was opened)
             if (!m_doneOnArrival)
             {
@@ -459,9 +468,9 @@ QAction* Tutorial::sectionAction() const
     {
         QString t = top->text();
         t.remove('&');
-        if (t != "View" || !top->menu()) continue;
+        if (t != menuBarText("View") || !top->menu()) continue;
         for (QAction* a : top->menu()->actions())
-            if (a->text() == "Section view") return a;
+            if (a->text() == T("Section view")) return a;
     }
     return nullptr;
 }
@@ -676,9 +685,9 @@ void Tutorial::buildSteps()
     // 0
     {
         Step s;
-        s.title = "Welcome to FielDes";
-        s.text = "A short tour of the basics: two minutes. You can skip any step, or the whole tour.";
-        s.hint = "It starts again from Help ▸ Guided tour.";
+        s.title = T("Welcome to FielDes");
+        s.text = T("A short tour of the basics: two minutes. You can skip any step, or the whole tour.");
+        s.hint = T("It starts again from Help ▸ Guided tour.");
         s.welcome = true;
         s.place = Center;
         add(s);
@@ -686,9 +695,9 @@ void Tutorial::buildSteps()
     // 1
     {
         Step s;
-        s.title = "The script is the model";
+        s.title = T("The script is the model");
         s.focus = plateLine;
-        s.text = "A FielDes model is a short script. Everything you see is made by these lines.";
+        s.text = T("A FielDes model is a short script. Everything you see is made by these lines.");
         s.holes = holesOf(scriptWidget);
         s.point = [this] { const QRect r = scriptLineRect(std::max(0, scriptLine("plate ="))); return r.isEmpty() ? QPoint() : QPoint(r.right() - 20, r.center().y()); };
         s.place = Right;
@@ -698,10 +707,10 @@ void Tutorial::buildSteps()
     // 2
     {
         Step s;
-        s.title = "Change a number";
+        s.title = T("Change a number");
         s.focus = plateLine;
-        s.text = "In the plate line, change the 6 to 12.";
-        s.hint = "Click in the script and type. Or press Show me.";
+        s.text = T("In the plate line, change the 6 to 12.");
+        s.hint = T("Click in the script and type. Or press Show me.");
         s.holes = holesOf(scriptWidget);
         s.point = [this] { const QRect r = scriptLineRect(std::max(0, scriptLine("plate ="))); return r.isEmpty() ? QPoint() : QPoint(r.right() - 20, r.center().y()); };
         s.place = Right;
@@ -711,7 +720,7 @@ void Tutorial::buildSteps()
             m_editor->scriptWidget()->goToLine(std::max(0, scriptLine("plate =")), false);
         };
         s.done = [this] { bool ok = false; const double v = plateHeight(&ok); return ok && std::abs(v - m_baseline) > 1e-9; };
-        s.doneNote = "Nice. The plate is thicker.";
+        s.doneNote = T("Nice. The plate is thicker.");
         s.show = [this](std::function<void()> over) {
             const int line = scriptLine("plate =");
             if (line < 0) { over(); return; }
@@ -727,9 +736,9 @@ void Tutorial::buildSteps()
     // 3
     {
         Step s;
-        s.title = "The viewport follows";
-        s.text = "The model is drawn here. Shift + left mouse, or the middle mouse button, turns it; right mouse pans; the wheel zooms.";
-        s.hint = "The framed line of the script made the plate you see: the picture is that line, drawn.";
+        s.title = T("The viewport follows");
+        s.text = T("The model is drawn here. Shift + left mouse, or the middle mouse button, turns it; right mouse pans; the wheel zooms.");
+        s.hint = T("The framed line of the script made the plate you see: the picture is that line, drawn.");
         s.code = linesWith("^plate =");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
@@ -738,9 +747,9 @@ void Tutorial::buildSteps()
     // 4
     {
         Step s;
-        s.title = "Drag a surface";
-        s.text = "Drag the top face of the plate up or down. The number in the script follows.";
-        s.hint = "Watch the framed line: it lights up each time it changes. Or press Show me.";
+        s.title = T("Drag a surface");
+        s.text = T("Drag the top face of the plate up or down. The number in the script follows.");
+        s.hint = T("Watch the framed line: it lights up each time it changes. Or press Show me.");
         s.code = linesWith("^plate =");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
@@ -755,7 +764,7 @@ void Tutorial::buildSteps()
             m_baseline = plateHeight();
         };
         s.done = [this] { bool ok = false; const double v = plateHeight(&ok); return ok && std::abs(v - m_baseline) > 1e-6; };
-        s.doneNote = "Nice. The script follows your hand.";
+        s.doneNote = T("Nice. The script follows your hand.");
         s.show = [this](std::function<void()> over) {
             bool ok = false;
             const double z = plateHeight(&ok);
@@ -768,8 +777,8 @@ void Tutorial::buildSteps()
     // 5
     {
         Step s;
-        s.title = "The model tree";
-        s.text = "Every model the script makes is listed here. Each kind has its own icon.";
+        s.title = T("The model tree");
+        s.text = T("Every model the script makes is listed here. Each kind has its own icon.");
         s.holes = holesOf(panelWidget);
         s.place = Right;
         s.enter = [this, scene] { scene()->showSettings(false); };
@@ -778,27 +787,40 @@ void Tutorial::buildSteps()
     // 6
     {
         Step s;
-        s.title = "Models inside models";
-        s.text = "drilled is made of plate and hole. They are its arguments, shown as its children.";
-        s.hint = "Drag them in and out of an operation and its call changes: the framed lines are the same models, as text.";
+        s.title = T("Models inside models");
+        s.text = T("drilled is made of plate and hole. They are its arguments, shown as its children.");
+        s.hint = T("Drag them in and out of an operation and its call changes: the framed lines are the same models, as text.");
         s.code = linesWith("^(plate|hole|drilled) =");
         s.holes = holesOf(panelWidget);
         s.point = rowTip("plate");
         s.place = Right;
         add(s);
     }
+    // 6b: what a placeholder is (it turns up on its own when a model is taken out of a call that cannot do without it)
+    {
+        Step s;
+        s.title = T("Placeholders");
+        s.text = T("A call that is missing something has a placeholder (...) in its place, after the name of the argument.");
+        s.hint = T("Amber, not red: it is no error, it is what has to be done for the script to run. The note under the model tree lists them: "
+                   "click one to select it in the code editor and write what goes there. Hover an argument's name to read what it is.");
+        s.code = linesWith("^drilled\\b");
+        s.holes = holesOf(panelWidget);
+        s.point = rowTip("drilled");
+        s.place = Right;
+        add(s);
+    }
     // 7
     {
         Step s;
-        s.title = "Select a model";
-        s.text = "Click drilled in the tree.";
+        s.title = T("Select a model");
+        s.text = T("Click drilled in the tree.");
         s.code = linesWith("^drilled\\b");
         s.holes = holesOf(panelWidget);
         s.point = rowTip("drilled");
         s.place = Right;
         s.enter = [scene] { scene()->clearSelection(); };
         s.done = [scene] { return scene()->selectionKeys().contains("shape:drilled"); };
-        s.doneNote = "Nice. It is selected in the viewport too.";
+        s.doneNote = T("Nice. It is selected in the viewport too.");
         s.show = [this, scene](std::function<void()> over) {
             const QRect r = scene()->rowRect("drilled", m_window);
             if (r.isEmpty()) { over(); return; }
@@ -810,9 +832,9 @@ void Tutorial::buildSteps()
     // 8
     {
         Step s;
-        s.title = "The gizmo";
-        s.text = "A selected model has a gizmo. Drag an arrow to move the model.";
-        s.hint = "The gizmo is a line of the script too (handles): its numbers change as you drag. Or press Show me.";
+        s.title = T("The gizmo");
+        s.text = T("A selected model has a gizmo. Drag an arrow to move the model.");
+        s.hint = T("The gizmo is a line of the script too (handles): its numbers change as you drag. Or press Show me.");
         s.code = linesWith("handles\\(");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
@@ -830,9 +852,9 @@ void Tutorial::buildSteps()
     // 9
     {
         Step s;
-        s.title = "Make things";
-        s.text = "Right-click empty space, choose New 3D shape, then sphere.";
-        s.hint = "Or press Show me.";
+        s.title = T("Make things");
+        s.text = T("Right-click empty space, choose New 3D shape, then sphere.");
+        s.hint = T("Or press Show me.");
         s.holes = holesOf(viewWidget);
         s.place = InsideTopRight;
         s.enter = [this, scene] {
@@ -840,7 +862,7 @@ void Tutorial::buildSteps()
             m_baseline = m_editor->getScript().count("sphere(");
         };
         s.done = [this] { return m_editor->getScript().count("sphere(") > m_baseline; };
-        s.doneNote = "Nice. The new line is in the script.";
+        s.doneNote = T("Nice. The new line is in the script.");
         s.show = [this](std::function<void()> over) {
             const QPoint at(int(m_view->width() * 0.12), int(m_view->height() * 0.80));
             fakeClick(m_view, at, Qt::RightButton, [this, over] {
@@ -850,7 +872,7 @@ void Tutorial::buildSteps()
                 if (!root) { over(); return; }
                 QAction* found = nullptr;
                 for (QAction* a : root->actions())
-                    if (a->text() == "New 3D shape") found = a;
+                    if (a->text() == T("New 3D shape")) found = a;
                 if (!found || !found->menu()) { root->close(); over(); return; }
                 root->setActiveAction(found);
                 QPointer<QMenu> sub = found->menu();
@@ -882,10 +904,10 @@ void Tutorial::buildSteps()
     // A section view (a viewer of its own, switched on by the user)
     {
         Step s;
-        s.title = "Cut a section";
-        s.text = "Press Ctrl+Shift+X (View ▸ Section view). A plane cuts the model open. Drag the arrow of the plane through the model.";
-        s.hint = "The section view is yours to switch on; its card has the plane's settings. The field viewer is another viewer, which "
-                 "opens by itself when you select a field: both can be open together. Or press Show me.";
+        s.title = T("Cut a section");
+        s.text = T("Press Ctrl+Shift+X (View ▸ Section view). A plane cuts the model open. Drag the arrow of the plane through the model.");
+        s.hint = T("The section view is yours to switch on; its card has the plane's settings. The field viewer is another viewer, which "
+                 "opens by itself when you select a field: both can be open together. Or press Show me.");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.keys = true;
@@ -901,7 +923,7 @@ void Tutorial::buildSteps()
             if (!m_sectionSeen) { m_sectionSeen = true; m_sectionBase = offset; return false; }
             return std::abs(offset - m_sectionBase) > 1e-3;
         };
-        s.doneNote = "Nice. The plane cuts the model open; its card has the rest of the settings.";
+        s.doneNote = T("Nice. The plane cuts the model open; its card has the rest of the settings.");
         s.show = [this](std::function<void()> over) {
             QAction* a = sectionAction();
             if (!a) { over(); return; }
@@ -927,9 +949,9 @@ void Tutorial::buildSteps()
     // 10
     {
         Step s;
-        s.title = "A field instead of a number";
-        s.text = "swell is a field. Drag it onto swollen: it takes the place of the 1.0.";
-        s.hint = "Anywhere a number goes, a field goes. The framed lines show the call change. Or press Show me.";
+        s.title = T("A field instead of a number");
+        s.text = T("swell is a field. Drag it onto swollen: it takes the place of the 1.0.");
+        s.hint = T("Anywhere a number goes, a field goes. The framed lines show the call change. Or press Show me.");
         s.code = linesWith("^(anchor|swell|swollen) =");
         s.holes = holesOf(panelWidget);
         s.point = rowTip("swell");
@@ -955,7 +977,7 @@ void Tutorial::buildSteps()
             scene()->clearSelection();
         };
         s.done = [this] { return m_editor->getScript().contains("offset(drilled, swell)"); };
-        s.doneNote = "Nice. The growth now follows the field.";
+        s.doneNote = T("Nice. The growth now follows the field.");
         s.show = [this, scene](std::function<void()> over) {
             const QRect a = scene()->rowRect("swell", m_window), b = scene()->rowRect("swollen", m_window);
             if (a.isEmpty() || b.isEmpty()) { over(); return; }
@@ -968,10 +990,10 @@ void Tutorial::buildSteps()
     // A reference: Ctrl+drag
     {
         Step s;
-        s.title = "A reference with Ctrl";
-        s.text = "Hold Ctrl and drag knob onto capped: capped uses it, and knob stays where it is.";
-        s.hint = "Without Ctrl, a drag moves the model into the operation. With Ctrl, capped lists a faded shadow of knob, and its "
-                 "line says # shadow: knob. Or press Show me.";
+        s.title = T("A reference with Ctrl");
+        s.text = T("Hold Ctrl and drag knob onto capped: capped uses it, and knob stays where it is.");
+        s.hint = T("Without Ctrl, a drag moves the model into the operation. With Ctrl, capped lists a faded shadow of knob, and its "
+                 "line says # shadow: knob. Or press Show me.");
         s.code = linesWith("^(knob|capped) =|#\\s*shadow:");
         s.holes = holesOf(panelWidget);
         s.point = rowTip("knob");
@@ -995,7 +1017,7 @@ void Tutorial::buildSteps()
             scene()->clearSelection();
         };
         s.done = [this] { return m_editor->getScript().contains(QRegularExpression("#\\s*shadow:\\s*knob")); };
-        s.doneNote = "Nice. knob did not move: capped only holds a reference to it.";
+        s.doneNote = T("Nice. knob did not move: capped only holds a reference to it.");
         s.show = [this, scene](std::function<void()> over) {
             const QRect a = scene()->rowRect("knob", m_window), b = scene()->rowRect("capped", m_window);
             if (a.isEmpty() || b.isEmpty()) { over(); return; }
@@ -1008,16 +1030,16 @@ void Tutorial::buildSteps()
     // 11
     {
         Step s;
-        s.title = "Rename";
-        s.text = "Double-click a name in the tree to rename it. Try swollen.";
-        s.hint = "Every line that uses the name is framed, and changes with it. Or press Show me.";
+        s.title = T("Rename");
+        s.text = T("Double-click a name in the tree to rename it. Try swollen.");
+        s.hint = T("Every line that uses the name is framed, and changes with it. Or press Show me.");
         s.code = linesWith("\\b(swollen|grown)\\b");
         s.holes = holesOf(panelWidget);
         s.point = rowTip("swollen");
         s.place = Right;
         s.keys = true;
         s.done = [this] { return !m_editor->getScript().contains(QRegularExpression("\\bswollen\\b")); };
-        s.doneNote = "Nice. Every use of the name changed.";
+        s.doneNote = T("Nice. Every use of the name changed.");
         s.show = [this, scene](std::function<void()> over) {
             const QRect r = scene()->rowRect("swollen", m_window);
             if (r.isEmpty()) { over(); return; }
@@ -1057,13 +1079,12 @@ void Tutorial::buildSteps()
     // 12
     {
         Step s;
-        s.title = "Render settings";
-        s.focus = [this, scene]() -> QRect { QLineEdit* f = scene()->settingEditor("set_resolution", 0); return f ? widgetRect(f) : QRect(); };
-        s.text = "The region and the resolution are set here. Change the resolution from 4 to 6.";
-        s.hint = "More samples per mm: a finer picture, slower. The framed line is the same setting, as text. Or press Show me.";
+        s.title = T("Render settings");
+        s.text = T("The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.");
+        s.hint = T("More samples per mm: a finer picture, slower. The row in the tree shows the numbers and goes to the line when clicked.");
         s.code = linesWith("set_resolution");
         s.holes = holesOf(panelWidget);
-        s.point = rowTip("Render settings");
+        s.point = rowTip(T("Render settings"));
         s.place = Right;
         s.keys = true;
         s.enter = [this, scene] {
@@ -1077,54 +1098,30 @@ void Tutorial::buildSteps()
             const auto m = re.match(m_editor->getScript());
             return m.hasMatch() && std::abs(m.captured(1).toDouble() - m_baseline) > 1e-9;
         };
-        s.doneNote = "Nice. The viewport meshes again at the new resolution.";
-        s.show = [this, scene](std::function<void()> over) {
-            QLineEdit* first = scene()->settingEditor("set_resolution", 0);
-            if (!first) { over(); return; }
-            const QPoint at = first->mapTo(m_window, QPoint(first->width() / 2, first->height() / 2));
-            m_busy = true;
-            setCursor(at + QPoint(90, 50));
-            // (the tree is built again when the script has run, and the fields with it: the field is looked up each time it is
-            // used, never kept -- a pointer kept across the glide pointed into freed memory when that happened)
-            auto field = [scene]() { return scene()->settingEditor("set_resolution", 0); };
-            glide(m_cursor, at, 700, [this](QPoint wp) { setCursor(wp); }, [this, field, at, over] {
-                setCursor(at, true);
-                if (QLineEdit* f = field()) { f->setFocus(); f->selectAll(); }
-                after(500, [this, field, at, over] {
-                    setCursor(at, false);
-                    // (typed, as a hand does: the script follows the key)
-                    if (QLineEdit* f = field())
-                    {
-                        QKeyEvent press(QEvent::KeyPress, 0, Qt::NoModifier, QString("6"));
-                        QApplication::sendEvent(f, &press);
-                    }
-                    after(500, [this, field, over] { if (QLineEdit* f = field()) sendKey(f, Qt::Key_Return); m_busy = false; hideCursor(); over(); });
-                });
-            });
-        };
+        s.doneNote = T("Nice. The viewport meshes again at the new resolution.");
         add(s);
     }
     // 13
     {
         Step s;
-        s.title = "Custom function from block";
-        s.text = "A Python file in the blocks folder is a block: its functions work in every script, like the built-in ones.";
-        s.hint = "Settings ▸ Blocks folder chooses the folder. The right-click menu lists them as New custom block.";
+        s.title = T("Custom function from block");
+        s.text = T("A Python file in the blocks folder is a block: its functions work in every script, like the built-in ones.");
+        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them as New custom block.");
         s.menuTitle = "Settings";
-        s.menuEntry = "Blocks folder";
+        s.menuEntry = "Blocks folder...";
         s.place = Right;
         add(s);
     }
     // 14
     {
         Step s;
-        s.title = "That is the tour";
-        s.text = "Shift+F1 opens the guide with every feature and shortcut. To see how the different features of FielDes work, open the examples: File ▸ Open example file.";
-        s.hint = "Each example is a small script to read, run and change. Help ▸ Guided tour starts this tour again.";
+        s.title = T("That is the tour");
+        s.text = T("Shift+F1 opens the guide with every feature and shortcut. To see how the different features of FielDes work, open the examples: File ▸ Open example file.");
+        s.hint = T("Each example is a small script to read, run and change. Help ▸ Guided tour starts this tour again.");
         s.last = true;
         // (the File menu is drawn beside the card, with the entry framed, as for the blocks folder: it lists the examples)
         s.menuTitle = "File";
-        s.menuEntry = "Open example file";
+        s.menuEntry = "Open example file...";
         s.place = Right;
         s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
         add(s);
@@ -1260,7 +1257,7 @@ void Tutorial::showMe()
             endDemo();
             const Step& s = (*m_steps)[step];
             if (s.enter) s.enter();
-            m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") + "Everything is back as it was. Now you try.");
+            m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") + T("Everything is back as it was. Now you try."));
             m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
         });
     };
@@ -1278,12 +1275,12 @@ void Tutorial::showStep()
     m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
     m_note->setVisible(!s.hint.isEmpty());
     m_counter->setText(s.welcome ? QString() : QString("%1 / %2").arg(m_index).arg(m_steps->size() - 1));
-    m_skipTour->setText(s.welcome ? "No thanks" : (s.last ? QString() : "Skip the tour"));
+    m_skipTour->setText(s.welcome ? T("No thanks") : (s.last ? QString() : T("Skip the tour")));
     m_skipTour->setVisible(!s.last);
     m_back->setVisible(!s.welcome && !s.last && m_index > 1);
     m_show->setVisible(bool(s.show));
     m_show->setText(s.showLabel);
-    m_next->setText(s.welcome ? "Start the tour" : s.last ? "Finish" : (s.done ? "Skip step  ▸" : "Next  ▸"));
+    m_next->setText(s.welcome ? T("Start the tour") : s.last ? T("Finish") : (s.done ? T("Skip step  ▸") : T("Next  ▸")));
     // (the window is dimmed, the card is above it)
     m_blocker->setGeometry(m_window->rect());
     m_layer->setGeometry(m_window->rect());
@@ -1301,7 +1298,7 @@ void Tutorial::showStep()
         {
             QString t = a->text();
             t.remove('&');
-            if (t != s.menuTitle || !a->menu()) continue;
+            if (t != menuBarText(s.menuTitle) || !a->menu()) continue;
             QMenu* menu = a->menu();
             menu->ensurePolished();
             menu->resize(menu->sizeHint());
@@ -1383,14 +1380,14 @@ void Tutorial::refresh()
         {
             QString t = a->text();
             t.remove('&');
-            if (t != s.menuTitle || !a->menu()) continue;
+            if (t != menuBarText(s.menuTitle) || !a->menu()) continue;
             QMenu* menu = a->menu();
             const QRect g = m_window->menuBar()->actionGeometry(a);
             buttonRect = QRect(m_window->menuBar()->mapTo(m_window, g.topLeft()), g.size());
             m_menuRect = QRect(m_window->menuBar()->mapTo(m_window, g.bottomLeft()), menu->size());
             for (QAction* item : menu->actions())
             {
-                if (item->text().remove('&').startsWith(s.menuEntry))
+                if (item->text().remove('&') == T(s.menuEntry))
                     entryRect = menu->actionGeometry(item).translated(m_menuRect.topLeft());
             }
         }

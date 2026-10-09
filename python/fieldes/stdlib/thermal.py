@@ -4,17 +4,22 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
     from fieldes import *
 
     part = ...                                          # any Shape, in mm
-    result = thermal_analysis(part, [
-        fixed_temperature(base_region, 20),             # held at 20 degrees C
-        heat_input(chip_region, 5.0),                   # 5 W into the part here
-        convection(fins_region, 25e-6, ambient=20)],    # air cooling
+    result = thermal_analysis(
+        part,
+        fixed_temperatures=[fixed_temperature(base_region, 20)],       # held at 20 degrees C
+        heat_inputs=[heat_input(chip_region, 5.0)],                    # 5 W into the part here
+        heat_generations=[],                                           # (none)
+        convections=[convection(fins_region, 25e-6, ambient=20)],      # air cooling
         material=aluminium, element_size=1.0)
     result                               # the part coloured by temperature (FielDes)
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
-    # the material layout (30 % of the part) that keeps the heat input coolest
-    design = thermal_topology_optimization(part, [...], volume_fraction=0.3)
+    # the material layout (30 % of the part) that keeps the heat input coolest: the same four inputs
+    design = thermal_topology_optimization(part, [...], [...], [...], [...], volume_fraction=0.3)
     design.shape()
+
+Every kind of condition is an input of its own, needed -- written with a placeholder -- and takes one item or a list ([] says there is none).
+Each condition is a model of its own, with an eye: it is drawn on the part the analysis was given.
 
 Boundary conditions are regions -- ordinary shapes, as for static_analysis:
   fixed_temperature(region, T)   the part is held at T inside the region
@@ -47,9 +52,11 @@ import time
 from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
+from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.excluded import keep_regions
-from fieldes.stdlib.fea import FeaError, TopologyResult, aluminium, colored, _bounds, _shape
+from fieldes.stdlib.fea import (FeaError, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
+                                _use_conditions, _with_conditions)
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
 
@@ -58,19 +65,43 @@ __all__ = ['fixed_temperature', 'heat_input', 'heat_generation', 'convection',
            'ThermalTopologyResult']
 
 
-class _Temperature:
+class _Temperature(_Condition):
+    _call = 'fixed_temperature(...)'
+
     def __init__(self, region, value):
         self.region, self.value = region, value
 
 
-class _Heat:
+class _Heat(_Condition):
     def __init__(self, region, power, volume=False, profile=None):
         self.region, self.power, self.volume, self.profile = region, power, volume, profile
 
 
-class _Convection:
+class _HeatInput(_Heat):
+    _call = 'heat_input(...)'
+
+
+class _HeatGeneration(_Heat):
+    _call = 'heat_generation(...)'
+
+
+class _Convection(_Condition):
+    _call = 'convection(...)'
+
     def __init__(self, region, coefficient, ambient):
         self.region, self.coefficient, self.ambient = region, coefficient, ambient
+
+
+_register_slots({'fixed_temperatures': ((_Temperature,), 'fixed_temperature(...) items'),
+                 'heat_inputs': ((_HeatInput,), 'heat_input(...) items'),
+                 'heat_generations': ((_HeatGeneration,), 'heat_generation(...) items'),
+                 'convections': ((_Convection,), 'convection(...) items')})
+
+
+def _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, what):
+    ''' The conditions of a thermal analysis, one list: what each input is given '''
+    return (_given(fixed_temperatures, 'fixed_temperatures', what) + _given(heat_inputs, 'heat_inputs', what) +
+            _given(heat_generations, 'heat_generations', what) + _given(convections, 'convections', what))
 
 
 def _number_or_field(value, what):
@@ -89,39 +120,96 @@ def _profile(profile, what):
     return profile
 
 
-def fixed_temperature(region, value):
+def _one(rest, what, count=1):
+    if len(rest) != count:
+        raise TypeError('{}: after the regions it acts on (any number, one argument after the other) comes {}'.format(
+            what, 'the value' if count == 1 else 'its values'))
+    return rest
+
+
+def fixed_temperature(*args, region=None, value=None):
     ''' The part held at temperature `value` wherever it lies inside
-        `region` (a Shape).  `value` can be a field: the temperature at each point (tetrahedral elements) '''
-    return _Temperature(_shape(region, 'fixed_temperature(region)'), _number_or_field(value, 'fixed_temperature: value'))
+        `region` (a Shape; any number of regions can be given, one argument after the other, then the value:
+        fixed_temperature(a, b, 20)).
+
+        region  where the part is held: a body, a field or a selected surface (the same as the first argument)
+        value   the temperature (degrees C): a number, or a field -- the temperature at each point (tetrahedral elements) '''
+    found, rest = _regions(args, region, 'fixed_temperature()')
+    if value is not None:
+        if rest:
+            raise TypeError('fixed_temperature(): the value is given once -- as the argument after the regions, or as value=')
+        rest = (value,)
+    value, = _one(rest, 'fixed_temperature(region, ..., value)')
+    return _Temperature(found, _number_or_field(value, 'fixed_temperature: value'))
+
+fixed_temperature._required = ('region', 'value')
 
 
-def heat_input(region, watts, profile=None):
+def heat_input(*args, region=None, watts=None, profile=None):
     ''' A total power (W) put into the part, spread evenly over its surface
-        inside `region` (a Shape); negative takes heat out.  profile: a field -- the power is spread in
-        proportion to it (not negative) instead of evenly '''
-    return _Heat(_shape(region, 'heat_input(region)'), float(watts), profile=_profile(profile, 'heat_input'))
+        inside `region` (a Shape; any number of regions, one argument after the other, then the power); negative takes heat out.
+
+        region   where the heat goes in: a body, a field or a selected surface (the same as the first argument)
+        watts    the total power in watts (negative takes heat out)
+        profile  a field -- the power is spread in proportion to it (not negative) instead of evenly '''
+    found, rest = _regions(args, region, 'heat_input()')
+    if watts is not None:
+        if rest:
+            raise TypeError('heat_input(): the power is given once -- as the argument after the regions, or as watts=')
+        rest = (watts,)
+    watts, = _one(rest, 'heat_input(region, ..., watts)')
+    return _HeatInput(found, float(watts), profile=_profile(profile, 'heat_input'))
+
+heat_input._required = ('region', 'watts')
 
 
-def heat_generation(region, watts, profile=None):
+def heat_generation(*args, region=None, watts=None, profile=None):
     ''' A total power (W) generated inside the part, spread evenly through
-        its volume inside `region` (a Shape) -- e.g. a resistive heater, or
-        electronics potted in the part.  profile: a field -- spread in proportion to it instead of evenly '''
-    return _Heat(_shape(region, 'heat_generation(region)'), float(watts), volume=True,
-                 profile=_profile(profile, 'heat_generation'))
+        its volume inside `region` (a Shape; any number of regions, one argument after the other, then the power) -- e.g. a resistive heater, or
+        electronics potted in the part.
+
+        region   where the heat is generated: a body or a field (the same as the first argument)
+        watts    the total power in watts
+        profile  a field -- spread in proportion to it instead of evenly '''
+    found, rest = _regions(args, region, 'heat_generation()')
+    if watts is not None:
+        if rest:
+            raise TypeError('heat_generation(): the power is given once -- as the argument after the regions, or as watts=')
+        rest = (watts,)
+    watts, = _one(rest, 'heat_generation(region, ..., watts)')
+    return _HeatGeneration(found, float(watts), volume=True, profile=_profile(profile, 'heat_generation'))
+
+heat_generation._required = ('region', 'watts')
 
 
-def convection(region, coefficient, ambient=20.0):
-    ''' The part's exposed surface inside `region` exchanges heat with an
-        ambient temperature: coefficient h in W / (mm^2 K) (still air
-        ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2).  The coefficient and the ambient
-        temperature can each be a field: their values at each point of the surface (tetrahedral elements) '''
-    return _Convection(_shape(region, 'convection(region)'), _number_or_field(coefficient, 'convection: coefficient'),
+def convection(*args, region=None, coefficient=None, ambient=None):
+    ''' The part's exposed surface inside `region` (any number of regions, one argument after the other, then the coefficient and the
+        ambient temperature) exchanges heat with an ambient temperature.
+
+        region       where the part exchanges heat: a body, a field or a selected surface (the same as the first argument)
+        coefficient  h in W / (mm^2 K): still air ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2.  A number, or a field --
+                     its value at each point of the surface (tetrahedral elements)
+        ambient      the ambient temperature (degrees C; 20 when it is not given): a number, or a field '''
+    found, rest = _regions(args, region, 'convection()')
+    if coefficient is not None:
+        if len(rest) > 1 or (rest and ambient is not None):
+            raise TypeError('convection(): the coefficient is given once -- as the argument after the regions, or as coefficient=')
+        rest = (coefficient,) + tuple(rest)
+    if len(rest) not in ((1,) if ambient is not None else (1, 2)):
+        raise TypeError('convection(region, ..., coefficient, ambient=20): after the regions come the coefficient and, if it is not 20, the ambient temperature (once, as the next argument or as ambient=)')
+    coefficient = rest[0]
+    if ambient is None:
+        ambient = rest[1] if len(rest) == 2 else 20.0
+    return _Convection(found, _number_or_field(coefficient, 'convection: coefficient'),
                        _number_or_field(ambient, 'convection: ambient'))
+
+convection._required = ('region', 'coefficient')
+convection._positional = ('region', 'coefficient', 'ambient')
 
 
 _FIELDS = ['temperature', 'heat_flux', 'qx', 'qy', 'qz']
-_LABELS = {'temperature': 'temperature', 'heat_flux': 'heat flux (W/mm^2)',
-           'qx': 'heat flux x (W/mm^2)', 'qy': 'heat flux y (W/mm^2)', 'qz': 'heat flux z (W/mm^2)'}
+_LABELS = {'temperature': _tr('temperature'), 'heat_flux': _tr('heat flux (W/mm^2)'),
+           'qx': _tr('heat flux x (W/mm^2)'), 'qy': _tr('heat flux y (W/mm^2)'), 'qz': _tr('heat flux z (W/mm^2)')}
 
 
 class _Handle:
@@ -187,11 +275,10 @@ class ThermalResult:
         return out
 
     def __repr__(self):
-        return ('Thermal analysis: {:,} elements ({:.1f} s)\n'
-                '  temperature {:.4g} to {:.4g} \u00b7 max heat flux {:.3g} W/mm^2 \u00b7 '
-                'heat in {:.4g} W, out {:.4g} W').format(
-                    self.elements, self.seconds, self.min_temperature, self.max_temperature,
-                    self.max_heat_flux, self.heat_in, self.heat_out)
+        return _tr('Thermal analysis: %s elements (%.1f s)\n  temperature %.4g to %.4g \u00b7 max heat flux %.3g W/mm^2 \u00b7 '
+                   'heat in %.4g W, out %.4g W') % (
+                       '{:,}'.format(self.elements), self.seconds, self.min_temperature, self.max_temperature,
+                       self.max_heat_flux, self.heat_in, self.heat_out)
 
 
 def _conductivity(material, conductivity, what):
@@ -285,9 +372,27 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
 _cache = OrderedDict()
 
 
-def thermal_analysis(shape, boundary, material=aluminium, element_size=None, bounds=None,
-                     conductivity=None, max_iterations=50000, tolerance=1e-7, element='tet',
-                     cache=True):
+@_with_conditions
+def thermal_analysis(shape, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, element_size=None,
+                     bounds=None, conductivity=None, tolerance=1e-7, element='tet', cache=True):
+    ''' Steady-state heat conduction in `shape` with the given boundary
+        conditions, one input for each kind (each one item or a list, [] for none):
+        fixed_temperatures  fixed_temperature(...) items (at least one of these or of the convections is needed)
+        heat_inputs         heat_input(...) items
+        heat_generations    heat_generation(...) items
+        convections         convection(...) items
+        (see the module's description).  Each condition is a model of its own, drawn on `shape`.
+
+        Everything else is as in the analysis below.  '''
+    max_iterations = 50000      # (the equation solver's own limit, never reached by a problem that has a solution: not an argument -- it stops by itself when the residual is below `tolerance`)
+    boundary = _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, 'thermal_analysis')
+    _use_conditions(boundary, shape)
+    return _thermal_analysis(shape, boundary, material, element_size, bounds, conductivity, max_iterations, tolerance, element, cache)
+
+
+def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bounds=None,
+                      conductivity=None, max_iterations=50000, tolerance=1e-7, element='tet',
+                      cache=True):
     ''' Steady-state heat conduction in `shape` with the given boundary
         conditions: fixed_temperature(...), heat_input(...),
         heat_generation(...) and convection(...) items (see the module's
@@ -392,26 +497,26 @@ class ThermalTopologyResult(TopologyResult):
     def verify(self, threshold=None, element_size=None):
         ''' A thermal analysis of the optimized part with the same boundary
             conditions and material '''
-        return thermal_analysis(self.shape(threshold), self._boundary, self.material,
+        return _thermal_analysis(self.shape(threshold), self._boundary, self.material,
                                 element_size=element_size or self.element_size,
                                 bounds=self.bounds, conductivity=self._conductivity,
                                 element=self.settings.get('element', 'hex'))
 
     def __repr__(self):
         t = self.temperature
-        return ('Thermal topology optimization: {:.0f} % of the part kept, heat input temperature '
-                '{:.4g} -> {:.4g} ({} iterations, {:.1f} s)').format(
-                    100 * self.volume_fraction, t[0] if t else 0, t[-1] if t else 0,
-                    self.iterations, self.seconds)
+        return _tr('Thermal topology optimization: %.0f %% of the part kept, heat input temperature %.4g -> %.4g '
+                   '(%d iterations, %.1f s)') % (
+                       100 * self.volume_fraction, t[0] if t else 0, t[-1] if t else 0, self.iterations, self.seconds)
 
 
 _topo_cache = OrderedDict()
 
 
-def thermal_topology_optimization(part, boundary, material=aluminium, volume_fraction=0.3,
-                                  element_size=None, iterations=60, filter_radius=None,
+@_with_conditions
+def thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium,
+                                  volume_fraction=0.3, element_size=None, iterations=60, filter_radius=None,
                                   keep=None, avoid=None, extrude=None, penalty=3.0, move=0.2,
-                                  bounds=None, conductivity=None, max_iterations=20000,
+                                  bounds=None, conductivity=None,
                                   tolerance=1e-6, cache=True, element='hex'):
     ''' Thermal topology optimization: the material layout, using
         `volume_fraction` of `part` (the design space), that keeps the heat
@@ -448,6 +553,8 @@ def thermal_topology_optimization(part, boundary, material=aluminium, volume_fra
     if element == 'tet':
         raise FeaError("thermal topology optimization designs one density per cell of a regular grid: "
                        "there is no tetrahedral mesh option (element='hex')")
+    boundary = _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, 'thermal_topology_optimization')
+    _use_conditions(boundary, part)
     k = _conductivity(material, conductivity, 'thermal_topology_optimization')
     keep = [] if keep is None else list(keep if isinstance(keep, (list, tuple)) else [keep])
     avoid = [] if avoid is None else list(avoid if isinstance(avoid, (list, tuple)) else [avoid])

@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/documentation.hpp"
 
 namespace FielDes {
@@ -161,7 +162,7 @@ DocumentationPane::DocumentationPane(Documentation docs)
     layout->setSpacing(0);
     setLayout(layout);
 
-    setWindowTitle("Shape reference");
+    setWindowTitle(T("Shape reference"));
     resize(640, 720);
 #ifdef Q_OS_MAC
     setWindowFlags(Qt::Tool);

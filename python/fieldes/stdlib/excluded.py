@@ -186,7 +186,6 @@ THROUGH = {
     'fea': ['static_analysis', 'modal_analysis'],
     'thermal': ['thermal_analysis'],
     'fluid': ['fluid_analysis'],
-    'boundary_conditions': ['static_boundary_conditions'],
     'selection': ['select_surface', 'surface_from_bodies'],
     'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom'],
     'conformal': ['lattice_surface_conform'],

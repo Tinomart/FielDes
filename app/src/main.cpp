@@ -142,7 +142,7 @@ int main(int argc, char** argv)
 
     QCoreApplication::setOrganizationName("FielDes");
     QCoreApplication::setApplicationName("FielDes");
-    QCoreApplication::setApplicationVersion("0.1.0");
+    QCoreApplication::setApplicationVersion(FIELDES_VERSION);
 
     App a(argc, argv);
     a.exec();

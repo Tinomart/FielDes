@@ -430,9 +430,9 @@ TetProblem::TetProblem(const Tree& shape, Eigen::Vector3d lo, Eigen::Vector3d hi
 {
 }
 
-void TetProblem::addSupport(const Tree& region, bool x, bool y, bool z)
+void TetProblem::addSupport(const Tree& region, bool x, bool y, bool z, int loadCase)
 {
-    m_supports.push_back(Support{region, {x, y, z}});
+    m_supports.push_back(Support{region, {x, y, z}, loadCase});
     m_prepared = false;
 }
 
@@ -502,12 +502,14 @@ bool TetProblem::prepare(std::string& error)
         return pts;
     };
     // Per vertex: bit a set = held in direction a
-    auto fixedMask = [&](const TetMesh& m, std::vector<unsigned char>& mask) {
+    // (onlyCase >= 0: the supports of that load case and those of every case; -2: all of them)
+    auto fixedMask = [&](const TetMesh& m, std::vector<unsigned char>& mask, int onlyCase = -2) {
         mask.assign(m.pos.size(), 0);
         const auto pts = positions(m);
         std::vector<float> v;
         for (const auto& s : m_supports)
         {
+            if (onlyCase >= 0 && s.loadCase >= 0 && s.loadCase != onlyCase) continue;
             evalTreePoints(s.region, pts, v);
             // (a region that misses the part by a little -- the surface of an optimised design, a
             // region placed by hand -- still holds it: the nodes within half an element)
@@ -590,6 +592,30 @@ bool TetProblem::prepare(std::string& error)
     std::vector<double> force(nDof, 0.0);
     int nCases = 1;
     for (const auto& fo : forces) nCases = std::max(nCases, fo.loadCase + 1);
+    // Supports of one load case's own (several boundary conditions to optimise against, each with its supports): the nodes each
+    // case holds, on top of the supports every case has
+    int supportCases = 0;
+    for (const auto& sp : m_supports) supportCases = std::max(supportCases, sp.loadCase + 1);
+    if (!m_noLoads) nCases = std::max(nCases, supportCases);
+    std::vector<std::vector<unsigned char>> caseFixed;
+    if (supportCases > 0 && !m_noLoads)
+    {
+        caseFixed.resize(size_t(nCases));
+        for (int c = 0; c < nCases; ++c)
+        {
+            std::vector<unsigned char> mc;
+            if (fixedMask(*mesh, mc, c) == 0)
+            {
+                error = "the boundary conditions " + std::to_string(c + 1) + " hold the part nowhere: each set of boundary conditions "
+                        "needs a fixed(...) support that touches the part";
+                return false;
+            }
+            caseFixed[size_t(c)].assign(nDof, 0);
+            for (size_t i = 0; i < nv; ++i)
+                for (int a = 0; a < 3; ++a)
+                    if (mc[i] & (1 << a)) caseFixed[size_t(c)][3 * i + size_t(a)] = 1;
+        }
+    }
     // (with several load cases, each has its own forces; the static analysis applies all of them)
     std::vector<std::vector<double>> caseForce;
     if (nCases > 1) caseForce.assign(size_t(nCases), std::vector<double>(nDof, 0.0));
@@ -832,7 +858,7 @@ bool TetProblem::prepare(std::string& error)
 
     // What the loads and the supports leave: something must push, and every
     // direction that is pushed must be held somewhere
-    if (!m_noLoads)
+    if (!m_noLoads && caseFixed.empty())            // (cases with supports of their own are checked one by one below)
     {
         double freeLoad = 0, anyLoad = 0;
         for (size_t d = 0; d < nDof; ++d)
@@ -872,12 +898,55 @@ bool TetProblem::prepare(std::string& error)
         }
     }
 
+    if (!m_noLoads && !caseFixed.empty())
+    {
+        for (int c = 0; c < nCases; ++c)
+        {
+            const std::vector<double>& cf = nCases > 1 ? caseForce[size_t(c)] : force;
+            const std::vector<unsigned char>& cx = caseFixed[size_t(c)];
+            double free = 0, any = 0;
+            for (size_t d = 0; d < nDof; ++d)
+            {
+                any += std::abs(cf[d]);
+                if (!cx[d]) free += std::abs(cf[d]);
+            }
+            if (!(any > 0))
+            {
+                error = "the boundary conditions " + std::to_string(c + 1) + " have no loads that act on the part";
+                return false;
+            }
+            if (!(free > 0))
+            {
+                error = "the loads of the boundary conditions " + std::to_string(c + 1) + " act only on fixed nodes: move the load region off the supports";
+                return false;
+            }
+            for (int a = 0; a < 3; ++a)
+            {
+                bool held = false;
+                double net = 0, scale = 0;
+                for (size_t i = size_t(a); i < nDof; i += 3)
+                {
+                    held = held || cx[i];
+                    net += cf[i];
+                    scale += std::abs(cf[i]);
+                }
+                if (!held && std::abs(net) > 1e-9 * std::max(scale, 1e-30))
+                {
+                    error = std::string("nothing holds the part in the ") + kAxis[a] + " direction in the boundary conditions " +
+                            std::to_string(c + 1) + ", but its loads push it that way: fix it in " + kAxis[a] + " somewhere";
+                    return false;
+                }
+            }
+        }
+    }
+
     uint64_t hsh = 1469598103934665603ull;
     const double hdr[] = {m_h, m_E, m_nu, double(nv), double(nt), m_alpha, m_reference};
     hsh = fnv(hsh, hdr, sizeof(hdr));
     hsh = fnv(hsh, mesh->pos.data(), mesh->pos.size() * sizeof(Vec3));
     hsh = fnv(hsh, mesh->tets.data(), mesh->tets.size() * sizeof(std::array<int, 4>));
     hsh = fnv(hsh, fixedDof.data(), fixedDof.size());
+    for (const auto& cx : caseFixed) hsh = fnv(hsh, cx.data(), cx.size());
     hsh = fnv(hsh, force.data(), force.size() * sizeof(double));
     for (const auto& cf : caseForce) hsh = fnv(hsh, cf.data(), cf.size() * sizeof(double));
     if (!m_thermalStrain.empty()) hsh = fnv(hsh, m_thermalStrain.data(), m_thermalStrain.size() * sizeof(double));
@@ -890,6 +959,7 @@ bool TetProblem::prepare(std::string& error)
     m_fixedDof.swap(fixedDof);
     m_force.swap(force);
     m_caseForce.swap(caseForce);
+    m_caseFixed.swap(caseFixed);
     m_result = std::make_shared<MeshResult>();
     m_result->mesh = m_mesh;
     m_result->looseElements = m_looseElements;
@@ -1057,9 +1127,10 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         error = "thermal expansion isn't supported in topology optimization";
         return false;
     }
-    if (!(s.volumeFraction > 0 && s.volumeFraction < 1))
+    const bool grown = s.origin.is_valid();
+    if (!(s.volumeFraction > 0 && (grown || s.volumeFraction < 1)))
     {
-        error = "the volume fraction must be between 0 and 1";
+        error = grown ? "the volume fraction must be more than 0" : "the volume fraction must be between 0 and 1";
         return false;
     }
     const auto t0 = std::chrono::steady_clock::now();
@@ -1092,6 +1163,13 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         evalTreePoints(t, centres, vals);
         for (size_t a = 0; a < na; ++a) if (vals[a] < 0) state[a] = 1;
     }
+    // The part the space was grown from: what lies outside it starts nearly empty, and the volume fraction is of what lies inside
+    std::vector<char> outside(na, 0);
+    if (grown)
+    {
+        evalTreePoints(s.origin, centres, vals);
+        for (size_t a = 0; a < na; ++a) outside[a] = !(vals[a] < 0);
+    }
     // Elements that hold the supports and loads stay solid
     for (size_t a = 0; a < na; ++a)
         for (int p = 0; p < 4 && state[a] != 1; ++p)
@@ -1122,6 +1200,185 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
             column[a] = it->second;
         }
     }
+
+    // Mirror symmetry.  For each plane the design is kept symmetric about: every element's partner, the element that holds the mirror
+    // image of its centre.  The sensitivities are averaged over the pairs, which keeps a design that starts symmetric symmetric
+    struct MirrorMap { int axis; double at; std::vector<int32_t> partner; };
+    std::vector<MirrorMap> mirrorMaps;
+    m_mirrorsUsed.clear();
+    if (s.symmetryAuto || !s.mirrors.empty())
+    {
+        Vec3 vlo = mesh.pos[0], vhi = mesh.pos[0];
+        for (const auto& p : mesh.pos)
+        {
+            vlo = vlo.cwiseMin(p);
+            vhi = vhi.cwiseMax(p);
+        }
+        const TetLocator locator(mesh);
+        auto mirrorOf = [](const Vec3& c, int axis, double at) {
+            Vec3 q = c;
+            q[axis] = 2 * at - c[axis];
+            return q;
+        };
+        auto makeMap = [&](int axis, double at) {
+            MirrorMap mm{axis, at, std::vector<int32_t>(na, -1)};
+            parallelRange(na, [&](size_t b0, size_t b1) {
+                for (size_t a = b0; a < b1; ++a)
+                {
+                    double lam[4];
+                    mm.partner[a] = locator.locateInside(mirrorOf(cen[a], axis, at), lam);
+                }
+            }, 512);
+            return mm;
+        };
+        const bool debug = std::getenv("FIELDES_FEA_DEBUG") != nullptr;
+        // Is the whole problem symmetric about this plane?  The part and the keep / avoid regions: the same at the mirror image of every
+        // element's centre; the loads and the supports: what acts on one side is what acts on the other, mirrored
+        auto problemSymmetric = [&](int axis, double at, std::string& why) -> bool {
+            std::vector<Eigen::Vector3f> mc(na);
+            for (size_t a = 0; a < na; ++a) mc[a] = mirrorOf(cen[a], axis, at).cast<float>();
+            double total = 0, badShape = 0, badRegion = 0;
+            std::vector<float> v1, v2;
+            evalTreePoints(m_shape, mc, v1);
+            for (size_t a = 0; a < na; ++a)
+            {
+                total += A.geom[a].vol;
+                if (!(v1[a] <= 0.25 * h)) badShape += A.geom[a].vol;
+            }
+            for (const auto* group : {&s.keep, &s.avoid})
+                for (const auto& t : *group)
+                {
+                    evalTreePoints(t, centres, v1);
+                    evalTreePoints(t, mc, v2);
+                    for (size_t a = 0; a < na; ++a)
+                        if ((v1[a] < 0) != (v2[a] < 0)) badRegion += A.geom[a].vol;
+                }
+            if (debug)
+                fprintf(stderr, "[tetopt] symmetry about axis %d at %.4g: part mismatch %.3f, keep/avoid mismatch %.3f\n", axis, at,
+                        badShape / std::max(total, 1e-30), badRegion / std::max(total, 1e-30));
+            if (badShape > 0.04 * total) { why = "the part is not symmetric"; return false; }
+            if (badRegion > 0.04 * total) { why = "the keep / avoid regions are not symmetric"; return false; }
+            if (!m_scale.empty()) { why = "the material is a field"; return false; }
+
+            auto sides = [&](const std::vector<double>& f, const std::vector<unsigned char>& fx, std::string& reason) -> bool {
+                struct Side { Vec3 sum = Vec3::Zero(); double w = 0; Vec3 c = Vec3::Zero(); };
+                Side sd[2];                                 // (0 above the plane, 1 below it)
+                double planeK = 0, planeW = 0, nFix[2][3] = {{0, 0, 0}, {0, 0, 0}}, fw[2] = {0, 0};
+                Vec3 fc[2] = {Vec3::Zero(), Vec3::Zero()};
+                for (size_t i = 0; i < nv; ++i)
+                {
+                    const Vec3& p = mesh.pos[i];
+                    const double d = p[axis] - at;
+                    const bool onPlane = std::abs(d) < 0.25 * h;
+                    const int side = d > 0 ? 0 : 1;
+                    Vec3 q = p;
+                    q[axis] = std::abs(d);                  // (the distance from the plane: the same for a point and its image)
+                    const Vec3 F(f[3 * i], f[3 * i + 1], f[3 * i + 2]);
+                    const double w = F.norm();
+                    if (w > 0)
+                    {
+                        if (onPlane)
+                        {
+                            planeK += F[axis];
+                            planeW += w;
+                        }
+                        else
+                        {
+                            sd[side].sum += F;
+                            sd[side].w += w;
+                            sd[side].c += w * q;
+                        }
+                    }
+                    bool held = false;
+                    for (int a = 0; a < 3; ++a)
+                        if (fx[3 * i + size_t(a)] && !onPlane)
+                        {
+                            nFix[side][a] += 1;
+                            held = true;
+                        }
+                    if (held)
+                    {
+                        fc[side] += q;
+                        fw[side] += 1;
+                    }
+                }
+                const double totalW = sd[0].w + sd[1].w + planeW;
+                if (totalW > 0)
+                {
+                    Vec3 mB = sd[1].sum;
+                    mB[axis] = -mB[axis];
+                    const double scale = std::max(sd[0].w, sd[1].w);
+                    if (debug)
+                        fprintf(stderr, "[tetopt]   loads: above (%.4g, %.4g, %.4g) below mirrored (%.4g, %.4g, %.4g), on the plane %.4g\n",
+                                sd[0].sum[0], sd[0].sum[1], sd[0].sum[2], mB[0], mB[1], mB[2], planeK);
+                    if ((sd[0].sum - mB).norm() > 0.06 * scale) { reason = "the loads differ between the two sides"; return false; }
+                    if (std::abs(planeK) > 0.06 * totalW) { reason = "a load on the plane pushes through it"; return false; }
+                    if (sd[0].w > 0.03 * totalW && sd[1].w > 0.03 * totalW)
+                    {
+                        const Vec3 cA = sd[0].c / sd[0].w, cB = sd[1].c / sd[1].w;
+                        if (debug) fprintf(stderr, "[tetopt]   load centres differ by %.4g (element size %.4g)\n", (cA - cB).norm(), h);
+                        if ((cA - cB).norm() > 0.5 * h) { reason = "the loads are in other places on the two sides"; return false; }
+                    }
+                }
+                for (int a = 0; a < 3; ++a)
+                    if (std::abs(nFix[0][a] - nFix[1][a]) > 0.1 * (nFix[0][a] + nFix[1][a]) + 3)
+                    {
+                        reason = "the supports differ between the two sides";
+                        return false;
+                    }
+                if (fw[0] >= 5 && fw[1] >= 5)
+                {
+                    const Vec3 cA = fc[0] / fw[0], cB = fc[1] / fw[1];
+                    if (debug) fprintf(stderr, "[tetopt]   support centres differ by %.4g\n", (cA - cB).norm());
+                    if ((cA - cB).norm() > 0.5 * h) { reason = "the supports are in other places on the two sides"; return false; }
+                }
+                return true;
+            };
+            if (m_caseForce.empty())
+            {
+                if (!sides(m_force, m_caseFixed.empty() ? m_fixedDof : m_caseFixed[0], why)) return false;
+            }
+            else
+                for (size_t c = 0; c < m_caseForce.size(); ++c)
+                    if (!sides(m_caseForce[c], m_caseFixed.empty() ? m_fixedDof : m_caseFixed[c], why)) return false;
+            return true;
+        };
+        for (const auto& m : s.mirrors)
+        {
+            if (m.axis < 0 || m.axis > 2) continue;
+            const double at = m.atCentre ? 0.5 * (vlo[m.axis] + vhi[m.axis]) : m.at;
+            mirrorMaps.push_back(makeMap(m.axis, at));
+            m_mirrorsUsed.push_back({m.axis, at, false});
+        }
+        if (s.symmetryAuto)
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                bool asked = false;
+                for (const auto& mm : mirrorMaps) asked = asked || mm.axis == axis;
+                if (asked) continue;
+                const double at = 0.5 * (vlo[axis] + vhi[axis]);
+                std::string why;
+                if (!problemSymmetric(axis, at, why))
+                {
+                    if (debug) fprintf(stderr, "[tetopt] not symmetric about axis %d: %s\n", axis, why.c_str());
+                    continue;
+                }
+                mirrorMaps.push_back(makeMap(axis, at));
+                m_mirrorsUsed.push_back({axis, at, true});
+            }
+    }
+    auto symmetrise = [&](std::vector<double>& v) {
+        std::vector<double> before;
+        for (const auto& mm : mirrorMaps)
+        {
+            before = v;
+            for (size_t a = 0; a < na; ++a)
+            {
+                const int q = mm.partner[a];
+                if (q >= 0) v[a] = 0.5 * (before[a] + before[size_t(q)]);
+            }
+        }
+    };
 
     // Filter: weights rmin - distance over the elements within rmin, times their volume
     const double rmin = s.filterRadius > 0 ? s.filterRadius : 1.5 * h;
@@ -1208,23 +1465,61 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     };
 
     std::vector<double> vol(na);
-    double total = 0;
+    double total = 0, room = 0;
     for (size_t a = 0; a < na; ++a)
     {
         vol[a] = A.geom[a].vol;
-        total += vol[a];
+        if (!outside[a]) total += vol[a];
+        if (state[a] != 2) room += vol[a];
     }
     const double target = s.volumeFraction * total;
+    if (!(target < 0.999 * room))
+    {
+        error = grown ? "the volume fraction is more than the design space can hold (the part grown by the distance asked for, less the regions to avoid)"
+                      : "the volume fraction is more than the part can hold (less the regions to avoid)";
+        return false;
+    }
     const double p = s.penalty, emin = s.minStiffness;
+    // The density is projected towards 0 and 1 (a smoothed step at 1/2, tanh(beta (x - 1/2)), steeper as the optimisation goes on):
+    // without it a third of the design stays grey -- material that is neither there nor not there, whose place in the part is
+    // decided by where the volume fraction cuts it -- and the layout keeps shifting to the very end.  beta starts at 1 (the filter's
+    // density as it is), doubles every projEvery iterations from projStart, and stops at the sharpness asked for
+    const double betaMax = s.sharpness > 1.0 ? s.sharpness : 0.0;
+    // The sharpening reaches its full steepness at three quarters of the iterations, however many there are (it used to start at the 10th and
+    // step every 5th at least, so a short run never got there: its design stayed grey): beta doubles from 1 up to the sharpness in steps of
+    // projEvery iterations, the last of them at 3/4 of the run, and the rest of the run refines the crisp design
+    const int doublings = betaMax > 1.0 ? std::max(1, int(std::ceil(std::log2(betaMax)))) : 1;
+    const int projEvery = std::max(2, int(std::ceil(0.75 * s.iterations / (2.0 * doublings))));
+    const int projStart = std::max(3, int(std::lround(0.75 * s.iterations - double(doublings) * projEvery)));
+    double beta = 1.0;
+    const double eta = 0.5;
+    auto projectOf = [&](double v) {
+        if (betaMax <= 0) return v;
+        const double den = std::tanh(beta * eta) + std::tanh(beta * (1 - eta));
+        return (std::tanh(beta * eta) + std::tanh(beta * (v - eta))) / den;
+    };
+    auto projectSlope = [&](double v) {
+        if (betaMax <= 0) return 1.0;
+        const double den = std::tanh(beta * eta) + std::tanh(beta * (1 - eta));
+        const double th = std::tanh(beta * (v - eta));
+        return beta * (1 - th * th) / den;
+    };
+    std::vector<double> xTil;
 
-    std::vector<double> x(na, s.volumeFraction), xPhys, dc(na), dv(na), dcF, dvF, xNew(na);
-    for (size_t a = 0; a < na; ++a) if (state[a]) x[a] = state[a] == 1 ? 1.0 : 0.0;
+    std::vector<double> x(na, grown ? std::min(1.0, s.volumeFraction) : s.volumeFraction), xPhys, dc(na), dv(na), dcF, dvF, xNew(na);
+    for (size_t a = 0; a < na; ++a)
+    {
+        if (outside[a]) x[a] = 0.02;            // (a little: material put in nothing grows only where the neighbours' strain says so)
+        if (state[a]) x[a] = state[a] == 1 ? 1.0 : 0.0;
+    }
     auto physical = [&](const std::vector<double>& xs, std::vector<double>& out) {
-        filter(xs, out);
+        filter(xs, xTil);
+        out.resize(na);
         for (size_t a = 0; a < na; ++a)
         {
             if (state[a] == 1) out[a] = 1.0;
             else if (state[a] == 2) out[a] = 0.0;
+            else out[a] = projectOf(xTil[a]);
         }
     };
     m_history.clear();
@@ -1252,8 +1547,47 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     std::vector<std::vector<double>> caseU(static_cast<size_t>(nc));
     std::vector<double> scale(na);
     run_progress::Task task("optimising");
+    // (the picture of the design that the viewport draws as it goes comes down when the optimisation ends, however it ends)
+    struct LivePicture { ~LivePicture() { run_progress::publishLive(nullptr); } } livePicture;
+    std::shared_ptr<TetLocator> liveLocator;
     buildPreconditioner(m_fixedDof, A);        // (sized; refreshed each iteration)
 
+    // Which element lies across each face of an element (-1: none): for the loose-material rule
+    std::vector<std::array<int32_t, 4>> across(na);
+    {
+        struct Face { int32_t a, b, c, element, slot; };
+        std::vector<Face> faces;
+        faces.reserve(4 * na);
+        static const int corner[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+        for (size_t e = 0; e < na; ++e)
+        {
+            across[e] = {-1, -1, -1, -1};
+            for (int q = 0; q < 4; ++q)
+            {
+                int32_t v[3] = {int32_t(mesh.tets[e][size_t(corner[q][0])]), int32_t(mesh.tets[e][size_t(corner[q][1])]),
+                                int32_t(mesh.tets[e][size_t(corner[q][2])])};
+                std::sort(v, v + 3);
+                faces.push_back({v[0], v[1], v[2], int32_t(e), q});
+            }
+        }
+        std::sort(faces.begin(), faces.end(), [](const Face& x, const Face& y) {
+            return x.a != y.a ? x.a < y.a : x.b != y.b ? x.b < y.b : x.c < y.c;
+        });
+        for (size_t i = 0; i + 1 < faces.size(); ++i)
+            if (faces[i].a == faces[i + 1].a && faces[i].b == faces[i + 1].b && faces[i].c == faces[i + 1].c)
+            {
+                across[size_t(faces[i].element)][size_t(faces[i].slot)] = faces[i + 1].element;
+                across[size_t(faces[i + 1].element)][size_t(faces[i + 1].slot)] = faces[i].element;
+            }
+    }
+    std::vector<char> floating(na, 0);
+    // The step: how far a density may move in one iteration.  It starts as large as the iterations asked for allow (a few have to go the
+    // whole way; many can be careful), the cap on it shrinks as they go so that the design has settled by the last, and within the cap it
+    // grows while the compliance falls as the sensitivities predicted and shrinks when it does not -- a trust region: the change the
+    // sensitivities predict for the step taken is compared with the change the next iteration's compliance shows
+    const double moveStart = std::max(0.2, std::min(0.5, 10.0 / std::max(1, s.iterations))), moveEnd = 0.05;
+    double moveNow = moveStart, predicted = 0, compliancePrev = 0, betaPrev = -1;
+    bool havePrediction = false;
     int it = 0;
     for (; it < s.iterations; ++it)
     {
@@ -1267,7 +1601,50 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
             snprintf(buf, sizeof(buf), "optimising, iteration %d of %d", it + 1, s.iterations);
             task.set(double(it) / std::max(1, s.iterations), buf);
         }
+        if (betaMax > 0) beta = std::min(betaMax, std::pow(2.0, std::floor(std::max(0, it - projStart) / double(projEvery))));
         physical(x, xPhys);
+        // Material that nothing joins to a support or a load carries nothing, and is taken out: left alone, an island grows from the
+        // stress at the corner of a support into the empty space beside the part, and stays there -- using the volume of a member that
+        // would be of use.  Material is where the density is above 0.3; two elements are joined when they share a face (a piece that
+        // touches the part at one corner is not held by it)
+        std::fill(floating.begin(), floating.end(), 0);
+        if (it >= 10)
+        {
+            std::vector<int32_t> parent(na);
+            std::iota(parent.begin(), parent.end(), 0);
+            auto root = [&](int32_t a) {
+                while (parent[size_t(a)] != a)
+                {
+                    parent[size_t(a)] = parent[size_t(parent[size_t(a)])];
+                    a = parent[size_t(a)];
+                }
+                return a;
+            };
+            auto material = [&](size_t a) { return state[a] == 1 || xPhys[a] > 0.3; };
+            for (size_t a = 0; a < na; ++a)
+            {
+                if (!material(a)) continue;
+                for (int q = 0; q < 4; ++q)
+                {
+                    const int32_t b = across[a][size_t(q)];
+                    if (b < 0 || !material(size_t(b))) continue;
+                    const int32_t r0 = root(int32_t(a)), r1 = root(b);
+                    if (r0 != r1) parent[size_t(r1)] = r0;
+                }
+            }
+            std::vector<char> anchored(na, 0);
+            for (size_t a = 0; a < na; ++a)
+                if (state[a] == 1) anchored[size_t(root(int32_t(a)))] = 1;
+            for (size_t a = 0; a < na; ++a)
+                if (state[a] == 0 && xPhys[a] > 0.3 && !anchored[size_t(root(int32_t(a)))]) floating[a] = 1;
+            if (std::getenv("FIELDES_FEA_DEBUG"))
+            {
+                size_t n = 0;
+                double volume = 0;
+                for (size_t a = 0; a < na; ++a) if (floating[a]) { ++n; volume += A.geom[a].vol; }
+                fprintf(stderr, "[tetopt] iteration %d: %zu elements of loose material (%.3g mm^3)\n", it, n, volume);
+            }
+        }
         for (size_t a = 0; a < na; ++a)
             scale[a] = (emin + (1 - emin) * std::pow(xPhys[a], p)) * (m_scale.empty() ? 1.0 : m_scale[a]);
         assemble(mesh, D, &scale, A);
@@ -1279,8 +1656,11 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
             const std::vector<double>& f = nc > 1 ? m_caseForce[size_t(lc)] : m_force;
             std::vector<double>& u = caseU[size_t(lc)];
             CgResult cg;
+            // (a case with supports of its own is held by those: its preconditioner is made for them)
+            const std::vector<unsigned char>& fixedLc = m_caseFixed.empty() ? m_fixedDof : m_caseFixed[size_t(lc)];
+            if (!m_caseFixed.empty()) buildPreconditioner(fixedLc, A);
             // (the sensitivities don't need a tight solve; warm starts keep each one short)
-            if (!cgSolve(A, m_fixedDof, f, u, std::max(s.tolerance, 1e-4), s.solverIterations, cancel, nullptr, cg, error))
+            if (!cgSolve(A, fixedLc, f, u, std::max(s.tolerance, 1e-4), s.solverIterations, cancel, nullptr, cg, error))
                 return false;
             double c = 0;
             for (size_t i = 0; i < n; ++i) c += f[i] * u[i];
@@ -1302,8 +1682,23 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         m_history.push_back(compliance);
         m_densityHistory.emplace_back();
         nodal(xPhys, m_densityHistory.back());
+        if (betaMax > 0)
+        {
+            // (the sensitivities are of the projected density: through the projection to the filtered one)
+            for (size_t a = 0; a < na; ++a)
+            {
+                const double slope = state[a] ? 0.0 : projectSlope(xTil[a]);
+                dc[a] *= slope;
+                dv[a] = vol[a] * slope;
+            }
+        }
         filterT(dc, dcF);
         filterT(dv, dvF);
+        if (!mirrorMaps.empty())
+        {
+            symmetrise(dcF);
+            symmetrise(dvF);
+        }
         if (nCol)
         {
             // (one value per line: the line's sensitivities summed; x stays equal along each line, starting equal)
@@ -1322,6 +1717,17 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
                 }
         }
 
+        // the step of this iteration (see above)
+        const double moveCap = moveStart + (moveEnd - moveStart) * std::min(1.0, double(it) / std::max(1, s.iterations - 1));
+        if (havePrediction && predicted < -1e-12 * std::abs(compliancePrev) && beta == betaPrev)
+        {
+            const double ratio = (compliance - compliancePrev) / predicted;      // 1: it fell as predicted; below 0: it rose
+            if (ratio > 0.75) moveNow *= 1.4;
+            else if (ratio < 0.25) moveNow *= 0.6;
+        }
+        moveNow = std::max(0.02, std::min(moveNow, moveCap));
+        const double move = moveNow;
+
         // optimality criteria: bisection on the volume's Lagrange multiplier
         double l1 = 0, l2 = 1e12;
         std::vector<double> xp;
@@ -1335,8 +1741,13 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
                     xNew[a] = x[a];
                     continue;
                 }
+                if (floating[a])
+                {
+                    xNew[a] = std::max(0.0, x[a] - move);           // (no path of material to a support or a load: it goes)
+                    continue;
+                }
                 const double B = std::sqrt(std::max(0.0, -dcF[a]) / (lm * std::max(dvF[a], 1e-30)));
-                xNew[a] = std::max(0.0, std::max(x[a] - s.move, std::min(1.0, std::min(x[a] + s.move, x[a] * B))));
+                xNew[a] = std::max(0.0, std::max(x[a] - move, std::min(1.0, std::min(x[a] + move, x[a] * B))));
             }
             physical(xNew, xp);
             double v = 0;
@@ -1345,13 +1756,65 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         }
         double change = 0;
         for (size_t a = 0; a < na; ++a) change = std::max(change, std::abs(xNew[a] - x[a]));
+        {
+            // The design as it is, for the viewport: the part where the density is above the level that keeps the volume asked for (the
+            // level at which what is kept is the most that is not more than that, so the first iterations, whose density is all the same,
+            // show the whole part)
+            auto view = std::make_shared<run_progress::LiveView>();
+            view->kind = "topology";
+            view->quantity = "compliance";
+            view->iteration = it + 1;
+            view->iterations = s.iterations;
+            view->objective = compliance;
+            view->change = change;
+            double kept = 0;
+            for (size_t a = 0; a < na; ++a) kept += vol[a] * xPhys[a];
+            view->volume = total > 0 ? kept / total : 0;
+            view->volumeLow = view->volumeHigh = s.volumeFraction;
+            view->history.assign(m_history.begin(), m_history.end());
+            double lo = 0, hi = 1;
+            for (int k = 0; k < 24; ++k)
+            {
+                const double mid = 0.5 * (lo + hi);
+                double keptAbove = 0;
+                for (size_t a = 0; a < na; ++a)
+                    if (xPhys[a] > mid) keptAbove += vol[a];
+                if (keptAbove > target) lo = mid; else hi = mid;
+            }
+            // The part as the result shows it: where the density (a field on the mesh) is above that level, within the design space,
+            // coloured by the density
+            auto density = std::make_shared<MeshResult>();
+            density->mesh = m_mesh;
+            if (!liveLocator) liveLocator = std::make_shared<TetLocator>(mesh);
+            density->locator = liveLocator;
+            for (auto& f : density->fields) f.assign(nv, 0.0f);
+            density->fields[0] = m_densityHistory.back();
+            density->minValue[0] = 0;
+            density->maxValue[0] = 1;
+            const Tree field = meshFieldTree(density, 0);
+            run_progress::LiveShape part;
+            part.tree = max((Tree(float(lo)) - field) * Tree(float(2.0 * rmin)), m_shape);
+            part.channels.push_back({"density", "density", field, 0.0f, 1.0f});
+            part.detail = float(h);
+            liveSurfaceIndexed(*m_mesh, m_densityHistory.back(), lo, true, part.surfaceVerts, part.surfaceTris);
+            view->shapes.push_back(std::move(part));
+            run_progress::publishLive(view);
+        }
+        // (what the sensitivities say this step changes the compliance by: for the next iteration to compare with what it did; not along
+        // extruded columns, where the sensitivities were summed)
+        havePrediction = nCol == 0;
+        predicted = 0;
+        if (havePrediction)
+            for (size_t a = 0; a < na; ++a) predicted += dcF[a] * (xNew[a] - x[a]);
+        compliancePrev = compliance;
+        betaPrev = beta;
         x.swap(xNew);
         // converged: the design stopped moving, or the compliance stopped improving over the last 5 iterations
         const size_t H = m_history.size();
         const bool flat = H > 6 && std::abs(m_history[H - 1] - m_history[H - 6]) < 2e-3 * std::abs(m_history[H - 1]);
         if (std::getenv("FIELDES_FEA_DEBUG"))
             fprintf(stderr, "[tetopt] iteration %d compliance %.6g change %.4f\n", it, compliance, change);
-        if (it >= 15 && (change < 0.01 || flat)) { ++it; break; }
+        if (it >= 15 && (betaMax <= 0 || beta >= betaMax) && (change < 0.01 || flat)) { ++it; break; }
     }
     physical(x, xPhys);
 
@@ -1373,6 +1836,13 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     R2->elements = int(na);
     R2->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     m_densityResult = R2;
+    return true;
+}
+
+bool TetProblem::densitySurface(size_t k, double level, std::vector<float>& verts, std::vector<uint32_t>& tris) const
+{
+    if (!m_mesh || k >= m_densityHistory.size() || m_densityHistory[k].size() != m_mesh->pos.size()) return false;
+    liveSurfaceIndexed(*m_mesh, m_densityHistory[k], level, true, verts, tris);
     return true;
 }
 
@@ -1441,7 +1911,8 @@ int TetProblem::pieces(double threshold, double margin) const
     return count;
 }
 
-bool TetProblem::modal(int count, double density, int maxIterations, double tolerance, std::string& error)
+bool TetProblem::modal(int count, double density, int maxIterations, double tolerance, std::string& error,
+                       const std::atomic<bool>* cancel)
 {
     if (count < 1)
     {
@@ -1490,7 +1961,7 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
     std::vector<std::vector<double>> vectors;
     int iterations = 0;
     // (the block eigensolver converges in tens of iterations; the number asked for is a floor)
-    if (!lobpcg(A, m_fixedDof, mass, count, std::max(maxIterations, 300), tolerance, nullptr, lambda, vectors, iterations, error))
+    if (!lobpcg(A, m_fixedDof, mass, count, std::max(maxIterations, 300), tolerance, cancel, lambda, vectors, iterations, error))
         return false;
     if (std::getenv("FIELDES_FEA_DEBUG")) fprintf(stderr, "[tetfea] modal: %d iterations\n", iterations);
 

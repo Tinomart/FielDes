@@ -29,6 +29,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QTimer>
 #include <QProgressBar>
 #include <QLabel>
+#include <QPushButton>
+#include <QToolButton>
+#include <QIcon>
 #include <QElapsedTimer>
 #include <QTextCursor>
 
@@ -51,7 +54,8 @@ class Editor : public QWidget
     Q_OBJECT
 public:
     Editor(Language::Type language);
-    void setScript(const QString& s, bool reload=false);
+    /*  `path` is the file the text is of (empty: none): the breakpoints it had when it was last closed are brought back  */
+    void setScript(const QString& s, bool reload=false, const QString& path=QString());
     QString getScript() const;
     void setModified(bool m);
 
@@ -101,6 +105,10 @@ public:
     /*  Whether the script is being run now  */
     bool scriptRunning() const { return m_scriptRunning; }
 
+    /*  Writes down the script's breakpoints, with the text on their lines, for when its file is opened again.  Done at every
+     *  change of them and of the text, and at the end of the program  */
+    void saveBreakpoints();
+
 public slots:
     /*  Opens a file in a tab of its own (or shows the one that has it) at a (0-based) line, and selects
      *  `name` there.  Only the first tab is run; this one is just for editing  */
@@ -148,9 +156,23 @@ public slots:
 
     /*  Scrolls to (and flashes) a 0-based line  */
     void goToLine(int line0);
+    /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over  */
+    void goToPlaceholder(int line0, int col0);
 
     /*  Continues a script stopped at a breakpoint (does nothing otherwise)  */
     void continueRun();
+
+    /*  The three buttons under the editor.  Pause / continue: a script that runs waits at the next point where it reports progress
+     *  (a solver's iteration, a step of an import, the next statement) until it is continued; one that is stopped at a breakpoint is
+     *  continued (as F8 does).  A script that reports nothing runs to its end first.  */
+    void togglePause();
+
+    /*  Runs the script again from the beginning: the run in flight, if any, is terminated first  */
+    void retryRun();
+
+    /*  Ends the script that is running (does nothing when none is): the solvers give up, the script is interrupted, and what the run
+     *  made is not shown.  A step that cannot be interrupted (an import, a lattice layout, a meshing) finishes first  */
+    void terminateRun();
 
     /*  Whether the script is stopped at a breakpoint, and the (1-based) line
      *  it is stopped before  */
@@ -194,18 +216,17 @@ signals:
     void settingsChanged(Settings s, bool first);
 
     /*
-     *  The model-tree description of the last successful evaluation
+     *  The model tree of the script's text (fieldes/outline.py): read from the text, not made by a run, so it is there as the script
+     *  is typed and while it runs.  `run_done` in it says that a run of this text has just ended
      */
     void sceneChanged(QString json);
+
+    /*  A run has ended (whatever it ended in)  */
+    void runFinished();
 
     /*  The script has an error: the last line of its traceback, and the 0-based line it is on (-1: not known); or it has none
      *  (an empty text).  The viewport and the model tree show it, after a moment  */
     void scriptErrorChanged(QString text, int line0);
-
-    /*
-     *  The model-tree description of what the statements of a script that is still running have made so far
-     */
-    void partialSceneChanged(QString json);
 
     /*
      *  Another script (a file opened, a new one) has taken the place of the one that was shown: what the old one
@@ -243,7 +264,7 @@ protected:
     void setResult(QColor color, QString result);
 
     /*  The "stopped at a breakpoint" row (with its Continue button)  */
-    void showPause(int line);
+    void showPause(int line, bool hole = false);
     void hidePause();
 
     Script* script;             // owned by layout
@@ -302,6 +323,11 @@ protected:
     int m_liveRevision = -1;
     void applyEditsAs(QList<TextEdit> edits, bool live);
 
+    // The model tree is read from the text after every edit (a moment after the last key), and again when a run has found something
+    // out about the statements (see outline.py)
+    QTimer m_outlineTimer;
+    void refreshOutline(bool runDone = false);
+
     // Debounces the interpreter's "busy" signal to avoid UI jitter
     QTimer m_interpreterBusyDebounce;
     bool m_scriptRunning = false;
@@ -315,6 +341,31 @@ protected:
     // Another script has taken the place of the one that a run in flight is of: what that run delivers is not shown
     // (until the next run begins)
     bool m_discardResults = false;
+
+    // The buttons at the right of the bottom row: pause / continue, run again, terminate (the red dot)
+    QWidget* m_controls = nullptr;
+    QToolButton* m_pauseButton = nullptr;
+    QToolButton* m_retryButton = nullptr;
+    QToolButton* m_terminateButton = nullptr;
+    QIcon m_iconPause, m_iconPlay;
+    void updateControls();
+
+    // A pause asked for (the script waits for its next checkpoint: the label says "Pausing..." until it has, then "Paused")
+    bool m_pauseWanted = false;
+
+    // The termination asked for that the script has not answered yet: the interrupt is sent again every second, a few times, in case a
+    // `try` of the script swallowed the first.  m_retryAfter: a run is to begin when this one is over (Retry on a running script)
+    bool m_terminating = false;
+    bool m_retryAfter = false;
+    int m_terminateSends = 0;
+    QTimer m_terminateRepeat;
+
+    // The breakpoints are kept per file (QSettings "breakpoints/<hash of the path>": the lines and the text on them, so that they find
+    // their lines again after the file was changed meanwhile).  m_breakpointPath: the file the ones that are set belong to (empty: none)
+    QString m_breakpointPath;
+    bool m_breakpointsFrozen = false;       // (taking them off and putting the text in is not the user's doing)
+    QByteArray m_breakpointsSaved;          // (what was written last: nothing is written again that is the same)
+    void restoreBreakpoints();
 
     // The script's progress while it runs, small, in place of the result
     // line (see onSpinner)
@@ -331,6 +382,8 @@ protected:
     // Shown instead of the progress while the script is stopped at a breakpoint
     QWidget* m_pauseRow = nullptr;
     QLabel* m_pauseLabel = nullptr;
+    QPushButton* m_continueButton = nullptr;
+    bool m_holePause = false;   // the stop is for a placeholder: there is nothing to continue until it is filled in
     int m_pausedLine = -1;      // 1-based, or -1
 
     bool drag_should_join=false;

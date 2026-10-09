@@ -119,6 +119,7 @@ def returns_field(fn):
         if origin is not None:
             _set_origin(out, origin)
         return out
+    g._makes = 'field'          # (what the model tree takes a statement that calls it to make, before it has run)
     return g
 
 
@@ -131,4 +132,5 @@ def returns_body(fn):
         if isinstance(out, Shape) and not any(out is a for a in list(args) + list(kwargs.values())):
             out._kind = None
         return out
+    g._makes = 'solid'
     return g

@@ -30,8 +30,10 @@ set(SRCS
     src/documentation.cpp
     src/editor.cpp
     src/findbar.cpp
+    src/i18n.cpp
     src/icons.cpp
     src/language.cpp
+    src/live_panel.cpp
     src/scenetree.cpp
     src/script.cpp
     src/result_panel.cpp
@@ -65,6 +67,7 @@ set(QOBJECTS
     include/fieldes/findbar.hpp
     include/fieldes/interpreter.hpp
     include/fieldes/language.hpp
+    include/fieldes/live_panel.hpp
     include/fieldes/scenetree.hpp
     include/fieldes/script.hpp
     include/fieldes/result_panel.hpp
@@ -98,7 +101,7 @@ target_link_libraries(FielDes
     Qt5::OpenGL
     Qt5::Concurrent
 )
-target_compile_definitions(FielDes PRIVATE FIELDES_WITH_PYTHON)
+target_compile_definitions(FielDes PRIVATE FIELDES_WITH_PYTHON FIELDES_VERSION="${PROJECT_VERSION}")
 
 if (MSVC)
     # Copy the DLLs into the build directory, so that FielDes.exe can find them

@@ -188,13 +188,22 @@ public:
         Eigen::Vector3d flowDir = Eigen::Vector3d::Zero(), liftDir = Eigen::Vector3d::Zero();
         double volumeMin = 1.0, volumeMax = 1.0;   // of the body's own volume
         double filterRadius = 0;        // the level set's smoothing radius (0: 1.5 element sizes)
-        double move = 0.5;              // the most the boundary moves in one iteration, in elements
         int extrude = -1;               // 0 / 1 / 2: the design is constant along x / y / z
         int iterations = 40;
         double darcy = 0.1;             // the solid's permeability relative to the element: the flow penetrates it by sqrt(darcy) elements
         std::vector<Tree> keep, avoid;
+        /*  Mirror symmetry: the design is kept symmetric about these planes (axis 0, 1, 2 = x, y, z at the coordinate `at`; atCentre: the plane
+         *  through the middle of the domain's extent along that axis).  symmetryAuto: look for the planes the domain, the body, the regions and
+         *  the boundary conditions are all symmetric about, and keep the design symmetric about them -- a symmetric problem otherwise breaks its
+         *  symmetry (the mesh of a symmetric domain is never exactly symmetric, and a small difference grows into a crooked nose)  */
+        struct Mirror { int axis = 0; double at = 0; bool atCentre = true; };
+        std::vector<Mirror> mirrors;
+        bool symmetryAuto = false;
     };
     bool optimize(const FlowOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
+    /*  After optimize: the planes the design was kept symmetric about (`found`: by itself, not asked for)  */
+    struct MirrorUsed { int axis; double at; bool found; };
+    const std::vector<MirrorUsed>& mirrorsUsed() const { return m_mirrorsUsed; }
     /*  After optimize: the drag and the lift (N) at each iteration (the last of the final body), the design as a
      *  field on the mesh (field 0: each tetrahedron's rho averaged at the nodes by volume) for meshFieldTree(., 0),
      *  and the directions used  */
@@ -207,7 +216,7 @@ public:
     size_t densityHistoryCount() const { return m_densityHistory.size(); }
     std::shared_ptr<const MeshResult> densityResultAt(size_t k) const;
     /*  How the optimisation ended: the steps it took back (each halved the step), and why it stopped --
-     *  0 the iteration limit, 1 the boundary stopped moving, 2 no step shortens the objective any more,
+     *  0 the iteration limit, 1 the objective stopped improving, 2 no step shortens the objective any more,
      *  3 no sensitivity left  */
     int optStepsBack() const { return m_optRejected; }
     int optStop() const { return m_optStop; }
@@ -280,7 +289,8 @@ private:
     std::vector<double> m_history, m_dropHistory;
     std::shared_ptr<MeshResult> m_densityResult;        // the level set at the nodes (mm, > 0 in the body) as field 0
     std::vector<std::vector<float>> m_densityHistory;   // per iteration: the level set at the nodes
-    int m_optRejected = 0, m_optStop = 0;      // (see optStepsBack / optStop)
+    int m_optRejected = 0, m_optStop = 0;
+    std::vector<MirrorUsed> m_mirrorsUsed;      // (see optStepsBack / optStop)
 
     bool resolveConditions(std::string& error);
     bool developedProfile(const std::vector<char>& inFace, const std::vector<char>& rim, std::vector<double>& phi,

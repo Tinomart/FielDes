@@ -10,6 +10,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/eval/eval_array.hpp"
 #include "libfive/eval/tape.hpp"
 #include "libfive/eval/deck.hpp"
+#include "libfive/eval/default_vars.hpp"
 
 namespace libfive {
 
@@ -45,7 +46,10 @@ ArrayEvaluator::ArrayEvaluator(
     for (auto& var_ : deck->vars.right)
     {
         auto var = vars.find(var_.first);
-        v.row(var_.second) = (var != vars.end()) ? var->second : 0;
+        float value = 0;
+        if (var != vars.end()) value = var->second;
+        else DefaultVars::find(var_.first, value);      // (the script's number for it, when it was not given one)
+        v.row(var_.second) = value;
     }
 
     // Unpack constants into result array
@@ -58,6 +62,10 @@ ArrayEvaluator::ArrayEvaluator(
     // are not walked with the tree, so their variables are not in deck->vars)
     for (auto& o : deck->oracles)
     {
+        if (vars.empty())
+        {
+            DefaultVars::forEach([&](Tree::Id id, float value) { o->setVar(id, value); });
+        }
         for (auto& var_ : vars)
         {
             o->setVar(var_.first, var_.second);

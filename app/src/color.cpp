@@ -31,6 +31,7 @@ const QColor Color::base2("#eee8d5");
 const QColor Color::base3("#fdf6e3");
 const QColor Color::yellow("#b58900");
 const QColor Color::orange("#cb4b16");
+const QColor Color::amber("#d9820a");
 const QColor Color::red("#dc322f");
 const QColor Color::magenta("#d33682");
 const QColor Color::violet("#6c71c4");

@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <chrono>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <unordered_set>
 #include <cstdio>
@@ -49,6 +50,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/settings.hpp"
 
 namespace libfive { class Tape; /*  forward declaration */ }
+namespace libfive { namespace fea { class TetProblem; } }
 
 namespace FielDes {
 
@@ -154,6 +156,9 @@ public:
      *  most `cutoff` -- the surface beyond is not drawn -- in the colour at the top of the colour map, and a hair
      *  towards the eye so that it wins over the part it lies on  */
     void setColorCutoff(float cutoff) { has_cutoff = true; color_cutoff = cutoff; }
+    /*  Only the places where the colour field is at least `floor` are drawn (the places of boundary conditions: category 1 and up; the
+     *  rest of the body is not), in the colours of the map  */
+    void setColorFloor(float floor) { has_floor = true; color_floor = floor; }
     bool isSurfacePatch() const { return has_cutoff; }
     const libfive::Tree& colorFieldTree() const { return color_field; }
     QString colorLabel() const { return color_label; }
@@ -188,6 +193,9 @@ public:
         std::vector<uint32_t> tris;             // three vertex numbers each
     };
     void setExactMesh(std::shared_ptr<const ExactMesh> mesh, const double* matrix);
+    /*  The shape is drawn from these triangles, placed as they are (a picture of an optimisation: its density surface), not meshed from its
+     *  field -- which stays the truth for the colours  */
+    void setSurfaceMesh(std::shared_ptr<const ExactMesh> mesh) { m_step_exact = std::move(mesh); }
     /*  Whether a render with these settings would mesh something other than the one that is going or was done last (see
      *  RenderGeometry): the viewport restarts only the shapes for which it would  */
     bool wouldRenderDifferently(const Settings& s) const;
@@ -359,6 +367,24 @@ public:
      *  geometry (the part after an iteration of an optimisation: meshed when the step is first shown,
      *  then kept) -- what it does not bring is the result's own.
      */
+    /*  The steps of an optimisation of tetrahedra (topology_optimization) bring their geometry as triangles too: the surface of the
+     *  design after each iteration, made from the optimisation's own densities in a few tens of milliseconds, so that stepping through the
+     *  iterations meshes no field.  A step's triangles are made the first time they are wanted -- or ahead of that, by a thread that goes
+     *  through them all (setSteps) -- and kept.  The surface holds the optimisation: it lives as long as the steps are drawn  */
+    struct StepSurface
+    {
+        StepSurface(std::shared_ptr<libfive::fea::TetProblem> problem, double level, int count);
+        ~StepSurface();
+        std::shared_ptr<const ExactMesh> mesh(int k);       // (from any thread; null when the step has no surface to draw)
+        void prepareAll();                                  // all that are not made yet, as far as memory allows
+        std::shared_ptr<libfive::fea::TetProblem> problem;
+        double level;
+        int count;
+    private:
+        std::mutex m_mutex;
+        std::vector<std::shared_ptr<const ExactMesh>> m_made;
+        size_t m_bytes = 0;
+    };
     using FlowLine = std::vector<std::array<float, 5>>;     // x y z speed time, along the line
     struct Step
     {
@@ -369,6 +395,8 @@ public:
         bool hasLines = false;
         std::vector<FlowLine> lines;
         libfive::Tree tree = libfive::Tree::invalid();      // valid: the step's own geometry
+        std::shared_ptr<StepSurface> surface;               // set: the step is drawn from the triangles surface->mesh(surfaceStep)
+        int surfaceStep = 0;
     };
     void setSteps(std::vector<Step> steps, int current);
     int stepCount() const { return int(m_steps.size()); }
@@ -616,6 +644,11 @@ protected:
         { return lo == o.lo && hi == o.hi && res == o.res && quality == o.quality && exact == o.exact; }
     };
     bool exactCurrent() const;
+    // The shown step's own triangles (a step of an optimisation), else none; and the ones the render in progress draws from
+    std::shared_ptr<const ExactMesh> m_step_exact;
+    std::shared_ptr<const ExactMesh> run_step_exact;
+    void applyStepExact();
+    static std::unique_ptr<libfive::Mesh> exactMeshOf(const ExactMesh& E, const double* matrix, const libfive::Region<3>& r);
     std::unique_ptr<libfive::Mesh> exactMeshIn(const libfive::Region<3>& r) const;
     std::shared_ptr<const ExactMesh> m_exact;
     double m_exact_matrix[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
@@ -666,6 +699,8 @@ protected:
     bool has_color=false;
     bool has_cutoff=false;                                 // (a patch of a surface: see setColorCutoff)
     float color_cutoff=0;
+    bool has_floor=false;                                  // (only the coloured places: see setColorFloor)
+    float color_floor=0;
     libfive::Tree color_field = libfive::Tree::invalid();
     bool color_auto=true;
     float color_lo=0, color_hi=1;

@@ -70,8 +70,11 @@ public:
     void toggleBreakpoint(int block);
     void toggleBreakpointAtCursor() { toggleBreakpoint(textCursor().blockNumber()); }
     void clearBreakpoints();
+    /*  Makes exactly these (1-based) lines the breakpoints (those a file had when it was closed); one change signal  */
+    void setBreakpoints(const QList<int>& lines);
 
-    /*  Marks the (0-based) line a run is stopped before; -1 clears it */
+    /*  Marks the (0-based) line a run is stopped before; -1 clears it.  The text cursor stays where it is, and the view
+     *  follows the stop only while the script is not the widget being typed in  */
     void setPausedLine(int line);
 
     /*  Completion vocabulary: base words (keywords, library functions),
@@ -92,6 +95,17 @@ public:
     using Resolver = std::function<QString(const QString& name, const QString& owner)>;
     void setDefinitionResolver(Resolver r) { m_resolver = std::move(r); m_linkCache.clear(); }
 
+    /*  What the Python library does for the editor (fieldes.app_support): (function, argument as JSON) -> its answer.  The completion writes
+     *  a call as the library lays it out (`complete_call`), a hover over an argument's name shows its documentation (`argument_doc`), and a
+     *  call is split over lines or joined (`reformat_call`)  */
+    using Support = std::function<QString(const QString& function, const QString& argument)>;
+    void setSupport(Support s) { m_support = std::move(s); }
+
+    /*  The call that holds the cursor with its arguments one to a line (join: on one line); false when there is none, or nothing changes  */
+    bool reformatCall(bool join);
+    /*  Selects `length` characters at a (0-based) place and gives the editor the keyboard: where a placeholder is, for the model tree to point at  */
+    void selectRange(int line0, int col0, int length);
+
     /*  Takes over another script's completion words, call tips and library definitions  */
     void copyVocabularyFrom(const Script& other);
 
@@ -106,6 +120,8 @@ public:
     void goToLine(int line, bool flash=true);
     /*  Scrolls a (0-based) line into view, without moving the text cursor  */
     void scrollToLine(int line);
+    /*  The same, but only when the line is not in view (and then to the middle)  */
+    void revealLine(int line);
 
     /*  Selects the given (0-based line / column) range */
     void selectRange(int line0, int col0, int line1, int col1);
@@ -208,9 +224,26 @@ protected:
     int m_errorLine=-1;
     int m_pausedLine=-1;
 
-    // Each breakpoint is a cursor at the start of its line, which the
-    // document moves along with the text
-    QList<QTextCursor> m_breakpoints;
+    // A breakpoint is bound to the code on its line, not to the line's number: a cursor at the start of the line, which the
+    // document moves along with the text, kept right by trackBreakpoints() where a cursor alone is wrong (see there)
+    struct Breakpoint
+    {
+        QTextCursor cursor;         // (always at the start of a line; stays before text typed there)
+        QString text;               // what the line said when last seen, trimmed: the code the breakpoint is bound to
+        int pos = 0;                // where the line started and how long its text was, before the change being handled
+        int length = 0;
+        bool dormant = false;       // its line was deleted: kept a while, for an undo or the line pasted somewhere else
+        int age = 0;                // (changes since)
+    };
+    QList<Breakpoint> m_breakpoints;
+
+    // The placeholders (`...`) of the call that was just completed: the first is selected, Tab goes to the next
+    QList<QTextCursor> m_holes;
+    int m_holeFirst = -1, m_holeLast = -1;          // (the lines the completed call is on: the placeholders are given up when the cursor leaves them)
+    Support m_support;
+    bool nextHole();
+    Breakpoint makeBreakpoint(const QTextBlock& block) const;
+    void trackBreakpoints(int position, int removed, int added);
 
     QCompleter* m_completer=nullptr;
     QStringListModel* m_completionModel=nullptr;

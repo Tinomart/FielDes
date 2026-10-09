@@ -2,7 +2,8 @@
 #
 # A hot bearing heats the clamp boss of the shaft support (60 W); the base plate is bolted to a
 # cold plate at 25 C and the rest of the surface gives heat to the air by natural convection.
-# Boundary conditions are regions, as supports and loads are in static_analysis.  The temperature
+# Boundary conditions are regions, as supports and loads are in static_analysis; each kind has an input of
+# its own (fixed_temperatures, heat_inputs, convections ...).  The temperature
 # is a field: colour the part by it, read it under the cursor, or let it drive the geometry.
 #
 from fieldes import *
@@ -19,9 +20,10 @@ cold_plate = box_exact((-51, -1, -1), (51, 20, 1.5))         # the base plate's 
 air = box_exact((lo[0] - 5, lo[1] - 5, 2), (hi[0] + 5, hi[1] + 5, hi[2] + 5))   # every surface above it
 
 result = thermal_analysis(stand,
-                          [heat_input(bearing, 60.0),                        # watts
-                           fixed_temperature(cold_plate, 25.0),
-                           convection(air, 10e-6, ambient=25.0)],            # W / (mm2 K): natural convection
+                          fixed_temperatures=[fixed_temperature(cold_plate, 25.0)],
+                          heat_inputs=[heat_input(bearing, 60.0)],                       # watts
+                          heat_generations=[],                                           # (none: [] says so)
+                          convections=[convection(air, 10e-6, ambient=25.0)],            # W / (mm2 K): natural convection
                           material=aluminium, element_size=3)
 print("bearing: %.1f C" % result.temperature(0, 92, 44))
 

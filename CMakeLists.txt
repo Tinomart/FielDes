@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(FielDes VERSION 0.1.0 LANGUAGES C CXX)
+project(FielDes VERSION 0.6.0 LANGUAGES C CXX)
 
 option(BUILD_APP "Build the FielDes application" ON)
 option(ENABLE_DEBUG "Add debugging symbols to the binaries" OFF)

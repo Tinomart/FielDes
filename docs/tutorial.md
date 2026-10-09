@@ -132,7 +132,8 @@ What nothing else uses is at the top. A model that two statements use has its ro
   one to take it out of that call; drop it **between the children** of an operation to put it at that place among its arguments.
   **`Ctrl`+drag** puts a new shadow where you drop it and moves nothing (a shadow cannot go above its original: the program says
   so and offers the easy fix). Taking a model
-  out of an operation that cannot do without it deletes that operation, after a question. All of it is edits of the script: one
+  out of an operation that cannot do without it leaves a placeholder (`...`) in its place: that statement (and what is made from it) waits until something is written,
+  and a model dropped on the placeholder's row fills it. All of it is edits of the script: one
   `Ctrl+Z` undoes a drop.
 - Rows have buttons: the **eye**, the **gizmo**, the **lock**, the **render cache** (keeps the finished mesh, so a big
   model comes back at once), and a **bin** (deletes the model's statements; `D` does it for the selected models). A shadow has a
@@ -191,8 +192,8 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
 - **File → Import model…** (`Ctrl+I`) brings in a STEP file (every solid becomes a field; an assembly arrives assembled) or a
   mesh (STL, OBJ, PLY, 3MF, glTF). The script gets the import line, and each part gets a row in the tree.
   See [Importing STEP files](step-import.md).
-- **Analysis** is script too: `static_boundary_conditions(part, supports=[fixed(region)], loads=[force(region, (0, 0, -200))])`,
-  then `static_analysis(part, conditions, material=aluminium)`. Supports and loads are *regions* — shapes you place — not
+- **Analysis** is script too: `static_analysis(part, supports=[fixed(region)], loads=[force(region, (0, 0, -200))], material=aluminium)` --
+  every kind of condition is an input of its own, and every condition a model of its own, with its own eye in the tree. Supports and loads are *regions* — shapes you place — not
   clicked faces. The result is a field: stated on its own it is drawn on the part, with the **result card** (the field to
   show, the load step, the deformation, the elements); `part - 0.02 * result.von_mises` uses it as geometry.
   Materials and loads take fields too: `Material('graded', ramp(x_field(), (0, 100), (69e3, 7e3)), 0.33)`. See

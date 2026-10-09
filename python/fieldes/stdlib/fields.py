@@ -853,7 +853,25 @@ def find_extent(shape, budget=200000, resolution=2.0, half=1.0e6):
         arithmetic -- or None when it has no extent that can be found (it is empty, or open on a side, or the search
         ran out of cells).  A shape with var() numbers is searched with the numbers they have in the script: inside
         the application a var() is held by the program, and a search that did not know its number would read it as 0
-        (a box of size var(2) is no box at all) '''
+        (a box of size var(2) is no box at all).  The search takes a third of a second or more, and every select_surface of the same part
+        asks for it again on every run of the script: it is remembered by what the shape is (and the numbers it has) '''
+    from fieldes.stdlib.content_cache import cache_for, shape_key, Uncacheable
+    memory = cache_for('extent', 256)
+    try:
+        key = (shape_key(shape), budget, resolution, half)
+    except Uncacheable:
+        key = None
+    if key is not None:
+        hit, found = memory.get(key)
+        if hit:
+            return found
+    found = _search_extent(shape, budget, resolution, half)
+    if key is not None:
+        memory.put(key, found)
+    return found
+
+
+def _search_extent(shape, budget, resolution, half):
     from fieldes.ffi import libfive_region_t
     search = libfive_region_t()
     for axis in (search.X, search.Y, search.Z):

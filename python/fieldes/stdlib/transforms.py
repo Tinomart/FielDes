@@ -587,6 +587,11 @@ def _exact_follows(name):
         return out
     f.__doc__ = prev.__doc__
     f.__name__ = name
+    try:
+        import inspect
+        f.__signature__ = inspect.signature(prev)       # (what the function takes: the completion, the hover and the menus read it)
+    except (TypeError, ValueError):
+        pass
     globals()[name] = f
 
 

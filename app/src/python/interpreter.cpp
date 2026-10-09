@@ -24,12 +24,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <map>
 
 #include "fieldes/python/interpreter.hpp"
+#include "fieldes/i18n.hpp"
 #include "fieldes/documentation.hpp"
 #include "fieldes/shape.hpp"
 
 #include "libfive.h"
+#include "libfive/eval/default_vars.hpp"
+#include "libfive/run_progress.hpp"
+#include "libfive/fea/tetfea.hpp"
 
 // We inject a dummy module named "_fieldes_host" into the Python namespace (fieldes.view
 // re-exports its functions), then
@@ -139,6 +144,16 @@ static PyObject* var_func(PyObject* host_mod, PyObject* args) {
         Py_DECREF(Shape);
     }
 
+    // (the kernel is told the number this variable stands for, for the evaluators that are made without the script's numbers: an analysis
+    // of a part that is made ready to be dragged read every variable as 0)
+    if (v) {
+        if (PyObject* handle = PyObject_GetAttrString(v, "ptr")) {
+            if (void* id = PyLong_AsVoidPtr(handle)) libfive::DefaultVars::set(id, float(value));
+            Py_DECREF(handle);
+        }
+        PyErr_Clear();
+    }
+
     const auto new_var = Py_BuildValue("Od(iiii)",
         v, value, lineno, end_lineno, col_offset, end_col_offset);
     PyList_Append(vars, new_var);
@@ -166,7 +181,40 @@ static PyObject* partial_scene(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+// A variable's number changed by the run itself (see fieldes.stdlib.handles._follow_literals): the entry of the run's list of variables, and the
+// number the kernel knows it by
+static PyObject* retune_func(PyObject*, PyObject* args) {
+    PyObject* v;
+    double value;
+    if (!PyArg_ParseTuple(args, "Od", &v, &value)) {
+        return NULL;
+    }
+    if (const auto host_mod = PyImport_ImportModule("_fieldes_host")) {
+        if (PyObject* vars = PyObject_GetAttrString(host_mod, "__vars")) {
+            if (PyList_Check(vars)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(vars); ++i) {
+                    PyObject* item = PyList_GetItem(vars, i);          // borrowed
+                    if (PyTuple_Check(item) && PyTuple_Size(item) == 3 && PyTuple_GetItem(item, 0) == v) {
+                        PyObject* updated = Py_BuildValue("OdO", v, value, PyTuple_GetItem(item, 2));
+                        if (updated) PyList_SetItem(vars, i, updated);   // (steals it, and lets the old entry go)
+                        break;
+                    }
+                }
+            }
+            Py_DECREF(vars);
+        }
+        Py_DECREF(host_mod);
+    }
+    if (PyObject* handle = PyObject_GetAttrString(v, "ptr")) {
+        if (void* id = PyLong_AsVoidPtr(handle)) libfive::DefaultVars::set(id, float(value));
+        Py_DECREF(handle);
+    }
+    PyErr_Clear();
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef host_methods[] = {
+    {"__retune", retune_func, METH_VARARGS, "Gives a variable of the run another number"},
     {"set_resolution", set_resolution, METH_VARARGS, "Sets render resolution"},
     {"set_quality", set_quality, METH_VARARGS, "Sets render quality"},
     {"set_bounds", set_bounds, METH_VARARGS, "Sets render bounds"},
@@ -239,13 +287,33 @@ QString Interpreter::defaultScript() {
 }
 
 void Interpreter::halt() {
+    // A script that is paused goes on, to end: it is being replaced, and the run that replaces it waits for it
+    libfive::run_progress::requestPause(false);
+
     // Restore the thread state and claim the GIL
     PyEval_RestoreThread(m_threadState);
 
-    // Interrupt the worker thread by ID
-    PyThreadState_SetAsyncExc(m_workerThreadId, PyExc_Exception);
+    // Interrupt the worker thread by ID (only while a run is going: one that has just ended has nothing to stop, and the exception would
+    // land in the next piece of Python that thread runs -- a completion, the tree's outline)
+    if (m_evaluating) PyThreadState_SetAsyncExc(m_workerThreadId, PyExc_Exception);
 
     // Then release the thread state again, saving it locally
+    m_threadState = PyEval_SaveThread();
+}
+
+void Interpreter::terminate() {
+    // The kernel's solvers are asked first, before the GIL is waited for: the one that runs in the worker holds no GIL and gives up at its
+    // next look at the flag (which also lets a paused script go on, to end)
+    libfive::run_progress::requestCancel();
+
+    PyEval_RestoreThread(m_threadState);
+    if (m_evaluating) {
+        // (KeyboardInterrupt, not Exception: a script's own `except Exception` does not swallow it)
+        PyThreadState_SetAsyncExc(m_workerThreadId, PyExc_KeyboardInterrupt);
+    } else {
+        // (the run ended while the flag was on its way: nothing is left to stop, and the next run must not find the flag set)
+        libfive::run_progress::clearCancel();
+    }
     m_threadState = PyEval_SaveThread();
 }
 
@@ -493,6 +561,16 @@ void Interpreter::init() {
 // QString, the same way a script-level exception has always been reported.
 // Must be called with an exception set; clears it as a side effect (same
 // as the printing this replaces did).
+// Whether a traceback is that of the exception halt() raises in a run that an edit of the script has replaced (an Exception with no
+// message; the termination is a KeyboardInterrupt): the last line of it is the bare name
+static bool endsWithBareStop(const QString& traceback)
+{
+    const QStringList lines = traceback.trimmed().split('\n');
+    const QString last = lines.isEmpty() ? QString() : lines.last().trimmed();
+    // (a solver that was told to stop by an edit may say so itself -- "...: cancelled" -- before the stop of the run reaches Python)
+    return last == "Exception" || last == "KeyboardInterrupt" || last.endsWith(": cancelled");
+}
+
 static QString capturePythonTraceback()
 {
     PyObject *type, *value, *traceback;
@@ -565,7 +643,12 @@ void Interpreter::eval(QString script)
     // Every edit of the script queues a run of the script as it was then.  Edits come faster than runs: a run that a newer edit has
     // already taken the place of is not made (the one that is running was told to stop, but a run that has not started cannot be told
     // anything: it would run to its end, one after another, for nothing).  Only the last of a row of edits runs
-    if (m_requests.fetch_sub(1) > 1) return;
+    if (m_requests.fetch_sub(1) > 1)
+    {
+        if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[run] request dropped (a newer one is waiting)" << std::endl;
+        return;
+    }
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[run] start" << std::endl;
     evaluate(script, false);
 }
 
@@ -584,6 +667,9 @@ void Interpreter::evaluate(QString script, bool resuming)
     emit(busy());
 
     PyGILState_STATE gstate = PyGILState_Ensure();
+    libfive::run_progress::clearCancel();       // (a termination or a pause asked for during an earlier run is over with it)
+    libfive::run_progress::requestPause(false);
+    m_evaluating = true;
 
     const auto host_mod = PyImport_ImportModule("_fieldes_host");
 
@@ -605,12 +691,19 @@ void Interpreter::evaluate(QString script, bool resuming)
     PyObject* ret;
     if (!resuming)
     {
+        // (the numbers this run finds the text behind on: see fieldes.stdlib.handles._follow_literals)
+        {
+            const auto fresh_resync = PyList_New(0);
+            PyObject_SetAttrString(host_mod, "__resync", fresh_resync);
+            Py_DECREF(fresh_resync);
+        }
         // Reset all settings
         PyObject_SetAttrString(host_mod, "__resolution", Py_None);
         PyObject_SetAttrString(host_mod, "__quality", Py_None);
         PyObject_SetAttrString(host_mod, "__bounds", Py_None);
 
-        // (no variable has been asked for by a key yet in this run)
+        // (no variable has been asked for by a key yet in this run, and the kernel knows the number of none)
+        libfive::DefaultVars::clear();
         const auto fresh_counts = PyDict_New();
         PyObject_SetAttrString(host_mod, "__key_count", fresh_counts);
         Py_DECREF(fresh_counts);
@@ -656,11 +749,38 @@ void Interpreter::evaluate(QString script, bool resuming)
     out.settings = Settings::defaultSettings();
     out.okay = ret && !PyErr_Occurred();
 
+    // A run that stopped with an error says so (the traceback) and shows what ran before it: the results of the statements that were done
+    // (runner.last_partial; none for a script that did not parse, which ran nothing: the picture stays as it was)
+    bool partial = false;
+    if (!out.okay)
+    {
+        const auto tb = capturePythonTraceback();
+        out.error = {tb, errorRangeFromTraceback(tb)};
+        // (halt(): an edit of the script stopped this run, and the run of the new text is next -- that is no error of the script)
+        out.replaced = m_requests.load() > 0 && endsWithBareStop(tb);
+        PyErr_Clear();
+        if (!out.replaced && m_runnerMod)
+        {
+            PyObject* done = PyObject_GetAttrString(m_runnerMod, "last_partial");
+            if (done && PyList_Check(done))
+            {
+                Py_XDECREF(ret);
+                ret = done;
+                partial = true;
+            }
+            else
+            {
+                Py_XDECREF(done);
+            }
+            PyErr_Clear();
+        }
+    }
+
     // Map storing vars and their desired values (with the mapping to positions
     // stored elsewhere in the Result structure)
     std::map<libfive::Tree::Id, float> vars;
 
-    if (out.okay) {
+    if (out.okay || partial) {
         // Did it stop at a breakpoint (runner.last_paused, a line)?
         m_pausedScript.clear();
         if (m_runnerMod) {
@@ -671,7 +791,31 @@ void Interpreter::evaluate(QString script, bool resuming)
             }
             Py_XDECREF(paused);
             PyErr_Clear();
+            // ... and was it for a placeholder (runner.last_hole: (line, how many, the statement's first line))?
+            const auto hole = PyObject_GetAttrString(m_runnerMod, "last_hole");
+            if (hole && PyTuple_Check(hole) && PyTuple_Size(hole) == 3) {
+                out.holeCount = int(PyLong_AsLong(PyTuple_GetItem(hole, 1)));
+                const auto text = PyTuple_GetItem(hole, 2);
+                if (text && PyUnicode_Check(text)) out.holeText = QString::fromUtf8(PyUnicode_AsUTF8(text));
+            }
+            Py_XDECREF(hole);
+            PyErr_Clear();
         }
+
+        // The numbers of the script that the run put right (a number edited in the call of a shape that was dragged: the list of numbers below
+        // it follows): the editor writes them, once the run is over
+        if (const auto resync = PyObject_GetAttrString(host_mod, "__resync")) {
+            if (PyList_Check(resync)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(resync); ++i) {
+                    int l0, c0, l1, c1;
+                    const char* text;
+                    if (PyArg_ParseTuple(PyList_GetItem(resync, i), "iiiis", &l0, &c0, &l1, &c1, &text))
+                        out.resync.push_back({l0, c0, l1, c1, QString::fromUtf8(text)});
+                }
+            }
+            Py_DECREF(resync);
+        }
+        PyErr_Clear();
 
         // Parse vars from studio.__vars
         const auto vars_size = PyList_Size(vars_list);
@@ -713,7 +857,11 @@ void Interpreter::evaluate(QString script, bool resuming)
         const auto ret_size = PyList_Size(ret);
         if (ret_size) {
             const auto s = PyObject_Repr(PyList_GetItem(ret, ret_size - 1));
-            if (!s) {
+            if (!s && partial) {
+                // (the value of the last statement that ran cannot be told: the error that is said is the run's own)
+                PyErr_Clear();
+                out.result = "None";
+            } else if (!s) {
                 out.okay = false;
                 const auto tb = capturePythonTraceback();
                 out.error = {tb, errorRangeFromTraceback(tb)};
@@ -764,11 +912,6 @@ void Interpreter::evaluate(QString script, bool resuming)
                 }
             }
             Py_XDECREF(lines);
-            const auto scene = PyObject_GetAttrString(m_runnerMod, "last_scene");
-            if (scene && PyUnicode_Check(scene)) {
-                out.scene = QString::fromUtf8(PyUnicode_AsUTF8(scene));
-            }
-            Py_XDECREF(scene);
             PyErr_Clear();
         }
 
@@ -785,11 +928,17 @@ void Interpreter::evaluate(QString script, bool resuming)
             const auto s = PyList_GetItem(ret, i);
             const int line = (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1;
             PyObject* shown = displayOf(s);
+            if (!shown && PyErr_Occurred() && partial) {
+                // (the run has its error already: a result that cannot be shown is left out of what ran)
+                PyErr_Clear();
+                continue;
+            }
             if (!shown && PyErr_Occurred()) {
                 // (a result that cannot be displayed: its error, as any other)
                 out.okay = false;
                 const auto tb = capturePythonTraceback();
                 out.error = {tb, errorRangeFromTraceback(tb)};
+                out.replaced = m_requests.load() > 0 && endsWithBareStop(tb);      // (an edit stopped it while it was drawing a result)
                 break;
             }
             PyObject* obj = shown ? shown : s;
@@ -867,7 +1016,7 @@ void Interpreter::evaluate(QString script, bool resuming)
         }
         if (res == Py_None || res == NULL) {
             out.warnings.append({
-                    "<b>Warning:</b> no <code>view.set_resolution(...)</code>: using the default",
+                    T("<b>Warning:</b> no <code>view.set_resolution(...)</code>: using the default"),
                     SET_RESOLUTION_STR.arg(out.settings.res)});
         }
         Py_XDECREF(res);
@@ -883,7 +1032,7 @@ void Interpreter::evaluate(QString script, bool resuming)
         }
         if (qua == Py_None || qua == NULL) {
             out.warnings.append({
-                    "<b>Warning:</b> no <code>view.set_quality(...)</code>: using the default",
+                    T("<b>Warning:</b> no <code>view.set_quality(...)</code>: using the default"),
                     SET_QUALITY_STR.arg(out.settings.quality)});
         }
         Py_XDECREF(qua);
@@ -903,7 +1052,7 @@ void Interpreter::evaluate(QString script, bool resuming)
         }
         if (bounds == Py_None || bounds == NULL) {
             out.warnings.append(
-                    {"<b>Warning:</b> no <code>view.set_bounds(...)</code>: using the default",
+                    {T("<b>Warning:</b> no <code>view.set_bounds(...)</code>: using the default"),
                     SET_BOUNDS_STR.arg(out.settings.min.x())
                                   .arg(out.settings.min.y())
                                   .arg(out.settings.min.z())
@@ -946,17 +1095,17 @@ void Interpreter::evaluate(QString script, bool resuming)
 
         // A stopped script hasn't reached its settings yet: no warnings
         // about them until it has
-        if (out.pausedLine > 0) {
-            out.warnings.clear();
+        if (out.pausedLine > 0 || partial) {
+            out.warnings.clear();       // (a run that stopped has not reached all its settings: the error comes first)
         }
       }
-    } else {
-        const auto tb = capturePythonTraceback();
-        out.error = {tb, errorRangeFromTraceback(tb)};
     }
 
     Py_DECREF(vars_list);
     Py_XDECREF(ret);
+    m_evaluating = false;
+    // (an interruption that came as the run was ending is over with it)
+    PyThreadState_SetAsyncExc(m_workerThreadId, nullptr);
     PyGILState_Release(gstate);
 
     emit(done(out));
@@ -1242,6 +1391,12 @@ void Interpreter::recordShape(
                 if (cutoff && PyFloat_Check(cutoff)) shape->setColorCutoff(float(PyFloat_AsDouble(cutoff)));
                 Py_XDECREF(cutoff);
                 PyErr_Clear();
+                // The conditions of a simulation (fieldes.stdlib.boundary_conditions): only the places that are held or loaded
+                // are drawn, the surfaces the symbols stand on -- not the body they are on
+                PyObject* floorValue = PyObject_GetAttrString(obj, "_color_floor");
+                if (floorValue && PyFloat_Check(floorValue)) shape->setColorFloor(float(PyFloat_AsDouble(floorValue)));
+                Py_XDECREF(floorValue);
+                PyErr_Clear();
 
                 // Streamlines through a flow (fieldes.stdlib.fluid): lists of (x, y, z, speed, time) points
                 auto linesOf = [](PyObject* list, std::vector<Shape::FlowLine>& lines) {
@@ -1462,6 +1617,7 @@ void Interpreter::recordShape(
                         if (stepsObj && PyList_Check(stepsObj) && PyList_Size(stepsObj) > 0)
                         {
                             std::vector<Shape::Step> steps;
+                            std::map<void*, std::shared_ptr<Shape::StepSurface>> surfaces;      // (one for each optimisation the steps are of)
                             for (Py_ssize_t k = 0; k < PyList_Size(stepsObj); k++)
                             {
                                 PyObject* d = PyList_GetItem(stepsObj, k);
@@ -1509,6 +1665,25 @@ void Interpreter::recordShape(
                                 }
                                 PyObject* sh = PyDict_GetItemString(d, "shape");
                                 if (sh && sh != Py_None) st.tree = treeOf(sh);
+                                // (the step's surface from the optimisation's own densities: (the optimisation, the iteration, the level))
+                                PyObject* sf = PyDict_GetItemString(d, "surface");
+                                if (sf && PyTuple_Check(sf) && PyTuple_Size(sf) == 3 && st.tree.is_valid())
+                                {
+                                    void* owner = PyLong_AsVoidPtr(PyTuple_GetItem(sf, 0));
+                                    if (owner)
+                                    {
+                                        auto& shared = surfaces[owner];
+                                        if (!shared)
+                                        {
+                                            auto problem = libfive::fea::tetProblemOf(owner);
+                                            if (problem)
+                                                shared = std::make_shared<Shape::StepSurface>(
+                                                    problem, PyFloat_AsDouble(PyTuple_GetItem(sf, 2)), int(PyList_Size(stepsObj)));
+                                        }
+                                        st.surface = shared;
+                                        st.surfaceStep = int(PyLong_AsLong(PyTuple_GetItem(sf, 1)));
+                                    }
+                                }
                                 steps.push_back(std::move(st));
                             }
                             PyObject* cur = PyObject_GetAttrString(obj, "_color_step");

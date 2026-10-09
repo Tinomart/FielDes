@@ -95,6 +95,8 @@ if ($Package) {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }
     Mirror (Join-Path $Source 'docs') (Join-Path $PackageDir 'docs') @()
+    # The translations of the program's texts (translations/<code>.json; English needs no file)
+    Mirror (Join-Path $Source 'translations') (Join-Path $PackageDir 'translations') @()
     # The custom blocks folder (the sample blocks; the user's own blocks go here or in a folder of their choice)
     Mirror (Join-Path $Source 'blocks') (Join-Path $PackageDir 'blocks') @('/XD', '__pycache__')
     # 5. The MSVC runtime, so it runs without the VC++ redistributable installed

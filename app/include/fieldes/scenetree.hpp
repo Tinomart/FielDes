@@ -73,6 +73,13 @@ public:
      *  by the (0-based) line `line0` (for the operations that combine two)  */
     bool hasModel() const;
     bool hasOtherModel(int line0) const;
+    /*  Whether the model defined by the statement that starts on this (1-based) line is shown (its eye is on); true when the scene has no model there  */
+    bool shownAtLine(int line1) const;
+    /*  Whether what is selected (or the model on `line0`) can make this entry of a menu (kind "operation" or "primitive"): the library is asked
+     *  to write the call for that selection, and an entry it refuses -- a part selected with supports and loads for a set of conditions,
+     *  conditions without a part for a simulation ... -- is greyed out in the menu, without a word: it is not offered for a selection that
+     *  cannot make it  */
+    bool entryAllowed(const QString& kind, const QString& name, int line0) const;
     /*  Whether the (0-based) line belongs to a model (a variable or a displayed expression that ran), and the middle of its
      *  bounds -- where a menu opened on it from outside the viewport takes its place from  */
     bool modelAtLine(int line0, QVector3D* centre = nullptr) const;
@@ -142,10 +149,6 @@ public slots:
      *  shown at once, correct, before the script has run -- and the run replaces it  */
     void showCached();
 
-    /*  While the script is still running: the models its finished statements have made so far (the rows are there as soon
-     *  as their statement is done; the whole scene follows when the script is)  */
-    void setPartialScene(const QString& json);
-
     /*  Another script has replaced the one the tree shows: nothing of the old one stays (its rows, its selection, what
      *  was waiting for its run)  */
     void clearScene();
@@ -210,6 +213,9 @@ public slots:
 signals:
     /*  Scroll the editor to a (0-based) line and flash it  */
     void goToLine(int line0);
+    /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over: the note under the tree and the rows of
+     *  the placeholders point at the code editor, where they are filled in  */
+    void placeholderRequested(int line0, int col0);
 
     /*  A right-click in the tree: the viewport's menu for the model displayed by the (0-based) line `line0` (-1: the menu of
      *  empty space), to be opened at `globalPos`  */
@@ -262,7 +268,20 @@ protected:
     bool canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why = nullptr) const;
     /*  What a drop ON an operation does (never a question): the text that is written and where -- `replace` is the span of what it
      *  takes the place of, `after` the span of the argument it is put after -- or, when it cannot be done, why not  */
-    struct OnPlan { bool ok = false; bool own = false; QJsonArray replace, after; QString text, what, why; };
+    // drop: the model a replacement takes out of the call (its `# shadow:` mark goes with it)
+    //  more: the other places the same drop writes into (conditions of several kinds go to several inputs of one call)
+    struct OnPlan
+    {
+        struct Piece { QJsonArray replace, after; QString text; };
+        bool ok = false; bool own = false; QJsonArray replace, after; QString text, what, why, drop;
+        QList<Piece> more;
+    };
+    /*  A dropped model of the same kind as one a call is given takes its place in the call (a force on a force, a part on a part, a
+     *  field on a field, whether the one it replaces is the call's own or a shadow of another's).  Never a question  */
+    OnPlan planReplace(const QList<QJsonObject>& models, const QJsonObject& parent, const QString& replaced) const;
+    /*  A model dropped on a placeholder (`...`, the `which`-th of the statement's) takes its place  */
+    OnPlan planFill(const QList<QJsonObject>& models, const QJsonObject& stmt, int which) const;
+    bool sameKind(const QJsonObject& a, const QJsonObject& b) const;
     OnPlan planDropOn(const QList<QJsonObject>& models, const QJsonObject& target) const;
     bool takesInput(const QJsonObject& model) const;
     /*  Whether the model's call is written with numbers (a FIELD dropped on it can take the place of one: anywhere a number
@@ -281,19 +300,19 @@ protected:
     void onTreeHeld(bool down);
     void onDrop(QTreeWidgetItem* over, int at, const QPoint& global, bool copy);
     void finishDrop(const QString& overKey, int at, const QPoint& global, bool copy);
-    void dropOnModel(const QList<QJsonObject>& models, const QJsonObject& target, bool copy);
+    void dropOnModel(const QList<QJsonObject>& models, const QJsonObject& target, bool copy, const OnPlan* given = nullptr);
 
     /*  The tree is the structure of the calls: a model that stands under an operation is one of the models it is given.  Every
      *  nesting, renesting and denesting is therefore an edit of the arguments of a call -- worked out here, before anything
-     *  is written, as a `Rewire`: the models taken out of calls and put into them, and the statements that cannot do without
-     *  a model that is taken out (they are deleted, after asking, and what is made of them loses them in turn)  */
+     *  is written, as a `Rewire`: the models taken out of calls and put into them.  A call that cannot do without a model that is
+     *  taken out gets a placeholder, `...`, where it was: nothing is deleted, and the script stops before the statement until
+     *  something is written there  */
     struct Rewire
     {
         struct Put { QString name, relative, side; };                // side: "before" or "after" `relative`, or "end"
-        struct Change { QJsonObject item; QStringList remove; QList<Put> insert; };
+        // remove: models taken out of the call (the other arguments, or the rest of a list, stay); hole: models that become `...`
+        struct Change { QJsonObject item; QStringList remove, hole; QList<Put> insert; };
         QMap<int, Change> edits;                                     // the statements whose call is rewritten, by their line
-        QMap<int, QJsonObject> deleted;                              // the statements that go, by their line
-        QStringList notes;                                           // what happens that was not asked for
     };
     QJsonObject itemByKey(const QString& key) const;
     /*  Shadows deleted: the references (statement, model's name) are taken out of their calls, as when a model is denested  */
@@ -302,20 +321,15 @@ protected:
     /*  The statement a dragged model is dragged out of: the one its row stands under, or, for a shadow, the one the shadow is
      *  under (empty: a model that stands under none)  */
     QJsonObject sourceStatement(const QJsonObject& model) const;
-    /*  The statements that use what `stmt` makes  */
-    QList<QJsonObject> usersOf(const QJsonObject& stmt) const;
-    /*  `model` is taken out of the call of `from`: out of its arguments when it takes any number of models and keeps one at
-     *  least, else the statement goes (and the statements that use it lose it in turn)  */
-    void wireRemove(Rewire& w, const QJsonObject& from, const QJsonObject& model, bool cascade) const;
-    void wireDelete(Rewire& w, const QJsonObject& stmt, const QString& because) const;
+    /*  `model` is taken out of the call of `from`: out of its arguments (or the list it is in) when the call keeps what it needs,
+     *  else a placeholder takes its place  */
+    void wireRemove(Rewire& w, const QJsonObject& from, const QJsonObject& model) const;
     void wireInsert(Rewire& w, const QJsonObject& parent, const QString& name, const QString& relative, const QString& side) const;
     /*  Writes a rewire into the lines (the interpreter rewrites the calls; the lines stay where they are, a line that is no more
      *  is marked, and the lines of what goes are marked) -- `targets` gets the variables of the rewritten statements, `newLength`
      *  the number of lines of each.  False, with the reason, when a call cannot be rewritten  */
     bool wireStage(const Rewire& w, QStringList& lines, QStringList* targets, QHash<QString, int>* newLength, QString* why) const;
     void wireDropGone(QStringList& lines, QVector<int>& origin) const;
-    /*  Asks before a statement is deleted by a rewire (unless the message was hidden); false when the user says no  */
-    bool wireConfirm(const Rewire& w, const QString& what);
     /*  A shadow cannot be above its original.  The tree gives a model its row under the FIRST statement that uses it (the original);
      *  every later use is a shadow.  Whatever an edit does -- a copy or a moved shadow dropped above the original, a statement that holds
      *  a shadow moved above it, the original moved below -- a shadow that would then come first is found in the tree the edit is
@@ -414,7 +428,6 @@ protected:
     bool m_treeHeld = false;            // (the left button is down on the tree)
     bool m_dropEdited = false;          // (the drag that is over edited the script)
     bool m_predicted = false;           // (the tree shown is a prediction: the script has not run yet)
-    bool m_partialShown = false;        // (the tree shown is what a run in progress has made so far: the next partial one replaces it)
     /*  An edit made from the rows needs rows that fit the script's text.  When the text has changed since the scene was made (a run
      *  is on its way), the edit waits for the scene that fits (deferEdit, deferItems: the items are found again by their keys),
      *  one at a time (runDeferred); a script with an error has no such scene to wait for, and the edit is refused with the reason  */
@@ -426,6 +439,7 @@ protected:
     QElapsedTimer m_sceneClock;         // (since the scene shown was made)
     QElapsedTimer m_predictClock;
     QString m_predictedMd5;             // (the text the prediction is of: its lines fit that text, and only it)
+    bool m_textUnreadable = false;      // (the last text the tree was asked to read does not parse: the rows are of an earlier one)
     bool m_rebuildPending = false;      // (the rows are built from the scene a moment from now: until then they are the old ones)
     /*  The line of the old text that each line of the new text is (-1: a new line), found from the edits alone; empty when the edits
      *  cannot be followed with certainty (a line that no edit touched is not the same text afterwards, two lines became one ...)  */
@@ -446,6 +460,8 @@ protected:
 
     /*  Actions (all become script edits)  */
     void toggleVisible(const QJsonObject& it);
+    /*  Shows (or hides) all these models in one edit of the script (the eye of a "boundary conditions" row)  */
+    void setVisibleAll(const QList<QJsonObject>& models, bool show);
     void reimport(const QJsonObject& it);
     void importMenu(const QJsonObject& it, const QPoint& global);
     /*  The edit raising the import call's rev= (false if it cannot be found)  */
@@ -507,6 +523,10 @@ protected:
     /*  The edits making `it` the region of interest; false if it has no
      *  known extent  */
     bool roiEdits(const QJsonObject& it, QList<TextEdit>& edits) const;
+    /*  The render region grows to hold the models that are new in the scene (those whose keys `before` does not have), when any of
+     *  them reaches out of it: view.set_bounds is rewritten (or added) with whole numbers and a little room  */
+    void growRegion(const QSet<QString>& before);
+    QSet<QString> m_unfitted;       // (models that reach out of the region but could not be fitted yet: the region of the script is not known until its run has set it)
     bool visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit>& edits) const;
     QJsonObject itemForVar(const QString& var) const;
     void focusOn(const QJsonObject& it);
@@ -532,11 +552,17 @@ protected:
     /*  What a menu opened on the shape displayed by `line0` (negative: in empty space) works on: when several models
      *  are selected and that one is among them, all of them (in the order they were selected), else just that one
      *  (in empty space: the selected ones, else the last model)  */
-    QList<Model> operandsFor(int line0) const;
+    QList<Model> operandsFor(int line0, bool fallback = true) const;
+    /*  Whether the entry is a simulation of the menu (static_analysis ...): it works on what is selected and writes a placeholder for what is
+     *  not -- the part, the conditions -- so it is never greyed out for lack of them, and never takes "the last model" for its part  */
+    bool isSimulation(const QString& operation) const;
     /*  Whether an operation of the menu takes several models (union, difference, intersection, surface_from_bodies)  */
     bool combines(const QString& operation) const;
     /*  Whether it cannot do without a second model (surface_from_bodies can: one model alone is its whole surface)  */
     bool needsSecond(const QString& operation) const;
+    /*  Whether a primitive of the menu -- a support, a load, a thermal or flow condition -- is made for a body and the regions it acts on
+     *  when several models are selected (otherwise it is a box laid at the cursor)  */
+    bool takesBodies(const QString& primitive) const;
     /*  The (0-based) lines that show the selected rows, for highlighting them in the viewport  */
     QList<int> selectedLines() const;
     QList<int> rowLines(QTreeWidgetItem* row) const;
@@ -585,6 +611,8 @@ protected:
     QStringList m_pressedSelection;     // (the keys of the rows selected when the mouse button last went down in the tree)
     mutable QHash<QString, bool> m_combining;
     mutable QHash<QString, bool> m_needsSecond;
+    mutable QSet<QString> m_withBodies;
+    mutable QSet<QString> m_simulations;
 
     /*  A variable to select once the script that creates it has run (tries counts the runs waited)  */
     QList<QPair<QString, QString>> m_copied;     // (the models of the last Ctrl+C: name, statements)
@@ -626,6 +654,7 @@ protected:
     QString headerText() const;
     QString errorNote() const;
     static void setErrorStyle(QWidget* w, bool on);
+    void setWaitingStyle(QWidget* w, bool on);          // (what has to be done to run the script: amber, not red)
     QLabel* m_note;
 
     QJsonObject m_scene;

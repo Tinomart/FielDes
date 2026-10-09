@@ -45,6 +45,10 @@ public:
      *  This will be called from the main thread! */
     virtual void halt() {}
 
+    /*  Ends the evaluation that is running for good (the red dot): the kernel's long solvers are told to give up and the script is
+     *  interrupted.  Does nothing when no script is running.  Called from the main thread!  */
+    virtual void terminate() {}
+
     /*  Called from the main thread for every run that is asked for (the script changed), before it is queued: so that the worker can tell,
      *  when a run comes to its turn, that a newer one is behind it  */
     virtual void noteRequest() {}

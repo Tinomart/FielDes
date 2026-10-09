@@ -10,9 +10,12 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "tet_common.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <unordered_map>
 
 namespace libfive {
 namespace fea {
@@ -465,8 +468,13 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
                 ww.assign(n, 0.0);
                 CgResult cr;
                 std::string err;
-                if (!cgSolve(A, fixed, rr, ww, 1e-3, inner, nullptr, std::function<void(double, const std::string&)>(), cr, err))
+                if (!cgSolve(A, fixed, rr, ww, 1e-3, inner, cancel, std::function<void(double, const std::string&)>(), cr, err))
                     precondition(A, rr.data(), ww.data());
+                if (cancel && cancel->load())
+                {
+                    error = "cancelled";
+                    return false;
+                }
                 for (size_t i = 0; i < n; ++i) W(long(i), long(c)) = fixed[i] ? 0.0 : ww[i];
             }
         }
@@ -548,6 +556,137 @@ bool lobpcg(const Assembly& A, const std::vector<unsigned char>& fixed, const st
         for (size_t i = 0; i < n; ++i) vectors[size_t(j)][i] = X(long(i), j);
     }
     return true;
+}
+
+void liveSurface(const TetMesh& mesh, const std::vector<float>& d, double level, bool caps, std::vector<float>& triangles)
+{
+    typedef Eigen::Vector3d V;
+    // (where the value crosses the level on the edge between two nodes, one above it and one not)
+    auto crossing = [&](int a, int b) {
+        const double da = d[size_t(a)], db = d[size_t(b)];
+        const double t = std::max(0.0, std::min(1.0, (level - da) / (db - da)));
+        return V(mesh.pos[size_t(a)] + t * (mesh.pos[size_t(b)] - mesh.pos[size_t(a)]));
+    };
+    // (a triangle, wound so that its normal points towards `away`)
+    auto emit = [&](const V& a, V b, V c, const V& away) {
+        if ((b - a).cross(c - a).dot(away) < 0) std::swap(b, c);
+        const V* corners[3] = {&a, &b, &c};
+        for (const V* p : corners)
+            for (int k = 0; k < 3; ++k) triangles.push_back(float((*p)[k]));
+    };
+    for (size_t t = 0; t < mesh.tets.size(); ++t)
+    {
+        const auto& tet = mesh.tets[t];
+        int in[4], out[4], ni = 0, no = 0;
+        for (int q = 0; q < 4; ++q)
+        {
+            const int v = tet[size_t(q)];
+            if (d[size_t(v)] > level) in[ni++] = v; else out[no++] = v;
+        }
+        if (ni == 0 || no == 0) continue;
+        // the surface the material makes inside: it faces from the corners that are in towards those that are out
+        V ci = V::Zero(), co = V::Zero();
+        for (int k = 0; k < ni; ++k) ci += mesh.pos[size_t(in[k])] / ni;
+        for (int k = 0; k < no; ++k) co += mesh.pos[size_t(out[k])] / no;
+        const V away = co - ci;
+        if (ni == 1)
+            emit(crossing(in[0], out[0]), crossing(in[0], out[1]), crossing(in[0], out[2]), away);
+        else if (no == 1)
+            emit(crossing(in[0], out[0]), crossing(in[1], out[0]), crossing(in[2], out[0]), away);
+        else
+        {
+            const V a = crossing(in[0], out[0]), b = crossing(in[0], out[1]), c = crossing(in[1], out[1]), e = crossing(in[1], out[0]);
+            emit(a, b, c, away);
+            emit(a, c, e, away);
+        }
+    }
+    if (!caps) return;
+    // the faces on the boundary of the mesh, where the material is
+    for (size_t f = 0; f < mesh.faces.size(); ++f)
+    {
+        const auto& face = mesh.faces[f];
+        const auto& tet = mesh.tets[size_t(mesh.faceTet[f])];
+        V centre = V::Zero();
+        for (int q = 0; q < 4; ++q) centre += mesh.pos[size_t(tet[size_t(q)])] / 4.0;
+        const V away = (mesh.pos[size_t(face[0])] + mesh.pos[size_t(face[1])] + mesh.pos[size_t(face[2])]) / 3.0 - centre;
+        V poly[4];
+        int n = 0;
+        for (int k = 0; k < 3; ++k)
+        {
+            const int a = face[size_t(k)], b = face[size_t((k + 1) % 3)];
+            const bool ain = d[size_t(a)] > level, bin = d[size_t(b)] > level;
+            if (ain) poly[n++] = mesh.pos[size_t(a)];
+            if (ain != bin) poly[n++] = crossing(a, b);
+        }
+        for (int k = 1; k + 1 < n; ++k) emit(poly[0], poly[k], poly[k + 1], away);
+    }
+}
+
+namespace {
+struct WeldKey
+{
+    int64_t k[3];
+    bool operator==(const WeldKey& o) const { return k[0] == o.k[0] && k[1] == o.k[1] && k[2] == o.k[2]; }
+};
+struct WeldHash
+{
+    size_t operator()(const WeldKey& w) const
+    {
+        uint64_t h = 1469598103934665603ull;
+        for (int a = 0; a < 3; ++a)
+        {
+            h ^= uint64_t(w.k[a]) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+            h *= 1099511628211ull;
+        }
+        return size_t(h);
+    }
+};
+}
+
+void liveSurfaceIndexed(const TetMesh& mesh, const std::vector<float>& d, double level, bool caps, std::vector<float>& verts,
+                        std::vector<uint32_t>& tris)
+{
+    std::vector<float> soup;
+    liveSurface(mesh, d, level, caps, soup);
+    verts.clear();
+    tris.clear();
+    const size_t n = soup.size() / 3;
+    if (n == 0) return;
+    // (points of the surface that are the same point -- the two sides of an edge the surface crosses -- are one vertex)
+    double lo[3] = {1e300, 1e300, 1e300}, hi[3] = {-1e300, -1e300, -1e300};
+    for (size_t i = 0; i < n; ++i)
+        for (int a = 0; a < 3; ++a)
+        {
+            lo[a] = std::min(lo[a], double(soup[3 * i + size_t(a)]));
+            hi[a] = std::max(hi[a], double(soup[3 * i + size_t(a)]));
+        }
+    const double diag = std::sqrt((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) + (hi[2] - lo[2]) * (hi[2] - lo[2]));
+    const double eps = std::max(1e-9, 1e-5 * diag);
+    std::unordered_map<WeldKey, uint32_t, WeldHash> number;
+    number.reserve(n);
+    std::vector<uint32_t> id(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        WeldKey key;
+        for (int a = 0; a < 3; ++a) key.k[a] = int64_t(std::llround((double(soup[3 * i + size_t(a)]) - lo[a]) / eps));
+        const auto found = number.find(key);
+        if (found != number.end())
+        {
+            id[i] = found->second;
+            continue;
+        }
+        id[i] = uint32_t(verts.size() / 3);
+        number.emplace(key, id[i]);
+        for (int a = 0; a < 3; ++a) verts.push_back(soup[3 * i + size_t(a)]);
+    }
+    tris.reserve(n);
+    for (size_t t = 0; t + 2 < n; t += 3)
+    {
+        if (id[t] == id[t + 1] || id[t + 1] == id[t + 2] || id[t] == id[t + 2]) continue;      // (a sliver that welded away)
+        tris.push_back(id[t]);
+        tris.push_back(id[t + 1]);
+        tris.push_back(id[t + 2]);
+    }
 }
 
 }   // namespace tet

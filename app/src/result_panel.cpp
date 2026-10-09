@@ -18,6 +18,7 @@ of the License, or (at your option) any later version.
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/carddrag.hpp"
 #include "fieldes/result_panel.hpp"
 #include "fieldes/colormap.hpp"
@@ -100,36 +101,36 @@ ResultPanel::ResultPanel(QWidget* parent)
         "  background: #eee8d5; }");
 
     m_fields->setObjectName("resultField");
-    m_fields->setToolTip("Field shown");
+    m_fields->setToolTip(T("Field shown"));
     m_deform->setObjectName("resultDeform");
     m_deform->setRange(0, 100);
-    m_deform->setToolTip("Deformation magnification");
+    m_deform->setToolTip(T("Deformation magnification"));
     m_trueScale->setObjectName("resultTrueScale");
     m_trueScale->setText("1:1");
-    m_trueScale->setToolTip("True size");
+    m_trueScale->setToolTip(T("True size"));
     m_elements->setObjectName("resultElements");
     m_elements->setCheckable(true);
-    m_elements->setText("Elements");
-    m_elements->setToolTip("Show the solver's elements, each with its own value");
+    m_elements->setText(T("Elements"));
+    m_elements->setToolTip(T("Show the solver's elements, each with its own value"));
     m_flow->setObjectName("resultFlow");
     m_flow->setCheckable(true);
-    m_flow->setText("Flow");
-    m_flow->setToolTip("Streamlines from the inlets with particles moving along them, drawn over the fluid");
+    m_flow->setText(T("Flow"));
+    m_flow->setToolTip(T("Streamlines from the inlets with particles moving along them, drawn over the fluid"));
     m_play->setObjectName("resultPlay");
     m_play->setCheckable(true);
     m_play->setText(QString(QChar(0x25B6)));
-    m_play->setToolTip("Play / pause the steps");
+    m_play->setToolTip(T("Play / pause the steps"));
     m_stepBack->setObjectName("resultStepBack");
     m_stepBack->setText(QString(QChar(0x25C2)));
-    m_stepBack->setToolTip("One step back");
+    m_stepBack->setToolTip(T("One step back"));
     m_stepForward->setObjectName("resultStepForward");
     m_stepForward->setText(QString(QChar(0x25B8)));
-    m_stepForward->setToolTip("One step forward");
+    m_stepForward->setToolTip(T("One step forward"));
     m_playMode->setObjectName("resultPlayMode");
     m_playMode->setText(QString(QChar(0x21BB)));
-    m_playMode->setToolTip("How play runs: round and round, back and forth, or once to the end (click to change)");
+    m_playMode->setToolTip(T("How play runs: round and round, back and forth, or once to the end (click to change)"));
     m_speed->setObjectName("resultPlaySpeed");
-    m_speed->setToolTip("Play speed: x1 is ten steps a second");
+    m_speed->setToolTip(T("Play speed: x1 is ten steps a second"));
     {
         static const float speeds[] = {0.125f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
         static const ushort glyphs[] = {0x215B, 0x00BC, 0x00BD, '1', '2', '4'};
@@ -139,7 +140,7 @@ ResultPanel::ResultPanel(QWidget* parent)
     }
     m_step->setObjectName("resultStep");
     m_step->setRange(0, 0);
-    m_step->setToolTip("Step shown");
+    m_step->setToolTip(T("Step shown"));
     m_stepLabel->setObjectName("resultStepLabel");
     m_stepLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     // play, how it runs, how fast, the step's name; the slider below, the card's whole width
@@ -167,7 +168,7 @@ ResultPanel::ResultPanel(QWidget* parent)
     deformLayout->setContentsMargins(0, 0, 0, 0);
     deformLayout->setSpacing(2);
     auto deformHead = new QHBoxLayout;
-    deformHead->addWidget(new QLabel("Deformation"));
+    deformHead->addWidget(new QLabel(T("Deformation")));
     deformHead->addStretch();
     deformHead->addWidget(m_scaleLabel);
     deformLayout->addLayout(deformHead);
@@ -270,8 +271,17 @@ int ResultPanel::sliderFor(float scale, float autoScale)
 
 void ResultPanel::updateScaleLabel(float s)
 {
-    m_scaleLabel->setText(s == 0 ? QString("off")
+    m_scaleLabel->setText(s == 0 ? T("off")
                                  : QString::fromUtf8("×") + QString::number(s, 'g', 3));
+}
+
+int ResultPanel::labelsWidth() const
+{
+    QFont bold = m_fields->font();
+    bold.setPointSize(9);
+    bold.setBold(true);
+    const QFontMetrics metrics(bold);
+    return metrics.horizontalAdvance(m_fields->currentText()) + 64;         // (the card's margins, the combo's padding and its arrow)
 }
 
 void ResultPanel::setState(const State& s)

@@ -35,6 +35,7 @@ extern const QColor base3;
 
 extern const QColor yellow;
 extern const QColor orange;
+extern const QColor amber;          // what has to be done to run the script (a placeholder), which is not an error
 extern const QColor red;
 extern const QColor magenta;
 extern const QColor violet;

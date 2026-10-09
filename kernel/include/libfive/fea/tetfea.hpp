@@ -113,7 +113,9 @@ class TetProblem
 public:
     TetProblem(const Tree& shape, Eigen::Vector3d lo, Eigen::Vector3d hi, double h, double E, double nu);
 
-    void addSupport(const Tree& region, bool x, bool y, bool z);
+    /*  A support.  loadCase >= 0: it holds the part only in that load case (topology optimization against several sets of
+     *  boundary conditions, each with its own supports); -1: in every case  */
+    void addSupport(const Tree& region, bool x, bool y, bool z, int loadCase = -1);
     /*  A load in a load case (0, 1, ...): topology optimization makes the part stiff for each
      *  case on its own; a static analysis applies every load together  */
     void addForce(const Tree& region, Eigen::Vector3d total, int loadCase = 0);
@@ -141,7 +143,8 @@ public:
      *  matrix (the material's density), by locally optimal block preconditioned conjugate
      *  gradients.  No loads are needed.  Each mode's shape is a MeshResult (fields UX, UY, UZ,
      *  DISPLACEMENT; scaled to a largest movement of 1).  */
-    bool modal(int count, double density, int maxIterations, double tolerance, std::string& error);
+    bool modal(int count, double density, int maxIterations, double tolerance, std::string& error,
+               const std::atomic<bool>* cancel = nullptr);
     const std::vector<double>& frequencies() const { return m_frequencies; }
 
     /*  Topology optimization (SIMP with a density filter and optimality-criteria updates): finds
@@ -153,15 +156,31 @@ public:
         double volumeFraction = 0.3;
         double penalty = 3.0;
         double filterRadius = 0;        // 0: 1.5 element sizes
-        double move = 0.2;
         double minStiffness = 1e-3;     // of the full material, for "void"
         int extrude = -1;               // 0 / 1 / 2: the design is constant along x / y / z
-        int iterations = 60;
+        int iterations = 100;
         int solverIterations = 20000;
         double tolerance = 1e-5;
         std::vector<Tree> keep, avoid;
+        /*  Set when the design space is bigger than the part (the part grown outwards): the part itself.  The volume
+         *  fraction is then of the part's volume, the design starts as the part (the rest of the space nearly empty) and
+         *  material may be put outside it where that makes the design stiffer  */
+        Tree origin = Tree::invalid();
+        /*  How crisp the design is: its density is projected towards 0 and 1 with a step that grows steeper to this number
+         *  (see optimize); 1: not at all, the density the filter makes  */
+        double sharpness = 16.0;
+        /*  Mirror symmetry: the design is kept symmetric about these planes (axis 0, 1, 2 = x, y, z at the coordinate `at`; atCentre: the
+         *  plane through the middle of the part's extent along that axis).  symmetryAuto: look for the planes the part, its supports,
+         *  its loads and its keep / avoid regions are all symmetric about, and keep the design symmetric about them -- a symmetric
+         *  problem otherwise breaks its symmetry (the mesh of a symmetric part is never exactly symmetric, and a small difference
+         *  grows: one of two redundant members takes the other's material)  */
+        struct Mirror { int axis = 2; double at = 0; bool atCentre = true; };
+        std::vector<Mirror> mirrors;
+        bool symmetryAuto = false;
     };
     bool optimize(const TopOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
+    /*  After optimize: the planes the design was kept symmetric about (found or asked for), `at` as it was resolved  */
+    const std::vector<TopOpt::Mirror>& mirrorsUsed() const { return m_mirrorsUsed; }
     /*  After optimize: the compliance at each iteration, and the density (0..1) as a field on the
      *  mesh (each tetrahedron's density averaged at the nodes by volume) for meshFieldTree(., 0)  */
     const std::vector<double>& complianceHistory() const { return m_history; }
@@ -170,6 +189,10 @@ public:
      *  step by step  */
     size_t densityHistoryCount() const { return m_densityHistory.size(); }
     std::shared_ptr<const MeshResult> densityResultAt(size_t k) const;
+    /*  The design after iteration k as a surface -- indexed triangles, counter-clockwise from outside -- where its density is
+     *  above `level`: the part as it was then, for the result card to draw when that step is shown (made from the density at the
+     *  nodes, exactly as the optimised part is cut from it, in a few tens of milliseconds)  */
+    bool densitySurface(size_t k, double level, std::vector<float>& verts, std::vector<uint32_t>& tris) const;
     /*  How many separate pieces the optimised design is in when it is cut at the density `threshold` (the density at
      *  the nodes, as the optimised part is cut from it): the part is where it is above the level, and a link that is only
      *  just there -- less than `margin` above it -- is too thin to count.  Specks under 2 % of the body are not
@@ -192,7 +215,7 @@ private:
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_E, m_nu;
 
-    struct Support { Tree region; bool fix[3]; };
+    struct Support { Tree region; bool fix[3]; int loadCase = -1; };
     struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); };
     std::vector<Support> m_supports;
     std::vector<Force> m_forces;
@@ -208,6 +231,8 @@ private:
     std::vector<unsigned char> m_fixedDof;      // per DOF (3 * vertex + axis)
     std::vector<double> m_force;                // per DOF: the loads, gravity and thermal expansion together
     std::vector<std::vector<double>> m_caseForce;   // per load case, when there are several
+    std::vector<std::vector<unsigned char>> m_caseFixed;    // per load case: the fixed DOFs of its own, when the cases have supports of their own
+    std::vector<TopOpt::Mirror> m_mirrorsUsed;
     std::vector<double> m_thermalStrain;        // per tetrahedron: alpha (T - reference)
     std::vector<double> m_scale;                // per tetrahedron: its Young's modulus over E (empty without a stiffness field)
     std::vector<double> m_elementDensity;       // per tetrahedron (empty without a density field)
@@ -224,6 +249,10 @@ private:
     std::vector<double> m_frequencies;
     std::vector<std::shared_ptr<MeshResult>> m_modes;
 };
+
+/*  The optimisation a C-API handle (libfive_tetfea*, as a pointer) holds, shared: what keeps it alive while a viewer still draws
+ *  the steps of its result  */
+std::shared_ptr<TetProblem> tetProblemOf(void* handle);
 
 }   // namespace fea
 }   // namespace libfive

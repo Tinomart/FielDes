@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "fieldes/app.hpp"
 #include "fieldes/args.hpp"
+#include "fieldes/i18n.hpp"
 #include "fieldes/icons.hpp"
 #include "fieldes/theme.hpp"
 
@@ -35,6 +36,9 @@ App::App(int& argc, char** argv)
     // the tessellation cache)
     if (!qEnvironmentVariableIsSet("FIELDES_DIR"))
         qputenv("FIELDES_DIR", QCoreApplication::applicationDirPath().toLocal8Bit());
+
+    // The language of the program's own words: the setting, or the language of the computer (before any window is made)
+    i18n::load();
 
     // The folder of the custom blocks that was chosen in Settings (the Python package reads it from the environment)
     if (!qEnvironmentVariableIsSet("FIELDES_BLOCKS"))

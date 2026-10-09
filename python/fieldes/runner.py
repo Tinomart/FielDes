@@ -101,9 +101,16 @@ class VarTransformer(ast.NodeTransformer):
 # lines of every top-level statement, in the same order as run()'s results,
 # and a JSON description of the script for the model tree.
 last_lines = []
-last_scene = ''
+last_scene = ''  # (no longer made: the model tree is read from the text, see outline.py)
 # The names of the last run and what they hold (FielDes asks for the numbers of a shape by name)
 last_globals = {}
+# The (first, last) lines of the statement that runs now and the text that is being run (None between runs): an edit of the script asks
+# where it begins -- see app_support.edit_reaches_running
+running_lines = None
+running_source = None
+# The results of the statements that were done when the last run stopped with an error (None when it ran to its end): FielDes shows
+# what ran before the error
+last_partial = None
 # What the script printed (shown in FielDes's output pane)
 last_output = ''
 
@@ -139,6 +146,32 @@ def _step_label(source_lines, p):
 # it ran to the end; and the state of a run stopped there (resume() continues it)
 last_paused = -1
 _paused = None
+# (line, number of placeholders, the statement's first line) when the last run stopped before a statement that has a placeholder, else None
+last_hole = None
+
+
+def _holes(stmt):
+    ''' The placeholders -- `...` written where a call is given an argument -- in a top-level statement, as [(line, column)].  A statement
+        that has one is not run: the run stops before it, until what goes there is written (FielDes puts a placeholder in place of a
+        model that is taken out of a call that cannot do without it, and in the calls it writes for you).  `...` that is no argument
+        (the body of a stub function, `x[..., 0]`) is not one '''
+    found = []
+
+    def walk(node, in_call):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return
+        if isinstance(node, ast.Constant) and node.value is Ellipsis:
+            if in_call:
+                found.append((node.lineno, node.col_offset))
+            return
+        if isinstance(node, ast.Subscript):
+            walk(node.value, in_call)       # (what is indexed, not the index: numpy's `x[..., 0]`)
+            return
+        for child in ast.iter_child_nodes(node):
+            walk(child, in_call or isinstance(node, ast.Call))
+
+    walk(stmt, False)
+    return found
 
 
 def _hit(breakpoints, p, prev_end=0):
@@ -193,10 +226,11 @@ def run(s, breakpoints=None, **env):
         top-level statement that contains one (last_paused is that line) and
         returns what was evaluated so far.  resume() continues it.
     '''
-    global _paused
+    global _paused, last_partial
     import contextlib
     import io
     _paused = None
+    last_partial = None         # (a script that does not even parse ran nothing: what is shown stays)
     _prepare_imports()
     parsed = ast.parse(s)
     tagged = VarTransformer().transform(parsed)
@@ -227,11 +261,10 @@ def resume(breakpoints=None):
 
 
 class _PartialScenes:
-    ''' The model tree while the script is still running.  A statement that takes a while (an import, a smoothing, an
-        analysis) used to leave the tree as it was until the whole script was done; now, once a statement has been
-        running for DELAY seconds, the tree is given the variables of the statements that are done (host.partial_scene).
-        It runs beside the script, in a thread of its own, and only looks at what is done: the script is not slowed by
-        it, and a script whose statements are all quick never makes one. '''
+    ''' The model tree is read from the script's text (see outline.py), so it does not wait for the run.  What the run adds is what its
+        statements found out, which `outline.record` keeps as each one is done; the tree is told to take it up (host.partial_scene)
+        once a statement has been running for DELAY seconds -- so a script whose statements are all quick says nothing until it is done.
+        It runs beside the script, in a thread of its own, and only tells: the script is not slowed by it. '''
     DELAY = 0.15
 
     def __init__(self, state, host):
@@ -250,10 +283,8 @@ class _PartialScenes:
             if self.sent < n < len(st['body']) and time.time() - st['t0'] >= self.DELAY:
                 self.sent = n
                 try:
-                    from fieldes.app_support import scene_json
-                    text = scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n, partial=True)
                     if not self.stop.is_set():
-                        self.host.partial_scene(text)
+                        self.host.partial_scene(json.dumps({'done_line': st['body'][n - 1].end_lineno, 'errored': False}))
                 except Exception:       # (the model tree is a convenience only)
                     pass
 
@@ -264,13 +295,11 @@ class _PartialScenes:
             self.thread.join()
 
     def error_scene(self):
-        ''' The script stopped with an error: the tree lists what the statements before it made (there is no finished
-            script's tree to follow) '''
+        ''' The script stopped with an error: the tree is told to take up what the statement that failed says (its row shows it) '''
         st = self.state
         try:
-            from fieldes.app_support import scene_json
             n = st['i']
-            self.host.partial_scene(scene_json(st['s'], dict(st['gs']), list(st['out'][:n]), upto=n, errored=True))
+            self.host.partial_scene(json.dumps({'done_line': st['body'][n - 1].end_lineno if n else 0, 'errored': True}))
         except Exception:
             pass
 
@@ -284,19 +313,28 @@ def _partial_scenes(state):
 
 
 def _continue(state, breakpoints, skip_first):
-    global last_lines, last_scene, last_output, last_paused, _paused, last_globals
+    global last_lines, last_scene, last_output, last_paused, _paused, last_globals, last_hole, last_partial, running_lines, running_source
     import contextlib
     import time
     from fieldes import field_cache, run_progress
     body, gs, out, lines = state['body'], state['gs'], state['out'], state['lines']
     source_lines = state['source_lines']
     last_paused = -1
+    last_hole = None
+    last_partial = None
     _paused = None
+    from fieldes import outline
+    if 'src' not in state:
+        from fieldes import app_support
+        state['src'] = app_support._Source(state['s'])
+    if not skip_first:
+        outline.run_began()
     # Progress: which statement runs (how many there are is known now)
     progress_lib = run_progress._lib
     if progress_lib:
         progress_lib.libfive_run_begin(len(body))
     state['t0'] = time.time()
+    running_source = state['s']
     watcher = _partial_scenes(state)
     try:
         with contextlib.redirect_stdout(state['printed']):
@@ -304,6 +342,25 @@ def _continue(state, breakpoints, skip_first):
                 i = state['i']
                 p = body[i]
                 state['t0'] = time.time()
+                holes = _holes(p)
+                pending = state.setdefault('pending', set())
+                waits = bool(holes) or (bool(pending) and any(
+                    isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in pending for n in ast.walk(p)))
+                if waits:
+                    # A placeholder: the statement does not run, and nor does what is made from it (a statement that uses a name it would
+                    # have made) -- the rest of the script does, so that the part, the render settings and everything that does not wait
+                    # are drawn.  The run is over when it reaches the end; the first statement that waits is told (last_hole), and the
+                    # script is run again when what goes there is written
+                    pending |= {n.id for n in ast.walk(p) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
+                    if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        pending.add(p.name)
+                    if holes and 'hole' not in state:
+                        state['hole'] = (p.lineno, len(holes), source_lines[p.lineno - 1].strip() if p.lineno <= len(source_lines) else '')
+                    out.append(None)
+                    lines.append((p.lineno, p.end_lineno))
+                    state['skip'] = -1
+                    state['i'] = i + 1
+                    continue
                 b = 0 if (skip_first and state.get('skip') == i) else _hit(
                     breakpoints, p, body[i - 1].end_lineno if i else 0)
                 if b:
@@ -312,9 +369,12 @@ def _continue(state, breakpoints, skip_first):
                     _paused = state
                     break
                 state['skip'] = -1
+                running_lines = (p.lineno, p.end_lineno)
                 run_progress.end_to(0)
                 if progress_lib:
                     progress_lib.libfive_run_step(i, run_progress._b(_step_label(source_lines, p)))
+                    if hasattr(progress_lib, 'libfive_run_step_line'):
+                        progress_lib.libfive_run_step_line(p.lineno)
                 if isinstance(p, ast.Expr):
                     exp = ast.Expression(p.value)
                     f = compile(exp, '<file>', 'eval')
@@ -340,15 +400,28 @@ def _continue(state, breakpoints, skip_first):
                                               time.time() - started)
                 out.append(r)
                 lines.append((p.lineno, p.end_lineno))
+                outline.record(p, state['src'], gs, r)
+                if pending:
+                    # (a name that a statement that waits would have made is made by this one after all: nothing waits for it any more)
+                    pending -= {n.id for n in ast.walk(p) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
                 state['i'] = i + 1
     except BaseException as e:
         # The script stopped with an error: its model tree lists what the statements before it made.  (Not when it
-        # was stopped by the application, for a newer edit: that is not an error of the script's)
-        if watcher and not (type(e) is Exception and not e.args):
+        # was stopped by the application, for a newer edit or by the red dot -- a solver that gave up says "cancelled" --
+        # that is not an error of the script's)
+        stopped = (type(e) in (Exception, KeyboardInterrupt) and not e.args) or str(e).endswith('cancelled')
+        if not stopped and state['i'] < len(body):
+            outline.note_error(body[state['i']], state['src'], e)
+        # (what the statements before it made, and the lines they are on: the viewer shows it beside the error)
+        last_partial = list(out)
+        last_lines = list(lines)
+        last_globals = gs
+        if watcher and not stopped:
             watcher.close()
             watcher.error_scene()
         raise
     finally:
+        running_lines = None
         if watcher:
             watcher.close()
         last_output = state['printed'].getvalue()
@@ -357,10 +430,9 @@ def _continue(state, breakpoints, skip_first):
             progress_lib.libfive_run_end()
     last_lines = list(lines)
     last_globals = gs
-    try:
-        from fieldes.app_support import scene_json
-        last_scene = scene_json(state['s'], gs, out)
-    except Exception as e:      # the model tree is a convenience only
-        import json
-        last_scene = json.dumps({'error': '{}: {}'.format(type(e).__name__, e)})
+    if state.get('hole') and last_paused <= 0:
+        # (a run that stopped at a breakpoint says that first: the statements that wait are told when it has run to its end)
+        last_paused = state['hole'][0]
+        last_hole = state['hole']
+    outline.finish(state['s'], gs, out)         # (what takes a measurement of the shapes: the tree is asked for again when it is done)
     return list(out)

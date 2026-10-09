@@ -43,6 +43,7 @@ public:
     QString extension() override { return ".py"; }
 
     void halt() override;
+    void terminate() override;
     void noteRequest() override;
     void preinit() override;
     void setBreakpoints(QList<int> lines) override;
@@ -72,6 +73,7 @@ protected:
     PyObject* m_varFunc=NULL;
     PyThreadState* m_threadState=NULL;
     unsigned long m_workerThreadId=0;
+    std::atomic<bool> m_evaluating{false};  // a script is running in the worker (set and cleared with the GIL held)
     std::atomic<int> m_requests{0};         // the runs of the script that have been asked for and not begun
 
 };

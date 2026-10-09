@@ -6,6 +6,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #include "libfive/step/step_progress.hpp"
+#include "libfive/run_progress.hpp"
 
 #include <algorithm>
 #include <mutex>
@@ -83,6 +84,7 @@ void begin(const std::string& path)
 
 void setRead(double fraction)
 {
+    run_progress::checkpoint();     // (an import is paused where it reports: the parts of the file, the faces, the solids)
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_running && g_stage == 0) g_read = std::max(g_read, std::min(1.0, fraction));
 }
@@ -98,6 +100,7 @@ void setFaces(size_t total)
 
 void faceDone()
 {
+    run_progress::checkpoint();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_running && g_stage == 1 && g_facesDone < g_faces) g_facesDone++;
 }
@@ -117,12 +120,14 @@ void skipSolid(size_t solid)
 
 void solidStarted(size_t solid)
 {
+    run_progress::checkpoint();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (solid < g_solids.size()) g_solids[solid].state = 1;
 }
 
 void solidDone(size_t solid)
 {
+    run_progress::checkpoint();
     std::lock_guard<std::mutex> lock(g_mutex);
     if (solid < g_solids.size() && g_solids[solid].state != 3) g_solids[solid].state = 2;
 }

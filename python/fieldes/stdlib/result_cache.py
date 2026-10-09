@@ -29,6 +29,8 @@ import tempfile
 import threading
 import time
 
+from fieldes.stdlib.content_cache import is_local
+
 __all__ = ['stats', 'load', 'save', 'salt']
 
 
@@ -68,9 +70,13 @@ def _folder():
     return os.path.join(os.path.dirname(os.path.abspath(field_cache._folder())), 'result-cache')
 
 
+# What the solvers' results are, as a number: it changes when a change to a solver changes what it gives for the same problem (a different
+# optimiser, another mesh), and only then -- so that a program that is rebuilt or updated reads back what an earlier one solved
+RESULT_VERSION = 4
+
+
 def _key(kind, ekey):
-    from fieldes import field_cache
-    text = repr(('fdrc', 1, field_cache._code_identity(), kind, ekey))
+    text = repr(('fdrc', RESULT_VERSION, kind, ekey))
     return hashlib.sha1(text.encode('utf-8', 'surrogatepass')).hexdigest()
 
 
@@ -91,7 +97,7 @@ def _fs(path):
 def load(kind, ekey, what):
     ''' The solved problem of this key, read back from its file: (handle pointer, extras dict), or None.
         `what` names the analysis in the message FielDes logs. '''
-    if ekey is None or kind not in _KINDS:
+    if ekey is None or kind not in _KINDS or is_local(ekey):
         return None
     from fieldes.ffi import lib
     loader = getattr(lib, 'libfive_%s_load' % kind, None)
@@ -124,7 +130,7 @@ def load(kind, ekey, what):
 
 def save(kind, ekey, ptr, what, extras=None):
     ''' Keeps the solved problem behind `ptr` for this key, with the extras (plain JSON) the Python result needs '''
-    if ekey is None or kind not in _KINDS or not ptr:
+    if ekey is None or kind not in _KINDS or not ptr or is_local(ekey):       # (a part only this session can recognise: no file another could find)
         return
     from fieldes.ffi import lib
     saver = getattr(lib, 'libfive_%s_save' % kind, None)

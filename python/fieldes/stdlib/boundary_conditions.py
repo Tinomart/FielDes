@@ -4,48 +4,58 @@ Boundary conditions you can see.
     from fieldes import *
 
     part = ...
-    conditions = static_boundary_conditions(
-        part,
-        supports=[fixed(base)],                                   # held here
-        loads=[force(lug, (0, -2000, 0)), gravity()])             # pushed here, and its own weight
-    conditions                                                    # displayed: supports and loads drawn on the part
-    result = static_analysis(part, conditions, material=aluminium, element_size=4)
+    base = fixed(base_face)                                       # held here
+    push = force(lug_face, (0, -2000, 0))                         # pushed here
+    result = static_analysis(part, supports=[base], loads=[push, gravity()], material=aluminium, element_size=4)
+    base                                                          # displayed: the held surface, with pads
+    push                                                          # displayed: the loaded surface, with arrows
 
-`static_boundary_conditions(part, supports, loads)` is the problem to solve, without the solving: the supports
-and loads of a static analysis, tied to the part they act on.  It is a shape, so it has a row in the model tree
-(show, hide, delete) like any other.  It is drawn the way structural analysis programs draw it:
+Every boundary condition -- a support, a force, a temperature, an inlet ... -- is a model of its own: a row of the model tree with an eye, and
+it is drawn the way structural and flow analysis programs draw it, on the body of the simulation it was given to (the body itself is drawn by
+its own row: show it with its eye to see both):
 
-    * the faces that are held or loaded are tinted (blue: fixed support, cyan: sliding support, red: force)
-    * a force is an ARRAY of identical arrows over the loaded faces, all along the force, each touching the surface
-      with its tip when it pushes in and with its tail when it pulls out, with the total force written beside it
-    * a support is an array of flat pads lying on the held faces, with its name beside it
+    * the surface it acts on is tinted, in a colour that says what it is (blue: fixed support, cyan: sliding support, red: force, orange:
+      gravity, yellow: heat in, green: inlet, violet: outlet, grey: wall, light blue: slip, ...)
+    * a force, an inlet, an outlet or a heat input is an ARRAY of identical arrows over the surface, each touching it with its tip when it pushes
+      in and with its tail when it points out, with what it says written beside it (the total force, the speed, the pressure, the power)
+    * a support, a wall, a slip, a temperature or a convection is an array of flat pads lying on the surface, with its name beside it
     * gravity is one arrow beside the part along the acceleration, with its value
+
+A simulation has the toggle `boundary conditions` in the model tree: it shows or hides all of its conditions at once.
 
 The arrows, pads and texts are not part of the meshed model: the viewport draws them over it, with a size that follows
 the zoom, so they are never cut off by the render region or made ragged by the render's resolution.
 
-`static_analysis`, `modal_analysis` and `topology_optimization` take it: it is the only way to give them
-their supports and loads (they take no `supports=` and `loads=` lists).  The tint is the part's own
-surface, coloured (and drawn a hair towards the eye, so that it wins over the part if both are shown); a place of the part counts
-as in a region when it is within about 1 % of the part's size of it.
+The tint is the body's own surface, coloured and drawn alone (a hair towards the eye, so that it wins over the body where both are shown); a
+place of the body counts as in a region when it is within about 1 % of the body's size of it.  A condition that no simulation has been given
+yet is drawn on a body all the same -- the one its surface was picked on (select_surface, surface_from_bodies), else the biggest solid of the
+script that its region reaches -- so it looks the same while you are setting a simulation up; only when the script has no body at all is it
+drawn as the region itself (the place it acts).
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
+import inspect
 import math
+import weakref
 
 from fieldes.ffi import lib
 from fieldes.shape import Shape
+from fieldes.stdlib.content_cache import content_cached
 from fieldes.stdlib.fea import _Support, _Force, _Gravity, _Thermal, _bounds, FeaError
 from fieldes.stdlib.fields import evaluate
 
-__all__ = ['static_boundary_conditions', 'StaticBoundaryConditions']
+__all__ = []
 
-# What a colour of the picture means (the colour map 'bc' of the application: the value is the category)
-FIXED, SLIDING, FORCE, GRAVITY = 1, 2, 3, 4
-_NAMES = {FIXED: 'Fixed support', SLIDING: 'Sliding support', FORCE: 'Force', GRAVITY: 'Gravity'}
-_RANGE = (0.0, 6.0)
+# What a colour of the picture means (the colour map 'bc' of the application: the value is the category; see colormap.hpp)
+FIXED, SLIDING, FORCE, GRAVITY, HEAT, SELECTED = 1, 2, 3, 4, 5, 6
+INLET, OUTLET, WALL, SLIP, TEMPERATURE, CONVECTION, GENERATION = 7, 8, 9, 10, 11, 12, 13
+_NAMES = {FIXED: 'Fixed support', SLIDING: 'Sliding support', FORCE: 'Force', GRAVITY: 'Gravity', HEAT: 'Heat in', INLET: 'Inlet',
+          OUTLET: 'Outlet', WALL: 'Wall', SLIP: 'Slip', TEMPERATURE: 'Fixed temperature', CONVECTION: 'Convection',
+          GENERATION: 'Heat generated'}
+CATEGORIES = 13
+_RANGE = (0.0, float(CATEGORIES))
 
 # How many symbols a loaded or supported face gets (about), and how big they may be, as shares of the part's size
 _FORCE_ARROWS = 48
@@ -53,62 +63,143 @@ _SUPPORT_PADS = 24
 _MAX_SYMBOLS = 90
 
 
-class StaticBoundaryConditions(Shape):
-    ''' The supports and loads of a static analysis and the part they act on, drawn on the part (see the
-        module).  .part, .supports, .loads; pass it to static_analysis(part, conditions, ...) '''
+def _kind_of(item):
+    ''' How a condition is drawn: (category, 'pad' | 'in' | 'out' | 'none', the text beside it) -- a pad lies on the surface, an arrow goes in
+        (its tip on the surface) or out (its tail on it), 'none' is only the tint '''
+    from fieldes.stdlib import thermal, fluid
+    if isinstance(item, thermal._Temperature):
+        value = item.value
+        return TEMPERATURE, 'pad', ('%g °C' % value) if isinstance(value, (int, float)) else 'Temperature (a field)'
+    if isinstance(item, thermal._HeatGeneration):
+        return GENERATION, 'none', '%g W generated' % item.power
+    if isinstance(item, thermal._Heat):
+        return HEAT, 'in' if item.power >= 0 else 'out', ('%g W' % item.power) if item.power >= 0 else ('%g W out' % -item.power)
+    if isinstance(item, thermal._Convection):
+        h = item.coefficient
+        return CONVECTION, 'pad', ('Convection h = %g' % h) if isinstance(h, (int, float)) else 'Convection (a field)'
+    if isinstance(item, fluid._Inlet):
+        if item.flow_rate > 0:
+            what = '%g mm³/s' % item.flow_rate
+        elif item.speed > 0:
+            what = '%g mm/s' % item.speed
+        else:
+            what = '%g mm/s' % math.sqrt(sum(v * v for v in item.direction))
+        return INLET, 'in', 'Inlet ' + what
+    if isinstance(item, fluid._Outlet):
+        return OUTLET, 'out', 'Outlet' if not item.pressure else 'Outlet %g MPa' % item.pressure
+    if isinstance(item, fluid._Wall):
+        moving = any(abs(v) > 0 for v in item.velocity)
+        return WALL, 'pad', 'Moving wall' if moving else 'Wall'
+    if isinstance(item, fluid._Slip):
+        return SLIP, 'pad', 'Slip'
+    return None
 
-    static_conditions = True          # (what static_analysis & co. look for)
-    _no_handles = True                # (not something to drag: FielDes hides the handles button)
 
-    def __repr__(self):
-        return 'static_boundary_conditions({})'.format('; '.join(self.describe()) or 'none')
-
-    def describe(self):
-        ''' One line for each support and load '''
-        out = []
-        for s in self.supports:
-            axes = ''.join(a for a, on in zip('xyz', s.axes) if on)
-            out.append('fixed ({})'.format(axes) if len(axes) == 3 else 'sliding support (fixed in {})'.format(axes or 'nothing'))
-        loads = self.loads
-        if loads and all(isinstance(c, (list, tuple)) for c in loads):
-            loads = [l for c in loads for l in c]
-        for l in loads:
-            if isinstance(l, _Force):
-                n = math.sqrt(sum(c * c for c in l.vector))
-                out.append('force {:g} N ({:g}, {:g}, {:g})'.format(n, *l.vector))
-            elif isinstance(l, _Gravity):
-                out.append('gravity ({:g}, {:g}, {:g}) mm/s2'.format(*l.g))
-            elif isinstance(l, _Thermal):
-                out.append('thermal expansion (reference {:g})'.format(l.reference))
-        return out
+_DRAWN = weakref.WeakKeyDictionary()          # (condition -> {body: what was drawn}: not kept in the condition, which is hashed by what it holds)
 
 
-def static_boundary_conditions(part, supports=(), loads=()):
-    ''' The supports and loads of a static analysis, tied to the `part` they act on and drawn on it.
+def display_condition(item):
+    ''' What a condition shows for itself (the way its model is displayed): on the body of the simulation it was given to, or on the body its
+        surface was picked on, drawn once for each body '''
+    from fieldes.stdlib.fea import _PARTS
+    parts = _PARTS.get(item)
+    part = parts[0] if parts else _body_for([item])
+    drawn = _DRAWN.setdefault(item, {})
+    key = id(part)
+    if key not in drawn:
+        drawn[key] = _draw([item], part)
+    return drawn[key]
 
-        supports   fixed(...) items
-        loads      force(...), gravity(...) and thermal_expansion(...) items -- for topology_optimization
-                   also several load cases, a list of such lists
 
-        Returns a shape to display (the held faces tinted blue, the loaded faces red; arrows for the forces, pads for
-        the supports, with their names and values; hide it with the eye of the model tree) that the analyses are given:
+def describe(item):
+    ''' One line that says what a condition is (its text beside it in the picture) '''
+    if isinstance(item, _Support):
+        axes = ''.join(a for a, on in zip('xyz', item.axes) if on)
+        return 'fixed ({})'.format(axes) if len(axes) == 3 else 'sliding support (fixed in {})'.format(axes or 'nothing')
+    if isinstance(item, _Force):
+        n = math.sqrt(sum(c * c for c in item.vector))
+        return 'force {:g} N ({:g}, {:g}, {:g})'.format(n, *item.vector)
+    if isinstance(item, _Gravity):
+        return 'gravity ({:g}, {:g}, {:g}) mm/s2'.format(*item.g)
+    if isinstance(item, _Thermal):
+        return 'thermal expansion (reference {:g})'.format(item.reference)
+    kind = _kind_of(item)
+    return kind[2] if kind else type(item).__name__
 
-            conditions = static_boundary_conditions(part, [fixed(base)], [force(lug, (0, -2000, 0))])
-            conditions
-            result = static_analysis(part, conditions, material=aluminium) '''
-    if not isinstance(part, Shape):
-        raise TypeError('static_boundary_conditions: the part must be a Shape')
-    supports = list(supports if isinstance(supports, (list, tuple)) else [supports])
-    loads = list(loads if isinstance(loads, (list, tuple)) else [loads])
-    for s in supports:
-        if not isinstance(s, _Support):
-            raise TypeError('supports must be fixed(...) items')
-    cases = loads and all(isinstance(c, (list, tuple)) for c in loads)
-    drawn_loads = [l for c in loads for l in c] if cases else loads        # (load cases are all drawn)
-    for l in drawn_loads:
-        if not isinstance(l, (_Force, _Gravity, _Thermal)):
-            raise TypeError('loads must be force(...), gravity(...) or thermal_expansion(...) items')
 
+def _regions_of(items):
+    ''' Every region a list of conditions acts in '''
+    return [i.region for i in items if getattr(i, 'region', None) is not None]
+
+
+def _members(region):
+    ''' The regions a united region is made of (see fea._united), or itself '''
+    inner = getattr(region, '_members', None)
+    return [m for r in inner for m in _members(r)] if inner else [region]
+
+
+def _bodies_overlap(a, b):
+    return all(a[0][i] <= b[1][i] and b[0][i] <= a[1][i] for i in range(3))
+
+
+def _body_for(conditions):
+    ''' The body that conditions no simulation has been given are drawn on, as they are on the body of the simulation that is: the body a
+        surface of theirs was picked on (select_surface, surface_from_bodies), else the biggest solid of the script that their regions
+        reach (the script's own models: nothing it only made on the way), else None -- the script has no body to draw them on '''
+    from fieldes.stdlib.selection import SurfaceSelection
+    regions = _regions_of(conditions)
+    for r in (m for region in regions for m in _members(region)):
+        if isinstance(r, SurfaceSelection) and isinstance(getattr(r, 'shape', None), Shape):
+            return r.shape
+    try:
+        from fieldes import runner
+        from fieldes.kinds import kind_of
+        models = list(runner.last_globals.values())
+    except Exception:
+        return None
+    reach = [b for b in (getattr(r, '_bounds', None) for r in regions) if b]
+    skip = {id(r) for r in regions}
+    best, biggest = None, 0.0
+    for v in models[:400]:
+        if not isinstance(v, Shape) or id(v) in skip or kind_of(v) != 'solid':
+            continue
+        box = getattr(v, '_bounds', None)
+        if box is None:
+            try:
+                box = _bounds(v)
+            except Exception:
+                continue
+        if not all(_bodies_overlap(box, b) for b in reach):
+            continue
+        volume = 1.0
+        for i in range(3):
+            volume *= max(box[1][i] - box[0][i], 1e-9)
+        if volume > biggest:
+            best, biggest = v, volume
+    return best
+
+
+@content_cached('bc_support_symbols', limit=48)
+def _support_symbols(part, region, lo, hi, size, tol):
+    ''' Where the pads of a support go (see _symbol_points), remembered by the part, the region and the numbers: the script runs again on every
+        edit -- a hide, a show -- and finding them evaluates the part at thousands of points '''
+    return _within_cap(_symbol_points, part, region, lo, hi, size, tol, want=_SUPPORT_PADS)
+
+
+@content_cached('bc_force_symbols', limit=48)
+def _force_symbols(part, region, lo, hi, size, tol, d):
+    ''' Where the arrows of a force along `d` go (see _force_points), remembered the same way '''
+    return _within_cap(_force_points, part, region, lo, hi, size, tol, d, want=_FORCE_ARROWS)
+
+
+def _draw(items, part):
+    ''' What the viewport shows of conditions: on `part` -- the body's own surface tinted where it is held, loaded or otherwise acted on, the
+        arrows and pads -- or, with no body to draw them on, the regions themselves '''
+    supports = [i for i in items if isinstance(i, _Support)]
+    drawn_loads = [i for i in items if isinstance(i, (_Force, _Gravity, _Thermal))]
+    others = [i for i in items if not isinstance(i, (_Support, _Force, _Gravity, _Thermal))]
+    if part is None:
+        return _draw_regions(items)
     try:
         lo, hi = _bounds(part)
     except FeaError:
@@ -127,7 +218,7 @@ def static_boundary_conditions(part, supports=(), loads=()):
         cat = FIXED if all(s.axes) else SLIDING
         pieces.append((cat, s.region, tol))
         present.add(cat)
-        pts, step = _within_cap(_symbol_points, part, s.region, lo, hi, size, tol, want=_SUPPORT_PADS)
+        pts, step = _support_symbols(part, s.region, tuple(lo), tuple(hi), size, tol)
         if not pts:
             notes.append('a support is where the part is not')
             continue
@@ -147,21 +238,22 @@ def static_boundary_conditions(part, supports=(), loads=()):
             if n <= 0:
                 continue
             d = _unit(l.vector)
-            pts, step = _within_cap(_force_points, part, l.region, lo, hi, size, tol, d, want=_FORCE_ARROWS)
+            pts, step = _force_symbols(part, l.region, tuple(lo), tuple(hi), size, tol, tuple(d))
             if not pts:
                 notes.append('a force acts where the part is not')
                 continue
             length = min(0.14 * size, max(0.03 * size, 1.3 * step)) * (0.75 + 0.25 * n / biggest)
             far = []                                     # the end of each arrow that is away from the surface
-            for p, nrm in pts:
+            for p, nrm, room in pts:
                 dn = _dot(d, nrm)
                 base = tuple(p[a] + nrm[a] * lift for a in range(3))
+                ln = length if room is None else min(length, 0.85 * room)       # (an arrow in a bore is as long as the bore leaves room for)
                 if dn < 0.0:                             # pushing in: the tip touches the surface
-                    glyphs.append((FORCE, True, base, d, length))
-                    far.append((tuple(base[a] - d[a] * length for a in range(3)), nrm))
+                    glyphs.append((FORCE, True, base, d, ln))
+                    far.append((tuple(base[a] - d[a] * ln for a in range(3)), nrm))
                 else:                                    # pulling out: the tail is on the surface
-                    glyphs.append((FORCE, False, base, d, length))
-                    far.append((tuple(base[a] + d[a] * length for a in range(3)), nrm))
+                    glyphs.append((FORCE, False, base, d, ln))
+                    far.append((tuple(base[a] + d[a] * ln for a in range(3)), nrm))
             labels.append((FORCE, '{:g} N'.format(float('{:.4g}'.format(n))), _label_point(far, 0.35 * length)))
         elif isinstance(l, _Gravity):
             arrow = _gravity_arrow(l.g, lo, hi, size)
@@ -169,14 +261,47 @@ def static_boundary_conditions(part, supports=(), loads=()):
                 p, d, length = arrow
                 glyphs.append((GRAVITY, False, p, d, length))
                 g = math.sqrt(sum(c * c for c in l.g))
-                labels.append((GRAVITY, 'Gravity {:.4g} m/s\u00b2'.format(g / 1000.0),
+                labels.append((GRAVITY, 'Gravity {:.4g} m/s²'.format(g / 1000.0),
                                tuple(p[i] - d[i] * 0.25 * length for i in range(3))))
                 present.add(GRAVITY)
 
+    # The other kinds -- a temperature, a heat, a convection, an inlet, an outlet, a wall, a slip -- as `_kind_of` says: a tint, and pads or arrows
+    for item in others:
+        kind = _kind_of(item)
+        if kind is None:
+            continue
+        cat, how, text = kind
+        pieces.append((cat, item.region, tol))
+        present.add(cat)
+        if how == 'none':
+            continue
+        pts, step = _support_symbols(part, item.region, tuple(lo), tuple(hi), size, tol)
+        if not pts:
+            notes.append('%s acts where the part is not' % _NAMES.get(cat, 'a condition').lower())
+            continue
+        if how == 'pad':
+            for p, n in pts:
+                glyphs.append((cat, False, tuple(p[a] + n[a] * lift for a in range(3)), n, 0.7 * step))
+            labels.append((cat, text, _label_point(pts, 0.9 * step)))
+            continue
+        length = min(0.14 * size, max(0.03 * size, 1.3 * step)) * 0.85
+        far = []
+        for p, nrm in pts:
+            base = tuple(p[a] + nrm[a] * lift for a in range(3))
+            if how == 'in':                              # coming in: along the inward normal, the tip on the surface
+                d = tuple(-c for c in nrm)
+                glyphs.append((cat, True, base, d, length))
+                far.append((tuple(base[a] - d[a] * length for a in range(3)), nrm))
+            else:                                        # going out: along the outward normal, the tail on the surface
+                glyphs.append((cat, False, base, nrm, length))
+                far.append((tuple(base[a] + nrm[a] * length for a in range(3)), nrm))
+        labels.append((cat, text, _label_point(far, 0.35 * length)))
+
     # The tint: the part itself, coloured by what each place is -- 0 nothing, else the category of the region it
     # is in (the larger wins: a load is shown over a support)
-    out = StaticBoundaryConditions(lib.libfive_tree_copy(part.ptr))
-    out.part, out.supports, out.loads, out.notes = part, supports, loads, notes
+    out = Shape(lib.libfive_tree_copy(part.ptr))
+    out.supports, out.loads, out.notes = supports, drawn_loads, notes
+    out._no_handles = True
     out._bounds = (tuple(lo), tuple(hi))
     colour = Shape.wrap(0.0)
     for cat, region, t in pieces:
@@ -185,11 +310,49 @@ def static_boundary_conditions(part, supports=(), loads=()):
     out._color_range = _RANGE
     out._color_label = 'bc:' + ','.join(str(c) for c in sorted(present))
     out._color_map = 'bc'
+    out._color_floor = 0.5          # (only the acted-on surfaces are drawn, flat in their colour: not the body they are on, which has its own row)
     # What the viewport draws over it (see the module): (kind, tip at the point, x, y, z, dx, dy, dz, size) and (kind, text, x, y, z)
     out._bc_glyphs = [(int(k), 1 if tip else 0, p[0], p[1], p[2], d[0], d[1], d[2], float(s)) for k, tip, p, d, s in glyphs]
     out._bc_labels = [(int(k), str(t), p[0], p[1], p[2]) for k, t, p in labels]
     if notes:
-        print('static_boundary_conditions: ' + '; '.join(notes))
+        print('boundary conditions: ' + '; '.join(notes))
+    return out
+
+
+def _draw_regions(items):
+    ''' The conditions of no simulation yet, with no body in the script: the regions they act in, tinted by what they are (there is no body to
+        draw the arrows on) '''
+    pieces, present = [], set()
+    for item in items:
+        if isinstance(item, _Support):
+            cat = FIXED if all(item.axes) else SLIDING
+        elif isinstance(item, _Force):
+            cat = FORCE
+        else:
+            kind = _kind_of(item)
+            if kind is None:
+                continue
+            cat = kind[0]
+        pieces.append((cat, item.region))
+        present.add(cat)
+    if not pieces:
+        return Shape.wrap(1e9)
+    region = pieces[0][1]
+    for _, r in pieces[1:]:
+        region = region.min(r)
+    # (the regions are where the field is negative: they are the picture; the colour says which is which)
+    out = Shape(lib.libfive_tree_copy(region.ptr))
+    out._no_handles = True
+    boxes = [getattr(r, '_bounds', None) for _, r in pieces]
+    if all(boxes):
+        out._bounds = (tuple(min(b[0][i] for b in boxes) for i in range(3)), tuple(max(b[1][i] for b in boxes) for i in range(3)))
+    colour = Shape.wrap(0.0)
+    for cat, r in pieces:
+        colour = colour.max(float(cat) * _inside(r, 1e-6))
+    out._color_field = colour
+    out._color_range = _RANGE
+    out._color_label = 'bc:' + ','.join(str(c) for c in sorted(present))
+    out._color_map = 'bc'
     return out
 
 
@@ -373,6 +536,12 @@ def _force_points(part, region, lo, hi, size, tol, d, want):
         Returns ([(point, outward normal)], step); ([], 0) if there is no such surface '''
     surf, norm, cell = _surface_samples(part, region, lo, hi, size, tol)
     seen = [(p, n) for p, n in zip(surf, norm) if abs(_dot(n, d)) >= 0.5]
+    grazed = False
+    if not seen:
+        # A surface that the force only grazes -- the wall of a bore that is loaded along its axis, a seat -- is loaded all the same: the
+        # arrows are shown on it, whatever way it faces (the force is where the region is, not where a face is turned towards it)
+        seen = list(zip(surf, norm))
+        grazed = bool(seen)
     if not seen:
         return [], 0.0
     u, v = _tangents(d)
@@ -419,27 +588,32 @@ def _force_points(part, region, lo, hi, size, tol, d, want):
     f2 = evaluate(part, onto)
     r2 = evaluate(region, onto)
     out = [(q, n) for q, n, fv, rv in zip(onto, normals, f2, r2)
-           if abs(fv) <= 0.05 * cell and rv < tol and abs(_dot(n, d)) >= 0.4]
+           if abs(fv) <= 0.05 * cell and rv < tol and (grazed or abs(_dot(n, d)) >= 0.4)]
     if not out:
         return [], 0.0
+    if grazed:
+        return [(q, n, None) for q, n in out], step     # (an arrow along a wall has no open space in front of it to look for)
     # An arrow stands in the open: the space it points into -- the way the surface faces, out of the part -- is free of the
-    # part for a few of its lengths.  What is not (the bottom of a bore, a slot, the foot of a wall: the part is over it) gets no arrow
+    # part for a few of its lengths.  Where it is not (the inside of a bore, a slot, the foot of a wall: the part is over it) the arrow
+    # is made as short as the free space is, and there is none when less than two probes of it are free.  Each point comes with the
+    # free distance (None: all that was looked at)
     reach = 5.0 * step
     along = [d if _dot(n, d) > 0.0 else tuple(-c for c in d) for _, n in out]
-    probes, owner = [], []
+    probes, owner, order = [], [], []
     for k, ((q, _), w) in enumerate(zip(out, along)):
         for m in range(1, int(reach / (0.4 * step)) + 1):
             probes.append(tuple(q[a] + w[a] * 0.4 * step * m for a in range(3)))
             owner.append(k)
-    blocked = set()
+            order.append(m)
+    free = {}
     if probes:
-        for k, fv in zip(owner, evaluate(part, probes)):
-            if fv < 0.0:
-                blocked.add(k)
-    out = [t for k, t in enumerate(out) if k not in blocked]
-    if not out:
+        for k, m, fv in zip(owner, order, evaluate(part, probes)):
+            if fv < 0.0 and k not in free:
+                free[k] = (m - 1) * 0.4 * step          # (the first probe inside the part: the space before it is free)
+    kept = [(q, n, free.get(k)) for k, (q, n) in enumerate(out) if free.get(k, reach) >= 0.8 * step]
+    if not kept:
         return [], 0.0
-    return out, step
+    return kept, step
 
 
 def _symbol_points(part, region, lo, hi, size, tol, want):
@@ -513,9 +687,10 @@ def _symbol_points(part, region, lo, hi, size, tol, want):
         for k, (q, nq) in enumerate(zip(qs, qn)):
             if abs(fq[k]) > 0.05 * cell or rq[k] >= tol or _dot(nq, n) < 0.8:
                 continue
-            around = [tuple(q[a] + 0.3 * step * (sx * u[a] + sy * v[a]) for a in range(3))
+            # (the pad is 0.7 steps across: the face goes on past its rim on all four sides, so it never hangs over the edge)
+            around = [tuple(q[a] + 0.4 * step * (sx * u[a] + sy * v[a]) for a in range(3))
                       for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
-            if not all(_near_any(fcells, face_pts, step, w, 0.4 * step) for w in around):
+            if not all(_near_any(fcells, face_pts, step, w, 0.25 * step) for w in around):
                 continue
             kept.append((q, nq, index[k]))
         out.extend((q, nq) for q, nq, _ in kept)

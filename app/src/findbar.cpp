@@ -16,6 +16,7 @@ of the License, or (at your option) any later version.
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/findbar.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/color.hpp"
@@ -29,8 +30,8 @@ FindBar::FindBar(Script* script, QWidget* parent)
       m_case(new QToolButton), m_word(new QToolButton), m_regex(new QToolButton),
       m_count(new QLabel)
 {
-    m_find->setPlaceholderText("Find");
-    m_replace->setPlaceholderText("Replace");
+    m_find->setPlaceholderText(T("Find"));
+    m_replace->setPlaceholderText(T("Replace"));
     m_find->setClearButtonEnabled(true);
     m_find->installEventFilter(this);
     m_replace->installEventFilter(this);
@@ -41,9 +42,9 @@ FindBar::FindBar(Script* script, QWidget* parent)
         b->setCheckable(true);
         b->setAutoRaise(true);
     };
-    option(m_case, "Aa", "Match case (Alt+C)");
-    option(m_word, "W", "Whole words (Alt+W)");
-    option(m_regex, ".*", "Regular expression (Alt+R)");
+    option(m_case, "Aa", T("Match case (Alt+C)"));
+    option(m_word, "W", T("Whole words (Alt+W)"));
+    option(m_regex, ".*", T("Regular expression (Alt+R)"));
 
     auto button = [this](QString text, QString tip, auto slot) {
         auto b = new QToolButton;
@@ -62,20 +63,20 @@ FindBar::FindBar(Script* script, QWidget* parent)
     findRow->addWidget(m_word);
     findRow->addWidget(m_regex);
     findRow->addWidget(m_count);
-    findRow->addWidget(button("↑", "Previous match (Shift+Enter / Shift+F3)",
+    findRow->addWidget(button("↑", T("Previous match (Shift+Enter / Shift+F3)"),
                               &FindBar::findPrevious));
-    findRow->addWidget(button("↓", "Next match (Enter / F3)", &FindBar::findNext));
-    findRow->addWidget(button("All", "Select all matches for simultaneous editing (Alt+Enter)",
+    findRow->addWidget(button("↓", T("Next match (Enter / F3)"), &FindBar::findNext));
+    findRow->addWidget(button(T("All"), T("Select all matches for simultaneous editing (Alt+Enter)"),
                               &FindBar::selectAllMatches));
-    findRow->addWidget(button("✕", "Close (Esc)", &FindBar::closeBar));
+    findRow->addWidget(button("✕", T("Close (Esc)"), &FindBar::closeBar));
 
     auto replaceRow = new QHBoxLayout(m_replaceRow);
     replaceRow->setContentsMargins(0, 0, 0, 0);
     replaceRow->setSpacing(2);
     replaceRow->addWidget(m_replace, 1);
-    replaceRow->addWidget(button("Replace", "Replace this match (Enter in replace field)",
+    replaceRow->addWidget(button(T("Replace"), T("Replace this match (Enter in replace field)"),
                                  &FindBar::replaceOne));
-    replaceRow->addWidget(button("Replace all", "Replace every match (Ctrl+Alt+Enter)",
+    replaceRow->addWidget(button(T("Replace all"), T("Replace every match (Ctrl+Alt+Enter)"),
                                  &FindBar::replaceAll));
 
     auto layout = new QVBoxLayout(this);
@@ -187,9 +188,9 @@ void FindBar::updateMatches()
     m_find->setStyleSheet(bad || (valid && m_matches.isEmpty())
         ? "QLineEdit { background: #f8d7d0; }" : QString());
     const int cur = currentIndex();
-    m_count->setText(m_matches.isEmpty() ? (m_find->text().isEmpty() ? "" : "No results")
-                   : cur >= 0 ? QString("%1 of %2").arg(cur + 1).arg(m_matches.size())
-                              : QString("%1 found").arg(m_matches.size()));
+    m_count->setText(m_matches.isEmpty() ? (m_find->text().isEmpty() ? QString() : T("No results"))
+                   : cur >= 0 ? T("%1 of %2").arg(cur + 1).arg(m_matches.size())
+                              : T("%1 found").arg(m_matches.size()));
 }
 
 int FindBar::currentIndex() const
@@ -216,7 +217,7 @@ void FindBar::jumpTo(int index)
     m_script->revealBlock(c.block());
     m_script->setTextCursor(c);
     m_script->centerCursor();
-    m_count->setText(QString("%1 of %2").arg(index + 1).arg(m_matches.size()));
+    m_count->setText(T("%1 of %2").arg(index + 1).arg(m_matches.size()));
 }
 
 void FindBar::findNext()
@@ -315,7 +316,7 @@ void FindBar::replaceAll()
     }
     edit.endEditBlock();
     updateMatches();
-    m_count->setText(QString("Replaced %1").arg(n));
+    m_count->setText(T("Replaced %1").arg(n));
 }
 
 void FindBar::selectAllMatches()

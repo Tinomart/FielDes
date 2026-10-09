@@ -127,6 +127,14 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
         raise ValueError("handles(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
         raise ValueError('handles(): move=, rotate= and scale= take three numbers each')
+    if not isinstance(shape, Shape) and callable(getattr(shape, '_display', None)):
+        # The result of an analysis or an optimisation is not a shape: it has no surface of its own to place (what it shows is made from
+        # its part).  Placed by nothing it is the result itself; placed by something, there is nothing it could mean
+        nums = _var_numbers(list(move) + list(rotate) + list(scale))
+        if nums is not None and all(n == 0 for n in nums[:6]) and all(n == 1 for n in nums[6:]):
+            return shape
+        raise TypeError('handles(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
+                        'Place the part it was made from (handles() on that part) -- the result follows it.' % type(shape).__name__)
     c = tuple(about) if about is not None else _centre_of(shape)
     to_rad = math.pi / 180.0
     out = shape
@@ -248,6 +256,48 @@ def _exposed_distance(shape, out, values, get):
     return base + (out - ref)
 
 
+_EPOCH = 0           # (a new script: what the last one was seen to have is forgotten)
+
+
+def forget_literals():
+    ''' A script was opened: the numbers the last run saw in the calls of the old one say nothing about this one '''
+    global _EPOCH
+    _EPOCH += 1
+
+
+def _follow_literals(shape, values):
+    ''' The number you change in the call of a shape that has been dragged wins.  `expose` holds the dragged numbers (the list of var()s below the
+        call), and a number written in the call -- `cylinder(15, 10, ...)` -- is only what the shape was made with: editing it did nothing, the list
+        below the call went on saying what the shape is.  Here the run notices that a number of the call is not what it was at the last run while
+        the list is as it was (nothing was dragged): the number of the call is taken, and the list is rewritten to say it, by the editor, once the
+        run is over (host.__resync).  Dragging, or editing the list, still works as it did: a number of the call that has not changed has no say. '''
+    try:
+        import _fieldes_host as host
+    except ImportError:
+        return
+    entries = getattr(host, '__vars', None) or []
+    where = {id(e[0]): e for e in entries}
+    own = [float(x) for x in exposed_values(shape)]
+    for v, c in zip(values, own):
+        entry = where.get(id(v))
+        if entry is None:
+            continue
+        value = float(entry[1])
+        seen = getattr(v, '_literal_seen', None)
+        tol = 1e-4 * max(1.0, abs(c))
+        if seen is not None and seen[0] == _EPOCH and abs(seen[1] - c) > tol and abs(seen[2] - value) <= tol:
+            getattr(host, '__retune')(v, c)
+            line, end_line, col, end_col = entry[2]
+            resync = getattr(host, '__resync', None)
+            if resync is not None:
+                resync.append((line - 1, col, end_line - 1, end_col - 1, _float32_text(c)))
+            value = c
+        try:
+            v._literal_seen = (_EPOCH, c, value)
+        except AttributeError:
+            pass
+
+
 def expose(shape, values):
     ''' A shape whose surfaces can be dragged: the numbers that place its
         surfaces -- a plane's position, a radius, the faces of a box -- are
@@ -265,6 +315,7 @@ def expose(shape, values):
     if len(values) != n:
         raise ValueError('expose(): the shape has %d numbers to expose, %d were given -- the part has '
                          'changed since (Reimport it in the model tree)' % (n, len(values)))
+    _follow_literals(shape, values)
     # (the wrapped numbers stay alive until the call has returned: plain numbers wrap to shapes
     # that would otherwise be freed with their pointers still in `arr`)
     wrapped = [Shape.wrap(v) for v in values]

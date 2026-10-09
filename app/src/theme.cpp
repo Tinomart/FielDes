@@ -10,6 +10,7 @@ of the License, or (at your option) any later version.
 #include <QPalette>
 #include <QStyleFactory>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/theme.hpp"
 
 namespace FielDes {

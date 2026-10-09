@@ -459,6 +459,19 @@ try:
     lib.libfive_tetfea_load.restype = libfive_tetfea_p
     lib.libfive_tetfea_set_salt.argtypes = [libfive_tetfea_p, ctypes.c_uint64]
     lib.libfive_tetfea_set_salt.restype = None
+    lib.libfive_tetfea_set_origin.argtypes = [libfive_tetfea_p, libfive_tree]
+    lib.libfive_tetfea_set_origin.restype = None
+    lib.libfive_tetfea_set_sharpness.argtypes = [libfive_tetfea_p, ctypes.c_double]
+    lib.libfive_tetfea_set_sharpness.restype = None
+    if hasattr(lib, 'libfive_tetfea_add_support_case'):
+        lib.libfive_tetfea_add_support_case.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        lib.libfive_tetfea_add_support_case.restype = None
+        lib.libfive_tetfea_add_mirror.argtypes = [libfive_tetfea_p, ctypes.c_int, ctypes.c_double, ctypes.c_int]
+        lib.libfive_tetfea_add_mirror.restype = None
+        lib.libfive_tetfea_set_symmetry_auto.argtypes = [libfive_tetfea_p, ctypes.c_int]
+        lib.libfive_tetfea_set_symmetry_auto.restype = None
+        lib.libfive_tetfea_mirror.argtypes = [libfive_tetfea_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        lib.libfive_tetfea_mirror.restype = ctypes.c_int
     lib.libfive_tetfea_solve.argtypes = [libfive_tetfea_p, ctypes.c_int, ctypes.c_float]
     lib.libfive_tetfea_solve.restype = ctypes.c_int
     lib.libfive_tetfea_message.argtypes = [libfive_tetfea_p]
@@ -490,7 +503,7 @@ try:
                                                   ctypes.c_float, ctypes.c_int]
     lib.libfive_tetfea_add_force_case.restype = None
     lib.libfive_tetfea_optimize.argtypes = [libfive_tetfea_p, ctypes.c_float, ctypes.c_float, ctypes.c_float,
-                                            ctypes.c_int, ctypes.c_float, ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
+                                            ctypes.c_int, ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
                                             ctypes.POINTER(ctypes.c_void_p), ctypes.c_int, ctypes.c_int, ctypes.c_float,
                                             ctypes.c_int]
     lib.libfive_tetfea_optimize.restype = ctypes.c_int
@@ -637,10 +650,17 @@ try:
     lib.libfive_tetflow_inlet_seeds.restype = ctypes.c_int
     lib.libfive_tetflow_optimize.argtypes = [libfive_tetflow_p, libfive_tree, libfive_tree, ctypes.c_float, ctypes.c_float,
                                              ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_float,
-                                             ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_int, ctypes.c_float,
+                                             ctypes.c_float, ctypes.c_float, ctypes.c_float, ctypes.c_int,
                                              ctypes.POINTER(ctypes.c_void_p), ctypes.c_int, ctypes.POINTER(ctypes.c_void_p), ctypes.c_int,
                                              ctypes.c_int, ctypes.c_float]
     lib.libfive_tetflow_optimize.restype = ctypes.c_int
+    if getattr(lib, 'libfive_tetflow_add_mirror', None) is not None:
+        lib.libfive_tetflow_add_mirror.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.c_double, ctypes.c_int]
+        lib.libfive_tetflow_add_mirror.restype = None
+        lib.libfive_tetflow_set_symmetry_auto.argtypes = [libfive_tetflow_p, ctypes.c_int]
+        lib.libfive_tetflow_set_symmetry_auto.restype = None
+        lib.libfive_tetflow_mirror.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        lib.libfive_tetflow_mirror.restype = ctypes.c_int
     lib.libfive_tetflow_direction.argtypes = [libfive_tetflow_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
     lib.libfive_tetflow_direction.restype = None
     lib.libfive_tetflow_level.argtypes = [libfive_tetflow_p]

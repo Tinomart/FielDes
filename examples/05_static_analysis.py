@@ -22,11 +22,11 @@ plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
                box_exact((45, 5, -61), (76, 36, 29)))
 lugs = box_exact((-60, -90, -61), (60, -60, 29))
 
-conditions = static_boundary_conditions(bracket,
-                                        supports=[fixed(plates)],
-                                        loads=[force(lugs, (0, -2000, 0))])      # N, pulling away from the wall
-# hidden: conditions            # the problem, drawn on the part: blue pads where it is held, red arrows (2000 N) where it is pulled
-result = static_analysis(bracket, conditions, material=aluminium, element_size=2)
+# The problem: every condition is a model of its own, with its own eye in the model tree -- the surfaces where the part is
+# held (blue, with pads) and pulled (red, with arrows: 2000 N).  The "boundary conditions" row of the analysis shows or hides them all
+support = fixed(plates)
+load = force(lugs, (0, -2000, 0))      # N, pulling away from the wall
+result = static_analysis(bracket, supports=[support], loads=[load], material=aluminium, element_size=2)
 print("safety factor: %.1f" % result.safety_factor)
 
 result                # shown: the stress on the deformed part (the result card steps the load)

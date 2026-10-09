@@ -18,6 +18,7 @@ of the License, or (at your option) any later version.
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/shortcuts.hpp"
 
 namespace FielDes {
@@ -121,14 +122,14 @@ QString actionLabel(const QAction* a)
 ShortcutDialog::ShortcutDialog(QWidget* parent)
     : QDialog(parent), m_table(new QTableWidget), m_filter(new QLineEdit)
 {
-    setWindowTitle("Keyboard shortcuts");
+    setWindowTitle(T("Keyboard shortcuts"));
     resize(640, 560);
 
-    m_filter->setPlaceholderText("Filter commands or keys");
+    m_filter->setPlaceholderText(T("Filter commands or keys"));
     m_filter->setClearButtonEnabled(true);
 
     m_table->setColumnCount(3);
-    m_table->setHorizontalHeaderLabels({"Command", "Shortcut", "Category"});
+    m_table->setHorizontalHeaderLabels({T("Command"), T("Shortcut"), T("Category")});
     m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -137,16 +138,16 @@ ShortcutDialog::ShortcutDialog(QWidget* parent)
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSortingEnabled(false);
 
-    auto hint = new QLabel("Double-click a command to change its shortcut. "
-                           "Changes apply immediately and are remembered.");
+    auto hint = new QLabel(T("Double-click a command to change its shortcut. "
+                           "Changes apply immediately and are remembered."));
     hint->setWordWrap(true);
 
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-    auto reset = buttons->addButton("Reset all to defaults", QDialogButtonBox::ResetRole);
+    auto reset = buttons->addButton(T("Reset all to defaults"), QDialogButtonBox::ResetRole);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::accept);
     connect(reset, &QPushButton::clicked, this, [this]{
-        if (QMessageBox::question(this, "Reset shortcuts",
-                "Restore every default shortcut?") == QMessageBox::Yes)
+        if (QMessageBox::question(this, T("Reset shortcuts"),
+                T("Restore every default shortcut?")) == QMessageBox::Yes)
         {
             Shortcuts::resetAll();
             rebuild();
@@ -192,7 +193,7 @@ void ShortcutDialog::rebuild()
             QFont bold = k->font();
             bold.setBold(true);
             k->setFont(bold);
-            k->setToolTip("Default: " + Shortcuts::toText(e.defaults));
+            k->setToolTip(T("Default: %1").arg(Shortcuts::toText(e.defaults)));
         }
         m_table->setItem(row, 0, name);
         m_table->setItem(row, 1, k);
@@ -207,16 +208,16 @@ void ShortcutDialog::editRow(int row)
     if (!e.action) return;
 
     QDialog d(this);
-    d.setWindowTitle("Shortcut for \"" + actionLabel(e.action) + "\"");
+    d.setWindowTitle(T("Shortcut for \"%1\"").arg(actionLabel(e.action)));
     auto edit = new QKeySequenceEdit(e.action->shortcut());
-    auto clear = new QPushButton("No shortcut");
-    auto defaults = new QPushButton("Default (" + Shortcuts::toText(e.defaults) + ")");
+    auto clear = new QPushButton(T("No shortcut"));
+    auto defaults = new QPushButton(T("Default (%1)").arg(Shortcuts::toText(e.defaults)));
     auto conflict = new QLabel;
     conflict->setStyleSheet("color: #dc322f;");
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
 
     auto layout = new QVBoxLayout(&d);
-    layout->addWidget(new QLabel("Press the new key combination:"));
+    layout->addWidget(new QLabel(T("Press the new key combination:")));
     layout->addWidget(edit);
     auto row2 = new QHBoxLayout;
     row2->addWidget(clear);
@@ -241,7 +242,7 @@ void ShortcutDialog::editRow(int row)
             }
         }
         conflict->setText(users.isEmpty() ? QString()
-            : "Already used by: " + users.join(", ") + " (that binding will be removed)");
+            : T("Already used by: %1 (that binding will be removed)").arg(users.join(", ")));
     });
 
     if (d.exec() != QDialog::Accepted) return;

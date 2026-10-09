@@ -53,47 +53,77 @@ seed=(x, y, z))`) and give the selection to `fixed()` or `force()`; see [Selecti
 
 ## Boundary conditions
 
-The supports and loads of an analysis are **boundary conditions**, made once and given to the analysis:
-`static_boundary_conditions(part, supports, loads)` is the problem to solve without the solving: the supports
-and loads tied to the part they act on. It is a shape — it has a row in the model tree (eye, delete) like any
-other — and it draws the conditions **on the part**:
+Every condition is a **model of its own** -- a variable with a row in the model tree, with its eye and its bin -- and every **kind** of
+condition is an **input of its own** of the analysis that takes it. A simulation is given the body (its first argument) and one list for
+each kind of condition it takes; a kind it has none of is `[]`:
+
+| Simulation | Its inputs for conditions (each a list, all of them required) |
+|---|---|
+| `static_analysis(part, supports, loads, material=steel, ...)` | `supports` (`fixed(...)`), `loads` (`force(...)`, `gravity(...)`, `thermal_expansion(...)`) |
+| `modal_analysis(part, supports, material=steel, ...)` | `supports` |
+| `topology_optimization(part, supports, loads, material=steel, ...)` | `supports`, `loads` (or several load cases, see [Topology optimization](#topology-optimization)) |
+| `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium, ...)` | those four |
+| `thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations, convections, ...)` | the same four |
+| `fluid_analysis(domain, inlets, outlets, boundaries, fluid=water, ...)` | those three (`boundaries` takes `wall(...)` and `slip(...)` items, one kind or both) |
+| `flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=water, ...)` | the same three |
 
 ```python
-conditions = static_boundary_conditions(bracket,
-                                        supports=[fixed(plates)],
-                                        loads=[force(lugs, (0, -2000, 0)), gravity((0, -9810, 0))])
-conditions                                   # display it; hide it with the eye of the model tree
-result = static_analysis(bracket, conditions, material=aluminium, element_size=4)
+support = fixed(plates)                                          # held here
+push = force(lugs, (0, -2000, 0))                                # pulled here
+weight = gravity((0, -9810, 0))
+result = static_analysis(bracket, supports=[support], loads=[push, weight], material=aluminium, element_size=4)
+support                                                          # display it: the surface and its pads, on the bracket
 ```
+
+A condition in the wrong input is an error that says where it goes: `supports=[force(...)]` stops with "supports are fixed(...)
+items, and a force(...) is not one -- it goes in loads=". One condition may stand for an input without a list (`supports=support`).
+The body is the analysis's first argument and is not part of any condition, so one condition can be given to several simulations
+(a static one, a modal one, an optimisation of the same part), and an optimisation can be given several load cases.
+
+**Every condition draws itself, on its own.** Display it (its eye in the model tree, or its name as a statement) and the viewport shows
+**only the surface it acts on, flat in its colour, with its symbols on it**; the body has its own row, so you see the condition on the
+body or by itself. The simulation's row in the model tree has a **boundary conditions** row under it -- a placeholder for every
+kind of condition the simulation still waits for, and the conditions it has under them, in the order the simulation takes them. **The eye of that row
+shows all of them at once, or hides all of them**; each condition keeps its own eye, so you can also show them one by one. Which
+surface of which body is drawn is found the same way before a simulation has been given the condition: the body its surface was picked
+on (`select_surface`, `surface_from_bodies`), else the biggest solid of the script that its region reaches -- a region can be a body or
+a field as well as a surface. A region that touches no surface of that body gets a note ("a force acts where the part is not") and no
+symbol. Only a script with no body at all draws the regions themselves.
 
 | Drawn | Means |
 |---|---|
 | blue place on the part, with blue pads and "Fixed" | fixed support (all directions): an array of flat pads lying on the held faces |
-| cyan place, with cyan pads and "Sliding (fixed in …)" | sliding support (`fixed(region, y=False)` and the like) |
+| cyan place, with cyan pads and "Sliding (fixed in ...)" | sliding support (`fixed(region, y=False)` and the like) |
 | red place, with an array of red arrows and the force ("2000 N") | force: identical arrows spread evenly over the loaded faces, all along the force; each touches the surface with its tip when it pushes in and with its tail when it pulls out; the text is the total force |
 | one orange arrow and "Gravity 9.81 m/s²" | gravity, from where the line through the middle of the part along it leaves the part |
+| bright orange place with pads and "20 °C" | fixed temperature |
+| yellow place with arrows going in and "5 W" | heat input (arrows going out for a negative power) |
+| gold place and "5 W generated" | heat generated through the volume |
+| purple place with pads and "Convection h = ..." | convection |
+| green place with arrows going in and "Inlet 10 mm/s" | inlet |
+| violet place with arrows going out and "Outlet" | outlet |
+| grey place with pads and "Wall" ("Moving wall") | wall |
+| light-blue place with pads and "Slip" | slip |
 
 A legend at the bottom right names the colours (close it with its ×). The arrows, pads and texts are drawn by the
 viewport over the model, not meshed with it: they follow the zoom and are never cut off by the render region. The
-coloured places are the part's own surface, drawn a hair towards the eye, so the part can stay displayed or not. A place counts as in a region when it is within
-about a hundredth of the part's size of it. `conditions.describe()` lists them; the object also holds `.part`,
-`.supports` and `.loads`.
+coloured places are the part's own surface, drawn a hair towards the eye -- only those: the part is not drawn with them, so it can stay displayed or not. A place counts as in a region when it is within
+about a hundredth of the part's size of it. `describe(condition)` says one line about a condition.
 
-`static_analysis`, `modal_analysis` (the supports only) and `topology_optimization` are given the conditions —
-that is the only way to give them their supports and loads: they have no `supports=` and `loads=` of their own,
-and a list of `fixed(...)` items passed to them is an error that says so. One set of conditions can be given
-to several analyses (a static one, a modal one, an optimisation of the same part), and for
-`topology_optimization` the loads may be several load cases, `loads=[[force(a, …)], [force(b, …), gravity()]]`.
-
-**Every condition is a model too** (kind `conditions`, orange): `fixed_1 = fixed(fixed_1_region)` is a row of the model tree, with its
-region -- a box model of its own -- nested under it. Right-click empty space -> **Add simulation** -> **New support or load** (fixed, force, gravity, thermal
+**Making them.** Right-click empty space -> **Add simulation** -> **New support or load** (fixed, force, gravity, thermal
 expansion), **New thermal condition** (fixed temperature, heat input, heat generation, convection), **New flow condition** (inlet,
-outlet, wall, slip) writes one, with its region a box at the cursor; **Simulation -> static_boundary_conditions** (the menu of a model) writes the whole
-`static_boundary_conditions(part, supports=[...], loads=[...])` for a model. In the tree, **drag them onto what takes them**: a
-set of conditions onto an analysis becomes its `conditions` (it replaces the one it has), a support onto
-`static_boundary_conditions` goes into its `supports=[...]`, a load into its `loads=[...]`, a thermal or flow condition into the
-list of its analysis; a selected surface dragged onto a condition takes the place of its region. A drop that cannot be done says why
-(a load does not go in the supports, a material does not go in a condition).
+outlet, wall, slip) writes one, **with a placeholder where it acts** (`force_1 = force(region=..., vector=..., profile=None)`: like any argument that is missing, that statement waits -- the rest of the script runs -- and the placeholder row of the
+model tree takes a body, a field or a surface dropped on it -- the menu makes no box of its own for a region). **Select the regions first** -- surfaces, fields or bodies -- and the same entries write the condition for what is selected:
+`fixed_1 = fixed(selection_1)`, or `force(a, b, (0, -100, 0))` for several. **Every condition takes any number of regions, one argument after the other**, and in the model tree a body, a surface or a field dropped on a
+condition is one more of them. **A force is written with its `vector`** (0, -100, 0 newtons to begin with), where it is changed. **Simulation -> static_analysis** (and modal, topology optimization, thermal, fluid) writes the simulation of the body selected, **with the conditions selected written in the input of their kind** and a placeholder
+for every other input (`fluid_analysis(domain, inlets=[inlet_1], outlets=..., boundaries=...)`): nothing is built for you, the run stops before the line until the placeholders are filled. A condition has **no body**: the simulation is given it.
+
+**Dragging them in.** In the model tree, drag a condition -- or several, selected with Ctrl or Shift -- onto the simulation, onto its **boundary conditions** row or onto the placeholder of its kind: they go into
+the input of their kind **as a list** (`boundaries=[wall_1, slip_1, slip_2]`), a placeholder is replaced by it and a list already there gets them as more
+items. **Dropped on the simulation or on its boundary conditions row, conditions of different kinds each go into the input of their kind** -- select the whole problem and drop it at
+once. Dropped on the placeholder (or the list) of one kind, only that kind is taken. All of them go in, or none does and the reason is said: a load does not go in the supports, a material does not go in a condition.
+A condition that is defined below the simulation is moved above it.
+Taking one out of the call (its shadow's bin, or `D`) leaves the others, and the last one leaves the placeholder.
 
 ## Materials
 
@@ -143,8 +173,8 @@ the default; the voxel elements (`element='hex'`) refuse a field with a message 
 
 ```python
 graded = Material('graded', ramp(x_field(), (0, 100), (aluminium.E, aluminium.E / 10)), aluminium.nu)
-conditions = static_boundary_conditions(beam, supports=[fixed(wall)], loads=[force(top, (0, 0, -200), profile=ramp(x_field(), (0, 100), (0, 1)))])
-result = static_analysis(beam, conditions, material=graded, element_size=3)
+result = static_analysis(beam, supports=[fixed(wall)], loads=[force(top, (0, 0, -200), profile=ramp(x_field(), (0, 100), (0, 1)))],
+                         material=graded, element_size=3)
 ```
 
 `examples/19_graded_material.py` runs it and compares with beam theory: the tip of a cantilever whose stiffness falls to a
@@ -161,18 +191,17 @@ the centre of **every element**: where it is not, the analysis stops and says wh
 ## Static structural analysis
 
 ```python
-conditions = static_boundary_conditions(bracket,
-                                        supports=[fixed(plates)],
-                                        loads=[force(lugs, (0, -2000, 0))])
-conditions                                         # shown on the part
-result = static_analysis(bracket, conditions, material=aluminium, element_size=4)
+support = fixed(plates)
+load = force(lugs, (0, -2000, 0))
+result = static_analysis(bracket, supports=[support], loads=[load], material=aluminium, element_size=4)
+support                                            # shown on the part the analysis was given (the load the same way)
 print("safety factor: %.1f" % result.safety_factor)
 result                                             # shown: the stress on the deformed part
 ```
 
-`static_analysis(shape, conditions, material=steel, element_size=None, bounds=None,
-max_iterations=20000, tolerance=1e-6, cache=True, element='tet')` with the
-`static_boundary_conditions(...)` of [Boundary conditions](#boundary-conditions). The element size defaults to the part's
+`static_analysis(shape, supports, loads, material=steel, element_size=None, bounds=None,
+tolerance=1e-6, cache=True, element='tet')` with the
+conditions of [Boundary conditions](#boundary-conditions) (`loads=[]` for none). The element size defaults to the part's
 longest side over 60. It raises `FeaError` if the problem cannot be solved as given (no support touching the
 part, supports that do not hold it in place).
 
@@ -211,15 +240,14 @@ and they feed lattices (see [Field-driven design](lattices.md#driving-a-lattice-
 ## Modal analysis
 
 ```python
-conditions = static_boundary_conditions(part, supports=[fixed(base)])
-modes = modal_analysis(part, conditions, material=aluminium, modes=6, element_size=3)
+modes = modal_analysis(part, supports=[fixed(base)], material=aluminium, modes=6, element_size=3)
 print(modes.frequencies)            # Hz, lowest first
 modes.modes[0]                      # shown: the first mode shape, deformed (play: it vibrates)
 ```
 
-`modal_analysis(shape, conditions, material, modes=6, element_size=None, bounds=None, max_iterations=100,
-tolerance=1e-6, cache=True, element='tet')`. Only the supports of the conditions are used: no loads, the
-material's E and density are. Each
+`modal_analysis(shape, supports, material, modes=6, element_size=None, bounds=None,
+tolerance=1e-6, cache=True, element='tet')`. Only the supports: no loads, the
+material's E and density are used. Each
 `Mode` has `.frequency` and the shape as fields (`displacement`, `ux`, `uy`, `uz`, scaled so the largest
 movement is 1 — a shape, not an amplitude). A mode stated on its own is shown deformed, and the result card
 steps the vibration through a cycle (24 phases; play to see it vibrate); the modal result itself shows its
@@ -227,21 +255,23 @@ first mode. Use the mode shape as a field: stiffen the part where the first mode
 
 ## Thermal analysis
 
-Steady-state conduction. Boundary conditions are regions, like supports and loads:
+Steady-state conduction. Boundary conditions are regions, like supports and loads, an input for each kind:
 
-| Function | |
-|---|---|
-| `fixed_temperature(region, T)` | The part is held at T inside the region. |
-| `heat_input(region, watts)` | A total power spread over the part's surface inside the region (negative removes heat). |
-| `heat_generation(region, watts)` | A total power generated through the part's volume inside the region (a heater, potted electronics). |
-| `convection(region, h, ambient=20)` | The exposed surface inside the region exchanges heat with the ambient. `h`: still air ≈ 5–25·10⁻⁶, forced air 25–250·10⁻⁶, water 500–10 000·10⁻⁶ W/(mm²·K). |
+| Function | Input | |
+|---|---|---|
+| `fixed_temperature(region, T)` | `fixed_temperatures` | The part is held at T inside the region. |
+| `heat_input(region, watts)` | `heat_inputs` | A total power spread over the part's surface inside the region (negative removes heat). |
+| `heat_generation(region, watts)` | `heat_generations` | A total power generated through the part's volume inside the region (a heater, potted electronics). |
+| `convection(region, h, ambient=20)` | `convections` | The exposed surface inside the region exchanges heat with the ambient. `h`: still air ≈ 5–25·10⁻⁶, forced air 25–250·10⁻⁶, water 500–10 000·10⁻⁶ W/(mm²·K). |
 
 At least one fixed temperature or convection is needed (otherwise the temperature is undetermined).
 
 ```python
-result = thermal_analysis(part, [fixed_temperature(base, 20),
-                                 heat_input(chip, 5.0),
-                                 convection(fins, 25e-6, ambient=20)],
+result = thermal_analysis(part,
+                          fixed_temperatures=[fixed_temperature(base, 20)],
+                          heat_inputs=[heat_input(chip, 5.0)],
+                          heat_generations=[],
+                          convections=[convection(fins, 25e-6, ambient=20)],
                           material=aluminium, element_size=2)
 result                               # shown: coloured by temperature
 ```
@@ -255,10 +285,9 @@ temperature (the result card switches to the heat flux). The conductivity comes 
 ## Thermal stress
 
 ```python
-temp = thermal_analysis(part, [...], material=aluminium)
-conditions = static_boundary_conditions(part, supports=[fixed(base)],
-                                        loads=[thermal_expansion(temp.temperature, reference=20)])
-stress = static_analysis(part, conditions, material=aluminium)
+temp = thermal_analysis(part, [...], [...], [], [...], material=aluminium)
+stress = static_analysis(part, supports=[fixed(base)],
+                         loads=[thermal_expansion(temp.temperature, reference=20)], material=aluminium)
 ```
 
 A part at `temperature` (a field, e.g. a thermal result's, or a number) expands by the material's
@@ -267,20 +296,40 @@ just grow. Static analysis only.
 
 ## Topology optimization
 
-`topology_optimization(part, conditions, material, volume_fraction=0.3, element_size=None,
-iterations=60, filter_radius=None, keep=None, avoid=None, extrude=None, penalty=3, move=0.2, bounds=None,
-max_iterations=20000, tolerance=1e-5, cache=True, element='tet')` finds the **stiffest** layout that uses
-`volume_fraction` of `part` (the design space) for the supports and loads of the conditions.
+`topology_optimization(part, supports, loads, material, volume_fraction=0.3, element_size=None,
+iterations=100, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None, penalty=3,
+sharpness=16, symmetry='auto', bounds=None, tolerance=1e-5, cache=True, element='tet')` finds the **stiffest**
+layout that uses `volume_fraction` of `part` (the design space) for the supports and loads.
+
+**Several load cases.** `loads` can be a list of lists, each a **load case with its own loads**: the part is made stiff for all
+of them at once (the compliances of the cases are added up). That is how a part that is pushed *and* pulled is optimised. Each case may be held differently too -- `supports`
+is then a list of lists, one for each case (tetrahedral elements):
+
+```python
+push = force(lug, (0, 0, -300))
+pull = force(lug, (0, 0, +300))
+design = topology_optimization(part, supports=[fixed(base)], loads=[[push], [pull]], volume_fraction=0.3, element_size=2)
+```
+
+The conditions have no body in them, so they cannot disagree about it; the body is the first argument. Each case needs a support that touches the part.
 
 | Option | |
 |---|---|
 | `keep` | regions (a shape or list) that must stay solid — bolt bosses, mounting faces. The material around supports and loads always stays. What the part has **excluded** (`exclude()`, [Fields](fields.md#excluded-regions-exclude)) is added by itself, however many operations came after it: those places stay exactly as they are |
 | `avoid` | regions that must stay empty |
+| `grow` | mm, default 0 (the design stays inside the part). With `grow=5` the part may also **thicken outwards** by up to 5 mm wherever that makes it stiffer: sections that are too thin grow, material that carries nothing goes. The design starts as the part and `volume_fraction` is of the part's own volume (`1` spends the same material, `1.2` spends 20 % more); the part is not grown round the supports and loads, which stay where they are. Use it when the part you have is not a good enough design space |
 | `extrude` | `'x'`, `'y'`, `'z'`: the same design along that axis (a profile to extrude, or to cut right through) |
 | `filter_radius` | the smallest member size, mm (default 1.5 elements) |
-| the conditions' `loads` | a list of loads, **or several load cases** `[[force(a, …)], [force(b, …), gravity()]]`: the part is made stiff for all of them (the sum of the compliances is minimised) |
+| `iterations` | at most this many (default 100); it stops sooner when the design has settled. If it stops at the limit while still improving, the output says so: raise `iterations`. **It sets the size of the steps too** -- there is no step to choose: how far a density may move in one iteration starts large (the fewer the iterations, the larger, so a short run still goes the whole way), is smaller as they go (so the design has settled by the last), and within that grows while the compliance falls as the sensitivities predicted and shrinks when it does not |
+| `symmetry` | `'auto'` (default), `None`, `'x'` / `'y'` / `'z'` or several (`'xz'`), or `{'z': 0.0}` with the plane's position. **A symmetric problem gets a symmetric design.** Left to itself an optimiser does not keep a symmetric problem symmetric: the mesh of a symmetric part is never exactly symmetric, the small difference grows, and one of two members that do the same job takes the other's material -- a strut on one side and none on the other. With `'auto'` the planes through the middle of the part (x, y, z) are tried: when the part, its supports, its loads (what acts on one side is what acts on the other, mirrored) and the `keep` / `avoid` regions are all symmetric about one, the design is kept symmetric about it (the output says which). `None` leaves the design alone; `'z'` asks for the plane through the middle of the part whatever the loads; a dict gives a plane of your own. `result.symmetry` says what was used |
+| `sharpness` | how crisp the design is (default 16; tetrahedral optimisations). The density is pushed towards 0 and 1 more and more as the iterations go on, up to this much -- reached at three quarters of the iterations, however many there are (a Heaviside projection): the part ends up solid or empty, not grey, and nothing wanders in at the end. `1` leaves the density as the filter makes it: soft edges, a third of the part grey, and the shape then depends on where the threshold is cut |
+| `loads` | a list of loads, **or several load cases** `[[force(a, …)], [force(b, …), gravity()]]`: the part is made stiff for all of them (the sum of the compliances is minimised) |
 
-The optimisation solves the analysis 30–60 times. Returns a `TopologyResult`:
+**Loose material is taken out.** From the tenth iteration on, material (density above 0.3) that no path of material joins to a support or a load (two elements that
+share a face are joined) carries nothing and is removed as the optimisation goes. Left alone, an island of material grows from the stress at the corner of a support into the empty
+space beside the part -- material that is of no use, using the volume of a member that would be.
+
+The optimisation solves the analysis 30–100 times. Returns a `TopologyResult`:
 
 - `.density` — a field, 0 (no material) to 1 (solid);
 - `.shape(threshold=None)` — the optimised part. The default threshold keeps the volume fraction you asked
@@ -294,11 +343,27 @@ The optimisation solves the analysis 30–60 times. Returns a `TopologyResult`:
 - `.verify()` — a static analysis of the optimised part (a list when there are several load cases).
 
 The result stated on its own shows the optimised part coloured by the density, and the result card **steps
-through the iterations**: the part as it was after each one (a slider with play / pause; a step is meshed
-the first time it is shown, then kept). `element='hex'` optimisations keep only the final density.
+through the iterations**: the part as it was after each one (a slider with play / pause). Each iteration's surface is
+made from the optimisation's own densities -- a few tens of milliseconds, in the background as soon as the result is there, and
+the same after the result was read back from the cache -- so stepping does not mesh a field for every iteration; the
+last step is the real mesh. `element='hex'` optimisations keep only the final density.
 
-**Thermal topology optimization** (`thermal_topology_optimization(part, boundary, material,
-volume_fraction, …, element='hex')`) finds the layout that keeps the heat coolest where it enters: the
+**Watching it go.** While a tetrahedral optimisation runs, the viewport shows **the design after every iteration** (in place of the
+pictures of the run before): the part where the density is above the level that keeps the volume asked for, so the first
+iterations show the whole part and the structure appears as the material is taken away. It is **the result's own picture**:
+the same shapes the result is made of, rendered by the same code -- the part cut from the density, coloured by the density, with the
+colour bar and the result card -- so what you watch is what you get. A card at the top says how it is going: the
+iteration, the **compliance** (with the change since the first iteration) and a small graph of it, the **material** the design has
+against what you asked for, and the **biggest change** of any element's density in the iteration. How to read it: the compliance
+should fall quickly and then level off; the material should close in on what you asked for; the change should shrink towards 0
+(the optimisation stops by itself once it has, after the sharpening has finished). If the compliance does not fall, or the part
+stays whole or goes empty, the input is off: check the supports and the loads (a load on a support, a region that holds no part
+of the model), the volume fraction, and the element size. The picture is only a picture -- nothing is computed from it -- and it
+goes when the optimisation ends and the result takes its place. (The voxel `element='hex'` optimisation does not draw itself yet; the flow
+topology optimisation does, below.)
+
+**Thermal topology optimization** (`thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations,
+convections, material, volume_fraction, …, element='hex')`) finds the layout that keeps the heat coolest where it enters: the
 heat-weighted mean temperature of the heat inputs is minimised. Heat inputs (`heat_input`,
 `heat_generation`) are required; fixed-temperature regions are the sinks; convection follows the design
 (give the region as the air around the design space and the fins grown into it are cooled). `extrude=` gives
@@ -317,16 +382,16 @@ post = cylinder_z(5, 6, (24, 20, -1))                              # ...with a r
 faces = union(box_exact((-1, -1, -1), (81, 41, 0.01)), box_exact((-1, -1, 3.99), (81, 41, 5)))
 sides = union(box_exact((-1, -1, -1), (81, 0.01, 5)), box_exact((-1, 39.99, -1), (81, 41, 5)))
 flow = fluid_analysis(difference(slab, post),
-                      [slip(faces), slip(sides),                   # a two-dimensional flow
-                       inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4.0),       # Re = U D / nu = 40
-                       outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],
+                      inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4.0)],       # Re = U D / nu = 40
+                      outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],
+                      boundaries=[slip(faces), slip(sides)],          # a two-dimensional flow (the post is a wall at rest: so is everything not named)
                       fluid=water, element_size=1.0)
 print(flow)                              # the flows, the pressure drop, the Reynolds number, the drag on the post
 flow                                     # shown: the speed on the fluid, streamlines, particles moving along them
 ```
 
 **The fluid domain is a shape**: the fluid is where its field is negative. The boundary conditions are regions on
-its surface, like the supports and loads of a static analysis:
+its surface, like the supports and loads of a static analysis, an input for each kind (`inlets`, `outlets`, `boundaries` for walls and slips):
 
 | Function | |
 |---|---|
@@ -339,8 +404,8 @@ its surface, like the supports and loads of a static analysis:
 predefined). `gravity=(gx, gy, gz)` (mm/s²) is a body force. A closed domain (no outlet: a lid-driven cavity) is
 allowed; its pressure is then relative, zero at one point.
 
-`fluid_analysis(domain, conditions, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
-max_iterations=60, tolerance=1e-5, cache=True, time=None, store_every=1)`. The element size defaults to the longest
+`fluid_analysis(domain, inlets, outlets, boundaries, fluid=water, element_size=None, bounds=None, gravity=None, stokes=False,
+tolerance=1e-5, cache=True, time=None, store_every=1)`. The element size defaults to the longest
 side over 40; the passages should be four elements across or more (the result says how many there are). `stokes=True`
 leaves the convection out (creeping flow, one linear solve); otherwise the Navier-Stokes equations are solved by Picard
 and then Newton iterations from the Stokes solution until the relative residual is below `tolerance`.
@@ -406,12 +471,12 @@ a passage should be four elements across at least.
 
 ## Flow topology optimization
 
-`flow_topology_optimization(body, domain, conditions, fluid=water, objective='drag', volume=1.0, region=None,
-keep=None, avoid=None, element_size=None, iterations=40, filter_radius=None, move=0.1, darcy=1e-5, extrude=None,
+`flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=water, objective='drag', volume=1.0, region=None,
+keep=None, avoid=None, element_size=None, iterations=40, filter_radius=None, darcy=1e-5, extrude=None,
 flow_direction=None, lift_direction=None, bounds=None, cache=True)` takes a **body in a stream** and changes its
 shape, and its topology, to make it best for the force the flow puts on it. `body` is the solid as it is (a Shape),
-`domain` the fluid domain it sits in (a Shape that holds the body's place too), `conditions` the flow's inlets,
-outlets, slip planes and walls as for `fluid_analysis`. The flow is the real one -- the Navier-Stokes equations at
+`domain` the fluid domain it sits in (a Shape that holds the body's place too), `inlets`, `outlets`,
+and `boundaries` the flow's conditions as for `fluid_analysis`. The flow is the real one -- the Navier-Stokes equations at
 the Reynolds number the inlet gives -- with the body a friction that a density per element sets (1 solid, 0 fluid:
 Borrvall & Petersson's penalised model), so the drag and the lift are the momentum the flow loses in the body.
 
@@ -422,8 +487,17 @@ Borrvall & Petersson's penalised model), so the drag and the lift are the moment
 | `region` | where material may be at all (a Shape; default the whole domain): the body shrinks, grows, moves and splits inside it |
 | `keep` / `avoid` | regions that stay solid (a shaft, a mounting) / regions that stay fluid. What the body has excluded (`exclude()`) is kept by itself |
 | `extrude` | `'x'`, `'y'`, `'z'`: the body is the same all along that axis (a 2D shape in a 2D flow) |
+| `symmetry` | `'auto'` (default), `None`, `'x'` / `'y'` / `'z'` or several (`'xz'`), or `{'y': 20.0}` with the plane's position. **A symmetric problem gets a symmetric body.** Left to itself the optimiser does not keep it so: the mesh of a symmetric domain is never exactly symmetric, and the small difference grows into a crooked nose or tail. With `'auto'` the planes through the middle of the domain are tried: when the domain, the body, the `region` / `keep` / `avoid` regions and the boundary conditions are all symmetric about one (the flow along the plane), the body is kept symmetric about it -- the sensitivities and the level set are averaged with their mirror images at every iteration -- and the output says which. `None` leaves the body alone; a letter asks for the plane through the middle of the domain whatever the rest; a dict gives a plane of your own. `result.symmetry` says what was used |
 | `flow_direction`, `lift_direction` | the drag and the lift directions (default: the inlets' mean direction, and perpendicular to it in the plane of the domain's two long axes) |
-| `filter_radius`, `move`, `darcy`, `iterations` | the smoothing radius of the boundary's motion (mm, default 1.5 elements; the shape itself is never smoothed); the most the boundary moves in one iteration (in elements, 0.5 by default; a step that raises the objective is taken back and halved); the solid's permeability relative to the element (its friction is μ / (darcy·h²): the flow penetrates it by about √darcy elements, 0.1 by default); at most how many iterations |
+| `filter_radius`, `darcy`, `iterations` | the smoothing radius of the boundary's motion (mm, default 1.5 elements; the shape itself is never smoothed); the solid's permeability relative to the element (its friction is μ / (darcy·h²): the flow penetrates it by about √darcy elements, 0.1 by default); at most how many iterations (default 40): **the run stops sooner when the objective has stopped improving** (over the last five designs that were kept it fell by less than half a percent), and says so. It also sets the size of the boundary's steps: one element at most per iteration, half an element when 48 iterations or more are allowed, the same all the way (a step cap that shrank as the run went left the nose and the tail too little to move: the body ended round and stubby, and the last iterations changed nothing you could see); a step grows while the objective falls as the sensitivities predicted, and one that raises the objective is taken back and halved, so the objective never rises |
+
+**Watching it go.** While it runs, the viewport shows the flow of the optimiser's model **after every iteration, as the result shows it**:
+the fluid around the body (the domain with the body taken out) coloured by the speed, with the streamlines from the inlets and the particles
+moving along them, the colour bar and the result card, and the body solid -- the same shapes, rendered by the same code. A card says how it is going: the iteration, the
+**drag** (or the objective, when lift counts) with its change since the first iteration and a graph of it, the body's **volume** against what
+is allowed, and how far the boundary moved in the iteration. The drag should fall and level off, the volume stay in its bounds, and the
+boundary's moves shrink; steps taken back (the objective got worse) are not drawn. The picture goes when the optimisation ends and the result
+takes its place.
 
 Returns a `FlowTopologyResult`: `.shape(iteration=None)` the optimised body (or the body after iteration k),
 `.fluid_shape()` the fluid around it, `.level` and `.levels` the level set (mm, positive inside the body) and the
@@ -445,10 +519,10 @@ transposed and solved for the adjoint of the force objective, the derivative of 
 friction is differenced element by element, and the chain runs through the fractions to the nodal values; the
 descent direction is that gradient smoothed over `filter_radius` (the shape itself is never smoothed, so a nose or
 a tail can sharpen as far as the sensitivities ask). The level set is rescaled to unit slope each iteration (a cheap
-reinitialisation), moved down the direction by at most `move` elements, and offset as a whole until the body's
+reinitialisation), moved down the direction by the step (see `iterations`), and offset as a whole until the body's
 volume is within its bounds (bisection: an offset of the level set is an offset of the boundary); a step that
-raises the objective is taken back and halved, and the run stops when the boundary stops moving or no step lowers
-the objective any more (the result says which, and how many steps were taken back). The steps shown for the
+raises the objective is taken back and halved, and the run stops when the objective stops improving or no step lowers
+it any more (the result says which, and how many steps were taken back). The steps shown for the
 iterations are the optimiser's own flow, in which the solid is a friction and a little fluid creeps through it;
 their streamlines are cut where they would enter the body. The final step is the real flow. The linear solves of
 every flow -- most of its time -- use a block incomplete-LU preconditioner, one block per core with a little
@@ -459,12 +533,16 @@ the sensitivities mislead (the optimiser's own drag is therefore a little below 
 real one). The boundary splits and merges as it moves; a hole does not open in the middle of solid.
 `FIELDES_FLOW_FDCHECK=1` checks the nodal sensitivities by finite differences.
 
-**Measured (2026-10-05)** on the round post of example 16 (10 mm across in a slab of water at Re 40, 1.5 mm
-elements, the drag minimised with the volume kept): the optimiser's own drag falls monotonically from 8.72e-7 to
-4.82e-7 N (45 % less) over 24 iterations (two steps taken back, 160 s on 12 threads), the volume is held to all
-digits, and the post becomes a slender body 21 mm long and 4 mm wide; the real flow around that body (the body a
-wall at rest) gives 4.05e-7 N against the round post's 8.21e-7 N: 51 % less drag. On a smaller post at Re 21 the
-optimiser's drag goes 5.55e-7 to 3.28e-7 N (41 % less). The nodal sensitivities agree with finite differences within
+**Measured (2026-10-09)** on the round post of example 16 (10 mm across in a slab of water at Re 40, 1.5 mm
+elements, the drag minimised with the volume kept, 24 iterations allowed): the optimiser's own drag falls from 8.72e-7 to
+4.73e-7 N (46 % less); it stops after 22 iterations (the last five kept designs improved it by less than half a percent; two steps were
+taken back), the volume is held to all digits, and the post becomes a slender body 22.5 mm long and 4.25 mm at its thickest, its
+ends coming to a point (half a millimetre thick at the nose, in elements of 1.5); the real flow around that body (the body a
+wall at rest) gives 4.03e-7 N against the round post's 8.18e-7 N: 51 % less drag. For comparison, in the same real flow a lens (two circular arcs, pointed ends) of the same
+volume gives 4.58e-7 N at 19 mm long, 4.16e-7 at 24 mm, 4.43e-7 at 30 mm and 5.0e-7 at 40 mm: the optimiser finds the length by itself. With 40 iterations
+allowed it stops after 32 (4.19e-7 real). A square post that nothing was tuned for: 7.9e-7 to 4.76e-7 N in the model, 4.10e-7 N in the real flow, stopped after 22 of 30. (The real
+drag of a body differs by a few percent with how the mesh happens to cut it: differences smaller than that are noise.) The earlier schedule, whose step cap shrank as the run went, ended the same
+runs at 4.5e-7 (a round-ended body 19 mm long) and ran to the limit. The nodal sensitivities agree with finite differences within
 7 % at every node checked (ratios 0.93 to 1.07). Limits:
 the flow sees the body as a porous solid whose wall lies a fraction of an element inside the design's wall (refine
 to tighten); laminar flow only; at a Reynolds number where the wake sheds (above about 50 for a post) there is no

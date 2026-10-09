@@ -53,6 +53,9 @@ public:
     /*  Continues an evaluation stopped at a breakpoint */
     void resume() { emit onResume(); }
 
+    /*  Ends the evaluation that is running (the red dot); from the main thread */
+    void terminate() { m_interpreter->terminate(); }
+
     /*  A question to the interpreter about the last run (see Interpreter::callSupport)  */
     QString callSupport(const QString& function, const QString& arg, QString* error)
     { return m_interpreter->callSupport(function, arg, error); }

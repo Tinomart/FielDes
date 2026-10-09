@@ -39,13 +39,19 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QTextBlock>
 #include <QTreeWidget>
 #include <QLineEdit>
+#include <QPointer>
+#include <QThread>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <iostream>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProcess>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QScreen>
 #include <QSplitter>
 #include <QDialog>
@@ -69,12 +75,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "libfive/step/step_progress.hpp"
 
+#include "fieldes/i18n.hpp"
 #include "fieldes/window.hpp"
 #include "fieldes/automation.hpp"
 #include "fieldes/documentation.hpp"
 #include "fieldes/editor.hpp"
 #include "fieldes/findbar.hpp"
 #include "fieldes/icons.hpp"
+#include "fieldes/regionformat.hpp"
 #include "fieldes/theme.hpp"
 #include "fieldes/tutorial.hpp"
 #include "fieldes/scenetree.hpp"
@@ -98,6 +106,37 @@ switch (checkUnsaved())                                                     \
 
 namespace FielDes {
 
+namespace {
+
+// A field that is clicked into (or tabbed into) has all of its text selected, so that typing replaces it: every number and every name
+// field of the program, the render settings, the resolution of a model, the spin boxes of the menus.  The script editor is no field.
+class SelectAllOnFocus : public QObject
+{
+public:
+    using QObject::QObject;
+
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::FocusIn) return false;
+        auto field = qobject_cast<QLineEdit*>(obj);
+        if (!field || field->isReadOnly()) return false;
+        const auto reason = static_cast<QFocusEvent*>(e)->reason();
+        if (reason != Qt::MouseFocusReason && reason != Qt::TabFocusReason && reason != Qt::BacktabFocusReason &&
+            reason != Qt::ShortcutFocusReason)
+        {
+            return false;       // (a field that gets the keyboard back after a rebuild keeps what is typed and where the cursor is)
+        }
+        // (after the click: the mouse press that gave the focus puts the cursor where it was pressed, and that comes after this)
+        QPointer<QLineEdit> guard(field);
+        QTimer::singleShot(0, field, [guard] {
+            if (guard && guard->hasFocus() && !guard->hasSelectedText()) guard->selectAll();
+        });
+        return false;
+    }
+};
+
+}   // anonymous namespace
+
 static QString guideHtml()
 {
     auto keys = [](const QString& id) {
@@ -106,147 +145,160 @@ static QString guideHtml()
             if (e.id == id && e.action)
             {
                 const QString t = Shortcuts::toText(e.action->shortcuts().mid(0, 1));
-                return t.isEmpty() ? QString("<i>unbound</i>") : "<b>" + t.toHtmlEscaped() + "</b>";
+                return t.isEmpty() ? "<i>" + T("unbound") + "</i>" : "<b>" + t.toHtmlEscaped() + "</b>";
             }
         }
-        return QString("<i>unbound</i>");
+        return "<i>" + T("unbound") + "</i>";
     };
+    // (every paragraph and list item is a text of its own, with %1, %2 for the keys: another language puts them elsewhere)
+    auto li = [](const QString& s) { return "<li>" + s + "</li>"; };
 
     QString h;
     h += "<style>h2{margin-top:16px; margin-bottom:2px} li{margin-bottom:3px} td{padding:2px 14px 2px 0} "
          "code{background:#eee}</style>";
-    h += "<h1>FielDes guide</h1>"
-         "<p>The script is the model. Whatever you do in the viewport is written into the script, so "
-         + keys("edit.undo") + " undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.</p>";
+    h += "<h1>" + T("FielDes guide") + "</h1>";
+    h += "<p>" + T("The script is the model. Whatever you do in the viewport is written into the script, so %1 undoes it. "
+                   "The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the "
+                   "program itself.").arg(keys("edit.undo")) + "</p>";
 
-    h += "<h2>Making things</h2><ul>"
-         "<li><b>Right-click</b> empty space in the viewport: <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New point</b>, "
-         "<b>New surface</b>, <b>New field</b> and <b>New custom block</b> write the call into the script where the cursor is "
-         "(and select it, ready to drag); <b>Add operation</b> and <b>Add simulation</b> work on the selected model. "
-         "Right-click a model for <b>Operation</b> (offsets, moving, field math ...) and <b>Simulation</b> (static, modal, "
-         "topology optimization, thermal, flow) on it, written with that model as the argument.</li>"
-         "<li><b>The same menu opens in the text editor and in the model tree</b>: right-click a line of the script that defines "
-         "a model, or its row in the tree, and it is as if you had right-clicked the model in the viewport. On a line with no "
-         "model it is the menu of empty space, and what you make goes under that line.</li>"
-         "<li><b>A field is not drawn</b>: select it in the model tree and the section viewer opens on it, showing its value at "
-         "every point of a plane you can move through it. Fields can be multiplied, added ... like numbers "
-         "(<code>a * b</code>, <code>2 ** a</code>); <code>field_from_body(part)</code> makes a field of a body's values.</li>"
-         "<li>Every kind of thing has its own colour and icon in the tree and the menus: "
-         "<span style='color:#4aa8e8'><b>3D shape</b></span>, <span style='color:#35c4b3'><b>2D shape</b></span>, "
-         "<span style='color:#82cc58'><b>field</b></span>, <span style='color:#b583ee'><b>surface</b></span>, "
-         "<span style='color:#f4b73a'><b>point</b></span>, <span style='color:#ee6a5e'><b>simulation</b></span>, "
-         "<span style='color:#c9a66b'><b>material</b></span>, <span style='color:#e08f58'><b>conditions</b></span>, "
-         "<span style='color:#d4b43c'><b>lattice cell</b></span>. "
-         "A model made by one of your own blocks has a small <b>f</b> badge.</li>"
-         "<li><b>Every number can be a field</b>: <code>offset(part, 0.5)</code> and "
-         "<code>offset(part, ramp(z_field(), (0, 40), (0.2, 2)))</code> are written alike. A point can stand "
-         "where a coordinate goes: <code>distance_to_point(p)</code>.</li></ul>";
+    h += "<h2>" + T("Making things") + "</h2><ul>";
+    h += li(T("<b>Right-click</b> empty space in the viewport: <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New point</b>, "
+              "<b>New surface</b>, <b>New field</b> and <b>New custom block</b> write the call into the script where the cursor is "
+              "(and select it, ready to drag); <b>Add operation</b> and <b>Add simulation</b> work on the selected model. "
+              "Right-click a model for <b>Operation</b> (offsets, moving, field math ...) and <b>Simulation</b> (static, modal, "
+              "topology optimization, thermal, flow) on it, written with that model as the argument. Whatever a menu entry "
+              "writes that you did not give -- a force, a volume fraction, an element size -- it asks for first."));
+    h += li(T("<b>The same menu opens in the text editor and in the model tree</b>: right-click a line of the script that defines "
+              "a model, or its row in the tree, and it is as if you had right-clicked the model in the viewport. On a line with no "
+              "model it is the menu of empty space, and what you make goes under that line."));
+    h += li(T("<b>A field is not drawn</b>: select it in the model tree and the section viewer opens on it, showing its value at "
+              "every point of a plane you can move through it. Fields can be multiplied, added ... like numbers "
+              "(<code>a * b</code>, <code>2 ** a</code>); <code>field_from_body(part)</code> makes a field of a body's values."));
+    h += li(T("Every kind of thing has its own colour and icon in the tree and the menus: "
+              "<span style='color:#4aa8e8'><b>3D shape</b></span>, <span style='color:#35c4b3'><b>2D shape</b></span>, "
+              "<span style='color:#82cc58'><b>field</b></span>, <span style='color:#b583ee'><b>surface</b></span>, "
+              "<span style='color:#f4b73a'><b>point</b></span>, <span style='color:#ee6a5e'><b>simulation</b></span>, "
+              "<span style='color:#c9a66b'><b>material</b></span>, <span style='color:#e08f58'><b>conditions</b></span>, "
+              "<span style='color:#d4b43c'><b>lattice cell</b></span>. "
+              "A model made by one of your own blocks has a small <b>f</b> badge."));
+    h += li(T("<b>Every number can be a field</b>: <code>offset(part, 0.5)</code> and "
+              "<code>offset(part, ramp(z_field(), (0, 40), (0.2, 2)))</code> are written alike. A point can stand "
+              "where a coordinate goes: <code>distance_to_point(p)</code>."));
+    h += "</ul>";
 
-    h += "<h2>Model tree</h2><ul>"
-         "<li><b>Click</b> a row to select it and see its code. <b>Eye</b>: show or hide.</li>"
-         "<li><b>Nesting is the structure of the calls</b>: the models an operation is made of are its children, in the "
-         "order of its arguments. A model that several statements use has its row under the first, and a <b>shadow</b> "
-         "(half transparent) under each other one: that statement's own reference. Every nest, renest and denest is an edit "
-         "of the arguments: <b>drag a row onto an operation</b> to make it one of its inputs (added to a <code>union</code> and the "
-         "like; never a menu); drag it out of a call to take it out; drop it "
-         "<b>between the children</b> of an operation to put it at that place among the arguments. Dragging a shadow moves "
-         "only that reference. <b>Ctrl+drag</b> moves nothing: it puts a new shadow where it is dropped (a model nothing else uses stays a top-level row, and the call gets a <code># shadow: name</code> comment). A shadow cannot go above "
-         "its original (the first statement that uses the model): a message explains it (once, however many shadows it is about, also "
-         "when a whole statement is dragged above the original) and offers the fix, which makes the first use the original and "
-         "leaves a reference at the old one. A "
-         "field dropped on an operation takes the place of one of its numbers (<code>offset(plate, 1.0)</code> becomes "
-         "<code>offset(plate, swell)</code>). Between two top-level rows a model moves in the script (with what it is made "
-         "of, when that is defined later). Taking a model out of an operation that cannot do without it (fixed inputs) "
-         "<b>deletes that operation</b>, after a question (default: Delete; it can be hidden). The bin button and "
-         + keys("view.delete") + " work on a shadow too: its reference is taken out. All of it is one undoable step.</li>"
-         "<li><b>Several rows</b>: Ctrl+click adds one or takes it out, Shift+click selects from the last one clicked, "
-         "as in a file list. In the viewport Ctrl+click does the same, and dragging draws a rectangle that selects "
-         "every body lying wholly inside it (with Ctrl too: added to the selection). A click on empty space "
-         "deselects all.</li>"
-         "<li><b>Dragging a surface</b> of a model is always possible (selecting it gives it the numbers). The "
-         "<b>gizmo button</b> (moves, rotates and scales) sets when the <b>gizmo</b> is shown: <b>click</b> (the "
-         "default: while the model is selected), <b>never</b> or <b>always</b>; it has priority over a surface "
-         "under it. <b>Lock button</b>: a locked model cannot be dragged at all; unlocked, it has the gizmo mode "
-         "it had. The <b>dot</b> in the middle of a gizmo moves the model freely, in the plane facing the "
-         "camera.</li>"
-         "<li><b>Several models selected</b> are moved by one gizmo, at the middle of them, whatever gizmo mode "
-         "each has when selected alone (a model with no numbers to move it by gets a gizmo line, in the mode it is "
-         "in). The key <b>E</b> changes each one's own gizmo mode for when it is selected alone. A "
-         "<b>locked</b> model cannot be in a selection of several: select it on its own to unlock it.</li>"
-         "<li>Keys (viewport focused; they work on all selected models): " + keys("view.edit-toggle") +
-         " goes round the gizmo modes (click, never, always), " + keys("view.edit-lock") + " lock / unlock, " +
-         keys("view.visible") + " show / hide, " +
-         keys("view.cache") + " render cache on / off, " + keys("view.isolate") + " shows only the selected, " +
-         keys("view.delete") + " deletes the selected models from the script. "
-         "A toggle first puts all the selected models in its on state (shown, locked, cached) if they are "
-         "not all in it; only then does it turn them all off.</li>"
-         "<li><b>Rename</b>: double-click a name (or F2), type, Enter: every use in the script changes. "
-         "<b>Render settings</b>: open the row and edit the region, resolution and quality as numbers.</li>"
-         "<li>A displayed expression gets a name first: <code>sphere(3)</code> becomes <code>sphere_1 = sphere(3)</code>.</li>"
-         "<li><b>Reimport</b> reads a file again; the <b>bin</b> also clears its cache and handle edits.</li>"
-         "<li>Grey: hidden, or outside the render region.</li></ul>";
+    h += "<h2>" + T("Model tree") + "</h2><ul>";
+    h += li(T("<b>Click</b> a row to select it and see its code. <b>Eye</b>: show or hide."));
+    h += li(T("<b>Nesting is the structure of the calls</b>: the models an operation is made of are its children, in the "
+              "order of its arguments. A model that several statements use has its row under the first, and a <b>shadow</b> "
+              "(half transparent) under each other one: that statement's own reference. Every nest, renest and denest is an edit "
+              "of the arguments: <b>drag a row onto an operation</b> to make it one of its inputs (added to a <code>union</code> and the "
+              "like; never a menu); drag it out of a call to take it out; drop it "
+              "<b>between the children</b> of an operation to put it at that place among the arguments. Dragging a shadow moves "
+              "only that reference. <b>Ctrl+drag</b> moves nothing: it puts a new shadow where it is dropped (a model nothing else uses stays a top-level row, and the call gets a <code># shadow: name</code> comment). A shadow cannot go above "
+              "its original (the first statement that uses the model): a message explains it (once, however many shadows it is about, also "
+              "when a whole statement is dragged above the original) and offers the fix, which makes the first use the original and "
+              "leaves a reference at the old one. A "
+              "field dropped on an operation takes the place of one of its numbers (<code>offset(plate, 1.0)</code> becomes "
+              "<code>offset(plate, swell)</code>). Between two top-level rows a model moves in the script (with what it is made "
+              "of, when that is defined later). Taking a model out of an operation that cannot do without it (fixed inputs) "
+              "<b>deletes that operation</b>, after a question (default: Delete; it can be hidden). The bin button and "
+              "%1 work on a shadow too: its reference is taken out. All of it is one undoable step.").arg(keys("view.delete")));
+    h += li(T("<b>Several rows</b>: Ctrl+click adds one or takes it out, Shift+click selects from the last one clicked, "
+              "as in a file list. In the viewport Ctrl+click does the same, and dragging draws a rectangle that selects "
+              "every body lying wholly inside it (with Ctrl too: added to the selection). A click on empty space "
+              "deselects all."));
+    h += li(T("<b>Dragging a surface</b> of a model is always possible (selecting it gives it the numbers). The "
+              "<b>gizmo button</b> (moves, rotates and scales) sets when the <b>gizmo</b> is shown: <b>click</b> (the "
+              "default: while the model is selected), <b>never</b> or <b>always</b>; it has priority over a surface "
+              "under it. <b>Lock button</b>: a locked model cannot be dragged at all; unlocked, it has the gizmo mode "
+              "it had. The <b>dot</b> in the middle of a gizmo moves the model freely, in the plane facing the "
+              "camera."));
+    h += li(T("<b>Several models selected</b> are moved by one gizmo, at the middle of them, whatever gizmo mode "
+              "each has when selected alone (a model with no numbers to move it by gets a gizmo line, in the mode it is "
+              "in). The key <b>E</b> changes each one's own gizmo mode for when it is selected alone. A "
+              "<b>locked</b> model cannot be in a selection of several: select it on its own to unlock it."));
+    h += li(T("Keys (viewport focused; they work on all selected models): %1 goes round the gizmo modes (click, never, always), "
+              "%2 lock / unlock, %3 show / hide, %4 render cache on / off, %5 shows only the selected, "
+              "%6 deletes the selected models from the script. "
+              "A toggle first puts all the selected models in its on state (shown, locked, cached) if they are "
+              "not all in it; only then does it turn them all off.")
+         .arg(keys("view.edit-toggle"), keys("view.edit-lock"), keys("view.visible"), keys("view.cache"), keys("view.isolate"))
+         .arg(keys("view.delete")));
+    h += li(T("<b>Rename</b>: double-click a name (or F2), type, Enter: every use in the script changes. "
+              "<b>Render settings</b>: open the row and edit the region, resolution and quality as numbers."));
+    h += li(T("A displayed expression gets a name first: <code>sphere(3)</code> becomes <code>sphere_1 = sphere(3)</code>."));
+    h += li(T("<b>Reimport</b> reads a file again; the <b>bin</b> also clears its cache and handle edits."));
+    h += li(T("Grey: hidden, or outside the render region."));
+    h += "</ul>";
 
-    h += "<h2>Viewport</h2><ul>"
-         "<li>Left-drag draws a selection rectangle, Shift+left-drag or middle-drag rotates, right-drag pans, the wheel zooms. Double-click frames a model or everything ("
-         + keys("view.frame-all") + ").</li>"
-         "<li>Standard views (click the viewport first): front " + keys("view.std-front") +
-         ", right " + keys("view.std-right") + ", top " + keys("view.std-top") +
-         ", isometric " + keys("view.std-iso") + ". The triad (top right) is clickable too.</li>"
-         "<li>" + keys("view.cancel-render") + " cancels a slow render. Screenshots: " + keys("file.export-screenshot") +
-         " (file), " + keys("file.copy-screenshot") + " (clipboard).</li></ul>";
+    h += "<h2>" + T("Viewport") + "</h2><ul>";
+    h += li(T("Left-drag draws a selection rectangle, Shift+left-drag or middle-drag rotates, right-drag pans, the wheel zooms. "
+              "Double-click frames a model or everything (%1).").arg(keys("view.frame-all")));
+    h += li(T("Standard views (click the viewport first): front %1, right %2, top %3, isometric %4. The triad (top right) is "
+              "clickable too.").arg(keys("view.std-front"), keys("view.std-right"), keys("view.std-top"), keys("view.std-iso")));
+    h += li(T("%1 cancels a slow render. Screenshots: %2 (file), %3 (clipboard).")
+                .arg(keys("view.cancel-render"), keys("file.export-screenshot"), keys("file.copy-screenshot")));
+    h += "</ul>";
 
-    h += "<h2>Section and result cards</h2><ul>"
-         "<li>" + keys("view.section") + " opens the section card: pick the axis, move the plane with the slider "
-         "or its arrow, flip the kept side.</li>"
-         "<li><b>Cut model</b> clips the geometry; <b>Field</b> paints the plane with the distance field, or with the "
-         "analysis result inside the part.</li>"
-         "<li><b>Whole elements</b> (with analysis elements shown) keeps elements whole at the plane.</li>"
-         "<li>The result card switches the field, magnifies the deformation and shows the solver's elements.</li>"
-         "<li>Hover a coloured model to read its value. Closing a legend (its x) stops the probing.</li></ul>";
+    h += "<h2>" + T("Section and result cards") + "</h2><ul>";
+    h += li(T("%1 opens the section card: pick the axis, move the plane with the slider or its arrow, flip the kept side.")
+                .arg(keys("view.section")));
+    h += li(T("<b>Cut model</b> clips the geometry; <b>Field</b> paints the plane with the distance field, or with the "
+              "analysis result inside the part."));
+    h += li(T("<b>Whole elements</b> (with analysis elements shown) keeps elements whole at the plane."));
+    h += li(T("The result card switches the field, magnifies the deformation and shows the solver's elements."));
+    h += li(T("Hover a coloured model to read its value. Closing a legend (its x) stops the probing."));
+    h += "</ul>";
 
-    h += "<h2>Importing</h2><ul>"
-         "<li>" + keys("file.import-model") + " or drop a file on the window.</li>"
-         "<li><b>STEP</b>: every solid becomes a field, one part each; assemblies arrive assembled. Free-form faces "
-         "are fitted and shaded by their deviation.</li>"
-         "<li><code>exclude()</code> or <code>auto_exclude=True</code> locks the file's own exact surface (made a field) where the fit is poor.</li>"
-         "<li><b>STL, OBJ, PLY, 3MF, GLB</b>: an exact distance field. Pass <code>file_units=</code> if the file is not in mm.</li></ul>";
+    h += "<h2>" + T("Importing") + "</h2><ul>";
+    h += li(T("%1 or drop a file on the window.").arg(keys("file.import-model")));
+    h += li(T("<b>STEP</b>: every solid becomes a field, one part each; assemblies arrive assembled. Free-form faces "
+              "are fitted and shaded by their deviation."));
+    h += li(T("<code>exclude()</code> or <code>auto_exclude=True</code> locks the file's own exact surface (made a field) where the fit is poor."));
+    h += li(T("<b>STL, OBJ, PLY, 3MF, GLB</b>: an exact distance field. Pass <code>file_units=</code> if the file is not in mm."));
+    h += "</ul>";
 
-    h += "<h2>Analysis</h2><ul>"
-         "<li><code>static_analysis</code>, <code>modal_analysis</code>, <code>thermal_analysis</code>, "
-         "<code>topology_optimization</code> and <code>fluid_analysis</code> work on any shape (mm, N, MPa).</li>"
-         "<li>Supports and loads are shapes: <code>fixed(region)</code>, <code>force(region, (fx, fy, fz))</code>, "
-         "<code>gravity()</code>.</li>"
-         "<li>Results are fields: <code>result.show('von_mises')</code>, or <code>part - 0.02 * result.von_mises</code>.</li>"
-         "<li>An unchanged analysis is not solved again.</li></ul>";
+    h += "<h2>" + T("Analysis") + "</h2><ul>";
+    h += li(T("<code>static_analysis</code>, <code>modal_analysis</code>, <code>thermal_analysis</code>, "
+              "<code>topology_optimization</code> and <code>fluid_analysis</code> work on any shape (mm, N, MPa)."));
+    h += li(T("Supports and loads are shapes: <code>fixed(region)</code>, <code>force(region, (fx, fy, fz))</code>, "
+              "<code>gravity()</code> -- and every kind of condition is an input of its own: "
+              "<code>static_analysis(part, supports=[...], loads=[...])</code>."));
+    h += li(T("Results are fields: <code>result.show('von_mises')</code>, or <code>part - 0.02 * result.von_mises</code>."));
+    h += li(T("An unchanged analysis is not solved again, in this session or the next: the result is kept and read back."));
+    h += "</ul>";
 
-    h += "<h2>Custom blocks</h2><ul>"
-         "<li>Put a <code>.py</code> file in the <b>blocks folder</b> (Settings &rarr; Blocks folder... chooses it; "
-         "<i>Show the blocks folder</i> opens it) and every function in it is there in every script, with its call tip "
-         "and completion: <code>def perforate(body, hole_radius=2.0): ...</code>. Save the file and the scripts that "
-         "use it run again. A block whose first argument is a model is in <b>Add operation &rarr; Custom blocks</b>.</li></ul>";
+    h += "<h2>" + T("Custom blocks") + "</h2><ul>";
+    h += li(T("Put a <code>.py</code> file in the <b>blocks folder</b> (Settings &rarr; Blocks folder... chooses it; "
+              "<i>Show the blocks folder</i> opens it) and every function in it is there in every script, with its call tip "
+              "and completion: <code>def perforate(body, hole_radius=2.0): ...</code>. Save the file and the scripts that "
+              "use it run again. A block whose first argument is a model is in <b>Add operation &rarr; Custom blocks</b>."));
+    h += "</ul>";
 
-    h += "<h2>Fields and lattices</h2><ul>"
-         "<li>Any shape is a field. <code>depth_below(part)</code>, <code>ramp()</code>, <code>fit(data)</code> and "
-         "analysis results can drive offsets, thicknesses and lattices.</li>"
-         "<li><code>lattice(body, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)</code> fills a body; "
-         "<code>density=</code> sets the share of material instead. A cell is <code>cell_periodic(kind)</code>, "
-         "<code>cell_non_periodic(kind)</code>, <code>cell_custom(region, geometry)</code> (any geometry in a box), "
-         "<code>cell_custom_truss(nodes, beams)</code> or <code>cell_custom_tpms(equation)</code>.</li>"
-         "<li><code>colored(part, field)</code> paints a part by a field.</li></ul>";
+    h += "<h2>" + T("Fields and lattices") + "</h2><ul>";
+    h += li(T("Any shape is a field. <code>depth_below(part)</code>, <code>ramp()</code>, <code>fit(data)</code> and "
+              "analysis results can drive offsets, thicknesses and lattices."));
+    h += li(T("<code>lattice(body, cell_periodic('gyroid'), cell_size=8, thickness=t, skin=1.5)</code> fills a body; "
+              "<code>density=</code> sets the share of material instead. A cell is <code>cell_periodic(kind)</code>, "
+              "<code>cell_non_periodic(kind)</code>, <code>cell_custom(region, geometry)</code> (any geometry in a box), "
+              "<code>cell_custom_truss(nodes, beams)</code> or <code>cell_custom_tpms(equation)</code>."));
+    h += li(T("<code>colored(part, field)</code> paints a part by a field."));
+    h += "</ul>";
 
-    h += "<h2>Editor</h2><ul>"
-         "<li>Completion while typing (" + keys("edit.complete") + "): a function gets its brackets. Find (" + keys("edit.find") +
-         "), multiple cursors (Alt+click, " + keys("edit.select-next-occurrence") + ").</li>"
-         "<li>Go to definition (Ctrl+click, " + keys("edit.go-to-definition") + ") also opens other files, in tabs. The first tab "
-         "(&#9654;) is the script that is rendered, the others are only for editing; " + keys("edit.back-to-script") +
-         " goes back to it, " + keys("edit.close-tab") + " closes a tab.</li>"
-         "<li>Breakpoint on a line: " + keys("edit.toggle-breakpoint") + "; continue: " + keys("edit.continue") + ".</li>"
-         "<li><b>Sections</b>: a comment <code>#SECTION Title</code> gets a fold arrow in the gutter; it folds everything up to "
-         "the next <code>#SECTION</code> (typing <code>#sec</code> completes it).</li>"
-         "<li>Text size: " + keys("settings.font-bigger") + " and " + keys("settings.font-smaller") + ".</li></ul>";
+    h += "<h2>" + T("Editor") + "</h2><ul>";
+    h += li(T("Completion while typing (%1): a function gets its brackets. Find (%2), multiple cursors (Alt+click, %3).")
+                .arg(keys("edit.complete"), keys("edit.find"), keys("edit.select-next-occurrence")));
+    h += li(T("Go to definition (Ctrl+click, %1) also opens other files, in tabs. The first tab "
+              "(&#9654;) is the script that is rendered, the others are only for editing; %2 goes back to it, %3 closes a tab.")
+                .arg(keys("edit.go-to-definition"), keys("edit.back-to-script"), keys("edit.close-tab")));
+    h += li(T("Breakpoint on a line: %1; continue: %2.").arg(keys("edit.toggle-breakpoint"), keys("edit.continue")));
+    h += li(T("<b>Sections</b>: a comment <code>#SECTION Title</code> gets a fold arrow in the gutter; it folds everything up to "
+              "the next <code>#SECTION</code> (typing <code>#sec</code> completes it)."));
+    h += li(T("Text size: %1 and %2.").arg(keys("settings.font-bigger"), keys("settings.font-smaller")));
+    h += "</ul>";
 
-    h += "<h2>Keyboard shortcuts</h2><p>Change them under Settings &rarr; Keyboard shortcuts ("
-         + keys("settings.keyboard-shortcuts") + ").</p><table>";
+    h += "<h2>" + T("Keyboard shortcuts") + "</h2><p>" +
+         T("Change them under Settings &rarr; Keyboard shortcuts (%1).").arg(keys("settings.keyboard-shortcuts")) + "</p><table>";
     QString category;
     for (const auto& e : Shortcuts::entries())
     {
@@ -256,7 +308,7 @@ static QString guideHtml()
             category = e.category;
             QString title = category;
             if (!title.isEmpty()) title[0] = title[0].toUpper();
-            h += "<tr><td colspan=2><br><b>" + title.toHtmlEscaped() + "</b></td></tr>";
+            h += "<tr><td colspan=2><br><b>" + T(title).toHtmlEscaped() + "</b></td></tr>";
         }
         QString name = e.action->text();
         name.remove('&');
@@ -273,6 +325,7 @@ Window::Window(Arguments args)
     , settings("FielDes", "FielDes")
 {
     automated = !qEnvironmentVariable("FIELDES_AUTOMATION").isEmpty();
+    qApp->installEventFilter(new SelectAllOnFocus(this));
 
     editor = new Editor(Language::LANGUAGE_PYTHON);
 
@@ -332,7 +385,7 @@ Window::Window(Arguments args)
         QStringList names;
         for (const auto& p : m_stepChanged) names << QFileInfo(p).fileName();
         m_stepChanged.clear();
-        statusBar()->showMessage("Reloading: " + names.join(", ") + " changed on disk", 6000);
+        statusBar()->showMessage(T("Reloading: %1 changed on disk").arg(names.join(", ")), 6000);
         editor->onTextChangedDebounce();
     });
     // The custom blocks: a script that uses a block runs again when the file that defines it is saved
@@ -354,7 +407,7 @@ Window::Window(Arguments args)
         watchBlocks();      // (files that came or went)
         // (only a script that uses a block of the folder is run again)
         if (editor->callSupport("blocks_used", editor->getScript(), nullptr) != "1") return;
-        statusBar()->showMessage("Running the script again: " + names.join(", ") + " changed", 6000);
+        statusBar()->showMessage(T("Running the script again: %1 changed").arg(names.join(", ")), 6000);
         editor->onTextChangedDebounce();
     });
     connect(&watcher, &QFileSystemWatcher::fileChanged,
@@ -372,7 +425,7 @@ Window::Window(Arguments args)
     // shape that's too expensive to mesh at the current resolution/bounds
     // (previously the only way out of a long render was to kill the application
     // entirely, losing unsaved work).
-    auto cancel_render = new QAction("Cancel render", this);
+    auto cancel_render = new QAction(T("Cancel render"), this);
     Shortcuts::add(cancel_render, "view.cancel-render", {QKeySequence(Qt::Key_Escape)});
     addAction(cancel_render);
     connect(cancel_render, &QAction::triggered, this, &Window::onCancelRender);
@@ -385,38 +438,38 @@ Window::Window(Arguments args)
     autosaveTimer.start();
 
     // File menu
-    auto file_menu = menuBar()->addMenu("&File");
+    auto file_menu = menuBar()->addMenu(T("&File"));
 
-    auto new_action = file_menu->addAction("New");
+    auto new_action = file_menu->addAction(T("New"));
     Shortcuts::add(new_action, "file.new", QKeySequence::keyBindings(QKeySequence::New));
     connect(new_action, &QAction::triggered, this, &Window::onNew);
 
-    auto open_action = file_menu->addAction("Open...");
+    auto open_action = file_menu->addAction(T("Open..."));
     Shortcuts::add(open_action, "file.open", QKeySequence::keyBindings(QKeySequence::Open));
     connect(open_action, &QAction::triggered, this, &Window::onOpen);
 
-    recent_menu = file_menu->addMenu("Open recent");
+    recent_menu = file_menu->addMenu(T("Open recent"));
     updateRecentMenu();
 
     // The examples are small scripts that show how the features work: they have their own entry in the menu
-    auto example_action = file_menu->addAction("Open example file...");
+    auto example_action = file_menu->addAction(T("Open example file..."));
     Shortcuts::add(example_action, "file.open-example", {});
     connect(example_action, &QAction::triggered, this, &Window::onOpenExample);
 
-    auto import_action = file_menu->addAction("Import model...");
+    auto import_action = file_menu->addAction(T("Import model..."));
     Shortcuts::add(import_action, "file.import-model", {QKeySequence(Qt::CTRL | Qt::Key_I)});
     connect(import_action, &QAction::triggered, this, &Window::onImportModel);
 
-    auto open_viewer = file_menu->addAction("Open as viewer...");
+    auto open_viewer = file_menu->addAction(T("Open as viewer..."));
     Shortcuts::add(open_viewer, "file.open-viewer", {});
     connect(open_viewer, &QAction::triggered, this, &Window::onOpenViewer);
 
     // Add a "Revert to saved" item, which is only enabled if there are
     // unsaved changes and there's an existing filename to load from.
-    auto default_action = file_menu->addAction("Load the default script");
+    auto default_action = file_menu->addAction(T("Load the default script"));
     connect(default_action, &QAction::triggered, this, &Window::onLoadDefault);
 
-    auto revert_action = file_menu->addAction("Revert to saved");
+    auto revert_action = file_menu->addAction(T("Revert to saved"));
     Shortcuts::add(revert_action, "file.revert", {});
     connect(revert_action, &QAction::triggered, this, &Window::onRevert);
     connect(editor, &Editor::modificationChanged,
@@ -427,55 +480,55 @@ Window::Window(Arguments args)
 
     file_menu->addSeparator();
 
-    auto save_action = file_menu->addAction("Save");
+    auto save_action = file_menu->addAction(T("Save"));
     Shortcuts::add(save_action, "file.save", QKeySequence::keyBindings(QKeySequence::Save));
     connect(save_action, &QAction::triggered, this, &Window::onSave);
 
-    auto save_as_action = file_menu->addAction("Save As...");
+    auto save_as_action = file_menu->addAction(T("Save As..."));
     Shortcuts::add(save_as_action, "file.save-as", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)});
     connect(save_as_action, &QAction::triggered, this, &Window::onSaveAs);
 
     file_menu->addSeparator();
 
-    auto export_action = file_menu->addAction("Export STL...");
+    auto export_action = file_menu->addAction(T("Export STL..."));
     Shortcuts::add(export_action, "file.export-stl",
                    {QKeySequence(Qt::CTRL | Qt::Key_E), QKeySequence(Qt::Key_F7)});
     connect(export_action, &QAction::triggered, this, &Window::onExport);
 
-    auto shot_action = file_menu->addAction("Export screenshot...");
+    auto shot_action = file_menu->addAction(T("Export screenshot..."));
     Shortcuts::add(shot_action, "file.export-screenshot", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)});
     connect(shot_action, &QAction::triggered, this, [this]{
         const QImage img = view->grabFramebuffer();
-        QString f = QFileDialog::getSaveFileName(this, "Export screenshot",
-                workingDirectory(), "PNG image (*.png);;JPEG image (*.jpg)");
+        QString f = QFileDialog::getSaveFileName(this, T("Export screenshot"),
+                workingDirectory(), T("PNG image (*.png);;JPEG image (*.jpg)"));
         if (f.isEmpty()) return;
         if (QFileInfo(f).suffix().isEmpty()) f += ".png";
         if (img.save(f))
         {
-            statusBar()->showMessage("Screenshot saved to " + QDir::toNativeSeparators(f), 6000);
+            statusBar()->showMessage(T("Screenshot saved to %1").arg(QDir::toNativeSeparators(f)), 6000);
         }
         else
         {
-            QMessageBox::warning(this, "FielDes", "Could not save the screenshot to\n" + f);
+            QMessageBox::warning(this, "FielDes", T("Could not save the screenshot to\n%1").arg(f));
         }
     });
-    auto copy_shot = file_menu->addAction("Copy screenshot to clipboard");
+    auto copy_shot = file_menu->addAction(T("Copy screenshot to clipboard"));
     Shortcuts::add(copy_shot, "file.copy-screenshot", {QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C)});
     connect(copy_shot, &QAction::triggered, this, [this]{
         QGuiApplication::clipboard()->setImage(view->grabFramebuffer());
-        statusBar()->showMessage("Screenshot copied to the clipboard", 4000);
+        statusBar()->showMessage(T("Screenshot copied to the clipboard"), 4000);
     });
 
     file_menu->addSeparator();
 
-    auto quit_action = file_menu->addAction("Quit");
+    auto quit_action = file_menu->addAction(T("Quit"));
     Shortcuts::add(quit_action, "file.quit", {QKeySequence(Qt::CTRL | Qt::Key_Q)});
     connect(quit_action, &QAction::triggered, this, &Window::onQuit);
 
     // Settings menu: built here, added to the menu bar after View (the things the user sets once)
-    auto settings_menu = new QMenu("&Settings", this);
+    auto settings_menu = new QMenu(T("&Settings"), this);
     {
-        auto shortcuts_action = settings_menu->addAction("Keyboard shortcuts...");
+        auto shortcuts_action = settings_menu->addAction(T("Keyboard shortcuts..."));
         Shortcuts::add(shortcuts_action, "settings.keyboard-shortcuts",
                        {QKeySequence(Qt::CTRL | Qt::Key_K, Qt::CTRL | Qt::Key_S)});
         connect(shortcuts_action, &QAction::triggered, this, [this]{
@@ -484,10 +537,10 @@ Window::Window(Arguments args)
         });
         settings_menu->addSeparator();
         // The custom blocks: the files of one folder become functions in every script
-        auto blocks_action = settings_menu->addAction("Blocks folder...");
-        blocks_action->setToolTip("The folder whose Python files are your custom blocks: every function in them is there in every script");
+        auto blocks_action = settings_menu->addAction(T("Blocks folder..."));
+        blocks_action->setToolTip(T("The folder whose Python files are your custom blocks: every function in them is there in every script"));
         connect(blocks_action, &QAction::triggered, this, [this]{ chooseBlocksFolder(); });
-        auto show_blocks = settings_menu->addAction("Show the blocks folder");
+        auto show_blocks = settings_menu->addAction(T("Show the blocks folder"));
         connect(show_blocks, &QAction::triggered, this, [this]{
             if (m_blocksFolder.isEmpty()) watchBlocks();
             QDir().mkpath(m_blocksFolder);
@@ -497,15 +550,15 @@ Window::Window(Arguments args)
     }
 
     // Edit menu
-    auto edit_menu = menuBar()->addMenu("&Edit");
-    auto undo_action = edit_menu->addAction("Undo");
+    auto edit_menu = menuBar()->addMenu(T("&Edit"));
+    auto undo_action = edit_menu->addAction(T("Undo"));
     undo_action->setEnabled(false);
     Shortcuts::add(undo_action, "edit.undo", QKeySequence::keyBindings(QKeySequence::Undo));
     connect(undo_action, &QAction::triggered, editor, &Editor::undo);
     connect(editor, &Editor::undoAvailable, undo_action, &QAction::setEnabled);
     connect(editor, &Editor::notice, this, [this](const QString& text) { statusBar()->showMessage(text, 6000); });
 
-    auto redo_action = edit_menu->addAction("Redo");
+    auto redo_action = edit_menu->addAction(T("Redo"));
     redo_action->setEnabled(false);
     Shortcuts::add(redo_action, "edit.redo", QKeySequence::keyBindings(QKeySequence::Redo));
     connect(redo_action, &QAction::triggered, editor, &Editor::redo);
@@ -524,16 +577,16 @@ Window::Window(Arguments args)
             connect(a, &QAction::triggered, this, fn);
             return a;
         };
-        auto find_menu = edit_menu->addMenu("Find");
-        cmd(find_menu, "edit.find", "Find...", {QKeySequence(Qt::CTRL | Qt::Key_F)},
+        auto find_menu = edit_menu->addMenu(T("Find"));
+        cmd(find_menu, "edit.find", T("Find..."), {QKeySequence(Qt::CTRL | Qt::Key_F)},
             [=]{ find_bar()->showFind(); });
-        cmd(find_menu, "edit.replace", "Find and replace...", {QKeySequence(Qt::CTRL | Qt::Key_H)},
+        cmd(find_menu, "edit.replace", T("Find and replace..."), {QKeySequence(Qt::CTRL | Qt::Key_H)},
             [=]{ find_bar()->showReplace(); });
-        cmd(find_menu, "edit.find-next", "Find next", {QKeySequence(Qt::Key_F3)},
+        cmd(find_menu, "edit.find-next", T("Find next"), {QKeySequence(Qt::Key_F3)},
             [=]{ find_bar()->findNext(); });
-        cmd(find_menu, "edit.find-previous", "Find previous", {QKeySequence(Qt::SHIFT | Qt::Key_F3)},
+        cmd(find_menu, "edit.find-previous", T("Find previous"), {QKeySequence(Qt::SHIFT | Qt::Key_F3)},
             [=]{ find_bar()->findPrevious(); });
-        cmd(find_menu, "edit.select-next-occurrence", "Add next occurrence to selection (multi-cursor); duplicate the selected models",
+        cmd(find_menu, "edit.select-next-occurrence", T("Add next occurrence to selection (multi-cursor); duplicate the selected models"),
             {QKeySequence(Qt::CTRL | Qt::Key_D)}, [=]{
                 // (the same key in the viewport and the model tree: a copy of every selected model under it)
                 QWidget* f = QApplication::focusWidget();
@@ -543,61 +596,72 @@ Window::Window(Arguments args)
                     script()->selectNextOccurrence();
             });
 
-        auto nav_menu = edit_menu->addMenu("Go to");
-        cmd(nav_menu, "edit.go-to-definition", "Go to definition", {QKeySequence(Qt::Key_F12)},
+        auto nav_menu = edit_menu->addMenu(T("Go to"));
+        cmd(nav_menu, "edit.go-to-definition", T("Go to definition"), {QKeySequence(Qt::Key_F12)},
             [=]{ script()->goToDefinitionAtCursor(); });
-        cmd(nav_menu, "edit.go-to-line", "Go to line...", {QKeySequence(Qt::CTRL | Qt::Key_G)},
+        cmd(nav_menu, "edit.go-to-line", T("Go to line..."), {QKeySequence(Qt::CTRL | Qt::Key_G)},
             [=]{ script()->promptGoToLine(); });
         nav_menu->addSeparator();
-        cmd(nav_menu, "edit.back-to-script", "Back to the rendered script", {QKeySequence(Qt::ALT | Qt::Key_Left)},
+        cmd(nav_menu, "edit.back-to-script", T("Back to the rendered script"), {QKeySequence(Qt::ALT | Qt::Key_Left)},
             [=]{ editor->showScriptTab(); editor->scriptWidget()->setFocus(); });
-        cmd(nav_menu, "edit.next-tab", "Next tab", {QKeySequence(Qt::CTRL | Qt::Key_PageDown)},
+        cmd(nav_menu, "edit.next-tab", T("Next tab"), {QKeySequence(Qt::CTRL | Qt::Key_PageDown)},
             [=]{ editor->nextTab(); });
-        cmd(nav_menu, "edit.previous-tab", "Previous tab", {QKeySequence(Qt::CTRL | Qt::Key_PageUp)},
+        cmd(nav_menu, "edit.previous-tab", T("Previous tab"), {QKeySequence(Qt::CTRL | Qt::Key_PageUp)},
             [=]{ editor->previousTab(); });
-        cmd(nav_menu, "edit.close-tab", "Close tab", {QKeySequence(Qt::CTRL | Qt::Key_W)},
+        cmd(nav_menu, "edit.close-tab", T("Close tab"), {QKeySequence(Qt::CTRL | Qt::Key_W)},
             [=]{ editor->closeCurrentTab(); });
 
-        auto lines_menu = edit_menu->addMenu("Lines");
-        cmd(lines_menu, "edit.toggle-comment", "Toggle comment", {QKeySequence(Qt::CTRL | Qt::Key_Slash)},
+        auto lines_menu = edit_menu->addMenu(T("Lines"));
+        cmd(lines_menu, "edit.toggle-comment", T("Toggle comment"), {QKeySequence(Qt::CTRL | Qt::Key_Slash)},
             [=]{ script()->toggleComment(); });
-        cmd(lines_menu, "edit.duplicate-lines", "Duplicate line(s)",
+        cmd(lines_menu, "edit.duplicate-lines", T("Duplicate line(s)"),
             {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D)}, [=]{ script()->duplicateLines(); });
-        cmd(lines_menu, "edit.delete-lines", "Delete line(s)",
+        cmd(lines_menu, "edit.delete-lines", T("Delete line(s)"),
             {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K)}, [=]{ script()->deleteLines(); });
-        cmd(lines_menu, "edit.move-lines-up", "Move line(s) up", {QKeySequence(Qt::ALT | Qt::Key_Up)},
+        cmd(lines_menu, "edit.split-call", T("Split the call over lines"), {QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Return)},
+            [=]{ script()->reformatCall(false); });
+        cmd(lines_menu, "edit.join-call", T("Join the call onto one line"), {QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_J)},
+            [=]{ script()->reformatCall(true); });
+        cmd(lines_menu, "edit.move-lines-up", T("Move line(s) up"), {QKeySequence(Qt::ALT | Qt::Key_Up)},
             [=]{ script()->moveLinesUp(); });
-        cmd(lines_menu, "edit.move-lines-down", "Move line(s) down", {QKeySequence(Qt::ALT | Qt::Key_Down)},
+        cmd(lines_menu, "edit.move-lines-down", T("Move line(s) down"), {QKeySequence(Qt::ALT | Qt::Key_Down)},
             [=]{ script()->moveLinesDown(); });
 
-        auto break_menu = edit_menu->addMenu("Breakpoints");
-        cmd(break_menu, "edit.toggle-breakpoint", "Toggle breakpoint on this line",
+        cmd(edit_menu, "edit.pause-script", T("Pause / continue the script"), {QKeySequence(Qt::Key_F6)},
+            [=]{ editor->togglePause(); });
+        cmd(edit_menu, "edit.retry-script", T("Run the script again"), {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F5)},
+            [=]{ editor->retryRun(); });
+        cmd(edit_menu, "edit.terminate-script", T("Terminate the script"), {QKeySequence(Qt::SHIFT | Qt::Key_F5)},
+            [=]{ editor->terminateRun(); });
+
+        auto break_menu = edit_menu->addMenu(T("Breakpoints"));
+        cmd(break_menu, "edit.toggle-breakpoint", T("Toggle breakpoint on this line"),
             {QKeySequence(Qt::Key_F9)}, [=]{ script()->toggleBreakpointAtCursor(); });
-        cmd(break_menu, "edit.continue", "Continue from the breakpoint",
+        cmd(break_menu, "edit.continue", T("Continue from the breakpoint"),
             {QKeySequence(Qt::Key_F8)}, [=]{ editor->continueRun(); });
-        cmd(break_menu, "edit.clear-breakpoints", "Remove all breakpoints", {},
+        cmd(break_menu, "edit.clear-breakpoints", T("Remove all breakpoints"), {},
             [=]{ script()->clearBreakpoints(); });
 
-        auto fold_menu = edit_menu->addMenu("Folding");
-        cmd(fold_menu, "edit.fold-toggle", "Fold / unfold at cursor",
+        auto fold_menu = edit_menu->addMenu(T("Folding"));
+        cmd(fold_menu, "edit.fold-toggle", T("Fold / unfold at cursor"),
             {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_BracketLeft)}, [=]{ script()->toggleFoldAtCursor(); });
-        cmd(fold_menu, "edit.fold-all", "Fold all",
+        cmd(fold_menu, "edit.fold-all", T("Fold all"),
             {QKeySequence(Qt::CTRL | Qt::Key_K, Qt::CTRL | Qt::Key_0)}, [=]{ script()->foldAll(); });
-        cmd(fold_menu, "edit.unfold-all", "Unfold all",
+        cmd(fold_menu, "edit.unfold-all", T("Unfold all"),
             {QKeySequence(Qt::CTRL | Qt::Key_K, Qt::CTRL | Qt::Key_J)}, [=]{ script()->unfoldAll(); });
 
-        cmd(edit_menu, "edit.complete", "Autocomplete", {QKeySequence(Qt::CTRL | Qt::Key_Space)},
+        cmd(edit_menu, "edit.complete", T("Autocomplete"), {QKeySequence(Qt::CTRL | Qt::Key_Space)},
             [=]{ script()->setFocus(); script()->triggerCompletion(); });
         // (the text size is a setting: Ctrl++ and Ctrl+-, also on the numeric keypad)
-        cmd(settings_menu, "settings.font-bigger", "Editor text bigger",
+        cmd(settings_menu, "settings.font-bigger", T("Editor text bigger"),
             {QKeySequence(Qt::CTRL | Qt::Key_Plus), QKeySequence(Qt::CTRL | Qt::KeypadModifier | Qt::Key_Plus)},
             [=]{ script()->zoomInFont(); });
-        cmd(settings_menu, "settings.font-smaller", "Editor text smaller",
+        cmd(settings_menu, "settings.font-smaller", T("Editor text smaller"),
             {QKeySequence(Qt::CTRL | Qt::Key_Minus), QKeySequence(Qt::CTRL | Qt::KeypadModifier | Qt::Key_Minus)},
             [=]{ script()->zoomOutFont(); });
     }
 
-    auto autoload_action = settings_menu->addAction("Automatically reload changes");
+    auto autoload_action = settings_menu->addAction(T("Automatically reload changes"));
     connect(autoload_action, &QAction::triggered, this,
             [&](bool b) { autoreload = b; });
     autoload_action->setCheckable(true);
@@ -609,8 +673,8 @@ Window::Window(Arguments args)
     settings_menu->addSeparator();
 
     // View menu
-    auto view_menu = menuBar()->addMenu("&View");
-    auto show_axes_action = view_menu->addAction("Show origin axes");
+    auto view_menu = menuBar()->addMenu(T("&View"));
+    auto show_axes_action = view_menu->addAction(T("Show origin axes"));
     show_axes_action->setCheckable(true);
     connect(show_axes_action, &QAction::toggled, [this](bool b){
         view->showAxes(b);
@@ -618,7 +682,7 @@ Window::Window(Arguments args)
     });
     show_axes_action->setChecked(settings.value("show-axes", true).toBool());
 
-    auto show_triad_action = view_menu->addAction("Show orientation triad");
+    auto show_triad_action = view_menu->addAction(T("Show orientation triad"));
     show_triad_action->setCheckable(true);
     connect(show_triad_action, &QAction::toggled, [this](bool b){
         view->showTriad(b);
@@ -626,7 +690,7 @@ Window::Window(Arguments args)
     });
     show_triad_action->setChecked(settings.value("show-triad", true).toBool());
 
-    auto show_legends_action = view_menu->addAction("Show legends");
+    auto show_legends_action = view_menu->addAction(T("Show legends"));
     show_legends_action->setCheckable(true);
     connect(show_legends_action, &QAction::toggled, [this](bool b){
         view->showLegends(b);
@@ -634,7 +698,7 @@ Window::Window(Arguments args)
     });
     show_legends_action->setChecked(settings.value("show-legends", true).toBool());
 
-    auto show_bbox_action = view_menu->addAction("Show bounding box(es)");
+    auto show_bbox_action = view_menu->addAction(T("Show bounding box(es)"));
     show_bbox_action->setCheckable(true);
     connect(show_bbox_action, &QAction::toggled, [this](bool b) {
         view->showBBox(b);
@@ -642,9 +706,9 @@ Window::Window(Arguments args)
     });
     show_bbox_action->setChecked(settings.value("show-bounding-box", false).toBool());
 
-    auto perspective_action = new QAction("Perspective", nullptr);
-    auto ortho_action = new QAction("Orthographic", nullptr);
-    auto proj_menu = new QMenu("Projection");
+    auto perspective_action = new QAction(T("Perspective"), nullptr);
+    auto ortho_action = new QAction(T("Orthographic"), nullptr);
+    auto proj_menu = new QMenu(T("Projection"));
     proj_menu->addAction(perspective_action);
     proj_menu->addAction(ortho_action);
     perspective_action->setCheckable(true);
@@ -668,9 +732,9 @@ Window::Window(Arguments args)
     else
         perspective_action->setChecked(true);
 
-    auto turn_y_up = new QAction("Turntable (Y up)", nullptr);
-    auto turn_z_up = new QAction("Turntable (Z up)", nullptr);
-    auto rotation_menu = new QMenu("Rotation mode");
+    auto turn_y_up = new QAction(T("Turntable (Y up)"), nullptr);
+    auto turn_z_up = new QAction(T("Turntable (Z up)"), nullptr);
+    auto rotation_menu = new QMenu(T("Rotation mode"));
     rotation_menu->addAction(turn_y_up);
     rotation_menu->addAction(turn_z_up);
     turn_z_up->setCheckable(true);
@@ -693,10 +757,10 @@ Window::Window(Arguments args)
     (y_is_up ? turn_y_up : turn_z_up)->setChecked(true);
     view->setUpAxis(y_is_up);
 
-    auto sensitivity_low = new QAction("Low", nullptr);
-    auto sensitivity_medium = new QAction("Medium", nullptr);
-    auto sensitivity_high = new QAction("High", nullptr);
-    auto sensitivity_menu = new QMenu("Rotation sensitivity");
+    auto sensitivity_low = new QAction(T("Low"), nullptr);
+    auto sensitivity_medium = new QAction(T("Medium"), nullptr);
+    auto sensitivity_high = new QAction(T("High"), nullptr);
+    auto sensitivity_menu = new QMenu(T("Rotation sensitivity"));
     sensitivity_menu->addAction(sensitivity_low);
     sensitivity_menu->addAction(sensitivity_medium);
     sensitivity_menu->addAction(sensitivity_high);
@@ -731,9 +795,9 @@ Window::Window(Arguments args)
     else
         sensitivity_medium->setChecked(true);
 
-    auto cursor_centric = new QAction("Cursor", nullptr);
-    auto scene_centric = new QAction("Scene", nullptr);
-    auto zoom_menu = new QMenu("Zoom center");
+    auto cursor_centric = new QAction(T("Cursor"), nullptr);
+    auto scene_centric = new QAction(T("Scene"), nullptr);
+    auto zoom_menu = new QMenu(T("Zoom center"));
     zoom_menu->addAction(cursor_centric);
     zoom_menu->addAction(scene_centric);
     cursor_centric->setCheckable(true);
@@ -758,7 +822,7 @@ Window::Window(Arguments args)
         cursor_centric->setChecked(true);
 
     view_menu->addSeparator();
-    auto tree_action = view_menu->addAction("Model tree");
+    auto tree_action = view_menu->addAction(T("Model tree"));
     tree_action->setCheckable(true);
     Shortcuts::add(tree_action, "view.model-tree", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T)});
     connect(tree_action, &QAction::toggled, this, [this](bool b) {
@@ -803,7 +867,7 @@ Window::Window(Arguments args)
             });
         }
 
-        auto section_action = view_menu->addAction("Section view");
+        auto section_action = view_menu->addAction(T("Section view"));
         section_action->setCheckable(true);
         sectionToggle = section_action;
         Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X)});
@@ -813,7 +877,7 @@ Window::Window(Arguments args)
         auto showKey = [=](const QString& key, const QStringList& keys) {
             *shownKey = key;
             QStringList names;
-            for (const QString& k : keys) names << (k.startsWith("line:") ? "field at line " + k.mid(5) : k);
+            for (const QString& k : keys) names << (k.startsWith("line:") ? T("field at line %1").arg(k.mid(5)) : k);
             view->showField(key);
             fieldPanel->setFields(keys, names, std::max(0, int(keys.indexOf(key))));
             bool known = false;
@@ -854,17 +918,17 @@ Window::Window(Arguments args)
 
     {   // Standard views; single keys, so they only act while the viewport
         // has keyboard focus (click it first) and never eat typing
-        auto std_menu = view_menu->addMenu("Standard views");
+        auto std_menu = view_menu->addMenu(T("Standard views"));
         const int KP = int(Qt::KeypadModifier);
-        struct V { const char* id; const char* name; int which; QList<QKeySequence> keys; };
+        struct V { const char* id; QString name; int which; QList<QKeySequence> keys; };
         const QList<V> views = {
-            {"view.std-front",  "Front",     View::VIEW_FRONT,  {QKeySequence(Qt::Key_1), QKeySequence(KP | Qt::Key_1)}},
-            {"view.std-back",   "Back",      View::VIEW_BACK,   {QKeySequence(Qt::CTRL | Qt::Key_1), QKeySequence(Qt::CTRL | KP | Qt::Key_1)}},
-            {"view.std-right",  "Right",     View::VIEW_RIGHT,  {QKeySequence(Qt::Key_3), QKeySequence(KP | Qt::Key_3)}},
-            {"view.std-left",   "Left",      View::VIEW_LEFT,   {QKeySequence(Qt::CTRL | Qt::Key_3), QKeySequence(Qt::CTRL | KP | Qt::Key_3)}},
-            {"view.std-top",    "Top",       View::VIEW_TOP,    {QKeySequence(Qt::Key_7), QKeySequence(KP | Qt::Key_7)}},
-            {"view.std-bottom", "Bottom",    View::VIEW_BOTTOM, {QKeySequence(Qt::CTRL | Qt::Key_7), QKeySequence(Qt::CTRL | KP | Qt::Key_7)}},
-            {"view.std-iso",    "Isometric", View::VIEW_ISO,    {QKeySequence(Qt::Key_0), QKeySequence(KP | Qt::Key_0)}},
+            {"view.std-front",  T("Front"),     View::VIEW_FRONT,  {QKeySequence(Qt::Key_1), QKeySequence(KP | Qt::Key_1)}},
+            {"view.std-back",   T("Rear"),      View::VIEW_BACK,   {QKeySequence(Qt::CTRL | Qt::Key_1), QKeySequence(Qt::CTRL | KP | Qt::Key_1)}},
+            {"view.std-right",  T("Right"),     View::VIEW_RIGHT,  {QKeySequence(Qt::Key_3), QKeySequence(KP | Qt::Key_3)}},
+            {"view.std-left",   T("Left"),      View::VIEW_LEFT,   {QKeySequence(Qt::CTRL | Qt::Key_3), QKeySequence(Qt::CTRL | KP | Qt::Key_3)}},
+            {"view.std-top",    T("Top"),       View::VIEW_TOP,    {QKeySequence(Qt::Key_7), QKeySequence(KP | Qt::Key_7)}},
+            {"view.std-bottom", T("Bottom"),    View::VIEW_BOTTOM, {QKeySequence(Qt::CTRL | Qt::Key_7), QKeySequence(Qt::CTRL | KP | Qt::Key_7)}},
+            {"view.std-iso",    T("Isometric"), View::VIEW_ISO,    {QKeySequence(Qt::Key_0), QKeySequence(KP | Qt::Key_0)}},
         };
         for (const auto& v : views)
         {
@@ -880,13 +944,13 @@ Window::Window(Arguments args)
     {   // How the selected models are edited by dragging: single keys, active while the viewport (or the
         // model tree) has the keyboard focus, so they never eat typing.  E goes round when the gizmo is shown (click,
         // never, always); R locks or unlocks, a switch of its own that leaves the gizmo mode alone
-        auto mode_menu = view_menu->addMenu("Edit mode");
-        struct E { const char* id; const char* name; const char* mode; Qt::Key key; };
+        auto mode_menu = view_menu->addMenu(T("Edit mode"));
+        struct E { const char* id; QString name; const char* mode; Qt::Key key; };
         const QList<E> modes = {
-            {"view.edit-toggle",  "Gizmo: click / never / always", "toggle", Qt::Key_E},
-            {"view.edit-lock",    "Lock / unlock",          "lock",    Qt::Key_R},
-            {"view.visible",      "Show / hide",            "visible", Qt::Key_V},
-            {"view.cache",        "Render cache on / off",  "cache",   Qt::Key_C},
+            {"view.edit-toggle",  T("Gizmo: click / never / always"), "toggle", Qt::Key_E},
+            {"view.edit-lock",    T("Lock / unlock"),          "lock",    Qt::Key_R},
+            {"view.visible",      T("Show / hide"),            "visible", Qt::Key_V},
+            {"view.cache",        T("Render cache on / off"),  "cache",   Qt::Key_C},
         };
         for (const auto& m : modes)
         {
@@ -904,7 +968,7 @@ Window::Window(Arguments args)
     }
 
     {   // Isolation: a single key like the edit modes, so it never eats typing in the editor
-        auto isolate = view_menu->addAction("Isolate the selected model");
+        auto isolate = view_menu->addAction(T("Isolate the selected model"));
         Shortcuts::add(isolate, "view.isolate", {QKeySequence(Qt::Key_I)});
         isolate->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(isolate);
@@ -913,7 +977,7 @@ Window::Window(Arguments args)
     }
 
     {   // Delete: D, a single key like the others (the viewport or the model tree has the focus, so it never eats typing)
-        auto del = view_menu->addAction("Delete the selected models");
+        auto del = view_menu->addAction(T("Delete the selected models"));
         Shortcuts::add(del, "view.delete", {QKeySequence(Qt::Key_D)});
         del->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(del);
@@ -924,7 +988,7 @@ Window::Window(Arguments args)
     {   // Copy and paste of models: Ctrl+C and Ctrl+V with the viewport or the model tree focused (a text field of the
         // tree keeps its own copy and paste)
         auto scene = view->scenePanel();
-        auto copy = view_menu->addAction("Copy the selected models");
+        auto copy = view_menu->addAction(T("Copy the selected models"));
         Shortcuts::add(copy, "view.copy-models", {QKeySequence(Qt::CTRL | Qt::Key_C)});
         copy->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(copy);
@@ -932,7 +996,7 @@ Window::Window(Arguments args)
             if (auto field = qobject_cast<QLineEdit*>(QApplication::focusWidget())) field->copy();
             else scene->copySelected();
         });
-        auto paste = view_menu->addAction("Paste the copied models");
+        auto paste = view_menu->addAction(T("Paste the copied models"));
         Shortcuts::add(paste, "view.paste-models", {QKeySequence(Qt::CTRL | Qt::Key_V)});
         paste->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(paste);
@@ -942,21 +1006,21 @@ Window::Window(Arguments args)
         });
     }
 
-    auto frame_all = view_menu->addAction("Frame all shapes");
+    auto frame_all = view_menu->addAction(T("Frame all shapes"));
     Shortcuts::add(frame_all, "view.frame-all", {QKeySequence(Qt::Key_Home)});
     connect(frame_all, &QAction::triggered, view, &View::frameAll);
 
-    auto zoom_to_action = new QAction("Zoom to bounds", nullptr);
+    auto zoom_to_action = new QAction(T("Zoom to bounds"), nullptr);
     view_menu->addAction(zoom_to_action);
     Shortcuts::add(zoom_to_action, "view.zoom-to-bounds", {});
     connect(zoom_to_action, &QAction::triggered, view, &View::zoomTo);
 
     // How the viewport meshes (the render options): the last part of the View menu
     view_menu->addSeparator();
-    auto dc_meshing = new QAction("Dual contouring", nullptr);
-    auto iso_meshing = new QAction("Iso-simplex", nullptr);
-    auto hybrid_meshing = new QAction("Hybrid", nullptr);
-    auto meshing_menu = new QMenu("Meshing algorithm");
+    auto dc_meshing = new QAction(T("Dual contouring"), nullptr);
+    auto iso_meshing = new QAction(T("Iso-simplex"), nullptr);
+    auto hybrid_meshing = new QAction(T("Hybrid"), nullptr);
+    auto meshing_menu = new QMenu(T("Meshing algorithm"));
     auto meshing_mode = new QActionGroup(meshing_menu);
     view_menu->addMenu(meshing_menu);
 
@@ -990,9 +1054,9 @@ Window::Window(Arguments args)
 
     // The render cache (the model tree's cache button keeps a shape's mesh): everything it kept
     settings_menu->addSeparator();
-    auto clear_cache = settings_menu->addAction("Clear the caches");
-    clear_cache->setToolTip("Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next "
-                            "time they are needed, and kept again)");
+    auto clear_cache = settings_menu->addAction(T("Clear the caches"));
+    clear_cache->setToolTip(T("Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next "
+                            "time they are needed, and kept again)"));
     connect(clear_cache, &QAction::triggered, this, [this]{
         qint64 bytes = 0;
         for (const auto& f : QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files))
@@ -1007,30 +1071,62 @@ Window::Window(Arguments args)
             if (f.suffix() == "fdfield") ++fields;
             QFile::remove(f.absoluteFilePath());
         }
-        statusBar()->showMessage(QString("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
+        statusBar()->showMessage(T("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
                                      .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);
     });
 
     // The messages that were hidden with "Do not show this again" come back
     settings_menu->addSeparator();
-    auto show_messages = settings_menu->addAction("Show hidden messages again");
-    show_messages->setToolTip("The messages you turned off with \"Do not show this message again\" are shown again");
+    auto show_messages = settings_menu->addAction(T("Show hidden messages again"));
+    show_messages->setToolTip(T("The messages you turned off with \"Do not show this message again\" are shown again"));
     connect(show_messages, &QAction::triggered, this, [this]{
         QSettings().remove("hidden-messages");
-        statusBar()->showMessage("Hidden messages will be shown again", 6000);
+        statusBar()->showMessage(T("Hidden messages will be shown again"), 6000);
     });
+
+    // The language of the program's own words: the language of the computer, or one of those it has translations of.  It is read when the
+    // program starts, so a change comes with a restart (offered at once)
+    settings_menu->addSeparator();
+    {
+        auto language_menu = settings_menu->addMenu(T("Language"));
+        auto group = new QActionGroup(language_menu);
+        const QString chosen = i18n::chosen();
+        auto add = [&](const QString& code, const QString& label) {
+            auto a = language_menu->addAction(label);
+            a->setObjectName("language_" + code);
+            a->setCheckable(true);
+            a->setChecked(chosen == code);
+            group->addAction(a);
+            connect(a, &QAction::triggered, this, [this, code] {
+                if (code == i18n::chosen()) return;
+                i18n::setChosen(code);
+                if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) return;
+                QMessageBox m(this);
+                m.setIcon(QMessageBox::Information);
+                m.setText(T("The language changes when FielDes is started again."));
+                auto now = m.addButton(T("Restart now"), QMessageBox::AcceptRole);
+                m.addButton(T("Later"), QMessageBox::RejectRole);
+                m.exec();
+                if (m.clickedButton() == static_cast<QAbstractButton*>(now) && close())
+                    QProcess::startDetached(QCoreApplication::applicationFilePath(), filename.isEmpty() ? QStringList() : QStringList{filename});
+            });
+        };
+        add("system", T("The language of the computer"));
+        language_menu->addSeparator();
+        for (const auto& l : i18n::languages()) add(l.code, l.name);
+    }
 
     menuBar()->addMenu(settings_menu);
 
     // Help menu
-    auto help_menu = menuBar()->addMenu("Help");
-    auto guide_action = help_menu->addAction("FielDes guide (features and shortcuts)");
+    auto help_menu = menuBar()->addMenu(T("Help"));
+    auto guide_action = help_menu->addAction(T("FielDes guide (features and shortcuts)"));
     Shortcuts::add(guide_action, "help.guide", {QKeySequence(Qt::SHIFT | Qt::Key_F1)});
     connect(guide_action, &QAction::triggered, this, [this]{
         auto d = new QDialog(this);
         d->setObjectName("FielDesGuide");
         d->setAttribute(Qt::WA_DeleteOnClose);
-        d->setWindowTitle("FielDes guide");
+        d->setWindowTitle(T("FielDes guide"));
         auto text = new QTextBrowser;
         text->setOpenExternalLinks(true);
         text->setHtml(guideHtml());
@@ -1043,10 +1139,10 @@ Window::Window(Arguments args)
         d->show();
     });
     help_menu->addSeparator();
-    connect(help_menu->addAction("About"), &QAction::triggered,
+    connect(help_menu->addAction(T("About")), &QAction::triggered,
             this, &Window::onAbout);
-    connect(help_menu->addAction("Guided tour"), &QAction::triggered, this, [this]{ if (tour) tour->start(); });
-    auto ref_action = help_menu->addAction("Shape reference");
+    connect(help_menu->addAction(T("Guided tour")), &QAction::triggered, this, [this]{ if (tour) tour->start(); });
+    auto ref_action = help_menu->addAction(T("Shape reference"));
     Shortcuts::add(ref_action, "help.shape-reference", {QKeySequence(Qt::Key_F1)});
     connect(ref_action, &QAction::triggered, editor, &Editor::onShowDocs);
 
@@ -1088,14 +1184,14 @@ Window::Window(Arguments args)
             arrow->setFixedSize(14, 30);
             arrow->setAutoRaise(true);
             arrow->setCursor(Qt::PointingHandCursor);
-            arrow->setToolTip(imports ? "Recently imported models" : "Recently opened scripts");
+            arrow->setToolTip(imports ? T("Recently imported models") : T("Recently opened scripts"));
             connect(arrow, &QToolButton::clicked, this, [=]{ showRecent(arrow, imports); });
             row->addWidget(arrow);
             row->addSpacing(imports ? 0 : 4);
         };
-        add(new_action, Icons::newFile(), "New script", false, false);
-        add(open_action, Icons::open(), "Open a script", false);
-        add(import_action, Icons::importFile(), "Import a model", true);
+        add(new_action, Icons::newFile(), T("New script"), false, false);
+        add(open_action, Icons::open(), T("Open a script"), false);
+        add(import_action, Icons::importFile(), T("Import a model"), true);
         auto line = new QFrame;
         line->setObjectName("TopDivider");
         line->setFrameShape(QFrame::VLine);
@@ -1118,7 +1214,6 @@ Window::Window(Arguments args)
             return editor->callSupport("expose_text", var, error);
         });
         connect(editor, &Editor::sceneChanged, scene, &ScenePanel::setScene);
-        connect(editor, &Editor::partialSceneChanged, scene, &ScenePanel::setPartialScene);
         connect(editor, &Editor::documentReplaced, scene, &ScenePanel::clearScene);
         connect(editor, &Editor::scriptLoaded, scene, &ScenePanel::showCached);
         connect(editor, &Editor::sceneChanged, this, &Window::onSceneChanged);
@@ -1152,11 +1247,25 @@ Window::Window(Arguments args)
                 else delay->start();
             });
             connect(editor->scriptWidget(), &QPlainTextEdit::textChanged, this, [=] {
-                if (!error->text.isEmpty() && !error->shown) delay->start();       // (typing: the moment starts again)
+                // (the error is about the text that was run: an edit makes it old -- it goes now, and what the run of the new text finds
+                // out comes after the moment of quiet.  Not kept on screen through a run that takes a minute)
+                if (error->shown || !error->text.isEmpty())
+                {
+                    delay->stop();
+                    error->text.clear();
+                    error->line = -1;
+                    if (error->shown)
+                    {
+                        error->shown = false;
+                        view->setError(QString(), -1);
+                        scene->setError(QString(), -1);
+                    }
+                }
             });
             connect(view, &View::errorClicked, this, [=](int line0) { if (line0 >= 0) editor->goToLine(line0); });
         }
         connect(scene, &ScenePanel::goToLine, editor, &Editor::goToLine);
+        connect(scene, &ScenePanel::placeholderRequested, editor, &Editor::goToPlaceholder);
         connect(scene, &ScenePanel::editScript, editor, &Editor::applyEdits);
         connect(scene, &ScenePanel::editScriptLive, editor, &Editor::applyEditsLive);
         connect(scene, &ScenePanel::rerunRequested, editor, &Editor::onTextChangedDebounce);
@@ -1188,13 +1297,14 @@ Window::Window(Arguments args)
             return editor->callSupport(function, arg, error);
         });
         view->setMenuCatalogSource([this]{ return editor->callSupport("menu_catalog", QString(), nullptr); });
+        view->setLiveSettings([this]{ return editor->callSupport("live_settings", QString(), nullptr); });
         connect(view, &View::createRequested, scene, &ScenePanel::createFromMenu);
         connect(view, &View::importRequested, this, [this] { onImportModel(); });
         // A right-click in the text editor, or in the model tree, opens the viewport's menu for the model of that line / row
         connect(editor, &Editor::objectMenuRequested, view, &View::showMenuForLine);
         connect(scene, &ScenePanel::menuRequested, view, &View::showMenuForLine);
         // (the list is asked for once, after a script has run, so that a right-click never waits for Python)
-        connect(editor, &Editor::sceneChanged, view, [=]{ view->loadMenuCatalog(); });
+        connect(editor, &Editor::runFinished, view, [=]{ view->loadMenuCatalog(); });
         // (what the render cache did, on the cache buttons of the shapes that have it on)
         connect(view, &View::cacheStatesChanged, scene, [=]{ scene->setCacheStates(view->cacheStates()); });
     }
@@ -1204,13 +1314,13 @@ Window::Window(Arguments args)
         region->setStyleSheet("color: palette(mid); padding-right: 6px;");
         statusBar()->addPermanentWidget(region);
         connect(editor, &Editor::settingsChanged, region, [=](Settings s, bool) {
-            auto fmt = [](float v) { return QString::number(v, 'g', 4); };
+            auto fmt = [](float v) { return regionNumber(double(v)); };       // (whole numbers: see regionNumber)
+            auto fmtN = [](float v) { return QString::number(v, 'g', 4); };
             const QString dot = QString("   ") + QChar(0x00b7) + "   ";
-            region->setText((QString("Region (%1, %2, %3) ") + QChar(0x2192) +
-                QString(" (%4, %5, %6)") + dot + "resolution %7" + dot + "quality %8")
+            region->setText(T("Region (%1, %2, %3) → (%4, %5, %6)   ·   resolution %7   ·   quality %8")
                 .arg(fmt(s.min.x())).arg(fmt(s.min.y())).arg(fmt(s.min.z()))
                 .arg(fmt(s.max.x())).arg(fmt(s.max.y())).arg(fmt(s.max.z()))
-                .arg(fmt(s.res)).arg(fmt(s.quality)));
+                .arg(fmtN(s.res)).arg(fmtN(s.quality)));
         });
         auto timer = new QElapsedTimer;
         auto running = new bool(false);
@@ -1221,7 +1331,7 @@ Window::Window(Arguments args)
             }
             else if (!busy && *running)
             {
-                statusBar()->showMessage(QString("Rendered in %1 s")
+                statusBar()->showMessage(T("Rendered in %1 s")
                     .arg(timer->elapsed() / 1000.0, 0, 'f', 2), 8000);
                 // (FIELDES_TIMING: also to stderr, for timing scripts)
                 if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
@@ -1315,6 +1425,33 @@ Window::Window(Arguments args)
             script->setTextCursor(c);
             script->setFocus();
         });
+        // hoverdoc <line> <column>: hover the (0-based) place of the script as a hand does, and say what the tooltip shows
+        a->add("hoverdoc", [=](const QString& args){
+            const auto p = args.split(' ');
+            if (p.size() < 2) return;
+            QTextCursor c(script->document()->findBlockByNumber(p[0].toInt()));
+            c.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor, p[1].toInt());
+            const QPoint at = script->viewport()->mapTo(script, script->cursorRect(c).center());     // (the hand's place: in the widget, beside the gutter)
+            QToolTip::hideText();
+            QHelpEvent help(QEvent::ToolTip, at, script->mapToGlobal(at));
+            QApplication::sendEvent(script, &help);
+            QApplication::processEvents();
+            std::cerr << "automation: tooltip '" << QToolTip::text().toStdString() << "'\n";
+        });
+        // seltext <text>: select the first place of the script that has this text, as a hand does with the mouse (what is typed next
+        // replaces it); seltext+ <text>: the next place after the cursor
+        a->add("seltext", [=](const QString& text){
+            QTextCursor c = script->document()->find(text);
+            if (c.isNull()) { std::cerr << "automation: no text '" << text.toStdString() << "'\n"; return; }
+            script->setTextCursor(c);
+            script->setFocus();
+        });
+        // bpdump: the (1-based) lines of the breakpoints, in the log
+        a->add("bpdump", [=](const QString&){
+            std::cerr << "automation: breakpoints";
+            for (const int l : script->breakpoints()) std::cerr << " " << l;
+            std::cerr << std::endl;
+        });
         // gutterclick <line>: click the editor gutter's breakpoint column at a (0-based) line
         a->add("gutterclick", [=](const QString& args){
             QTextCursor c(script->document()->findBlockByNumber(args.toInt()));
@@ -1398,6 +1535,13 @@ Window::Window(Arguments args)
         a->add("click", [=](const QString& name){
             if (auto b = findChild<QAbstractButton*>(name.trimmed())) b->click();
             else std::cerr << "automation: no button " << name.toStdString() << std::endl;
+        });
+        // param <key> <text>: type into a field of the menu that asks for what an entry of the creation menus writes (a volume fraction, a force...)
+        a->add("param", [=](const QString& args){
+            const QString key = args.section(' ', 0, 0);
+            if (auto f = findChild<QLineEdit*>("param_" + key)) f->setText(args.section(' ', 1));
+            else if (auto c = findChild<QComboBox*>("param_" + key)) c->setCurrentText(args.section(' ', 1));
+            else std::cerr << "automation: no field param_" << key.toStdString() << std::endl;
         });
         // slider <object name> <value>: set a slider (the result card's step: resultStep)
         a->add("slider", [=](const QString& args){
@@ -1831,6 +1975,32 @@ Window::Window(Arguments args)
             QApplication::sendEvent(vp, &e);
             QApplication::processEvents();
         });
+        // treejitter <text prefix>: the left button pressed on a row of the model tree, the mouse moved by two pixels (a hand's tremor: not
+        // a drag) and the button let go -- says how many rows are selected after the press, after the move and after the release (a selection
+        // of several must stay as it is until the button comes up; the click then selects the row alone)
+        a->add("treejitter", [=](const QString& args){
+            auto row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            QWidget* vp = view->scenePanel()->treeViewport();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            const QPoint from(60, tree->visualItemRect(row).center().y());
+            auto send = [&](QEvent::Type t, const QPoint& pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, vp->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(vp, &e);
+                QApplication::processEvents();
+            };
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            const int afterPress = tree->selectedItems().size();
+            send(QEvent::MouseMove, from + QPoint(2, 1), Qt::NoButton, Qt::LeftButton);
+            const int afterMove = tree->selectedItems().size();
+            send(QEvent::MouseMove, from + QPoint(-1, 2), Qt::NoButton, Qt::LeftButton);
+            const int afterSecond = tree->selectedItems().size();
+            send(QEvent::MouseButtonRelease, from, Qt::LeftButton, Qt::NoButton);
+            std::cerr << "automation: treejitter selected rows: after the press " << afterPress << ", after a move " << afterMove
+                      << ", after another " << afterSecond << ", after the release " << tree->selectedItems().size() << "\n";
+        });
         a->add("treedrop", [=](const QString& args){
             const QStringList p = args.split('>');
             if (p.size() < 3) { std::cerr << "automation: treedrop <source> > <target> > <above|on|below|end> [ctrl]\n"; return; }
@@ -1912,6 +2082,21 @@ Window::Window(Arguments args)
             QApplication::sendEvent(f, &release);
             QApplication::processEvents();
             std::cerr << "automation: setting " << p[0].toStdString() << " " << p[1].toStdString() << " shows '" << f->text().toStdString() << "'\n";
+        });
+        // fieldfocus <fn> <index>: give a field of the render settings the keyboard the way a click does, and say what is selected in it
+        a->add("fieldfocus", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 2) { std::cerr << "automation: fieldfocus <fn> <index>\n"; return; }
+            auto scene = view->scenePanel();
+            scene->showSettings(true);
+            QApplication::processEvents();
+            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
+            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
+            f->clearFocus();
+            f->setFocus(Qt::MouseFocusReason);
+            for (int i = 0; i < 3; ++i) { QApplication::processEvents(); QThread::msleep(15); }
+            std::cerr << "automation: field " << args.toStdString() << " shows '" << f->text().toStdString() << "', selected '"
+                      << f->selectedText().toStdString() << "'\n";
         });
         // (the editor of a name in the tree: the field that has the keyboard, else the one that is open in the tree -- a window that
         // is not the active one has no keyboard focus, and a test must not depend on that)
@@ -2129,8 +2314,8 @@ bool Window::onOpen(bool)
 {
     CHECK_UNSAVED();
 
-    QString f = QFileDialog::getOpenFileName(this, "Open",
-            workingDirectory(), "FielDes scripts (*.py);;Any files (*)");
+    QString f = QFileDialog::getOpenFileName(this, T("Open"),
+            workingDirectory(), T("FielDes scripts (*.py);;Any files (*)"));
     if (!f.isEmpty())
     {
         return openFile(f);
@@ -2146,15 +2331,15 @@ bool Window::onOpenExample(bool)
     if (!QDir(dir).exists())
     {
         QMessageBox m(this);
-        m.setText("The examples folder was not found");
-        m.setInformativeText("The examples are the files of the folder <code>examples</code> next to the program, and there is none at<br><code>" +
-                             QDir::toNativeSeparators(dir) + "</code>");
+        m.setText(T("The examples folder was not found"));
+        m.setInformativeText(T("The examples are the files of the folder <code>examples</code> next to the program, and there is none at<br><code>%1</code>")
+                                 .arg(QDir::toNativeSeparators(dir)));
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Information);
         m.exec();
         return false;
     }
-    const QString f = QFileDialog::getOpenFileName(this, "Open an example", dir, "FielDes examples (*.py);;Any files (*)");
+    const QString f = QFileDialog::getOpenFileName(this, T("Open an example"), dir, T("FielDes examples (*.py);;Any files (*)"));
     return f.isEmpty() ? false : openFile(f);
 }
 
@@ -2181,8 +2366,8 @@ bool Window::loadFile(QString f, bool reload)
     if (!file.open(QIODevice::ReadOnly))
     {
         QMessageBox m(this);
-        m.setText("Failed to open file");
-        m.setInformativeText("<code>" + f + "</code><br>does not exist");
+        m.setText(T("Failed to open file"));
+        m.setInformativeText(T("<code>%1</code><br>does not exist").arg(f));
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Critical);
         m.setWindowModality(Qt::WindowModal);
@@ -2191,7 +2376,7 @@ bool Window::loadFile(QString f, bool reload)
     }
     else
     {
-        editor->setScript(file.readAll(), reload);
+        editor->setScript(file.readAll(), reload, f);
         editor->setModified(false);
         editor->guessLanguage(QFileInfo(file.fileName()).suffix().toLower());
         return true;
@@ -2249,8 +2434,8 @@ bool Window::saveFile(QString f)
     {
 
         QMessageBox m(this);
-        m.setText("Failed to save file");
-        m.setInformativeText("<code>" + f + "</code><br>is not writable");
+        m.setText(T("Failed to save file"));
+        m.setInformativeText(T("<code>%1</code><br>is not writable").arg(f));
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Critical);
         m.setWindowModality(Qt::WindowModal);
@@ -2260,8 +2445,8 @@ bool Window::saveFile(QString f)
     if (!file.open(QIODevice::WriteOnly))
     {
         QMessageBox m(this);
-        m.setText("Failed to save file");
-        m.setInformativeText("<code>" + f + "</code><br>does not exist");
+        m.setText(T("Failed to save file"));
+        m.setInformativeText(T("<code>%1</code><br>does not exist").arg(f));
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Critical);
         m.setWindowModality(Qt::WindowModal);
@@ -2323,9 +2508,9 @@ void Window::onAutosave()
 
 bool Window::onSaveAs(bool)
 {
-    QString f = QFileDialog::getSaveFileName(this, "Save as",
+    QString f = QFileDialog::getSaveFileName(this, T("Save as"),
             workingDirectory(),
-            QString("FielDes scripts (*%1);;Any files (*)").arg(editor->getExtension()));
+            T("FielDes scripts (*%1);;Any files (*)").arg(editor->getExtension()));
     if (!f.isEmpty())
     {
         if (saveFile(f))
@@ -2430,8 +2615,8 @@ QMessageBox::StandardButton Window::checkUnsaved()
     if (!others.isEmpty() && !automated)
     {
         QMessageBox m(this);
-        m.setText("Do you want to save your changes to " + others.join(", ") + "?");
-        m.setInformativeText("If you don't save, your changes will be lost");
+        m.setText(T("Do you want to save your changes to %1?").arg(others.join(", ")));
+        m.setInformativeText(T("If you don't save, your changes will be lost"));
         m.addButton(QMessageBox::Discard);
         m.addButton(QMessageBox::Cancel);
         m.addButton(QMessageBox::Save);
@@ -2444,8 +2629,8 @@ QMessageBox::StandardButton Window::checkUnsaved()
     if (isWindowModified())
     {
         QMessageBox m(this);
-        m.setText("Do you want to save your changes to this document?");
-        m.setInformativeText("If you don't save, your changes will be lost");
+        m.setText(T("Do you want to save your changes to this document?"));
+        m.setInformativeText(T("If you don't save, your changes will be lost"));
         m.addButton(QMessageBox::Discard);
         m.addButton(QMessageBox::Cancel);
         m.addButton(QMessageBox::Save);
@@ -2506,12 +2691,12 @@ void Window::showRecent(QWidget* below, bool imports)
     }
     if (n == 0)
     {
-        menu->addAction(imports ? "No model has been imported yet" : "No script has been opened yet")->setEnabled(false);
+        menu->addAction(imports ? T("No model has been imported yet") : T("No script has been opened yet"))->setEnabled(false);
     }
     else
     {
         menu->addSeparator();
-        connect(menu->addAction("Clear list"), &QAction::triggered, this, [=]{
+        connect(menu->addAction(T("Clear list")), &QAction::triggered, this, [=]{
             settings.remove(key);
             updateRecentMenu();
         });
@@ -2543,7 +2728,7 @@ void Window::updateRecentMenu()
     if (n)
     {
         recent_menu->addSeparator();
-        connect(recent_menu->addAction("Clear list"), &QAction::triggered, this, [this]{
+        connect(recent_menu->addAction(T("Clear list")), &QAction::triggered, this, [this]{
             settings.remove("recent-files");
             updateRecentMenu();
         });
@@ -2558,7 +2743,7 @@ void Window::setFilename(const QString& f)
     addRecentFile(f);
     if (filename.startsWith(":/"))
     {
-        QString title = QFileInfo(filename).fileName() + " (read-only)";
+        QString title = T("%1 (read-only)").arg(QFileInfo(filename).fileName());
         #if defined(Q_OS_LINUX) || defined(Q_OS_WIN)
             setWindowTitle(title+"[*]");
         #else
@@ -2606,8 +2791,8 @@ void Window::onExportReady(QList<const libfive::Mesh*> shapes)
                                 std::list<const libfive::Mesh*>(shapes.begin(), shapes.end())))
     {
         QMessageBox m(this);
-        m.setText("Could not save file");
-        m.setInformativeText("Check the console for more information");
+        m.setText(T("Could not save file"));
+        m.setInformativeText(T("Check the console for more information"));
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Critical);
         m.setWindowModality(Qt::WindowModal);
@@ -2619,7 +2804,7 @@ void Window::onExportReady(QList<const libfive::Mesh*> shapes)
 void Window::onExport(bool)
 {
     export_filename = QFileDialog::getSaveFileName(
-            this, "Export STL", workingDirectory(), "STL files (*.stl);;Any files (*)");
+            this, T("Export STL"), workingDirectory(), T("STL files (*.stl);;Any files (*)"));
     if (export_filename.isEmpty())
     {
         return;
@@ -2634,7 +2819,7 @@ void Window::onExport(bool)
     auto p = new QProgressDialog(this);
     p->setCancelButton(nullptr);
     p->setWindowModality(Qt::WindowModal);
-    p->setLabelText("Exporting...");
+    p->setLabelText(T("Exporting..."));
     p->setMaximum(0);
 
     // If we cancel the export (by pressing escape), then we shouldn't
@@ -2655,22 +2840,22 @@ void Window::onExport(bool)
 
 void Window::onAbout(bool)
 {
-    QString info = "<b>FielDes</b> &mdash; field-driven design<br><br>"
-                   "Version 0.1.0 (beta)<br>"
+    QString info = T("<b>FielDes</b> &mdash; field-driven design<br><br>"
+                   "Version %1 (beta)<br>"
                    "Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> "
-                   "by Matt Keeter<br><br>";
+                   "by Matt Keeter<br><br>").arg(QCoreApplication::applicationVersion());
     const QString revision = libfive_git_revision();
-    if (revision != "N/A") info += "Kernel revision: <code>" + revision + "</code><br>";
-    info += "Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)";
-    QMessageBox::about(this, "About FielDes", info);
+    if (revision != "N/A") info += T("Kernel revision: <code>%1</code><br>").arg(revision);
+    info += T("Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)");
+    QMessageBox::about(this, T("About FielDes"), info);
 }
 
 void Window::onImportModel(bool)
 {
     const QString f = QFileDialog::getOpenFileName(
-            this, "Import model", workingDirectory(),
-            "CAD models (*.step *.stp *.STEP *.STP *.stl *.STL *.obj *.OBJ *.ply *.PLY *.3mf *.3MF *.glb *.GLB *.gltf *.GLTF);;"
-            "STEP (*.step *.stp);;Triangle meshes (*.stl *.obj *.ply *.3mf *.glb *.gltf);;Any files (*)");
+            this, T("Import model"), workingDirectory(),
+            T("CAD models (*.step *.stp *.STEP *.STP *.stl *.STL *.obj *.OBJ *.ply *.PLY *.3mf *.3MF *.glb *.GLB *.gltf *.GLTF);;"
+            "STEP (*.step *.stp);;Triangle meshes (*.stl *.obj *.ply *.3mf *.glb *.gltf);;Any files (*)"));
     if (!f.isEmpty())
     {
         importModel(f);
@@ -2817,7 +3002,7 @@ void Window::importModel(const QString& path)
     edits << TextEdit{0, 0, last, int(lines[last].size()), out.join('\n')};
     editor->applyEdits(edits, "Import " + fi.fileName());
     view->zoomOnNextSettings();
-    statusBar()->showMessage("Imported " + fi.fileName(), 8000);
+    statusBar()->showMessage(T("Imported %1").arg(fi.fileName()), 8000);
 }
 
 void Window::watchImports(const QString& sceneJson)
@@ -2862,11 +3047,11 @@ void Window::setBlocksFolder(const QString& path)
 void Window::chooseBlocksFolder()
 {
     if (m_blocksFolder.isEmpty()) watchBlocks();
-    const QString chosen = QFileDialog::getExistingDirectory(this, "Blocks folder: the Python files in it are your custom blocks",
+    const QString chosen = QFileDialog::getExistingDirectory(this, T("Blocks folder: the Python files in it are your custom blocks"),
                                                              m_blocksFolder);
     if (chosen.isEmpty()) return;
     setBlocksFolder(chosen);
-    statusBar()->showMessage("Blocks folder: " + chosen, 6000);
+    statusBar()->showMessage(T("Blocks folder: %1").arg(chosen), 6000);
 }
 
 void Window::onSceneChanged(QString json)
@@ -2878,10 +3063,12 @@ void Window::onSceneChanged(QString json)
     {
         return;
     }
+    const auto doc = QJsonDocument::fromJson(json.toUtf8()).object();
+    // (what an import found is known once its run has ended: the tree read from the text before that has no parts to show)
+    if (!doc["run_done"].toBool()) return;
     const QString pending = m_pendingImport;
     m_pendingImport.clear();
 
-    const auto doc = QJsonDocument::fromJson(json.toUtf8()).object();
     for (const auto v : doc["items"].toArray())
     {
         const auto it = v.toObject();
@@ -2924,7 +3111,7 @@ bool Window::loadTourModel()
     // (the tour is about the model tree: it is shown whatever it was before)
     for (QAction* a : menuBar()->findChildren<QAction*>())
     {
-        if (a->isCheckable() && a->text() == "Model tree") a->setChecked(true);
+        if (a->isCheckable() && a->text() == T("Model tree")) a->setChecked(true);
     }
     setFilename("");
     setWindowTitle("FielDes[*]");

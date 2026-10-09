@@ -1,10 +1,11 @@
 # Fluid flow around a body: water past a round post in a channel, and the wake behind it.
 #
 # The fluid is a shape like any other -- here a thin slab of water with the post cut out of it (slip on both faces
-# of the slab and on its sides: a two-dimensional flow, open at the sides).  fluid_analysis(domain, conditions, fluid,
-# element_size) solves the Navier-Stokes equations on tetrahedra that follow the fluid's surface.  The boundary
-# conditions are regions: an inlet (the mean speed, or a flow rate), an outlet (its pressure), slip planes, and
-# everything else is a wall at rest -- here the post, so the wall force is the drag on it.
+# of the slab and on its sides: a two-dimensional flow, open at the sides).  fluid_analysis(domain, inlets, outlets,
+# boundaries, fluid, element_size) solves the Navier-Stokes equations on tetrahedra that follow the fluid's surface.
+# The boundary conditions are regions, an input for each kind: inlets (the mean speed, or a flow rate), outlets (their
+# pressure), boundaries (walls, at rest unless they move, and slips, planes the fluid slides along: one or both, in one
+# list); everything not named is a wall at rest -- here the post, so the wall force is the drag on it.
 #
 # The result on its own shows the flow: the fluid coloured by the speed, with streamlines from the inlet and particles
 # moving along them drawn over it.  The result card switches to the pressure, the vorticity, ...; its step slider
@@ -36,7 +37,9 @@ inlet_face = box_exact((-1, -1, -1), (0.01, H + 1, T + 1))
 outlet_face = box_exact((W - 0.01, -1, -1), (W + 1, H + 1, T + 1))
 
 flow = fluid_analysis(fluid_domain,
-                      [slip(faces), slip(sides), inlet(inlet_face, speed=U), outlet(outlet_face, pressure=0)],
+                      inlets=[inlet(inlet_face, speed=U)],
+                      outlets=[outlet(outlet_face, pressure=0)],
+                      boundaries=[slip(faces), slip(sides)],        # (the post is a wall at rest: everything not named is)
                       fluid=water, element_size=1.0)
 print('drag on the post %.3g N (%.3g uN); speed behind it at 2 D: %.2f mm/s' % (
     flow.wall_force[0], flow.wall_force[0] * 1e6, flow.vx(24 + 2 * D, 20, T / 2)))

@@ -456,30 +456,70 @@ def _estimate_bounds(shapes, deadline):
     import ctypes
     import time
     from fieldes.ffi import lib, libfive_region_t
+    from fieldes.stdlib.content_cache import cache_for, shape_key
+    from fieldes.stdlib.fields import _vars_key
+    memory = cache_for('scene_bounds', 256)         # (the extents found, by the expression and the numbers of the script's variables)
     boxes = []
     for s in shapes:
         b = getattr(s, '_bounds', None)
         if b:
             boxes.append(b)
             continue
+        key = None
+        try:
+            key = (shape_key(s), _vars_key())
+        except Exception:
+            pass
+        if key is not None:
+            hit, kept = memory.get(key)
+            if hit:
+                boxes.append(kept)
+                continue
         if time.time() > deadline:
             return None
-        search = libfive_region_t()
-        for axis in (search.X, search.Y, search.Z):
-            axis.lower, axis.upper = -_SEARCH, _SEARCH
-        out = libfive_region_t()
-        open_sides = ctypes.c_int(0)
         known = _var_values() if hasattr(lib, 'libfive_tree_bounds_vars') else None
-        if known is not None:
-            found = lib.libfive_tree_bounds_vars(s.ptr, search, 100000, 0.08, ctypes.byref(out),
-                                                 ctypes.byref(open_sides), known[0], known[1], known[2])
-        else:
-            found = lib.libfive_tree_bounds(s.ptr, search, 100000, 0.08, ctypes.byref(out),
-                                            ctypes.byref(open_sides))
-        if not found or open_sides.value:
+        box = None
+        # A search that is cut short (80 ms) returns the coarser box it had got to -- a 500 mm box round a part of 30 mm, when the
+        # machine is busy.  It is searched again inside the box that was found (the shape is in it), as long as that makes the box
+        # smaller and there is time, so that the extent -- and what is sized by it: the element size of a simulation, the framing -- is
+        # right whatever the load
+        for attempt in range(2):
+            search = libfive_region_t()
+            for k, axis in enumerate((search.X, search.Y, search.Z)):
+                if box is None:
+                    axis.lower, axis.upper = -_SEARCH, _SEARCH
+                else:
+                    # (a cube round the box: a search over a box that is not a cube does not come to an end in the time it has)
+                    half = 0.51 * max(box[1][i] - box[0][i] for i in range(3)) + 1e-3
+                    centre = 0.5 * (box[0][k] + box[1][k])
+                    axis.lower, axis.upper = centre - half, centre + half
+            out = libfive_region_t()
+            open_sides = ctypes.c_int(0)
+            started = time.time()
+            limit = 0.08 if attempt == 0 else 0.5       # (the first look is quick; the one inside the box it found takes the time it needs)
+            if known is not None:
+                found = lib.libfive_tree_bounds_vars(s.ptr, search, 100000, limit, ctypes.byref(out),
+                                                     ctypes.byref(open_sides), known[0], known[1], known[2])
+            else:
+                found = lib.libfive_tree_bounds(s.ptr, search, 100000, limit, ctypes.byref(out),
+                                                ctypes.byref(open_sides))
+            if not found or open_sides.value:
+                break                       # (nothing better than the box that was found before, if there is one)
+            found_box = ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
+            size_before = sum(box[1][i] - box[0][i] for i in range(3)) if box else None
+            box = found_box
+            if size_before is None:
+                # (the first answer may be a coarse one -- the search ran out of its 80 ms: look again inside it; one that came quickly is final)
+                if time.time() - started >= 0.06 and time.time() < deadline:
+                    continue
+                break
+            if sum(box[1][i] - box[0][i] for i in range(3)) > 0.98 * size_before or time.time() > deadline:
+                break
+        if box is None:
             return None
-        boxes.append(((out.X.lower, out.Y.lower, out.Z.lower),
-                      (out.X.upper, out.Y.upper, out.Z.upper)))
+        if key is not None:
+            memory.put(key, box)
+        boxes.append(box)
     if not boxes:
         return None
     return [[min(b[0][i] for b in boxes) for i in range(3)],
@@ -502,6 +542,31 @@ def menu_call(request):
         Raises ValueError with the reason when the entry cannot be made. '''
     from fieldes import menu_catalog as catalog
     return catalog.call(request)
+
+
+def complete_call(request):
+    ''' The call of a function as the completion writes it, complete and laid out (see fieldes.completion): `request` is JSON {name, column, indent} '''
+    from fieldes import completion
+    return completion.complete_for_editor(request)
+
+
+def forget_literals(_arg=''):
+    ''' A script was opened (see fieldes.stdlib.handles) '''
+    from fieldes.stdlib import handles
+    handles.forget_literals()
+    return '1'
+
+
+def argument_doc(request):
+    ''' What the documentation says of the argument whose name is at a position of the script, as JSON (see fieldes.completion) '''
+    from fieldes import completion
+    return completion.argument_doc(request)
+
+
+def reformat_call(request):
+    ''' The innermost call that holds a position of the script, laid out again, as JSON {start, end, text} (see fieldes.completion) '''
+    from fieldes import completion
+    return completion.reformat_in_source(request)
 
 
 def set_blocks_folder(path):
@@ -630,6 +695,77 @@ def rename_edits(arg):
     return json.dumps({'edits': edits})
 
 
+def _arg_removals(call, names, var, start_of, end_of):
+    ''' The edits that take models out of a call: a plain name written as one of its arguments (union(a, b)), or as an element of a
+        list or tuple that is an argument or the value of a keyword, or of a list inside one (loads=[a, b], [push, pull]).  A list
+        keeps its other elements.  When its last element goes a placeholder stands in the list -- `loads=[...]`, never an empty
+        bracket, which would only fail when the script runs -- and a call is not left with nothing (ValueError) '''
+    top = {'nodes': sorted(list(call.args) + list(call.keywords), key=lambda n: (n.lineno, n.col_offset)),
+           'kind': 'call', 'node': None, 'parent': None, 'depth': 0}
+    containers = [top]
+
+    def walk(lst, kind, parent, depth):
+        c = {'nodes': list(lst.elts), 'kind': kind, 'node': lst, 'parent': parent, 'depth': depth}
+        containers.append(c)
+        for k, e in enumerate(lst.elts):
+            if isinstance(e, (ast.List, ast.Tuple)):
+                walk(e, kind, (c, k), depth + 1)
+
+    for a in call.args:
+        if isinstance(a, (ast.List, ast.Tuple)):
+            walk(a, 'positional', None, 1)
+    for kw in call.keywords:
+        if kw.arg and isinstance(kw.value, (ast.List, ast.Tuple)):
+            walk(kw.value, 'keyword', None, 1)
+
+    removals = {}                           # id(container) -> (container, the indices of the elements to take out)
+    for name in names:
+        found = call_done = False
+        for c in containers:
+            for i, n in enumerate(c['nodes']):
+                if not (isinstance(n, ast.Name) and n.id == name):
+                    continue
+                if c['kind'] == 'call':
+                    if call_done:
+                        continue            # (the call's own arguments: one place, as it was)
+                    call_done = True
+                found = True
+                removals.setdefault(id(c), (c, set()))[1].add(i)
+        if not found:
+            raise ValueError('%s is not one of the models %s is given' % (name, var))
+
+    edits = []
+    for depth in range(max(c['depth'] for c in containers), -1, -1):
+        for c, idx in [e for e in removals.values() if e[0]['depth'] == depth]:
+            nodes = c['nodes']
+            if len(idx) < len(nodes):
+                k = 0
+                while k < len(nodes):
+                    if k not in idx:
+                        k += 1
+                        continue
+                    j = k
+                    while j + 1 < len(nodes) and (j + 1) in idx:
+                        j += 1
+                    if j + 1 < len(nodes):
+                        edits.append((start_of(nodes[k]), start_of(nodes[j + 1]), ''))
+                    else:
+                        edits.append((end_of(nodes[k - 1]), end_of(nodes[j]), ''))
+                    k = j + 1
+                rest = [n for i, n in enumerate(nodes) if i not in idx]
+                if isinstance(c['node'], ast.Tuple) and len(rest) == 1:
+                    edits.append((end_of(rest[0]), end_of(rest[0]), ','))      # (one element left: a tuple still)
+            elif c['kind'] == 'keyword' and c['depth'] == 1 and isinstance(c['node'], ast.List):
+                # nothing is left of a list that is what a keyword is given (`inlets=[a]`): the input is a placeholder again, `inlets=...`
+                edits.append((start_of(c['node']), end_of(c['node']), '...'))
+            elif c['kind'] != 'call':
+                # nothing is left of the list: a placeholder is, as the call needs something there
+                edits.append((start_of(c['node']), end_of(c['node']), '[...]' if isinstance(c['node'], ast.List) else '(...,)'))
+            else:
+                raise ValueError('%s is given nothing else: it cannot lose %s' % (var, ', '.join(names)))
+    return edits
+
+
 def arg_edits(arg):
     ''' Changing the models a call is given: the model tree's nesting, renesting and denesting are edits of the arguments.
         `arg` is JSON {source, statements: [{var, line, remove: [name, ...], insert: [{name, relative, side}, ...]}]}: for each
@@ -664,12 +800,16 @@ def arg_edits(arg):
             if st.lineno == line and any(isinstance(t, ast.Name) and t.id == var for t in targets):
                 stmt = st
                 break
-        if stmt is None or not isinstance(getattr(stmt, 'value', None), ast.Call):
+        if stmt is None or getattr(stmt, 'value', None) is None:
             raise ValueError('%s is not written as a call: edit the script' % var)
         call = stmt.value
+        is_call = isinstance(call, ast.Call)
+        if not is_call and (want.get('remove') or want.get('insert')):
+            raise ValueError('%s is not written as a call: edit the script' % var)
+        # (a model that is used in arithmetic, `x = a + b`, can only be replaced by a placeholder: `x = a + ...`)
         # the places a model can stand: the call's own arguments, and the lists and tuples written in them
-        containers = [sorted(list(call.args) + list(call.keywords), key=lambda n: (n.lineno, n.col_offset))]
-        for a in call.args:
+        containers = [sorted(list(call.args) + list(call.keywords), key=lambda n: (n.lineno, n.col_offset))] if is_call else []
+        for a in (call.args if is_call else []):
             if isinstance(a, (ast.List, ast.Tuple)):
                 containers.append(list(a.elts))
         elements = []                       # (node, the nodes of its container), in the order of the script
@@ -685,16 +825,16 @@ def arg_edits(arg):
                     return node, nodes
             raise ValueError('%s is not one of the models %s is given' % (name, var))
 
-        edits = []                          # (start, end, text) in offsets of the whole source
-        for name in want.get('remove', []):
-            node, nodes = find(name)
-            i = next(k for k, n in enumerate(nodes) if n is node)
-            if i + 1 < len(nodes):
-                edits.append((start_of(node), start_of(nodes[i + 1]), ''))
-            elif i > 0:
-                edits.append((end_of(nodes[i - 1]), end_of(node), ''))
-            else:
-                raise ValueError('%s is given nothing else: it cannot lose %s' % (var, name))
+        edits = _arg_removals(call, want.get('remove', []), var, start_of, end_of) if want.get('remove') else []
+        for name in want.get('hole', []):
+            # (a model the call cannot do without is taken out: a placeholder `...` stands where it was, wherever it is written)
+            nodes = [n for n in ast.walk(call) if isinstance(n, ast.Name) and n.id == name
+                     and n is not getattr(call, 'func', None)]
+            if not nodes:
+                raise ValueError('%s is not used by %s' % (name, var))
+            for n in nodes:
+                edits.append((start_of(n), end_of(n), '...'))
+                                            # (start, end, text) in offsets of the whole source
         for ins in want.get('insert', []):
             name, side, relative = ins['name'], ins.get('side', 'end'), ins.get('relative')
             if side == 'end' or not relative:
@@ -993,6 +1133,30 @@ def _inputs_of(value, gs, by_name, own=None):
                 if tuple(span) not in seen:
                     seen.add(tuple(span))
                     found.append({'name': n.id, 'span': span, 'deep': True})
+    # A name written as an element of a list or tuple that the call is given -- positionally ([push, pull]) or as the value of a keyword
+    # (loads=[a, b]), or in a list inside such a list -- can be taken out of that list while the call keeps the rest: `listed`.
+    # `list_size` is how many elements that list has, `list_keyword` whether it is the value of a keyword (such a list may be left empty)
+    listed = {}
+
+    def note(lst, keyword):
+        for e in lst.elts:
+            if isinstance(e, ast.Name):
+                listed[tuple(_span(e))] = (len(lst.elts), keyword)
+            elif isinstance(e, (ast.List, ast.Tuple)):
+                note(e, keyword)
+
+    for a in value.args:
+        if isinstance(a, (ast.List, ast.Tuple)):
+            note(a, False)
+    for kw in value.keywords:
+        if kw.arg and isinstance(kw.value, (ast.List, ast.Tuple)):
+            note(kw.value, True)
+    for d in found:
+        info = listed.get(tuple(d['span']))
+        if info:
+            d['listed'] = True
+            d['list_size'] = info[0]
+            d['list_keyword'] = info[1]
     variadic = False
     f = value.func
     callee = gs.get(f.id) if isinstance(f, ast.Name) else None
@@ -1004,20 +1168,26 @@ def _inputs_of(value, gs, by_name, own=None):
     return found, variadic, _numbers_of(value, gs)
 
 
+def _region_args_of(call, src):
+    ''' The arguments of a condition's call that are its regions -- the leading positional ones that are not numbers, tuples of numbers or
+        keywords -- as [{span, text}] '''
+    out = []
+    for a in call.args:
+        literal = isinstance(a, (ast.Constant, ast.Tuple)) or (isinstance(a, ast.UnaryOp) and isinstance(a.operand, ast.Constant))
+        if literal or isinstance(a, ast.Starred):
+            break
+        out.append({'span': _span(a), 'text': src.segment(a)})
+    return out
+
+
 def _condition_role(value):
-    ''' What a condition is, for a drop on the call that takes it: 'support' and 'load' go to the lists of
-        static_boundary_conditions, 'boundary' (a temperature, a heat, a convection, an inlet ...) to the list of an analysis,
-        'set' is a whole set of conditions (static_boundary_conditions(...)); '' for anything else '''
-    name = type(value).__name__
-    if name == '_Support':
-        return 'support'
-    if name in ('_Force', '_Gravity', '_Thermal'):
-        return 'load'
-    if name in ('_Temperature', '_Heat', '_Convection', '_Inlet', '_Outlet', '_Wall', '_Slip'):
-        return 'boundary'
-    if name in ('StaticBoundaryConditions', '_PlainConditions'):
-        return 'set'
-    return ''
+    ''' What a condition is, for a drop on the call that takes it: the name of the input of an analysis it goes in -- `supports`, `loads`,
+        `fixed_temperatures`, `inlets` ... (every kind of condition has an input of its own); '' for anything else '''
+    try:
+        from fieldes.stdlib.fea import _slot_of
+        return _slot_of(value) or ''
+    except Exception:
+        return ''
 
 
 def _call_slots(value, gs, src):
@@ -1048,6 +1218,7 @@ def _call_slots(value, gs, src):
         span = _span(node)
         d = {'span': span, 'text': _short(src.segment(node), 60)}
         if isinstance(node, ast.List):
+            d['text'] = _short(src.segment(node), 2000)         # (the drop reads the names in it: not cut short)
             d['list'] = True
             if node.elts:
                 d['last'] = _span(node.elts[-1])
@@ -1087,480 +1258,63 @@ def _key_of(it):
         return kind + ':' + it['list_var']
     return kind + ':' + it.get('label', '')
 
+def edit_reaches_running(new_text):
+    ''' '1' when an edit of the script -- the new text is `new_text` -- begins at or above the statement that runs now: what it makes may
+        be another thing, so a solver that works on it is stopped at once, not waited for.  '' when the edit is below it (an eye toggled
+        under it, a line added at the end): that cannot change what the statement makes, it finishes -- and is kept for the next run '''
+    from fieldes import runner
+    running = getattr(runner, 'running_lines', None)
+    old = getattr(runner, 'running_source', None)
+    if not running or old is None:
+        return ''
+    a, b = old.splitlines(), new_text.splitlines()
+    n = 0
+    while n < len(a) and n < len(b) and a[n] == b[n]:
+        n += 1
+    if n == len(a) == len(b):
+        return ''
+    return '1' if n + 1 <= running[1] else ''
 
-def scene_json(source, gs, results, upto=None, partial=False, errored=False):
-    ''' Describes the evaluated script for FielDes's model tree.  Returns a
-        JSON string; every position is 1-based lines / 0-based columns.
-        While a script is still running the tree is given what has been made so far: upto is the number of
-        top-level statements that are done, and partial leaves out what takes a measurement of the shapes (their
-        extents, whether their surfaces can be dragged), which the finished script's tree has. '''
-    Shape, FailedPart = _types()
-    from fieldes.kinds import kind_of, describe as describe_kinds
-    blocks = _block_names()
 
-    def is_blocked(value):
-        ''' Whether a call is of one of the custom blocks (a function of the blocks folder) '''
-        return isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in blocks
+def outline_json(arg):
+    ''' The model tree of the script's text, read from the text (see outline.py): JSON {source, run_done} -> the tree's JSON '''
+    from fieldes import outline
+    debug = os.environ.get('FIELDES_OUTLINE_DEBUG')         # (a file the answers, and the errors, are written to: for finding out why a tree is not there)
+    try:
+        out = outline.outline_json(arg)
+    except Exception:
+        if debug:
+            import traceback
+            with open(debug, 'a') as f:
+                traceback.print_exc(file=f)
+        raise
+    if debug:
+        with open(debug, 'a') as f:
+            f.write(out[:3000] + '\n----\n')
+    return out
 
-    src = _Source(source)
-    _SPAN_LINES[:] = src.lines
-    _FIELD_SOURCES[:] = []
-    tree = ast.parse(source)
-    if upto is not None:
-        tree.body = tree.body[:upto]
 
-    def is_shape(v):
-        return isinstance(v, Shape)
+def seed_known(arg):
+    ''' A tree kept from an earlier session tells what its statements made, until a run says it again (see outline.seed) '''
+    from fieldes import outline
+    outline.seed(arg)
+    return '1'
 
-    def is_result(v):
-        # (an analysis result: displayed through its _display(), listed like a shape)
-        return not isinstance(v, Shape) and callable(getattr(v, '_display', None))
 
-    def display_shapes(v):
-        ''' The shapes a value displays (a result's _display() may be one or several) '''
-        if is_shape(v):
-            return [v]
-        if is_result(v):
-            try:
-                d = v._display()
-            except Exception:
-                return []
-            return [s for s in (d if isinstance(d, (list, tuple)) else [d]) if is_shape(s)]
-        if isinstance(v, (list, tuple)):
-            return [s for s in v if is_shape(s)]
-        return []
-
-    def is_failed(v):
-        return bool(FailedPart) and isinstance(v, FailedPart)
-
-    taken = set(gs) | {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}   # (names not to reuse)
-    items = []
-    by_name = {}        # shape variable -> its item
-    settings = {}
-    list_imports = {}   # parts-list variable -> import item
-
-    for index, stmt in enumerate(tree.body):
-        value = results[index] if index < len(results) else None
-        line, end = stmt.lineno, stmt.end_lineno
-
-        # --- view.set_bounds / set_resolution / set_quality
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-            fn = _call_name(stmt.value)
-            if fn.startswith('view.') and _short_name(fn) in SETTINGS_FUNCS:
-                settings[_short_name(fn)] = {'line': line, 'end_line': end,
-                                             'span': _span(stmt),
-                                             'text': src.segment(stmt)}
-                continue
-
-        # --- imports
-        call, sub = _find_import(stmt, gs)
-        if call is not None:
-            func = _short_name(_call_name(call))
-            path = None
-            if call.args:
-                a = call.args[0]
-                if isinstance(a, ast.Constant) and isinstance(a.value, str):
-                    path = a.value
-                elif isinstance(a, ast.Name) and isinstance(gs.get(a.id), str):
-                    path = gs[a.id]
-            rev = None
-            rev_span = None
-            units = None
-            for kw in call.keywords:
-                if kw.arg == 'rev' and isinstance(kw.value, ast.Constant):
-                    rev = kw.value.value
-                    rev_span = _span(kw.value)
-                if kw.arg == 'units' and isinstance(kw.value, ast.Constant):
-                    units = kw.value.value
-            log = _import_log_entry(path) if path else None
-            item = {
-                'kind': 'import', 'line': line, 'end_line': end,
-                'func': func, 'path': path,
-                'label': os.path.basename(path) if path else func,
-                'call': _span(call), 'rev': rev, 'rev_span': rev_span,
-                'units': units if units is not None else (log or {}).get('units'),
-                'unit_mm': (log or {}).get('unit_mm'),
-                'note': (log or {}).get('note'),
-                'parts': [dict(p) for p in (log or {}).get('parts', [])],
-                'exists': bool(path) and os.path.exists(path),
-                'text': _short(src.segment(stmt), 90),
-            }
-            if sub is not None:
-                k, knode = _const_index(sub)
-                if k is not None:
-                    item['index'] = k
-                    item['index_span'] = _span(knode)
-
-            # What does the statement bind?
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    elts = target.elts if isinstance(target, ast.Tuple) else [target]
-                    first = elts[0] if elts else None
-                    if isinstance(target, ast.Name):
-                        v = gs.get(target.id)
-                        if isinstance(v, list):
-                            item['list_var'] = target.id
-                            list_imports[target.id] = item
-                        elif is_shape(v) or is_failed(v):
-                            item['var'] = target.id
-                        elif isinstance(v, tuple) and len(v) == 2:
-                            item['part_tuple_var'] = target.id
-                    elif isinstance(first, ast.Name):
-                        v = gs.get(first.id)
-                        if is_shape(v) or is_failed(v):
-                            item['var'] = first.id
-                            if len(elts) > 1:
-                                item['bounds_expr'] = src.segment(elts[1])
-            if 'var' in item:
-                v = gs.get(item['var'])
-                item['failed'] = is_failed(v)
-                if is_failed(v):
-                    item['error'] = v.error
-                b = getattr(v, '_bounds', None) if is_shape(v) else None
-                if b:
-                    item['bounds'] = _bounds_list(b)
-                elif 'index' in item and item['index'] < len(item['parts']):
-                    item['bounds'] = item['parts'][item['index']]['bounds']
-                item['roi_expr'] = item.get('bounds_expr') or \
-                    (item['var'] if b else None)
-                by_name[item['var']] = item
-            elif 'list_var' in item:
-                item['roi_expr'] = item['list_var']
-            if item['parts']:
-                lo = [min(p['bounds'][0][i] for p in item['parts']) for i in range(3)]
-                hi = [max(p['bounds'][1][i] for p in item['parts']) for i in range(3)]
-                item.setdefault('bounds', [lo, hi])
-            items.append(item)
-            continue
-
-        # --- "x = handles(x, ...)" / "x = expose(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the
-        # shape x (not shapes of their own)
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and \
-                isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call) and \
-                _short_name(_call_name(stmt.value)) in ('handles', 'expose', 'render_cache', 'lock', 'custom_resolution') and stmt.value.args and \
-                isinstance(stmt.value.args[0], ast.Name) and \
-                stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
-            target = by_name[stmt.targets[0].id]
-            if _short_name(_call_name(stmt.value)) == 'custom_resolution':
-                # (a resolution of its own for the shape: its number is a field under the shape in the tree)
-                arg = stmt.value.args[1] if len(stmt.value.args) > 1 else None
-                for kw in stmt.value.keywords:
-                    if kw.arg == 'resolution':
-                        arg = kw.value
-                number = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)) and not isinstance(arg.value, bool) else None
-                info = {'line': line, 'end_line': end, 'call': _span(stmt.value), 'text': _short(src.segment(stmt), 60),
-                        'value': number, 'span': _span(arg) if arg is not None else None}
-                # (a number that is finer than a body can be drawn is capped: the tree's row says what is used)
-                used = getattr(gs.get(stmt.targets[0].id), '_custom_resolution_used', None)
-                if isinstance(used, (int, float)) and number is not None and used < number * (1 - 1e-9):
-                    info['used'] = used
-                target['custom_resolution'] = info
-                continue
-            if _short_name(_call_name(stmt.value)) == 'render_cache':
-                # (the render cache keeps every shape's mesh unless the script says render_cache(x, False): that line
-                # is the opt-out; render_cache(x) is the default said aloud)
-                on = True
-                flag = stmt.value.args[1] if len(stmt.value.args) > 1 else None
-                for kw in stmt.value.keywords:
-                    if kw.arg == 'on':
-                        flag = kw.value
-                if isinstance(flag, ast.Constant):
-                    on = bool(flag.value)
-                info = {'line': line, 'end_line': end, 'call': _span(stmt.value), 'text': _short(src.segment(stmt), 60)}
-                target['cache' if on else 'cache_off'] = info
-                continue
-            if _short_name(_call_name(stmt.value)) == 'lock':
-                # (a locked shape cannot be dragged; the way of editing it had stays, for when it is unlocked)
-                target['locked'] = {'line': line, 'end_line': end, 'call': _span(stmt.value),
-                                    'text': _short(src.segment(stmt), 60)}
-                continue
-            if _short_name(_call_name(stmt.value)) == 'expose':
-                # (its numbers are var()s: the shape's surfaces can be dragged)
-                target['exposed'] = {'line': line, 'end_line': end, 'call': _span(stmt.value),
-                                     'text': _short(src.segment(stmt), 60)}
-                target['has_var'] = True
-                continue
-            mode, mode_span = None, None
-            for kw in stmt.value.keywords:
-                if kw.arg == 'mode' and isinstance(kw.value, ast.Constant) and \
-                        isinstance(kw.value.value, str):
-                    mode, mode_span = kw.value.value, _span(kw.value)
-            if mode not in ('click', 'never', 'always'):
-                mode = 'click'
-            target['handles'] = {
-                'line': line, 'end_line': end, 'mode': mode, 'mode_span': mode_span,
-                'call': _span(stmt.value), 'text': src.segment(stmt),
-                'has_scale': any(kw.arg == 'scale' for kw in stmt.value.keywords),
-                # (a bare handles(x, mode='never') has no numbers to drag: no gizmo)
-                'has_numbers': any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and
-                                   n.func.id == 'var' for n in ast.walk(stmt.value))}
-            continue
-
-        # --- assignments of shapes (and of parts taken from an import list)
-        if isinstance(stmt, ast.Assign):
-            for target in stmt.targets:
-                elts = target.elts if isinstance(target, ast.Tuple) else [target]
-                for pos, t in enumerate(elts):
-                    if not isinstance(t, ast.Name):
-                        continue
-                    v = gs.get(t.id)
-                    mkind = None if is_failed(v) else kind_of(v)
-                    if not (is_shape(v) or is_failed(v) or is_result(v) or mkind is not None):
-                        continue
-                    shown = is_shape(v) or is_result(v)
-                    item = {'kind': 'failed' if is_failed(v) else 'shape',
-                            'line': line, 'end_line': end,
-                            'var': t.id, 'label': t.id,
-                            'result': is_result(v),
-                            'no_handles': bool(getattr(v, '_no_handles', False)) or is_result(v) or not shown,
-                            'text': _short(src.segment(stmt.value), 70),
-                            'deps': sorted(n for n in _names_in(stmt.value)
-                                           if n in by_name and n != t.id)}
-                    if mkind:
-                        item['type'] = mkind        # (what it is: see fieldes.kinds)
-                    if mkind == 'field':
-                        # (not drawn: the section viewer shows it when it is selected)
-                        item['displayable'] = False
-                        _FIELD_SOURCES.append((t.id, v))
-                    if not shown:
-                        item['displayable'] = False     # (a material, a lattice cell ...: nothing to draw)
-                    item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name, t.id)
-                    item['slots'] = _call_slots(stmt.value, gs, src)
-                    if mkind == 'conditions':
-                        item['condition_role'] = _condition_role(v)
-                    item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
-                    item['callee'] = _callee_name(stmt.value)
-                    item['role'] = 'operation' if item['deps'] else 'primitive'
-                    if is_blocked(stmt.value):
-                        item['block'] = _call_name(stmt.value)
-                    # A shape made with var() numbers (its own, or those of what it is made of) has
-                    # FielDes's handles: hover a surface and drag it
-                    item['has_var'] = any(
-                        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
-                        for n in ast.walk(stmt.value)) or \
-                        any(by_name[d].get('has_var') for d in item['deps'])
-                    if is_failed(v):
-                        item['error'] = v.error
-                    b = getattr(v, '_bounds', None) if is_shape(v) else None
-                    if b:
-                        item['bounds'] = _bounds_list(b)
-                        item['roi_expr'] = t.id
-                    # "v = parts[k][0]" / "v, b = parts[k]" -> part k of an import
-                    node = stmt.value
-                    k = None
-                    if isinstance(node, ast.Subscript):
-                        inner = node.value
-                        if isinstance(inner, ast.Subscript) and isinstance(inner.value, ast.Name) \
-                                and inner.value.id in list_imports:
-                            k, _ = _const_index(inner)
-                            base = inner.value.id
-                        elif isinstance(inner, ast.Name) and inner.id in list_imports:
-                            k, _ = _const_index(node)
-                            base = inner.id
-                    if k is not None:
-                        imp = list_imports[base]
-                        item['part_of'] = imp['line']
-                        item['part_index'] = k
-                        if k < len(imp['parts']):
-                            imp['parts'][k]['var'] = t.id
-                            item.setdefault('bounds', imp['parts'][k]['bounds'])
-                        item['roi_expr'] = '{}[{}]'.format(base, k)
-                    by_name[t.id] = item
-                    items.append(item)
-            continue
-
-        # --- displayed expressions
-        if isinstance(stmt, ast.Expr):
-            shown = is_shape(value) or is_result(value) or (isinstance(value, (list, tuple)) and value and
-                                                            all(is_shape(v) for v in value))
-            if isinstance(stmt.value, ast.Name) and stmt.value.id in by_name:
-                it = by_name[stmt.value.id]
-                it['display_line'] = line
-                continue
-            if shown:
-                deps = sorted(n for n in _names_in(stmt) if n in by_name)
-                item = {'kind': 'display', 'line': line, 'end_line': end,
-                        'label': _short(src.segment(stmt), 50),
-                        'text': _short(src.segment(stmt), 90),
-                        'display_line': line,
-                        'deps': deps,
-                        '_value': value}
-                shown_value = value[0] if isinstance(value, (list, tuple)) and value else value
-                if kind_of(shown_value):
-                    item['type'] = kind_of(shown_value)
-                    if item['type'] == 'field' and is_shape(shown_value):
-                        item['displayable'] = False
-                        _FIELD_SOURCES.append(('line:%d' % line, shown_value))
-                item['inputs'], item['variadic'], item['numbers'] = _inputs_of(stmt.value, gs, by_name)
-                item['slots'] = _call_slots(stmt.value, gs, src)
-                item['points'] = _points_of(stmt.value, gs) if isinstance(stmt.value, ast.Call) else []
-                item['callee'] = _callee_name(stmt.value)
-                item['role'] = 'operation' if deps else 'primitive'
-                if is_blocked(stmt.value):
-                    item['block'] = _call_name(stmt.value)
-                if is_shape(value) and not hasattr(value, '_color_field'):
-                    # (a displayed expression can be given a name, to be edited by dragging: the model
-                    # tree's handles button does that, then edits the new variable)
-                    item['can_name'] = True
-                    item['span'] = _span(stmt)
-                    item['new_var'] = _new_name(stmt.value, taken)
-                    item['has_var'] = any(
-                        isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
-                        for n in ast.walk(stmt)) or any(by_name[d].get('has_var') for d in deps)
-                items.append(item)
-
-    # --- "# hidden: <expr>" comment lines (top level)
-    lines = src.lines
-    i = 0
-    while i < len(lines):
-        m = HIDDEN_RE.match(lines[i])
-        if not m or m.group(1):
-            i += 1
-            continue
-        start = i
-        text = m.group(2)
-        # Multi-line hidden expressions: keep consuming hidden lines until
-        # the collected text parses as a single expression
-        j = i
-        while True:
-            try:
-                ast.parse(text, mode='eval')
-                break
-            except SyntaxError:
-                if j + 1 < len(lines) and HIDDEN_RE.match(lines[j + 1]):
-                    j += 1
-                    text += '\n' + HIDDEN_RE.match(lines[j]).group(2)
-                else:
-                    break
-        try:
-            ast.parse(text, mode='eval')
-        except SyntaxError:
-            # (`# hidden: x = lock(x)` is a statement that was commented out, not a model that is hidden: it is a comment, and no row
-            # of the tree -- a row there would be a ghost that a hide of another model's line had made)
-            i = start + 1
-            continue
-        name = text.strip()
-        if name in by_name:
-            by_name[name]['hidden_line'] = start + 1
-        elif not ((partial or errored or upto is not None) and start + 1 > (tree.body[-1].end_lineno if tree.body else 0)):
-            # (a run in progress, or one that stopped with an error, has not reached the lines after its last statement: a
-            # `# hidden: name` line there names a model that does not exist yet, and would be a row of its own that points at nothing)
-            items.append({'kind': 'display', 'line': start + 1, 'end_line': j + 1,
-                          'label': _short(text, 50), 'text': _short(text, 90),
-                          'hidden_line': start + 1})
-        i = j + 1
-
-    for it in items:
-        if it['kind'] == 'display':
-            it['visible'] = 'hidden_line' not in it
-            it['mode'], it['mode_explicit'] = 'click', False
-        elif 'var' in it:
-            it['visible'] = 'display_line' in it
-            # The gizmo mode of its button: written by a handles() line ('click', 'never' or 'always'), else the
-            # default, 'click'.  Whether it is locked is a line of its own
-            h = it.get('handles')
-            if h:
-                it['mode'], it['mode_explicit'] = h['mode'], True
-            else:
-                it['mode'], it['mode_explicit'] = 'click', False
-
-    # Extents of displayed shapes whose bounds aren't known yet (plain CSG,
-    # shapes built from imports): needed to frame them and to make them the
-    # region of interest.  Visible ones first, within a time budget.
-    import time
-    deadline = time.time() + (0 if partial else _BOUNDS_SECONDS)
-    for it in sorted(items, key=lambda i: not i.get('visible')):
-        if 'bounds' in it or it.get('failed') or partial:
-            continue
-        if it['kind'] == 'display':
-            v = it.get('_value')
-            shapes = [v] if is_shape(v) else (list(v) if isinstance(v, (list, tuple)) else [])
-        elif it['kind'] == 'shape' and 'var' in it:
-            shapes = display_shapes(gs.get(it['var']))
-        else:
-            continue
-        shapes = [s for s in shapes if is_shape(s)]
-        if shapes:
-            b = _estimate_bounds(shapes, deadline)
-            if b:
-                it['bounds'] = b
-    # Shapes written with plain numbers: can their surfaces be made draggable?  (the first click on
-    # the handles button makes them so; when they cannot, it goes to the gizmo)
-    deadline = time.time() + _BOUNDS_SECONDS
-    for it in sorted(items, key=lambda i: not i.get('visible')):
-        if it.get('failed') or it.get('has_var') or it.get('exposed') or partial \
-                or it['kind'] not in ('shape', 'display', 'import') or time.time() > deadline:
-            continue
-        if it['kind'] == 'display':
-            v = it.get('_value') if it.get('can_name') else None
-        else:
-            v = gs.get(it.get('var'))
-        if is_shape(v):
-            n = _expose_count(v)
-            # (FielDes writes the numbers of a shape itself when it is selected, whatever their number, up to the cap the library
-            # will write: `expose_count` says how many there are, `expose_cap` the most)
-            it['can_expose'] = 0 < n <= _MAX_EXPOSED
-            it['expose_count'] = n
-            it['expose_cap'] = _MAX_EXPOSED
-    for it in items:
-        it.pop('_value', None)
-
-    items.sort(key=lambda it: it['line'])
-    # The `# shadow: name` comments of the statements (written by a Ctrl+drag of a model that nothing else used): the statement
-    # holds a REFERENCE to those models, which does not make it their owner
-    for it in items:
-        names = shadow_names(src.lines[it['line'] - 1:it.get('end_line', it['line'])])
-        if names:
-            it['shadows'] = sorted(names)
-    # The model tree nests the models an operation takes under it: a model belongs to the first statement that uses it (a
-    # statement that only holds a reference, by its `# shadow:` comment, does not count: the model stays where it is)
-    versions = {}
-    for it in items:
-        if 'var' in it:
-            versions.setdefault(it['var'], []).append(it)
-    for it in items:
-        for d in it.get('deps', []):
-            if d in it.get('shadows', ()):
-                continue
-            earlier = [x for x in versions.get(d, []) if x['line'] < it['line']]
-            if earlier and 'owner' not in earlier[-1] and earlier[-1] is not it:
-                earlier[-1]['owner'] = _key_of(it)
-    last_of = {}
-    for it in items:
-        if 'var' in it:
-            last_of[it['var']] = it
-    for it in items:
-        if 'var' in it and last_of[it['var']] is not it:
-            it['reassigned'] = True       # (the handles button belongs to its last statement)
-    truncated = 0
-    if len(items) > MAX_ITEMS:
-        # Huge generated scripts: only the intermediate shapes are left out
-        # of the tree.  Imports, displayed and hidden items are all kept,
-        # however many there are (every part of an import can be shown)
-        keep = [it for it in items if it['kind'] in ('import', 'display') or
-                it.get('visible') or 'hidden_line' in it]
-        truncated = len(items) - len(keep)
-        items = keep
-
-    # Current render settings (as the script left them)
+def live_settings(arg):
+    ''' The render settings the running script has given so far (view.set_bounds, set_resolution, set_quality), as JSON: what it has not
+        given yet is left out.  The viewport renders the picture of an optimisation that is running with them '''
     try:
         import _fieldes_host as host
-        values = {'bounds': getattr(host, '__bounds', None),
-                  'resolution': getattr(host, '__resolution', None),
-                  'quality': getattr(host, '__quality', None)}
     except ImportError:
-        values = {}
-    for k, v in values.items():
+        return '{}'
+    out = {}
+    bounds = getattr(host, '__bounds', None)
+    if bounds:
+        out['min'], out['max'] = [float(c) for c in bounds[0]], [float(c) for c in bounds[1]]
+    for key, name in (('res', '__resolution'), ('quality', '__quality')):
+        v = getattr(host, name, None)
         if v is not None:
-            settings.setdefault(k, {})['value'] = v
-
-    import hashlib
-    return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(),
-                       'truncated': truncated, 'errored': bool(errored),
-                       # (how far the run has got: the last line of the last statement that is done -- a model that stopped with an
-                       # error on a line before it is no longer in error)
-                       'done_line': tree.body[-1].end_lineno if tree.body else 0,
-                       # (the text this scene is of: the tree's edits are made from its lines, and wait for a scene that fits the text)
-                       'source_md5': hashlib.md5(source.encode('utf-8')).hexdigest(),
-                       'has_roi': 'roi' in gs, 'has_roi_resolution': 'roi_resolution' in gs},
-                      default=str)
+            out[key] = float(v)
+    import json
+    return json.dumps(out)

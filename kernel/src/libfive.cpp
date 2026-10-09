@@ -959,6 +959,11 @@ void libfive_run_step(int index, const char* label)
     libfive::run_progress::setStep(index, label ? label : "");
 }
 
+void libfive_run_step_line(int line)
+{
+    libfive::run_progress::setStepLine(line);
+}
+
 void libfive_run_end(void)
 {
     libfive::run_progress::endScript();
@@ -1021,7 +1026,7 @@ void libfive_fea_set_salt(libfive_fea* f, uint64_t salt)
 int libfive_fea_solve(libfive_fea* f, int max_iterations, float tolerance)
 {
     f->message.clear();
-    f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    f->solved = f->problem->solve(max_iterations, tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     if (f->solved)
     {
@@ -1163,7 +1168,7 @@ int libfive_fea_optimize(libfive_fea* f, float volume_fraction, float penalty,
     for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
     f->message.clear();
-    const bool ok = f->problem->optimize(s, f->message);
+    const bool ok = f->problem->optimize(s, f->message, &libfive::run_progress::cancelFlag());
     if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return ok ? 1 : 0;
 }
@@ -1259,10 +1264,19 @@ void libfive_tetmesh_delete(libfive_tetmesh* m)
 
 struct libfive_tetfea_
 {
-    std::unique_ptr<fea::TetProblem> problem;
+    std::shared_ptr<fea::TetProblem> problem;       // (shared: a viewer that draws the steps of its result keeps it alive)
     std::string message;
     bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
+    libfive_tree origin = nullptr;            // (the part a grown design space was made from: see TopOpt::origin)
+    double sharpness = 16.0;                  // (see TopOpt::sharpness)
+    std::vector<fea::TetProblem::TopOpt::Mirror> mirrors;   // (see TopOpt::mirrors)
+    bool symmetryAuto = false;
 };
+
+std::shared_ptr<libfive::fea::TetProblem> libfive::fea::tetProblemOf(void* handle)
+{
+    return handle ? static_cast<libfive_tetfea_*>(handle)->problem : nullptr;
+}
 
 libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 r, float h, float E, float nu)
 {
@@ -1363,10 +1377,53 @@ void libfive_tetfea_set_salt(libfive_tetfea* f, uint64_t salt)
     if (f) f->salt = salt;
 }
 
+void libfive_tetfea_set_origin(libfive_tetfea* f, libfive_tree origin)
+{
+    if (f) f->origin = origin;
+}
+
+void libfive_tetfea_set_sharpness(libfive_tetfea* f, double sharpness)
+{
+    if (f) f->sharpness = sharpness;
+}
+
+void libfive_tetfea_add_support_case(libfive_tetfea* f, libfive_tree region, int x, int y, int z, int load_case)
+{
+    f->problem->addSupport(Tree(region), x != 0, y != 0, z != 0, load_case);
+    f->prepared = false;
+}
+
+void libfive_tetfea_add_mirror(libfive_tetfea* f, int axis, double at, int at_centre)
+{
+    if (!f) return;
+    fea::TetProblem::TopOpt::Mirror m;
+    m.axis = axis;
+    m.at = at;
+    m.atCentre = at_centre != 0;
+    f->mirrors.push_back(m);
+}
+
+void libfive_tetfea_set_symmetry_auto(libfive_tetfea* f, int on)
+{
+    if (f) f->symmetryAuto = on != 0;
+}
+
+int libfive_tetfea_mirror(libfive_tetfea* f, int axis, double* at)
+{
+    if (!f) return 0;
+    for (const auto& m : f->problem->mirrorsUsed())
+        if (m.axis == axis)
+        {
+            if (at) *at = m.at;
+            return m.atCentre ? 2 : 1;          // (2: found by itself, 1: asked for)
+        }
+    return 0;
+}
+
 int libfive_tetfea_solve(libfive_tetfea* f, int max_iterations, float tolerance)
 {
     f->message.clear();
-    f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    f->solved = f->problem->solve(max_iterations, tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
@@ -1483,23 +1540,26 @@ int libfive_tetfea_element_range(libfive_tetfea* f, int field, float* lo, float*
 }
 
 int libfive_tetfea_optimize(libfive_tetfea* f, float volume_fraction, float penalty, float filter_radius,
-                            int iterations, float move, const libfive_tree* keep, int keep_count,
+                            int iterations, const libfive_tree* keep, int keep_count,
                             const libfive_tree* avoid, int avoid_count, int solver_iterations, float tolerance,
                             int extrude)
 {
     fea::TetProblem::TopOpt s;
     s.extrude = extrude;
+    s.sharpness = f->sharpness;
+    s.mirrors = f->mirrors;
+    s.symmetryAuto = f->symmetryAuto;
+    if (f->origin) s.origin = Tree(f->origin);
     s.volumeFraction = volume_fraction;
     s.penalty = penalty;
     s.filterRadius = filter_radius;
     s.iterations = iterations;
-    s.move = move;
     s.solverIterations = solver_iterations;
     s.tolerance = tolerance;
     for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
     f->message.clear();
-    const bool ok = f->problem->optimize(s, f->message);
+    const bool ok = f->problem->optimize(s, f->message, &libfive::run_progress::cancelFlag());
     if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return ok ? 1 : 0;
 }
@@ -1540,7 +1600,7 @@ libfive_tree libfive_tetfea_density_at(libfive_tetfea* f, int k)
 int libfive_tetfea_modal(libfive_tetfea* f, int count, float density, int max_iterations, float tolerance)
 {
     f->message.clear();
-    const bool ok = f->problem->modal(count, density, max_iterations, tolerance, f->message);
+    const bool ok = f->problem->modal(count, density, max_iterations, tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return ok ? 1 : 0;
 }
@@ -1693,7 +1753,7 @@ void libfive_tetthermal_set_salt(libfive_tetthermal* f, uint64_t salt)
 int libfive_tetthermal_solve(libfive_tetthermal* f, int max_iterations, float tolerance)
 {
     f->message.clear();
-    f->solved = f->problem->solve(max_iterations, tolerance, f->message);
+    f->solved = f->problem->solve(max_iterations, tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
@@ -1754,6 +1814,8 @@ struct libfive_tetflow_
     std::unique_ptr<fea::TetFlowProblem> problem;
     std::string message;
     bool prepared = false, solved = false;    uint64_t salt = 0;                  // the serials of the results, from the whole problem (0: counted)
+    std::vector<fea::TetFlowProblem::FlowOpt::Mirror> mirrors;     // (planes the design is to be kept symmetric about, asked for)
+    bool symmetryAuto = false;
 };
 
 libfive_tetflow* libfive_tetflow_new(libfive_tree domain, libfive_region3 r, float h, float density, float viscosity)
@@ -1848,7 +1910,7 @@ void libfive_tetflow_set_salt(libfive_tetflow* f, uint64_t salt)
 int libfive_tetflow_solve(libfive_tetflow* f, float tolerance)
 {
     f->message.clear();
-    f->solved = f->problem->solve(tolerance, f->message);
+    f->solved = f->problem->solve(tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
@@ -1936,7 +1998,7 @@ int libfive_tetflow_items(libfive_tetflow* f, int kind, double* out, int max)
 int libfive_tetflow_solve_transient(libfive_tetflow* f, float dt, int steps, int store_every, float tolerance)
 {
     f->message.clear();
-    f->solved = f->problem->solveTransient(dt, steps, store_every, tolerance, f->message);
+    f->solved = f->problem->solveTransient(dt, steps, store_every, tolerance, f->message, &libfive::run_progress::cancelFlag());
     if (f->solved) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return f->solved ? 1 : 0;
 }
@@ -2051,7 +2113,7 @@ int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out)
 
 int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree region, float w_drag, float w_lift,
                              float dx, float dy, float dz, float lx, float ly, float lz, float v_min, float v_max,
-                             float filter_radius, int iterations, float move, const libfive_tree* keep, int keep_count,
+                             float filter_radius, int iterations, const libfive_tree* keep, int keep_count,
                              const libfive_tree* avoid, int avoid_count, int extrude, float darcy)
 {
     f->message.clear();
@@ -2066,15 +2128,43 @@ int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree
     s.volumeMax = v_max;
     s.filterRadius = filter_radius;
     s.iterations = iterations;
-    s.move = move;
     s.extrude = extrude;
     if (darcy > 0) s.darcy = darcy;
     for (int i = 0; i < keep_count; ++i) s.keep.push_back(Tree(keep[i]));
     for (int i = 0; i < avoid_count; ++i) s.avoid.push_back(Tree(avoid[i]));
-    const bool ok = f->problem->optimize(s, f->message);
+    s.mirrors = f->mirrors;
+    s.symmetryAuto = f->symmetryAuto;
+    const bool ok = f->problem->optimize(s, f->message, &libfive::run_progress::cancelFlag());
     f->solved = ok;
     if (ok) fea::ResultIO::assignSerials(*f->problem, f->salt);
     return ok ? 1 : 0;
+}
+
+void libfive_tetflow_add_mirror(libfive_tetflow* f, int axis, double at, int at_centre)
+{
+    if (!f) return;
+    fea::TetFlowProblem::FlowOpt::Mirror m;
+    m.axis = axis;
+    m.at = at;
+    m.atCentre = at_centre != 0;
+    f->mirrors.push_back(m);
+}
+
+void libfive_tetflow_set_symmetry_auto(libfive_tetflow* f, int on)
+{
+    if (f) f->symmetryAuto = on != 0;
+}
+
+int libfive_tetflow_mirror(libfive_tetflow* f, int axis, double* at)
+{
+    if (!f) return 0;
+    for (const auto& m : f->problem->mirrorsUsed())
+        if (m.axis == axis)
+        {
+            if (at) *at = m.at;
+            return m.found ? 2 : 1;             // (2: found by itself, 1: asked for)
+        }
+    return 0;
 }
 
 void libfive_tetflow_direction(libfive_tetflow* f, int kind, double* out3)
