@@ -803,7 +803,7 @@ Write it under a shape's definition, with its handles() and expose() lines:
 
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: drawn as a small ball, dragged by its gizmo
+    p = point(10, 0, 5)                    a point: not drawn, its gizmo shows where it is and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -815,7 +815,7 @@ What is drawn for each kind of model (Shape._display calls displayed() below):
     a 3D shape and a simulation   as they are
     a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
     a surface                     a thin sheet
-    a point                       a small ball (about the size of a mark on the screen, whatever the part's size)
+    a point                       nothing: a point is not drawn, its gizmo is all there is of it
     a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
                                   which colours a plane through the render region by the field (move the plane to see
                                   the field in 3D)
@@ -826,9 +826,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `Point`
 
-A point: p.xyz is its coordinates (numbers or fields).  It is a small ball as a field, so it can be moved,
-dragged and shown like any shape; size (mm) is the ball's radius -- by default about a mark on the screen
-(a fortieth of the render region's longest side, at least two voxels)
+A point: p.xyz is its coordinates (numbers or fields).  It is **not drawn**: select it and its gizmo shows where it is.  (As a field
+it is a tiny ball, which gives it a place for its gizmo and for the bounds of what is made of it: nothing of it is painted.)
 
 ### `Surface`
 
@@ -846,9 +845,9 @@ What FielDes draws for a shape (see the top of this file)
 
 A plane through `point`, positive on the side `normal` points to: a surface
 
-### `point(x=0.0, y=0.0, z=0.0, size=None)`
+### `point(x=0.0, y=0.0, z=0.0)`
 
-A point at (x, y, z).  Its coordinates are numbers or fields.  size: the radius (mm) of the ball it is drawn as
+A point at (x, y, z).  Its coordinates are numbers or fields.  It is not drawn: select it, and its gizmo shows where it is
 
 ### `sphere_surface(radius=10.0, center=(0, 0, 0))`
 

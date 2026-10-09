@@ -465,7 +465,7 @@ void View::focusOn(QVector3D min, QVector3D max, QList<int> lines0)
     QVector3D lo, hi;
     for (auto& s : shapes)
     {
-        if (!lines0.contains(s->sourceLine()) || !s->hasMesh()) continue;
+        if (!lines0.contains(s->sourceLine()) || !s->hasMesh() || s->noPaint()) continue;
         const auto& b = s->getMeshBounds();
         const QVector3D l(b.lower.x(), b.lower.y(), b.lower.z());
         const QVector3D h(b.upper.x(), b.upper.y(), b.upper.z());
@@ -490,7 +490,7 @@ bool View::meshBounds(QVector3D& min, QVector3D& max) const
     bool any = false;
     for (auto& s : shapes)
     {
-        if (!s->hasMesh()) continue;
+        if (!s->hasMesh() || s->noPaint()) continue;
         const auto& b = s->getMeshBounds();
         const QVector3D lo(b.lower.x(), b.lower.y(), b.lower.z());
         const QVector3D hi(b.upper.x(), b.upper.y(), b.upper.z());
@@ -509,7 +509,7 @@ void View::frameAll()
     QList<int> all;
     for (auto& s : shapes) all << s->sourceLine();
     bool any = false;
-    for (auto& s : shapes) any |= s->hasMesh();
+    for (auto& s : shapes) any |= s->hasMesh() && !s->noPaint();
     if (any)
     {
         focusOn(QVector3D(), QVector3D(), all);
@@ -617,7 +617,8 @@ void View::redrawPicker()
     Shader::basic->release();
     for (auto& s : shapes)
     {
-        s->drawMonochrome(m, color++);
+        if (!s->noPaint()) s->drawMonochrome(m, color);
+        ++color;                // (a point is not painted, nor picked: the numbers of the others stay what they were)
     }
     if (clipping)
     {
@@ -690,7 +691,7 @@ void View::paintGL()
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(-1.0f, -1.0f);
         }
-        s->draw(m);
+        if (!s->noPaint()) s->draw(m);
         if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
     }
     if (clipping)
@@ -2089,10 +2090,14 @@ void View::addQuickOperations(QMenu* menu, int line, const QVector3D& point, dou
         const auto o = v.toObject();
         if (!o["quick"].toBool()) continue;
         const QString name = o["name"].toString();
-        auto action = menu->addAction(TypeIcons::icon(name == "center" ? "point" : "solid"), name, this,
+        // (the distance from a point is made of a point: it is there for a point, and only then)
+        const bool fromPoint = name == "distance_to_point";
+        if (fromPoint && (!m_scene || !m_scene->pointsOnly(line))) continue;
+        auto action = menu->addAction(TypeIcons::icon(fromPoint ? "field" : name == "center" ? "point" : "solid"), name, this,
                                       [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
-        action->setToolTip(name == "center" ? T("The middle of the model's bounding box, as a point")
-                                            : T("The smallest box, aligned with the axes, that holds the model: a body of its own"));
+        action->setToolTip(fromPoint ? T("A field: how far every place is from this point")
+                           : name == "center" ? T("The middle of the model's bounding box, as a point")
+                                              : T("The smallest box, aligned with the axes, that holds the model: a body of its own"));
         if (m_scene && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
     }
 }
@@ -2804,6 +2809,7 @@ void View::startSliceAt(Plane& plane, bool fine)
     {
         // (the field model that is selected is the only thing the plane shows)
         FieldSource src = m_fieldSources.value(m_fieldKey);
+        src.map = "section";            // (a field is shown in the section's colours and dark lines: one look for what the planes show)
         if (m_fieldRanges.contains(m_fieldKey))
         {
             src.lo = m_fieldRanges[m_fieldKey].first;
@@ -2944,9 +2950,11 @@ void View::drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettin
             plane.colorTex->setSize(plane.slice.w, plane.slice.h);
             plane.colorTex->allocateStorage(QOpenGLTexture::Red, QOpenGLTexture::Float32);
             plane.colorTex->setData(QOpenGLTexture::Red, QOpenGLTexture::Float32, plane.slice.color.constData());
-            // nearest: NaN (outside) must not bleed into its neighbours
-            plane.colorTex->setMinificationFilter(QOpenGLTexture::Nearest);
-            plane.colorTex->setMagnificationFilter(QOpenGLTexture::Nearest);
+            // nearest: NaN (outside) must not bleed into its neighbours -- except for a field of the field viewer, whose lines are drawn from
+            // its values and need them smooth
+            const auto filter = plane.slice.colorMap == "section" ? QOpenGLTexture::Linear : QOpenGLTexture::Nearest;
+            plane.colorTex->setMinificationFilter(filter);
+            plane.colorTex->setMagnificationFilter(filter);
             plane.colorTex->setWrapMode(QOpenGLTexture::ClampToEdge);
         }
         plane.gridVerts = 0;       // (the deformed grid is rebuilt)
@@ -3064,7 +3072,8 @@ void View::drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettin
     int colorMode = 0;
     if (plane.colorTex)
     {
-        colorMode = plane.slice.colorMap == "viridis" ? 2 : (plane.slice.colorMap == "grey" || plane.slice.colorMap == "gray") ? 3 : 1;
+        colorMode = plane.slice.colorMap == "section" ? 4 : plane.slice.colorMap == "viridis" ? 2
+                    : (plane.slice.colorMap == "grey" || plane.slice.colorMap == "gray") ? 3 : 1;
         plane.colorTex->bind(1);
         glUniform1i(Shader::slice->uniformLocation("color_field"), 1);
         glUniform1f(Shader::slice->uniformLocation("color_lo"), plane.slice.colorLo);

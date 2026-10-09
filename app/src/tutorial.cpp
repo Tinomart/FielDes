@@ -283,6 +283,7 @@ struct Tutorial::Step
     Place place = Auto;
     bool keys = false;                                  // whether the keyboard works in this step
     std::function<void()> enter;
+    std::function<void()> leave;                        // what the step wrote into the script for itself goes when it is left
     std::function<bool()> done;                         // what the step asks of the user is done
     std::function<void(std::function<void()>)> show;    // "Show me": the program does it, once, and says when it is over
     QString showLabel = T("Show me");
@@ -369,12 +370,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
             m_note->setStyleSheet("font-size: 9.5pt; color: #82cc58; font-weight: bold;");
             m_show->hide();
             m_next->setText(m_index + 1 < m_steps->size() ? T("Next  ▸") : T("Finish"));
-            // (a moment to see what the user did, then on; not when what the step asks was done already when it was opened)
-            if (!m_doneOnArrival)
-            {
-                const int gen = m_generation;
-                after(1300, [this, gen] { if (m_active && gen == m_generation) next(); });
-            }
+            // (the note stays until the user goes on: it says what happened, and it is read at the user's pace)
         }
     });
     m_tick.setInterval(40);
@@ -800,13 +796,31 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Placeholders");
-        s.text = T("A call that is missing something has a placeholder (...) in its place, after the name of the argument.");
+        s.text = T("A call that is missing something has a placeholder (...) in its place. washer waits for how far to offset drilled.");
         s.hint = T("Amber, not red: it is no error, it is what has to be done for the script to run. The note under the model tree lists them: "
                    "click one to select it in the code editor and write what goes there. Hover an argument's name to read what it is.");
-        s.code = linesWith("^drilled\\b");
+        s.code = linesWith("^washer\\b");
         s.holes = holesOf(panelWidget);
-        s.point = rowTip("drilled");
+        s.point = rowTip("washer");
         s.place = Right;
+        // (the line the step looks at: a call that waits for its distance.  It is the step's own: it goes when the step is left)
+        s.enter = [this] {
+            if (scriptLine("washer =") >= 0) return;
+            const QStringList lines = m_editor->getScript().split('\n');
+            for (int i = int(lines.size()) - 1; i >= 0; --i)
+            {
+                if (lines[i].trimmed() != "drilled") continue;
+                m_editor->applyEdits({TextEdit{i, 0, i, int(lines[i].size()), "drilled\nwasher = offset(drilled, ...)"}}, "Tour");
+                break;
+            }
+        };
+        s.leave = [this] {
+            const int i = scriptLine("washer =");
+            if (i < 0) return;
+            const QStringList lines = m_editor->getScript().split('\n');
+            if (i + 1 < lines.size()) m_editor->applyEdits({TextEdit{i, 0, i + 1, 0, QString()}}, "Tour");
+            else if (i > 0) m_editor->applyEdits({TextEdit{i - 1, int(lines[i - 1].size()), i, int(lines[i].size()), QString()}}, "Tour");
+        };
         add(s);
     }
     // 7
@@ -968,6 +982,7 @@ void Tutorial::buildSteps()
                     if (lines[i].trimmed() != "drilled") continue;
                     m_editor->applyEdits({TextEdit{i, 0, i, int(lines[i].size()),
                         "anchor = point(24, 12, 6)\n"
+                        "anchor\n"
                         "swell = ramp(distance_to_point(anchor), (0, 50), (4.0, 0.3))\n"
                         "swollen = offset(drilled, 1.0)\n"
                         "swollen"}}, "Tour");
@@ -984,6 +999,37 @@ void Tutorial::buildSteps()
             QWidget* vp = scene()->treeViewport();
             fakeDrag(vp, vp->mapFrom(m_window, QPoint(a.left() + 60, a.center().y())),
                      vp->mapFrom(m_window, QPoint(b.left() + 90, b.center().y())), 1100, over);
+        };
+        add(s);
+    }
+    // 10b: the point of the field is moved by its gizmo, and the field follows
+    {
+        Step s;
+        s.title = T("Move the point");
+        s.text = T("swell is the distance from the point anchor. Drag the arrows of anchor and watch where the growth is.");
+        s.hint = T("A point is not drawn: its gizmo is all there is of it. The gizmo is a line of the script too (handles). Or press Show me.");
+        s.code = linesWith("^anchor\\b|^swell =");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.enter = [this, scene] {
+            // (the growth by the field is what is moved: it is there when the step before was skipped too)
+            const int i = scriptLine("swollen = offset(drilled, 1.0)");
+            if (i >= 0) m_editor->applyEdits({TextEdit{i, 0, i, int(m_editor->getScript().split('\n')[i].size()),
+                                                       "swollen = offset(drilled, swell)"}}, "Tour");
+            scene()->selectModel("anchor");
+        };
+        s.point = [this] { QPoint p; return m_view->handleGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        s.done = [this] {
+            static const QRegularExpression re(R"(^anchor = handles\(anchor, move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
+                                               QRegularExpression::MultilineOption);
+            const auto m = re.match(m_editor->getScript());
+            return m.hasMatch() && (std::abs(m.captured(1).toDouble()) + std::abs(m.captured(2).toDouble()) + std::abs(m.captured(3).toDouble())) > 1e-6;
+        };
+        s.doneNote = T("Nice. The field follows the point: the growth is where the point is.");
+        s.show = [this](std::function<void()> over) {
+            QPoint p;
+            if (!m_view->handleGripPoint(0, 0, p)) { over(); return; }
+            fakeDrag(m_view, p, p + QPoint(70, 0), 900, over);
         };
         add(s);
     }
@@ -1006,11 +1052,15 @@ void Tutorial::buildSteps()
                 const QStringList lines = m_editor->getScript().split('\n');
                 int last = int(lines.size()) - 1;
                 while (last > 0 && lines[last].trimmed().isEmpty()) --last;
+                // (they rest on the plate, whatever its height is now: nothing floats in the air)
+                bool ok = false;
+                const double top = plateHeight(&ok);
+                const auto z = [&](double dz) { return QString::number((ok ? top : 6.0) + dz); };
                 m_editor->applyEdits({TextEdit{last, int(lines[last].size()), last, int(lines[last].size()),
-                    "\nknob = sphere(4, (24, 0, 18))\n"
+                    QString("\nknob = sphere(4, (15, 0, ") + z(4) + "))\n"
                     "knob\n"
-                    "cap = box_exact((-8, -8, 14), (8, 8, 16))\n"
-                    "ring = cylinder_z(9, 2, (0, 0, 13))\n"
+                    "cap = cylinder_z(7, 3, (-15, 0, " + z(0) + "))\n"
+                    "ring = cylinder_z(9, 1, (-15, 0, " + z(0) + "))\n"
                     "capped = union(cap, ring)\n"
                     "capped"}}, "Tour");
             }
@@ -1081,10 +1131,10 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Render settings");
         s.text = T("The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.");
-        s.hint = T("More samples per mm: a finer picture, slower. The row in the tree shows the numbers and goes to the line when clicked.");
-        s.code = linesWith("set_resolution");
-        s.holes = holesOf(panelWidget);
-        s.point = rowTip(T("Render settings"));
+        s.hint = T("More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.");
+        s.focus = [this] { return scriptLineRect(std::max(0, scriptLine("view.set_resolution"))); };
+        s.holes = holesOf(scriptWidget);
+        s.point = [this] { const QRect r = scriptLineRect(std::max(0, scriptLine("view.set_resolution"))); return r.isEmpty() ? QPoint() : QPoint(r.right() - 20, r.center().y()); };
         s.place = Right;
         s.keys = true;
         s.enter = [this, scene] {
@@ -1092,6 +1142,15 @@ void Tutorial::buildSteps()
             static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
             const auto m = re.match(m_editor->getScript());
             m_baseline = m.hasMatch() ? m.captured(1).toDouble() : 0;
+            m_editor->scriptWidget()->goToLine(std::max(0, scriptLine("view.set_resolution")), false);
+        };
+        s.show = [this](std::function<void()> over) {
+            const int line = scriptLine("view.set_resolution");
+            if (line < 0) { over(); return; }
+            static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
+            const auto m = re.match(m_editor->getScript().split('\n').value(line));
+            if (!m.hasMatch()) { over(); return; }
+            typeOver(line, m.capturedStart(1), m.capturedEnd(1), "6", over);
         };
         s.done = [this] {
             static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
@@ -1178,6 +1237,7 @@ void Tutorial::stop(bool completed)
 {
     const bool wasActive = m_active;
     endDemo();                              // (the tour ends with the program as the user had it, not as a demonstration left it)
+    if (wasActive && m_index >= 0 && m_index < m_steps->size() && (*m_steps)[m_index].leave) (*m_steps)[m_index].leave();
     m_active = false;
     ++m_generation;
     m_poll.stop();
@@ -1203,6 +1263,7 @@ void Tutorial::goTo(int index, bool viaBack)
         return;
     }
     endDemo();                              // (what a "Show me" did is undone before the step changes)
+    if (m_index >= 0 && m_index < m_steps->size() && (*m_steps)[m_index].leave) (*m_steps)[m_index].leave();
     ++m_generation;
     m_index = index;
     m_done = false;

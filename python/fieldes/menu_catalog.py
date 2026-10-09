@@ -276,6 +276,8 @@ OPERATIONS = [
     # Measuring: both are in the first menu of a body (QUICK), not under a group
     ('center', 'Measuring', 'center({body})', False),
     ('bounding_box', 'Measuring', 'bounding_box({body})', False),
+    # A field made of a point: how far each place is from it (in the first menu of a point, and only there)
+    ('distance_to_point', 'Fields', 'distance_to_point({body})', False),
     # Simulations: the model is the part (the fluid, for the flow); every kind of condition the analysis takes is an input of its own, written
     # as a placeholder (`supports=...`, `inlets=...`) -- nothing is made up to stand there: the statement waits until they are given.  The
     # conditions that are selected with the body are written in the input of their kind.  The completion writes the inputs from the signature
@@ -292,7 +294,7 @@ OPERATIONS = [
 
 
 # (operations that are in the first menu of a body, not under a group: used all the time)
-QUICK = ('center', 'bounding_box')
+QUICK = ('center', 'bounding_box', 'distance_to_point')
 
 
 def _blocks():
@@ -387,6 +389,8 @@ def _slots_of(name):
 
 
 def _takes(name):
+    if name == 'distance_to_point':
+        return [({'point'}, [])]                # (the distance from a point: a point is what it is made of)
     # (a simulation takes a part, the conditions of the kinds it has an input for and a material -- and needs none of them: what is not selected
     # is a placeholder in the call)
     if name in _SIMULATIONS:

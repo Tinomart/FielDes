@@ -112,6 +112,13 @@ public:
     bool isSelected() const { return selected; }
 
     /*
+     *  A point is not painted at all: the gizmo is what shows where it is.  It is still a shape (it has its place, its numbers and its
+     *  gizmo), but nothing of it is drawn or picked, and the camera never frames it
+     */
+    void setNoPaint(bool on) { no_paint = on; }
+    bool noPaint() const { return no_paint; }
+
+    /*
      *  Bounds of the current mesh (empty region if not meshed yet)
      */
     const libfive::Region<3>& getMeshBounds() const { return mesh_bounds; }
@@ -526,6 +533,7 @@ protected:
     bool grabbed=false;
     bool hover=false;
     bool selected=false;
+    bool no_paint=false;
     int source_line=-1;
 
     QFuture<BoundedMesh> mesh_future;

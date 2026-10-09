@@ -2,6 +2,22 @@
 
 ## Next — one import function, a field walk for surface selection, materials and conditions as models
 
+### One look for what a plane shows: the field viewer is drawn like the section view
+- **The field viewer uses the section view's colours and dark lines.** It had its own rainbow; now a field is blue, cream and orange on the same stops as the section view, with the same dark lines at round steps of its values, and a heavier
+  line where it is zero. A field with both signs is cream at its zero (so `field_from_body(part)` reads exactly as the section does: the surface cream, with its dark contour), blue below and orange above; any other field runs from blue at its lowest
+  value to orange at its highest. The colour bar, the 2D view and the viewport's disc all agree. (A part coloured by a result, `colored(...)`, keeps the map it is given.)
+
+### The tour works again, and a point is only its gizmo
+- **A point is not drawn at all.** No ball, nothing to pick in the viewport: select it (in the tree) and its **gizmo** shows where it is, and moves it. A point keeps its place, its numbers and its handles line, and goes wherever a position goes
+  (`distance_to_point(anchor)`). `point(x, y, z, size=...)` lost its `size`: there is no ball to give a radius to.
+- **Selecting a point (or a field made of one) no longer zooms the camera into it.** The camera framed the point's box, a fraction of a millimetre wide, and everything else went out of view ("0.2 mm" on the scale bar); a point never moves the camera.
+- **The first menu of a point offers `distance_to_point`**: the field of the distance from the selected point (also in *Add operation* with a point selected). It is only there for a point.
+- **The Render settings rows have no bin any more** (the resolution and the quality could be deleted from the tree): a render setting is a line of the code, changed or deleted there; a click on a row goes to the line.
+- **The guided tour's Render settings step is done in the code editor**: it asked for the resolution to be changed in the tree, where it is read-only now, and the rest of the window was blocked. The framed line is the one to change, and *Show me* types it.
+- **The tour's Placeholders step shows a placeholder** (`washer = offset(drilled, ...)`, amber, with its row and the note under the tree) and puts it away when the step is left.
+- **A new tour step, *Move the point***: the point of the field is shown, selected with its gizmo, and the growth follows it as it is dragged.
+- **What a finished tour step says stays on the card** until *Next* is pressed: it moved on by itself after a second, before the note could be read.
+
 ### Every kind of boundary condition is an input of its own; every condition is a model of its own
 - **One required input for each kind of condition**, for every analysis: `static_analysis(part, supports, loads, ...)`, `modal_analysis(part, supports, ...)`, `topology_optimization(part, supports, loads, ...)`,
   `thermal_analysis(part, fixed_temperatures, heat_inputs, heat_generations, convections, ...)`, `fluid_analysis(domain, inlets, outlets, boundaries, ...)` and the two optimisations of heat and flow. A kind the analysis has none of

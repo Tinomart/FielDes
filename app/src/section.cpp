@@ -443,6 +443,9 @@ void colorizeField(FieldSlice& slice, float range, float spacing)
     }
     slice.spacing = spacing > 0 ? spacing
                                 : niceStep(std::max(slice.rangeIn, slice.rangeOut) / 6);
+    // (a field of the field viewer: the lines are at round steps of ITS values)
+    if (slice.hasColor && slice.colorMap == "section" && slice.colorHi > slice.colorLo)
+        slice.spacing = niceStep((slice.colorHi - slice.colorLo) / 8);
 
     // (the image of the 2D view is made when that view is shown -- buildSliceImage: nobody looks at it most of the time, and
     // making it cost more than sampling the field)
@@ -461,6 +464,30 @@ void buildSliceImage(FieldSlice& slice)
         for (int i = 0; i < w; ++i)
         {
             const float v = slice.values[j * w + i];
+            if (slice.hasColor && slice.colorMap == "section")
+            {
+                // A field of the field viewer: the section's colours over its range, its dark lines at round steps of its values (the
+                // distance to the nearest in pixels, from the field's slope there), a heavier one at zero, the rim of the disc dark
+                const float c = slice.color.value(j * w + i, std::numeric_limits<float>::quiet_NaN());
+                if (!(v < 0) || !std::isfinite(c))
+                {
+                    img.setPixel(i, j, std::fabs(v) / pixel < 1.2f ? qRgba(20, 20, 20, 255) : qRgba(0, 0, 0, 0));
+                    continue;
+                }
+                const float span = slice.colorHi - slice.colorLo;
+                QColor col = fieldColour(span > 0 ? sectionLevel(c, slice.colorLo, slice.colorHi) : 0.f);
+                auto at = [&](int ii, int jj) {
+                    const float q = slice.color.value(std::max(0, std::min(h - 1, jj)) * w + std::max(0, std::min(w - 1, ii)), c);
+                    return std::isfinite(q) ? q : c;
+                };
+                const float gx = 0.5f * (at(i + 1, j) - at(i - 1, j)), gy = 0.5f * (at(i, j + 1) - at(i, j - 1));
+                const float slope = std::max(std::hypot(gx, gy), 1e-12f);
+                if (std::fabs(c - slice.spacing * std::round(c / slice.spacing)) / slope < 0.8f) col = col.darker(135);
+                if (slice.colorLo < 0 && slice.colorHi > 0 && std::fabs(c) / slope < 1.2f) col = QColor(20, 20, 20);
+                if (std::fabs(v) / pixel < 1.2f) col = QColor(20, 20, 20);
+                img.setPixel(i, j, col.rgba());
+                continue;
+            }
             if (slice.hasColor)
             {
                 // An analysis result: its field inside the model, the
@@ -622,7 +649,9 @@ void FieldLegend::paintEvent(QPaintEvent*)
     for (int k = 0; k <= 20; ++k)
     {
         const float t = -1 + 2 * k / 20.f;
-        g.setColorAt(k / 20.0, m_hasColor ? colormapColor(m_map, k / 20.f) : fieldColour(t));
+        g.setColorAt(k / 20.0, !m_hasColor ? fieldColour(t)
+                               : m_map == "section" ? fieldColour(sectionLevel(m_lo + (m_hi - m_lo) * k / 20.f, m_lo, m_hi))
+                                                    : colormapColor(m_map, k / 20.f));
     }
     QPainterPath path;
     path.addRoundedRect(bar, 3, 3);
@@ -834,6 +863,7 @@ SectionPanel::SectionPanel(QWidget* parent)
     m_show2d->setCheckable(true);
     m_show2d->setText(T("2D view"));
     m_show2d->setToolTip(T("Flat 2D plot of the plane"));
+    m_show2d->setObjectName("sectionShow2d");
     m_view->hide();
     auto viewRow = new QHBoxLayout;
     viewRow->addWidget(m_info, 1);
@@ -1204,6 +1234,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     m_show2d->setCheckable(true);
     m_show2d->setText(T("2D view"));
     m_show2d->setToolTip(T("Flat 2D plot of the disc"));
+    m_show2d->setObjectName("fieldShow2d");
     m_view->hide();
     auto viewRow = new QHBoxLayout;
     viewRow->addWidget(m_info, 1);

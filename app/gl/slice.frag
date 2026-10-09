@@ -9,7 +9,7 @@
 
 uniform sampler2D field;
 uniform sampler2D color_field;
-uniform int color_mode;     // 0: distance; 1 turbo, 2 viridis, 3 grey
+uniform int color_mode;     // 0: distance; 1 turbo, 2 viridis, 3 grey; 4: a field of the field viewer, in the section's colours
 uniform float color_lo;
 uniform float color_hi;
 uniform float opacity;
@@ -69,6 +69,36 @@ void main()
     }
     // Line widths in screen pixels, from the field's screen-space gradient
     float w = max(fwidth(d), 1e-12);
+
+    if (color_mode == 4)
+    {
+        // A field of the field viewer (d is the distance field of its disc): the section's colours over the field's range, the section's
+        // dark lines at round steps of its values, a heavier one where it is zero when that is in range, the rim of the disc dark
+        float z = 1.0 - smoothstep(0.7 * w, 1.8 * w, abs(d));
+        float v = texture(color_field, frag_uv).r;
+        if (!(d < 0.0) || !(v == v))
+        {
+            if (z < 0.05) discard;
+            fragColor = vec4(0.08, 0.08, 0.08, z * opacity);
+            return;
+        }
+        float span = color_hi - color_lo;
+        float u = (color_lo < 0.0 && color_hi > 0.0) ? (v < 0.0 ? v / -color_lo : v / color_hi)
+                                                      : (span > 0.0 ? 2.0 * (v - color_lo) / span - 1.0 : 0.0);
+        vec3 c = cmap(clamp(u, -1.0, 1.0));
+        float wv = max(fwidth(v), 1e-12);
+        float f = abs(v - spacing * floor(v / spacing + 0.5));
+        float iso = 1.0 - smoothstep(0.35 * wv, 1.1 * wv, f);
+        c = mix(c, c * 0.68, 0.85 * iso);
+        if (color_lo < 0.0 && color_hi > 0.0)
+        {
+            float zv = 1.0 - smoothstep(0.7 * wv, 1.8 * wv, abs(v));
+            c = mix(c, vec3(0.08, 0.08, 0.08), zv);
+        }
+        c = mix(c, vec3(0.08, 0.08, 0.08), z);
+        fragColor = vec4(c, opacity);
+        return;
+    }
 
     if (color_mode != 0)
     {

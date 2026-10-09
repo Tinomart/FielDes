@@ -1158,6 +1158,13 @@ void Interpreter::recordShape(
         const auto tree = static_cast<libfive_tree>(ptr);
         const auto shape = new Shape(libfive::Tree(tree), vars);
         shape->setSourceLine(line);
+        {
+            // (a point is not painted: its gizmo shows where it is)
+            PyObject* kind = PyObject_GetAttrString(obj, "_kind");
+            if (kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point") shape->setNoPaint(true);
+            Py_XDECREF(kind);
+            PyErr_Clear();
+        }
 
         // A thin part meshed on its own (fieldes.stdlib.cad_import):
         // (box lo, box hi, resolution, cube side, thinnest feature)

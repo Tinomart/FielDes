@@ -68,7 +68,7 @@ region with the field's value at every point -- move the disc to see the field i
 
 ## Points and surfaces
 
-A **point** is a model: `anchor = point(52, 8, 6)` shows as a small ball, has a gizmo, and goes wherever a coordinate
+A **point** is a model: `anchor = point(52, 8, 6)` is not drawn (select it and its gizmo shows where it is), and goes wherever a coordinate
 goes — `distance_to_point(anchor)`, `attractor(anchor, 30)`, `radial_field(anchor, 'z')` — so a design can be driven from
 a point you drag. `anchor.xyz` is its coordinates (they follow the gizmo). A point reads as its three coordinates **wherever a
 position goes** -- `sphere(5, anchor)`, `move(part, anchor)`, `distance_to_line(anchor, (0, 0, 1))` -- and in the model tree you

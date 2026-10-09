@@ -46,6 +46,16 @@ inline void bcCategoryRGB(int k, float& r, float& g, float& b)
     b = table[k][2];
 }
 
+/*  Where the value v of a field stands on the section view's scale (-1 deep blue ... 0 cream ... 1 deep orange; fieldColour in
+ *  section.cpp, and gl/slice.frag, have the colours), for a field whose values run from lo to hi: a field that has both signs has its zero
+ *  where the section view has the surface (blue below it, scaled by the lowest value; orange above it, by the highest), any other has its
+ *  lowest value at the deep blue and its highest at the deep orange  */
+inline float sectionLevel(float v, float lo, float hi)
+{
+    if (lo < 0.f && hi > 0.f) return std::max(-1.f, std::min(1.f, v < 0.f ? v / -lo : v / hi));
+    return hi > lo ? std::max(-1.f, std::min(1.f, 2.f * (v - lo) / (hi - lo) - 1.f)) : 0.f;
+}
+
 /*  t in [0, 1] -> colour.  "turbo" (Google's rainbow, polynomial fit by
  *  Mikhailov), "viridis" (polynomial fit), "fit" (a part's own light grey
  *  turning red: shades where an import is approximate), "bc" (the nearest

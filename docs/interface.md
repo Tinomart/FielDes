@@ -210,7 +210,7 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 | square, teal | **2D shape** | a profile (a field that does not depend on z), drawn flat in the z = 0 plane |
 | soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: select it and the [field viewer](#the-field-viewer) opens on it |
 | sheet, purple | **surface** | the zero of a field with no body behind it; drawn as a thin sheet |
-| cross, amber | **point** | a point: a small ball, with a gizmo |
+| cross, amber | **point** | a point: not drawn, its gizmo shows where it is |
 | bars, red | **simulation** | a solved analysis or optimisation |
 | hatched block, tan | **material** | what a part (or a fluid) is made of: `Material(...)`, steel, aluminium, water ...; an analysis is given one (`material=steel`). A model like the others: it is in the tree, and dragged onto an analysis it becomes its `material=` (or `fluid=`) |
 | arrow on a base, orange | **conditions** | what an analysis is given: supports, loads, thermal and flow boundary conditions. Dragged onto an analysis, its **boundary conditions** row or the placeholder of its kind, one or several of them go into the input of their kind, as a list |
@@ -315,7 +315,7 @@ The keys you type are one step of `Ctrl+Z`.
 
 **Render settings.** Open the row: the region (the two corners of `view.set_bounds`), the resolution and the quality, as the script has them
 (or the defaults, dimmed, when it has not set them: the strip under the editor offers the line). **They are read here and written in the code editor**:
-a click on a row selects its line; the bin of the resolution and the quality takes the line away (back to the default).
+a click on a row goes to its line. The rows have no bin: a render setting is a line of the code, and it is changed or deleted there.
 The corners the program writes are **whole numbers** (a minimum is rounded down and a maximum up, so the region still covers what it
 covered), with two decimals only for what is under 1, a part a few millimetres across. **The region grows by itself**: when a new model comes into the
 script and reaches out of the region, `view.set_bounds` is rewritten to hold it, with a little room (a script that gets its region from `roi(...)` keeps it, the
@@ -387,8 +387,11 @@ A *field* model (a distance, a ramp, noise, `field_from_body(...)`, anything mad
 nothing of it is drawn in the viewport. **Select it in the model tree and the field viewer opens**, a card like the section card.
 It is independent of the section view: the two can be open together, each with its own plane in the viewport and its own card:
 
-- It shows the field on a **disc**: the value at every point of a plane, coloured (the colour scale is found from the field once,
-  on a coarse grid in 3D, and kept while you move the disc). Hover the disc to read the value. It **cuts no model**, and has none of
+- It shows the field on a **disc**: the value at every point of a plane, **in the section view's own colours and dark lines**: blue
+  to cream to orange, with a dark line at every round step of the value, and a heavier one where the field is zero. A field that
+  has both signs is cream at its zero (as the section view is at the surface), blue below it and orange above; any other field runs
+  from blue at its lowest value to orange at its highest. (The scale is found from the field once, on a coarse grid in 3D, and kept
+  while you move the disc.) Hover the disc to read the value. It **cuts no model**, and has none of
   the buttons that are only about models (cut, flip, whole elements).
 - The disc starts **where the field is about**: the point or the middle of the body it was made from
   (`distance_to_point(anchor)` starts at `anchor`, `depth_below(part)` at the middle of `part`, a field made of those, such as
@@ -468,7 +471,7 @@ improve one or add a language.
 ## The guided tour
 
 The first time FielDes starts, a card offers a tour; **Help → Guided tour** starts it at any time. It runs on the program itself, not
-on a script: short cards of one or two sentences, 16 steps, about two minutes (among them the section view, and the Ctrl+drag that makes a shadow reference). Each step
+on a script: short cards of one or two sentences, 17 steps, about two minutes (among them the section view, and the Ctrl+drag that makes a shadow reference). Each step
 
 - **dims** the window except what it is about, and puts a **glowing frame** round it (and round the line or field it means);
 - shows the **script and the picture as one thing**: the lines of the script a step is about stay lit and framed in the editor even

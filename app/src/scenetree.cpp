@@ -1868,11 +1868,6 @@ void ScenePanel::rebuild()
             c->setForeground(COL_NAME, set ? QColor(0xee, 0xe8, 0xd5) : kDim);
             c->setToolTip(COL_NAME, tip + "\n" + (set ? s["text"].toString() + "\n" + T("Click: go to the line. Change the numbers in the code editor.")
                                                     : T("Not set in the script (the default is shown): write the line in the code editor.")));
-            if (set && fn != "set_bounds")
-            {
-                c->setIcon(COL_DELETE, deleteIcon());
-                c->setToolTip(COL_DELETE, T("Delete this line (back to the default)"));
-            }
         };
         auto number = [](const QJsonValue& v) { return QString::number(v.toDouble(), 'g', 8); };
         const auto bounds = settings["bounds"].toObject()["value"].toArray();
@@ -3849,8 +3844,9 @@ void ScenePanel::deleteRow(QTreeWidgetItem* row)
     const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
     if (type == "setting")
     {
-        // (the region is not deleted: see the rows)
-        if (row->data(COL_NAME, ROLE_KEY).toString().startsWith("setting:set_bounds")) return;
+        // (the render settings are lines of the code, changed there and never deleted from here: only a model's own resolution is a row
+        // that goes)
+        if (!row->data(COL_NAME, ROLE_KEY).toString().startsWith("setting:custom_resolution:")) return;
         if (it.contains("line"))
         {
             const QList<TextEdit> edit{deleteLines(it["line"].toInt() - 1, it["end_line"].toInt() - 1)};
@@ -4679,6 +4675,8 @@ void ScenePanel::switchPart(const QJsonObject& imp, int part)
 
 void ScenePanel::focusOn(const QJsonObject& it)
 {
+    // (a point is not drawn, and its box is a few pixels wide: the camera would go in until nothing else is in view)
+    if (it["type"].toString() == "point") return;
     if (it.contains("bounds"))
     {
         const auto b = it["bounds"].toArray();
@@ -5467,7 +5465,8 @@ void ScenePanel::prepareSelection()
     const QString allText = m_source ? m_source() : QString();
     auto prepares = [&](const QJsonObject& t, bool* gizmoOut, bool* exposeOut) {
         if (t["kind"].toString() == "display" || t["failed"].toBool() || t["reassigned"].toBool() ||
-            t["no_handles"].toBool() || !t.contains("var") || t.contains("locked") || !t["visible"].toBool())
+            t["no_handles"].toBool() || !t.contains("var") || t.contains("locked") || !t["visible"].toBool() ||
+            t["type"].toString() == "field")                // (a field is not drawn: it has nothing to drag)
             return false;
         const QString var = t["var"].toString();
         const bool hasHandles = t.contains("handles");
@@ -5705,6 +5704,17 @@ bool ScenePanel::combines(const QString& operation) const
         }
     }
     return m_combining.value(operation, false);
+}
+
+bool ScenePanel::pointsOnly(int line0) const
+{
+    const QList<Model> operands = operandsFor(line0, false);
+    if (operands.isEmpty()) return false;
+    for (const Model& m : operands)
+    {
+        if (m.item["type"].toString() != "point") return false;
+    }
+    return true;
 }
 
 bool ScenePanel::isSimulation(const QString& operation) const

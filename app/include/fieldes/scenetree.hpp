@@ -80,6 +80,9 @@ public:
      *  conditions without a part for a simulation ... -- is greyed out in the menu, without a word: it is not offered for a selection that
      *  cannot make it  */
     bool entryAllowed(const QString& kind, const QString& name, int line0) const;
+    /*  Whether what a menu on this line (-1: empty space) would work on is points and nothing else: the first menu of a point offers the
+     *  field of the distance from it  */
+    bool pointsOnly(int line0) const;
     /*  Whether the (0-based) line belongs to a model (a variable or a displayed expression that ran), and the middle of its
      *  bounds -- where a menu opened on it from outside the viewport takes its place from  */
     bool modelAtLine(int line0, QVector3D* centre = nullptr) const;
@@ -556,6 +559,7 @@ protected:
     /*  Whether the entry is a simulation of the menu (static_analysis ...): it works on what is selected and writes a placeholder for what is
      *  not -- the part, the conditions -- so it is never greyed out for lack of them, and never takes "the last model" for its part  */
     bool isSimulation(const QString& operation) const;
+
     /*  Whether an operation of the menu takes several models (union, difference, intersection, surface_from_bodies)  */
     bool combines(const QString& operation) const;
     /*  Whether it cannot do without a second model (surface_from_bodies can: one model alone is its whole surface)  */

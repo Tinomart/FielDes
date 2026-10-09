@@ -1,7 +1,7 @@
 '''
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: drawn as a small ball, dragged by its gizmo
+    p = point(10, 0, 5)                    a point: not drawn, its gizmo shows where it is and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -13,7 +13,7 @@ What is drawn for each kind of model (Shape._display calls displayed() below):
     a 3D shape and a simulation   as they are
     a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
     a surface                     a thin sheet
-    a point                       a small ball (about the size of a mark on the screen, whatever the part's size)
+    a point                       nothing: a point is not drawn, its gizmo is all there is of it
     a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
                                   which colours a plane through the render region by the field (move the plane to see
                                   the field in 3D)
@@ -69,17 +69,15 @@ def _coord(c):
 
 
 class Point(Shape):
-    ''' A point: p.xyz is its coordinates (numbers or fields).  It is a small ball as a field, so it can be moved,
-        dragged and shown like any shape; size (mm) is the ball's radius -- by default about a mark on the screen
-        (a fortieth of the render region's longest side, at least two voxels) '''
+    ''' A point: p.xyz is its coordinates (numbers or fields).  It is **not drawn**: select it and its gizmo shows where it is.  (As a field
+        it is a tiny ball, which gives it a place for its gizmo and for the bounds of what is made of it: nothing of it is painted.) '''
     _kind = 'point'
 
-    def __init__(self, x=0.0, y=0.0, z=0.0, size=None):
+    def __init__(self, x=0.0, y=0.0, z=0.0):
         self.xyz = (_coord(x), _coord(y), _coord(z))
-        self.size = None if size is None else float(size)
         self._kind = 'point'                    # (an instance attribute: it goes with the point through handles() and the like)
         res, lo, hi = _view()
-        radius = self.size or max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
+        radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
         ball = self._ball(radius)               # (held: its tree is freed with it)
         super().__init__(lib.libfive_tree_copy(ball.ptr))
         if all(isinstance(c, float) for c in self.xyz):
@@ -133,11 +131,11 @@ class Surface(Shape):
         return _as(self, abs(self) - _eps())
 
 
-def point(x=0.0, y=0.0, z=0.0, size=None):
-    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  size: the radius (mm) of the ball it is drawn as '''
+def point(x=0.0, y=0.0, z=0.0):
+    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is not drawn: select it, and its gizmo shows where it is '''
     if isinstance(x, (tuple, list)) and y == 0.0 and z == 0.0 and len(x) == 3:
         x, y, z = x
-    return Point(x, y, z, size)
+    return Point(x, y, z)
 
 
 def surface(field):
