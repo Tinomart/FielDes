@@ -1190,6 +1190,22 @@ def _condition_role(value):
         return ''
 
 
+def _min_inputs(callee):
+    ''' How many models a call of this function needs at the least, from its signature (nothing is listed by hand, so a new function is known
+        too): the positional parameters it cannot do without -- `difference(a, b, *rest)` needs two, `union(a, *rest)` one -- and at least one
+        for a function that takes any number of models.  A model taken out of a call that has no more than this leaves a placeholder instead '''
+    needed = 0
+    try:
+        for p in inspect.signature(callee).parameters.values():
+            if p.kind == p.VAR_POSITIONAL:
+                break
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) and p.default is p.empty:
+                needed += 1
+    except (TypeError, ValueError):
+        pass
+    return max(1, needed)
+
+
 def _call_slots(value, gs, src):
     ''' What a call is given, argument by argument, and what it could be given: {params: [the names of the callee's
         parameters], args: {parameter: {span, text, list (a list written in the call: its `last` element's span, or none

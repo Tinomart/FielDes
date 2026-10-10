@@ -635,6 +635,8 @@ def outline_json(arg):
                     if not shown:
                         item['displayable'] = False
                     item['inputs'], item['variadic'], item['numbers'] = inputs, variadic, numbers
+                    if variadic:
+                        item['min_inputs'] = A._min_inputs(ns.get(callee))
                     item['slots'] = A._call_slots(stmt.value, ns, src)
                     if mkind == 'conditions':
                         item['condition_role'] = facts.get('condition_role') or _guess_role(callee)
@@ -716,6 +718,8 @@ def outline_json(arg):
                 if mkind == 'field':
                     item['displayable'] = False
             item['inputs'], item['variadic'], item['numbers'] = A._inputs_of(stmt.value, ns, by_name)
+            if item['variadic']:
+                item['min_inputs'] = A._min_inputs(ns.get(A._callee_name(stmt.value)))
             item['slots'] = A._call_slots(stmt.value, ns, src)
             item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
             item['callee'] = A._callee_name(stmt.value)

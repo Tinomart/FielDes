@@ -10,6 +10,13 @@
   the place cannot be had; **the other statements that use it hold a reference to it** (`# shadow: cube`), so the model stands at the top level instead of moving under the next statement that uses it (it used to land in
   another selection, nested again). Only a plain move that takes nothing out of a call is still refused, with the reason.
 
+- **A model taken out of any call that needs it leaves a placeholder, whatever the call is.** Taking one of the two models out of `difference(a, b)` left `difference(a)`, which is an error, because the tree only knew that
+  `difference` takes any number of models. It now reads how many a call needs from the function's own signature (`difference(a, b, *rest)` needs two, `union(a, *rest)` one, a function that takes any number of models at least one): a model
+  leaves a call that keeps what it needs (`difference(a, b, c)` loses `b` and stays `difference(a, c)`), and leaves a placeholder in one that would not (`difference(a, ...)`). Nothing is listed by hand, so an operation that is added later,
+  in the library or in a block of yours, is covered as soon as it is written.
+- **A locked model that is selected for an operation of the menu is a reference in it, as when it is dragged.** `union` of a model and a locked one is written `union_1 = union(a, c)  # shadow: c`, below the locked model's `lock(...)` line,
+  so the locked model stays where it is, shows at the top level, and is not made part of the operation.
+
 ### `fluid_analysis` is the flow around a body: the same inputs as `flow_topology_optimization`
 - **`fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, ...)`**: the flow goes around a body, inside a domain, and the analysis takes what the optimisation takes -- it is to `flow_topology_optimization` what
   `static_analysis` is to `topology_optimization`: the same flow, solved once for the body as it is. It used to be given only the fluid (`fluid_analysis(difference(slab, post), ...)`), so there was no body for the flow to go around

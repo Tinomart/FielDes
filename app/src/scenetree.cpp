@@ -5033,7 +5033,9 @@ bool ScenePanel::describeModel(const QJsonObject& target, QString* source, int* 
     if (target.contains("var"))
     {
         src = target["var"].toString();
-        for (const char* key : {"exposed", "handles"})
+        // (the lines that go on making the model after its statement: what a new statement under it has to stay below -- the numbers that
+        // drag it, its gizmo, its lock: `c = lock(c)` is the model that is used, not the one before it)
+        for (const char* key : {"exposed", "handles", "locked"})
         {
             if (target.contains(key)) aft = std::max(aft, target[key].toObject()["end_line"].toInt() - 1);
         }
@@ -5995,10 +5997,15 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     QJsonObject bodyItem;           // (the model it is made for: the first selected; its extent is what a simulation is sized by)
     QJsonArray othersInfo;          // (what each of the others is: the menu writes a region, a condition or a material differently)
     bool bare = false;              // (a simulation with nothing selected: it is written at the end of the script, whole of placeholders)
+    QStringList lockedNames;        // (the selected models that are locked: read-only, so the new statement holds a reference to each, as a drag does)
     if (kind == "operation" || withBodies)
     {
         // What it works on: the model that was right-clicked, or the selected ones, in the order they were selected
         const QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
+        for (const Model& m : operands)
+        {
+            if (m.item.contains("locked") && m.item.contains("var")) lockedNames << m.item["var"].toString();
+        }
         if (operands.isEmpty() && operation && isSimulation(name))
         {
             // (a simulation of nothing that is selected: every input is a placeholder, written at the end of the script)
@@ -6121,7 +6128,15 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         static const QString preludeMark = "\n#@@#\n";
         const int cut = call.indexOf(preludeMark);
         const QString prelude = cut >= 0 ? call.left(cut) : QString();
-        const QString statement = (cut >= 0 ? prelude + "\n" : QString()) + var + " = " + (cut >= 0 ? call.mid(cut + preludeMark.size()) : call);
+        QString statement = (cut >= 0 ? prelude + "\n" : QString()) + var + " = " + (cut >= 0 ? call.mid(cut + preludeMark.size()) : call);
+        // (a locked model the call is made of is held by reference: `# shadow: name` on the statement's last line, so it stays where it is
+        // and is not made part of the call)
+        for (const QString& locked : lockedNames)
+        {
+            if (!QRegularExpression("\\b" + QRegularExpression::escape(locked) + "\\b").match(call).hasMatch()) continue;
+            const int cutAt = statement.lastIndexOf('\n');
+            statement = (cutAt >= 0 ? statement.left(cutAt + 1) : QString()) + markShadow(statement.mid(cutAt + 1), locked);
+        }
 
         // The library's functions are in scope with `from fieldes import *`
         static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
@@ -7554,7 +7569,10 @@ void ScenePanel::wireRemove(Rewire& w, const QJsonObject& from, const QJsonObjec
             return;
         }
     }
-    if (from["variadic"].toBool() && direct.contains(name) && direct.size() - change.remove.size() >= 2)
+    // (a call that takes any number of models keeps as many as its signature cannot do without -- `difference(a, b, *rest)` needs two, so taking
+    // one of two out leaves a placeholder -- the function says, so no operation is listed here)
+    if (from["variadic"].toBool() && direct.contains(name) &&
+        direct.size() - change.remove.size() - 1 >= std::max(1, from["min_inputs"].toInt(1)))
     {
         change.remove << name;
         return;
