@@ -32,8 +32,8 @@
   `03_exclude_and_assembly.py` (an assembly of three imported parts, and `exclude()` with a region of your own); 13 tessellates the bracket.
 - **The Windows installer starts FielDes only when Finish is clicked** (it started it while its own window still said it was working); the box *Start FielDes when the installation is finished* can be changed until then.
 - **Linux**: `scripts/build-linux.sh --package` also makes a **self-extracting installer** (`FielDes-<version>-linux-x64-installer.run`: for the user into `~/.local/share/FielDes` with a menu entry, the command `fieldes` and an `uninstall.sh`; `--system` for everyone;
-  `--prefix DIR`; `--uninstall`) and a **Debian / Ubuntu package** (`.deb`: `sudo apt install ./FielDes_<version>_amd64.deb`). **macOS**: `scripts/build-macos.sh --dmg --pkg` makes the disk image and an installer package, and the app has its icon.
-  The release workflow builds and uploads all of them (the macOS ones are untried).
+  `--prefix DIR`; `--uninstall`) and a **Debian / Ubuntu package** (`.deb`: `sudo apt install ./FielDes_<version>_amd64.deb`).
+  The release workflow builds and uploads them.
 
 ### Files: export to every common format, finite-element models and results, key numbers on the screen
 - **`export_mesh(part, "part.stl")`** writes a body as **STL (binary or ASCII), OBJ, PLY, 3MF, glTF (`.glb`, `.gltf`), FBX, OFF and DXF**, in the format of the extension; the importer reads
@@ -51,13 +51,11 @@
   bounding box seen along the flow). `result_summary(result)` lists them; the property drawer's last button writes them as text.
 - **Bug fixed on the way: importing a mesh failed** (`NameError: _NATIVE` in `mesh_import.py`: the table of the formats the library reads itself was missing, so STL, OBJ, PLY, 3MF and glTF imports raised an error instead of reading the file).
 
-### Linux and macOS packages open with nothing installed
+### The Linux package opens with nothing installed
 - **The Linux package is self-contained.** `scripts/build-linux.sh --package` now puts **Qt and its plugins, a Python runtime with its standard library, the kernel's libraries and every other library the program loads** into the folder
   (`lib/`, `plugins/`, `runtime/python3/`, found through `qt.conf`, the programs' run paths and `PYTHONHOME`, which the program sets itself when `runtime/python3` is next to it): unpack it and double-click `FielDes`; only the C library and the
   graphics driver of the machine are used. (A copy that was handed to someone had to have Qt installed first.) The one thing a package cannot carry is the C library, so it asks for one as new as the one it was built with: the
   script says which, and **`.github/workflows/release.yml` builds it on Ubuntu 22.04**, the oldest common one, and starts the result in a bare Ubuntu with only a virtual display before handing it over.
-- **A macOS build is written** -- `scripts/build-macos.sh` makes `FielDes.app` (Qt by `macdeployqt`, every other library by `dylibbundler`, a Python of its own, ad-hoc signed) and a disk image, and the same workflow builds it on Intel
-  and Apple-silicon machines of GitHub. **It has not been tried on a Mac yet.**
 
 ### The model tree: arguments, sections, remembered closing, the property drawer
 - **A comment or a blank line written or deleted anywhere does not stop a calculation that is running** (adding a section above the model that is being solved, typing a note above it). An edit that left the statements as they were but moved them down

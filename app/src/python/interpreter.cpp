@@ -353,7 +353,7 @@ void Interpreter::preinit() {
             }
         } while (!found && app_dir.cdUp());
 #else
-        // A packaged copy (Linux, macOS) brings its own Python: runtime/python3 next to the program holds its standard library, so nothing of
+        // A packaged copy (Linux) brings its own Python: runtime/python3 next to the program holds its standard library, so nothing of
         // the machine's Python is needed -- or looked at.  (A build that is run from where it was made uses the system's Python.)
         app_dir = QDir(QCoreApplication::applicationDirPath());
         do {
@@ -392,7 +392,7 @@ void Interpreter::preinit() {
             PyErr_Print();
             QMessageBox::critical(nullptr, "FielDes",
                 "FielDes cannot load its Python library: the folder python/fieldes and the library "
-                "(fieldes.dll, fieldes.so, fieldes.dylib) must stay next to the program, as in the downloaded folder.\n\n"
+                "(fieldes.dll, fieldes.so) must stay next to the program, as in the downloaded folder.\n\n"
                 "Details are on the console (start FielDes from a terminal).");
             std::exit(1);
         }

@@ -1,4 +1,4 @@
-# Builds the Linux and macOS packages on GitHub's machines.
+# Builds the Linux packages on GitHub's machines.
 #
 # Linux is built on Ubuntu 22.04 on purpose: a program asks for a C library as new as the one it was built with, and the oldest common one is the one
 # that opens on the most systems.  The package carries Qt, Python and every other library with it, so it opens with nothing installed -- the last step
@@ -56,25 +56,3 @@ jobs:
             dist/FielDes-linux-x64.tar.gz
             dist/FielDes-*-linux-x64-installer.run
             dist/FielDes_*_amd64.deb
-
-  macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-13, macos-14]       # Intel, Apple silicon
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the build dependencies
-        run: brew install cmake ninja qt@5 boost eigen libpng python@3.12 tbb pkg-config manifold clipper2 dylibbundler create-dmg
-
-      - name: Build and package
-        run: bash scripts/build-macos.sh --dmg --pkg
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FielDes-macos-${{ matrix.os }}
-          path: |
-            dist/FielDes-macos-*.dmg
-            dist/FielDes-macos-*.pkg

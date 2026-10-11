@@ -10,7 +10,7 @@ application, its libraries (Qt and the Visual C++ runtime too), a private Python
 documents -- **nothing else has to be installed**. Nothing is written outside your user settings and the cache files
 next to the STEP files you import.
 
-**Linux and macOS.** `sh FielDes-<version>-linux-x64-installer.run` (or the `.deb`, or the `.tar.gz` unpacked and run), `FielDes.app` from the disk image or the installer package: the same, with Qt, Python and
+**Linux.** `sh FielDes-<version>-linux-x64-installer.run` (or the `.deb`, or the `.tar.gz` unpacked and run): the same, with Qt, Python and
 the libraries inside. See [Building](building.md) for how they are made and what is tried.
 
 **From source.** See [Building from source](building.md).

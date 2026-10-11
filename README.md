@@ -154,7 +154,7 @@ start by clicking the gap between two rows (they fold in the code editor too), a
      `scripts/build-windows.ps1 -Package`, see [Building](docs/building.md)).
    - **Linux**: `sh FielDes-<version>-linux-x64-installer.run` installs for you into `~/.local/share/FielDes` with a menu entry and the command `fieldes` (`--system` for everyone; `--uninstall` removes it);
      on Debian and Ubuntu `sudo apt install ./FielDes_<version>_amd64.deb`; or unpack the `.tar.gz` and run `FielDes`.
-   - **macOS**: open the disk image and drag FielDes to Applications, or run the installer package (`.pkg`). *(These are built by the release workflow and have not been tried on a Mac yet.)*
+   - There is no macOS version.
 
    FielDes speaks English, Spanish, French, German, Japanese, Chinese and Russian (the language of the system by default; **Settings → Language**).
 2. The **guided tour** (it opens by itself the first time; later **Help → Guided tour**) walks through the basics; **File → Import model…** (`Ctrl+I`) brings in a STEP
@@ -262,8 +262,7 @@ takes a few seconds and is cached next to it.
   numbers (they say so when given a field). A graded lattice cell size changes by at most a factor of 16 over the part.
 - Windows is the main platform (its package is checked to need nothing but Windows itself). **Linux**: `scripts/build-linux.sh --package` makes a folder that opens with nothing installed
   (Qt, Python and every library inside; only the C library, the graphics driver and X11 of the machine are used), an installer (`.run`) and a `.deb` (see [Building](docs/building.md); tried under WSL2 + WSLg
-  on Fedora -- the release workflow builds them on Ubuntu 22.04 so that they open on older systems too). **macOS**: `scripts/build-macos.sh` makes `FielDes.app`, a disk image and an installer package; they have not
-  been tried on a Mac yet.
+  on Fedora -- the release workflow builds them on Ubuntu 22.04 so that they open on older systems too).
 - Units: STEP units are read and converted; STL/OBJ/PLY/OFF carry none and are assumed to be millimetres
   (`file_units=`).
 - Analyses are linear (small strain, linear material) and use tetrahedra (or voxel hexahedra); no contact.

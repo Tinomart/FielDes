@@ -14,8 +14,6 @@ import sys
 def try_link(folder, name):
     if sys.platform == "linux" or sys.platform == "linux2":
         suffix = '.so'
-    elif sys.platform == "darwin":
-        suffix = '.dylib'
     elif sys.platform == "win32":
         suffix = '.dll'
     path = os.path.join(folder, name + suffix)

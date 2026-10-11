@@ -164,12 +164,8 @@ DocumentationPane::DocumentationPane(Documentation docs)
 
     setWindowTitle(T("Shape reference"));
     resize(640, 720);
-#ifdef Q_OS_MAC
-    setWindowFlags(Qt::Tool);
-#else
     setWindowFlags(Qt::Tool | Qt::CustomizeWindowHint |
                    Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
-#endif
 }
 
 void DocumentationPane::show() {

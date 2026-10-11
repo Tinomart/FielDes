@@ -54,8 +54,8 @@ const Tree& TreeData::rhs() const {
 }
 
 float TreeData::value() const {
-    // Can't use std::get<TreeConstant> because it requires a newer macOS
-    // than my main development machine.
+    // std::get_if rather than std::get<TreeConstant>, which needs a newer standard library
+    // than some of the systems this is built on.
     if (auto i = std::get_if<TreeConstant>(this)) {
         return i->value;
     } else {

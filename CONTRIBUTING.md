@@ -38,5 +38,5 @@ A test suite that automates those is the most useful contribution there is.
 
 ## Ideas that would help
 
-Linux/macOS builds, a test suite, contact in the analyses, more STEP entity types, exact B-spline faces in
+A test suite, contact in the analyses, more STEP entity types, exact B-spline faces in
 the field, a package manager recipe for the dependencies.

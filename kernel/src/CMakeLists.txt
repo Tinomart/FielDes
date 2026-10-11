@@ -178,9 +178,9 @@ target_include_directories(libfive PUBLIC
 
 set(LIBS ${PNG_LIBRARIES})
 
-if(UNIX AND NOT(APPLE))
+if(UNIX)
     set(LIBS ${LIBS} ${CMAKE_THREAD_LIBS_INIT})
-endif(UNIX AND NOT(APPLE))
+endif(UNIX)
 
 target_link_libraries(libfive ${LIBS})
 

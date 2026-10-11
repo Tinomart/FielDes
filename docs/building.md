@@ -136,13 +136,6 @@ file system first (compiling from there is several times faster). Manifold and C
 a gigabyte: on a machine with 8 GB use `--jobs 4`, or the build thrashes; later builds only rebuild what changed. Under WSL, `~/FielDes-linux/FielDes` opens the window
 through WSLg.
 
-## macOS
-
-`scripts/build-macos.sh` (with `--dmg` for a disk image to drag the app from, and `--pkg` for an installer package that puts it in Applications) builds FielDes and packs it as **`FielDes.app` with Qt (`macdeployqt`), Python and every other library inside**
-(`dylibbundler`), so it needs nothing installed to run; `brew install cmake ninja qt@5 boost eigen libpng python@3.12 tbb pkg-config manifold clipper2 dylibbundler create-dmg`
-once. **It has not been tried on a Mac yet**: the release workflow builds it on Intel and Apple-silicon machines of GitHub, and the first runs are where it will be corrected.
-The app is signed ad hoc only (Apple silicon requires some signature), so a copy downloaded from the internet is opened the first time with a right-click on the icon, *Open*.
-
 ## Other platforms
 
 Install the dependencies with your package manager (Eigen ≥ 3.2.92 via pkg-config, Boost, libpng, Qt5,
