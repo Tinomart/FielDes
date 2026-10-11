@@ -1256,6 +1256,117 @@ def _call_slots(value, gs, src):
     return out
 
 
+def export_model(arg):
+    ''' A one-off export asked for by a menu: JSON {kind, var, path, ...} -> JSON {path, text}.  `kind` is "mesh" (a body as a mesh file), "fea" (the
+        finite-element model of a static analysis), "results" (what an analysis found) or "field" (a field on a grid): the model is the
+        variable `var` of the script that ran last, and the file is written by fieldes.stdlib.exporting -- the same functions a script calls '''
+    import os
+    from fieldes import runner
+    from fieldes.stdlib import exporting as E
+    req = json.loads(arg)
+    var, path, kind = req['var'], req['path'], req['kind']
+    glob = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+    if var not in glob:
+        raise RuntimeError('%s is not a model of the script that ran last: run the script, then export' % var)
+    value = glob[var]
+    try:
+        if kind == 'mesh':
+            try:
+                E.export_mesh(value, path)
+            except ValueError as e:
+                # (a body whose extent is not known -- built from fields: the region of the scene is meshed)
+                host = E._host('__bounds', None)
+                if host is None or 'extent' not in str(e):
+                    raise
+                E.export_mesh(value, path, bounds=host)
+        elif kind == 'fea':
+            E.export_fea(value, path)
+        elif kind == 'results':
+            E.export_results(value, path)
+        elif kind == 'field':
+            host = E._host('__bounds', None)
+            E.export_field(value, path, bounds=host)
+        else:
+            raise ValueError('unknown kind of export %r' % kind)
+    except Exception as e:
+        raise RuntimeError(str(e))
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    return json.dumps({'path': path, 'text': '%s (%s)' % (path, ('%.1f MB' % (size / 1e6)) if size > 1e6 else ('%.0f KB' % (size / 1e3)))})
+
+
+def convert_mesh(arg):
+    ''' The viewport's meshes saved as STL, written in another format: JSON {source, target} -> the number of triangles '''
+    from fieldes.stdlib import meshfiles
+    req = json.loads(arg)
+    return str(meshfiles.convert_mesh(req['source'], req['target']))
+
+
+def _arg_kind(node):
+    ''' What an argument is written as, for the model tree's argument rows: number, string, constant (True, None ...), tuple, list, name
+        (of something that is not a model), call, or expression '''
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if isinstance(v, bool) or v is None:
+            return 'constant'
+        if isinstance(v, (int, float)):
+            return 'number'
+        if isinstance(v, str):
+            return 'string'
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)) and isinstance(node.operand, ast.Constant) \
+            and isinstance(node.operand.value, (int, float)) and not isinstance(node.operand.value, bool):
+        return 'number'
+    if isinstance(node, ast.Tuple):
+        return 'tuple'
+    if isinstance(node, ast.List):
+        return 'list'
+    if isinstance(node, ast.Name):
+        return 'name'
+    if isinstance(node, ast.Call):
+        return 'call'
+    return 'expression'
+
+
+def _args_of(value, gs, by_name, src):
+    ''' Every argument a call is written with, in the order written, for the model tree: [{param, text, span, kind}].  The tree shows each
+        one as a row under the statement, as the code reads: a click on it selects it in the code, ready to be replaced.  A model that is
+        an argument (a name of a model of the script, or a list of them) is left out: it is a row of its own -- a child of the statement
+        or a shadow of it -- and so is a placeholder (`...`) '''
+    if not isinstance(value, ast.Call):
+        return []
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    positional = []
+    if callable(callee):
+        try:
+            for p in inspect.signature(callee).parameters.values():
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+                    positional.append(p.name)
+        except (TypeError, ValueError):
+            pass
+
+    def only_models(node):
+        if isinstance(node, ast.Name):
+            return node.id in by_name
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return bool(node.elts) and all(only_models(e) for e in node.elts)
+        return False
+
+    out = []
+
+    def add(name, node):
+        if only_models(node) or (isinstance(node, ast.Constant) and node.value is Ellipsis):
+            return
+        out.append({'param': name or '', 'text': _short(src.segment(node), 80), 'span': _span(node), 'kind': _arg_kind(node)})
+
+    for i, a in enumerate(value.args):
+        if not isinstance(a, ast.Starred):
+            add(positional[i] if i < len(positional) else None, a)
+    for kw in value.keywords:
+        if kw.arg:
+            add(kw.arg, kw.value)
+    return out
+
+
 def _block_names():
     ''' The names of the custom blocks (see fieldes.blocks), or none '''
     try:
@@ -1274,22 +1385,67 @@ def _key_of(it):
         return kind + ':' + it['list_var']
     return kind + ':' + it.get('label', '')
 
-def edit_reaches_running(new_text):
-    ''' '1' when an edit of the script -- the new text is `new_text` -- begins at or above the statement that runs now: what it makes may
-        be another thing, so a solver that works on it is stopped at once, not waited for.  '' when the edit is below it (an eye toggled
-        under it, a line added at the end): that cannot change what the statement makes, it finishes -- and is kept for the next run '''
+_view_shapes = {}           # the shapes the viewport draws, by the pointer of their tree (oldest first): what the field viewers look up
+_view_exact = {}            # ... and the exact distance made of one, by the same pointer (kept alive for the viewers)
+_VIEW_SHAPES_KEPT = 512
+
+
+def register_view_shape(shape):
+    ''' A shape that the viewport draws and that has an exact distance (an imported part, moved or edited or not) is told here by the
+        application, so that a field viewer -- the section's Field mode, the field disc -- can ask for that distance when it samples:
+        the part's own field is exact in sign only (outside it is the boxy distance to the infinite surfaces of its faces) '''
+    key = int(shape.ptr)
+    _view_shapes.pop(key, None)
+    _view_shapes[key] = shape
+    while len(_view_shapes) > _VIEW_SHAPES_KEPT:
+        old = next(iter(_view_shapes))
+        del _view_shapes[old]
+        _view_exact.pop(old, None)
+
+
+def exact_view_tree(key):
+    ''' The pointer (as text) of the tree of the exact distance of the shape registered under `key`, or '' when there is none (it is
+        made the first time it is asked for, about a second for a part, and kept) '''
+    try:
+        key = int(key)
+        shape = _view_shapes.get(key)
+        if shape is None:
+            return ''
+        exact = _view_exact.get(key)
+        if exact is None:
+            from fieldes.stdlib.fields import _dist
+            exact = _dist(shape)
+            if exact is shape:
+                return ''
+            _view_exact[key] = exact
+        return str(int(exact.ptr))
+    except Exception:
+        return ''
+
+
+def edit_in_place(new_text):
+    ''' What an edit of the script -- the new text is `new_text` -- does to the run that is going, and does it where it can:
+        'inplace'  it changes nothing the statement that runs is made of or makes (a model shown or hidden above it, whatever comes
+                   after it): it is put into the run, which goes on with the new text -- nothing is stopped, and no other run follows;
+        'reaches'  it begins at or above what that statement is made of (a number changed, a line added above it): what it makes may be
+                   another thing, so a solver that works on it is stopped at once, not waited for;
+        'defer'    the text is not a script just now (it is being typed) and the edit is below the statement: the run goes on to the end
+                   of that statement, whose result is kept, and then makes way for the run of the text;
+        ''         nothing runs (or the run is over its last statement): the edit makes its run '''
     from fieldes import runner
-    running = getattr(runner, 'running_lines', None)
-    old = getattr(runner, 'running_source', None)
-    if not running or old is None:
+    st = runner.running_state
+    if st is None or new_text == runner.running_source:
+        # (the same text asks for a run of it again: a breakpoint set, a file that was imported changed on disk, Retry)
         return ''
-    a, b = old.splitlines(), new_text.splitlines()
-    n = 0
-    while n < len(a) and n < len(b) and a[n] == b[n]:
-        n += 1
-    if n == len(a) == len(b):
-        return ''
-    return '1' if n + 1 <= running[1] else ''
+    with st['lock']:
+        plan = runner.plan_edit(new_text)
+        if plan is None:
+            return ''
+        if isinstance(plan, dict):
+            return 'inplace' if runner.apply_edit(new_text) == '1' else 'reaches'
+        if plan == 'defer':
+            runner.stop_after_statement()
+        return plan
 
 
 def outline_json(arg):

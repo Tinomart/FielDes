@@ -11,7 +11,8 @@
 //   /language=xx       en, es, fr, de, ja, zh or ru (default: the language of Windows)
 //   /dir=PATH          the install folder (default: %LOCALAPPDATA%\Programs\FielDes, or where FielDes is installed already)
 //   /nodesktop         no desktop shortcut
-//   /nolaunch          do not start FielDes when the installation is finished
+//   /nolaunch          do not start FielDes when the installation is finished (with the window: when Finish is clicked, if the box is ticked;
+//                      silent: right away)
 //   /uninstall         (Setup) remove FielDes
 //
 // It installs for the current user only: it needs no administrator rights.
@@ -380,6 +381,7 @@ namespace FielDesSetup
         CheckBox desktop, launch;
         ProgressBar bar;
         bool finished;
+        string installedDir;                // (where it was installed: FielDes is started there when Finish is clicked)
 
         public SetupForm(Options o, bool uninstall, string dir)
         {
@@ -466,7 +468,11 @@ namespace FielDesSetup
         {
             if (finished)
             {
+                // The program starts only now, when the user has said they are done with the installer -- not while its window still says it
+                // is working (the box was ticked or not as they wanted, up to this click)
+                bool wantLaunch = !uninstalling && launch != null && launch.Checked && installedDir != null;
                 Close();
+                if (wantLaunch) Launch(installedDir);
                 return;
             }
             string dir = uninstalling ? options.RunFrom : folderBox.Text.Trim();
@@ -480,7 +486,6 @@ namespace FielDesSetup
             bar.Visible = true;
             status.Text = Texts.Get(uninstalling ? "removing" : "installing", language);
             bool wantDesktop = !uninstalling && desktop.Checked;
-            bool wantLaunch = !uninstalling && launch.Checked;
             string lang = language;
             Thread worker = new Thread(delegate()
             {
@@ -491,13 +496,13 @@ namespace FielDesSetup
                     if (uninstalling) Install.Remove(dir, progress); else Install.Run(dir, lang, wantDesktop, progress);
                 }
                 catch (Exception ex) { failure = ex; }
-                BeginInvoke((Action)delegate { Finished(failure, dir, wantLaunch); });
+                BeginInvoke((Action)delegate { Finished(failure, dir); });
             });
             worker.IsBackground = true;
             worker.Start();
         }
 
-        void Finished(Exception failure, string dir, bool wantLaunch)
+        void Finished(Exception failure, string dir)
         {
             if (failure != null)
             {
@@ -511,11 +516,12 @@ namespace FielDesSetup
                 return;
             }
             finished = true;
+            installedDir = dir;
             bar.Value = 100;
             status.Text = Texts.Get(uninstalling ? "removed" : "done", language);
             go.Enabled = true;
+            if (!uninstalling) launch.Enabled = true;         // (still theirs to change until they click Finish)
             Translate();
-            if (wantLaunch) Launch(dir);
         }
 
         public static void Launch(string dir)

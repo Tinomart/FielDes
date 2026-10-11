@@ -348,6 +348,7 @@ Editor::Editor(Language::Type language)
             &m_textChangedDebounce, QOverload<>::of(&QTimer::start));
     // ... and is written down for the file, which finds it again when it is opened
     connect(script, &Script::breakpointsChanged, this, &Editor::saveBreakpoints);
+    connect(script, &Script::foldToggled, this, &Editor::foldToggled);
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &Editor::saveBreakpoints);
     // (a script that is paused when the program ends is let go: its thread waits on a flag that is about to be destroyed)
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [] { libfive::run_progress::requestPause(false); });
@@ -396,6 +397,19 @@ Editor::Editor(Language::Type language)
 void Editor::loadDefaultScript() {
     setScript(m_language->defaultScript());
     setModified(false);
+}
+
+void Editor::onInterpreterPartialResult(Result r)
+{
+    // What the run has shown so far, before a statement that takes long: drawn now, as anything is -- the viewport follows an edit (a part
+    // hidden or shown) while an analysis runs.  The run's own result replaces it when the run is over (what is the same is not drawn again)
+    if (m_discardResults || m_terminating)
+    {
+        for (auto s : r.shapes) s->deleteLater();
+        return;
+    }
+    emit(partialShapes(r.shapes, r.keepFromLine));
+    emit(settingsChanged(r.settings, first_change));
 }
 
 void Editor::onInterpreterBusy() {
@@ -1343,6 +1357,20 @@ void Editor::goToPlaceholder(int line0, int col0)
     script->selectRange(line0, col0, 3);
 }
 
+void Editor::setFold(int line0, bool folded)
+{
+    int end = 0;
+    if (line0 < 0 || !script->foldRange(line0, &end)) return;       // (a line with nothing under it to fold)
+    if (script->isFolded(line0) != folded) script->setFolded(line0, folded);
+}
+
+void Editor::goToSpan(int line0, int col0, int endLine0, int endCol0)
+{
+    showScriptTab();
+    script->selectRange(line0, col0, endLine0, endCol0);
+    script->setFocus();
+}
+
 void Editor::onSyntaxReady() {
     m_outlineTimer.start();
     script_doc->contentsChange(0, 0, script_doc->toPlainText().length());
@@ -1408,6 +1436,8 @@ void Editor::setLanguage(Language::Type t) {
                 this, &Editor::onInterpreterDone);
         connect(m_language.data(), &Language::interpreterPartialScene,
                 this, &Editor::onInterpreterPartialScene);
+        connect(m_language.data(), &Language::interpreterPartialResult,
+                this, &Editor::onInterpreterPartialResult);
         connect(m_language.data(), &Language::syntaxReady,
                 this, &Editor::onSyntaxReady);
 

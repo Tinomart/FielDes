@@ -79,7 +79,8 @@ powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 turns the portable folder into one `dist\FielDes-<version>-windows-x64-setup.exe` (about 30 MB): it asks for the language (Windows' by default) and the
 folder, installs for the current user (no administrator rights), makes the Start menu shortcut and the entry in Settings → Apps, and uninstalls
 (`uninstall.exe`, which removes only the files the installation wrote, listed in `install.manifest`; what you added to the folder stays). `/S` installs silently;
-the switches are at the top of `installer\Setup.cs` (`/language=xx`, `/dir=…`, `/nodesktop`, `/nolaunch`). It is built with the C# compiler of the
+the switches are at the top of `installer\Setup.cs` (`/language=xx`, `/dir=…`, `/nodesktop`, `/nolaunch`). With its window it starts FielDes **when Finish is clicked** (if the box *Start FielDes when the installation is finished* is ticked), not
+while it is still working. It is built with the C# compiler of the
 Visual Studio Build Tools (or the .NET Framework's `csc.exe`: nothing to download) from the portable folder as `dist\FielDes` is after `-Package`; the version is
 the one of `CMakeLists.txt`. It is **not code-signed**: Windows SmartScreen shows "unknown publisher" the first time it runs (*More info → Run anyway*); a
 code-signing certificate and `signtool` at the end of `build-installer.ps1` would remove that.
@@ -102,9 +103,23 @@ The CMake options: `BUILD_APP` (default ON; OFF builds only the kernel and its C
 
 ## Linux
 
-`scripts/build-linux.sh` builds the kernel, the Python library and the application, and with `--package` makes a portable
-folder (`~/FielDes-linux`, and `dist/FielDes-linux-x64.tar.gz` in the repository) that is started with `run.sh`. It was made
-and tested on Fedora under WSL2 (Windows 11, WSLg shows the window). Install once:
+`scripts/build-linux.sh` builds the kernel, the Python library and the application, and with `--package` makes a **self-contained** portable
+folder (`~/FielDes-linux`, and `dist/FielDes-linux-x64.tar.gz` in the repository). **It opens on a Linux desktop with nothing installed beforehand**: Qt and its
+plugins, the kernel's libraries, a Python runtime with its standard library and every other library the program loads are inside the folder
+(`lib/`, `plugins/`, `runtime/python3/`, found through `qt.conf`, the programs' run paths and `PYTHONHOME`, which the program sets itself); only the C library and the
+graphics driver of the machine are used. Unpack it, double-click `FielDes` (or run `./FielDes`; `run.sh` does the same). It was made
+and tested on Fedora under WSL2 (Windows 11, WSLg shows the window).
+
+**The installers.** `--package` also makes `dist/FielDes-<version>-linux-x64-installer.run` (`scripts/make-linux-installer.sh`: a shell script with the package appended -- it needs only a shell and
+tar) and `dist/FielDes_<version>_amd64.deb` (`scripts/make-deb.sh`, written with `ar` and `tar`, so `dpkg-deb` is not needed). `sh FielDes-<version>-linux-x64-installer.run` installs for the current user into
+`~/.local/share/FielDes` (a menu entry, the command `fieldes` in `~/.local/bin`, and an `uninstall.sh` in the folder); `--system` (with `sudo`) installs into `/opt/FielDes` for everyone, `--prefix DIR` anywhere, `--uninstall`
+removes it again, and a folder that is not a FielDes installation is never touched. `sudo apt install ./FielDes_<version>_amd64.deb` puts the program in `/opt/fieldes`, the command in `/usr/bin` and the menu entry in
+the system's. The installer was tried under WSL (install, upgrade over it, refuse a foreign folder, uninstall); the `.deb` was built and its parts checked, but not installed with dpkg.
+
+**The one thing a package cannot bring is the C library.** A program asks for a glibc as new as the one it was built with, so a package built on Fedora 44
+(glibc 2.43) opens only on a system that new. The script says at its end which glibc the package asks for; to open on nearly everything **build on an old
+system** -- Ubuntu 22.04 (glibc 2.35) is what `.github/workflows/release.yml` uses: run it on GitHub (Actions → Release builds → Run workflow, or push a tag
+such as `v0.6.1`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. Install once:
 
 ```
 # Fedora
@@ -112,15 +127,21 @@ sudo dnf install qt5-qtbase-devel qt5-qtbase-private-devel boost-devel eigen3-de
     manifold-devel tbb-devel mesa-libGL-devel mesa-libGLU-devel libatomic cmake ninja-build gcc-c++ pkgconf-pkg-config rsync patchelf
 # Ubuntu / Debian
 sudo apt install qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libboost-dev libeigen3-dev libpng-dev python3-dev \
-    libmanifold-dev libtbb-dev libgl-dev libglu1-mesa-dev cmake ninja-build g++ pkg-config rsync patchelf
+    libtbb-dev libgl-dev libglu1-mesa-dev cmake ninja-build g++ pkg-config rsync patchelf git
 ```
 
 then `scripts/build-linux.sh --package`. When the sources are on a Windows drive (`/mnt/c/...`) they are copied to the Linux
-file system first (compiling from there is several times faster). Manifold needs Clipper2, which Fedora does not package: the
-script builds it once into `~/fieldes-deps`. The first build takes a good while (the kernel is large) and each compiler needs about
-a gigabyte: on a machine with 8 GB use `--jobs 4`, or the build thrashes; later builds only rebuild what changed. The portable
-folder needs Python 3 and Qt 5 installed on the machine that runs it. Under WSL, `~/FielDes-linux/run.sh` opens the window
+file system first (compiling from there is several times faster). Manifold and Clipper2 are not packaged by every distribution
+(Fedora has Manifold but not Clipper2; Ubuntu 22.04 has neither): the script builds what it cannot find once into `~/fieldes-deps`. The first build takes a good while (the kernel is large) and each compiler needs about
+a gigabyte: on a machine with 8 GB use `--jobs 4`, or the build thrashes; later builds only rebuild what changed. Under WSL, `~/FielDes-linux/FielDes` opens the window
 through WSLg.
+
+## macOS
+
+`scripts/build-macos.sh` (with `--dmg` for a disk image to drag the app from, and `--pkg` for an installer package that puts it in Applications) builds FielDes and packs it as **`FielDes.app` with Qt (`macdeployqt`), Python and every other library inside**
+(`dylibbundler`), so it needs nothing installed to run; `brew install cmake ninja qt@5 boost eigen libpng python@3.12 tbb pkg-config manifold clipper2 dylibbundler create-dmg`
+once. **It has not been tried on a Mac yet**: the release workflow builds it on Intel and Apple-silicon machines of GitHub, and the first runs are where it will be corrected.
+The app is signed ad hoc only (Apple silicon requires some signature), so a copy downloaded from the internet is opened the first time with a right-click on the icon, *Open*.
 
 ## Other platforms
 
@@ -132,7 +153,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target FielDes -j
 ```
 
-Expect to fix small things: macOS has not been tried.
+Expect to fix small things.
 
 ## Running the library without the application
 

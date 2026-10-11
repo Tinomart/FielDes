@@ -155,7 +155,14 @@ bracket = lock(bracket)
 ```
 
 A locked shape cannot be dragged: neither the gizmo nor a surface. Use it when the viewport is for looking, so a
-slip of the mouse cannot change the design. The lock button (or `R`) writes that line under the shape's
+slip of the mouse cannot change the design. **Any model can be locked**, not only a shape: the result of an analysis,
+a condition, a material, a point (`result = lock(result)`: every row of the model tree has the lock button).
+
+**A locked model is read-only, and nothing moves it.** Not a drag, not a menu, not an operation made of it: its line stays
+where it is, whatever is made of it. What is made of a locked model holds a **reference** to it (`# shadow: name`, a shadow),
+written below its `lock(...)` line: a surface picked on it (right-click → *Select Surface*), a `union` or an analysis chosen from
+its menu, a drop into another call -- the locked model stays at the top level and is not taken into the new call. An edit
+that would have to move it (making room for what is made of it) is refused, and says why. The lock button (or `R`) writes that line under the shape's
 definition and deletes it again; it does not touch `handles()` or `expose()`, so the gizmo mode and the placement
 numbers stay in the script and are there again when it is unlocked.
 `handles(mode='lock')`, from before the lock was a switch of its own, is refused: use `lock()`.

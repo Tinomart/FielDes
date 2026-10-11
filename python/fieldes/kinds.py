@@ -12,7 +12,10 @@ Everything a script makes is one of a few kinds, and FielDes shows the kind with
     simulation  a solved analysis or optimisation
     material    what a part (or a fluid) is made of: Material(...), steel, aluminium, water ...: an analysis is given one
     conditions  what an analysis is given: supports, loads, thermal and flow boundary conditions
-    cell        what a lattice is made of: a cell, a cell map, a graph of beams
+    cell        what a lattice is made of: a cell (a strut cell, a TPMS, a planar pattern, a custom cell), a cell map,
+                a graph of beams
+    lattice     a body that is a lattice: what lattice(), lattice_surface_conform() ... make (a body filled with cells)
+    points      a set of points: what random_points() makes, the points a foam is made around (drawn as the dots of gizmos)
     import      a file read in
     block       (a model made by one of your custom blocks carries a small block mark on its icon)
 
@@ -34,6 +37,8 @@ KINDS = {
     'material':   ('Material',    '#c9a66b'),
     'conditions': ('Conditions',  '#e08f58'),
     'cell':       ('Lattice cell', '#d4b43c'),
+    'lattice':    ('Lattice',     '#e0709c'),
+    'points':     ('Point set',   '#f0a24c'),
     'import':     ('Import',      '#2aa198'),
     'block':      ('Custom block', '#8da2c0'),
 }
@@ -47,7 +52,7 @@ _BY_CLASS = {
     '_HeatInput': 'conditions', '_HeatGeneration': 'conditions',
     '_Convection': 'conditions', '_Inlet': 'conditions', '_Outlet': 'conditions', '_Wall': 'conditions',
     '_Slip': 'conditions',
-    'LatticeCell': 'cell', 'CellMap': 'cell', 'LatticeGraph': 'cell',
+    'LatticeCell': 'cell', 'CellMap': 'cell', 'LatticeGraph': 'cell', 'PointSet': 'points',
     'SurfaceSelection': 'surface',
     'Regression': 'field', 'FieldFit': 'field',
 }
@@ -68,7 +73,7 @@ def kind_of(value):
     from fieldes.shape import Shape
     if isinstance(value, Shape):
         k = getattr(value, '_kind', None)
-        if k in ('point', 'surface', 'field', 'profile'):
+        if k in ('point', 'points', 'surface', 'field', 'profile', 'lattice'):
             return k
         if k == 'const':
             return 'field'
@@ -87,8 +92,8 @@ def kind_of(value):
 def keep_kind(out, shape):
     ''' `out` is `shape` edited in a way that does not change what it is (a gizmo, exposed numbers): a 2D shape is still one,
         although its field now depends on z the way the edit is written (a rotation about x) '''
-    if kind_of(shape) == 'profile':
-        out._kind = 'profile'
+    if kind_of(shape) in ('profile', 'lattice'):
+        out._kind = kind_of(shape)
 
 
 def describe():

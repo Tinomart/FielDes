@@ -13,6 +13,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "libfive/render/brep/per_thread_brep.hpp"
 #include "libfive/render/brep/free_thread_handler.hpp"
+#include "libfive/render/brep/spawn.hpp"
 #include "libfive/render/brep/settings.hpp"
 #include "libfive/render/brep/mesh.hpp"
 #include "libfive/render/brep/root.hpp"
@@ -275,7 +276,7 @@ std::unique_ptr<typename M::Output> Dual<N>::walk_(
     futures.resize(settings.workers);
     std::atomic_bool done(false);
     for (unsigned i=0; i < settings.workers; ++i) {
-        futures[i] = std::async(std::launch::async,
+        futures[i] = spawn(settings.low_priority,
             [&breps, &tasks, &MesherFactory, &settings, &done, i]()
             {
                 auto m = MesherFactory(breps[i], i);

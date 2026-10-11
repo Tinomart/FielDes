@@ -6,7 +6,7 @@ Importing a model: import_model(), reconstruct() and tessellate().
     view.set_bounds(*roi(parts))
 
 import_model() is the one function to know.  It reads a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply,
-.3mf, .glb, .gltf) and returns a list of (shape, (lower corner, upper corner)), one entry per part -- one for a mesh --
+.3mf, .glb, .gltf, .fbx, .off, .dxf) and returns a list of (shape, (lower corner, upper corner)), one entry per part -- one for a mesh --
 each part placed where the file has it, in the units you ask for.  What is a field here is chosen by the file:
 
     a mesh                  the exact signed distance to its triangles
@@ -45,7 +45,7 @@ from fieldes.stdlib.fields import _s, _shape_bounds, render_mesh, _vars_key
 __all__ = ['import_model', 'reconstruct', 'tessellate']
 
 _STEP = ('.step', '.stp')
-_MESH = ('.stl', '.obj', '.ply', '.3mf', '.glb', '.gltf')
+_MESH = ('.stl', '.obj', '.ply', '.3mf', '.glb', '.gltf', '.fbx', '.off', '.dxf')
 
 # The share of a part's surface that is free-form (B-spline) from which it is tessellated rather than reconstructed.
 # Measured on the parts of the example files: the reconstruction is exact for
@@ -185,7 +185,7 @@ def _worst_fit(path, survey):
 
 def import_model(path, units='mm', file_units=None, rev=None, cache=True, threshold=THRESHOLD, quality=64,
                  thickness=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64, fit_tolerance=FIT_TOLERANCE):
-    ''' Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf) as a list of
+    ''' Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf, .fbx, .off, .dxf) as a list of
         (shape, (lower corner, upper corner)): one entry per part of a STEP file (an assembly comes out assembled: every
         part is where the file puts it, a part used several times has an entry for each place), one for a mesh.  Nothing
         else to say: the way each part is made a field is chosen for it -- see the module's text:
@@ -202,8 +202,8 @@ def import_model(path, units='mm', file_units=None, rev=None, cache=True, thresh
 
         units       the units of your script ('mm', 'cm', 'm', 'in'...): a STEP file declares its own (each part
                     its own; the numbers are converted), 'file' gives the first declared one
-        file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ and PLY do not; 3MF does,
-                    glTF is metres) -- for mesh files only
+        file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
+                    with $INSUNITS do, glTF is metres) -- for mesh files only
         rev         a number that is part of what an import is kept by: another one imports again ("Reimport" in FielDes)
         cache       an import is kept in files next to the STEP file (<file>.fieldes-cache.py, ...-tessellation):
                     False: not
@@ -222,7 +222,7 @@ def import_model(path, units='mm', file_units=None, rev=None, cache=True, thresh
     kind = _kind_of(path)
     if kind is None:
         raise ValueError('import_model({!r}): not a file it can read; use a STEP file (.step, .stp) or a mesh '
-                         '(.stl, .obj, .ply, .3mf, .glb, .gltf)'.format(path))
+                         '(.stl, .obj, .ply, .3mf, .glb, .gltf, .fbx, .off, .dxf)'.format(path))
     if kind == 'mesh':
         return [_import_mesh(path, units, file_units, rev)]
     if file_units is not None:

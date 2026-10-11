@@ -53,6 +53,15 @@ public:
      *  when a run comes to its turn, that a newer one is behind it  */
     virtual void noteRequest() {}
 
+    /*  An edit that was put into the run that is going (it changes nothing of what that run makes) is not a run of its own: the results of the
+     *  run that goes on are of the text as it is now.  Called from the main thread  */
+    virtual void setRunScript(QString) {}
+
+    /*  The edit that was just noted (noteRequest) was put into the run that is going: it has no run of its own, and the runs that edits before it
+     *  asked for -- they wait behind the one that is going -- are of another text now: they are dropped when their turn comes.  Called from the
+     *  main thread, at once (not queued behind the run)  */
+    virtual void absorbed() {}
+
     /*  Called from the main thread before the worker thread starts */
     virtual void preinit() {}
 
@@ -85,6 +94,11 @@ signals:
     /*  While a run goes on: the model tree's description of what its finished statements have made so far
      *  (emitted from the run's own helper thread; the run's done() follows with the whole) */
     void partialScene(QString json);
+
+    /*  A statement that takes long is about to run (an analysis, an optimisation): what the statements before it have shown, so that the
+     *  viewport can draw it now and follow an edit meanwhile -- a part hidden or shown -- without waiting for the end of the run.  Emitted
+     *  from the run's own thread, between two statements; the run's done() follows with the whole  */
+    void partialResult(Result);
 };
 
 } // namespace FielDes

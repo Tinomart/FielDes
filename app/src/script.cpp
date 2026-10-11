@@ -32,6 +32,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QStringListModel>
 #include <QTextBlock>
 #include <QToolTip>
+#include <QApplication>
+#include <QCryptographicHash>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -146,6 +148,13 @@ Script::Script(QWidget* parent)
             this, [this]{ setSelections(SEL_FLASH, {}); });
 
     viewport()->setMouseTracking(true);
+    m_hoverTimer.setSingleShot(true);
+    m_hoverTimer.setInterval(70);
+    connect(&m_hoverTimer, &QTimer::timeout, this, [this] {
+        // (the mouse rests on a name: its documentation, unless a button is down or a menu or the completion has the keyboard)
+        if (QApplication::mouseButtons() != Qt::NoButton || m_completer->popup()->isVisible()) return;
+        showDocAt(m_hoverPos, m_hoverGlobal);
+    });
     onCursorMoved();
 }
 
@@ -427,11 +436,17 @@ static int breakpointColumn(const QFontMetrics& fm)
     return fm.height() / 2 + 6;
 }
 
+// The column at the gutter's right edge where a block folds: wide enough for an arrow that can be seen and hit
+static int foldColumn(const QFontMetrics& fm)
+{
+    return std::max(16, fm.height() * 5 / 4);
+}
+
 int Script::gutterWidth() const
 {
     const QFontMetrics fm(gutterFont(document()->defaultFont()));
     const int digits = std::max(2, int(QString::number(std::max(1, blockCount())).length()));
-    return breakpointColumn(fm) + 4 + fm.horizontalAdvance(QLatin1Char('9')) * digits + fm.height() * 2 / 3;
+    return breakpointColumn(fm) + 4 + fm.horizontalAdvance(QLatin1Char('9')) * digits + foldColumn(fm);
 }
 
 void Script::updateGutterWidth()
@@ -475,7 +490,7 @@ void Script::paintGutter(QPaintEvent* event)
     p.setFont(font);
     const QFontMetrics fm(font);
     const QFontMetrics sfm(scriptFont);
-    const int markerSize = fm.height() * 2 / 3;
+    const int markerSize = foldColumn(fm);
     const int numberRight = m_gutter->width() - markerSize - 4;
     const int current = textCursor().blockNumber();
 
@@ -526,7 +541,7 @@ void Script::paintGutter(QPaintEvent* event)
                 const bool folded = isFolded(blockNumber);
                 const double cx = numberRight + 4 + markerSize / 2.0;
                 const double cy = top + sfm.height() / 2.0;
-                const double s = markerSize * 0.22;
+                const double s = markerSize * 0.30;
                 QPainterPath tri;
                 if (folded)
                 {   // pointing right
@@ -542,7 +557,7 @@ void Script::paintGutter(QPaintEvent* event)
                 }
                 tri.closeSubpath();
                 p.setPen(Qt::NoPen);
-                p.setBrush(folded ? Color::blue : Color::base1);
+                p.setBrush(folded ? Color::blue : Color::base0);
                 p.drawPath(tri);
             }
         }
@@ -563,7 +578,7 @@ void Script::gutterPressed(QMouseEvent* event)
         if (block.isVisible() && event->pos().y() >= top && event->pos().y() < top + h)
         {
             const QFontMetrics fm(gutterFont(document()->defaultFont()));
-            const int markerSize = fm.height() * 2 / 3;
+            const int markerSize = foldColumn(fm);
             int end;
             if (event->pos().x() < breakpointColumn(fm))
             {
@@ -743,6 +758,7 @@ void Script::setFolded(int blockNum, bool folded)
         }
     }
 
+    const bool was = isFolded(blockNum);
     for (QTextBlock b = header.next(); b.isValid() && b.blockNumber() <= end; b = b.next())
     {
         b.setVisible(!folded);
@@ -752,6 +768,7 @@ void Script::setFolded(int blockNum, bool folded)
     viewport()->update();
     m_gutter->update();
     ensureCursorVisible();
+    if (was != folded) emit(foldToggled(blockNum, folded));
 }
 
 void Script::toggleFoldAtCursor()
@@ -791,6 +808,11 @@ void Script::foldAll()
 void Script::unfoldAll()
 {
     bool changed = false;
+    QList<int> opened;              // (the headers that were folded: the tree is told)
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+    {
+        if (b.isVisible() && isFolded(b.blockNumber())) opened << b.blockNumber();
+    }
     for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
     {
         if (!b.isVisible())
@@ -805,6 +827,7 @@ void Script::unfoldAll()
         viewport()->update();
         m_gutter->update();
     }
+    for (const int line : opened) emit(foldToggled(line, false));
 }
 
 void Script::validateFolds()
@@ -813,6 +836,7 @@ void Script::validateFolds()
     // right before it; anything else (e.g. a programmatic edit that
     // inserted lines into a folded region) is unhidden.
     bool changed = false;
+    QList<int> opened;              // (the headers whose folds were broken by an edit: the tree is told)
     QTextBlock b = document()->begin();
     while (b.isValid())
     {
@@ -839,6 +863,7 @@ void Script::validateFolds()
                 u.setVisible(true);
             }
             changed = true;
+            if (header.isValid()) opened << header.blockNumber();
         }
     }
     if (changed)
@@ -847,6 +872,7 @@ void Script::validateFolds()
         viewport()->update();
         m_gutter->update();
     }
+    for (const int line : opened) emit(foldToggled(line, false));
 }
 
 void Script::ensureBlockVisible(const QTextBlock& target)
@@ -2130,6 +2156,13 @@ void Script::contextMenuEvent(QContextMenuEvent* e)
 
 void Script::mouseMoveEvent(QMouseEvent* e)
 {
+    // The documentation of the name under the mouse is shown as soon as the mouse rests on it (a moment, not the long wait of a tooltip)
+    if (!(e->buttons() & Qt::LeftButton) && !(e->modifiers() & Qt::ControlModifier))
+    {
+        m_hoverPos = e->pos();
+        m_hoverGlobal = e->globalPos();
+        m_hoverTimer.start();
+    }
     // Ctrl+hover shows go-to-definition links
     if (e->modifiers() & Qt::ControlModifier)
     {
@@ -2208,6 +2241,75 @@ void Script::selectRange(int line0, int col0, int length)
     setFocus();
 }
 
+bool Script::showDocAt(const QPoint& vp, const QPoint& global)
+{
+    QTextCursor range;
+    const QString w = wordAt(vp, &range);
+    if (w.isEmpty())
+    {
+        QToolTip::hideText();
+        return false;
+    }
+    // (where the word is: the tooltip stays while the mouse is on it, and goes when it is not)
+    QTextCursor from(document()), to(document());
+    from.setPosition(range.selectionStart());
+    to.setPosition(range.selectionEnd());
+    const QRect a = cursorRect(from), b = cursorRect(to);
+    const QRect word(viewport()->mapTo(this, QPoint(a.left(), a.top())), QSize(std::max(6, b.left() - a.left()), a.height()));
+    QString html;
+    const auto tip = m_callTips.find(w);
+    if (tip != m_callTips.end())
+    {
+        html = "<tt>" + tip.value().toHtmlEscaped() + "</tt>";
+    }
+    else if (m_support)
+    {
+        // The name of an argument written in a call (`seed=` ...): what the documentation says of it, the default beside it
+        const QTextBlock block = range.block();
+        const int end = range.selectionEnd() - block.position();
+        static const QRegularExpression equals(R"(^\s*=(?!=))");
+        if (equals.match(block.text().mid(end)).hasMatch())
+        {
+            const QString source = toPlainText();
+            const int col = range.selectionStart() - block.position() + 1;
+            const QString key = QCryptographicHash::hash(source.toUtf8(), QCryptographicHash::Md5).toHex() + ":" +
+                                QString::number(block.blockNumber()) + ":" + QString::number(col);
+            auto cached = m_docCache.constFind(key);
+            if (cached != m_docCache.constEnd())
+            {
+                html = *cached;
+            }
+            else
+            {
+                QJsonObject request;
+                request["source"] = source;
+                request["line"] = block.blockNumber();
+                request["col"] = col;
+                const QString answer = m_support("argument_doc", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+                const QJsonObject o = QJsonDocument::fromJson(answer.toUtf8()).object();
+                if (!o.isEmpty())
+                {
+                    html = "<b>" + o["function"].toString().toHtmlEscaped() + "</b>(<b>" + o["name"].toString().toHtmlEscaped() + "</b>";
+                    if (!o["default"].toString().isEmpty()) html += " = <tt>" + o["default"].toString().toHtmlEscaped() + "</tt>";
+                    html += ")";
+                    if (!o["text"].toString().isEmpty()) html += "<br>" + o["text"].toString().toHtmlEscaped();
+                    html = "<div style='max-width: 420px'>" + html + "</div>";
+                }
+                if (m_docCache.size() > 400) m_docCache.clear();
+                m_docCache.insert(key, html);
+            }
+        }
+    }
+    if (html.isEmpty())
+    {
+        QToolTip::hideText();
+        return false;
+    }
+    if (QToolTip::isVisible() && QToolTip::text() == html) return true;         // (shown already: it is not drawn again)
+    QToolTip::showText(global, html, this, word);
+    return true;
+}
+
 bool Script::event(QEvent* e)
 {
     // Keep Escape for ourselves (not the window's "cancel render") while
@@ -2222,48 +2324,15 @@ bool Script::event(QEvent* e)
             return true;
         }
     }
-    // Hovering a documented library name shows its signature
+    // Hovering a documented library name shows its signature (the mouse resting on it shows it at once, see mouseMoveEvent; the tooltip's own
+    // event, later, shows the same again)
     if (e->type() == QEvent::ToolTip)
     {
         auto he = static_cast<QHelpEvent*>(e);
-        const QPoint vp = viewport()->mapFrom(this, he->pos());
-        QTextCursor range;
-        const QString w = wordAt(vp, &range);
-        const auto tip = m_callTips.find(w);
-        if (tip != m_callTips.end())
-        {
-            QToolTip::showText(he->globalPos(),
-                               "<tt>" + tip.value().toHtmlEscaped() + "</tt>", this);
-            return true;
-        }
-        // The name of an argument written in a call (`seed=` ...): what the documentation says of it, the default beside it
-        if (m_support && !w.isEmpty())
-        {
-            const QTextBlock block = range.block();
-            const int end = range.selectionEnd() - block.position();
-            static const QRegularExpression equals(R"(^\s*=(?!=))");
-            if (equals.match(block.text().mid(end)).hasMatch())
-            {
-                QJsonObject request;
-                request["source"] = toPlainText();
-                request["line"] = block.blockNumber();
-                request["col"] = range.selectionStart() - block.position() + 1;
-                const QString answer = m_support("argument_doc", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
-                const QJsonObject o = QJsonDocument::fromJson(answer.toUtf8()).object();
-                if (!o.isEmpty())
-                {
-                    QString html = "<b>" + o["function"].toString().toHtmlEscaped() + "</b>(<b>" + o["name"].toString().toHtmlEscaped() + "</b>";
-                    if (!o["default"].toString().isEmpty()) html += " = <tt>" + o["default"].toString().toHtmlEscaped() + "</tt>";
-                    html += ")";
-                    if (!o["text"].toString().isEmpty()) html += "<br>" + o["text"].toString().toHtmlEscaped();
-                    QToolTip::showText(he->globalPos(), "<div style='max-width: 420px'>" + html + "</div>", this);
-                    return true;
-                }
-            }
-        }
-        QToolTip::hideText();
+        showDocAt(viewport()->mapFrom(this, he->pos()), he->globalPos());
         return true;
     }
+    if (e->type() == QEvent::Leave) m_hoverTimer.stop();
     if (e->type() == QEvent::KeyRelease &&
         static_cast<QKeyEvent*>(e)->key() == Qt::Key_Control &&
         !m_layers[SEL_LINK].isEmpty())

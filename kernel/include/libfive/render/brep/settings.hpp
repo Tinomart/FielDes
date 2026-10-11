@@ -44,6 +44,7 @@ public:
         workers = 8;
         alg = DUAL_CONTOURING;
         free_thread_handler = nullptr;
+        low_priority = false;
         progress_handler = nullptr;
         cancel.store(false);
         vol = nullptr;
@@ -65,6 +66,11 @@ public:
 
     /*  This is the meshing algorti */
     BRepAlgorithm alg;
+
+    /*  Whether the worker threads run at a lower priority than the rest of the program's: a long render that goes on in the
+     *  background, which must not take the processor from what is made meanwhile (a small shape that was changed, the window).  It
+     *  still uses every core that nothing else wants.  */
+    bool low_priority;
 
     /*  Optional function called when a thread finds itself without anything
      *  to do.  This can be used to keep threads from spinning if libfive

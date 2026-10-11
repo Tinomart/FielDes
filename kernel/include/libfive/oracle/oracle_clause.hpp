@@ -44,8 +44,16 @@ public:
      *  a tree rebuilt with fresh (but identical) oracles -- e.g. every time
      *  a Studio script is re-run -- is recognized as unchanged instead of
      *  being re-meshed.
+     *
+     *  No class has to say it twice: the default is made of what the oracle
+     *  says it holds (persistentKey: a hash of its own data, which stays the
+     *  same from one run to the next, so it is the same within one) and of
+     *  the content keys of the trees it depends on.  An oracle that says
+     *  neither -- nothing of what it holds -- has none: it is this very one,
+     *  the safe answer.  A class may still give a cheaper or a coarser key of
+     *  its own (the solver results, which are named by the problem they solve).
      */
-    virtual std::string contentKey() const { return std::string(); }
+    virtual std::string contentKey() const;
 
     /*
      *  A key of what this oracle computes that stays the same from one run of

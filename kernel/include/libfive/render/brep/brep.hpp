@@ -15,6 +15,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <Eigen/StdVector>
 
 #include "libfive/render/brep/per_thread_brep.hpp"
+#include "libfive/render/brep/spawn.hpp"
 
 namespace libfive {
 
@@ -73,7 +74,7 @@ public:
         futures.resize(workers);
 
         for (unsigned i=0; i < workers; ++i) {
-            futures[i] = std::async(std::launch::async,
+            futures[i] = spawn(
                 [i, workers, this, &children]() {
                     for (unsigned j=i; j < children.size(); j += workers) {
                         const auto& c = children[j];

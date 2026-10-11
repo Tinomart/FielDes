@@ -174,9 +174,17 @@ def lock(shape):
 
             part = lock(part)
 
-        (FielDes's model tree has a lock button on every shape, and the key R toggles it.) '''
+        (FielDes's model tree has a lock button on every model -- shapes, results, conditions, materials, points -- and the key R toggles it.) '''
     if not isinstance(shape, Shape):
-        raise TypeError('lock(shape): shape must be a Shape, not {}'.format(type(shape).__name__))
+        # Any other block -- the result of an analysis, a condition, a material, a point, a lattice cell -- is locked the same way: it is
+        # itself in every way, and the model tree does not let it be dragged (the lock is the line: `result = lock(result)`)
+        import copy
+        try:
+            out = copy.copy(shape)
+            out._locked = True
+            return out
+        except Exception:
+            return shape
     ptr = lib.libfive_tree_copy(shape.ptr)
     try:
         out = type(shape)(ptr)

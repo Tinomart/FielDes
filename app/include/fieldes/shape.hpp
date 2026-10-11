@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QObject>
+#include <QStringList>
 #include <QtConcurrent>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLBuffer>
@@ -117,6 +118,14 @@ public:
      */
     void setNoPaint(bool on) { no_paint = on; }
     bool noPaint() const { return no_paint; }
+
+    /*
+     *  Points that are drawn as the dot in the middle of a gizmo, with none of its handles (fieldes.stdlib.lattices.PointSet): a set of
+     *  points is data, not something to drag.  The shape that carries them is not painted (setNoPaint) and nothing of it is picked; two
+     *  sets are two shapes (the points are part of colorKey)
+     */
+    void setMarkers(std::vector<QVector3D> points);
+    const std::vector<QVector3D>& markers() const { return m_markers; }
 
     /*
      *  How opaque a result is drawn (1: opaque): a flow is drawn translucent when the body in it is to be seen through it
@@ -341,6 +350,12 @@ public:
     /*  How finely a result's colours are read: the render's triangles are split until no edge is longer
      *  than this (mm, the solver's element; 0: as meshed)  */
     void setColorDetail(float d) { color_detail = d; }
+    /*  The key of its exact distance in the Python side's registry (empty: it has none, its own field is the distance): see FieldSource  */
+    void setExactKey(const QString& key) { m_exactKey = key; }
+    const QString& exactKey() const { return m_exactKey; }
+    /*  The key numbers of a result -- label, text, unit of each (fieldes.stdlib.exporting.key_results): the result card prints them  */
+    void setKeyResults(const QList<QStringList>& rows) { m_keyResults = rows; }
+    const QList<QStringList>& keyResults() const { return m_keyResults; }
     bool hasResult() const { return has_result; }
     const std::vector<FieldChannel>& channels() const { return m_channels; }
     int channel() const { return m_channel; }
@@ -546,6 +561,14 @@ protected:
     QFuture<BoundedMesh> mesh_future;
     QFutureWatcher<BoundedMesh> mesh_watcher;
     libfive::BRepSettings mesh_settings;
+    /*  Whether the level that is being meshed is expected to take long (see startRender): its threads then run at a lower priority,
+     *  so that a small shape that was changed meanwhile, or the window, get the processor first -- the long render itself is never
+     *  stopped or made to wait, it uses every core that nothing else wants.  force_low marks the renders made in the background
+     *  (the steps that are not shown) as such  */
+    bool run_heavy = false;
+    bool force_low = false;
+    QString m_exactKey;
+    QList<QStringList> m_keyResults;
 
     libfive::Tree tree;                 // (what is meshed: the shown step's geometry, usually base_tree)
     libfive::Tree base_tree = libfive::Tree::invalid();     // the shape as the script made it (optimized)
@@ -709,6 +732,8 @@ protected:
     std::vector<BcGlyph> bc_glyphs;
     std::vector<BcLabel> bc_labels;
     QString bc_key;                                        // identifies them (shapes are only reused when it matches)
+    std::vector<QVector3D> m_markers;                      // the dots of a set of points (see setMarkers)
+    QString marker_key;
 
     // Colouring by a field (see setColorField)
     bool has_color=false;
@@ -789,6 +814,10 @@ protected:
     std::map<std::pair<int, int>, std::vector<float>> step_values;   // (step, channel): a step's own field at the vertices
     std::map<int, std::vector<Eigen::Vector3f>> step_disp;            // step: a step's own displacement at the vertices
     void applyStepState();
+    /*  The geometry of a step that has not been meshed yet, meshed in the background while another is shown, and kept (see stashStepMesh):
+     *  once the shown one is finished, every step is meshed one after the other, so that playing the steps back finds them all made.
+     *  Does nothing while a render runs (the next one is started by the end of that one)  */
+    void prefetchSteps();
     void rebuildEvaluators();
     void stashStepMesh();
     const std::vector<Eigen::Vector3f>& dispNow();

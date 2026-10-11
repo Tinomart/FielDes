@@ -2,10 +2,27 @@
 #include <cassert>
 
 #include "libfive/tree/data.hpp"
+#include "libfive/tree/content_key.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/oracle/transformed_oracle_clause.hpp"
 
 namespace libfive {
+
+std::string OracleClause::contentKey() const
+{
+    const std::string own = persistentKey();
+    if (own.empty())
+    {
+        return std::string();
+    }
+    // (what it holds, by name and hash; and what it is made of: a moved copy of an oracle is its oracle and the three maps)
+    std::string out = name() + "|" + own;
+    for (const Tree& dep : dependencies())
+    {
+        out += "|" + (dep.get() ? treeContentKey(dep) : std::string("-"));
+    }
+    return out;
+}
 
 std::unique_ptr<const OracleClause> OracleClause::deserialize(
         const std::string& name, Deserializer& in)

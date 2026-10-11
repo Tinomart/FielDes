@@ -61,10 +61,14 @@ public:
     { return m_interpreter->callSupport(function, arg, error); }
 
 signals:
+    /*  A run of the script as it is now is asked for: forwarded to the interpreter's thread (see the handler of onScriptChanged)  */
+    void evalRequested(QString text);
+
     /*  Emits the result of an interpreter evaluation */
     void interpreterDone(Result);
     void interpreterBusy();
     void interpreterPartialScene(QString json);
+    void interpreterPartialResult(Result);
 
     void syntaxReady();
 

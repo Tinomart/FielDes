@@ -161,7 +161,7 @@ def _body_for(conditions):
     skip = {id(r) for r in regions}
     best, biggest = None, 0.0
     for v in models[:400]:
-        if not isinstance(v, Shape) or id(v) in skip or kind_of(v) != 'solid':
+        if not isinstance(v, Shape) or id(v) in skip or kind_of(v) not in ('solid', 'lattice'):
             continue
         box = getattr(v, '_bounds', None)
         if box is None:

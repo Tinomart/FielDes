@@ -4,14 +4,18 @@ A lattice in FielDes is a **field** that repeats through space, trimmed to a bod
 wall thickness, strut radius, offset, relative density, cell size — can itself be a field, so a lattice can
 follow a regression, a distance, a stress result, a temperature.
 
+[`examples/23_lattice_gallery.py`](../examples/23_lattice_gallery.py) shows one lattice of every kind, each in a simple body of its own.
+
 - [One call: lattice()](#one-call-lattice)
-- [Cells: cell_periodic, cell_non_periodic, cell_custom, cell_custom_truss, cell_custom_tpms](#cells)
+- [In the menus and the model tree](#in-the-menus-and-the-model-tree)
+- [Cells: cell_periodic, cell_custom, cell_custom_truss, cell_custom_tpms](#cells)
+- [Foams: random_points, voronoi_lattice, delaunay_lattice](#foams-random_points-voronoi_lattice-delaunay_lattice)
 - [Sizing: thickness, radius, density](#sizing-thickness-radius-density)
 - [Skin, shell and fill()](#skin-shell-and-fill)
 - [Cell maps: cells that follow the body](#cell-maps-cells-that-follow-the-body)
 - [Driving a lattice from a field](#driving-a-lattice-from-a-field)
 - [Building blocks](#building-blocks)
-- [Your own cells and equations](#your-own-cells-and-equations)
+- [Custom cells and equations](#custom-cells-and-equations)
 - [Lattices that follow a surface](#lattices-that-follow-a-surface)
 - [Beams on surfaces, Voronoi and graphs](#beams-on-surfaces-voronoi-and-graphs)
 - [Measuring a lattice](#measuring-a-lattice)
@@ -30,31 +34,47 @@ wall=None, axis='z')` fills `body` with a lattice and returns a shape. `cell` is
 the next section. `cell_size` is 10 mm unless the cell is a `cell_custom(region, geometry)`, which is made in the
 size of its region.
 
+## In the menus and the model tree
+
+Lattices have a section of their own in the right-click menus: **Lattice** on a model (and **Add lattice** on empty space). It lists the
+operations that fill a model with a lattice (`lattice`, `lattice_surface_conform`), the three steps of a foam (`random_points`, which makes points in a
+model, then `voronoi_lattice` and `delaunay_lattice`, which are made of those points), and under them **every cell** the library has, a menu for each
+family: *Strut cells*, *TPMS cells*, *Planar cells* and *Custom cells* (`cell_custom`, `cell_custom_truss`, `cell_custom_tpms`). A cell entry writes
+the call that makes the cell -- `cell_gyroid_1 = cell_periodic('gyroid')` -- and needs no model. Select a cell together with a body and choose
+*Lattice* → `lattice`: the lattice is written with that cell (`lattice(part, cell_gyroid_1, ...)`); a field selected with them is its thickness.
+
+A foam is made around **points**, not of a cell: select a model and choose *Lattice* → `random_points` (the points appear in the viewport, each as the dot of
+a gizmo), then select the points and choose `voronoi_lattice` or `delaunay_lattice`. The points know the model they were made in, so these two take the points
+and nothing else: with anything else selected they are greyed out.
+
+Lattices and their parts have kinds of their own in the model tree, each with its own colour and icon: a **lattice** (what `lattice()` and
+`lattice_surface_conform()` make: a body filled with cells), a **lattice cell** (what the cell functions make) and a **point set** (what
+`random_points()` makes, drawn as dots in the viewport). A lattice is a body like any other once it is made: union it, analyse it, drag it onto an operation.
+
 ## Cells
 
 Every lattice operation — `lattice()`, `lattice_surface_conform()`, `strut_lattice()`, `tpms()`, `planar_lattice()`,
-`lattice_parameter_for_density()` — takes a **cell**: the thing the lattice is made of. Five functions make one, and
+`lattice_parameter_for_density()` — takes a **cell**: the one cell the lattice is made of. Four functions make one, and
 they all make the same kind of object, so any of them goes wherever a cell is taken — and nothing else does: a name
 such as `'gyroid'` is not a cell, `cell_periodic('gyroid')` is.
 
 | Function | Makes | Examples |
 |---|---|---|
 | `cell_periodic(kind)` | a standard cell that repeats on a grid | `'octet'`, `'gyroid'`, `'hexagon'` |
-| `cell_non_periodic(kind, relax=2, seed=1)` | cells that do not repeat: a random graph | `'voronoi'`, `'delaunay'` |
-| `cell_custom(region, geometry)` | a cell of **any geometry** of your own: a box and a field | spheres, rods, a TPMS, any boolean of them |
-| `cell_custom_truss(nodes, beams, mirror='')` | a strut cell of your own: beams between nodes | a cube frame with a plus through its middle |
-| `cell_custom_tpms(equation)` | a triply periodic surface of your own, from its equation | a gyroid written out |
+| `cell_custom(region, geometry)` | a custom cell of **any geometry**: a box and a field | spheres, rods, a TPMS, any boolean of them |
+| `cell_custom_truss(nodes, beams, mirror='')` | a custom strut cell: beams between nodes | a cube frame with a plus through its middle |
+| `cell_custom_tpms(equation)` | a custom triply periodic surface, from its equation | a gyroid written out |
 
 ```python
 lattice(part, cell_periodic('octet'), cell_size=10, radius=0.6)
-lattice(part, cell_non_periodic('voronoi', seed=4), cell_size=8, radius=0.5)
 lattice(part, cell_custom(box((0, 0, 0), (10, 10, 10)), my_geometry))
 lattice(part, cell_custom_tpms(my_equation), cell_size=8, thickness=0.8)
 lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
 ```
 
 The cell is only *what* the lattice is made of. How thick it is (`thickness`, `radius`, `wall`, `offset`, `density`),
-how big (`cell_size`) and where it goes (a body, a surface, a `cell_map`) belong to the operation.
+how big (`cell_size`) and where it goes (a body, a surface, a `cell_map`) belong to the operation. A foam does not repeat, so it is not made of a cell:
+it is made around points, see [Foams](#foams-random_points-voronoi_lattice-delaunay_lattice).
 
 **`cell_periodic(kind)`**
 
@@ -64,13 +84,8 @@ how big (`cell_size`) and where it goes (a body, a surface, a `cell_map`) belong
 | **Struts** | `cubic`, `bcc`, `bccz`, `fcc`, `fccz`, `octet`, `octahedron`, `kelvin` (= `truncated_octahedron`), `diamond_struts`, `cross`, `tesseract`, `cuboctahedron` | `radius`, optionally `node_radius`, `blend` |
 | **Planar** (2.5D, extruded along `axis`) | `hexagon` (honeycomb), `triangle`, `square`, `kagome` | `wall` |
 
-**`cell_non_periodic(kind)`** — `'voronoi'` (the edges of Voronoi cells: a foam) or `'delaunay'` (the Delaunay edges: a
-stochastic truss), about `cell_size` apart; `relax` makes the cells more even, `seed` picks another random pattern.
-`thickness` is the beam thickness (diameter; `radius` is the same thing, half of it). In `lattice()` it fills a body; in `lattice_surface_conform()` it lays the graph on the
-surface (its beams centred on it).
-
 **`cell_custom(region, geometry)`**, **`cell_custom_truss(nodes, beams)`** and **`cell_custom_tpms(equation)`** — see
-[Your own cells and equations](#your-own-cells-and-equations).
+[Custom cells and equations](#custom-cells-and-equations).
 
 TPMS `style`: `'sheet'` is a wall of `thickness` mm centred on the minimal surface ("walled TPMS");
 `'network'` is the solid on one side of it, grown by `offset` mm ("skeletal TPMS"; `invert=True` on `tpms()`
@@ -78,15 +93,57 @@ takes the other side).
 
 `cell_size` is in mm, or `(sx, sy, sz)` for a stretched cell. For the honeycomb it is the flat-to-flat width.
 
+## Foams: random_points, voronoi_lattice, delaunay_lattice
+
+A foam does not repeat, so it is not made of one cell: it is made around **points**, in three steps that each do what their name says. **`random_points`**
+makes the points in a body -- how far apart on average, how regular or how random, the nearest and the farthest two may be -- and FielDes draws them in the
+viewport, each as the dot of a gizmo (without its handles: they are data, not something to drag). **`voronoi_lattice`** makes the foam from them (the edges of
+the Voronoi cells around the points, as beams); **`delaunay_lattice`** makes a stochastic truss (beams along the Delaunay edges between the points):
+
+```python
+points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11, seed=3)
+print(points)                       # <PointSet: 281 points, nearest neighbour 8.0 mm on average (5.1 to 10.6)>
+foam = voronoi_lattice(points, thickness=1.0)
+truss = delaunay_lattice(points, thickness=1.0)
+```
+
+The points know the body they were made in, and the lattice fills **that** body: `voronoi_lattice` and `delaunay_lattice` take the points and no body of their
+own (it could only disagree with the points). To fill another body, make the points in it.
+
+`random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None)`
+
+| Argument | What it does |
+|---|---|
+| `body` | where the points are made: inside it, and in a layer of one `spacing` outside, so that the cells at its surface are closed. Without a body, give `bounds=((x0, y0, z0), (x1, y1, z1))` |
+| `spacing` | how far a point is from its nearest neighbour **on average** (mm). The points are made so that they come out that far apart whatever the randomness |
+| `randomness` | 0 to 1: how far the points are moved off a regular body-centred grid. 0 is a regular grid (every cell the same), 1 is as random as the distances below allow |
+| `min_distance` | no two points are closer than this (mm). Default: the spacing less 60 % of the randomness. A low number lets the points clump; the spacing itself makes them even |
+| `max_distance` | no point is farther than this from its nearest neighbour (mm): a point that is more alone gets a neighbour. Default: none. Not less than `min_distance` |
+| `seed` | another number is another pattern; the same number is the same points again |
+
+`min_distance` and `max_distance` are the range the distances to the nearest neighbour are in: the closer together they are, the more regular the
+points. The result is a `PointSet` (`len(points)`, `points.points`, `points.stats()` for the distances the points really have, `points.body` the body they were
+made in). A plain list of at least five `(x, y, z)` is a set of points too, but it does not know a body: `voronoi_lattice(my_points, body=part)`.
+
+`voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)` and `delaunay_lattice(...)`, with the same arguments:
+
+| Argument | What it does |
+|---|---|
+| `points` | `random_points(...)`, or a list of at least five `(x, y, z)` |
+| `thickness` | the diameter of the beams (mm): a number or a field. `radius` is the same thing, half of it. Default: 16 % of the spacing of the points |
+| `density` | instead of the beams' size: the share of the body that is material (0–1), calibrated. Not together with `thickness` or `radius` |
+| `skin`, `blend`, `skin_blend` | a solid skin of this thickness on the surface of the body; the rounding of the joints; the rounding of the joints with the skin |
+| `body` | only for a list of points, which does not know one. Points from `random_points` fill the body they were made in (giving another is an error that says so) |
+
 ## Sizing: thickness, radius, density
 
 **One word for every cell: `thickness`.** It is the wall of a sheet TPMS and the diameter of the beams of a strut cell or a
-non-periodic cell, in `lattice()`, `strut_lattice()` and `lattice_surface_conform()` alike (`radius=` is the same for beams, half of it;
+foam, in `lattice()`, `strut_lattice()`, `lattice_surface_conform()` and `voronoi_lattice()` alike (`radius=` is the same for beams, half of it;
 giving both is an error). A number sets it everywhere, a field varies it.
 
 ```python
 lattice(part, cell_periodic('octet'), cell_size=10, thickness=1.2)                        # beams 1.2 mm across
-lattice(part, cell_non_periodic('voronoi'), cell_size=8, thickness=1.0)                   # a foam of 1 mm beams
+voronoi_lattice(random_points(part, spacing=8), thickness=1.0)                   # a foam of 1 mm beams
 lattice_surface_conform(part, cell_periodic('bcc'), 2, cell_size=5, thickness=1.1)         # beams 1.1 mm across on a surface
 ```
 
@@ -166,9 +223,9 @@ distance (`depth_below`, `distance_to_point`), a regression over measured data, 
 | `planar_lattice(cell, cell_size, wall, axis, cell_map)` | honeycomb and grids (`cell`: a planar cell or its name) |
 | `fill(body, lattice, …)` | trim to a body |
 
-## Your own cells and equations
+## Custom cells and equations
 
-Three functions make a cell of your own, and every lattice operation takes it like a standard cell.
+Three functions make a custom cell, and every lattice operation takes it like a standard cell.
 
 **Any geometry** — `cell_custom(region, geometry)` — is the cell you model yourself: `region` is a **box** (`box(...)`,
 `box_exact(...)`, `cube(...)`) that gives the extent of the cell, and `geometry` is **any field** that says what is in
@@ -279,7 +336,7 @@ invert=False, skin=0, within=None)`:
 | `within` | where, besides: any shape; the lattice is kept inside it. Default: the whole surface |
 | `cell_thickness` | how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it, or go into the body. Default **3 mm**: a thin layer, for riveting and the like. `None`: for a body filled from inside, as deep as the body is under each cell (a thin shell: its thickness; at most three cells); for a surface, a selection or `side='outside'`, one cell |
 | `stretch_cell` | `True` (the default): the cells are **deformed to fit the thickness** -- `cell_size` along the surface, `cell_thickness` through it, so a thin layer has flat cells. `False`: the cells keep their own proportions (as deep as they are wide), **`cell_thickness` of them stands out** of the surface, and the rest of each cell, on the other side of the surface (the inside of the body), is **cut off** there |
-| `cell` | a **strut cell** (`cell_periodic('octet')`, `'bcc'`, `'cubic'`, `'kelvin'`, …; `radius` is the strut radius, by default 12 % of the smaller of `cell_size` and the layer's depth), a **periodic surface** (`cell_periodic('gyroid')`, `'schwarz_p'`, `'diamond'`, `'neovius'`, `'lidinoid'`, `'split_p'`, `'iwp'`, `'frd'`, `'fischer_koch_s'`; see below), `cell_custom_truss(nodes, beams)`, or `cell_non_periodic(…)` (a random graph on the surface). Default `cell_periodic('octet')` |
+| `cell` | a **strut cell** (`cell_periodic('octet')`, `'bcc'`, `'cubic'`, `'kelvin'`, …; `radius` is the strut radius, by default 12 % of the smaller of `cell_size` and the layer's depth), a **periodic surface** (`cell_periodic('gyroid')`, `'schwarz_p'`, `'diamond'`, `'neovius'`, `'lidinoid'`, `'split_p'`, `'iwp'`, `'frd'`, `'fischer_koch_s'`; see below) or `cell_custom_truss(nodes, beams)`. Default `cell_periodic('octet')` |
 | `thickness`, `style`, `offset`, `invert`, `skin` | for a periodic surface: the wall of a `'sheet'` in mm (default 15 % of `cell_size`), or `style='network'` (the solid on one side of the surface, grown by `offset` mm; `invert=True` takes the other side); `skin` mm of solid against the faces of the layers |
 | `cell_size`, `layers` | the cell along the surface; the number of cells through the depth (default: as many as fit, at least 1) |
 | `side` | `'inside'` (the default for a body: the lattice goes into it) or `'outside'` (it stands out of the surface: the default for a surface or a selection, on the side its normal faces -- the side the field is positive on) |
@@ -389,7 +446,7 @@ layers are all filled by other cells …` says how many were left out.
 - A quad mesh of a surface has nodes that are not on four cells (a node on three or five): about one in five here. Cells
   are less regular round those, round a narrow fillet or a small step (narrower than a cell) and where the rows of cells
   have to turn a corner; the nodes are evened out afterwards, but a node on a sharp edge can only slide along it.
-- Struts and the nine periodic surfaces (and a graph of random cells); your own TPMS equation (`cell_custom_tpms(…)`),
+- Struts and the nine periodic surfaces; your own TPMS equation (`cell_custom_tpms(…)`),
   a planar pattern, a geometry in a box (`cell_custom(region, geometry)`) and the trusses made on the nodes of a surface mesh (`prism`, `xbrace`, `zigzag`)
   are not available here (they need the surface's coordinates as a field, or a
   mesh of the surface, and a mesh is only the output).
@@ -405,8 +462,8 @@ layers are all filled by other cells …` says how many were left out.
 
 ## Graphs
 
-The random cells are made through `cell_non_periodic` (`lattice()` for a foam or truss in a body,
-`lattice_surface_conform()` for beams on a surface); these build and thicken graphs directly:
+The foams are made through `voronoi_lattice` and `delaunay_lattice` (around the points of `random_points`); these build and thicken graphs directly --
+also a random graph on a surface, `surface_graph(body, 5, 'voronoi').thicken(0.5)` (`lattice_surface_conform()` lays cells that repeat):
 
 | | |
 |---|---|

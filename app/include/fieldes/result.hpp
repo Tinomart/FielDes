@@ -72,6 +72,11 @@ struct Result {
      *  when the script does not define bounds, resolution, etc. */
     QList<QPair<QString, QString>> warnings;
 
+    /*  For a partial picture (what a run has shown so far, see Interpreter::partialResult): the (0-based) line of the statement that runs.
+     *  The shapes the viewport has from statements at or after it are not in this picture because they have not been made yet in this
+     *  run -- not because they are gone -- so they are left as they are (a long render of one of them goes on).  -1: a whole result  */
+    int keepFromLine = -1;
+
     /*  The (1-based) line of the breakpoint the script stopped before, or -1
      *  when it ran to the end.  The rest of the result is what the
      *  statements before it produced. */

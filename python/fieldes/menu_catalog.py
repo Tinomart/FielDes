@@ -68,6 +68,57 @@ def _materials():
     return out
 
 
+def _cell_entries():
+    ''' The cells of the library as menu entries (name, group, template, label), made from what the library itself lists: every strut cell,
+        every TPMS, every planar pattern, and the three custom cells.  Each writes the
+        call that makes the cell (`cell_periodic('gyroid')`); the name of the entry is `cell_<kind>`, its label is the kind '''
+    out = []
+    try:
+        from fieldes.stdlib import lattices as L
+    except Exception:
+        return out
+
+    def listed(table, group, alias=None):
+        seen = set()
+        for key, fn in table.items():
+            if id(fn) in seen:
+                continue                            # (the other names of the same cell: simple_cubic, schwarz_d ...)
+            seen.add(id(fn))
+            kind = alias.get(key, key) if alias else key
+            out.append(('cell_' + kind, group, "cell_periodic('%s')" % kind, kind))
+
+    listed(L.STRUT_CELLS, 'Strut cells', {'diamond': 'diamond_struts'})
+    listed(L.TPMS_KINDS, 'TPMS cells')
+    for kind in L.PLANAR_KINDS:
+        out.append(('cell_' + kind, 'Planar cells', "cell_periodic('%s')" % kind, kind))
+    out.append(('cell_custom', 'Custom cells', 'cell_custom(box_exact((0, 0, 0), ({s}, {s}, {s})), sphere({h}, ({h}, {h}, {h})))',
+                'custom'))
+    out.append(('cell_custom_truss', 'Custom cells',
+                "cell_custom_truss({{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}}, [('c', 'o')], mirror='xyz')", 'custom_truss'))
+    out.append(('cell_custom_tpms', 'Custom cells',
+                'cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())', 'custom_tpms'))
+    return out
+
+
+_CELLS = _cell_entries()
+# What an entry is called in the menu, where that is not its name (the cells: `cell_gyroid` is the gyroid)
+LABELS = {name: label for name, _g, _t, label in _CELLS}
+# The sections of the menus that a group of entries belongs to, besides the first menu: the lattice section holds the lattice operations
+# (and the points a foam is made around) and every cell
+SECTIONS = {'Strut cells': 'lattice', 'TPMS cells': 'lattice', 'Planar cells': 'lattice', 'Custom cells': 'lattice', 'Lattices': 'lattice'}
+
+# What the Lattice menu says of an entry when the mouse rests on it
+HINTS = {
+    'lattice': tr('With a cell selected with the model: that cell.  Otherwise a first cell to change in the script.'),
+    'lattice_surface_conform': tr('With a cell selected with the model: that cell.  Otherwise a first cell to change in the script.'),
+    'random_points': tr("Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two "
+                        "may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice"),
+    'voronoi_lattice': tr('A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  '
+                          'Select points first (random_points)'),
+    'delaunay_lattice': tr('A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were '
+                           'made in.  Select points first (random_points)'),
+}
+
 # (function, group, template)
 PRIMITIVES = [
     ('sphere', '3D', 'sphere({h}, ({x}, {y}, {z}))'),
@@ -125,7 +176,7 @@ PRIMITIVES = [
     ('outlet', 'Flow conditions', 'outlet()'),
     ('wall', 'Flow conditions', 'wall()'),
     ('slip', 'Flow conditions', 'slip()'),
-] + _materials()
+] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
 # The number of an operation's call that a FIELD takes the place of when one is selected with the body -- `offset(plate, swell)`, `lattice(part, cell, thickness=density)`
 # -- the way a field dropped on the call in the model tree does it (every size, radius, thickness of the library takes a field)
@@ -220,7 +271,10 @@ BODY_CONDITIONS = {
 # What a group of primitives makes (the kind: see fieldes.kinds), for the icon beside each entry
 GROUP_KINDS = {'3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field',
                'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
-               'Thermal conditions': 'conditions', 'Flow conditions': 'conditions'}
+               'Thermal conditions': 'conditions', 'Flow conditions': 'conditions',
+               'Strut cells': 'cell', 'TPMS cells': 'cell', 'Planar cells': 'cell', 'Custom cells': 'cell'}
+# What an operation makes, where it is not what its group makes (the operations of the lattice section make lattices, but random_points makes points)
+OPERATION_KINDS = {'random_points': 'points'}
 
 # (function, group, template, takes a second model: True = needs one, 'optional' = takes the other selected models if there are any)
 OPERATIONS = [
@@ -266,10 +320,14 @@ OPERATIONS = [
     ('square_field', 'Field math', 'square_field({body})', False),
     ('field_from_body', 'Field math', 'field_from_body({body})', False),
     ('body_from_field', 'Field math', 'body_from_field({body})', False),
-    # Lattices (the cell is a first choice to change in the script: cell_periodic('octet'), cell_non_periodic('voronoi'), ...)
+    # Lattices (the cell is a first choice to change in the script: cell_periodic('octet'), ...; a cell that is selected with the body is the
+    # cell).  A foam is not made of a cell but around points: random_points makes them in the body, and the lattice made of the points fills it
     ('lattice', 'Lattices', "lattice({body}, cell_periodic('{cell}'), cell_size={cs}, thickness={ct})", 'optional'),
     ('lattice_surface_conform', 'Lattices',
-     "lattice_surface_conform({body}, cell_periodic('{cell}'), cell_size={cs})", False),
+     "lattice_surface_conform({body}, cell_periodic('{cell}'), cell_size={cs})", 'optional'),
+    ('random_points', 'Lattices', 'random_points({body}, spacing={cs})', False),
+    ('voronoi_lattice', 'Lattices', 'voronoi_lattice({body})', False),
+    ('delaunay_lattice', 'Lattices', 'delaunay_lattice({body})', False),
     # Importing: the surface of any model as the exact distance to its meshed surface (a file is imported from the menu of
     # empty space, Import model...)
     ('tessellate', 'Importing', 'tessellate({body})', False),
@@ -313,18 +371,23 @@ def catalog():
     blocks = _blocks()
     return json.dumps({
         'kinds': describe(),
-        'primitives': [{'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS}
+        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS},
+                            **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}))
                        for n, g, _ in PRIMITIVES]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
-        'operations': [{'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK} for n, g, _, o in OPERATIONS]
+        'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK},
+                            **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
+                            **({'type': OPERATION_KINDS[n]} if n in OPERATION_KINDS else
+                                                                                       {'type': 'lattice'} if g == 'Lattices' else {}))
+                       for n, g, _, o in OPERATIONS]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'other': False, 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['operation']],
     })
 
 
-_REGION_TYPES = ('solid', 'profile', 'field', 'surface')          # (what can say where a condition acts: a body, a field, a surface)
+_REGION_TYPES = ('solid', 'profile', 'field', 'surface', 'lattice')          # (what can say where a condition acts: a body, a field, a surface)
 
 
 def _others(r):
@@ -362,13 +425,10 @@ def _fluids(others):
 # takes: a list of SIGNATURES -- the tags it accepts, and the tags it must be given at least one of.  A selection fits an entry when all of
 # its models are accepted by ONE signature and the signature's needs are met; an entry it does not fit is greyed out in the menu (nothing is
 # said: it is not offered).  A model of no known kind (not run yet) fits anything, and so does an entry that declares nothing (a custom block).
-_SHAPES = frozenset(('solid', 'profile', 'import', 'simulation', 'field', 'surface', 'point'))      # (what a geometric operation works on)
-_PART = frozenset(('solid', 'profile', 'import', 'simulation'))                                 # (what a simulation is made for)
+_SHAPES = frozenset(('solid', 'profile', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))      # (what a geometric operation works on)
+_PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
 
-_TAKES_GROUP = {
-    'Lattices': [(_SHAPES | {'cell'}, [])],
-}
 # The simulations of the menu: each takes the body, the conditions of the kinds it has an input for, and a material (a fluid for a flow)
 _SIMULATIONS = ('static_analysis', 'modal_analysis', 'topology_optimization', 'thermal_analysis', 'fluid_analysis',
                 'thermal_topology_optimization', 'flow_topology_optimization')
@@ -391,6 +451,14 @@ def _slots_of(name):
 def _takes(name):
     if name == 'distance_to_point':
         return [({'point'}, [])]                # (the distance from a point: a point is what it is made of)
+    # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all
+    # it takes -- they know the model it fills)
+    if name in ('lattice', 'lattice_surface_conform'):
+        return [(_SHAPES | {'cell'}, [_SHAPES])]
+    if name == 'random_points':
+        return [(_SHAPES, [_SHAPES])]
+    if name in ('voronoi_lattice', 'delaunay_lattice'):
+        return [({'points'}, [{'points'}])]
     # (a simulation takes a part, the conditions of the kinds it has an input for and a material -- and needs none of them: what is not selected
     # is a placeholder in the call)
     if name in _SIMULATIONS:
@@ -416,7 +484,7 @@ def _selection_fits(kind, name, models):
         signatures = _TAKES_CONDITION if name in BODY_CONDITIONS else None
     else:
         group = next((g for n, g, _, _ in OPERATIONS if n == name), None)
-        signatures = _takes(name) or _TAKES_GROUP.get(group) or ([(_SHAPES, [])] if group else None)
+        signatures = _takes(name) or ([(_SHAPES, [])] if group else None)
     tags = [t for t in map(_tag, models) if t]
     if not signatures or not tags:
         return True
@@ -436,7 +504,7 @@ def _body_first(body, info, others):
     if info.get('type') not in ('conditions', 'material'):
         return body, info, others
     first = {'name': body, 'type': info.get('type'), 'role': info.get('role') or '', 'cls': info.get('cls') or ''}
-    main = next((o for o in others if o.get('type') in ('solid', 'profile')), None)
+    main = next((o for o in others if o.get('type') in ('solid', 'profile', 'lattice')), None)
     if main is None:
         return '', {}, [first] + list(others)
     return (main['name'], {'type': main.get('type'), 'role': '', 'cls': main.get('cls') or '', 'part': ''},
@@ -450,6 +518,28 @@ def _build_operation(name, v, others):
         body, info, others = _body_first(v['body'], v.get('body_info') or {}, others)
         v = dict(v, body=body, body_info=info)
     body = v['body']
+    if name in ('lattice', 'lattice_surface_conform'):
+        # (the first model selected is the one the lattice is made in -- unless it is a cell: that is what it is made of)
+        info = v.get('body_info') or {}
+        if info.get('type') == 'cell':
+            main = next((o for o in others if o.get('type') in _SHAPES), None)
+            if main is not None:
+                others = [{'name': body, 'type': info.get('type')}] + [o for o in others if o is not main]
+                body = main['name']
+                v = dict(v, body=body)
+    if name == 'lattice':
+        # (a cell that is selected with the body is the cell; a field is the thickness)
+        cells = [o['name'] for o in others if o.get('type') == 'cell']
+        fields = [o['name'] for o in others if o.get('type') == 'field']
+        if cells or fields:
+            v = dict(v)
+            if fields:
+                v['ct'] = fields[0]
+            return ('lattice({body}, %s, cell_size={cs}, thickness={ct})' % (cells[0] if cells else "cell_periodic('{cell}')")).format(**v)
+    if name == 'lattice_surface_conform':
+        cells = [o['name'] for o in others if o.get('type') == 'cell']
+        if cells:
+            return 'lattice_surface_conform({body}, %s, cell_size={cs})'.format(**v) % cells[0]
     slot = FIELD_SLOTS.get(name)
     if slot:
         fields = [o['name'] for o in others if o.get('type') == 'field']
@@ -468,7 +558,7 @@ def _build_operation(name, v, others):
             params = list(inspect.signature(getattr(fieldes, name)).parameters)
         except Exception:
             params = []
-        parts = ([body] if body else []) + [o['name'] for o in others if o.get('type') in ('solid', 'profile', 'import', 'simulation')]
+        parts = ([body] if body else []) + [o['name'] for o in others if o.get('type') in ('solid', 'profile', 'import', 'simulation', 'lattice')]
         args, missing = [], False
         for k in range(2 if name in _FLOWS else 1):
             if k < len(parts):
@@ -582,15 +672,20 @@ def call(request):
     return head + marker + expression
 
 
+KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice')
+
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)
-_PLACED_GROUPS = ('3D', '2D', 'Points', 'Surfaces', 'Fields', 'Materials', 'Fluids')
+_PLACED_GROUPS = ('3D', '2D', 'Points', 'Surfaces', 'Fields', 'Materials', 'Fluids',
+                  'Strut cells', 'TPMS cells', 'Planar cells', 'Custom cells')
 
 
 def _makes_up_nothing(r):
-    ''' Whether the entry writes no number or text of its own: every operation, and the conditions of a simulation '''
+    ''' Whether the entry writes no number or text of its own: every operation, and the conditions of a simulation.  (The lattice operations
+        keep the cell they write and the sizes worked out from the model -- a tenth of it across for a cell, an eighth of that for its thickness:
+        what they are is what they say) '''
     if r['kind'] == 'operation':
-        return True
+        return r['name'] not in KEEPS_ITS_TEMPLATE
     if r['kind'] == 'primitive':
         for n, group, _ in PRIMITIVES:
             if n == r['name']:

@@ -32,17 +32,30 @@ Language::Language(Interpreter* interpreter,
     // into the interpreter worker thread
     connect(this, &Language::onScriptChanged,
             this, [=](QString text){
+                // The run that is going is asked what the edit does to it (fieldes.app_support.edit_in_place).  An edit that changes nothing of
+                // what the statement that runs is made of or makes -- a model shown or hidden, whatever comes after it -- is put into the run:
+                // it is not stopped, a calculation of minutes goes on, and no run follows.  One at or above what that statement is made of
+                // changes what it makes: a solver that works on it is stopped now, not waited for.  One in a text that is being typed, below
+                // it, lets the statement end (its result is kept for the next run) and then makes way
                 m_interpreter->noteRequest();
-                // An edit at or above the statement that runs changes what it makes: a solver that works on it is stopped now, not waited for
-                // (minutes of an optimisation for a script that is not the one asked for).  An edit below it leaves it alone: it finishes, and
-                // its result is kept for the run of the edited text
                 QString error;
-                if (m_interpreter->callSupport("edit_reaches_running", text, &error) == "1")
+                const QString effect = m_interpreter->callSupport("edit_in_place", text, &error);
+                if (effect == "inplace")
+                {
+                    // (the runs that edits before this one asked for, and that wait, are of an older text now: see Interpreter::absorbed)
+                    m_interpreter->setRunScript(text);
+                    m_interpreter->absorbed();
+                    return;
+                }
+                if (effect == "reaches")
                     libfive::run_progress::requestCancel();
-                m_interpreter->halt();
+                if (effect != "defer")
+                    m_interpreter->halt();
+                emit(evalRequested(text));
             });
-    connect(this, &Language::onScriptChanged,
+    connect(this, &Language::evalRequested,
             m_interpreter.data(), &Interpreter::eval);
+
     connect(this, &Language::onResume,
             m_interpreter.data(), &Interpreter::resume);
 
@@ -55,6 +68,8 @@ Language::Language(Interpreter* interpreter,
             this, &Language::interpreterBusy);
     connect(m_interpreter.data(), &Interpreter::partialScene,
             this, &Language::interpreterPartialScene);
+    connect(m_interpreter.data(), &Interpreter::partialResult,
+            this, &Language::interpreterPartialResult);
 
     connect(this, &Language::onCursorMoved,
             m_syntax.data(), &Syntax::onCursorMoved);

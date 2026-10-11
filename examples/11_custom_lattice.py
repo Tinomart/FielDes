@@ -1,19 +1,19 @@
-# Custom cells: a cell of your own, and every lattice operation takes it like a standard one.
+# Custom cells: and every lattice operation takes one like a standard cell.
 #
 # Shown inside the same imported part one after the other (change which line is last to see the others):
 #   1) ANY geometry: cell_custom(region, geometry) -- a box for the extent of the cell and a field for what is in it
 #   2) a strut cell from nodes and beams (each beam may have its own radius): cell_custom_truss(nodes, beams)
-#   3) your own TPMS equation: cell_custom_tpms(f)
+#   3) a TPMS from its equation: cell_custom_tpms(f)
 #
 # The lattice is inside a 1 mm skin: open the section card (Ctrl+Shift+X) to look inside.
 #
 from fieldes import *
 
-parts = import_model("step/Bracket.step")
+parts = import_model("step/PivotBearingSupportBracket.STEP")
 body, (lo, hi) = parts[0]
 
 view.set_bounds(*roi(parts))
-view.set_resolution(3)
+view.set_resolution(2)
 view.set_quality(8)
 
 # 1) Any geometry.  The region is the box of the cell (here 10 mm); the geometry is any field -- it may reach out of the
@@ -36,7 +36,7 @@ star = cell_custom_truss({"o": (0, 0, 0), "c": (0.5, 0.5, 0.5), "e": (0.5, 0, 0)
 print("strut cell:", star, star.check() or "tiles")      # check() lists what would make it not tile
 struts = lattice(body, star, cell_size=8, radius=0.6, skin=1.0)
 
-# 3) Your own TPMS: a function of the three cell phases a, b, c (2 pi per cell), written with
+# 3) A custom TPMS: a function of the three cell phases a, b, c (2 pi per cell), written with
 #    + - * / and .sin() .cos() .sqrt() .square().  The result becomes a distance, so thickness=
 #    is a real wall in mm, and density= calibrates it like the built-in ones.
 my_tpms = cell_custom_tpms(lambda a, b, c: a.cos() * b.cos() * c.cos() - a.sin() * b.sin() * c.sin(), name="D-like")

@@ -56,14 +56,15 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import ctypes
+import math
 import time
 from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
-from fieldes.shape import Shape
+from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.excluded import keep_regions, carry_locks
-from fieldes.stdlib.fea import (FeaError, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given, _use_conditions, _with_conditions,
+from fieldes.stdlib.fea import (FeaError, FieldResult, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given, _use_conditions, _with_conditions,
                                 _symmetry_request)
 from fieldes.stdlib.csg import difference as _difference
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key
@@ -241,7 +242,7 @@ class _Handle:
             self.ptr = None
 
 
-class FluidResult:
+class FluidResult(FieldResult):
     ''' The solved flow.  Fields (Shapes whose value is the result at each point, usable in any
         expression): speed, vx, vy, vz (mm/s), pressure, total_pressure (MPa), shear_rate,
         vorticity (1/s).  Numbers: inlet_flow, outlet_flow (mm^3/s; inlet_flows / outlet_flows per
@@ -265,7 +266,7 @@ class FluidResult:
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, Shape(lib.libfive_tetflow_field(p, i)))
+            setattr(self, name, field_shape(lib.libfive_tetflow_field(p, i)))
             self._ranges[name] = (lib.libfive_tetflow_field_min(p, i), lib.libfive_tetflow_field_max(p, i))
         stat = lambda k: lib.libfive_tetflow_stat(p, k)
         self.elements = int(stat(0))
@@ -307,6 +308,107 @@ class FluidResult:
     def range(self, field='speed'):
         ''' (min, max) of a field over the fluid '''
         return self._ranges[field]
+
+    def _flow_direction(self):
+        ''' (the unit vector the fluid comes in along, the mean speed in mm/s): from the inlets that were given a `velocity`; None when none was '''
+        total, n, speed = [0.0, 0.0, 0.0], 0, 0.0
+        for c in getattr(self, '_conditions', None) or ():
+            if isinstance(c, _Inlet) and any(c.direction):
+                mag = math.sqrt(sum(v * v for v in c.direction))
+                total = [t + v / mag for t, v in zip(total, c.direction)]
+                speed += mag
+                n += 1
+        norm = math.sqrt(sum(t * t for t in total))
+        if n and norm > 0:
+            return tuple(t / norm for t in total), speed / n
+        # (an inlet given a `speed=` goes along its own normal, which the script does not say: the way through is taken to be from the middle of the
+        # inlets to the middle of the outlets, when the regions know their extent)
+        def box_of(c):
+            b = getattr(c.region, '_bounds', None)
+            if b:
+                return b
+            try:
+                from fieldes.stdlib.fields import find_extent
+                return find_extent(c.region)
+            except Exception:
+                return None
+
+        def middle(items):
+            boxes = [box_of(c) for c in items]
+            boxes = [b for b in boxes if b]
+            if not boxes:
+                return None
+            return [sum((b[0][i] + b[1][i]) / 2 for b in boxes) / len(boxes) for i in range(3)]
+        conditions = getattr(self, '_conditions', None) or ()
+        inlets = [c for c in conditions if isinstance(c, _Inlet) and c.speed > 0]
+        outlets = [c for c in conditions if type(c).__name__ == '_Outlet']
+        a, b = middle(inlets), middle(outlets)
+        if not inlets or a is None or b is None:
+            return None
+        way = [y - x for x, y in zip(a, b)]
+        length = math.sqrt(sum(v * v for v in way))
+        if length <= 0:
+            return None
+        return tuple(v / length for v in way), sum(c.speed for c in inlets) / len(inlets)
+
+    def _lift_direction(self, d):
+        ''' The unit vector across the flow that is most nearly Z (Y when the flow runs along Z) '''
+        z = (0.0, 0.0, 1.0) if abs(d[2]) < 0.999 else (0.0, 1.0, 0.0)
+        dot = sum(a * b for a, b in zip(z, d))
+        l = [a - dot * b for a, b in zip(z, d)]
+        norm = math.sqrt(sum(a * a for a in l))
+        return tuple(a / norm for a in l)
+
+    @property
+    def drag_force(self):
+        ''' The force of the flow on the walls along the flow (N): `wall_force` along the direction the inlets' velocity points in.  For a body in a stream
+            whose domain has slip walls it is the body's drag.  None when no inlet was given a `velocity=` (the direction is not known) '''
+        found = self._flow_direction()
+        if found is None:
+            return None
+        return sum(f * d for f, d in zip(self.wall_force, found[0]))
+
+    @property
+    def lift_force(self):
+        ''' The force of the flow on the walls across the flow (N), along the direction across it that is most nearly Z (Y for a flow along Z).
+            None when no inlet was given a `velocity=` '''
+        found = self._flow_direction()
+        if found is None:
+            return None
+        return sum(f * d for f, d in zip(self.wall_force, self._lift_direction(found[0])))
+
+    def _reference(self):
+        ''' (dynamic pressure in MPa, reference area in mm^2): the pressure 1/2 rho U^2 of the mean inlet speed, and the area of the body's bounding box
+            seen along the flow -- or None '''
+        found = self._flow_direction()
+        body = getattr(self, 'body', None)
+        bounds = getattr(body, '_bounds', None) if body is not None else None
+        if body is not None and not bounds:
+            try:
+                from fieldes.stdlib.fields import find_extent
+                bounds = find_extent(body)
+            except Exception:
+                bounds = None
+        if found is None or not bounds:
+            return None
+        (dx, dy, dz), speed = found
+        a, b, c = (bounds[1][i] - bounds[0][i] for i in range(3))
+        area = b * c * abs(dx) + a * c * abs(dy) + a * b * abs(dz)
+        q = 0.5 * self.fluid.density * speed * speed
+        return (q, area) if q > 0 and area > 0 else None
+
+    @property
+    def drag_coefficient(self):
+        ''' drag_force / (1/2 rho U^2 A): U the mean speed of the inlets that were given a velocity, A the area of the body's bounding box seen along the flow
+            (the frontal area, taken from the box: give the true one by dividing `drag_force` yourself).  None when it is not known '''
+        ref, force = self._reference(), self.drag_force
+        return None if ref is None or force is None else force / (ref[0] * ref[1])
+
+    @property
+    def lift_coefficient(self):
+        ''' lift_force / (1/2 rho U^2 A), as drag_coefficient.  None when it is not known '''
+        ref, force = self._reference(), self.lift_force
+        return None if ref is None or force is None else force / (ref[0] * ref[1])
 
     def _read_steps(self):
         p = self._handle.ptr
@@ -425,7 +527,7 @@ class FluidStep:
             (_tr('Stokes start') if self.iteration == 0 else _tr('iteration %d') % self.iteration)
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, Shape(lib.libfive_tetflow_step_field(p, k, i)))
+            setattr(self, name, field_shape(lib.libfive_tetflow_step_field(p, k, i)))
             self._ranges[name] = (lib.libfive_tetflow_step_field_min(p, k, i), lib.libfive_tetflow_step_field_max(p, k, i))
         stat = lambda w: lib.libfive_tetflow_step_stat(p, k, w)
         self.iterations = int(stat(3))
@@ -553,6 +655,7 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
     result = _fluid_analysis(around, conditions, fluid, element_size, bounds, gravity, stokes, max_iterations, tolerance, relaxation, cache,
                              time, store_every)
     result.body, result.domain = body, domain
+    result._conditions = conditions
     return result
 
 
@@ -663,7 +766,7 @@ def _outside_body(lines, level):
     return out
 
 
-class FlowTopologyResult:
+class FlowTopologyResult(FieldResult):
     ''' The result of flow_topology_optimization(): the body made best in the flow.
         .level          a field (mm, positive inside the body, its boundary the zero level: a smooth
                         level set on the flow's mesh); .levels the same after each iteration (the first
@@ -893,7 +996,7 @@ def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=
     def finish(handle, ptr, seconds, symmetric=None):
         ''' The result from a solved problem (just optimised, or read back from its file); `symmetric`: the planes the design was kept symmetric
             about, when they were kept with it ({'y': [position, how]}: asked for (1), or found (2: and then said)) '''
-        level = Shape(lib.libfive_tetflow_level(ptr))
+        level = field_shape(lib.libfive_tetflow_level(ptr))
         buf = (ctypes.c_double * 1000)()
         m = lib.libfive_tetflow_history(ptr, 0, buf, 1000)
         drag = [buf[i] for i in range(min(m, 1000))]
@@ -977,3 +1080,18 @@ def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=
         while len(_shape_cache) > 8:
             _shape_cache.popitem(last=False)
     return result
+
+
+FluidResult._as_field = lambda self: self.speed
+FluidResult.fields = property(lambda self: OrderedDict((name, getattr(self, name)) for name in _FIELDS))
+FlowTopologyResult._as_field = lambda self: self.shape()
+
+
+def _flow_topology_fields(self):
+    out = OrderedDict([('shape', self.shape()), ('level', self.level)])
+    if self.flow is not None:
+        out.update(self.flow.fields)           # (the flow around the final body: its speed, its pressure ...)
+    return out
+
+
+FlowTopologyResult.fields = property(_flow_topology_fields)

@@ -1,6 +1,7 @@
 '''
 Triangle-mesh import (what import_model() does with a mesh file): STL (binary or ASCII), Wavefront OBJ, PLY
-(ASCII or binary), 3MF and glTF (.glb / .gltf) files.
+(ASCII or binary), 3MF, glTF (.glb / .gltf), Autodesk FBX (binary or ASCII: see fbx.py for what that means), OFF and DXF (3DFACE
+and polyface meshes) files.
 
     parts = import_model(r"C:\\models\\bracket.stl")
     bracket, bounds = parts[0]
@@ -27,11 +28,14 @@ import ctypes
 import os
 import struct
 import sys
+import zlib
 from array import array
 
 from fieldes.ffi import lib, libfive_mesh_import_info_t
 from fieldes.shape import Shape
 from fieldes.stdlib import cad_import as _cad
+from fieldes.stdlib import fbx as _fbx
+from fieldes.stdlib import meshfiles as _meshfiles
 from fieldes.stdlib.content_cache import cache_for
 
 __all__ = ['mesh_info']
@@ -451,16 +455,20 @@ def _read_gltf(path):
 
 # ---------------------------------------------------------------------------
 
+_NATIVE = ('.stl', '.obj')                                              # (read by the library itself)
+_PYTHON = ('.ply', '.3mf', '.glb', '.gltf', '.off', '.dxf', '.fbx')      # (read here, and handed to the library as arrays)
+
+
 def _import_mesh(path, units='mm', file_units=None, rev=None):
-    ''' import_model() of a mesh file (.stl, .obj, .ply, .3mf, .glb or .gltf): a Shape whose
+    ''' import_model() of a mesh file (.stl, .obj, .ply, .3mf, .glb, .gltf, .off, .dxf or .fbx): a Shape whose
         value is the exact signed distance to its triangles (negative
         inside).
 
         units       the units of your script ('mm', 'cm', 'm', 'in', ...)
-        file_units  what the numbers in the file mean.  STL, OBJ and PLY
-                    files don't say (millimetres are assumed); 3MF files do
-                    and glTF is in metres, which is used unless this
-                    overrides it
+        file_units  what the numbers in the file mean.  STL, OBJ, PLY and OFF
+                    files don't say (millimetres are assumed); 3MF, FBX and
+                    DXF files do (a DXF only when it has $INSUNITS) and glTF
+                    is in metres, which is used unless this overrides it
         rev         not used by the import itself: changing it makes FielDes
                     run the script (and read the file) again, e.g. after
                     the file changed on disk
@@ -473,7 +481,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
     ext = os.path.splitext(path)[1].lower()
     if ext not in _NATIVE + _PYTHON:
         raise ValueError('import_model({!r}): unsupported file type {!r}; use a STEP file or '
-                         'an .stl, .obj, .ply, .3mf, .glb or .gltf mesh'.format(path, ext))
+                         'an .stl, .obj, .ply, .3mf, .glb, .gltf, .fbx, .off or .dxf mesh'.format(path, ext))
 
     # The same file (by its path, size and modification time), read with the same units, is the same shape:
     # reading, cleaning and building the distance structure of a big mesh takes seconds, and a script runs
@@ -505,9 +513,15 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
                 xyz, tri = _read_ply(path)
             elif ext == '.3mf':
                 xyz, tri, declared_mm = _read_3mf(path)
+            elif ext == '.off':
+                xyz, tri = _meshfiles.read_off(path)
+            elif ext == '.dxf':
+                xyz, tri, declared_mm = _meshfiles.read_dxf(path)
+            elif ext == '.fbx':
+                xyz, tri, declared_mm = _fbx.read_fbx(path)
             else:
                 xyz, tri, declared_mm = _read_gltf(path)
-        except (RuntimeError, ValueError, KeyError, IndexError, TypeError, OSError, struct.error) as e:
+        except (RuntimeError, ValueError, KeyError, IndexError, TypeError, OSError, struct.error, zlib.error) as e:
             raise RuntimeError('import_model({!r}): {}'.format(path, e))
 
     if file_units is not None:

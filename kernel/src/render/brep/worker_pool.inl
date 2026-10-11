@@ -9,6 +9,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 
 #include "libfive/render/brep/free_thread_handler.hpp"
+#include "libfive/render/brep/spawn.hpp"
 #include "libfive/render/brep/settings.hpp"
 #include "libfive/render/brep/worker_pool.hpp"
 #include "libfive/render/brep/vol/vol_tree.hpp"
@@ -65,7 +66,7 @@ Root<T> WorkerPool<T, Neighbors, N>::build(
     std::atomic_bool done(false);
     for (unsigned i=0; i < settings.workers; ++i)
     {
-        futures[i] = std::async(std::launch::async,
+        futures[i] = spawn(settings.low_priority,
                 [&eval, &tasks, &out, &root_lock, &settings, &done, i](){
                     run(eval + i, tasks, out, root_lock, settings, done);
                 });

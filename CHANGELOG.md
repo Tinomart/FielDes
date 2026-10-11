@@ -2,6 +2,111 @@
 
 ## 0.6.1 — the flow analysis takes a body, the guided tour works again, points are only their gizmo, one look for the planes
 
+### Cells and lattices are their own kind, with a section of their own in the menus, and random points for foams
+- **A *Lattice* section in the right-click menus** (*Add lattice* on empty space): the operations that fill a model with a lattice (`lattice`, `lattice_surface_conform`) -- they are no longer among the operations -- the foam in three steps (`random_points`, `voronoi_lattice`, `delaunay_lattice`),
+  and under them **every cell the library has**, a menu for each family (*Strut cells*, *TPMS cells*, *Planar cells*, *Custom cells*): *random*, *custom* and every lattice type can now be chosen from the menu. A cell entry writes
+  `cell_gyroid_1 = cell_periodic('gyroid')`; a cell selected with a body is the cell of the `lattice` that is written, a field selected with them its thickness.
+- **Kinds of their own**: a **lattice** (what `lattice()` and `lattice_surface_conform()` make, with an icon of struts), a **lattice cell** and a **point set** (scattered dots). A lattice is a body like any other once made (the kind is not kept by arithmetic on it).
+- **A foam is made around points, in three steps that each do what their name says.** `random_points(body, spacing, randomness, min_distance, max_distance, seed)` makes points in a body with the say over how random
+  they are: the average distance between neighbours (calibrated, whatever the randomness), a regular grid (0) to as random as the distances allow (1), the nearest two points may be, the farthest a point may be from its neighbour -- and **FielDes draws the
+  points in the viewport, each as the dot of a gizmo** (without its handles: they are data, not something to drag). `voronoi_lattice(points)` makes the foam around them, `delaunay_lattice(points)` a stochastic truss. The points know the body they were
+  made in and the lattice fills that body, so there is no second body to contradict them (a list of your own points says it with `body=`). **`cell_non_periodic` is gone**: a foam is not a cell -- a cell is one cell that repeats -- so `lattice()` and
+  `lattice_surface_conform()` take cells that repeat, and `lattice(part, cell_non_periodic('voronoi'), cell_size=8)` is now `voronoi_lattice(random_points(part, spacing=8))`; a random graph on a surface is `surface_graph(body, 5, 'voronoi').thicken(0.5)`.
+  The menu groups are named like the rest of the program (*Custom cells*, entries `custom`, `custom_truss`, `custom_tpms`; the foam has no group of cells any more). See [Lattices](docs/lattices.md#foams-random_points-voronoi_lattice-delaunay_lattice).
+
+- **`examples/23_lattice_gallery.py`**: one lattice of every kind, each in a simple body of its own (no part needed): octet and kelvin struts, a custom strut cell, a gyroid sheet, a Schwarz P network, a honeycomb, a Voronoi foam (with its points drawn), a Delaunay truss, a foam by relative density, a wall graded by a field, a cell map round a cylinder and a conformal layer on a sphere.
+
+### The guided tour, rebuilt; the property tab; the editor
+- **The tour's order makes sense**: selecting a model and its gizmo come right after the tree, before arguments, placeholders and sections. **Arrows point at the row they mean**: the row is framed, the arrow ends at its edge facing the card and never crosses the tree, and the card
+  stands where it covers neither that row nor the lines of the script the step is about (it used to cover them, and the arrow crossed the whole tree). The cards are as tall as their words need.
+- **Only what a step is about is shown.** The tree closes every row that has rows under it except the ones the step needs, and the steps that need more than the plate -- a field, a reference, a result -- work on **a small model of their own** (a plate, a point, a field, the plate grown by it; a knob and a cap; a plain beam with a support and a load) and
+  give the user's model back when they are left. The **Properties** step uses a real, small analysis that renders. The gizmo line that selecting writes does not stay behind.
+- **Shadow references are explained**: what it is for first (a model needed in two places; a normal drag would move it out of the first), then what to do.
+- **The property tab** comes out of the right edge of the tree, outside it, level with the hovered row (it used to sit inside the row, over the buttons), and the drawer is restyled: the model and what it is, fields and numbers in groups with their glyphs and values, the hint and the export button below.
+  **A property is not made of its result**: `von_mises_1 = result.von_mises` has no child row for `result` and no shadow of it. **Every field a solver calculates is a field**, not a body (`result.von_mises`, the temperature, the speed, the density ... used to be of the kind *3D shape*).
+- **The fold arrow of the code editor is bigger** (it was too small to see and hit). **The documentation under the mouse -- the signature of a function, the explanation of an argument name -- appears as soon as the mouse rests on the name** (it waited for the long delay of a tooltip), and an answer is kept.
+- **The arrow in front of a row reacts to a quick second click** (it was a double click, which Qt ignores on the arrow).
+
+### Examples that run as they are, and installers
+- **Every example that starts from a part now uses the bracket that comes with FielDes** (02, 03, 04, 06, 07, 09, 11, 12 and 13 started from sample parts that are not distributed): the analyses, lattices and exports place their regions for the bracket. `03_kitchen_assembly.py` is
+  `03_exclude_and_assembly.py` (an assembly of three imported parts, and `exclude()` with a region of your own); 13 tessellates the bracket.
+- **The Windows installer starts FielDes only when Finish is clicked** (it started it while its own window still said it was working); the box *Start FielDes when the installation is finished* can be changed until then.
+- **Linux**: `scripts/build-linux.sh --package` also makes a **self-extracting installer** (`FielDes-<version>-linux-x64-installer.run`: for the user into `~/.local/share/FielDes` with a menu entry, the command `fieldes` and an `uninstall.sh`; `--system` for everyone;
+  `--prefix DIR`; `--uninstall`) and a **Debian / Ubuntu package** (`.deb`: `sudo apt install ./FielDes_<version>_amd64.deb`). **macOS**: `scripts/build-macos.sh --dmg --pkg` makes the disk image and an installer package, and the app has its icon.
+  The release workflow builds and uploads all of them (the macOS ones are untried).
+
+### Files: export to every common format, finite-element models and results, key numbers on the screen
+- **`export_mesh(part, "part.stl")`** writes a body as **STL (binary or ASCII), OBJ, PLY, 3MF, glTF (`.glb`, `.gltf`), FBX, OFF and DXF**, in the format of the extension; the importer reads
+  them all back (`import_model`): **FBX** (binary and ASCII), **OFF** and **DXF** (`3DFACE` and polyface meshes) are new to it. FBX is an Autodesk format with no published specification: it is
+  read and written **without the Autodesk SDK**, from the structure the community documents, and for **meshes only** (see [Meshes](docs/meshes.md#exporting-and-importing-meshes) for what that means).
+- **`export_fea(result, "bracket.inp")`** hands a static analysis to another solver -- **Abaqus / CalculiX `.inp`, Nastran `.bdf`, Gmsh `.msh`**: the tetrahedral mesh FielDes solved on, the material, the supports
+  (as node sets with their held directions) and the loads (a force spread over the nodes of its surface by the area each carries), gravity.
+  **`export_results(result, "bracket.vtu")`** writes what was found for ParaView and others -- **VTK `.vtu`** (the mesh, the displacement and every field at the nodes and in each element), **CSV** tables of the nodes
+  and the elements, and **`.txt`** with the key numbers (any kind of result). **`export_field(field, "stress.vti")`** samples any field on a grid (VTK image data or CSV).
+- **Export in the menus.** *File → Export mesh…* writes the viewport's meshes in any of the formats (it was STL only). Right-click a model, in the viewport or on its row → **Export**: *Mesh* in every format,
+  *Field on a grid*, and for an analysis *Finite-element model* and *Results*; the file is asked for and written in the background by the same functions a script calls.
+- **Key numbers on the result card.** The card prints what the result found that matters -- maximum von Mises stress, maximum displacement, safety factor and reactions of a static analysis; **drag and lift
+  force and coefficients**, pressure drop and flows of a flow; temperatures; natural frequencies -- under its field drop-down. `result.drag_force`, `.lift_force`, `.drag_coefficient` and `.lift_coefficient`
+  are new on a flow result (the direction is the inlets' `velocity=`, or from the inlets' middle to the outlets'; the coefficients use the dynamic pressure of the mean inlet speed and the area of the body's
+  bounding box seen along the flow). `result_summary(result)` lists them; the property drawer's last button writes them as text.
+- **Bug fixed on the way: importing a mesh failed** (`NameError: _NATIVE` in `mesh_import.py`: the table of the formats the library reads itself was missing, so STL, OBJ, PLY, 3MF and glTF imports raised an error instead of reading the file).
+
+### Linux and macOS packages open with nothing installed
+- **The Linux package is self-contained.** `scripts/build-linux.sh --package` now puts **Qt and its plugins, a Python runtime with its standard library, the kernel's libraries and every other library the program loads** into the folder
+  (`lib/`, `plugins/`, `runtime/python3/`, found through `qt.conf`, the programs' run paths and `PYTHONHOME`, which the program sets itself when `runtime/python3` is next to it): unpack it and double-click `FielDes`; only the C library and the
+  graphics driver of the machine are used. (A copy that was handed to someone had to have Qt installed first.) The one thing a package cannot carry is the C library, so it asks for one as new as the one it was built with: the
+  script says which, and **`.github/workflows/release.yml` builds it on Ubuntu 22.04**, the oldest common one, and starts the result in a bare Ubuntu with only a virtual display before handing it over.
+- **A macOS build is written** -- `scripts/build-macos.sh` makes `FielDes.app` (Qt by `macdeployqt`, every other library by `dylibbundler`, a Python of its own, ad-hoc signed) and a disk image, and the same workflow builds it on Intel
+  and Apple-silicon machines of GitHub. **It has not been tried on a Mac yet.**
+
+### The model tree: arguments, sections, remembered closing, the property drawer
+- **A comment or a blank line written or deleted anywhere does not stop a calculation that is running** (adding a section above the model that is being solved, typing a note above it). An edit that left the statements as they were but moved them down
+  or up used to count as a change above the running statement and stopped it; the same statements a few lines further on are now put into the run, with the places they keep (the line it is on, the places of its numbers) moved along. A script
+  with breakpoints, or a running statement that is written with `var(...)` numbers it has not asked for yet, is still run again for such an edit.
+- **Every argument of a call is a row under it** (`radius = 4`, `center = (3, 0, 0)`), in the order of the call, so the tree reads like the code; **a click selects the value in the code editor**, ready to be replaced, as a placeholder is. A statement that has only
+  arguments for children starts closed.
+- **Sections are rows.** A `# SECTION name` comment is a row with the models below it (up to the next section) under it. **Hover the gap between two rows: it lights up; click it and a section starts there, its name already open for typing**;
+  double-click a section's name to rename it (the comment follows every key); its bin deletes the heading only. Nesting stops at a section's border (a model used in a later section is a shadow there), and the heading is no longer
+  moved along with the first model below it when that is dragged.
+- **What is closed is remembered for each file, and it is the editor's folding.** Closing a statement's row folds its lines in the code editor, closing a section folds the section, and folding in the editor's gutter closes the row -- both
+  ways, and both kept when the file is opened again. **A row that holds a placeholder is never closed**, whatever was saved: that is where you have to write.
+- **Property drawer.** A hovered result row has an arrow at its end; it opens a drawer with the result's **fields and numbers**; a click writes `von_mises_1 = result.von_mises` under the statement as a model of its own. The result stays where it is
+  (a statement that only takes a property of a model holds a reference to it, not its ownership).
+- **The guided tour** has steps for all of it (arguments, sections, closing, properties) and a **placeholder step you do yourself**: right-click `drilled`, *Operation ▸ Offsets and walls ▸ offset* makes `offset_1 = offset(drilled, o=...)`, and you type the number.
+- **Fixed:** the field of an imported part showed boxy outside its surface in the section card's *Field* mode (it sampled the body's raw tree; it now uses the exact distance), `field_from_body` of an imported part is exact too, and an imported model
+  in the static-analysis example can be shown again (the tree refused a tuple-unpacking definition such as `bracket, (lo, hi) = parts[0]`).
+
+### A locked model is read-only; every result is a field; any model can be locked; the viewport follows a running simulation
+- **Nothing moves a locked model, and a menu never inserts one.** A surface picked on a locked model (right-click → *Select Surface*) is written below its `lock(...)` line with a reference to it
+  (`# shadow: part`) instead of the model being taken into the selection, as for a drag and for the other menu operations. And a plain move, a drop or an operation that would have to move a locked model (to make room for what is made of it)
+  is refused, with the reason, in one place for every kind of edit -- so no operation, present or added later, can move it.
+- **Every result is a field.** The result of an optimisation is its final design, of `static_analysis` the von Mises stress, of `modal_analysis` the displacement of the first mode, of `thermal_analysis` the temperature, of `fluid_analysis` the speed:
+  it goes wherever a shape goes (`offset(result, 1)`, `difference(part, result)`, `result * 2`, the part or the domain of the next analysis). **`result.fields`** lists every field the result calculated as `{name: field}`
+  (the attributes by those names stay: `result.pressure`). Stated on its own, a result is shown as before -- an optimisation with all its iterations -- and passing it on does not change that.
+- **What you set on the result card stays while a design changes.** The opacity of a flow, the field shown, the deformation, Elements and Flow used to start again from their defaults with every new
+  picture of a running optimisation (a new one after every iteration), so what you had lowered or switched was lost at once. The window now keeps them and gives them to every new result shape -- the live pictures and the result of the next run.
+- **After an optimisation, playing the steps back no longer meshes each one again.** The steps that were not shown are meshed in the background once the shown one is done, and kept, so the step slider and play (topology and flow optimisation alike) find them all made.
+- **Any model can be locked**: the lock button is on every row of the model tree, results and simulations included (`result = lock(result)`); `lock()` takes whatever the script made.
+- **The viewport follows a running simulation or optimisation.** While one ran, nothing was meshed on the screen -- a part hidden or shown, a number edited, appeared only when the run was over -- and an edit could not even restart the run until the solver
+  had done its meshing (20 s and more on a fine element size). Three causes, each fixed at its root:
+  - *the viewport waited for the script's thread.* The notice that a shape's level was meshed was delivered by the thread that runs the script, which handles none until the script is over; it now goes to the window's own thread, so every shape is meshed
+    and drawn at once while the script runs. A statement that is still going after 0.4 s -- whatever it is: an analysis, an optimisation, an import -- has what the statements before it show drawn, and the run's own result replaces it when it is done.
+    A picture of a run that is not over **never removes** a shape that the last run made from a statement that has not run yet in this one (it is not gone, it is not made yet), so a long render of such a shape is not stopped by it.
+    A script whose statements are all quick is drawn as before.
+  - *an edit waited for the solver's meshing.* The tetrahedral mesher did not look at the stop flag; it does now, between its phases and in its long loops, so a new edit stops the old run within a moment and the new one starts.
+  - *a long render took the processor from the small ones.* A render that is expected to be long (its next level has more than about 150 000 vertices) runs at a lower priority and is **never stopped or made to wait**: it uses every core that nothing else wants. A small shape that is changed
+    meanwhile -- and a part that is hidden, which needs no render at all -- goes first (a tiny sphere next to a gyroid that took half a minute to mesh was ready in 0.35 s instead of 4 s). The mesher's threads are now threads of their own instead of tasks of the
+    system's shared pool (which makes a second render wait for threads while the first one has them all), and an idle mesher thread gives its turn away instead of looping at full speed.
+
+### An edit that has nothing to do with what is running leaves it running
+- **A calculation that is going is not stopped, and not made again, by an edit that does not touch it.** A model shown or hidden above it (a line that only shows a model) and anything written after it are put into the run as it goes: the calculation of minutes (an optimisation,
+  an analysis) carries on, no run follows, and what the edit shows -- an unhidden model -- is drawn at once; what comes after the statement that runs is the new text's when the run gets to it. Only an edit that changes what the statement is made of -- a
+  number in it or in a statement it uses, a line added above it -- stops it, as before. (The check read the first changed *line*, so a click on the eye of a model above the optimisation stopped it, and the stopped solver's work was lost.) Typing in a text that is not a script yet,
+  below the statement, lets the statement end and keeps its result for the run that follows.
+- **A long render is not begun again by an edit that has nothing to do with it.** The design an optimisation made, smoothed (`smooth(result, ...)`), is a field made of copies of the result's own field moved by a few steps; such a moved copy had no key of what it is, so every
+  run of the script made "new" shapes of it, and the smoothed design -- a render of one or two minutes -- started over at every edit, even of a cylinder next to it. **Every oracle now has one**, with no class saying it for itself: what an oracle says it holds
+  (its persistent key) and the keys of what it depends on make its content key, in the base class. An oracle that says nothing of what it holds is still told apart by itself, the safe answer.
+
 ### The flow result card has an Opacity slider; a model dragged out of a call that needs it leaves a placeholder
 - **A flow can be drawn translucent**, so that the body in it shows: the result card of `fluid_analysis` and of `flow_topology_optimization` has an **Opacity** slider (as the field viewer's), and the body stays solid inside the fluid. The
   setting is kept while you edit and run again. (The fluid used to be opaque, and a body inside a box of fluid was hidden by it.)

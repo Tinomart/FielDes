@@ -108,6 +108,9 @@ struct FieldSource
     // Its displacements, if it is drawn deformed
     libfive::Tree disp[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(),
                              libfive::Tree::invalid()};
+    /*  What names the shape in the Python side's registry of the shapes that have an exact distance (see app_support.register_view_shape): set
+     *  for an imported part, whose own field is exact in sign only.  The sampling asks for that distance and uses it in place of `tree`  */
+    QString exactKey;
 };
 
 /*  The colour range (lo, hi) of a field source: its values on a coarse grid over the region, without the extreme one percent

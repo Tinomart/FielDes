@@ -22,6 +22,7 @@ import hashlib
 import fnmatch
 import json
 import os
+import re
 import threading
 import time
 import types
@@ -41,7 +42,7 @@ _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
 _FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_handles', 'condition_role', 'cls', 'bounds', 'can_expose',
-              'expose_count', 'expose_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known')
+              'expose_count', 'expose_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
 _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_handles', 'condition_role', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
@@ -50,6 +51,7 @@ _NOT_MODELS = {
     'print', 'len', 'range', 'int', 'float', 'str', 'list', 'dict', 'tuple', 'set', 'sum', 'min', 'max', 'abs', 'round', 'sorted',
     'enumerate', 'zip', 'open', 'map', 'filter', 'any', 'all', 'bool', 'type', 'isinstance', 'input', 'var', 'roi', 'roi_resolution',
     'progress', 'expose', 'handles', 'lock', 'render_cache', 'custom_resolution', 'export_stl', 'export_mesh', 'export_step',
+    'export_fea', 'export_results', 'export_field', 'result_summary',
     'mass_properties', 'volume_of', 'field_range', 'find_extent', 'evaluate', 'sample_grid',
 }
 
@@ -64,9 +66,11 @@ _MAKES = (
     ('surface', ('select_surface', 'surface_from_bodies', 'surface_*')),
     ('point', ('point', 'center')),
     ('cell', ('cell_*',)),
+    ('points', ('random_points',)),
+    ('lattice', ('lattice', 'lattice_surface_conform')),
     ('field', ('fit', 'fit_csv', 'fit_field', 'interpolate_field', 'X', 'Y', 'Z')),
 )
-_GEOMETRIC = ('solid', 'profile', 'field', 'surface')
+_GEOMETRIC = ('solid', 'profile', 'field', 'surface', 'lattice')
 _FUNCTION_KINDS = {}
 
 
@@ -84,7 +88,9 @@ def _function_kinds():
                     _FUNCTION_KINDS[n] = 'simulation'
                 elif g == 'Conditions':
                     _FUNCTION_KINDS[n] = 'conditions'
-                elif g in ('Lattices', 'Importing'):
+                elif g == 'Lattices':
+                    _FUNCTION_KINDS[n] = M.OPERATION_KINDS.get(n, 'lattice')
+                elif g == 'Importing':
                     _FUNCTION_KINDS[n] = 'solid'
                 elif g == 'Surfaces':
                     _FUNCTION_KINDS[n] = 'surface'
@@ -173,6 +179,78 @@ def facts_of(v):
     return f
 
 
+def _property_text(v):
+    ''' How a property of a result is shown in the property drawer (its kind and a short text), or None when it is not one to offer:
+        numbers, vectors and short lists of numbers, flags, short texts '''
+    import math
+    if isinstance(v, bool):
+        return 'flag', 'yes' if v else 'no'
+    if isinstance(v, (int, float)):
+        return ('number', '%.4g' % v) if math.isfinite(v) else None
+    if isinstance(v, (tuple, list)) and 2 <= len(v) <= 8 and all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v):
+        return 'number', '(' + ', '.join('%.4g' % x for x in v) + ')'
+    if isinstance(v, str) and 0 < len(v) <= 28 and '\n' not in v:
+        return 'text', v
+    return None
+
+
+def exports_of(value):
+    ''' What can be exported of a result (see fieldes.stdlib.exporting): "fea" and "results" for the tetrahedral static analysis, "summary" (its key
+        numbers as text) for any result that has some, "mesh" when it has a body '''
+    out = []
+    try:
+        from fieldes.stdlib import exporting as E
+        from fieldes.stdlib import fea
+        if isinstance(value, fea.TetResult):
+            out += ['fea', 'results']
+        if E.result_summary(value):
+            out.append('summary')
+        try:
+            E._body_of(value, 'exports')
+            out.append('mesh')
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
+
+def properties_of(value):
+    ''' What a result offers to be taken out of it, for the property drawer of the model tree: [{name, kind, text}] -- the fields it calculated
+        (`result.fields`, each also an attribute by its name: `stress = result.von_mises`) first, then its numbers, flags and short texts (an
+        attribute of the result: `peak = result.max_von_mises`) '''
+    out, seen = [], set()
+    try:
+        fields = value.fields
+    except Exception:
+        fields = {}
+    if isinstance(fields, dict):
+        for name in fields:
+            if isinstance(name, str) and not name.startswith('_'):
+                out.append({'name': name, 'kind': 'field', 'text': ''})
+                seen.add(name)
+    try:
+        attrs = list(vars(value).items())
+    except TypeError:
+        attrs = []
+    for name, v in attrs:
+        if name.startswith('_') or name in seen:
+            continue
+        got = _property_text(v)
+        if got:
+            out.append({'name': name, 'kind': got[0], 'text': got[1]})
+            seen.add(name)
+    try:
+        from fieldes.stdlib.exporting import _COMPUTED_NUMBERS
+        for name in _COMPUTED_NUMBERS:
+            got = _property_text(getattr(value, name, None))
+            if got and name not in seen:
+                out.append({'name': name, 'kind': got[0], 'text': got[1]})
+    except Exception:
+        pass
+    return out
+
+
 def _display_shapes(v):
     ''' The shapes a value displays: itself, what an analysis result shows (its _display()), the shapes of a list '''
     Shape, _ = A._types()
@@ -259,6 +337,12 @@ def finish(source, gs, out):
                         continue
                     if facts.get('type') == 'field':
                         A._FIELD_SOURCES.append((t.id, v))
+                    if facts.get('result') and not facts.get('failed'):
+                        try:
+                            facts['properties'] = properties_of(v)
+                            facts['exports'] = exports_of(v)
+                        except Exception:
+                            pass
                     shapes = [] if facts.get('failed') else _display_shapes(v)
                     if shapes:
                         has_var = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
@@ -422,6 +506,24 @@ def _namespace():
     return ns
 
 
+# A section of the script: the comment `# SECTION name` (or `# %% name`) -- it folds what follows, up to the next one, and the model tree
+# shows it as a row the models below it stand under
+_SECTION_RE = re.compile(r'^(\s*#\s*)(SECTION\b|%%)[ \t]*[:\-]?[ \t]*(.*?)[ \t]*$')
+
+
+def _sections_of(lines):
+    ''' The sections of a script, in order: [{line, end_line, name, span, marker}] -- `span` is the name in the comment (line, column, line,
+        column: a rename writes there), `end_line` the line before the next section (or the last of the script) '''
+    out = []
+    for i, text in enumerate(lines):
+        m = _SECTION_RE.match(text)
+        if m:
+            out.append({'line': i + 1, 'name': m.group(3), 'span': [i + 1, m.start(3), i + 1, m.end(3)], 'marker': m.group(2)})
+    for k, s in enumerate(out):
+        s['end_line'] = out[k + 1]['line'] - 1 if k + 1 < len(out) else len(lines)
+    return out
+
+
 def outline_json(arg):
     ''' The model tree of a script's text, as JSON: {items, settings, kinds, ...}.  `arg` is JSON {source, run_done}: run_done says that
         the run of this text has just ended (what waits for the imports it made, and for the menus it changes, goes on) '''
@@ -483,6 +585,7 @@ def outline_json(arg):
             log = A._import_log_entry(path) if path else None
             item = {
                 'kind': 'import', 'line': line, 'end_line': end, 'func': func, 'path': path,
+                'args': A._args_of(call, ns, by_name, src),
                 'label': os.path.basename(path) if path else func,
                 'call': A._span(call), 'rev': rev, 'rev_span': rev_span,
                 'units': units if units is not None else (log or {}).get('units'),
@@ -638,6 +741,14 @@ def outline_json(arg):
                     if variadic:
                         item['min_inputs'] = A._min_inputs(ns.get(callee))
                     item['slots'] = A._call_slots(stmt.value, ns, src)
+                    item['args'] = A._args_of(stmt.value, ns, by_name, src)
+                    # `x = result.von_mises`: a property taken out of a model (the property drawer writes them).  It is made of the model, but does not
+                    # own it: the model stays where it is, and the property row holds a reference to it
+                    node = stmt.value
+                    while isinstance(node, ast.Attribute):
+                        node = node.value
+                    if isinstance(stmt.value, ast.Attribute) and isinstance(node, ast.Name) and node.id in by_name and node.id != t.id:
+                        item['attribute_of'] = node.id
                     if mkind == 'conditions':
                         item['condition_role'] = facts.get('condition_role') or _guess_role(callee)
                     if mkind == 'surface' and (facts.get('surface_selection') or callee == 'select_surface'):
@@ -658,6 +769,10 @@ def outline_json(arg):
                     if failed:
                         item['error'] = facts.get('error') or error.get('message')
                     if exact:
+                        if facts.get('properties'):
+                            item['properties'] = facts['properties']
+                        if facts.get('exports'):
+                            item['exports'] = facts['exports']
                         if facts.get('bounds'):
                             item['bounds'] = facts['bounds']
                             if facts.get('exact_bounds'):
@@ -721,6 +836,7 @@ def outline_json(arg):
             if item['variadic']:
                 item['min_inputs'] = A._min_inputs(ns.get(A._callee_name(stmt.value)))
             item['slots'] = A._call_slots(stmt.value, ns, src)
+            item['args'] = A._args_of(stmt.value, ns, by_name, src)
             item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
             item['callee'] = A._callee_name(stmt.value)
             item['role'] = 'operation' if deps else 'primitive'
@@ -787,19 +903,32 @@ def outline_json(arg):
 
     items.sort(key=lambda it: it['line'])
     for it in items:
-        names = A.shadow_names(src.lines[it['line'] - 1:it.get('end_line', it['line'])])
+        names = set(A.shadow_names(src.lines[it['line'] - 1:it.get('end_line', it['line'])]))
         if names:
             it['shadows'] = sorted(names)
     versions = {}
     for it in items:
         if 'var' in it:
             versions.setdefault(it['var'], []).append(it)
+    # A model belongs to the first statement that uses it -- within its section: a section is a chapter of the script, and what is made in
+    # one stands in it, however later chapters use it (they hold a reference to it, as a shadow)
+    sections = _sections_of(src.lines)
+
+    def section_of(line):
+        k = -1
+        for i, s in enumerate(sections):
+            if s['line'] <= line:
+                k = i
+            else:
+                break
+        return k
+
     for it in items:
         for d in it.get('deps', []):
-            if d in it.get('shadows', ()):
-                continue
+            if d in it.get('shadows', ()) or d == it.get('attribute_of'):
+                continue            # (a reference of the statement, or a property taken out of the model: neither makes it a child)
             earlier = [x for x in versions.get(d, []) if x['line'] < it['line']]
-            if earlier and 'owner' not in earlier[-1] and earlier[-1] is not it:
+            if earlier and 'owner' not in earlier[-1] and earlier[-1] is not it and section_of(earlier[-1]['line']) == section_of(it['line']):
                 earlier[-1]['owner'] = A._key_of(it)
     last_of = {}
     for it in items:
@@ -825,6 +954,7 @@ def outline_json(arg):
             settings.setdefault(k, {})['value'] = v
 
     return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(), 'truncated': truncated,
+                       'sections': sections,
                        'errored': bool(error), 'run_done': bool(req.get('run_done')),
                        'done_line': tree.body[-1].end_lineno if tree.body else 0, 'source_md5': md5,
                        'has_roi': 'roi' in ns, 'has_roi_resolution': 'roi_resolution' in ns}, default=str)

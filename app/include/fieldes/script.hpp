@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSet>
 #include <QHash>
 #include <QTimer>
+#include <QHash>
 
 #include <functional>
 
@@ -169,6 +170,9 @@ signals:
     /*  The text size was changed with the keys  */
     void fontSizeChanged(int size);
 
+    /*  The lines under a fold header (the 0-based line) were folded or unfolded: the model tree follows (see ScenePanel::editorFolded)  */
+    void foldToggled(int line0, bool folded);
+
     /*  A name defined in a library file (not the script) was requested */
     void libraryDefinitionRequested(QString name, QString file, int line);
 
@@ -251,6 +255,12 @@ protected:
     QStringList m_scriptWords;
     QMap<QString, QStringList> m_memberWords;
     QMap<QString, QString> m_callTips;
+    // The documentation under the mouse: shown a moment after the mouse stops over a name (not after the long wait a tooltip has), and the
+    // answers kept, so that the second look at the same name is at once
+    QTimer m_hoverTimer;
+    QPoint m_hoverPos, m_hoverGlobal;
+    QHash<QString, QString> m_docCache;
+    bool showDocAt(const QPoint& viewportPos, const QPoint& globalPos);
     QMap<QString, QString> m_libraryDefs;
     Resolver m_resolver;
     QHash<QString, bool> m_linkCache;       // (owner.name) -> whether another file defines it

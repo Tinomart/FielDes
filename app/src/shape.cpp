@@ -45,6 +45,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/shader.hpp"
 #include "fieldes/colormap.hpp"
 
+#include "libfive/render/brep/free_thread_handler.hpp"
+#include "libfive/render/brep/spawn.hpp"
 #include "libfive/eval/tape.hpp"
 #include "libfive/eval/evaluator.hpp"
 #include "libfive/tree/data.hpp"
@@ -76,6 +78,11 @@ Shape::Shape(const libfive::Tree& t,
     }
     base_tree = tree;
 
+    // The watcher that reports a finished level is the shape's child, so that it goes where the shape goes: a shape is made
+    // by the script's thread and moved to the GUI thread (Interpreter::recordShape), and a watcher left behind delivers its
+    // events to the thread that runs the script, which handles none until the run is over -- no shape was meshed on the
+    // screen while an analysis ran
+    mesh_watcher.setParent(this);
     connect(this, &Shape::gotMesh, this, &Shape::redraw);
     connect(&mesh_watcher, &decltype(mesh_watcher)::finished,
             this, &Shape::onFutureFinished);
@@ -111,6 +118,21 @@ void Shape::setBoundarySymbols(std::vector<BcGlyph> glyphs, std::vector<BcLabel>
                    .arg(g.dir.x()).arg(g.dir.y()).arg(g.dir.z()).arg(g.size);
     for (const auto& l : bc_labels) key += QString("%1,%2;").arg(l.kind).arg(l.text);
     bc_key = key;
+}
+
+void Shape::setMarkers(std::vector<QVector3D> points)
+{
+    m_markers = std::move(points);
+    // (a hash of the points, not the points: a set can have thousands)
+    quint64 h = 1469598103934665603ull;
+    for (const QVector3D& p : m_markers)
+        for (const float c : {p.x(), p.y(), p.z()})
+        {
+            quint32 bits;
+            std::memcpy(&bits, &c, sizeof(bits));
+            h = (h ^ bits) * 1099511628211ull;
+        }
+    marker_key = m_markers.empty() ? QString() : QString("|dots %1 %2").arg(m_markers.size()).arg(h, 0, 16);
 }
 
 void Shape::setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res)
@@ -444,7 +466,7 @@ void Shape::placedHint(QVector3D& out_lo, QVector3D& out_hi, float& out_side) co
 
 QString Shape::colorKey() const
 {
-    return colorKeyBase();
+    return colorKeyBase() + marker_key;
 }
 
 QString Shape::colorKeyBase() const
@@ -2009,6 +2031,10 @@ void Shape::startRender(RenderSettings s)
         }
         m_last_settings = s.settings;
         m_last_alg = s.alg;
+        {   // (the vertices of this level are expected from the last one's: about four times as many for every halving of the cell)
+            const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
+            run_heavy = force_low || expected > 150000.0;
+        }
         timer.start();
         running = true;
 #if QT_VERSION >= 0x060000
@@ -2215,6 +2241,40 @@ void Shape::onFutureFinished()
     {
         startRender(next);
     }
+    else
+    {
+        prefetchSteps();        // (idle: the steps whose geometry has not been meshed are made now, one after the other)
+    }
+}
+
+void Shape::prefetchSteps()
+{
+    if (running || m_steps.size() < 2 || m_step < 0 || default_div == MESH_DIV_EMPTY || mesh == nullptr) return;
+    // (only when the shown geometry is finished: the picture the user is looking at comes first)
+    if (mesh_div != 0 || target_div != 0) return;
+    const int shown = m_step;
+    int k = -1;
+    for (int i = 0; i < int(m_steps.size()); ++i)
+    {
+        if (i != shown && m_steps[size_t(i)].tree.is_valid() && !m_steps[size_t(i)].surface && !step_meshes.count(i)) { k = i; break; }
+    }
+    if (k < 0) return;
+    const libfive::Tree shownTree = tree;
+    const bool shownTreeIsValid = shownTree.is_valid();
+    stashStepMesh();                                    // (the finished mesh of the shown geometry is kept)
+    // The render takes what the step is made of -- its geometry, its fields -- at its start: the shown step is put back at once.  The
+    // evaluators are the step's until the render has read them (the next render of the shown geometry makes them again)
+    m_step = k;
+    applyStepState();
+    tree = m_steps[size_t(k)].tree;
+    rebuildEvaluators();
+    force_low = true;
+    startRender(RenderSettings{m_last_settings, 0, m_last_alg});        // (straight to the finest level: only a finished mesh is kept)
+    force_low = false;
+    m_step = shown;
+    applyStepState();
+    if (shownTreeIsValid) tree = shownTree;
+    es_stale = true;
 }
 
 void Shape::freeGL()
@@ -2255,6 +2315,36 @@ libfive::Tree::Id Shape::getUniqueId(
     return base_tree.cooptimize(canonical).id();
 }
 
+namespace {
+
+/*  What a mesher thread does while it waits for work (libfive's FreeThreadHandler).  Left alone, a thread with nothing to do
+ *  loops at full speed, and a render whose work is mostly in one thread (the end of the octree, the walk of a deep cell) keeps
+ *  all the cores busy doing nothing -- so a small shape that was changed meanwhile, or a field slice, got a fraction of the machine
+ *  and took a hundred times as long as it would alone.  The thread gives its turn away at once, and after a longer wait sleeps a moment
+ *  (a thread that finds work again starts over, see the gap below), so a long render keeps going at its own speed and the others
+ *  go first  */
+class RenderIdle : public libfive::FreeThreadHandler
+{
+public:
+    void offerWait() override
+    {
+        // (the calls of one thread that follow one another closely are one wait: a longer gap means it found work in between)
+        thread_local std::chrono::steady_clock::time_point last;
+        thread_local unsigned waiting = 0;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last > std::chrono::microseconds(200)) waiting = 0;
+        if (++waiting < 2000)
+            std::this_thread::yield();
+        else
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        last = std::chrono::steady_clock::now();
+    }
+};
+
+RenderIdle g_renderIdle;
+
+}   // namespace
+
 ////////////////////////////////////////////////////////////////////////////////
 // This function is called in a separate thread:
 Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
@@ -2281,6 +2371,8 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     render_progress.store(0.0);
     RenderProgress handler(render_progress, s.div);
     mesh_settings.progress_handler = &handler;
+    mesh_settings.free_thread_handler = &g_renderIdle;
+    mesh_settings.low_priority = run_heavy;
     // A part with its own resolution is meshed on its own (setRenderHint):
     // over a cube around it, at the resolution it needs
     double res = s.settings.res;
@@ -2435,7 +2527,9 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                 }
             };
             std::vector<std::thread> threads;
-            for (size_t t = 1; t < T; t++) threads.emplace_back(work, t);
+            const bool low = run_heavy;
+            for (size_t t = 1; t < T; t++)
+                threads.emplace_back([&work, t, low] { if (low) libfive::lowerThreadPriority(); work(t); });
             work(0);
             for (auto& th : threads) th.join();
             return T;

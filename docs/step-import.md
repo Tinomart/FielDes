@@ -1,7 +1,7 @@
 # Importing models
 
 One function imports a model, whatever file it is in: `import_model(path)`. It reads a **STEP file** (`.step`,
-`.stp`) or a **triangle mesh** (`.stl`, `.obj`, `.ply`, `.3mf`, `.glb`, `.gltf`) and returns a list of
+`.stp`) or a **triangle mesh** (`.stl`, `.obj`, `.ply`, `.3mf`, `.glb`, `.gltf`, `.fbx`, `.off`, `.dxf`) and returns a list of
 `(shape, (lower corner, upper corner))`, one per part (one for a mesh). The shapes are ordinary fields: they can
 be offset, shelled, filled with a lattice, analysed and exported, and they carry the exact dimensions of the CAD.
 
@@ -213,8 +213,8 @@ A note on the exact mesh: the tessellation is verified watertight and matches Op
 which is made of the same tessellation). Tori are refined like the other curved faces, and a refinement is kept only if the
 mesh's area comes closer to the torus patch's own.
 
-`examples/03_kitchen_assembly.py` excludes the poor fits of the whole kitchen with one region, a union of the
-parts' `poor_fit_region` fields.
+`examples/03_exclude_and_assembly.py` shows `exclude()` with a region of your own on the sample bracket, and a small assembly of
+imported parts; for a whole import, one region can be a union of the parts' `poor_fit_region` fields.
 
 ## Tessellated parts: tessellate()
 

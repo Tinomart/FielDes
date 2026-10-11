@@ -20,11 +20,19 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/fea/tetmesh.hpp"
 #include "libfive/fea/fea.hpp"
 #include "libfive/eval/eval_array.hpp"
+#include "libfive/run_progress.hpp"
 
 namespace libfive {
 namespace fea {
 
 namespace {
+
+// Whether the application has asked the run to stop (a newer edit, the red dot): the meshing of a part takes
+// seconds on a fine element size, and the run must not go on with it -- the edit is waiting for it to end
+inline bool stopped()
+{
+    return run_progress::cancelFlag().load(std::memory_order_relaxed);
+}
 
 using Vec3 = Eigen::Vector3d;
 using Id = uint32_t;
@@ -262,6 +270,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             pts.resize(count);
             for (size_t q = 0; q < count; ++q) pts[q] = L.pos(start + q).cast<float>();
             evalPoints(shape, pts, v);
+            if (stopped()) { error = "cancelled"; return false; }
             std::copy(v.begin(), v.end(), val.begin() + std::ptrdiff_t(start));
         }
     }
@@ -276,7 +285,10 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
     std::unordered_map<uint64_t, uint32_t> edgeIndex;
     std::vector<CutEdge> cuts;
     bool tooMany = false;
+    size_t visited = 0;
     forEachTet(L, [&](Id a, Id b, Id c, Id d) {
+        if ((++visited & 0xFFFF) == 0 && stopped()) tooMany = true;     // (ends the loop's work: see below)
+        if (tooMany) return;
         const Tet4 t = {a, b, c, d};
         const int sum = sgn[a] + sgn[b] + sgn[c] + sgn[d];
         if (sum == 4) return;
@@ -303,6 +315,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
                 }
             }
     });
+    if (stopped()) { error = "cancelled"; return false; }
     if (tooMany)
     {
         error = "too many elements: use a larger element size";
@@ -335,6 +348,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             for (size_t e = 0; e < m; ++e)
                 pts[e] = (pa[e] + 0.5 * (tin[e] + tout[e]) * (pb[e] - pa[e])).cast<float>();
             evalPoints(shape, pts, v);
+            if (stopped()) { error = "cancelled"; return false; }
             for (size_t e = 0; e < m; ++e)
             {
                 const double mid = 0.5 * (tin[e] + tout[e]);
@@ -398,6 +412,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
                 }
             std::vector<float> v;
             evalPoints(shape, pts, v);
+            if (stopped()) { error = "cancelled"; return false; }
             for (size_t e = 0; e < m; ++e)
             {
                 Vec3 g;
@@ -428,6 +443,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
         size_t dbgNear = 0, dbgUse = 0, dbgSharp = 0, dbgReach = 0, dbgOn = 0;
         for (size_t v = 0; v < nTotal; ++v)
         {
+            if ((v & 0x3FFF) == 0 && stopped()) { error = "cancelled"; return false; }
             if (start[v + 1] - start[v] < 2) continue;
             dbgNear++;
             const Vec3 vp = L.pos(v);
@@ -490,6 +506,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
                     }
                 }
                 evalPoints(shape, pts, v);
+                if (stopped()) { error = "cancelled"; return false; }
                 for (size_t i = 0; i < cand.size(); ++i)
                 {
                     Vec3 g;
@@ -593,9 +610,15 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             }
         };
 
-        for (const Tet4& t : inside) emit(t[0], t[1], t[2], t[3]);
+        size_t work = 0;
+        for (const Tet4& t : inside)
+        {
+            if ((++work & 0x3FFFF) == 0 && stopped()) return;       // (the pass loop below stops the meshing)
+            emit(t[0], t[1], t[2], t[3]);
+        }
         for (const Tet4& t : mixed)
         {
+            if ((++work & 0x3FFFF) == 0 && stopped()) return;
             Id in[4], on[4], ex[4];
             int nI = 0, nO = 0, nX = 0;
             for (int p = 0; p < 4; ++p)
@@ -659,9 +682,11 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
     for (int pass = 0; pass < 8; ++pass)
     {
         generate();
+        if (stopped()) { error = "cancelled"; return false; }
         if (feature.empty()) break;
         std::vector<size_t> bad;
         findBadTets(outT, position, h, bad);
+        if (stopped()) { error = "cancelled"; return false; }
         std::unordered_set<Id> off;
         for (size_t t : bad)
             for (int p = 0; p < 4; ++p)
@@ -674,6 +699,7 @@ bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector
             // still bad: no snapping at all
             for (const auto& f : featureAll) featureOff.insert(f.first);
             generate();
+            if (stopped()) { error = "cancelled"; return false; }
         }
     }
     out.degenerate = degenerate;

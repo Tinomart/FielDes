@@ -87,12 +87,12 @@ protected:
 
 private:
     struct Step;
-    enum Place { Auto, Right, Left, Below, Above, Center, InsideTopRight, InsideBottom };
+    enum Place { Auto, Right, Left, Below, Above, Center, InsideTopRight, InsideBottom, InsideBottomLeft };
 
     void buildSteps();
     void showStep();
     void refresh();                         // (where things are now: the target, the card, the arrow)
-    void layoutCard(const QRect& hole);
+    void layoutCard(const QRect& hole, const QVector<QRect>& keepClear);
     void updateMask();
     void setCursor(const QPoint& windowPos, bool pressed = false);
     void hideCursor();
@@ -121,6 +121,8 @@ private:
     };
     State capture() const;
     void restore(const State& state);
+    /*  Puts a whole script in the editor (a step that works on a model of its own), without it counting as a change of the user's  */
+    void useScript(const QString& text);
     void selectAgain(QStringList names, int tries);
     QAction* sectionAction() const;
     /*  Puts everything back as it was before a "Show me" (at once: the step is changing, or the tour ends)  */
@@ -150,6 +152,9 @@ private:
     bool m_busy = false;                    // (a "Show me" is running)
     bool m_demo = false;                    // (a "Show me" is running or its result is on show: nothing it does counts as the user's work)
     State m_demoBefore;                     // (how things were when the button was pressed)
+    State m_groupBefore;                    // (the state before the first step of a group that works on models of its own: put back when the group is left)
+    bool m_hasGroup = false;
+    QString m_stepScript;                   // (the script as it was when the step was opened: a step whose work is its own undoes it)
     QVector<State> m_entry;                 // (the state of each step, as it was when the step was first opened)
     QVector<char> m_hasEntry;
     bool m_viaBack = false;                 // (the step was reached with Back)

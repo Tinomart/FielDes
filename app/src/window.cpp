@@ -51,6 +51,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QMessageBox>
 #include <QProcess>
 #include <QProgressDialog>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <QPushButton>
 #include <QScreen>
 #include <QSplitter>
@@ -490,7 +492,7 @@ Window::Window(Arguments args)
 
     file_menu->addSeparator();
 
-    auto export_action = file_menu->addAction(T("Export STL..."));
+    auto export_action = file_menu->addAction(T("Export mesh..."));
     Shortcuts::add(export_action, "file.export-stl",
                    {QKeySequence(Qt::CTRL | Qt::Key_E), QKeySequence(Qt::Key_F7)});
     connect(export_action, &QAction::triggered, this, &Window::onExport);
@@ -1202,7 +1204,8 @@ Window::Window(Arguments args)
     }
 
     // Link up the editor and the view
-    connect(editor, &Editor::shapes, view, &View::setShapes);
+    connect(editor, &Editor::shapes, view, [this](QList<Shape*> shapes) { view->setShapes(shapes); });
+    connect(editor, &Editor::partialShapes, view, &View::setShapes);
     connect(view, &View::varsDragged, editor, &Editor::setVarValues);
 
     // Model tree: every action is an edit of the script
@@ -1216,6 +1219,10 @@ Window::Window(Arguments args)
         connect(editor, &Editor::sceneChanged, scene, &ScenePanel::setScene);
         connect(editor, &Editor::documentReplaced, scene, &ScenePanel::clearScene);
         connect(editor, &Editor::scriptLoaded, scene, &ScenePanel::showCached);
+        // (what is collapsed in the tree is kept for the file, and tied to the code editor's folds in both directions)
+        scene->setFileKeySource([this]{ return editor->foldKey(); });
+        connect(scene, &ScenePanel::foldRequested, editor, &Editor::setFold);
+        connect(editor, &Editor::foldToggled, scene, &ScenePanel::editorFolded);
         connect(editor, &Editor::sceneChanged, this, &Window::onSceneChanged);
 
         // An error in the script, shown where the work is (a banner and a frame in the viewport, the model tree's card) -- not at
@@ -1266,6 +1273,8 @@ Window::Window(Arguments args)
         }
         connect(scene, &ScenePanel::goToLine, editor, &Editor::goToLine);
         connect(scene, &ScenePanel::placeholderRequested, editor, &Editor::goToPlaceholder);
+        connect(scene, &ScenePanel::spanRequested, editor, &Editor::goToSpan);
+        connect(scene, &ScenePanel::exportRequested, this, &Window::exportModel);
         connect(scene, &ScenePanel::editScript, editor, &Editor::applyEdits);
         connect(scene, &ScenePanel::editScriptLive, editor, &Editor::applyEditsLive);
         connect(scene, &ScenePanel::rerunRequested, editor, &Editor::onTextChangedDebounce);
@@ -1298,6 +1307,12 @@ Window::Window(Arguments args)
         });
         view->setMenuCatalogSource([this]{ return editor->callSupport("menu_catalog", QString(), nullptr); });
         view->setLiveSettings([this]{ return editor->callSupport("live_settings", QString(), nullptr); });
+        view->setExactResolver([this](const QString& key) -> libfive::Tree {
+            const QString text = editor->callSupport("exact_view_tree", key, nullptr);
+            const auto address = text.toULongLong();
+            if (!address) return libfive::Tree::invalid();
+            return libfive::Tree(reinterpret_cast<const libfive::Tree::Data*>(address));
+        });
         connect(view, &View::createRequested, scene, &ScenePanel::createFromMenu);
         connect(view, &View::importRequested, this, [this] { onImportModel(); });
         // A right-click in the text editor, or in the model tree, opens the viewport's menu for the model of that line / row
@@ -1700,6 +1715,140 @@ Window::Window(Arguments args)
             }
             QContextMenuEvent e(QContextMenuEvent::Mouse, pos, tree->viewport()->mapToGlobal(pos));
             QApplication::sendEvent(tree->viewport(), &e);
+        });
+        // exportmodel <variable> <mesh|fea|results|field> <path>: the same export as the menus, with the file given
+        a->add("exportmodel", [=](const QString& args){
+            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) { std::cerr << "automation: exportmodel <variable> <kind> <path>\n"; return; }
+            exportModelTo(p[0], p[1], p.mid(2).join(' '));
+        });
+        // treegap <hover|click> <text prefix>: the mouse on the gap above a row of the model tree (a hover lights it up; a click starts a section there)
+        a->add("treegap", [=](const QString& args){
+            const QString what = args.section(' ', 0, 0);
+            auto row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            const QPoint pos(tree->columnViewportPosition(0) + tree->columnWidth(0) / 2, tree->visualItemRect(row).top() + 1);
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, tree->viewport()->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(tree->viewport(), &e);
+                QApplication::processEvents();
+            };
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            if (what == "click")
+            {
+                send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+                send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            }
+        });
+        // treearrow <hover|click> <text prefix>: the mouse on the arrow at the end of a row (the properties of a result): a hover shows it, a click opens the drawer
+        a->add("treearrow", [=](const QString& args){
+            const QString what = args.section(' ', 0, 0);
+            auto row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            // (the mouse over the row shows the tab at the panel's right edge; a click is on the tab)
+            const QPoint pos(tree->columnViewportPosition(0) + 60, tree->visualItemRect(row).center().y());
+            auto send = [&](QWidget* w, const QPoint& at, QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, w->mapToGlobal(at), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(w, &e);
+                QApplication::processEvents();
+            };
+            send(tree->viewport(), pos, QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            auto tab = view->scenePanel()->propertyTab();
+            std::cerr << "automation: property tab " << (tab && tab->isVisible() ? "shown" : "NOT shown") << "\n";
+            if (what == "click" && tab && tab->isVisible())
+            {
+                const QPoint at = tab->rect().center();
+                send(tab, at, QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+                send(tab, at, QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            }
+        });
+        // treearrowdbl <text prefix>: a quick double click on the arrow in front of a row of the model tree (the second click must toggle it again), and
+        // whether the row is open after each click
+        a->add("treearrowdbl", [=](const QString& prefix){
+            auto row = findRow(prefix);
+            if (!row) { std::cerr << "automation: no tree row " << prefix.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            row = findRow(prefix);
+            if (!row) return;
+            const QRect r = tree->visualItemRect(row);
+            const QPoint pos(r.left() - tree->indentation() / 2, r.center().y());
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, tree->viewport()->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(tree->viewport(), &e);
+            };
+            const bool before = row->isExpanded();
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            const bool afterFirst = findRow(prefix) ? findRow(prefix)->isExpanded() : before;
+            send(QEvent::MouseButtonDblClick, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            const bool afterSecond = findRow(prefix) ? findRow(prefix)->isExpanded() : afterFirst;
+            std::cerr << "automation: arrow double click: open " << before << " -> " << afterFirst << " -> " << afterSecond << "\n";
+        });
+        // scripthover <line> <col>: the mouse moves over a (0-based) place of the script, as a hand does; the documentation of the name there is
+        // on screen a moment later ("scripthover" prints the tooltip's text after 250 ms)
+        a->add("scripthover", [=](const QString& args){
+            auto sc = editor->scriptWidget();
+            const int line = args.section(' ', 0, 0).toInt(), col = args.section(' ', 1, 1).toInt();
+            const QTextBlock b = sc->document()->findBlockByNumber(line);
+            if (!b.isValid()) { std::cerr << "automation: no line " << line << "\n"; return; }
+            QTextCursor c(b);
+            c.setPosition(b.position() + col);
+            const QPoint at = sc->cursorRect(c).center();
+            QMouseEvent move(QEvent::MouseMove, at, sc->viewport()->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(sc->viewport(), &move);
+            QElapsedTimer t;
+            t.start();
+            while (t.elapsed() < 250) QApplication::processEvents(QEventLoop::AllEvents, 20);
+            std::cerr << "automation: tooltip " << (QToolTip::isVisible() ? "shown" : "NOT shown") << ": "
+                      << QToolTip::text().left(120).toStdString() << "\n";
+        });
+        // sectionarrow: a real click (mouse events) on the arrow in front of the first section of the model tree
+        a->add("sectionarrow", [=](const QString&){
+            auto scene = view->scenePanel();
+            QWidget* vp = scene->treeViewport();
+            const QPoint pos = vp->mapFrom(this, scene->sectionArrowPoint(this));
+            std::cerr << "automation: section arrow at " << pos.x() << "," << pos.y() << "\n";
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, vp->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(vp, &e);
+                QApplication::processEvents();
+            };
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+        });
+        // treeexpand <0|1> <text prefix>: a row of the model tree closed or opened, as the arrow in front of it does
+        a->add("treeexpand", [=](const QString& args){
+            auto row = findRow(args.section(' ', 1));
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            row->setExpanded(args.section(' ', 0, 0) == "1");
+            QApplication::processEvents();
+        });
+        // folds: the fold headers of the rendered script (0-based line: closed or open) in the log
+        a->add("folds", [=](const QString&){
+            Script* s = editor->scriptWidget();
+            std::cerr << "automation: folds";
+            for (QTextBlock b = s->document()->begin(); b.isValid(); b = b.next())
+            {
+                int end = 0;
+                if (b.isVisible() && s->foldRange(b.blockNumber(), &end))
+                    std::cerr << " " << b.blockNumber() << (s->isFolded(b.blockNumber()) ? ":closed" : ":open");
+            }
+            std::cerr << std::endl;
         });
         // widgetgeom <objectName>: where a widget is in its parent, and how large it is (a card, for instance)
         a->add("widgetgeom", [=](const QString& name){
@@ -2107,6 +2256,23 @@ Window::Window(Arguments args)
                 if (e->isVisible() && !e->property("fn").isValid()) return e;
             return nullptr;
         };
+        // nameeditor [text]: say what the editor of a name in the tree holds (or that none is open); with a text, type it into it a key at a time
+        a->add("nameeditor", [=](const QString& text){
+            auto f = nameEditor();
+            if (!f) { std::cerr << "automation: no name editor is open\n"; return; }
+            std::cerr << "automation: name editor holds '" << f->text().toStdString() << "', selected '" << f->selectedText().toStdString() << "'\n";
+            if (text.trimmed().isEmpty()) return;
+            f->selectAll();
+            for (const QChar c : text.trimmed())
+            {
+                auto g = nameEditor();
+                if (!g) { std::cerr << "automation: the name editor was lost\n"; return; }
+                QKeyEvent key(QEvent::KeyPress, 0, Qt::NoModifier, QString(c));
+                QApplication::sendEvent(g, &key);
+                QApplication::processEvents();
+            }
+            if (auto g = nameEditor()) std::cerr << "automation: name editor now holds '" << g->text().toStdString() << "'\n";
+        });
         // renamekey <enter|esc>: the key on the name editor that is open (after treerename ... typeonly)
         a->add("renamekey", [=](const QString& what){
             auto f = nameEditor();
@@ -2787,31 +2953,55 @@ QString Window::workingDirectory() const
 void Window::onExportReady(QList<const libfive::Mesh*> shapes)
 {
     disconnect(view, &View::meshesReady, this, &Window::onExportReady);
-    if (!libfive::Mesh::saveSTL(export_filename.toStdString(),
-                                std::list<const libfive::Mesh*>(shapes.begin(), shapes.end())))
+    // (the meshes are written as STL; another format is made from that file by the library, which knows them all)
+    const QString target = export_filename;
+    const bool stl = target.endsWith(".stl", Qt::CaseInsensitive);
+    const QString written = stl ? target : QDir::temp().filePath(QString("fieldes_export_%1.stl").arg(QCoreApplication::applicationPid()));
+    bool saved = libfive::Mesh::saveSTL(written.toStdString(), std::list<const libfive::Mesh*>(shapes.begin(), shapes.end()));
+    QString why;
+    if (saved && !stl)
+    {
+        QJsonObject request{{"source", written}, {"target", target}};
+        QString error;
+        editor->callSupport("convert_mesh", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+        QFile::remove(written);
+        if (!error.isEmpty()) { saved = false; why = error; }
+    }
+    if (!saved)
     {
         QMessageBox m(this);
         m.setText(T("Could not save file"));
-        m.setInformativeText(T("Check the console for more information"));
+        m.setInformativeText(why.isEmpty() ? T("Check the console for more information") : why);
         m.addButton(QMessageBox::Ok);
         m.setIcon(QMessageBox::Critical);
         m.setWindowModality(Qt::WindowModal);
         m.exec();
+    }
+    else
+    {
+        statusBar()->showMessage(T("Exported to %1").arg(QDir::toNativeSeparators(target)), 6000);
     }
     emit(exportDone());
 }
 
 void Window::onExport(bool)
 {
-    export_filename = QFileDialog::getSaveFileName(
-            this, T("Export STL"), workingDirectory(), T("STL files (*.stl);;Any files (*)"));
+    static const QString filters = T("STL (*.stl);;OBJ (*.obj);;PLY (*.ply);;3MF (*.3mf);;glTF binary (*.glb);;glTF (*.gltf);;"
+                                     "FBX (*.fbx);;OFF (*.off);;DXF (*.dxf)");
+    QString chosen;
+    export_filename = QFileDialog::getSaveFileName(this, T("Export mesh"), workingDirectory(), filters, &chosen);
     if (export_filename.isEmpty())
     {
         return;
     }
-    if (!export_filename.endsWith(".stl", Qt::CaseInsensitive))
+    static const QStringList known = {".stl", ".obj", ".ply", ".3mf", ".glb", ".gltf", ".fbx", ".off", ".dxf"};
+    bool has = false;
+    for (const QString& k : known) has = has || export_filename.endsWith(k, Qt::CaseInsensitive);
+    if (!has)
     {
-        export_filename += ".stl";
+        // (no extension typed: the one of the filter chosen, "STL (*.stl)")
+        const QRegularExpressionMatch m = QRegularExpression(R"(\*(\.\w+)\))").match(chosen);
+        export_filename += m.hasMatch() ? m.captured(1) : QString(".stl");
     }
 
     connect(view, &View::meshesReady, this, &Window::onExportReady);
@@ -2834,6 +3024,62 @@ void Window::onExport(bool)
 
     p->show();
     view->checkMeshes();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+void Window::exportModel(const QString& var, const QString& kind, const QString& ext)
+{
+    static const QHash<QString, QString> names = {
+        {".stl", "STL"}, {".obj", "OBJ"}, {".ply", "PLY"}, {".3mf", "3MF"}, {".glb", "glTF binary"}, {".gltf", "glTF"}, {".fbx", "FBX"},
+        {".off", "OFF"}, {".dxf", "DXF"}, {".vti", "VTK image data"}, {".csv", "CSV"}, {".inp", "Abaqus / CalculiX"}, {".bdf", "Nastran"},
+        {".msh", "Gmsh"}, {".vtu", "VTK"}, {".txt", "text"}};
+    QSettings settings("FielDes", "FielDes");
+    const QString folder = settings.value("export-folder", workingDirectory()).toString();
+    const QString filter = T("%1 files (*%2)").arg(names.value(ext, ext.mid(1).toUpper()), ext);
+    QString path = QFileDialog::getSaveFileName(this, T("Export %1").arg(var), QDir(folder).filePath(var + ext), filter);
+    if (path.isEmpty()) return;
+    if (!path.endsWith(ext, Qt::CaseInsensitive)) path += ext;
+    settings.setValue("export-folder", QFileInfo(path).absolutePath());
+    exportModelTo(var, kind, path);
+}
+
+void Window::exportModelTo(const QString& var, const QString& kind, const QString& path)
+{
+    QJsonObject request{{"kind", kind}, {"var", var}, {"path", path}};
+    const QString json = QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    auto progress = new QProgressDialog(T("Exporting %1...").arg(var), QString(), 0, 0, this);
+    progress->setCancelButton(nullptr);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(400);
+    auto watcher = new QFutureWatcher<QPair<QString, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<QString, QString>>::finished, this, [this, progress, watcher, path] {
+        const auto done = watcher->result();
+        progress->close();
+        progress->deleteLater();
+        watcher->deleteLater();
+        if (!done.second.isEmpty())
+        {
+            QMessageBox m(this);
+            m.setText(T("Could not export"));
+            m.setInformativeText(done.second);
+            m.addButton(QMessageBox::Ok);
+            m.setIcon(QMessageBox::Warning);
+            m.setWindowModality(Qt::WindowModal);
+            m.exec();
+            std::cerr << "export failed: " << done.second.toStdString() << std::endl;
+            return;
+        }
+        const QString text = QJsonDocument::fromJson(done.first.toUtf8()).object()["text"].toString(path);
+        statusBar()->showMessage(T("Exported to %1").arg(QDir::toNativeSeparators(text)), 8000);
+        std::cerr << "export done: " << text.toStdString() << std::endl;
+    });
+    // (written by the library on its own thread: the window stays alive, and the script goes on running)
+    watcher->setFuture(QtConcurrent::run([this, json]() {
+        QString error;
+        const QString out = editor->callSupport("export_model", json, &error);
+        return qMakePair(out, error);
+    }));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

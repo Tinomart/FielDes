@@ -181,6 +181,12 @@ ResultPanel::ResultPanel(QWidget* parent)
     layout->setContentsMargins(10, 8, 10, 8);
     layout->setSpacing(5);
     layout->addWidget(m_fields);
+    m_keys = new QLabel;
+    m_keys->setObjectName("resultKeys");
+    m_keys->setTextFormat(Qt::RichText);
+    m_keys->setToolTip(T("The key numbers of the result.  Right-click its row in the model tree, Export, to write them as text (the arrow at the end of "
+                         "the row lists more)."));
+    layout->addWidget(m_keys);
     layout->addWidget(m_bar, 1);
     layout->addWidget(m_note);
     layout->addWidget(m_stepRow);
@@ -299,7 +305,9 @@ int ResultPanel::labelsWidth() const
     bold.setPointSize(9);
     bold.setBold(true);
     const QFontMetrics metrics(bold);
-    return metrics.horizontalAdvance(m_fields->currentText()) + 64;         // (the card's margins, the combo's padding and its arrow)
+    int width = metrics.horizontalAdvance(m_fields->currentText()) + 64;     // (the card's margins, the combo's padding and its arrow)
+    if (m_keys && m_keys->isVisibleTo(this)) width = std::max(width, m_keys->sizeHint().width() + 28);        // (and the key numbers, whole)
+    return width;
 }
 
 void ResultPanel::setState(const State& s)
@@ -333,6 +341,23 @@ void ResultPanel::setState(const State& s)
     m_note->setText(s.note);
     m_note->setToolTip(s.noteHelp);
     m_note->setVisible(!s.note.isEmpty());
+    {
+        QString html;
+        if (!s.keyResults.isEmpty())
+        {
+            html = "<table cellspacing='0' cellpadding='1'>";
+            for (const QStringList& r : s.keyResults)
+            {
+                if (r.size() < 3) continue;
+                html += "<tr><td style='color:#93a1a1'>" + r[0].toHtmlEscaped() + "&nbsp;&nbsp;</td>"
+                        "<td align='right' style='color:#eee8d5; font-weight:bold'>" + r[1].toHtmlEscaped() + "</td>"
+                        "<td style='color:#93a1a1'>&nbsp;" + r[2].toHtmlEscaped() + "</td></tr>";
+            }
+            html += "</table>";
+        }
+        m_keys->setText(html);
+        m_keys->setVisible(!html.isEmpty());
+    }
     m_info->setText(s.elementInfo);
     m_info->setVisible(!s.elementInfo.isEmpty());
     m_updating = false;

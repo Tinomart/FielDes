@@ -471,7 +471,9 @@ def field_from_body(body):
         and still be a valid field.  (A body itself always keeps its true scale: it is a distance, which a factor would
         break.  Selecting the field shows it in the section viewer.) '''
     s = _s(body)
-    out = Shape(lib.libfive_tree_copy(s.ptr))
+    # (the field of a part imported from a STEP file is exact in sign only -- outside it is the distance to the infinite surfaces of its
+    # faces, the boxy mitres of a CSG field -- so the field is its exact distance: what "its distance to its surface" says)
+    out = Shape(lib.libfive_tree_copy(_dist(s).ptr))
     out._kind = 'field'
     out._field_origin = s._field_origin if s._field_origin is not None else s       # (the viewer starts at the body)
     return out

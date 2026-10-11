@@ -127,18 +127,24 @@ View::View(QWidget* parent)
         update();
     };
     connect(m_resultPanel, &ResultPanel::channelChanged, this, [=](int i) {
+        for (auto s : shapes)
+            if (s->hasResult() && i >= 0 && size_t(i) < s->channels().size()) { m_choiceChannel = s->channels()[size_t(i)].name; break; }
         forResults([i](Shape* s) { s->setChannel(i); }, true);
     });
     connect(m_resultPanel, &ResultPanel::deformChanged, this, [=](float f) {
+        for (auto s : shapes)
+            if (s->hasResult() && s->hasDeformation() && s->deformAuto() > 0) { m_choiceDeform = f / s->deformAuto(); break; }
         forResults([f](Shape* s) { s->setDeformScale(f); }, false);
     });
     connect(m_resultPanel, &ResultPanel::elementsToggled, this, [=](bool on) {
+        m_choiceElements = on ? 1 : 0;
         forResults([on](Shape* s) { s->setShowElements(on); }, false);
     });
     connect(m_resultPanel, &ResultPanel::stepChanged, this, [=](int k) {
         forResults([k](Shape* s) { s->setStep(k); }, true);
     });
     connect(m_resultPanel, &ResultPanel::flowToggled, this, [=](bool on) {
+        m_choiceLines = on ? 1 : 0;
         forResults([on](Shape* s) { s->setShowFlowLines(on); }, false);
     });
     connect(m_resultPanel, &ResultPanel::opacityChanged, this, [=](float a) {
@@ -254,12 +260,28 @@ View::~View()
     doneCurrent();
 }
 
-void View::setShapes(QList<Shape*> new_shapes)
+// A new result shape looks as the one before it did: what was chosen on the result card is kept, run after run and picture after picture
+void View::applyViewerChoices(Shape* s) const
 {
-    for (auto s : new_shapes)
+    if (s->hasFlowLines())
     {
-        if (s->hasFlowLines()) s->setOpacity(m_flowOpacity);        // (a flow keeps how opaque it was made, run after run)
+        s->setOpacity(m_flowOpacity);
+        if (m_choiceLines >= 0) s->setShowFlowLines(m_choiceLines != 0);
     }
+    if (!s->hasResult()) return;
+    if (!m_choiceChannel.isEmpty())
+    {
+        const auto& channels = s->channels();
+        for (size_t i = 0; i < channels.size(); ++i)
+            if (channels[i].name == m_choiceChannel) { s->setChannel(int(i)); break; }
+    }
+    if (m_choiceDeform >= 0 && s->hasDeformation() && s->deformAuto() > 0) s->setDeformScale(m_choiceDeform * s->deformAuto());
+    if (m_choiceElements >= 0 && s->hasElements()) s->setShowElements(m_choiceElements != 0);
+}
+
+void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
+{
+    for (auto s : new_shapes) applyViewerChoices(s);
     // We're going to co-optimize every single new and old tree together,
     // so that we can deduplicate them.  This could be expensive; if we
     // notice the main thread lagging, we could do the new_shapes half of this
@@ -286,7 +308,13 @@ void View::setShapes(QList<Shape*> new_shapes)
     {
         // (same geometry coloured differently -- another field or range -- is a different shape: its colours are computed while meshing)
         auto n = new_shapes_map.find(ShapeKey{(*itr)->getUniqueId(canonical), (*itr)->colorKey()});
-        if (n == new_shapes_map.end())
+        if (n == new_shapes_map.end() && keepFromLine >= 0 && (*itr)->sourceLine() >= keepFromLine)
+        {
+            // (a statement that has not run yet in this run: its shape is the last run's, until the run makes it -- not gone)
+            any_running |= !(*itr)->done();
+            ++itr;
+        }
+        else if (n == new_shapes_map.end())
         {
             if (*itr == drag_target)
             {
@@ -839,6 +867,7 @@ void View::paintOverlay(QPainter& painter)
     {
         drawFieldGizmo(painter);
     }
+    drawMarkers(painter);
     drawHandles(painter);
     if (!section_readout.isEmpty() && !section_drag)
     {
@@ -1039,6 +1068,7 @@ void View::startLive()
             s->setColorDetail(ls.detail);
         }
         s->setParent(this);
+        applyViewerChoices(s);          // (a picture after every iteration: it looks as the one before it did)
         connect(s, &Shape::gotMesh, this, &View::swapLive);
         m_livePending.push_back(s);
     }
@@ -1456,6 +1486,7 @@ void View::updateResultPanel()
     st.hasFlow = r->hasFlowLines();
     st.showFlow = r->showFlowLines();
     st.opacity = r->opacityValue();
+    st.keyResults = r->keyResults();
     bool flowing = false;
     for (auto s : shapes) if (s->showsFlowLines()) flowing = true;
     if (flowing && !m_flowTimer.isActive()) m_flowTimer.start();
@@ -2060,12 +2091,65 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     }
 }
 
+void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line)
+{
+    const int generation = m_scene ? m_scene->generation() : -1;
+    const bool haveModel = !m_scene || m_scene->hasModel();
+    // The operations that fill a model with a lattice, and the points a foam is made around (random_points, then voronoi_lattice)
+    int shown = 0;
+    for (const auto v : m_catalog["operations"].toArray())
+    {
+        const auto o = v.toObject();
+        if (o["section"].toString() != "lattice") continue;
+        const QString name = o["name"].toString();
+        auto action = menu->addAction(TypeIcons::icon(o["type"].toString("lattice")), name, this,
+                                      [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
+        if (!o["hint"].toString().isEmpty()) action->setToolTip(o["hint"].toString());
+        if (!haveModel)
+        {
+            action->setEnabled(false);
+            action->setToolTip(T("There is no model to work on yet"));
+        }
+        else if (m_scene && !m_scene->entryAllowed("operation", name, line))
+        {
+            action->setEnabled(false);
+        }
+        ++shown;
+    }
+    if (shown) menu->addSeparator();
+    // The cells: a menu for each family, in the order the catalog lists them
+    QStringList order;
+    QHash<QString, QList<QJsonObject>> groups;
+    for (const auto v : m_catalog["primitives"].toArray())
+    {
+        const auto p = v.toObject();
+        if (p["section"].toString() != "lattice") continue;
+        const QString g = p["group"].toString();
+        if (!groups.contains(g)) order << g;
+        groups[g] << p;
+    }
+    for (const QString& g : order)
+    {
+        auto sub = menu->addMenu(TypeIcons::icon("cell"), T(g));
+        sub->setToolTipsVisible(true);
+        for (const auto& p : groups[g])
+        {
+            const QString name = p["name"].toString();
+            const QString label = p["label"].toString(name);
+            auto action = sub->addAction(TypeIcons::icon("cell"), label, this,
+                                         [=]{ emit(createRequested("primitive", name, point, scale, line, -1)); });
+            action->setToolTip(T("A new cell: %1 -- a lattice operation takes it as its cell").arg(name));
+        }
+    }
+}
+
 void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations)
 {
     QJsonArray ops;
     for (const auto v : m_catalog["operations"].toArray())
     {
         if (v.toObject()["quick"].toBool()) continue;          // (in the first menu: see addQuickOperations)
+        if (v.toObject()["section"].toString() == "lattice") continue;      // (the lattice section has them: see fillLatticeMenu)
         if (isSimulationOperation(v.toObject()["group"].toString()) == simulations) ops.append(v);
     }
     if (ops.isEmpty())
@@ -2113,6 +2197,61 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         // (what is selected cannot make it: the library refuses the call for this selection -- a part with supports and loads for a set of
         // conditions, conditions with no part for a simulation ...)
         if (m_scene && action->isEnabled() && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
+    }
+}
+
+void View::addExportMenu(QMenu* menu, int line)
+{
+    if (!m_scene) return;
+    const QString type = m_scene->typeAtLine(line);
+    const QStringList exports = m_scene->exportsAtLine(line);
+    const bool shape = type == "solid" || type == "profile" || type == "surface" || type == "lattice";
+    const bool simulation = type == "simulation";
+    const bool field = type == "field";
+    if (!shape && !simulation && !field) return;
+    const bool named = !m_scene->varAtLine(line).isEmpty();
+    auto sub = menu->addMenu(T("Export"));
+    sub->setToolTipsVisible(true);
+    auto add = [&](QMenu* into, const QString& text, const QString& kind, const QString& ext, bool enabled, const QString& why) {
+        auto a = into->addAction(text, this, [=] { if (m_scene) m_scene->requestExport(line, kind, ext); });
+        a->setEnabled(enabled && named);
+        if (!named) a->setToolTip(T("Give the model a name first: only a variable of the script is exported."));
+        else if (!enabled) a->setToolTip(why);
+        return a;
+    };
+    if (shape || (simulation && exports.contains("mesh")))
+    {
+        auto mesh = sub->addMenu(T("Mesh"));
+        mesh->setToolTipsVisible(true);
+        mesh->setToolTip(T("The surface of the model as triangles, at the resolution of the scene"));
+        static const QList<QPair<QString, QString>> formats = {
+            {"STL (.stl)", ".stl"}, {"OBJ (.obj)", ".obj"}, {"PLY (.ply)", ".ply"}, {"3MF (.3mf)", ".3mf"}, {"glTF binary (.glb)", ".glb"},
+            {"glTF (.gltf)", ".gltf"}, {"FBX (.fbx)", ".fbx"}, {"OFF (.off)", ".off"}, {"DXF (.dxf)", ".dxf"}};
+        for (const auto& f : formats) add(mesh, f.first, "mesh", f.second, true, QString());
+    }
+    if (field)
+    {
+        auto grid = sub->addMenu(T("Field on a grid"));
+        grid->setToolTipsVisible(true);
+        grid->setToolTip(T("The field sampled on a regular grid at the resolution of the scene, for other programs"));
+        add(grid, T("VTK image data (.vti)"), "field", ".vti", true, QString());
+        add(grid, T("CSV table (.csv)"), "field", ".csv", true, QString());
+    }
+    if (simulation)
+    {
+        const QString staticOnly = T("Only for a static analysis: the others do not keep a mesh to write");
+        auto model = sub->addMenu(T("Finite-element model"));
+        model->setToolTipsVisible(true);
+        model->setToolTip(T("The mesh the analysis was solved on, with its material, supports and loads, for another solver"));
+        add(model, T("Abaqus / CalculiX (.inp)"), "fea", ".inp", exports.contains("fea"), staticOnly);
+        add(model, T("Nastran (.bdf)"), "fea", ".bdf", exports.contains("fea"), staticOnly);
+        add(model, T("Gmsh (.msh)"), "fea", ".msh", exports.contains("fea"), staticOnly);
+        auto results = sub->addMenu(T("Results"));
+        results->setToolTipsVisible(true);
+        add(results, T("VTK mesh with every field (.vtu)"), "results", ".vtu", exports.contains("results"), staticOnly);
+        add(results, T("CSV tables (.csv)"), "results", ".csv", exports.contains("results"), staticOnly);
+        add(results, T("Key numbers as text (.txt)"), "results", ".txt", exports.contains("summary"),
+            T("This result has no key numbers to write"));
     }
 }
 
@@ -2191,7 +2330,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
         {
             const auto p = v.toObject();
             const QString g = p["group"].toString();
-            if (isSimulationPrimitive(g)) continue;
+            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Add simulation, Add lattice)
             if (!groups.contains(g)) order << g;
             groups[g] << p;
         }
@@ -2201,7 +2340,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
             const QString type = entries.first()["type"].toString("solid");
             auto make = [&](QMenu* into, const QJsonObject& p) {
                 const QString name = p["name"].toString();
-                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), name,
+                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
                                               this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
                 return action;
@@ -2224,6 +2363,9 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
                         "whichever suits it."));
     }
     auto ops = menu->addMenu(T("Add operation"));
+    auto lattices = menu->addMenu(TypeIcons::icon("lattice"), T("Add lattice"));
+    lattices->setToolTipsVisible(true);
+    fillLatticeMenu(lattices, point, scale, atLine);
     auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Add simulation"));
     sims->setToolTipsVisible(true);
     // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
@@ -2258,6 +2400,9 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     }
     addQuickOperations(menu, line, point, scale);
     fillOperations(menu->addMenu(T("Operation")), line, point, scale);
+    auto lattices = menu->addMenu(TypeIcons::icon("lattice"), T("Lattice"));
+    lattices->setToolTipsVisible(true);
+    fillLatticeMenu(lattices, point, scale, line);
     auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Simulation"));
     sims->setToolTipsVisible(true);
     fillSimulationPrimitives(sims, point, scale, line);
@@ -2275,6 +2420,7 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
             own->setToolTip(T("A resolution of its own is for a model that is drawn: a shape, a surface"));
         }
     }
+    addExportMenu(menu, line);
     auto select = menu->addAction(T("Select Surface"), this, [=]{
         // (after this menu has closed: the menu of the surface selection takes its place)
         QTimer::singleShot(0, this, [=]{ showSelectMenu(globalPos, line, point); });
@@ -2809,6 +2955,7 @@ void View::sliceRegion(QVector3D& lo, QVector3D& hi, float& fade) const
 FieldSource View::sourceOf(Shape* s) const
 {
     FieldSource src{s->getTree(), s->getVars()};
+    src.exactKey = s->exactKey();
     if (s->hasColorField())
     {   // (the field it is shown coloured by, e.g. an analysis result)
         src.color = s->colorFieldTree();
@@ -2894,9 +3041,35 @@ void View::startSliceAt(Plane& plane, bool fine)
     plane.clock.start();
     plane.runningFine = fine;
     std::atomic<int>* g = &plane.generation;
+    const auto exactResolver = m_exactResolver;
+    const auto exactMutex = m_exactMutex;
+    const auto exactTrees = m_exactTrees;
     plane.watcher.setFuture(QtConcurrent::run([=]() {
         const auto t0 = std::chrono::steady_clock::now();
         QVector<FieldSource> used = sources;
+        // An imported part's own field is exact in sign only: outside it is the boxy distance to the infinite surfaces of its faces, and
+        // inside it has the ghosts of faces that end elsewhere.  What a plane shows is its distance, so the plane asks for the exact one
+        // (made the first time, about a second a part, and kept)
+        for (auto& u : used)
+        {
+            if (u.exactKey.isEmpty() || !exactResolver) continue;
+            libfive::Tree t = libfive::Tree::invalid();
+            {
+                QMutexLocker lock(exactMutex.get());
+                const auto it = exactTrees->constFind(u.exactKey);
+                if (it != exactTrees->constEnd()) t = *it;
+            }
+            if (!t.is_valid())
+            {
+                t = exactResolver(u.exactKey);
+                if (t.is_valid())
+                {
+                    QMutexLocker lock(exactMutex.get());
+                    exactTrees->insert(u.exactKey, t);
+                }
+            }
+            if (t.is_valid()) u.tree = t;
+        }
         if (!rangeKnown && !used.isEmpty()) autoColorRange(used[0], fieldMode ? rangeLo : lo, fieldMode ? rangeHi : hi);
         FieldSlice s = sampleField(used, sec, lo, hi, samples, fade, g, gen);
         s.fine = fine;
@@ -3739,6 +3912,30 @@ void View::startWaitingGrip()
         beginHandleDrag(g, pos);
         return;
     }
+}
+
+void View::drawMarkers(QPainter& painter)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QMatrix4x4 M = camera.M();
+    for (Shape* s : shapes)
+    {
+        if (s->markers().empty()) continue;
+        // The dot of a gizmo (see drawHandles), the same colours; lit up while the set is the model tree's selection
+        const bool on = s->isSelected();
+        painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.0));
+        painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
+        const double r = on ? 4.5 : 4.0;
+        for (const QVector3D& p : s->markers())
+        {
+            if (!(M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f)) continue;     // (behind the eye)
+            const QPointF q = toScreen(p);
+            if (q.x() < -r || q.y() < -r || q.x() > width() + r || q.y() > height() + r) continue;
+            painter.drawEllipse(q, r, r);
+        }
+    }
+    painter.restore();
 }
 
 void View::drawHandles(QPainter& painter)

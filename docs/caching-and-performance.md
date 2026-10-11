@@ -33,7 +33,7 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | **`mass_properties` / `volume_of`** | in memory | the shape, bounds and resolution |
 | **Field queries** (`wall_thickness`, `curvature_field`, data fields) | in memory | they remember their answer at every point they were asked about — the same values, exactly |
 
-The first opening of a STEP file is the slow one (the 90-part kitchen assembly takes about a minute and a
+The first opening of a STEP file is the slow one (a 90-part assembly with free-form surfaces takes about a minute and a
 half). Afterwards the import is read from its cache, which is much faster, as long as the file and the
 algorithm are unchanged.
 
@@ -169,8 +169,23 @@ the work that does not need doing from being done:
 - **Only the last of a row of edits runs.** The edits of a quick series (typing, several clicks in the model tree) each
   ask for a run of the script as it was then; a run that a newer edit has replaced is not made, and the one that is running
   is told to stop. A script that takes a minute to run does not run six times for six clicks.
+- **An edit that does not touch the statement that runs does not stop it.** Showing or hiding a model above an optimisation or
+  an analysis that is going, or writing anything below it, is put into the run as it goes: the calculation carries on (it
+  can be minutes), and what you unhid is drawn at once. Only an edit of what that statement is made of -- a number in it or in a
+  statement it uses, a line added above it -- stops it, and then at once, not when the solver has finished meshing.
 - **A part of the script that is stopped half-way shows its last whole result.** The viewport keeps what it had until a run
   is done; an error in the middle of typing does not empty it.
+
+Two more things hold while a long render or a long analysis is going on:
+
+- **A long render is never stopped by a change that has nothing to do with it, and it does not hold the others up.** A render that
+  is expected to be long (the next level has more than about 150 000 vertices) runs at a lower priority: it still uses every core that
+  nothing else wants, but a small shape that was changed meanwhile is meshed first -- a tiny sphere next to a gyroid that takes half
+  a minute was ready in a third of a second -- and a part that is hidden needs no render at all, so it is gone at once.
+- **The viewport follows a running analysis or optimisation.** What the statements before a long one have shown is drawn as soon as
+  that statement begins, a part hidden or shown meanwhile is seen at once, and the new edit stops the old run within a moment (the
+  tetrahedral mesher, which takes seconds on a fine element size, looks at the stop flag as the solvers do) and starts its own. The
+  result of the run replaces the partial picture when it is done.
 
 ## The model tree
 

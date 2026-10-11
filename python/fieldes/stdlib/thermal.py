@@ -53,9 +53,9 @@ from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
-from fieldes.shape import Shape
+from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.excluded import keep_regions
-from fieldes.stdlib.fea import (FeaError, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
+from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions)
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
@@ -229,7 +229,7 @@ class _Handle:
             self.ptr = None
 
 
-class ThermalResult:
+class ThermalResult(FieldResult):
     ''' The solved thermal analysis.  Fields (Shapes whose value is the
         result at each point, usable in any expression): temperature,
         heat_flux (magnitude, W/mm^2), qx, qy, qz.  Summary: max_temperature,
@@ -244,7 +244,7 @@ class ThermalResult:
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, Shape(handle.fn('field')(p, i)))
+            setattr(self, name, field_shape(handle.fn('field')(p, i)))
             self._ranges[name] = (handle.fn('field_min')(p, i), handle.fn('field_max')(p, i))
         stat = lambda k: handle.fn('stat')(p, k)
         self.elements = int(stat(0))
@@ -590,7 +590,7 @@ def thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_ge
 
     def finish(handle, ptr, seconds):
         ''' The result from a solved problem (just optimised, or read back from its file) '''
-        density = Shape(lib.libfive_thermal_density(ptr))
+        density = field_shape(lib.libfive_thermal_density(ptr))
         hist = (ctypes.c_double * 1000)()
         m = lib.libfive_thermal_history(ptr, hist, 1000)
         history = [hist[i] for i in range(min(m, 1000))]
@@ -652,3 +652,7 @@ def thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_ge
     while len(_topo_cache) > 8:
         _topo_cache.popitem(last=False)
     return result
+
+
+ThermalResult._as_field = lambda self: self.temperature
+ThermalResult.fields = property(lambda self: OrderedDict((name, getattr(self, name)) for name in _FIELDS))

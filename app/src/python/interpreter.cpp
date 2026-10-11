@@ -181,6 +181,18 @@ static PyObject* partial_scene(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+// What the run has shown so far, before a statement that takes long (see Interpreter::publishPartial)
+static PyObject* partial_shapes(PyObject*, PyObject* args) {
+    PyObject* snapshot = nullptr;
+    PyObject* lines = nullptr;
+    int running = -1;
+    if (!PyArg_ParseTuple(args, "OO|i", &snapshot, &lines, &running)) {
+        return NULL;
+    }
+    if (g_interpreter) g_interpreter->publishPartial(snapshot, lines, running);
+    Py_RETURN_NONE;
+}
+
 // A variable's number changed by the run itself (see fieldes.stdlib.handles._follow_literals): the entry of the run's list of variables, and the
 // number the kernel knows it by
 static PyObject* retune_func(PyObject*, PyObject* args) {
@@ -220,6 +232,7 @@ static PyMethodDef host_methods[] = {
     {"set_bounds", set_bounds, METH_VARARGS, "Sets render bounds"},
     {"__var", var_func, METH_VARARGS, "Constructs a free variable"},
     {"partial_scene", partial_scene, METH_VARARGS, "Gives the model tree what a running script has made so far"},
+    {"partial_shapes", partial_shapes, METH_VARARGS, "Gives the viewport what a running script has shown so far"},
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
@@ -339,6 +352,16 @@ void Interpreter::preinit() {
                 }
             }
         } while (!found && app_dir.cdUp());
+#else
+        // A packaged copy (Linux, macOS) brings its own Python: runtime/python3 next to the program holds its standard library, so nothing of
+        // the machine's Python is needed -- or looked at.  (A build that is run from where it was made uses the system's Python.)
+        app_dir = QDir(QCoreApplication::applicationDirPath());
+        do {
+            if (app_dir.exists("runtime/python3")) {
+                qputenv("PYTHONHOME", app_dir.filePath("runtime/python3").toLocal8Bit());
+                break;
+            }
+        } while (app_dir.cdUp());
 #endif
 
         PyImport_AppendInittab("_fieldes_host", PyInit_fieldes_host);
@@ -368,9 +391,9 @@ void Interpreter::preinit() {
         if (!library) {
             PyErr_Print();
             QMessageBox::critical(nullptr, "FielDes",
-                "FielDes cannot load its Python library: the folder python\\fieldes and fieldes.dll "
-                "must stay next to FielDes.exe, as in the downloaded folder.\n\n"
-                "Details are on the console (start FielDes.exe from a terminal).");
+                "FielDes cannot load its Python library: the folder python/fieldes and the library "
+                "(fieldes.dll, fieldes.so, fieldes.dylib) must stay next to the program, as in the downloaded folder.\n\n"
+                "Details are on the console (start FielDes from a terminal).");
             std::exit(1);
         }
         Py_DECREF(library);
@@ -643,7 +666,21 @@ void Interpreter::eval(QString script)
     // Every edit of the script queues a run of the script as it was then.  Edits come faster than runs: a run that a newer edit has
     // already taken the place of is not made (the one that is running was told to stop, but a run that has not started cannot be told
     // anything: it would run to its end, one after another, for nothing).  Only the last of a row of edits runs
-    if (m_requests.fetch_sub(1) > 1)
+    bool drop = false;
+    {
+        QMutexLocker lock(&m_queueMutex);
+        if (m_stale > 0)
+        {
+            --m_stale;
+            m_requests.fetch_sub(1);
+            drop = true;
+        }
+        else
+        {
+            drop = m_requests.fetch_sub(1) > 1;
+        }
+    }
+    if (drop)
     {
         if (qEnvironmentVariableIsSet("FIELDES_TIMING")) std::cerr << "[run] request dropped (a newer one is waiting)" << std::endl;
         return;
@@ -654,7 +691,27 @@ void Interpreter::eval(QString script)
 
 void Interpreter::noteRequest()
 {
+    QMutexLocker lock(&m_queueMutex);
     m_requests.fetch_add(1);
+}
+
+void Interpreter::absorbed()
+{
+    QMutexLocker lock(&m_queueMutex);
+    m_requests.fetch_sub(1);        // (its own request, counted by noteRequest: there is no run for it)
+    m_stale += m_requests.load();   // (the runs that edits before it asked for, which wait for this one to be over: not of this text)
+}
+
+void Interpreter::setRunScript(QString script)
+{
+    QMutexLocker lock(&m_runScriptMutex);
+    m_runScript = script;
+}
+
+QString Interpreter::currentRunScript() const
+{
+    QMutexLocker lock(&m_runScriptMutex);
+    return m_runScript;
 }
 
 void Interpreter::resume()
@@ -665,6 +722,7 @@ void Interpreter::resume()
 void Interpreter::evaluate(QString script, bool resuming)
 {
     emit(busy());
+    setRunScript(script);
 
     PyGILState_STATE gstate = PyGILState_Ensure();
     libfive::run_progress::clearCancel();       // (a termination or a pause asked for during an earlier run is over with it)
@@ -745,7 +803,7 @@ void Interpreter::evaluate(QString script, bool resuming)
     Py_DECREF(breaks);
 
     Result out;
-    out.script = script;
+    out.script = currentRunScript();        // (an edit that was put into the run: the text it went on with)
     out.settings = Settings::defaultSettings();
     out.okay = ret && !PyErr_Occurred();
 
@@ -757,7 +815,7 @@ void Interpreter::evaluate(QString script, bool resuming)
         const auto tb = capturePythonTraceback();
         out.error = {tb, errorRangeFromTraceback(tb)};
         // (halt(): an edit of the script stopped this run, and the run of the new text is next -- that is no error of the script)
-        out.replaced = m_requests.load() > 0 && endsWithBareStop(tb);
+        out.replaced = freshRequests() > 0 && endsWithBareStop(tb);
         PyErr_Clear();
         if (!out.replaced && m_runnerMod)
         {
@@ -938,7 +996,7 @@ void Interpreter::evaluate(QString script, bool resuming)
                 out.okay = false;
                 const auto tb = capturePythonTraceback();
                 out.error = {tb, errorRangeFromTraceback(tb)};
-                out.replaced = m_requests.load() > 0 && endsWithBareStop(tb);      // (an edit stopped it while it was drawing a result)
+                out.replaced = freshRequests() > 0 && endsWithBareStop(tb);      // (an edit stopped it while it was drawing a result)
                 break;
             }
             PyObject* obj = shown ? shown : s;
@@ -1146,6 +1204,121 @@ QString Interpreter::callSupport(const QString& function, const QString& arg, QS
     return out;
 }
 
+void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int runningLine)
+{
+    if (!snapshot || !PyList_Check(snapshot)) return;
+    // (a newer edit of the script is waiting: the run it will start draws what it shows, this one is not worth drawing)
+    if (freshRequests() > 0) return;
+    Result out;
+    out.script = currentRunScript();
+    out.keepFromLine = runningLine;     // (the shapes of the statements from the one that runs on are the last run's, until it makes them)
+    out.settings = Settings::defaultSettings();
+    out.okay = true;
+    const auto host_mod = PyImport_ImportModule("_fieldes_host");
+    if (!host_mod) { PyErr_Clear(); return; }
+
+    // The render settings the script has given by now
+    {
+        auto res = PyObject_GetAttrString(host_mod, "__resolution");
+        if (res && res != Py_None) { const double r = PyFloat_AsDouble(res); if (!PyErr_Occurred()) out.settings.res = r; }
+        Py_XDECREF(res);
+        PyErr_Clear();
+        auto qua = PyObject_GetAttrString(host_mod, "__quality");
+        if (qua && qua != Py_None) { const double q = PyFloat_AsDouble(qua); if (!PyErr_Occurred()) out.settings.quality = q; }
+        Py_XDECREF(qua);
+        PyErr_Clear();
+        auto bounds = PyObject_GetAttrString(host_mod, "__bounds");
+        if (bounds && bounds != Py_None)
+        {
+            double xmin, ymin, zmin, xmax, ymax, zmax;
+            if (PyArg_ParseTuple(bounds, "(ddd)(ddd)", &xmin, &ymin, &zmin, &xmax, &ymax, &zmax))
+            {
+                out.settings.min = QVector3D(xmin, ymin, zmin);
+                out.settings.max = QVector3D(xmax, ymax, zmax);
+            }
+        }
+        Py_XDECREF(bounds);
+        PyErr_Clear();
+    }
+    // The numbers of the script (var) the shapes hold
+    std::map<libfive::Tree::Id, float> vars;
+    if (const auto list = PyObject_GetAttrString(host_mod, "__vars"))
+    {
+        if (PyList_Check(list))
+        {
+            for (Py_ssize_t i = 0; i < PyList_Size(list); ++i)
+            {
+                PyObject* s = nullptr;
+                double value = 0;
+                int lineno, end_lineno, col_offset, end_col_offset;
+                if (!PyArg_ParseTuple(PyList_GetItem(list, i), "Od(iiii)", &s, &value, &lineno, &end_lineno, &col_offset, &end_col_offset))
+                {
+                    PyErr_Clear();
+                    continue;
+                }
+                const auto ptr_obj = PyObject_GetAttrString(s, "ptr");
+                if (ptr_obj)
+                {
+                    vars[static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(ptr_obj))] = value;
+                    Py_DECREF(ptr_obj);
+                }
+                PyErr_Clear();
+            }
+        }
+        Py_DECREF(list);
+    }
+    PyErr_Clear();
+    QVector<int> stmt_lines;
+    if (linesList && PyList_Check(linesList))
+    {
+        for (Py_ssize_t k = 0; k < PyList_Size(linesList); ++k)
+        {
+            const auto t = PyList_GetItem(linesList, k);
+            stmt_lines << (PyTuple_Check(t) ? int(PyLong_AsLong(PyTuple_GetItem(t, 0))) - 1 : -1);
+        }
+    }
+    auto displayOf = [](PyObject* obj) -> PyObject* {
+        if (!obj || !PyObject_HasAttrString(obj, "_display")) return nullptr;
+        PyObject* fn = PyObject_GetAttrString(obj, "_display");
+        PyObject* res = (fn && PyCallable_Check(fn)) ? PyObject_CallObject(fn, nullptr) : nullptr;
+        Py_XDECREF(fn);
+        return res;
+    };
+    const auto n = PyList_Size(snapshot);
+    for (Py_ssize_t i = 0; i < n; ++i)
+    {
+        const auto s = PyList_GetItem(snapshot, i);
+        if (!s || s == Py_None) continue;
+        const int line = (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1;
+        PyObject* shown = displayOf(s);
+        if (!shown && PyErr_Occurred())
+        {
+            PyErr_Clear();          // (a result that cannot be shown is left out of what is drawn now)
+            continue;
+        }
+        PyObject* obj = shown ? shown : s;
+        recordShape(obj, out, vars, line);
+        const auto iter = PyObject_GetIter(obj);
+        if (iter)
+        {
+            PyObject* item = NULL;
+            while ((item = PyIter_Next(iter)))
+            {
+                PyObject* d = displayOf(item);
+                if (!d) PyErr_Clear();
+                recordShape(d ? d : item, out, vars, line);
+                Py_XDECREF(d);
+                Py_DECREF(item);
+            }
+            Py_DECREF(iter);
+        }
+        PyErr_Clear();
+        Py_XDECREF(shown);
+    }
+    Py_DECREF(host_mod);
+    emit(partialResult(out));
+}
+
 void Interpreter::recordShape(
         PyObject* obj,
         Result &out,
@@ -1159,10 +1332,50 @@ void Interpreter::recordShape(
         const auto shape = new Shape(libfive::Tree(tree), vars);
         shape->setSourceLine(line);
         {
+            // (an imported part, moved or edited or not, has an exact distance of its own: the field viewers ask for it by this key)
+            PyObject* exact = PyObject_GetAttrString(obj, "_distance_of");
+            const bool hasExact = exact && exact != Py_None && PyCallable_Check(exact);
+            Py_XDECREF(exact);
+            PyErr_Clear();
+            if (hasExact)
+            {
+                shape->setExactKey(QString::number(reinterpret_cast<quintptr>(ptr)));
+                PyObject* support = PyImport_ImportModule("fieldes.app_support");
+                if (support)
+                {
+                    PyObject* r = PyObject_CallMethod(support, "register_view_shape", "O", obj);
+                    Py_XDECREF(r);
+                    Py_DECREF(support);
+                }
+                PyErr_Clear();
+            }
+        }
+        {
             // (a point is not painted: its gizmo shows where it is)
             PyObject* kind = PyObject_GetAttrString(obj, "_kind");
             if (kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point") shape->setNoPaint(true);
             Py_XDECREF(kind);
+            PyErr_Clear();
+        }
+        {
+            // (a set of points -- fieldes.stdlib.lattices.PointSet._display -- is carried by a shape with no extent: its points are drawn
+            // by the viewport, each as the dot of a gizmo)
+            PyObject* dots = PyObject_GetAttrString(obj, "_markers");
+            if (dots && PyList_Check(dots))
+            {
+                std::vector<QVector3D> points;
+                points.reserve(size_t(PyList_Size(dots)));
+                for (Py_ssize_t k = 0; k < PyList_Size(dots); k++)
+                {
+                    PyObject* t = PyList_GetItem(dots, k);
+                    if (!PyTuple_Check(t) || PyTuple_Size(t) != 3) continue;
+                    points.emplace_back(float(PyFloat_AsDouble(PyTuple_GetItem(t, 0))), float(PyFloat_AsDouble(PyTuple_GetItem(t, 1))),
+                                        float(PyFloat_AsDouble(PyTuple_GetItem(t, 2))));
+                }
+                shape->setNoPaint(true);
+                shape->setMarkers(std::move(points));
+            }
+            Py_XDECREF(dots);
             PyErr_Clear();
         }
 
@@ -1584,6 +1797,29 @@ void Interpreter::recordShape(
                     }
                 }
                 Py_XDECREF(fields);
+                // The key numbers of a result (fieldes.stdlib.exporting.key_results): [(label, text, unit)]
+                {
+                    PyObject* keys = PyObject_GetAttrString(obj, "_key_results");
+                    if (keys && PyList_Check(keys))
+                    {
+                        QList<QStringList> rows;
+                        for (Py_ssize_t k = 0; k < PyList_Size(keys); k++)
+                        {
+                            PyObject* row = PyList_GetItem(keys, k);
+                            if (!row || !PyTuple_Check(row) || PyTuple_Size(row) != 3) continue;
+                            QStringList r;
+                            for (int c = 0; c < 3; c++)
+                            {
+                                PyObject* part = PyTuple_GetItem(row, c);
+                                r << (part && PyUnicode_Check(part) ? QString::fromUtf8(PyUnicode_AsUTF8(part)) : QString());
+                            }
+                            rows << r;
+                        }
+                        shape->setKeyResults(rows);
+                    }
+                    Py_XDECREF(keys);
+                    PyErr_Clear();
+                }
             }
             Py_XDECREF(fptr);
             Py_XDECREF(field);

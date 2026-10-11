@@ -1,4 +1,4 @@
-# A conformal lattice on an OPEN surface, made of a cell of your own.
+# A conformal lattice on an OPEN surface, made of a custom cell.
 #
 # The surface is just where a field is zero (here an S-shaped sheet, z = 8 sin(0.12 x)): it has no thickness and no STEP file is
 # needed.  lattice_surface_conform(surface, cell, ...) lays one layer of cells on one side of it (side='outside': where the field is
@@ -23,7 +23,7 @@ x, y, z = Shape.X(), Shape.Y(), Shape.Z()
 wave = z - 8 * (0.12 * x).sin()
 patch = box_exact((-30, -20, -14), (30, 20, 14))
 
-# a cell of your own, coordinates 0..1 across it, one corner drawn and mirrored in x, y and z: from the corner "o" beams run along the
+# a custom cell, coordinates 0..1 across it, one corner drawn and mirrored in x, y and z: from the corner "o" beams run along the
 # edges to their middles ("ex", "ey", "ez"), from the centre "c" to the middles of the faces at that corner ("fx", "fy", "fz")
 my_cell = cell_custom_truss({"o": (0, 0, 0), "ex": (0.5, 0, 0), "ey": (0, 0.5, 0), "ez": (0, 0, 0.5),
                              "c": (0.5, 0.5, 0.5), "fx": (0, 0.5, 0.5), "fy": (0.5, 0, 0.5), "fz": (0.5, 0.5, 0)},

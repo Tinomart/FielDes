@@ -9,6 +9,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #pragma once
 
 #include "libfive/render/brep/progress.hpp"
+#include "libfive/render/brep/spawn.hpp"
 #include "libfive/render/brep/object_pool.hpp"
 
 namespace libfive {
@@ -137,7 +138,7 @@ void ObjectPool<T, Ts...>::reset(unsigned workers,
 
     // Delete all of the blocks, using multiple threads for speed
     for (unsigned i=0; i < workers; ++i) {
-        futures[i] = std::async(std::launch::async,
+        futures[i] = spawn(
                 [i, this, workers, &progress_watcher]() {
                 for (unsigned j=i; j < allocated_blocks.size();
                                    j += workers)

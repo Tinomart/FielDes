@@ -105,9 +105,11 @@ last_scene = ''  # (no longer made: the model tree is read from the text, see ou
 # The names of the last run and what they hold (FielDes asks for the numbers of a shape by name)
 last_globals = {}
 # The (first, last) lines of the statement that runs now and the text that is being run (None between runs): an edit of the script asks
-# where it begins -- see app_support.edit_reaches_running
+# where it begins -- see app_support.edit_in_place
 running_lines = None
 running_source = None
+# The state of the run that is going (None between runs): an edit that changes nothing of what it makes is put into it -- see apply_edit
+running_state = None
 # The results of the statements that were done when the last run stopped with an error (None when it ran to its end): FielDes shows
 # what ran before the error
 last_partial = None
@@ -260,17 +262,197 @@ def resume(breakpoints=None):
     return _continue(_paused, breakpoints, skip_first=True)
 
 
+def _display_name(stmt):
+    ''' The name a statement only shows (`ball`: the eye of a model in the tree writes and takes out such a line), else None.  It makes
+        nothing: a run that has gone past it can have it put in or taken out without any of what it made being any other '''
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Name):
+        return stmt.value.id
+    return None
+
+
+def _position(stmt):
+    return (stmt.lineno, stmt.end_lineno)
+
+
+def _line_rule(old_text, new_text):
+    ''' For a text that is not a script just now (it is being typed): 'reaches' when the edit begins at or above the statement that runs,
+        else 'defer' -- the run goes on to the end of that statement and then makes way for the run of the text '''
+    running = running_lines
+    if not running:
+        return None
+    a, b = old_text.splitlines(), new_text.splitlines()
+    n = 0
+    while n < len(a) and n < len(b) and a[n] == b[n]:
+        n += 1
+    if n == len(a) == len(b):
+        return None
+    return 'reaches' if n + 1 <= running[1] else 'defer'
+
+
+def plan_edit(new_text):
+    ''' What an edit of the script does to the run that is going.  None: nothing runs (or the run is past its last statement).
+        'reaches': it changes what the statement that runs makes -- or what it is made of: that statement, or one before it that is not
+        only a model shown (a changed number, a line added above it), so the run is stopped and made again.  'defer': the text is not a
+        script just now, and the edit is below the statement that runs.  Else the plan to put it into the run: the statements the run has
+        done (and the one that runs) are what they were, so what they made stays; a model shown or hidden above, and whatever comes
+        after the statement that runs, are the new text's.  Called with the run's lock '''
+    st = running_state
+    old_text = running_source
+    if st is None or old_text is None:
+        return None
+    i = st['i']
+    if i >= len(st['body']):
+        return None
+    try:
+        old = ast.parse(old_text).body
+        module = ast.parse(new_text)
+    except SyntaxError:
+        return _line_rule(old_text, new_text)
+    new = module.body
+    if i >= len(old) or _display_name(old[i]) is not None:
+        return None                         # (the one that runs only shows a model: it is over at once)
+    core_old = [(k, s) for k, s in enumerate(old[:i + 1]) if _display_name(s) is None]
+    core_new = [(k, s) for k, s in enumerate(new) if _display_name(s) is None]
+    n = len(core_old)
+    if len(core_new) < n:
+        return 'reaches'
+    shifts = []
+    for (_, a), (_, b) in zip(core_old, core_new):
+        # (the same statement: what it made is what the new text says)
+        if ast.dump(a) != ast.dump(b):
+            return 'reaches'
+        if _position(a) != _position(b):
+            # (... a few lines further on, or nearer: a comment or a blank line was put above it, or taken away -- the statement is the same
+            # text, so what it made is what the new text says, and the places of its numbers move by the same lines.  Only when it is the same
+            # text to the letter: the columns of its numbers are known from it)
+            if ast.get_source_segment(old_text, a) != ast.get_source_segment(new_text, b):
+                return 'reaches'
+            shifts.append((a.lineno, a.end_lineno, b.lineno - a.lineno))
+    if shifts:
+        # (the statement that runs is moved too: the numbers it has not asked for yet are tagged with the lines it had, and so are the
+        # breakpoints a run was begun with -- a text with those, and a move, is made again)
+        running = core_old[n - 1][1]
+        if st.get('breakpoints') or any(isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id == 'var' for x in ast.walk(running)):
+            return 'reaches'
+    end = core_new[n - 1][0] + 1            # (the statement that runs, in the new text, and one past it)
+    done_new = new[:end - 1]
+    gs = st['gs']
+    for s in done_new:
+        name = _display_name(s)
+        if name is not None and name not in gs:
+            # (it shows a name that is not there -- half typed, or made below: this run has nothing to show for it, and only a run of the
+            # new text says what is wrong.  The statement that runs is not touched: it ends, and its result is kept)
+            return 'defer'
+    return {'module': module, 'done': done_new, 'end': end, 'core_done': [k for k, _ in core_old[:-1]], 'shifts': shifts}
+
+
+def apply_edit(new_text):
+    ''' Puts an edit of the script that does not reach the statement that runs into the run that is going: '1' when it is in (the run goes
+        on with the new text, its results are the new text's; nothing is stopped and no other run follows), else '' '''
+    st = running_state
+    if st is None:
+        return ''
+    global running_source
+    with st['lock']:
+        plan = plan_edit(new_text)
+        if not isinstance(plan, dict):
+            return ''
+        out, lines, body, gs = st['out'], st['lines'], st['body'], st['gs']
+        i = st['i']
+        values = iter(out[k] for k in plan['core_done'])
+        done_out, done_lines = [], []
+        for s in plan['done']:
+            name = _display_name(s)
+            done_out.append(gs[name] if name is not None else next(values))
+            done_lines.append(_position(s))
+        # the statements after the one that runs are the new text's (tagged as a run tags them: see VarTransformer)
+        tagged = VarTransformer().transform(plan['module'])
+        _count_loops(tagged)
+        running = body[i]
+        if plan['shifts']:
+            _shift_places(running, plan['shifts'])
+        body[:] = list(tagged.body[:len(done_out)]) + [running] + list(tagged.body[plan['end']:])
+        out[:] = done_out
+        lines[:] = done_lines
+        st['i'] = len(done_out)
+        st['s'] = new_text
+        st['source_lines'][:] = new_text.splitlines()
+        from fieldes import app_support
+        st['src'] = app_support._Source(new_text)
+        running_source = new_text
+        st['republish'] = True              # (what is shown is drawn again: a model shown or hidden is seen at once)
+        st['stop'] = False                  # (a stop asked for by an edit before this one is over with: the run is the new text's now)
+    return '1'
+
+
+def _shift_places(running, shifts):
+    ''' The statements the run has done, and the one that runs, are on other lines in the new text (`shifts`: first line, last line, how many
+        lines further): what the run keeps of where they are is moved with them -- the line of the statement that runs, and the places of the
+        numbers (var) it has found so far, which the editor writes a drag to '''
+    global running_lines
+
+    def moved(line):
+        for first, last, delta in shifts:
+            if first <= line <= last:
+                return line + delta
+        return line
+
+    delta_running = moved(running.lineno) - running.lineno
+    if delta_running:
+        ast.increment_lineno(running, delta_running)
+    running_lines = (running.lineno, running.end_lineno)
+    try:
+        from fieldes import run_progress
+        lib = run_progress._lib
+        if lib and hasattr(lib, 'libfive_run_step_line'):
+            lib.libfive_run_step_line(running.lineno)
+    except Exception:
+        pass
+    try:
+        import _fieldes_host as host
+        entries = getattr(host, '__vars', None)
+        if isinstance(entries, list):
+            for k, item in enumerate(entries):
+                if isinstance(item, tuple) and len(item) == 3 and isinstance(item[2], tuple) and len(item[2]) == 4:
+                    first, last, col, end_col = item[2]
+                    entries[k] = (item[0], item[1], (moved(first), moved(last), col, end_col))
+    except ImportError:
+        pass
+
+
+def stop_after_statement():
+    ''' Asks the run that is going to stop when the statement that runs is done -- not in it: what it makes is whole and kept (a solver's
+        result, a field), so that the run that follows finds it made -- for an edit below it that cannot be put into the run '''
+    st = running_state
+    if st is not None:
+        st['stop'] = True
+
+
+def _publish_partial(out, lines, running_line=-1):
+    ''' The viewport draws what the statements so far have shown (their values and the lines they are on) before a long statement runs: a part
+        hidden or shown, a number edited, is seen at once, whatever the analysis after it takes. (Only inside the application.) '''
+    try:
+        import _fieldes_host as host
+        publish = getattr(host, 'partial_shapes', None)
+        if publish is not None:
+            publish(list(out), list(lines), running_line)
+    except Exception:
+        pass
+
+
 class _PartialScenes:
     ''' The model tree is read from the script's text (see outline.py), so it does not wait for the run.  What the run adds is what its
         statements found out, which `outline.record` keeps as each one is done; the tree is told to take it up (host.partial_scene)
         once a statement has been running for DELAY seconds -- so a script whose statements are all quick says nothing until it is done.
         It runs beside the script, in a thread of its own, and only tells: the script is not slowed by it. '''
     DELAY = 0.15
+    SHOW_AFTER = 0.4        # a statement still going after this long -- whatever it is -- has what the statements before it show drawn
 
     def __init__(self, state, host):
         import threading
         self.state, self.host = state, host
         self.sent = 0
+        self.shown = -1         # the statement whose picture was drawn
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name='fieldes-partial-scenes', daemon=True)
         self.thread.start()
@@ -279,7 +461,26 @@ class _PartialScenes:
         import time
         st = self.state
         while not self.stop.wait(0.05):
+            if st.get('republish'):
+                # an edit was put into the run (a model shown or hidden above the statement that runs): what the statements done show is drawn
+                # again now, not when the run is over
+                st['republish'] = False
+                try:
+                    if not self.stop.is_set():
+                        i = st['i']
+                        _publish_partial(list(st['out']), list(st['lines']), st['body'][i].lineno - 1 if i < len(st['body']) else -1)
+                except Exception:
+                    pass
             n = st['i']
+            if self.shown != n < len(st['body']) and time.time() - st['t0'] >= self.SHOW_AFTER:
+                # a statement takes long (an analysis, an optimisation, an import ...): what the statements before it have shown is drawn
+                # now, and an edit meanwhile -- a model shown or hidden -- is seen at once, not when the statement is over
+                self.shown = n
+                try:
+                    if not self.stop.is_set():
+                        _publish_partial(list(st['out']), list(st['lines']), st['body'][n].lineno - 1)
+                except Exception:
+                    pass
             if self.sent < n < len(st['body']) and time.time() - st['t0'] >= self.DELAY:
                 self.sent = n
                 try:
@@ -314,7 +515,9 @@ def _partial_scenes(state):
 
 def _continue(state, breakpoints, skip_first):
     global last_lines, last_scene, last_output, last_paused, _paused, last_globals, last_hole, last_partial, running_lines, running_source
+    global running_state
     import contextlib
+    import threading
     import time
     from fieldes import field_cache, run_progress
     body, gs, out, lines = state['body'], state['gs'], state['out'], state['lines']
@@ -335,12 +538,22 @@ def _continue(state, breakpoints, skip_first):
         progress_lib.libfive_run_begin(len(body))
     state['t0'] = time.time()
     running_source = state['s']
+    state['breakpoints'] = list(breakpoints or ())          # (an edit that moves the lines of the statements below it asks whether lines matter)
+    lock = state.setdefault('lock', threading.RLock())
+    state['stop'] = False
+    running_state = state
     watcher = _partial_scenes(state)
     try:
         with contextlib.redirect_stdout(state['printed']):
             while state['i'] < len(body):
-                i = state['i']
-                p = body[i]
+                # (an edit that does not reach the statement that runs is put into the run between its statements: see apply_edit)
+                with lock:
+                    if state['stop']:
+                        raise Exception()   # (a run that an edit has replaced ends so: nothing is shown of it)
+                    i = state['i']
+                    if i >= len(body):
+                        break
+                    p = body[i]
                 state['t0'] = time.time()
                 holes = _holes(p)
                 pending = state.setdefault('pending', set())
@@ -356,10 +569,12 @@ def _continue(state, breakpoints, skip_first):
                         pending.add(p.name)
                     if holes and 'hole' not in state:
                         state['hole'] = (p.lineno, len(holes), source_lines[p.lineno - 1].strip() if p.lineno <= len(source_lines) else '')
-                    out.append(None)
-                    lines.append((p.lineno, p.end_lineno))
-                    state['skip'] = -1
-                    state['i'] = i + 1
+                    with lock:
+                        i = state['i']
+                        out.append(None)
+                        lines.append((p.lineno, p.end_lineno))
+                        state['skip'] = -1
+                        state['i'] = i + 1
                     continue
                 b = 0 if (skip_first and state.get('skip') == i) else _hit(
                     breakpoints, p, body[i - 1].end_lineno if i else 0)
@@ -398,13 +613,15 @@ def _continue(state, breakpoints, skip_first):
                         if key is not None:
                             field_cache.store(key, gs.get(p.targets[0].id), state['printed'].getvalue()[before:],
                                               time.time() - started)
-                out.append(r)
-                lines.append((p.lineno, p.end_lineno))
-                outline.record(p, state['src'], gs, r)
-                if pending:
-                    # (a name that a statement that waits would have made is made by this one after all: nothing waits for it any more)
-                    pending -= {n.id for n in ast.walk(p) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-                state['i'] = i + 1
+                with lock:
+                    i = state['i']      # (an edit put into the run while the statement ran has moved it: see apply_edit)
+                    out.append(r)
+                    lines.append((p.lineno, p.end_lineno))
+                    outline.record(p, state['src'], gs, r)
+                    if pending:
+                        # (a name that a statement that waits would have made is made by this one after all: nothing waits for it any more)
+                        pending -= {n.id for n in ast.walk(p) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+                    state['i'] = i + 1
     except BaseException as e:
         # The script stopped with an error: its model tree lists what the statements before it made.  (Not when it
         # was stopped by the application, for a newer edit or by the red dot -- a solver that gave up says "cancelled" --
@@ -422,6 +639,8 @@ def _continue(state, breakpoints, skip_first):
         raise
     finally:
         running_lines = None
+        with lock:
+            running_state = None            # (an edit now finds no run to put itself into: it makes one)
         if watcher:
             watcher.close()
         last_output = state['printed'].getvalue()

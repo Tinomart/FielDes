@@ -67,6 +67,7 @@ public:
         bool hasFlow = false;        // a flow with streamlines...
         bool showFlow = true;        // ...drawn over it
         float opacity = 1;           // how opaque the flow is drawn (a lower one shows the body in it)
+        QList<QStringList> keyResults;   // the key numbers of the result: label, text, unit of each
     };
     void setState(const State& s);
     // The width the name of the field shown needs, so that a long one (in another language) is not cut off at the card's usual width
@@ -112,6 +113,7 @@ protected:
     QLabel* m_stepLabel;
     QLabel* m_note;
     QLabel* m_info;
+    QLabel* m_keys = nullptr;
     State m_state;
     bool m_updating = false;
 };

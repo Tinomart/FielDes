@@ -2,19 +2,27 @@
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
-Every lattice operation takes a CELL: the thing the lattice is made of.  Five functions make one --
+A lattice that repeats is made of a CELL: the one cell it is made of.  Four functions make one --
 
-    cell_periodic(kind)              a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS
+    cell_periodic(kind)              a standard cell: a strut cell (octet, bcc, kelvin ...), a TPMS
                                      (gyroid, schwarz_p ...) or a planar pattern (hexagon ...)
-    cell_non_periodic(kind)          cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
-    cell_custom(region, geometry)    your own cell of ANY geometry: a box for the extent of the cell and a field for
+    cell_custom(region, geometry)    a custom cell of ANY geometry: a box for the extent of the cell and a field for
                                      what is in it -- the cell is their intersection, and repeats on any cell map
-    cell_custom_truss(nodes, beams)  your own strut cell: beams between nodes in the unit cube
-    cell_custom_tpms(equation)       your own triply periodic surface, from its equation
+    cell_custom_truss(nodes, beams)  a custom strut cell: beams between nodes in the unit cube
+    cell_custom_tpms(equation)       a custom triply periodic surface, from its equation
 
 -- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
 name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
 it is, how big, and where it goes (a body, a surface, a cell map) are the operation's.
+
+A foam does not repeat, so it is not made of a cell: it is made around POINTS.  Three steps, each what its name says --
+
+    random_points(body, ...)         points in a body: how far apart they are on average, how random, the nearest and the farthest
+                                     two may be.  FielDes draws them, each as the dot of a gizmo
+    voronoi_lattice(points, ...)     the edges of the Voronoi cells of the points, as beams: a foam
+    delaunay_lattice(points, ...)    the Delaunay edges between the points, as beams: a stochastic truss
+
+-- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
 The one-call version:
 
@@ -31,8 +39,9 @@ The one-call version:
     # the density may itself be a field)
     lat = lattice(part, cell_periodic('octet'), cell_size=10, density=0.2)
 
-    # a foam that does not repeat
-    foam = lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
+    # a foam: points in the body, and the Voronoi cells around them
+    points = random_points(part, spacing=8, randomness=0.7)
+    foam = voronoi_lattice(points, thickness=1.0)
 
     # cells that follow a sphere / cylinder
     lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0,
@@ -70,13 +79,16 @@ import collections
 import itertools
 import math
 import numbers
+import random
+import sys
 
 from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
-from fieldes.stdlib.fieldargs import is_field, present, positive, number_or_field
+from fieldes.stdlib.fieldargs import is_field, present, positive, number_or_field, returns_lattice
 
-__all__ = ['cell_periodic', 'cell_non_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
+__all__ = ['cell_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
+           'random_points', 'PointSet', 'voronoi_lattice', 'delaunay_lattice',
            'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
            'graph_lattice', 'voronoi_graph',
            'surface_graph', 'points_graph', 'LatticeGraph',
@@ -227,10 +239,10 @@ def _rotation(rot):
 
 
 class LatticeCell:
-    ''' What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic(), cell_custom(),
+    ''' What a lattice is made of (see the module): made by cell_periodic(), cell_custom(),
         cell_custom_truss() or cell_custom_tpms(), taken by every lattice operation as its `cell`.
-        .family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
-                     (any geometry in a box, see cell_custom) or 'foam' (cells that do not repeat)
+        .family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern) or 'shape'
+                     (any geometry in a box, see cell_custom)
         .periodic    whether the cell repeats on a grid (so can follow a cell map or a surface) '''
     family = ''
     periodic = True
@@ -939,15 +951,15 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
         cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
             iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
             diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
-            cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
-            or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
+            cell_custom(region, geometry), cell_custom_truss(nodes, beams) or cell_custom_tpms(equation).
+            Default: cell_periodic('gyroid').  (A foam is not a cell: voronoi_lattice(random_points(body)))
         cell_size: mm, or (sx, sy, sz), or a FIELD (cells bigger here and smaller there).  (Default 10 mm; for a
             cell_custom(region, geometry) cell the size of its region, so that it comes out as you modelled it -- a
             larger or smaller size scales the cell.)  A cell size field is blended from lattices of cells a factor 2
             apart (up to a factor of 16 in all): the cells are exact where the field is one of those sizes and a blend of
             the two next to it between them
         thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
-            or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
+            cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
             (planar).  Numbers or fields
         density: instead of the member size, a relative density 0..1 (a
             number or a field); calibrated automatically
@@ -970,16 +982,6 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
         else:
             lat = _periodic(cellobj, cell_size, cell_map)
         return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
-    if cellobj.family == 'foam':
-        if graded is not None:
-            raise ValueError('lattice: cells that do not repeat (voronoi, delaunay) take a cell size that is a number: '
-                             'their points are about that far apart')
-        cell = _cell3(10.0 if cell_size is None else cell_size)
-        r = _beam_radius('lattice', thickness, radius, None)
-        if r is None and density is None:
-            r = 0.08 * min(cell)
-        return _voronoi_lattice(body, min(cell), radius=r, style=cellobj.style, relax=cellobj.relax, seed=cellobj.seed,
-                                skin=skin, blend=blend, skin_blend=skin_blend, density=density)
     is_tpms = cellobj.family == 'tpms'
     is_planar = cellobj.family == 'planar'
 
@@ -1017,6 +1019,9 @@ def lattice(body, cell=None, cell_size=None, thickness=None, radius=None, densit
     else:
         lat = one_size(10.0 if cell_size is None else cell_size)
     return fill(body, lat, skin=skin, region=region, depth=depth, blend=skin_blend)
+
+
+lattice = returns_lattice(lattice)
 
 
 def _graded_size(cell_size):
@@ -1066,7 +1071,7 @@ def _graded_field(body, size, build):
 # cell_custom_tpms()
 
 class UnitCell(LatticeCell):
-    ''' A strut unit cell of your own: beams between nodes in the unit cube
+    ''' A custom strut unit cell: beams between nodes in the unit cube
         (coordinates 0..1 across the cell, scaled by cell_size when used).
         What cell_custom_truss(nodes, beams, mirror) makes; use it wherever a cell is
         taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
@@ -1332,18 +1337,6 @@ class ShapeCell(LatticeCell):
         return 'ShapeCell(region {:g} x {:g} x {:g} mm)'.format(*self.size)
 
 
-class FoamCell(LatticeCell):
-    ''' Cells that do not repeat (see cell_non_periodic) '''
-    family = 'foam'
-    periodic = False
-
-    def __init__(self, style='voronoi', relax=2, seed=1):
-        self.style = style
-        self.relax = int(relax)
-        self.seed = int(seed)
-        self.name = style
-
-
 def _norm(name):
     return name.lower().replace('-', '_').replace(' ', '_')
 
@@ -1360,13 +1353,15 @@ def cell_periodic(kind='octet'):
         Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
             lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
             lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
-        (Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
-        repeat: cell_non_periodic().) '''
+        (Custom cells: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  A foam is made around points,
+        not of a cell: voronoi_lattice(random_points(body)).) '''
     if not isinstance(kind, str):
         raise TypeError('cell_periodic(kind): kind is the name of a standard cell, e.g. cell_periodic(\'gyroid\')')
     key = _norm(kind)
     if key in ('voronoi', 'voronoi_foam', 'stochastic', 'delaunay'):
-        raise ValueError('cell_periodic: {!r} does not repeat: use cell_non_periodic({!r})'.format(kind, kind))
+        raise ValueError('cell_periodic: {!r} is not a cell that repeats: a foam is made around points, not of a cell -- '
+                         '{}_lattice(random_points(body, spacing=8)) fills the body with it'.format(
+                             kind, 'delaunay' if key == 'delaunay' else 'voronoi'))
     if key == 'diamond_struts':
         return StrutCell('diamond')
     if key in TPMS_KINDS:
@@ -1377,23 +1372,6 @@ def cell_periodic(kind='octet'):
         return StrutCell(key)
     raise ValueError('unknown cell {!r}. Struts: {}; TPMS: {}; planar: {}'.format(
         kind, ', '.join(sorted(STRUT_CELLS)), ', '.join(sorted(TPMS_KINDS)), ', '.join(PLANAR_KINDS)))
-
-
-def cell_non_periodic(kind='voronoi', relax=2, seed=1):
-    ''' Cells that do not repeat: points at random about a cell size apart, joined into a graph that fills the body
-        (or lies on a surface).
-
-        kind    'voronoi' (the edges of the Voronoi cells: a foam) or 'delaunay' (the Delaunay edges: a stochastic truss)
-        relax   iterations that make the cells more even
-        seed    another number is another random pattern
-
-            lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5) '''
-    key = _norm(kind) if isinstance(kind, str) else kind
-    if key in ('voronoi', 'voronoi_foam'):
-        return FoamCell('voronoi', relax, seed)
-    if key in ('delaunay', 'stochastic'):
-        return FoamCell('delaunay', relax, seed)
-    raise ValueError("cell_non_periodic: kind is 'voronoi' or 'delaunay'")
 
 
 def cell_custom(region=None, geometry=None, check=True, **removed):
@@ -1436,7 +1414,7 @@ def cell_custom(region=None, geometry=None, check=True, **removed):
 
 
 def cell_custom_truss(nodes, beams, mirror=''):
-    ''' A strut cell of your own: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
+    ''' A custom strut cell: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
         cell_size when used).
 
         nodes   {name: (x, y, z)} or a list of (x, y, z) (then the names are the indices)
@@ -1457,7 +1435,7 @@ def cell_custom_truss(nodes, beams, mirror=''):
 
 
 def cell_custom_tpms(equation, name='custom'):
-    ''' A triply periodic surface of your own, from its equation f(a, b, c): a, b, c are the position in the cell as
+    ''' A custom triply periodic surface, from its equation f(a, b, c): a, b, c are the position in the cell as
         phases (2 pi per cell).  Write it with + - * / and the methods .sin() .cos() .sqrt() .square() of a, b, c, e.g.
         a gyroid:
 
@@ -1477,8 +1455,10 @@ def _need_cell(cell, who, family=None, default=None):
     if not isinstance(cell, LatticeCell):
         hint = ''
         if isinstance(cell, str):
-            hint = ': write cell_periodic({!r}) (a standard cell), cell_non_periodic(...) or cell_custom(...)'.format(cell)
-        raise TypeError('{}: the cell is made by cell_periodic(...), cell_non_periodic(...), cell_custom(region, geometry), '
+            hint = ': write cell_periodic({!r}) (a standard cell) or cell_custom(...)'.format(cell)
+        elif isinstance(cell, PointSet):
+            hint = ': points are not a cell -- a foam made around them is voronoi_lattice(points) (or delaunay_lattice(points))'
+        raise TypeError('{}: the cell is made by cell_periodic(...), cell_custom(region, geometry), '
                         'cell_custom_truss(...) or cell_custom_tpms(...), not {}{}'
                         .format(who, repr(cell) if isinstance(cell, str) else 'a ' + type(cell).__name__, hint))
     if family is not None and cell.family != family:
@@ -1492,6 +1472,380 @@ def _plain(cell):
     if isinstance(cell, (StrutCell, TPMSCell, PlanarCell)):
         return cell.key
     return cell
+
+
+################################################################################
+# Points: what a foam is made around
+
+class PointSet:
+    ''' A set of points: what random_points() makes, and voronoi_lattice() and delaunay_lattice() are made around.  FielDes draws
+        them, each as the dot of a gizmo (without the gizmo's handles: they are data, not something to drag).
+        .points     the points, (x, y, z) in mm
+        .spacing    the average distance between a point and its nearest neighbour that it was made for
+        .body       the body they were made in (None when they were not made in one): a lattice made of them fills it
+        len(points), iterating it, points[i] work as for a list; points.stats() says how the points really are '''
+
+    _no_handles = True             # (not something to drag: FielDes hides the handles button)
+
+    def __init__(self, points, spacing, bounds=None, seed=None, body=None):
+        self.points = [tuple(float(c) for c in p) for p in points]
+        self.spacing = float(spacing)
+        self.bounds = bounds
+        self.seed = seed
+        self.body = body
+
+    def _display(self):
+        ''' What FielDes shows for the points: a shape with no extent that carries them (`_markers`), and the viewport draws each of them
+            as the dot of a gizmo -- nothing is meshed.  The shape is a constant that depends on the points, so that two sets are two
+            shapes (shapes with the same field are one) '''
+        shown = self.__dict__.get('_shown')
+        if shown is None:
+            import zlib
+            key = zlib.crc32(repr(self.points).encode('ascii'))
+            shown = Shape.wrap(float(1 + key % 1000003))              # (positive everywhere: nothing is inside)
+            shown._kind = 'points'
+            shown._markers = list(self.points)
+            if self.points:
+                shown._bounds = (tuple(min(p[i] for p in self.points) for i in range(3)),
+                                 tuple(max(p[i] for p in self.points) for i in range(3)))
+            self._shown = shown
+        return shown
+
+    def __len__(self):
+        return len(self.points)
+
+    def __iter__(self):
+        return iter(self.points)
+
+    def __getitem__(self, i):
+        return self.points[i]
+
+    def stats(self):
+        ''' How the points are: {count, mean, min, max} -- the distance from a point to its nearest neighbour (mm), on average, the
+            smallest and the largest of them '''
+        d = _nearest_distances(self.points, self.spacing * 1.5)
+        d = [v for v in d if v is not None]
+        if not d:
+            return {'count': len(self.points), 'mean': 0.0, 'min': 0.0, 'max': 0.0}
+        return {'count': len(self.points), 'mean': sum(d) / len(d), 'min': min(d), 'max': max(d)}
+
+    def __repr__(self):
+        s = self.stats()
+        return '<PointSet: {count} points, nearest neighbour {mean:.3g} mm on average ({min:.3g} to {max:.3g})>'.format(**s)
+
+
+def _nearest_distances(points, cell):
+    ''' For every point, the distance to the nearest other point (None when there is none within a few cells) '''
+    cell = max(float(cell), 1e-9)
+    grid = {}
+    for i, p in enumerate(points):
+        grid.setdefault((int(p[0] // cell), int(p[1] // cell), int(p[2] // cell)), []).append(i)
+    out = []
+    for i, p in enumerate(points):
+        cx, cy, cz = int(p[0] // cell), int(p[1] // cell), int(p[2] // cell)
+        best = None
+        for ring in (1, 2, 3):
+            for dx in range(-ring, ring + 1):
+                for dy in range(-ring, ring + 1):
+                    for dz in range(-ring, ring + 1):
+                        for j in grid.get((cx + dx, cy + dy, cz + dz), ()):
+                            if j != i:
+                                d = math.dist(p, points[j])
+                                if best is None or d < best:
+                                    best = d
+            if best is not None and best <= ring * cell:
+                break
+        out.append(best)
+    return out
+
+
+def _mean_nearest(points):
+    ''' The average nearest-neighbour distance of a list of points (their spacing) '''
+    pts = [tuple(float(c) for c in p) for p in points]
+    if len(pts) < 2:
+        return 1.0
+    lo = [min(p[i] for p in pts) for i in range(3)]
+    hi = [max(p[i] for p in pts) for i in range(3)]
+    cell = max((max(hi[i] - lo[i] for i in range(3)) / max(1.0, len(pts) ** (1.0 / 3.0))) * 1.5, 1e-6)
+    d = [v for v in _nearest_distances(pts, cell) if v is not None]
+    return sum(d) / len(d) if d else 1.0
+
+
+class _Hash:
+    ''' A grid of points: asks whether any lies within a distance (cells of the size of the largest distance asked) '''
+
+    def __init__(self, cell):
+        self.cell = float(cell)
+        self.cells = {}
+
+    def key(self, p):
+        c = self.cell
+        return (int(p[0] // c), int(p[1] // c), int(p[2] // c))
+
+    def add(self, p):
+        self.cells.setdefault(self.key(p), []).append(p)
+
+    def any_within(self, p, r, other=False):
+        ''' Whether a point lies within r of p (other: not p itself) '''
+        r2 = r * r
+        cx, cy, cz = self.key(p)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for q in self.cells.get((cx + dx, cy + dy, cz + dz), ()):
+                        if other and q is p:
+                            continue
+                        if (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2 <= r2:
+                            return True
+        return False
+
+
+def _bcc_points(lo, hi, nearest):
+    ''' The points of a body-centred grid over the box whose nearest neighbours are `nearest` apart (every point has the same eight) '''
+    c = 2.0 * nearest / math.sqrt(3.0)
+    n = [int(math.ceil((hi[i] - lo[i]) / c)) + 1 for i in range(3)]
+    if 2.0 * n[0] * n[1] * n[2] > 4e6:
+        raise ValueError('random_points: the spacing is too small for this region (it would be more than a million points): make it '
+                         'larger, or the region smaller')
+    out = []
+    for i in range(n[0]):
+        for j in range(n[1]):
+            for k in range(n[2]):
+                x, y, z = lo[0] + i * c, lo[1] + j * c, lo[2] + k * c
+                out.append((x, y, z))
+                out.append((x + c / 2, y + c / 2, z + c / 2))
+    return out
+
+
+def _inside(body, pts, band):
+    ''' The points whose value in the body is below `band` (inside it, or within `band` mm outside) '''
+    if body is None:
+        return list(pts)
+    from fieldes.stdlib.fields import evaluate
+    out = []
+    for start in range(0, len(pts), 40000):
+        chunk = pts[start:start + 40000]
+        vals = evaluate(body, chunk)
+        out.extend(p for p, v in zip(chunk, vals) if v < band)
+    return out
+
+
+def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None):
+    ''' Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
+
+        body          where the points are made: inside it, and a layer of one `spacing` outside, so that the cells at its surface are
+                      closed.  Without a body, give bounds=((x0, y0, z0), (x1, y1, z1))
+        spacing       how far a point is from its nearest neighbour, on average (mm): the points are made so that they come out that far
+                      apart whatever the randomness (points.stats() says how far they really are)
+        randomness    0 to 1: how much the points are moved off a regular grid -- 0 is a regular body-centred grid (every cell the same),
+                      1 is as random as the distances below allow
+        min_distance  no two points are closer than this (mm).  Default: `spacing` less 60 % of the randomness -- a low number lets the
+                      points clump, `spacing` itself makes them even
+        max_distance  no point is farther than this from its nearest neighbour (mm): a point that is more alone than that is given a
+                      neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
+                      distances to the nearest neighbour are in: the closer together they are, the more regular the points)
+        seed          another number is another pattern (the same number is the same points again)
+
+        Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
+        distances the points really have), points.body (the body they were made in), and
+
+            points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
+            foam = voronoi_lattice(points, thickness=1.0)
+            truss = delaunay_lattice(points, thickness=1.0)
+
+        make a foam and a stochastic truss around them, in the same body. '''
+    if not isinstance(spacing, numbers.Number) or isinstance(spacing, bool) or not spacing > 0:
+        raise ValueError('random_points: spacing is a number of mm, more than 0')
+    spacing = float(spacing)
+    if not isinstance(randomness, numbers.Number) or not 0.0 <= randomness <= 1.0:
+        raise ValueError('random_points: randomness is between 0 (a regular grid) and 1 (as random as the distances allow)')
+    if min_distance is None:
+        min_distance = spacing * (1.0 - 0.6 * randomness)
+    if not min_distance > 0 or min_distance > spacing * 1.0000001:
+        raise ValueError('random_points: min_distance is more than 0 and at most the spacing ({:g} mm): the nearest neighbour is '
+                         '{:g} mm away on average, so no two points can be farther apart than that all through'.format(spacing, spacing))
+    if max_distance is not None and max_distance < min_distance:
+        raise ValueError('random_points: max_distance ({:g}) cannot be less than min_distance ({:g})'.format(max_distance, min_distance))
+    if body is None:
+        if bounds is None:
+            raise ValueError('random_points: give the body the points are made in, or bounds=((x0, y0, z0), (x1, y1, z1))')
+        lo, hi = (tuple(float(c) for c in bounds[0]), tuple(float(c) for c in bounds[1]))
+    else:
+        body = Shape.wrap(body)
+        region = _region_of(body, bounds)
+        lo = (region.X.lower, region.Y.lower, region.Z.lower)
+        hi = (region.X.upper, region.Y.upper, region.Z.upper)
+    band = spacing                                 # (the layer outside the body that has points: its cells are closed)
+    plo = tuple(c - band for c in lo)
+    phi = tuple(c + band for c in hi)
+
+    def make(grid_spacing):
+        rng = random.Random(int(seed))
+        # 1. a regular grid, moved off it by the randomness, and only where the body is
+        jitter = 0.5 * spacing * float(randomness)
+        grid = _bcc_points(plo, phi, grid_spacing)
+        if jitter > 0:
+            grid = [(x + rng.uniform(-jitter, jitter), y + rng.uniform(-jitter, jitter), z + rng.uniform(-jitter, jitter))
+                    for x, y, z in grid]
+        grid = _inside(body, grid, band)
+        if randomness > 0:
+            rng.shuffle(grid)
+        # 2. no two closer than min_distance
+        kept = []
+        near = _Hash(min_distance)
+        for p in grid:
+            if not near.any_within(p, min_distance * 0.9999999):
+                near.add(p)
+                kept.append(p)
+        # 3. a point that has no neighbour within max_distance is given one, between min_distance and max_distance away
+        if max_distance is not None:
+            far = _Hash(max_distance)
+            for p in kept:
+                far.add(p)
+            for _ in range(4):
+                lonely = [p for p in kept if not far.any_within(p, max_distance, other=True)]
+                if not lonely:
+                    break
+                tries = []
+                for p in lonely:
+                    for _k in range(8):
+                        d = min_distance + (max_distance - min_distance) * (0.2 + 0.6 * rng.random())
+                        while True:
+                            v = (rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 1))
+                            n = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+                            if n > 1e-9:
+                                break
+                        tries.append((p, (p[0] + d * v[0] / n, p[1] + d * v[1] / n, p[2] + d * v[2] / n)))
+                good = set(_inside(body, [q for _, q in tries], band))
+                done = set()
+                for p, q in tries:
+                    if id(p) in done or q not in good or near.any_within(q, min_distance * 0.9999999):
+                        continue
+                    done.add(id(p))
+                    near.add(q)
+                    far.add(q)
+                    kept.append(q)
+                if not done:
+                    break
+        return kept
+
+    # (the grid is spaced so that the points come out `spacing` from their nearest neighbour on average: moving points off the grid, and
+    # taking out the ones that are too close, bring them nearer, so the grid is made coarser until they are that far apart)
+    grid_spacing = spacing
+    kept = make(grid_spacing)
+    for _ in range(4 if randomness > 0 and len(kept) > 8 else 0):
+        mean = _mean_nearest(kept)
+        if abs(mean - spacing) <= 0.03 * spacing or not mean > 0:
+            break
+        grid_spacing *= (spacing / mean) ** 0.95
+        kept = make(grid_spacing)
+    if len(kept) < 5:
+        raise ValueError('random_points: only {} points: the spacing is too large for this region'.format(len(kept)))
+    return PointSet(kept, spacing, (lo, hi), seed, body)
+
+
+random_points._makes = 'points'
+
+
+def _as_points(who, points):
+    ''' `points` as a PointSet: one from random_points(), or a list of (x, y, z) '''
+    if isinstance(points, PointSet):
+        return points
+    if isinstance(points, Shape):
+        raise TypeError('{}: a lattice of this kind is made around POINTS, not of a body: give it random_points(body, ...) (or a list of '
+                        '(x, y, z)) -- {}(random_points(body, spacing=8))'.format(who, who))
+    if isinstance(points, (list, tuple)) and len(points) >= 5 and all(isinstance(p, (list, tuple)) and len(p) == 3 for p in points):
+        return PointSet(points, _mean_nearest(points))
+    raise TypeError('{}: the first argument is a set of points: random_points(body, ...), or a list of at least five (x, y, z)'.format(who))
+
+
+def _points_lattice(who, style, points, thickness, radius, density, skin, blend, skin_blend, body):
+    ''' The beams of the Voronoi or Delaunay graph of the points that are in the body, as a body '''
+    pts = _as_points(who, points)
+    if body is not None and pts.body is not None:
+        raise ValueError('{}: these points were made in a body, and the lattice fills that one -- to fill another, make the points in it: '
+                         'random_points(other, ...)'.format(who))
+    body = pts.body if body is None else body
+    if body is None:
+        raise ValueError('{}: a list of points does not say which body to fill: {}(points, body=part) -- or make the points in the body '
+                         'with random_points(part, ...), which knows it'.format(who, who))
+    body = Shape.wrap(body)
+    r = _beam_radius(who, thickness, radius, None)
+    if density is not None and r is not None:
+        raise ValueError("{}: give either density or the beams' size (thickness or radius), not both".format(who))
+    if r is None and density is None:
+        r = 0.08 * pts.spacing
+    g = _graph_in_body(points_graph(pts.points, style), body, pts.spacing)
+    if density is not None:
+        # beams of radius r fill about pi r^2 * (length inside) / volume
+        from fieldes.stdlib.fields import volume_of
+        region = _region_of(body, pts.bounds)
+        lo = (region.X.lower, region.Y.lower, region.Z.lower)
+        hi = (region.X.upper, region.Y.upper, region.Z.upper)
+        vol = volume_of(body, lo, hi)
+        target = float(density)
+        r = math.sqrt(target * vol / (math.pi * sum(g.lengths())))
+        # refine against the measured density (joints overlap, beams stick out)
+        for _ in range(4):
+            got = volume_of(fill(body, g.thicken(r)), lo, hi) / vol
+            if got <= 0:
+                break
+            r *= math.sqrt(target / got)
+    lat = g.thicken(r, blend)
+    guarded = sys.modules['fieldes.stdlib'].fill
+    return guarded(body, lat, skin=skin, blend=skin_blend)       # (the guarded fill: the locked places of an excluded body stay)
+
+
+def voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None):
+    ''' A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.
+
+        points     random_points(body, ...) -- how far apart they are, how random, the nearest and the farthest two may be -- or a list of
+                   (x, y, z), which does not know a body: then say it with body=
+        thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the
+                   spacing of the points
+        density    instead of the beams' size: the share of the body that is material (0..1), calibrated
+        skin       the thickness of a solid skin on the surface of the body (0: none)
+        blend      rounds the joints; skin_blend rounds the joints with the skin
+        body       the body to fill -- only for a list of points.  Points from random_points() fill the body they were made in
+
+            points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
+            foam = voronoi_lattice(points, thickness=1.0) '''
+    return _points_lattice('voronoi_lattice', 'voronoi', points, thickness, radius, density, skin, blend, skin_blend, body)
+
+
+def delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None):
+    ''' A stochastic truss: beams along the Delaunay edges between a set of points (every point joined to its neighbours), filling the
+        body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin ...
+
+            points = random_points(part, spacing=8)
+            truss = delaunay_lattice(points, thickness=1.0) '''
+    return _points_lattice('delaunay_lattice', 'delaunay', points, thickness, radius, density, skin, blend, skin_blend, body)
+
+
+voronoi_lattice = returns_lattice(voronoi_lattice)
+delaunay_lattice = returns_lattice(delaunay_lattice)
+
+
+def _graph_in_body(g, body, spacing):
+    ''' The beams of a graph that are in the body (or within half a spacing of it): the rest are dropped.  Five places along each are looked at '''
+    from fieldes.stdlib.fields import evaluate
+    nodes, beams = g.nodes, g.beams
+    if not beams:
+        raise ValueError('the points make no beams: there are too few of them')
+    samples = []
+    for a, b in beams:
+        for s in range(5):
+            t = s / 4.0
+            samples.append(tuple(nodes[a][i] * (1 - t) + nodes[b][i] * t for i in range(3)))
+    vals = []
+    for start in range(0, len(samples), 50000):
+        vals.extend(evaluate(body, samples[start:start + 50000]))
+    kept = [beams[i] for i in range(len(beams)) if min(vals[5 * i:5 * i + 5]) < 0.5 * spacing]
+    if not kept:
+        raise ValueError('no beams inside the body: the points are not where the body is')
+    used = sorted({n for beam in kept for n in beam})
+    remap = {n: k for k, n in enumerate(used)}
+    return LatticeGraph([nodes[n] for n in used], [(remap[a], remap[b]) for a, b in kept])
 
 
 ################################################################################
@@ -1631,53 +1985,3 @@ def points_graph(points, style='delaunay'):
     cp = (ctypes.c_float * (3 * len(pts)))(*[c for p in pts for c in p])
     mode = {'voronoi': 1, 'delaunay': 0}[style]
     return _graph_from_c(lib.libfive_lattice_points_graph(cp, len(pts), mode), 'points_graph')
-
-
-def _voronoi_lattice(body, cell_size=8.0, radius=0.6, style='voronoi', relax=2, seed=1,
-                     skin=0.0, blend=0.0, skin_blend=0.0, bounds=None, density=None):
-    ''' A body filled with a random Voronoi foam (or, style='delaunay', a
-        stochastic truss) of round beams.  radius may be a field (e.g. from
-        a regression); seed picks a different random pattern.
-        density: a relative density instead of the radius (a number). '''
-    body = Shape.wrap(body)
-    g = voronoi_graph(body, cell_size, style, relax, seed, bounds)
-    if density is not None:
-        # beams of radius r fill about pi r^2 * (length inside) / volume
-        from fieldes.stdlib.fields import volume_of
-        region = _region_of(body, bounds)
-        lo = (region.X.lower, region.Y.lower, region.Z.lower)
-        hi = (region.X.upper, region.Y.upper, region.Z.upper)
-        vol = volume_of(body, lo, hi)
-        target = float(density)
-        r = math.sqrt(target * vol / (math.pi * sum(g.lengths())))
-        # refine against the measured density (joints overlap, beams stick out)
-        for _ in range(4):
-            got = volume_of(fill(body, g.thicken(r)), lo, hi) / vol
-            if got <= 0:
-                break
-            r *= math.sqrt(target / got)
-        radius = r
-    lat = g.thicken(radius, blend)
-    return fill(body, lat, skin=skin, blend=skin_blend)
-
-
-def _surface_lattice(body, cell_size=8.0, radius=0.6, pattern='triangle', seed=1, blend=0.0,
-                     bounds=None, with_body=None):
-    ''' Round beams on a body's surface: a triangle lattice
-        (pattern='triangle') or its dual, a Voronoi / hexagon-like pattern
-        (pattern='voronoi').  The beams are centred on the surface; pass
-        with_body='inside' to keep only their part inside the body, or
-        'union' to add them to the body. '''
-    body = Shape.wrap(body)
-    g = surface_graph(body, cell_size, pattern, seed, bounds)
-    lat = g.thicken(radius, blend)
-    if with_body == 'inside':
-        lat = lat.max(body)
-    elif with_body == 'union':
-        lat = lat.min(body)
-    elif with_body is not None:
-        raise ValueError("with_body is None, 'inside' or 'union'")
-    b = getattr(body, '_bounds', None)
-    if b:
-        lat._bounds = b
-    return lat

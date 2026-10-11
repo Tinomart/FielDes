@@ -179,8 +179,7 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
                         patch picked on a body: a SURFACE, laid out as one -- a method of its own, that has nothing to do
                         with what is behind it or how thick that is -- the lattice is laid on that patch only)
         cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
-                        TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
-                        surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
+                        TPMS: gyroid, schwarz_p ...) or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
         cell_thickness  how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it
                         (side='outside') or go into the body (side='inside').  Default 3 mm: the lattice is a thin layer,
                         for riveting and the like.  None: for a body filled from inside, as deep as the body is under each
@@ -193,7 +192,7 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
                         (`layers` then counts whole cells through the depth; a thickness over one cell makes more of them)
         within          where, besides: any shape, or a list of them, the lattice is kept inside it (default: everywhere on the surface)
         cell_size       mm along the surface
-        thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
+        thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell,
                     the wall of a TPMS sheet (below).  Default: beams 24 % of cell_size across (not more than half of the layer's
                     thickness), a sheet 15 % of cell_size
         radius      the same for beams, as a radius (half of thickness; give one of the two): a number, or a field (the
@@ -249,11 +248,10 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
     if cellobj.family == 'shape':
         raise ValueError("lattice_surface_conform: a cell_custom(region, geometry) cell is a box of geometry: it repeats on "
                          "a straight, cylindrical or spherical grid (lattice(..., cell_map=...)), it cannot follow a "
-                         "surface.  Use cell_periodic() with a strut cell or a TPMS, cell_custom_truss(), or "
-                         "cell_non_periodic()")
+                         "surface.  Use cell_periodic() with a strut cell or a TPMS, or cell_custom_truss()")
     if cellobj.family == 'planar':
         raise ValueError("lattice_surface_conform: a planar cell is not made of cells that can follow a surface: use "
-                         "cell_periodic() with a strut cell or a TPMS, or cell_non_periodic()")
+                         "cell_periodic() with a strut cell or a TPMS, or cell_custom_truss()")
     if cell_thickness is not None and not float(cell_thickness) > 0:
         raise ValueError('lattice_surface_conform: cell_thickness must be positive (or None)')
     if not isinstance(stretch_cell, (bool, numbers.Integral)):
@@ -298,18 +296,6 @@ def lattice_surface_conform(surface_field, cell=None, cell_thickness=3.0, stretc
 
     if getattr(lib, 'libfive_surface_cells', None) is None:
         raise RuntimeError('this FielDes library is too old for lattice_surface_conform (libfive_surface_cells missing)')
-    if cellobj.family == 'foam':
-        # (cells that do not repeat: a random graph on the surface, its beams centred on it)
-        try:
-            flo, fhi = _shape_bounds(body, bounds)
-        except ValueError:
-            if bounds is not None or surface is None:
-                raise
-            flo, fhi = _shape_bounds(surface, None)
-        r = float(radius) if isinstance(radius, numbers.Number) else (radius if radius is not None else 0.12 * c)
-        lat = _L._surface_lattice(body, c, radius=r, pattern='triangle' if cellobj.style == 'delaunay' else 'voronoi',
-                                  seed=cellobj.seed, blend=blend, bounds=(flo, fhi))
-        return _finish(lat, body, surface, side, cell_thickness, c, flo, fhi, False)
     if tpms:
         if getattr(lib, 'libfive_surface_tpms', None) is None:
             raise RuntimeError('this FielDes library is too old for a TPMS on a surface (libfive_surface_tpms missing)')
@@ -422,3 +408,7 @@ def _finish(lat, body, surface, side, thickness, c, lo, hi, trim):
         pad = (float(thickness) if thickness else c) + c if side == 'outside' else c
         lat._bounds = (tuple(box[0][i] - pad for i in range(3)), tuple(box[1][i] + pad for i in range(3)))
     return lat
+
+
+from fieldes.stdlib.fieldargs import returns_lattice as _returns_lattice
+lattice_surface_conform = _returns_lattice(lattice_surface_conform)

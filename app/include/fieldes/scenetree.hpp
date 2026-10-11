@@ -69,12 +69,23 @@ public:
      *  fails): the viewport menus' calls come from it  */
     void setSupport(std::function<QString(const QString&, const QString&, QString*)> f) { m_support = f; }
 
+    /*  The editor's key for the file that is open (empty for a script with no file of its own): what is collapsed in the tree is kept
+     *  for it  */
+    void setFileKeySource(std::function<QString()> f) { m_fileKey = f; }
+
     /*  Whether the script has a model a menu operation can work on, and another one besides the model displayed
      *  by the (0-based) line `line0` (for the operations that combine two)  */
     bool hasModel() const;
     bool hasOtherModel(int line0) const;
     /*  Whether the model defined by the statement that starts on this (1-based) line is shown (its eye is on); true when the scene has no model there  */
     bool shownAtLine(int line1) const;
+    /*  The variable of the model on the (0-based) line (empty: it has none -- an expression that is only shown), and what can be exported of it
+     *  ("mesh", "fea", "results", "summary": see fieldes.stdlib.exporting, and the Export menu)  */
+    QString varAtLine(int line0) const;
+    QStringList exportsAtLine(int line0) const;
+    /*  An Export entry of the menus: the model on the line is exported as `kind` ("mesh", "fea", "results", "field") in the file format `ext`  */
+    void requestExport(int line0, const QString& kind, const QString& ext);
+
     /*  Whether what is selected (or the model on `line0`) can make this entry of a menu (kind "operation" or "primitive"): the library is asked
      *  to write the call for that selection, and an entry it refuses -- a part selected with supports and loads for a set of conditions,
      *  conditions without a part for a simulation ... -- is greyed out in the menu, without a word: it is not offered for a selection that
@@ -105,6 +116,28 @@ public:
     QLineEdit* settingEditor(const QString& fn, int index) const;
     void showSettings(bool open);
     bool settingsOpen() const;
+    /*  For the guided tour: close or open the first row whose text starts with `prefix` (as the arrow in front of it does), and whether it
+     *  is open; whether a section is closed; every section closed or opened; where the arrow in front of the first section is, and the
+     *  property arrow at the end of a row (in the coordinates of `in`); whether the name of a section is being typed  */
+    void setRowOpen(const QString& prefix, bool open);
+    bool rowIsOpen(const QString& prefix) const;
+    bool sectionClosed() const;
+    void setSectionsOpen(bool open);
+    QPoint sectionArrowPoint(QWidget* in);
+    QPoint propertyArrowPoint(const QString& prefix, QWidget* in);
+    /*  The property tab (it sticks out of the right edge of the panel, level with the hovered row of a model that has properties): the widget, when it is
+     *  shown, and where it is for the first row whose text starts with `prefix` (in the coordinates of `in`), shown or not  */
+    QWidget* propertyTab() const { return m_propTab; }
+    QRect propertyTabRect(const QString& prefix, QWidget* in);
+    /*  For the guided tour: every row that has rows under it is closed, except the models named here (and what holds a placeholder) -- for every
+     *  tree that is built until showAll(); and where a row is, without opening or scrolling to it (empty when it is not in view)  */
+    void showOnly(const QStringList& open);
+    void showAll();
+    QRect visibleRowRect(const QString& prefix, QWidget* in);
+    /*  Where the first placeholder row, and the first section row, are (in the coordinates of `in`; empty when there is none in view)  */
+    QRect placeholderRect(QWidget* in);
+    QRect sectionRect(QWidget* in);
+    bool isNaming() const;
     bool dragging() const { return m_dragging; }
     /*  For the tests: whether a row is a shadow (the reference of a statement to a model another statement owns), and the row of a
      *  model under a statement, shadow or not (null if there is none)  */
@@ -155,6 +188,10 @@ public slots:
     /*  Another script has replaced the one the tree shows: nothing of the old one stays (its rows, its selection, what
      *  was waiting for its run)  */
     void clearScene();
+
+    /*  A fold of the code editor was closed or opened at this (0-based) line: the row of the statement or the section that starts
+     *  there follows it  */
+    void editorFolded(int line0, bool folded);
 
     /*  The keys that work on the selected models.  Every toggle follows one rule: if the models are not all in the
      *  "on" state, they are all put there first (visible, locked, cached); only when they all are, they are
@@ -219,6 +256,13 @@ signals:
     /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over: the note under the tree and the rows of
      *  the placeholders point at the code editor, where they are filled in  */
     void placeholderRequested(int line0, int col0);
+    /*  An argument row was clicked: its value in the code (from line0, col0 to endLine0, endCol0, 0-based) is selected, ready to be replaced  */
+    void spanRequested(int line0, int col0, int endLine0, int endCol0);
+    /*  The model of this variable is to be exported: as `kind` ("mesh", "fea", "results", "field"), in the format `ext` -- the window asks where  */
+    void exportRequested(QString var, QString kind, QString ext);
+    /*  A row was closed or opened in the tree: the code editor folds, or unfolds, the lines of its statement or section (the 0-based
+     *  line they start on)  */
+    void foldRequested(int line0, bool folded);
 
     /*  A right-click in the tree: the viewport's menu for the model displayed by the (0-based) line `line0` (-1: the menu of
      *  empty space), to be opened at `globalPos`  */
@@ -665,11 +709,52 @@ protected:
     QHash<int, QString> m_cacheStates;
     QString m_selectedKey;
     QHash<QString, bool> m_expandState;   // user's expand / collapse, by row key
+    std::function<QString()> m_fileKey;
+    QTimer m_expandSaveTimer;             // (what is collapsed is written a moment after it was changed)
+    bool m_foldsPending = false;          // (a file was opened: the folds its saved state asks for are set in the editor with its first tree)
+    bool m_foldSyncing = false;           // (a fold is being passed between the tree and the editor: its echo is not taken as a new one)
+    struct SectionRename { bool active = false; int line = 0, col = 0, length = 0; QString original, lead, current; };
+    SectionRename m_sectionRename;        // (the name of a section being typed: where in its comment it is written)
+    int m_startSectionRename = -1;        // (the 0-based line of a section just written: its name is typed in as soon as its row is there)
+    int m_startSectionTries = 0;
     std::function<QString()> m_source;
     std::function<QString(const QString&, QString*)> m_expose;
     std::function<QString(const QString&, const QString&, QString*)> m_support;
     bool m_collapsed=false;
     QString spanText(const QJsonArray& span) const;
+
+    /*  What is collapsed: a property of the file.  It is kept by the editor's key for the file and brought back when the file is opened;
+     *  and it is tied to the code editor's folds in both directions -- the lines of a statement or of a section fold when its row closes,
+     *  and its row closes when they are folded.  A row that holds a placeholder is never closed (that is where the user has to write)  */
+    void noteExpansion(QTreeWidgetItem* row, bool open);
+    int foldLineOf(QTreeWidgetItem* row) const;
+    bool holdsPlaceholder(QTreeWidgetItem* row) const;
+    void refoldInside(QTreeWidgetItem* row);
+    void loadExpandState();
+    void saveExpandState();
+    void applyFolds();
+    QString sectionKey(int index) const;
+
+    /*  Sections: `# SECTION name` comments, rows of their own.  A new one is written in the gap between two rows, and its name typed
+     *  in the row; a double click renames one (the comment is rewritten as it is typed)  */
+    void createSectionBefore(QTreeWidgetItem* below);
+
+    /*  The property arrow (the end of a row that is hovered, when the model has properties: the fields and numbers of a result) opens a
+     *  drawer that lists them; one that is clicked is written as a new model of its own, under the statement: `stress_1 = result.von_mises`  */
+    void openProperties(QTreeWidgetItem* row, const QPoint& global);
+    void addProperty(const QJsonObject& item, const QString& property);
+    QPointer<QFrame> m_drawer;
+    QPointer<QWidget> m_propTab;                // (the tab that opens the drawer)
+    QString m_propTabKey;                       // (the row it is for)
+    QTimer m_propTabHide;                       // (it goes a moment after the mouse leaves the row and the tab)
+    void showPropertyTab(QTreeWidgetItem* row);
+    void placePropertyTab();
+    void hidePropertyTab();
+    bool m_showOnly = false;                    // (a step of the tour: only the rows it is about are open)
+    QStringList m_showOnlyOpen;
+    void applyShowOnly();
+    void liveRenameSection(QTreeWidgetItem* row, const QString& typed);
+    void endSectionRename(bool keep);
 };
 
 }   // namespace FielDes

@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body)
 
 ## Primitive shapes
 
@@ -483,7 +483,7 @@ Importing a model: import_model(), reconstruct() and tessellate().
     view.set_bounds(*roi(parts))
 
 import_model() is the one function to know.  It reads a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply,
-.3mf, .glb, .gltf) and returns a list of (shape, (lower corner, upper corner)), one entry per part -- one for a mesh --
+.3mf, .glb, .gltf, .fbx, .off, .dxf) and returns a list of (shape, (lower corner, upper corner)), one entry per part -- one for a mesh --
 each part placed where the file has it, in the units you ask for.  What is a field here is chosen by the file:
 
     a mesh                  the exact signed distance to its triangles
@@ -508,7 +508,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `import_model(path, units='mm', file_units=None, rev=None, cache=True, threshold=0.1, quality=64, thickness=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64, fit_tolerance=1.0)`
 
-Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf) as a list of
+Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf, .fbx, .off, .dxf) as a list of
 (shape, (lower corner, upper corner)): one entry per part of a STEP file (an assembly comes out assembled: every
 part is where the file puts it, a part used several times has an entry for each place), one for a mesh.  Nothing
 else to say: the way each part is made a field is chosen for it -- see the module's text:
@@ -525,8 +525,8 @@ import normally.
 
 units       the units of your script ('mm', 'cm', 'm', 'in'...): a STEP file declares its own (each part
             its own; the numbers are converted), 'file' gives the first declared one
-file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ and PLY do not; 3MF does,
-            glTF is metres) -- for mesh files only
+file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
+            with $INSUNITS do, glTF is metres) -- for mesh files only
 rev         a number that is part of what an import is kept by: another one imports again ("Reimport" in FielDes)
 cache       an import is kept in files next to the STEP file (<file>.fieldes-cache.py, ...-tessellation):
             False: not
@@ -683,7 +683,8 @@ mix them.)
 ## Triangle meshes
 
 Triangle-mesh import (what import_model() does with a mesh file): STL (binary or ASCII), Wavefront OBJ, PLY
-(ASCII or binary), 3MF and glTF (.glb / .gltf) files.
+(ASCII or binary), 3MF, glTF (.glb / .gltf), Autodesk FBX (binary or ASCII: see fbx.py for what that means), OFF and DXF (3DFACE
+and polyface meshes) files.
 
     parts = import_model(r"C:\models\bracket.stl")
     bracket, bounds = parts[0]
@@ -710,6 +711,88 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 The summary of the last import of `path` in this session (triangle
 count, whether it is watertight, ...) as a dict, or None.
+
+## Exporting files
+
+Exporting: a body as a mesh file, an analysis as a finite-element model and as results, in the files other programs read.
+
+    export_mesh(part, "part.stl")                   .stl .obj .ply .3mf .glb .gltf .fbx .off .dxf  (see meshfiles.py)
+    export_fea(result, "bracket.inp")               the model of a static analysis for another solver: .inp (Abaqus, CalculiX), .bdf
+                                                    (Nastran), .msh (Gmsh 2.2)
+    export_results(result, "bracket.vtu")           what an analysis found: .vtu (VTK / ParaView: the mesh with every field), .csv (the
+                                                    nodes and the elements as tables), .txt (the key numbers: maximum stress, safety
+                                                    factor, drag ... as text)
+    export_field(field, "stress.vti")               any field sampled on a regular grid: .vti (VTK image data), .csv
+
+Every file is in FielDes's own units: millimetres, newtons, megapascals (so a mass is in tonnes: N, mm, t, s, MPa is a consistent set).
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `export_fea(result, path, **options)`
+
+Writes the finite-element model of a static analysis -- its tetrahedral mesh, the material, the supports and the loads -- for another
+solver, in the format of the file's extension:
+
+    .inp   Abaqus and CalculiX: C3D4 elements, *MATERIAL, *NSET of each support and load, *BOUNDARY, *CLOAD, *DLOAD for gravity
+    .bdf   Nastran: CTETRA, MAT1, SPC1, FORCE (small-field free format), solution 101
+    .msh   Gmsh 2.2: the mesh, with the displacement, the supports and every field of the result as data
+
+The model is the one FielDes solved (the same nodes and tetrahedra).  A force is spread over the nodes of the surface it acts on by the
+area each carries, so that the sum is the force.  Materials with a field (a graded stiffness) and thermal_expansion loads are not model
+file contents: the first is refused, the second said in a note.  Units: mm, N, MPa, tonne.  Returns the path.
+
+### `export_field(field, path, bounds=None, resolution=None, name='field')`
+
+Samples a field -- anything that is a Shape, a result's field (`result.von_mises`) -- on a regular grid and writes it:
+
+    .vti   VTK image data (ParaView ...): the values as point data
+    .csv   x, y, z, value for every grid point
+
+bounds      ((x0, y0, z0), (x1, y1, z1)): the box sampled (the extent of the shape that has one: field.bounds, else this is needed)
+resolution  samples per mm (the scene's resolution by default, limited to 2 million points)
+
+A field is not a mesh: this is the sampling of it that other programs work with, at the resolution asked for.  Returns the path.
+
+### `export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False)`
+
+Writes the surface of a body as a triangle mesh file, in the format of the file's extension:
+
+    .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
+
+part        a body (a shape, a list of them, the design an optimisation made, the body of an analysis' result)
+path        the file to write (a folder that is not there is made)
+bounds      ((x0, y0, z0), (x1, y1, z1)) the region meshed; the body's own extent when it is not given
+resolution  samples per mm of the mesh (the scene's resolution when it is not given: the one of the viewport)
+name        the object's name inside the file (the file's name)
+ascii       STL as text, not binary
+
+Millimetres in every format that has no unit; the ones that state their unit (3MF, FBX, DXF) say millimetres (a glTF is in metres, Y up, as
+glTF is).  Returns the path.
+
+### `export_results(result, path, **options)`
+
+Writes what an analysis found, in the format of the file's extension:
+
+    .vtu   VTK XML (ParaView, VisIt...): the tetrahedral mesh with the displacement and every field at the nodes, and every field
+           in each element (static analyses)
+    .csv   the nodes (position, displacement, every field) as a table, and the elements next to it (<name>_elements.csv)
+           (static analyses)
+    .txt   the key numbers as text, one per line, with their units: maximum stress, safety factor, reactions, drag and lift of a
+           flow, temperatures, natural frequencies ... (every kind of result)
+
+Units: mm, N, MPa.  Returns the path.
+
+### `key_results(result, count=6)`
+
+The few numbers the result card shows on the screen: [(label, text, unit)] -- what result_summary lists, without the counts and times
+
+### `result_summary(result)`
+
+The numbers of a result that matter, as [(label, text, unit)] in the order they are shown -- what the result card prints on the screen
+and what export_results(..., '.txt') writes.  Only what the result has: a static analysis its stress and safety factor, a flow its
+forces and flows, a thermal analysis its temperatures ...
 
 ## Handles: editing shapes by dragging
 
@@ -797,7 +880,7 @@ Write it under a shape's definition, with its handles() and expose() lines:
 
     part = lock(part)
 
-(FielDes's model tree has a lock button on every shape, and the key R toggles it.)
+(FielDes's model tree has a lock button on every model -- shapes, results, conditions, materials, points -- and the key R toggles it.)
 
 ## Points and surfaces
 
@@ -1610,19 +1693,27 @@ z_top = sz / 2 + amplitude sin(2 pi x / period) sin(2 pi y / period)
 Lattices: periodic TPMS and strut lattices, field-driven thickness, cell
 maps (Cartesian, cylindrical, spherical), and filling bodies.
 
-Every lattice operation takes a CELL: the thing the lattice is made of.  Five functions make one --
+A lattice that repeats is made of a CELL: the one cell it is made of.  Four functions make one --
 
-    cell_periodic(kind)              a standard cell that repeats: a strut cell (octet, bcc, kelvin ...), a TPMS
+    cell_periodic(kind)              a standard cell: a strut cell (octet, bcc, kelvin ...), a TPMS
                                      (gyroid, schwarz_p ...) or a planar pattern (hexagon ...)
-    cell_non_periodic(kind)          cells that do not repeat: 'voronoi' (a foam) or 'delaunay' (a stochastic truss)
-    cell_custom(region, geometry)    your own cell of ANY geometry: a box for the extent of the cell and a field for
+    cell_custom(region, geometry)    a custom cell of ANY geometry: a box for the extent of the cell and a field for
                                      what is in it -- the cell is their intersection, and repeats on any cell map
-    cell_custom_truss(nodes, beams)  your own strut cell: beams between nodes in the unit cube
-    cell_custom_tpms(equation)       your own triply periodic surface, from its equation
+    cell_custom_truss(nodes, beams)  a custom strut cell: beams between nodes in the unit cube
+    cell_custom_tpms(equation)       a custom triply periodic surface, from its equation
 
 -- and lattice(), lattice_surface_conform(), strut_lattice(), tpms() ... take it as their `cell`, and nothing else: a
 name such as 'gyroid' is not a cell, cell_periodic('gyroid') is.  The cell is only WHAT the lattice is made of; how thick
 it is, how big, and where it goes (a body, a surface, a cell map) are the operation's.
+
+A foam does not repeat, so it is not made of a cell: it is made around POINTS.  Three steps, each what its name says --
+
+    random_points(body, ...)         points in a body: how far apart they are on average, how random, the nearest and the farthest
+                                     two may be.  FielDes draws them, each as the dot of a gizmo
+    voronoi_lattice(points, ...)     the edges of the Voronoi cells of the points, as beams: a foam
+    delaunay_lattice(points, ...)    the Delaunay edges between the points, as beams: a stochastic truss
+
+-- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
 The one-call version:
 
@@ -1639,8 +1730,9 @@ The one-call version:
     # the density may itself be a field)
     lat = lattice(part, cell_periodic('octet'), cell_size=10, density=0.2)
 
-    # a foam that does not repeat
-    foam = lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
+    # a foam: points in the body, and the Voronoi cells around them
+    points = random_points(part, spacing=8, randomness=0.7)
+    foam = voronoi_lattice(points, thickness=1.0)
 
     # cells that follow a sphere / cylinder
     lat = lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0,
@@ -1686,16 +1778,12 @@ A short description of the mapping, for the output pane
 
 The point p as lattice coordinates (u, v, w) in mm, in which the lattice repeats every `cell`
 
-### `FoamCell`
-
-Cells that do not repeat (see cell_non_periodic)
-
 ### `LatticeCell`
 
-What a lattice is made of (see the module): made by cell_periodic(), cell_non_periodic(), cell_custom(),
+What a lattice is made of (see the module): made by cell_periodic(), cell_custom(),
 cell_custom_truss() or cell_custom_tpms(), taken by every lattice operation as its `cell`.
-.family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern), 'shape'
-             (any geometry in a box, see cell_custom) or 'foam' (cells that do not repeat)
+.family      'strut' (beams between nodes), 'tpms' (a periodic surface), 'planar' (a 2.5D pattern) or 'shape'
+             (any geometry in a box, see cell_custom)
 .periodic    whether the cell repeats on a grid (so can follow a cell map or a surface)
 
 ### `LatticeGraph`
@@ -1715,6 +1803,20 @@ The graph as round beams of `radius` mm: see graph_lattice()
 ### `PlanarCell`
 
 A standard planar (2.5D) pattern (see cell_periodic)
+
+### `PointSet`
+
+A set of points: what random_points() makes, and voronoi_lattice() and delaunay_lattice() are made around.  FielDes draws
+them, each as the dot of a gizmo (without the gizmo's handles: they are data, not something to drag).
+.points     the points, (x, y, z) in mm
+.spacing    the average distance between a point and its nearest neighbour that it was made for
+.body       the body they were made in (None when they were not made in one): a lattice made of them fills it
+len(points), iterating it, points[i] work as for a list; points.stats() says how the points really are
+
+#### `PointSet.stats(self)`
+
+How the points are: {count, mean, min, max} -- the distance from a point to its nearest neighbour (mm), on average, the
+smallest and the largest of them
 
 ### `ShapeCell`
 
@@ -1747,7 +1849,7 @@ so thickness= is a real wall thickness.
 
 ### `UnitCell`
 
-A strut unit cell of your own: beams between nodes in the unit cube
+A custom strut unit cell: beams between nodes in the unit cube
 (coordinates 0..1 across the cell, scaled by cell_size when used).
 What cell_custom_truss(nodes, beams, mirror) makes; use it wherever a cell is
 taken: lattice(body, cell), strut_lattice(cell), lattice_surface_conform(...).
@@ -1806,7 +1908,7 @@ and shape of the old cell_custom are gone: `**removed` is only there to say so, 
 
 ### `cell_custom_tpms(equation, name='custom')`
 
-A triply periodic surface of your own, from its equation f(a, b, c): a, b, c are the position in the cell as
+A custom triply periodic surface, from its equation f(a, b, c): a, b, c are the position in the cell as
 phases (2 pi per cell).  Write it with + - * / and the methods .sin() .cos() .sqrt() .square() of a, b, c, e.g.
 a gyroid:
 
@@ -1818,7 +1920,7 @@ Its value is turned into a distance in mm (its gradient is followed), so thickne
 
 ### `cell_custom_truss(nodes, beams, mirror='')`
 
-A strut cell of your own: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
+A custom strut cell: beams between nodes in the unit cube (coordinates 0..1 across the cell, scaled by
 cell_size when used).
 
 nodes   {name: (x, y, z)} or a list of (x, y, z) (then the names are the indices)
@@ -1833,17 +1935,6 @@ mirror  'x', 'xy', 'xyz' ... copies the beams mirrored across the cell's mid-pla
 (Any other geometry as a cell: cell_custom(region, geometry).)  See UnitCell: .check() lists what would make
 the lattice fall apart or not tile.
 
-### `cell_non_periodic(kind='voronoi', relax=2, seed=1)`
-
-Cells that do not repeat: points at random about a cell size apart, joined into a graph that fills the body
-(or lies on a surface).
-
-kind    'voronoi' (the edges of the Voronoi cells: a foam) or 'delaunay' (the Delaunay edges: a stochastic truss)
-relax   iterations that make the cells more even
-seed    another number is another random pattern
-
-    lattice(part, cell_non_periodic('voronoi'), cell_size=8, radius=0.5)
-
 ### `cell_periodic(kind='octet')`
 
 A standard cell that repeats on a grid -- what a lattice, a conformal lattice or a lattice on a cell map is
@@ -1857,14 +1948,22 @@ kind    a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin (= 
 Only the cell: its size, its thickness (radius, wall, offset) and where it goes are the lattice operation's.
     lattice(part, cell_periodic('gyroid'), cell_size=8, thickness=1.0)
     lattice_surface_conform(part, cell_periodic('truncated_octahedron'), cell_thickness=2, cell_size=5)
-(Your own cell: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  Cells that do not
-repeat: cell_non_periodic().)
+(Custom cells: cell_custom(region, geometry), cell_custom_truss(), cell_custom_tpms().  A foam is made around points,
+not of a cell: voronoi_lattice(random_points(body)).)
 
 ### `cylindrical(origin=(0, 0, 0), axis='z', cells_around=None, radius=None, rotation=None)`
 
 Cells that wrap around an axis: radial, around, and along the axis.
 Give the number of cells around (cells_around=) or the radius at
 which cells are cell_size wide (radius=).
+
+### `delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)`
+
+A stochastic truss: beams along the Delaunay edges between a set of points (every point joined to its neighbours), filling the
+body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin ...
+
+    points = random_points(part, spacing=8)
+    truss = delaunay_lattice(points, thickness=1.0)
 
 ### `fill(body, lattice_field, skin=0.0, region='volume', depth=None, blend=0.0)`
 
@@ -1888,15 +1987,15 @@ A body filled with a lattice, in one call.
 cell: what it is made of -- cell_periodic(kind) (a TPMS: gyroid, schwarz_p, diamond, neovius, lidinoid, split_p,
     iwp, frd, fischer_koch_s; a strut cell: cubic, bcc, bccz, fcc, fccz, octet, octahedron, kelvin,
     diamond_struts, cross, tesseract, cuboctahedron; a planar pattern: hexagon, triangle, square, kagome),
-    cell_non_periodic('voronoi' | 'delaunay'), cell_custom(region, geometry), cell_custom_truss(nodes, beams)
-    or cell_custom_tpms(equation).  Default: cell_periodic('gyroid')
+    cell_custom(region, geometry), cell_custom_truss(nodes, beams) or cell_custom_tpms(equation).
+    Default: cell_periodic('gyroid').  (A foam is not a cell: voronoi_lattice(random_points(body)))
 cell_size: mm, or (sx, sy, sz), or a FIELD (cells bigger here and smaller there).  (Default 10 mm; for a
     cell_custom(region, geometry) cell the size of its region, so that it comes out as you modelled it -- a
     larger or smaller size scales the cell.)  A cell size field is blended from lattices of cells a factor 2
     apart (up to a factor of 16 in all): the cells are exact where the field is one of those sizes and a blend of
     the two next to it between them
 thickness: the member size of every cell -- the wall of a sheet TPMS, the diameter of the beams of a strut
-    or non-periodic cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
+    cell (radius= is the same thing for beams, half of it); offset (network TPMS), wall
     (planar).  Numbers or fields
 density: instead of the member size, a relative density 0..1 (a
     number or a field); calibrated automatically
@@ -1923,6 +2022,32 @@ may be a field).
 ### `points_graph(points, style='delaunay')`
 
 The Delaunay (or Voronoi) graph of your own points
+
+### `random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None)`
+
+Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
+
+body          where the points are made: inside it, and a layer of one `spacing` outside, so that the cells at its surface are
+              closed.  Without a body, give bounds=((x0, y0, z0), (x1, y1, z1))
+spacing       how far a point is from its nearest neighbour, on average (mm): the points are made so that they come out that far
+              apart whatever the randomness (points.stats() says how far they really are)
+randomness    0 to 1: how much the points are moved off a regular grid -- 0 is a regular body-centred grid (every cell the same),
+              1 is as random as the distances below allow
+min_distance  no two points are closer than this (mm).  Default: `spacing` less 60 % of the randomness -- a low number lets the
+              points clump, `spacing` itself makes them even
+max_distance  no point is farther than this from its nearest neighbour (mm): a point that is more alone than that is given a
+              neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
+              distances to the nearest neighbour are in: the closer together they are, the more regular the points)
+seed          another number is another pattern (the same number is the same points again)
+
+Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
+distances the points really have), points.body (the body they were made in), and
+
+    points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
+    foam = voronoi_lattice(points, thickness=1.0)
+    truss = delaunay_lattice(points, thickness=1.0)
+
+make a foam and a stochastic truss around them, in the same body.
 
 ### `relative_density(lattice_field, cell_size, samples=40, origin=(0, 0, 0))`
 
@@ -1980,6 +2105,22 @@ A random graph filling a body: Poisson-disk points about cell_size
 apart, joined by the edges of their Voronoi cells (style='voronoi',
 a foam) or by their Delaunay edges (style='delaunay', a stochastic
 truss).  relax: iterations that make the cells more even.
+
+### `voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)`
+
+A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.
+
+points     random_points(body, ...) -- how far apart they are, how random, the nearest and the farthest two may be -- or a list of
+           (x, y, z), which does not know a body: then say it with body=
+thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the
+           spacing of the points
+density    instead of the beams' size: the share of the body that is material (0..1), calibrated
+skin       the thickness of a solid skin on the surface of the body (0: none)
+blend      rounds the joints; skin_blend rounds the joints with the skin
+body       the body to fill -- only for a list of points.  Points from random_points() fill the body they were made in
+
+    points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
+    foam = voronoi_lattice(points, thickness=1.0)
 
 ## Lattices that follow a surface
 
@@ -2123,8 +2264,7 @@ surface_field   the surface, as ONE argument whatever it is: a body (a closed so
                 patch picked on a body: a SURFACE, laid out as one -- a method of its own, that has nothing to do
                 with what is behind it or how thick that is -- the lattice is laid on that patch only)
 cell            what it is made of: cell_periodic('octet') (a strut cell: octet, bcc, cubic, kelvin ...; a
-                TPMS: gyroid, schwarz_p ...), cell_non_periodic(...) for a graph of random cells laid on the
-                surface, or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
+                TPMS: gyroid, schwarz_p ...) or cell_custom_truss(nodes, beams).  Default: cell_periodic('octet')
 cell_thickness  how thick the layer of cells is (mm), measured from the surface: how far the cells stand out of it
                 (side='outside') or go into the body (side='inside').  Default 3 mm: the lattice is a thin layer,
                 for riveting and the like.  None: for a body filled from inside, as deep as the body is under each
@@ -2137,7 +2277,7 @@ stretch_cell    True (the default): the cells are deformed to fit the thickness 
                 (`layers` then counts whole cells through the depth; a thickness over one cell makes more of them)
 within          where, besides: any shape, or a list of them, the lattice is kept inside it (default: everywhere on the surface)
 cell_size       mm along the surface
-thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell or a non-periodic cell,
+thickness   the thickness of the cell's members, mm: the diameter of the beams of a strut cell,
             the wall of a TPMS sheet (below).  Default: beams 24 % of cell_size across (not more than half of the layer's
             thickness), a sheet 15 % of cell_size
 radius      the same for beams, as a radius (half of thickness; give one of the two): a number, or a field (the
@@ -2326,6 +2466,19 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 ### `FeaError`
 
 The analysis could not be set up or solved (the message says why)
+
+### `FieldResult`
+
+What every result is -- of an analysis or of an optimisation: a FIELD, like any shape.  Wherever a shape goes (`offset(result, 1)`,
+`difference(part, result)`, `result * 2`, the part of the next analysis) the result goes, and it is its own field there:
+
+    an optimisation       the final design (the shape it made)
+    static_analysis       the von Mises stress          modal_analysis      the first mode's displacement
+    thermal_analysis      the temperature               fluid_analysis      the speed
+
+and `result.fields` lists every field it calculated -- `{name: field}` -- the others being attributes by those names (`result.pressure`).
+Whatever the result is made visible as -- the optimisation's iterations, the flow's streamlines -- is how it is shown when it is
+stated on its own: the field it is passed as does not change that.
 
 ### `Material`
 

@@ -61,7 +61,10 @@ of the License, or (at your option) any later version.
 #include <memory>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
+#include <QGuiApplication>
 #include <QSet>
 #include <QSettings>
 #include <QTimer>
@@ -546,8 +549,11 @@ bool lineMatches(const QString& text, const QString& var, const QString& kind)
         {
             if (lineMatches(text, var, QString::fromLatin1(fn))) return false;
         }
-        // (it may be one of several targets: `a = b = f()`; what stands between its name and the next = is no call, no comparison)
-        pattern = "^[^#]*?\\b" + name + "\\b[^#=()\\[\\]]*=(?!=)";
+        // (it may be one of several targets: `a = b = f()`; what stands between its name and the next = is no call, no comparison.  Or one of
+        // the names of a destructuring target -- `part, (lo, hi) = parts[0]`, `a, *rest = items` -- which has only names, commas, brackets
+        // and stars on the left of its =)
+        pattern = "^[^#]*?\\b" + name + "\\b[^#=()\\[\\]]*=(?!=)"
+                  "|^\\s*[\\w\\s,()\\[\\]*]*\\b" + name + "\\b[\\w\\s,()\\[\\]*]*=(?!=)";
     }
     else
     {
@@ -684,6 +690,50 @@ QIcon holeIcon()
     return icon;
 }
 
+// The icon of an argument row: a small value tag (a bar with a dot), dim: an argument is what the call is written with
+QIcon argIcon()
+{
+    static QIcon icon;
+    if (!icon.isNull()) return icon;
+    const qreal dpr = 2.0;
+    QPixmap pm(int(16 * dpr), int(16 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor c(0x93, 0xa1, 0xa1);
+    p.setPen(QPen(c, 1.3));
+    p.drawLine(QPointF(2.5, 8), QPointF(8.2, 8));
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(11.4, 8), 2.3, 2.3);
+    p.end();
+    icon = QIcon(pm);
+    return icon;
+}
+
+// The icon of a section: a rule with a dot, the heading of what follows
+QIcon sectionIcon()
+{
+    static QIcon icon;
+    if (!icon.isNull()) return icon;
+    const qreal dpr = 2.0;
+    QPixmap pm(int(16 * dpr), int(16 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor c(0x2a, 0xa1, 0x98);
+    p.setPen(Qt::NoPen);
+    p.setBrush(c);
+    p.drawEllipse(QPointF(3.6, 8), 2.3, 2.3);
+    p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(7.6, 8), QPointF(14.2, 8));
+    p.end();
+    icon = QIcon(pm);
+    return icon;
+}
+
 // The icon of a shadow: the icon of the model it stands for, half transparent
 QIcon fadedIcon(const QIcon& icon)
 {
@@ -737,7 +787,7 @@ bool regionDrop(const QJsonObject& target, const QList<QJsonObject>& models)
     for (const auto& m : models)
     {
         const QString type = m["type"].toString();
-        if (!(type == "solid" || type == "profile" || type == "surface" || type == "field")) return false;
+        if (!(type == "solid" || type == "profile" || type == "surface" || type == "field" || type == "lattice")) return false;
         if (type != "field") fields = false;
     }
     if (target["region_args"].toArray().isEmpty()) return false;        // (the call has no region written: nothing to put the model beside)
@@ -806,7 +856,7 @@ QString unmarkShadow(const QString& line, const QString& name)
 // What a model may be swapped for another of: a field for a field, a body (3D or 2D) for a body, any other kind for its own
 QString typeClass(const QString& type)
 {
-    return type == "solid" || type == "profile" ? QString("shape") : type;
+    return type == "solid" || type == "profile" || type == "lattice" ? QString("shape") : type;
 }
 
 // The editor of a name in the tree: only the rows of a variable have one (a double click), and what is typed goes to the panel
@@ -819,7 +869,7 @@ public:
     std::function<void(const QModelIndex&, const QString&)> typed;
     QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex& index) const override
     {
-        if (index.data(ROLE_RENAME).toString().isEmpty()) return nullptr;
+        if (index.data(ROLE_RENAME).toString().isEmpty() && index.data(ROLE_TYPE).toString() != "section") return nullptr;
         auto e = new QLineEdit(parent);
         e->setText(index.data(ROLE_RENAME).toString());
         const QPersistentModelIndex where(index);
@@ -877,12 +927,19 @@ public:
     std::function<void()> dragEnded;
     std::function<bool()> alwaysCopy;                        // is what is carried only ever copied (a locked model is read-only: a reference)
     std::function<void(bool)> held;                          // the left button is down on the tree / is up again
+    // the gap above a row is where a section can be started: may it be here (the row is a statement of the script or a section, not one of its arguments)
+    std::function<bool(QTreeWidgetItem*)> gapAbove;
+    std::function<void(QTreeWidgetItem*)> gapClicked;        // a click on the lit gap above this row
+    // the hovered row whose model has properties (a result: its fields and numbers): the panel shows its tab for it; the row that is hovered
+    // changes (null: none)
+    std::function<bool(QTreeWidgetItem*)> hasProperties;
+    std::function<void(QTreeWidgetItem*)> propertyRowChanged;
 
     bool dragging() const { return m_dragging; }
     bool isEditing() const { return state() == EditingState; }
     QTreeWidgetItem* rowOf(const QModelIndex& index) const { return itemFromIndex(index); }
     // (the rows are made again when the scene changes: a row that was pressed or is hovered is gone with them)
-    void resetDrop() { m_ok = false; m_over = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
+    void resetDrop() { m_ok = false; m_over = nullptr; m_gap = nullptr; m_propRow = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
 
     // Where in the tree a point is: above a row (its top third), on it (the middle), below it, or in the empty space
     int where(const QPoint& pos, QTreeWidgetItem** over) const
@@ -899,8 +956,36 @@ public:
     }
 
 protected:
+    bool viewportEvent(QEvent* e) override
+    {
+        if (e->type() == QEvent::Leave && (m_gap || m_propRow))
+        {
+            m_gap = nullptr;
+            const bool hadProperties = m_propRow != nullptr;
+            m_propRow = nullptr;
+            viewport()->unsetCursor();
+            viewport()->update();
+            if (hadProperties && propertyRowChanged) propertyRowChanged(nullptr);
+        }
+        return QTreeWidget::viewportEvent(e);
+    }
     void mousePressEvent(QMouseEvent* e) override
     {
+        // A press on the lit gap between two rows starts a section there
+        if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) && gapClicked && !m_dragging)
+        {
+            updateGap(e->pos());
+            if (m_gap)
+            {
+                QTreeWidgetItem* below = m_gap;
+                m_gap = nullptr;
+                viewport()->unsetCursor();
+                viewport()->update();
+                e->accept();
+                gapClicked(below);
+                return;
+            }
+        }
         m_pressRow = nullptr;
         m_toggleRow = nullptr;
         m_replay.reset();
@@ -956,6 +1041,11 @@ protected:
     }
     void mouseMoveEvent(QMouseEvent* e) override
     {
+        if (!m_dragging && !(e->buttons() & Qt::LeftButton))
+        {
+            updateGap(e->pos());
+            updateProp(e->pos());
+        }
         if (m_dragging)
         {
             m_copy = copyFor(e->modifiers());
@@ -992,6 +1082,26 @@ protected:
             return;
         }
         QTreeWidget::mouseMoveEvent(e);
+    }
+    void mouseDoubleClickEvent(QMouseEvent* e) override
+    {
+        // A second click on the arrow in front of a row, quickly after the first, is a double click -- and Qt ignores a double click on the arrow (it
+        // is not on the row), so the row did not open or close again: it felt like the arrow did not react.  The arrow's second click does what
+        // the first did
+        if (e->button() == Qt::LeftButton && !isEditing() && !m_dragging)
+        {
+            if (QTreeWidgetItem* row = itemAt(e->pos()))
+            {
+                const QRect r = visualItemRect(row);
+                if (row->childCount() > 0 && e->pos().x() < r.left() && e->pos().x() >= r.left() - indentation())
+                {
+                    row->setExpanded(!row->isExpanded());
+                    e->accept();
+                    return;
+                }
+            }
+        }
+        QTreeWidget::mouseDoubleClickEvent(e);
     }
     void mouseReleaseEvent(QMouseEvent* e) override
     {
@@ -1070,6 +1180,7 @@ protected:
     void paintEvent(QPaintEvent* e) override
     {
         QTreeWidget::paintEvent(e);
+        if (m_gap && !m_dragging) paintGap();
         if (!m_dragging) return;
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
@@ -1146,6 +1257,67 @@ protected:
     }
 
 private:
+    // The gap between two statements of the script (or sections) lights up under the mouse: a click there starts a new section
+    void updateGap(const QPoint& pos)
+    {
+        QTreeWidgetItem* gap = nullptr;
+        if (gapAbove && !isEditing() && columnAt(pos.x()) == COL_NAME)
+        {
+            if (QTreeWidgetItem* row = itemAt(pos))
+            {
+                const QRect r = visualItemRect(row);
+                const int edge = std::max(3, r.height() / 5);
+                if (pos.y() - r.top() <= edge) gap = row;                       // (the gap above this row)
+                else if (r.bottom() - pos.y() <= edge) gap = itemBelow(row);     // (the gap below it, above the next row that is shown)
+            }
+            if (gap && !gapAbove(gap)) gap = nullptr;
+        }
+        if (gap == m_gap) return;
+        m_gap = gap;
+        if (gap) viewport()->setCursor(Qt::PointingHandCursor);
+        else viewport()->unsetCursor();
+        viewport()->update();
+    }
+    void paintGap()
+    {
+        QPainter p(viewport());
+        p.setRenderHint(QPainter::Antialiasing);
+        const int y = visualItemRect(m_gap).top();
+        const QColor blue(0x26, 0x8b, 0xd2);
+        const int right = viewport()->width() - 6;
+        p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 70), 7, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(6, y), QPointF(right, y));
+        p.setPen(QPen(blue, 2.0, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(6, y), QPointF(right, y));
+        QFont f = font();
+        f.setPointSizeF(std::max(7.0, f.pointSizeF() * 0.92));
+        p.setFont(f);
+        const QString label = QString("+  ") + T("new section");
+        const QFontMetrics fm(f);
+        const int width = fm.horizontalAdvance(label) + 14;
+        const QRect pill(columnViewportPosition(COL_NAME) + columnWidth(COL_NAME) - width - 6, y - 8, width, 16);
+        p.setPen(QPen(blue, 1.2));
+        p.setBrush(QColor(0x0b, 0x32, 0x40));
+        p.drawRoundedRect(pill, 8, 8);
+        p.setPen(QColor(0xee, 0xe8, 0xd5));
+        p.drawText(pill, Qt::AlignCenter, label);
+    }
+    QTreeWidgetItem* m_gap = nullptr;       // (the row the lit gap is above)
+    QTreeWidgetItem* m_propRow = nullptr;   // (the hovered row that has properties: its arrow is drawn)
+    void updateProp(const QPoint& pos)
+    {
+        QTreeWidgetItem* row = nullptr;
+        if (hasProperties && !isEditing())
+        {
+            row = itemAt(pos);
+            if (row && !hasProperties(row)) row = nullptr;
+        }
+        if (row == m_propRow) return;
+        m_propRow = row;
+        viewport()->update();
+        if (propertyRowChanged) propertyRowChanged(row);
+    }
+
     // (Ctrl makes a drag a copy; so does what is carried when it can only be copied)
     bool copyFor(Qt::KeyboardModifiers mods) const { return (mods & Qt::ControlModifier) || (alwaysCopy && alwaysCopy()); }
     void updateDrag(const QPoint& pos)
@@ -1189,6 +1361,60 @@ private:
 }   // anonymous namespace
 
 ////////////////////////////////////////////////////////////////////////////////
+
+namespace {
+
+// The tab that opens the drawer of a model's properties: a small tab that sticks out of the right edge of the panel
+class PropertyTab : public QWidget
+{
+public:
+    explicit PropertyTab(QWidget* parent) : QWidget(parent)
+    {
+        setObjectName("PropertyTab");
+        setCursor(Qt::PointingHandCursor);
+        setMouseTracking(true);
+        hide();
+    }
+    std::function<void()> clicked, entered, left;
+    bool active = false;                        // (its drawer is open)
+protected:
+    void enterEvent(QEvent*) override { m_hover = true; if (entered) entered(); update(); }
+    void leaveEvent(QEvent*) override { m_hover = false; if (left) left(); update(); }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton) return;
+        e->accept();
+        if (clicked) clicked();
+    }
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const bool lit = m_hover || active;
+        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        // (square where it meets the panel, round on the outside)
+        QPainterPath tab;
+        tab.moveTo(r.left(), r.top());
+        tab.lineTo(r.right() - 8, r.top());
+        tab.quadTo(r.right(), r.top(), r.right(), r.top() + 8);
+        tab.lineTo(r.right(), r.bottom() - 8);
+        tab.quadTo(r.right(), r.bottom(), r.right() - 8, r.bottom());
+        tab.lineTo(r.left(), r.bottom());
+        p.fillPath(tab, lit ? QColor(0x2a, 0xa1, 0x98) : QColor(0x16, 0x4c, 0x5e, 248));
+        p.setPen(QPen(lit ? QColor(0x4a, 0xc4, 0xb8) : QColor(0x2a, 0xa1, 0x98, 200), 1.2));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(tab);
+        const QPointF c = r.center() + QPointF(-0.5, 0);
+        p.setPen(QPen(lit ? QColor(0x06, 0x26, 0x30) : QColor(0xee, 0xe8, 0xd5), 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        QPolygonF chevron;
+        chevron << QPointF(c.x() - 2.4, c.y() - 4.8) << QPointF(c.x() + 2.6, c.y()) << QPointF(c.x() - 2.4, c.y() + 4.8);
+        p.drawPolyline(chevron);
+    }
+private:
+    bool m_hover = false;
+};
+
+}   // anonymous namespace
 
 ScenePanel::ScenePanel(QWidget* parent)
     : QFrame(parent), m_tree(new SceneTree), m_header(new QToolButton),
@@ -1284,18 +1510,62 @@ ScenePanel::ScenePanel(QWidget* parent)
         tree->dropped = [this](QTreeWidgetItem* over, int at, QPoint global, bool copy) { onDrop(over, at, global, copy); };
         tree->dragEnded = [this] { m_dragging = false; };            // (the models stay: the drop that follows needs them)
         tree->held = [this](bool down) { onTreeHeld(down); };
+        tree->gapAbove = [this](QTreeWidgetItem* row) {
+            if (m_dragging || m_textUnreadable || !m_source) return false;
+            const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+            if (type != "item" && type != "section") return false;
+            auto parent = row->parent();
+            return !parent || parent->data(COL_NAME, ROLE_TYPE).toString() == "section";
+        };
+        tree->gapClicked = [this](QTreeWidgetItem* row) { createSectionBefore(row); };
+        tree->hasProperties = [this](QTreeWidgetItem* row) {
+            return row->data(COL_NAME, ROLE_TYPE).toString() == "item" &&
+                   !row->data(COL_NAME, ROLE_ITEM).toJsonObject()["properties"].toArray().isEmpty() && !m_dragging;
+        };
+        tree->propertyRowChanged = [this](QTreeWidgetItem* row) {
+            if (row) showPropertyTab(row);
+            else m_propTabHide.start();
+        };
+        m_propTabHide.setSingleShot(true);
+        m_propTabHide.setInterval(220);
+        connect(&m_propTabHide, &QTimer::timeout, this, [this] {
+            // (it stays while the mouse is on it, or the drawer it opened is there)
+            if (m_propTab && (m_propTab->underMouse() || m_drawer)) return;
+            hidePropertyTab();
+        });
+        connect(m_tree->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { hidePropertyTab(); });
+        installEventFilter(this);               // (the tab follows the panel when it is moved, sized or hidden)
 
         auto renamer = new RenameDelegate;
         renamer->setParent(m_tree);
         // (the script is renamed as the name is typed; Enter or leaving the field keeps it, Escape gives the old name back, and a
         // name that is not one -- empty, taken, a keyword -- does not stay either: the script has the name it had before)
         renamer->typed = [this](const QModelIndex& index, const QString& text) {
-            if (auto row = static_cast<SceneTree*>(m_tree)->rowOf(index)) liveRename(row, text);
+            auto row = static_cast<SceneTree*>(m_tree)->rowOf(index);
+            if (!row) return;
+            if (row->data(COL_NAME, ROLE_TYPE).toString() == "section") liveRenameSection(row, text);
+            else liveRename(row, text);
         };
         renamer->renamed = [this](const QModelIndex& index, const QString& text) {
             auto row = static_cast<SceneTree*>(m_tree)->rowOf(index);
             if (!row) return;
             if (m_revertClock.isValid() && m_revertClock.elapsed() < 500) return;       // (Escape was pressed: see m_revertClock)
+            if (row->data(COL_NAME, ROLE_TYPE).toString() == "section")
+            {
+                // (the comment was written as the name was typed -- a name that was set some other way is written now; a name with nothing in
+                // it is no name: the old one stays)
+                const QString name = text.trimmed();
+                if (m_sectionRename.active)
+                {
+                    const QString want = name.isEmpty() ? m_sectionRename.original : name;
+                    if (want != m_sectionRename.current) liveRenameSection(row, want);
+                }
+                else if (!name.isEmpty() && name != row->data(COL_NAME, ROLE_RENAME).toString())
+                {
+                    liveRenameSection(row, name);
+                }
+                return;
+            }
             // (what the script calls it now: after typing, the last name that could be one)
             const QString current = row->data(COL_NAME, ROLE_RENAME).toString();
             const bool had = m_renaming.active && m_renaming.current == current;
@@ -1303,6 +1573,7 @@ ScenePanel::ScenePanel(QWidget* parent)
             if (!applyRename(current, text, false) && original != current) applyRename(current, original, true);
         };
         connect(renamer, &QAbstractItemDelegate::closeEditor, this, [this](QWidget*, QAbstractItemDelegate::EndEditHint hint) {
+            if (m_sectionRename.active) { endSectionRename(hint != QAbstractItemDelegate::RevertModelCache); return; }
             endRenaming(hint != QAbstractItemDelegate::RevertModelCache);
         });
         m_tree->setItemDelegateForColumn(COL_NAME, renamer);
@@ -1332,13 +1603,18 @@ ScenePanel::ScenePanel(QWidget* parent)
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, &ScenePanel::onItemDoubleClicked);
     connect(m_tree, &QTreeWidget::customContextMenuRequested, this, &ScenePanel::onContextMenu);
     connect(m_tree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* i){
-        if (!m_rebuilding) m_expandState[i->data(COL_NAME, ROLE_KEY).toString()] = true;
+        if (!m_rebuilding) noteExpansion(i, true);
         setCollapsed(m_collapsed);    // resize to the new row count
     });
     connect(m_tree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* i){
-        if (!m_rebuilding) m_expandState[i->data(COL_NAME, ROLE_KEY).toString()] = false;
+        if (!m_rebuilding) noteExpansion(i, false);
         setCollapsed(m_collapsed);
     });
+    // (what is collapsed is a property of the file: written a moment after it changed, and when the application ends)
+    m_expandSaveTimer.setSingleShot(true);
+    m_expandSaveTimer.setInterval(400);
+    connect(&m_expandSaveTimer, &QTimer::timeout, this, &ScenePanel::saveExpandState);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ScenePanel::saveExpandState);
 
     m_note->setWordWrap(true);
     m_note->setOpenExternalLinks(false);
@@ -1389,6 +1665,11 @@ bool ScenePanel::eventFilter(QObject* obj, QEvent* e)
     {
         setCollapsed(m_collapsed);
     }
+    if (obj == this && (e->type() == QEvent::Move || e->type() == QEvent::Resize))
+    {
+        if (m_propTab && m_propTab->isVisible()) placePropertyTab();
+    }
+    if (obj == this && e->type() == QEvent::Hide) hidePropertyTab();
     // (the modifiers of a click on the tree: itemClicked, which comes after the release, does not carry them)
     if (obj == m_tree->viewport() && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonRelease))
     {
@@ -1690,7 +1971,15 @@ void ScenePanel::clearScene()
     m_isolateRestore.clear();
     m_isolatedKey.clear();
     m_isolatedName.clear();
+    if (m_expandSaveTimer.isActive())
+    {
+        m_expandSaveTimer.stop();
+        saveExpandState();          // (of the file that is left: the editor does not know the new one yet)
+    }
     m_expandState.clear();
+    m_foldsPending = false;
+    m_sectionRename = SectionRename();
+    m_startSectionRename = -1;
     rebuild();
     emit(highlightLines(QList<int>()));
     updateMultiNote();
@@ -1787,6 +2076,8 @@ void ScenePanel::rebuild()
             if (!typing->property("fn").isValid())
             {
                 nameKey = m_tree->currentItem()->data(COL_NAME, ROLE_KEY).toString();
+                if (m_tree->currentItem()->data(COL_NAME, ROLE_TYPE).toString() == "section")      // (its key changes with the name that is typed)
+                    nameKey = "section@" + QString::number(m_tree->currentItem()->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt());
                 nameText = typing->text();
                 nameCursor = typing->cursorPosition();
                 nameSelStart = typing->selectionStart();
@@ -2000,10 +2291,10 @@ void ScenePanel::rebuild()
         }
 
         // Handles: how it is edited by dragging in the view (a button cycling the three ways)
-        if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool() &&
-            !it["no_handles"].toBool())
+        if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool())
         {
-            setModeButton(row, it);
+            // (every model can be locked, whatever it is -- an analysis, a condition, a point: the gizmo's mode is only for what has a gizmo)
+            if (!it["no_handles"].toBool()) setModeButton(row, it);
             setLockButton(row, it);
         }
         else if (!failed && kind == "display" && it["can_name"].toBool() && it["visible"].toBool())
@@ -2190,6 +2481,7 @@ void ScenePanel::rebuild()
         for (const auto d : it["deps"].toArray())
         {
             if (mine.contains(d.toString())) continue;
+            if (d.toString() == it["attribute_of"].toString()) continue;        // (`x = result.von_mises`: a property of the model, not made of it)
             const QJsonObject ref = itemBefore(d.toString(), it["line"].toInt());
             auto c = makeRow(row, d.toString(), ref.isEmpty() ? QIcon() : fadedIcon(itemIcon(ref, false)), "dep", it,
                              key + ">" + d.toString());
@@ -2218,6 +2510,22 @@ void ScenePanel::rebuild()
                 anyUses = true;
             }
         }
+        // The arguments the call is written with, as the code reads: a row each (a model that is an argument is a row of its own, above, and so
+        // is a placeholder).  A click selects the value in the code, ready to be replaced
+        {
+            const QJsonArray args = it["args"].toArray();
+            for (int k = 0; k < args.size(); ++k)
+            {
+                const QJsonObject a = args[k].toObject();
+                const QString param = a["param"].toString();
+                const QString value = a["text"].toString().simplified();
+                auto c = makeRow(row, param.isEmpty() ? value : param + " = " + value, argIcon(), "arg", it, key + ">arg" + QString::number(k));
+                c->setData(COL_NAME, ROLE_PART, k);
+                c->setForeground(COL_NAME, QColor(0xb4, 0xc0, 0xc0));
+                c->setToolTip(COL_NAME, T("An argument of %1: click it to select it in the code editor, where it is replaced by typing.").arg(it["var"].toString().isEmpty() ? it["label"].toString() : it["var"].toString())
+                                           + "\n" + a["text"].toString());
+            }
+        }
         if (anyUses || !mine.isEmpty()) expandedByDefault[row] = true;
     }
     phase("items");
@@ -2239,22 +2547,33 @@ void ScenePanel::rebuild()
     {
         if (parent->childCount() == 0 && owning.value(parent).isEmpty()) continue;
         const auto pit = parent->data(COL_NAME, ROLE_ITEM).toJsonObject();
-        QStringList order;                      // (the models of its call, in the order the call is written)
-        for (const auto iv : pit["inputs"].toArray()) order << iv.toObject()["name"].toString();
+        // (what the call is given, in the order it is written: the models, the placeholders and the other arguments stand in their places in it)
+        QHash<QString, qint64> positionOfName;
+        auto positionOf = [](const QJsonArray& span) { return span.size() >= 2 ? qint64(span[0].toInt()) * 100000 + span[1].toInt() : qint64(1) << 40; };
+        for (const auto iv : pit["inputs"].toArray())
+        {
+            const QJsonObject in = iv.toObject();
+            const qint64 at = positionOf(in["span"].toArray());
+            if (!positionOfName.contains(in["name"].toString()) || at < positionOfName[in["name"].toString()]) positionOfName[in["name"].toString()] = at;
+        }
         QList<QTreeWidgetItem*> rows, others;
         while (parent->childCount() > 0)
         {
             auto c = parent->takeChild(0);
             const QString t = c->data(COL_NAME, ROLE_TYPE).toString();
-            (t == "dep" || t == "hole" ? rows : others) << c;
+            (t == "dep" || t == "hole" || t == "arg" ? rows : others) << c;
         }
         rows << owning.value(parent);
-        auto place = [&](QTreeWidgetItem* c) {
-            const bool shadow = c->data(COL_NAME, ROLE_TYPE).toString() == "dep";
+        auto place = [&](QTreeWidgetItem* c) -> qint64 {
+            const QString t = c->data(COL_NAME, ROLE_TYPE).toString();
+            if (t == "arg")
+                return positionOf(pit["args"].toArray()[c->data(COL_NAME, ROLE_PART).toInt()].toObject()["span"].toArray());
+            if (t == "hole")
+                return positionOf(pit["holes"].toArray()[c->data(COL_NAME, ROLE_PART).toInt()].toObject()["span"].toArray());
+            const bool shadow = t == "dep";
             const QString name = shadow ? c->data(COL_NAME, ROLE_PART).toString()
                                         : c->data(COL_NAME, ROLE_ITEM).toJsonObject()["var"].toString();
-            const int k = order.indexOf(name);
-            return k >= 0 ? k : 100000;
+            return positionOfName.value(name, qint64(1) << 40);
         };
         std::stable_sort(rows.begin(), rows.end(), [&](QTreeWidgetItem* a, QTreeWidgetItem* b) { return place(a) < place(b); });
         // The conditions of a simulation -- and a placeholder for each kind of them it still waits for -- stand under one row of their
@@ -2271,7 +2590,11 @@ void ScenePanel::rebuild()
                 const QString t = c->data(COL_NAME, ROLE_TYPE).toString();
                 QString role;
                 bool isCondition = false;
-                if (t == "hole")
+                if (t == "arg")
+                {
+                    continue;
+                }
+                else if (t == "hole")
                 {
                     const QJsonObject h = holesOf[c->data(COL_NAME, ROLE_PART).toInt()].toObject();
                     if (h["list"].toBool()) { isCondition = true; role = h["param"].toString(); }
@@ -2331,13 +2654,53 @@ void ScenePanel::rebuild()
         for (auto c : others) parent->addChild(c);
         for (auto c : rows) parent->addChild(c);
     }
+    QList<QTreeWidgetItem*> sectionRows;
     {
-        // Every row that is not under another goes into the tree, all at once
+        // Every row that is not under another goes into the tree, all at once.  The sections -- the comments `# SECTION name` -- are rows
+        // of their own, and the rows that stand below one in the script (up to the next) stand under it
+        const QJsonArray sections = m_scene["sections"].toArray();
+        for (int s = 0; s < sections.size(); ++s)
+        {
+            const QJsonObject so = sections[s].toObject();
+            const QString name = so["name"].toString();
+            const QString key = sectionKey(s);
+            auto row = new QTreeWidgetItem();
+            row->setText(COL_NAME, name.isEmpty() ? T("(unnamed section)") : name);
+            row->setIcon(COL_NAME, sectionIcon());
+            row->setData(COL_NAME, ROLE_ITEM, so);
+            row->setData(COL_NAME, ROLE_TYPE, "section");
+            row->setData(COL_NAME, ROLE_KEY, key);
+            row->setData(COL_NAME, ROLE_RENAME, name);
+            row->setData(COL_NAME, ROLE_LINE, so["line"].toInt() - 1);
+            row->setFlags((row->flags() | Qt::ItemIsEditable) & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
+            row->setForeground(COL_NAME, QColor(0x2a, 0xa1, 0x98));
+            QFont bold = row->font(COL_NAME);
+            bold.setBold(true);
+            row->setFont(COL_NAME, bold);
+            row->setIcon(COL_DELETE, deleteIcon());
+            row->setToolTip(COL_DELETE, T("Delete the heading of this section: the models in it stay"));
+            row->setToolTip(COL_NAME, T("A section of the script (the comment `# SECTION name`).\n"
+                                        "Double-click: rename it.  The arrow closes it here and in the code editor.  Click: go to it in the code."));
+            if (key == m_selectedKey) toSelect = row;
+            if (m_selectOrder.contains(key)) restore << row;
+            sectionRows << row;
+        }
         QList<QTreeWidgetItem*> top;
+        int s = -1;
+        QTreeWidgetItem* in = nullptr;
         for (auto r : topRows)
         {
-            if (!nested.contains(r)) top << r;
+            if (nested.contains(r)) continue;
+            const int line = r->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt();
+            while (s + 1 < sectionRows.size() && sections[s + 1].toObject()["line"].toInt() <= line)
+            {
+                in = sectionRows[++s];
+                top << in;
+            }
+            if (in) in->addChild(r);
+            else top << r;
         }
+        while (s + 1 < sectionRows.size()) top << sectionRows[++s];
         m_tree->addTopLevelItems(top);
     }
     phase("nesting");
@@ -2434,9 +2797,29 @@ void ScenePanel::rebuild()
     for (auto row : rowOfKey)
     {
         if (row->childCount() == 0) continue;
-        row->setExpanded(m_expandState.value(row->data(COL_NAME, ROLE_KEY).toString(), expandedByDefault.value(row, true)));
+        // (a statement that has its arguments for children and nothing else is closed until the user opens it: that is how the tree looked
+        // before it showed them)
+        bool onlyArguments = true;
+        for (int k = 0; k < row->childCount() && onlyArguments; ++k) onlyArguments = row->child(k)->data(COL_NAME, ROLE_TYPE).toString() == "arg";
+        row->setExpanded(m_expandState.value(row->data(COL_NAME, ROLE_KEY).toString(), onlyArguments ? false : expandedByDefault.value(row, true)));
     }
     for (const auto& g : conditionGroups) g.first->setExpanded(m_expandState.value(g.second, true));
+    for (auto row : sectionRows)
+    {
+        if (row->childCount() > 0) row->setExpanded(m_expandState.value(row->data(COL_NAME, ROLE_KEY).toString(), true));
+    }
+    // Where the user has to write -- a placeholder -- nothing is closed: every row that holds one is open (what was chosen about it is forgotten,
+    // so that it does not close again once the placeholder is filled in)
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() != "hole") continue;
+        for (auto p = (*i)->parent(); p; p = p->parent())
+        {
+            p->setExpanded(true);
+            m_expandState.remove(p->data(COL_NAME, ROLE_KEY).toString());
+        }
+    }
+    applyShowOnly();
 
     // Footer notes: analysis problems, truncated huge scripts
     QString note;
@@ -2547,7 +2930,10 @@ void ScenePanel::rebuild()
     {
         for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
         {
-            if ((*i)->data(COL_NAME, ROLE_KEY).toString() != nameKey || !((*i)->flags() & Qt::ItemIsEditable)) continue;
+            const QString rowName = (*i)->data(COL_NAME, ROLE_TYPE).toString() == "section"
+                ? "section@" + QString::number((*i)->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt())
+                : (*i)->data(COL_NAME, ROLE_KEY).toString();
+            if (rowName != nameKey || !((*i)->flags() & Qt::ItemIsEditable)) continue;
             if (m_tree->currentItem() != *i) m_tree->setCurrentItem(*i);
             m_tree->editItem(*i, COL_NAME);
             if (auto e = qobject_cast<QLineEdit*>(typingWidget()))
@@ -2557,6 +2943,27 @@ void ScenePanel::rebuild()
                 if (nameSelLength > 0) e->setSelection(nameSelStart, nameSelLength);
             }
             break;
+        }
+    }
+    if (m_foldsPending) applyFolds();
+    // A section that was just written (a click on a gap between two rows): its name is typed in at once
+    if (m_startSectionRename >= 0)
+    {
+        QTreeWidgetItem* found = nullptr;
+        for (auto r : sectionRows)
+        {
+            if (r->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt() - 1 == m_startSectionRename) found = r;
+        }
+        if (found)
+        {
+            m_startSectionRename = -1;
+            m_tree->setCurrentItem(found);
+            m_tree->scrollToItem(found);
+            m_tree->editItem(found, COL_NAME);
+        }
+        else if (++m_startSectionTries > 12)
+        {
+            m_startSectionRename = -1;
         }
     }
 }
@@ -3058,6 +3465,9 @@ void ScenePanel::saveSceneCache(const QString& json, const QString& md5)
 
 void ScenePanel::showCached()
 {
+    // A script was opened: what was collapsed in it when it was last open comes back (and the code editor's folds follow with its tree)
+    loadExpandState();
+    m_foldsPending = true;
     if (!m_source || m_predicted || !m_scene["items"].toArray().isEmpty()) return;
     const QString text = m_source();
     if (text.trimmed().isEmpty()) return;
@@ -3829,6 +4239,20 @@ TextEdit ScenePanel::deleteLines(int a, int b) const
 
 void ScenePanel::deleteRow(QTreeWidgetItem* row)
 {
+    if (row->data(COL_NAME, ROLE_TYPE).toString() == "section")
+    {
+        // The heading goes, the models stay (they belong to the section above it then): only the line of the comment is deleted
+        const auto so = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        const int line = so["line"].toInt() - 1;
+        static const QRegularExpression heading(R"(^\s*#\s*(SECTION\b|%%))");
+        if (!heading.match(lineText(line)).hasMatch())
+        {
+            refuseOutOfDate();
+            return;
+        }
+        editFollowed(QList<TextEdit>{deleteLines(line, line)}, "Delete section " + so["name"].toString(), [](QJsonObject&, const QVector<int>&) {});
+        return;
+    }
     {
         // (a row is found again by its key when the script has run: the rows are made anew)
         const QString key = row->data(COL_NAME, ROLE_KEY).toString();
@@ -4707,7 +5131,7 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
     const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
     const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
 
-    if (type == "setting")
+    if (type == "setting" || type == "section")
     {
         const int line = row->data(COL_NAME, ROLE_LINE).toInt();
         if (line >= 0) emit(goToLine(line));
@@ -4737,6 +5161,22 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
             if (span.size() >= 2)
             {
                 emit(placeholderRequested(span[0].toInt() - 1, span[1].toInt()));
+                emit(highlightLines({}));
+                return;
+            }
+        }
+    }
+    if (type == "arg")
+    {
+        // (the argument's value in the code, selected: it is replaced by typing, as a placeholder is)
+        const auto args = it["args"].toArray();
+        const int k = row->data(COL_NAME, ROLE_PART).toInt();
+        if (k >= 0 && k < args.size())
+        {
+            const auto span = args[k].toObject()["span"].toArray();
+            if (span.size() >= 4)
+            {
+                emit(spanRequested(span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt()));
                 emit(highlightLines({}));
                 return;
             }
@@ -5016,6 +5456,37 @@ bool ScenePanel::modelAtLine(int line0, QVector3D* centre) const
     return true;
 }
 
+QString ScenePanel::varAtLine(int line0) const
+{
+    QJsonObject model;
+    QString source;
+    int after = 0;
+    if (!resolveModel(line0, &model, &source, &after)) return QString();
+    return model["var"].toString();
+}
+
+QStringList ScenePanel::exportsAtLine(int line0) const
+{
+    QJsonObject model;
+    QString source;
+    int after = 0;
+    QStringList out;
+    if (!resolveModel(line0, &model, &source, &after)) return out;
+    for (const auto v : model["exports"].toArray()) out << v.toString();
+    return out;
+}
+
+void ScenePanel::requestExport(int line0, const QString& kind, const QString& ext)
+{
+    const QString var = varAtLine(line0);
+    if (var.isEmpty())
+    {
+        notify(T("Give the model a name first: only a variable of the script is exported (its row has a button for it)."));
+        return;
+    }
+    emit(exportRequested(var, kind, ext));
+}
+
 QString ScenePanel::typeAtLine(int line0) const
 {
     QJsonObject model;
@@ -5152,6 +5623,8 @@ void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, do
     if (mode != "flat") call += ", mode='" + mode + "'";
     if (radius > 0) call += ", radius=" + num(radius);
     call += ")";
+    // (a locked model is read-only: the selection holds a reference to it -- `# shadow: name` -- and does not take it in as its own)
+    if (target.contains("locked") && target.contains("var")) call = markShadow(call, target["var"].toString());
 
     const QString indent = indentOf(lineText(target["line"].toInt() - 1));
     const QString last = lineText(after);
@@ -6275,8 +6748,11 @@ QString ScenePanel::dumpRows() const
         }
         else if (type == "dep") out += "  [uses]";
         else if (type == "hole") out += "  [placeholder]";
+        else if (type == "arg") out += "  [argument]";
+        else if (type == "section") out += "  [section]";
         else if (type == "bcgroup")
             out += QString("  [conditions of %1, eye %2]").arg(it["var"].toString(), r->icon(COL_EYE).isNull() ? "none" : r->data(COL_EYE, Qt::UserRole).toBool() ? "on" : "off");
+        if (r->childCount() > 0 && !r->isExpanded()) out += "  {closed}";
         out += "\n";
         for (int k = 0; k < r->childCount(); ++k) walk(r->child(k), depth + 1);
     };
@@ -6927,6 +7403,12 @@ bool ScenePanel::canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why)
             "for it to be an argument of. Drop it on an operation, or between the models one is made of.");
     if (!over) return at == DropViewport && !copy ? true : (copy ? refuse(copyNeedsCall) : false);
     const QString type = over->data(COL_NAME, ROLE_TYPE).toString();
+    if (type == "section")
+    {
+        // (a model can be dropped above or below the heading of a section -- it stands last in the section above, or first in this one -- never on it)
+        if (at == DropOn) return false;
+        return copy ? refuse(copyNeedsCall) : true;
+    }
     if (type != "item" && type != "dep" && type != "hole" && type != "bcgroup") return false;
     const QJsonObject t = over->data(COL_NAME, ROLE_ITEM).toJsonObject();
     if (type == "bcgroup")
@@ -7010,11 +7492,13 @@ QList<QPair<int, int>> ScenePanel::groupRanges(const QJsonObject& it, bool comme
     int a = it["line"].toInt() - 1;
     const int b = it["end_line"].toInt() - 1;
     static const QRegularExpression hidden(R"(^\s*#\s*hidden:)");
+    static const QRegularExpression heading(R"(^#\s*(SECTION\b|%%))");
     while (comments && a > 0)
     {
-        // (the comment lines right above a definition are about it)
+        // (the comment lines right above a definition are about it -- but the heading of a section is about the section: it stays where it is
+        // when the first model under it is moved, and a section is started below it)
         const QString t = lineText(a - 1).trimmed();
-        if (t.startsWith('#') && !hidden.match(t).hasMatch()) --a;
+        if (t.startsWith('#') && !hidden.match(t).hasMatch() && !heading.match(t).hasMatch()) --a;
         else break;
     }
     r << qMakePair(a, b);
@@ -7072,6 +7556,15 @@ bool ScenePanel::moveGroups(QStringList& lines, QVector<int>* origin, const QLis
     };
     for (const auto& m : models) add(m, true);
     if (moved.isEmpty()) return true;
+    // A locked model is read-only: no operation moves it, not even to make room for what is made of it -- a reference to it can be made
+    // instead (the model tree does that for every drag and every menu)
+    for (const auto& m : moved)
+    {
+        if (!m.contains("locked")) continue;
+        if (why) *why = T("%1 is locked: it is read-only, so it is never moved. A reference to it (a shadow) can be put where it is needed.")
+                            .arg(m.contains("var") ? m["var"].toString() : m["label"].toString());
+        return false;
+    }
     std::sort(moved.begin(), moved.end(), [&](const QJsonObject& a, const QJsonObject& b) { return groupStart(a) < groupStart(b); });
 
     const int n = lines.size();
@@ -7370,7 +7863,22 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
         }
     }
 
-    // A model belongs to the first statement that uses it
+    // A model belongs to the first statement that uses it -- in its section (see outline.py)
+    QList<int> sectionLines;
+    for (const auto v : scene["sections"].toArray())
+    {
+        if (v.toObject().contains("line")) sectionLines << v.toObject()["line"].toInt();
+    }
+    std::sort(sectionLines.begin(), sectionLines.end());
+    auto sectionOf = [&](int line) {
+        int k = -1;
+        for (int i = 0; i < sectionLines.size(); ++i)
+        {
+            if (sectionLines[i] <= line) k = i;
+            else break;
+        }
+        return k;
+    };
     QHash<QString, QList<int>> versions;
     for (int i = 0; i < list.size(); ++i)
     {
@@ -7389,7 +7897,8 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
             {
                 if (list[j]["line"].toInt() < list[i]["line"].toInt()) earlier = j;
             }
-            if (earlier >= 0 && earlier != i && !owner.contains(earlier)) owner[earlier] = keyOf(list[i]);
+            if (earlier >= 0 && earlier != i && !owner.contains(earlier) && sectionOf(list[earlier]["line"].toInt()) == sectionOf(list[i]["line"].toInt()))
+                owner[earlier] = keyOf(list[i]);
         }
     }
     QJsonArray items;
@@ -7401,6 +7910,19 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
         items.append(it);
     }
     scene["items"] = items;
+    {
+        // (the sections whose heading was moved are where it is now; one whose heading went is gone)
+        QList<QJsonObject> sections;
+        for (const auto v : scene["sections"].toArray())
+        {
+            if (v.toObject().contains("line")) sections << v.toObject();
+        }
+        std::stable_sort(sections.begin(), sections.end(),
+                         [](const QJsonObject& a, const QJsonObject& b) { return a["line"].toInt() < b["line"].toInt(); });
+        QJsonArray out;
+        for (const auto& s : sections) out.append(s);
+        scene["sections"] = out;
+    }
     return scene;
 }
 
@@ -7801,7 +8323,7 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
         for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
         {
             const QString type = (*i)->data(COL_NAME, ROLE_TYPE).toString();
-            if ((*i)->data(COL_NAME, ROLE_KEY).toString() == overKey && (type == "item" || type == "dep" || type == "hole" || type == "bcgroup"))
+            if ((*i)->data(COL_NAME, ROLE_KEY).toString() == overKey && (type == "item" || type == "dep" || type == "hole" || type == "bcgroup" || type == "section"))
             {
                 target = (*i)->data(COL_NAME, ROLE_ITEM).toJsonObject();
                 if (type == "dep") shadowOf = (*i)->data(COL_NAME, ROLE_PART).toString();
@@ -7978,7 +8500,8 @@ void ScenePanel::finishDrop(const QString& overKey, int at, const QPoint& global
     if (!moving.isEmpty())
     {
         int place = int(lines.size());
-        if (!target.isEmpty()) place = at == DropAbove ? groupStart(target) : groupEnd(target);
+        if (target.contains("marker")) place = at == DropAbove ? target["line"].toInt() - 1 : target["line"].toInt();       // (a section: its heading)
+        else if (!target.isEmpty()) place = at == DropAbove ? groupStart(target) : groupEnd(target);
         else while (place > 0 && lines[place - 1].trimmed().isEmpty()) --place;
 
         // A top-level model that statements hold references to (`# shadow: name`), dragged below the first of them: the reference
@@ -8527,6 +9050,62 @@ QRect ScenePanel::rowRect(const QString& prefix, QWidget* in)
     return QRect(m_tree->viewport()->mapTo(in, full.topLeft()), full.size());
 }
 
+void ScenePanel::setRowOpen(const QString& prefix, bool open)
+{
+    for (auto r : m_tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+    {
+        if (isShadow(r) || r->childCount() == 0) continue;
+        if (open) expandTo(r);
+        r->setExpanded(open);
+        return;
+    }
+}
+
+bool ScenePanel::rowIsOpen(const QString& prefix) const
+{
+    for (auto r : m_tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+    {
+        if (isShadow(r)) continue;
+        return r->childCount() == 0 || r->isExpanded();
+    }
+    return false;
+}
+
+bool ScenePanel::sectionClosed() const
+{
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() == "section" && (*i)->childCount() > 0 && !(*i)->isExpanded()) return true;
+    }
+    return false;
+}
+
+void ScenePanel::setSectionsOpen(bool open)
+{
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() == "section" && (*i)->childCount() > 0) (*i)->setExpanded(open);
+    }
+}
+
+QPoint ScenePanel::sectionArrowPoint(QWidget* in)
+{
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* r = *i;
+        if (r->data(COL_NAME, ROLE_TYPE).toString() != "section" || r->childCount() == 0) continue;
+        m_tree->scrollToItem(r);
+        const QRect rect = m_tree->visualItemRect(r);
+        return m_tree->viewport()->mapTo(in, QPoint(m_tree->indentation() / 2 + 1, rect.center().y()));
+    }
+    return QPoint();
+}
+
+bool ScenePanel::isNaming() const
+{
+    return m_startSectionRename >= 0 || static_cast<SceneTree*>(m_tree)->isEditing();
+}
+
 void ScenePanel::showSettings(bool open)
 {
     for (int k = 0; k < m_tree->topLevelItemCount(); ++k)
@@ -8646,6 +9225,650 @@ void ScenePanel::commitSetting(QLineEdit* edited, bool live)
         return;
     }
     // (the render settings are not typed into the tree: they are lines of the code, changed in the code editor)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// What is collapsed (kept for the file, tied to the code editor's folds), and the sections
+
+namespace {
+
+// Where the collapse of a file's rows is kept: under the editor's key for the file
+QString expandStorageKey(const QString& file)
+{
+    return "tree-state/" + md5Hex(file);
+}
+
+}   // anonymous namespace
+
+QString ScenePanel::sectionKey(int index) const
+{
+    const QJsonArray sections = m_scene["sections"].toArray();
+    if (index < 0 || index >= sections.size()) return QString();
+    const QString name = sections[index].toObject()["name"].toString();
+    int n = 0;
+    for (int i = 0; i < index; ++i)
+    {
+        if (sections[i].toObject()["name"].toString() == name) ++n;
+    }
+    return "section:" + name + "#" + QString::number(n);
+}
+
+int ScenePanel::foldLineOf(QTreeWidgetItem* row) const
+{
+    const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+    if (type != "item" && type != "section") return -1;
+    return row->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt() - 1;
+}
+
+bool ScenePanel::holdsPlaceholder(QTreeWidgetItem* row) const
+{
+    for (int k = 0; k < row->childCount(); ++k)
+    {
+        auto c = row->child(k);
+        if (c->data(COL_NAME, ROLE_TYPE).toString() == "hole" || holdsPlaceholder(c)) return true;
+    }
+    return false;
+}
+
+void ScenePanel::noteExpansion(QTreeWidgetItem* row, bool open)
+{
+    const QString key = row->data(COL_NAME, ROLE_KEY).toString();
+    // A row that holds a placeholder is not closed: that is where the user has to write
+    if (!open && !m_foldSyncing && holdsPlaceholder(row))
+    {
+        QTimer::singleShot(0, this, [this, key] {
+            for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+            {
+                if ((*i)->data(COL_NAME, ROLE_KEY).toString() == key) { (*i)->setExpanded(true); break; }
+            }
+        });
+        return;
+    }
+    m_expandState[key] = open;
+    m_expandSaveTimer.start();
+    // The lines of the statement or the section fold in the code editor with its row
+    if (m_foldSyncing) return;
+    const int line = foldLineOf(row);
+    if (line < 0) return;
+    m_foldSyncing = true;
+    emit(foldRequested(line, !open));
+    m_foldSyncing = false;
+    if (open && row->data(COL_NAME, ROLE_TYPE).toString() == "section") refoldInside(row);
+}
+
+void ScenePanel::refoldInside(QTreeWidgetItem* row)
+{
+    // (opening a section shows all of its lines again, the lines of the statements that are closed in it too: they are folded again)
+    std::function<void(QTreeWidgetItem*)> walk = [&](QTreeWidgetItem* r) {
+        for (int k = 0; k < r->childCount(); ++k)
+        {
+            auto c = r->child(k);
+            const int line = foldLineOf(c);
+            const QString key = c->data(COL_NAME, ROLE_KEY).toString();
+            if (line >= 0 && c->childCount() > 0 && m_expandState.contains(key) && !m_expandState.value(key) && !holdsPlaceholder(c))
+            {
+                m_foldSyncing = true;
+                emit(foldRequested(line, true));
+                m_foldSyncing = false;
+            }
+            walk(c);
+        }
+    };
+    walk(row);
+}
+
+void ScenePanel::editorFolded(int line0, bool folded)
+{
+    if (m_foldSyncing || m_rebuilding) return;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (row->childCount() == 0 || foldLineOf(row) != line0) continue;
+        if (folded && holdsPlaceholder(row))
+        {
+            // (a placeholder is not hidden: the lines open again)
+            m_foldSyncing = true;
+            emit(foldRequested(line0, false));
+            m_foldSyncing = false;
+            return;
+        }
+        m_expandState[row->data(COL_NAME, ROLE_KEY).toString()] = !folded;
+        m_expandSaveTimer.start();
+        m_foldSyncing = true;
+        row->setExpanded(!folded);
+        m_foldSyncing = false;
+        if (!folded && row->data(COL_NAME, ROLE_TYPE).toString() == "section") refoldInside(row);
+        return;
+    }
+}
+
+void ScenePanel::applyFolds()
+{
+    // The folds that the saved state of a file asks for are set in the code editor, once, with the tree of the text that is in it (a tree
+    // of an older text has other lines)
+    if (m_scene["items"].toArray().isEmpty() && m_scene["sections"].toArray().isEmpty()) return;
+    if (!m_source || m_scene["source_md5"].toString() != md5Hex(m_source())) return;
+    m_foldsPending = false;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (row->childCount() == 0) continue;
+        const int line = foldLineOf(row);
+        if (line < 0) continue;
+        const QString key = row->data(COL_NAME, ROLE_KEY).toString();
+        const bool holds = holdsPlaceholder(row);
+        if (!m_expandState.contains(key) && !holds) continue;       // (what the user did not choose stays as the editor has it: open)
+        m_foldSyncing = true;
+        emit(foldRequested(line, !holds && !m_expandState.value(key)));
+        m_foldSyncing = false;
+    }
+}
+
+void ScenePanel::loadExpandState()
+{
+    m_expandState.clear();
+    const QString file = m_fileKey ? m_fileKey() : QString();
+    if (file.isEmpty()) return;
+    QSettings settings("FielDes", "FielDes");
+    const QJsonObject o = QJsonDocument::fromJson(settings.value(expandStorageKey(file)).toString().toUtf8()).object();
+    for (const auto v : o["open"].toArray()) m_expandState[v.toString()] = true;
+    for (const auto v : o["closed"].toArray()) m_expandState[v.toString()] = false;
+}
+
+void ScenePanel::saveExpandState()
+{
+    const QString file = m_fileKey ? m_fileKey() : QString();
+    if (file.isEmpty()) return;
+    QSettings settings("FielDes", "FielDes");
+    const QString key = expandStorageKey(file);
+    if (m_expandState.isEmpty())
+    {
+        if (settings.contains(key)) settings.remove(key);
+        return;
+    }
+    QJsonArray open, closed;
+    int count = 0;
+    for (auto it = m_expandState.begin(); it != m_expandState.end() && count < 3000; ++it, ++count)
+        (it.value() ? open : closed).append(it.key());
+    QJsonObject o;
+    o["path"] = file;
+    o["open"] = open;
+    o["closed"] = closed;
+    o["saved"] = double(QDateTime::currentSecsSinceEpoch());
+    const bool isNew = !settings.contains(key);
+    settings.setValue(key, QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    if (!isNew) return;
+    // (only so many files are remembered: the ones not touched for longest go)
+    settings.beginGroup("tree-state");
+    const QStringList keys = settings.childKeys();
+    const int keep = 300;
+    if (keys.size() > keep)
+    {
+        QList<QPair<qint64, QString>> ages;
+        for (const QString& k : keys)
+            ages << qMakePair(qint64(QJsonDocument::fromJson(settings.value(k).toString().toUtf8()).object().value("saved").toDouble()), k);
+        std::sort(ages.begin(), ages.end());
+        for (int i = 0; i < keys.size() - keep; ++i) settings.remove(ages[i].second);
+    }
+    settings.endGroup();
+}
+
+void ScenePanel::createSectionBefore(QTreeWidgetItem* below)
+{
+    if (!m_source) return;
+    // (the rows must be of the text that is in the editor: the line the section is written on comes from them)
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh)
+    {
+        refuseOutOfDate();
+        return;
+    }
+    const QJsonObject it = below->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    const bool sectionRow = below->data(COL_NAME, ROLE_TYPE).toString() == "section";
+    const QStringList lines = m_source().split('\n');
+    int at = sectionRow ? it["line"].toInt() - 1 : groupStart(it);
+    if (!sectionRow)
+    {
+        // (the models a row holds are defined above it: the section starts above them too)
+        std::function<void(QTreeWidgetItem*)> earliest = [&](QTreeWidgetItem* r) {
+            for (int k = 0; k < r->childCount(); ++k)
+            {
+                auto c = r->child(k);
+                if (c->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
+                at = std::min(at, groupStart(c->data(COL_NAME, ROLE_ITEM).toJsonObject()));
+                earliest(c);
+            }
+        };
+        earliest(below);
+    }
+    at = std::max(0, std::min(at, int(lines.size())));
+    QSet<QString> names;
+    for (const auto v : m_scene["sections"].toArray()) names << v.toObject()["name"].toString();
+    int n = int(names.size()) + 1;
+    QString name;
+    do { name = T("Section %1").arg(n++); } while (names.contains(name));
+    QString text = "# SECTION " + name + "\n";
+    int header = at;
+    if (at > 0 && !lines.value(at - 1).trimmed().isEmpty())
+    {
+        text = "\n" + text;
+        header = at + 1;
+    }
+    m_startSectionRename = header;          // (typed in as soon as the row of the new section is there)
+    m_startSectionTries = 0;
+    // (followed by the tree at once: the lines of the rows -- and of the shapes in the viewport -- move down with the heading)
+    editFollowed(QList<TextEdit>{TextEdit{at, 0, at, 0, text}}, "Add section " + name, [](QJsonObject&, const QVector<int>&) {});
+}
+
+void ScenePanel::openProperties(QTreeWidgetItem* row, const QPoint& global)
+{
+    const QJsonObject it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    const QJsonArray props = it["properties"].toArray();
+    if (props.isEmpty()) return;
+    if (m_drawer) m_drawer->close();
+    const QString var = it["var"].toString();
+    // The drawer: opens at the side of the tab, lists what the model has -- its fields first, then its numbers -- and a click on one writes it as a
+    // model of its own, under the statement
+    auto drawer = new QFrame(this, Qt::Popup);
+    m_drawer = drawer;
+    drawer->setObjectName("PropertyDrawer");
+    drawer->setAttribute(Qt::WA_DeleteOnClose);
+    drawer->setStyleSheet(
+        "#PropertyDrawer { background: rgb(16, 56, 72); border: 1px solid rgba(42, 161, 152, 190); border-radius: 9px; }"
+        "QLabel { color: #93a1a1; font-size: 8pt; padding: 0px; background: transparent; }"
+        "QLabel#DrawerTitle { color: #eee8d5; font-weight: bold; font-size: 10pt; }"
+        "QLabel#DrawerSub { color: #2aa198; font-size: 8pt; font-weight: bold; }"
+        "QFrame#DrawerRule { background: rgba(147, 161, 161, 70); border: none; max-height: 1px; min-height: 1px; }"
+        "QPushButton[propertyRow=\"true\"] { background: transparent; border: none; border-radius: 5px; text-align: left; padding: 0px; }"
+        "QPushButton[propertyRow=\"true\"]:hover { background: rgba(38, 139, 210, 170); }");
+    auto outer = new QVBoxLayout(drawer);
+    outer->setContentsMargins(10, 9, 10, 9);
+    outer->setSpacing(5);
+    // The head: the model, and what this is
+    {
+        auto head = new QHBoxLayout;
+        head->setSpacing(7);
+        auto icon = new QLabel;
+        icon->setPixmap(TypeIcons::icon(it["type"].toString("simulation")).pixmap(16, 16));
+        auto title = new QLabel(var);
+        title->setObjectName("DrawerTitle");
+        auto sub = new QLabel(T("PROPERTIES"));
+        sub->setObjectName("DrawerSub");
+        head->addWidget(icon);
+        head->addWidget(title);
+        head->addStretch(1);
+        head->addWidget(sub);
+        outer->addLayout(head);
+        auto rule = new QFrame;
+        rule->setObjectName("DrawerRule");
+        outer->addWidget(rule);
+    }
+    auto holder = new QWidget;
+    holder->setStyleSheet("background: transparent;");
+    auto lay = new QVBoxLayout(holder);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(1);
+    QString lastKind;
+    int rows = 0, groups = 0;
+    for (const auto pv : props)
+    {
+        const QJsonObject p = pv.toObject();
+        const QString name = p["name"].toString();
+        const QString kind = p["kind"].toString();
+        const QString group = kind == "field" ? T("FIELDS") : T("NUMBERS");
+        if (group != lastKind)
+        {
+            lastKind = group;
+            auto g = new QLabel(group);
+            g->setStyleSheet("color: #2aa198; font-size: 7.5pt; font-weight: bold; padding: 7px 0px 2px 3px;");
+            lay->addWidget(g);
+            ++groups;
+        }
+        auto b = new QPushButton;
+        b->setObjectName("prop_" + name);
+        b->setProperty("propertyRow", true);
+        b->setFixedHeight(24);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setToolTip(kind == "field"
+            ? T("A field of %1: `%2_1 = %1.%2` is written below it, a model like any other (shown in the field viewer, sliced, used in other models)").arg(var, name)
+            : T("A number of %1: `%2_1 = %1.%2` is written below it").arg(var, name));
+        auto row2 = new QHBoxLayout(b);
+        row2->setContentsMargins(7, 0, 8, 0);
+        row2->setSpacing(7);
+        auto glyph = new QLabel;
+        glyph->setAttribute(Qt::WA_TransparentForMouseEvents);
+        glyph->setFixedWidth(16);
+        glyph->setAlignment(Qt::AlignCenter);
+        if (kind == "field") glyph->setPixmap(TypeIcons::icon("field").pixmap(14, 14));
+        else
+        {
+            glyph->setText("#");
+            glyph->setStyleSheet("color: #93a1a1; font-size: 9pt; font-weight: bold; background: transparent;");
+        }
+        row2->addWidget(glyph);
+        auto nameLabel = new QLabel(name);
+        nameLabel->setStyleSheet("color: #eee8d5; font-size: 9pt; background: transparent;");
+        nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        row2->addWidget(nameLabel);
+        row2->addStretch(1);
+        if (!p["text"].toString().isEmpty())
+        {
+            auto value = new QLabel(p["text"].toString());
+            value->setStyleSheet("color: #b4c0c0; font-size: 8.5pt; font-family: Consolas, monospace; background: transparent;");
+            value->setAttribute(Qt::WA_TransparentForMouseEvents);
+            row2->addSpacing(16);
+            row2->addWidget(value);
+        }
+        connect(b, &QPushButton::clicked, this, [this, it, name, drawer] {
+            drawer->close();
+            addProperty(it, name);
+        });
+        lay->addWidget(b);
+        ++rows;
+    }
+    auto scroll = new QScrollArea;
+    scroll->setWidget(holder);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet("QScrollArea { background: transparent; } QScrollBar:vertical { width: 8px; background: transparent; }"
+                          "QScrollBar::handle:vertical { background: rgba(147, 161, 161, 120); border-radius: 3px; }"
+                          "QScrollBar::add-line, QScrollBar::sub-line { height: 0px; }");
+    scroll->setMinimumWidth(270);
+    scroll->setFixedHeight(std::min(rows * 25 + groups * 24 + 4, 470));
+    outer->addWidget(scroll);
+    // (what the result found, written as text: the key numbers a result card shows)
+    QStringList exports;
+    for (const auto ev : it["exports"].toArray()) exports << ev.toString();
+    {
+        auto rule = new QFrame;
+        rule->setObjectName("DrawerRule");
+        outer->addWidget(rule);
+        auto hint = new QLabel(T("Click one: it is written below %1 as a model of its own.").arg(var));
+        hint->setWordWrap(true);
+        hint->setMaximumWidth(270);
+        outer->addWidget(hint);
+    }
+    if (exports.contains("summary"))
+    {
+        auto save = new QPushButton(T("Export the key numbers as text..."));
+        save->setObjectName("exportKeyNumbers");
+        save->setCursor(Qt::PointingHandCursor);
+        save->setStyleSheet("QPushButton { color: #eee8d5; background: rgba(147, 161, 161, 36); border: 1px solid rgba(147, 161, 161, 100);"
+                            " border-radius: 5px; padding: 4px 9px; font-size: 8.5pt; text-align: left; }"
+                            "QPushButton:hover { background: rgba(38, 139, 210, 170); border-color: rgba(38, 139, 210, 220); }");
+        connect(save, &QPushButton::clicked, this, [this, var, drawer] {
+            drawer->close();
+            emit(exportRequested(var, "results", ".txt"));
+        });
+        outer->addWidget(save);
+    }
+    drawer->adjustSize();
+    // (it opens at the right of the tab, level with it: a drawer that comes out of the panel, not a menu on top of the rows)
+    QPoint at = mapToGlobal(QPoint(width() + 30, 0));
+    if (m_propTab && m_propTab->isVisible()) at = m_propTab->mapToGlobal(QPoint(m_propTab->width() + 6, -2));
+    else at.setY(global.y());
+    if (auto screen = QGuiApplication::screenAt(global))
+    {
+        const QRect avail = screen->availableGeometry();
+        at.setX(std::min(at.x(), avail.right() - drawer->width()));
+        at.setY(std::max(avail.top(), std::min(at.y(), avail.bottom() - drawer->height())));
+    }
+    drawer->move(at);
+    if (auto tab = static_cast<PropertyTab*>(m_propTab.data())) { tab->active = true; tab->update(); }
+    connect(drawer, &QObject::destroyed, this, [this] {
+        if (auto tab = static_cast<PropertyTab*>(m_propTab.data())) { tab->active = false; tab->update(); }
+        m_propTabHide.start();
+    });
+    drawer->show();
+}
+
+// The tab that opens the drawer: it sticks out of the right edge of the panel, level with the hovered row of a model that has properties
+void ScenePanel::showPropertyTab(QTreeWidgetItem* row)
+{
+    if (!parentWidget() || !row) return;
+    m_propTabHide.stop();
+    m_propTabKey = row->data(COL_NAME, ROLE_KEY).toString();
+    if (!m_propTab)
+    {
+        auto tab = new PropertyTab(parentWidget());
+        tab->clicked = [this] {
+            if (!m_propTab) return;
+            QTreeWidgetItem* r = nullptr;
+            for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+                if ((*i)->data(COL_NAME, ROLE_KEY).toString() == m_propTabKey) { r = *i; break; }
+            if (r) openProperties(r, m_propTab->mapToGlobal(QPoint(m_propTab->width(), 0)));
+        };
+        tab->entered = [this] { m_propTabHide.stop(); };
+        tab->left = [this] { m_propTabHide.start(); };
+        m_propTab = tab;
+    }
+    placePropertyTab();
+}
+
+void ScenePanel::placePropertyTab()
+{
+    if (!m_propTab || !parentWidget()) return;
+    QTreeWidgetItem* row = nullptr;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+        if ((*i)->data(COL_NAME, ROLE_KEY).toString() == m_propTabKey) { row = *i; break; }
+    if (!row || !isVisible()) { hidePropertyTab(); return; }
+    const QRect r = m_tree->visualItemRect(row);
+    if (r.isEmpty() || r.bottom() < 0 || r.top() > m_tree->viewport()->height()) { hidePropertyTab(); return; }
+    const QPoint top = m_tree->viewport()->mapTo(parentWidget(), QPoint(0, r.top()));
+    const QString var = row->data(COL_NAME, ROLE_ITEM).toJsonObject()["var"].toString();
+    m_propTab->setToolTip(T("Properties of %1: its fields and numbers").arg(var));
+    m_propTab->setGeometry(geometry().right() - 1, top.y() - 1, 20, std::max(22, r.height() + 2));
+    m_propTab->show();
+    m_propTab->raise();
+}
+
+void ScenePanel::hidePropertyTab()
+{
+    if (m_propTab && m_propTab->isVisible() && !m_drawer) m_propTab->hide();
+}
+
+QPoint ScenePanel::propertyArrowPoint(const QString& prefix, QWidget* in)
+{
+    const QRect r = propertyTabRect(prefix, in);
+    return r.isEmpty() ? QPoint() : r.center();
+}
+
+QRect ScenePanel::propertyTabRect(const QString& prefix, QWidget* in)
+{
+    for (auto r : m_tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+    {
+        if (isShadow(r)) continue;
+        expandTo(r);
+        m_tree->scrollToItem(r);
+        const QRect rect = m_tree->visualItemRect(r);
+        if (rect.isEmpty() || !parentWidget()) return QRect();
+        const QPoint top = m_tree->viewport()->mapTo(parentWidget(), QPoint(0, rect.top()));
+        const QRect inParent(geometry().right() - 1, top.y() - 1, 20, std::max(22, rect.height() + 2));
+        return QRect(in->mapFromGlobal(parentWidget()->mapToGlobal(inParent.topLeft())), inParent.size());
+    }
+    return QRect();
+}
+
+void ScenePanel::showOnly(const QStringList& open)
+{
+    m_showOnly = true;
+    m_showOnlyOpen = open;
+    applyShowOnly();
+}
+
+void ScenePanel::showAll()
+{
+    m_showOnly = false;
+    m_showOnlyOpen.clear();
+}
+
+void ScenePanel::applyShowOnly()
+{
+    if (!m_showOnly) return;
+    // (the rows are walked from the top: a row is closed before the rows under it are looked at, and one of those that is open opens the rows above it again)
+    const bool before = m_foldSyncing;
+    m_foldSyncing = true;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (row->childCount() == 0 || row->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
+        const QString var = row->data(COL_NAME, ROLE_ITEM).toJsonObject()["var"].toString();
+        const bool open = m_showOnlyOpen.contains(var) || holdsPlaceholder(row);
+        row->setExpanded(open);
+        if (open)
+            for (auto p = row->parent(); p; p = p->parent()) p->setExpanded(true);
+    }
+    m_foldSyncing = before;
+}
+
+QRect ScenePanel::placeholderRect(QWidget* in)
+{
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() != "hole") continue;
+        bool shown = true;
+        for (auto p = (*i)->parent(); p; p = p->parent()) shown = shown && p->isExpanded();
+        if (!shown) continue;
+        const QRect rect = m_tree->visualItemRect(*i);
+        if (rect.isEmpty()) continue;
+        return QRect(m_tree->viewport()->mapTo(in, QPoint(0, rect.top())), QSize(m_tree->viewport()->width(), rect.height()));
+    }
+    return QRect();
+}
+
+QRect ScenePanel::sectionRect(QWidget* in)
+{
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        if ((*i)->data(COL_NAME, ROLE_TYPE).toString() != "section") continue;
+        const QRect rect = m_tree->visualItemRect(*i);
+        if (rect.isEmpty()) continue;
+        return QRect(m_tree->viewport()->mapTo(in, QPoint(0, rect.top())), QSize(m_tree->viewport()->width(), rect.height()));
+    }
+    return QRect();
+}
+
+QRect ScenePanel::visibleRowRect(const QString& prefix, QWidget* in)
+{
+    for (auto r : m_tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+    {
+        if (isShadow(r)) continue;
+        bool shown = true;
+        for (auto p = r->parent(); p; p = p->parent()) shown = shown && p->isExpanded();
+        if (!shown) return QRect();
+        QRect rect = m_tree->visualItemRect(r);
+        if (rect.isEmpty() || rect.bottom() > m_tree->viewport()->height() || rect.top() < 0)
+        {
+            m_tree->scrollToItem(r);
+            rect = m_tree->visualItemRect(r);
+        }
+        if (rect.isEmpty()) return QRect();
+        const QRect full(0, rect.top(), m_tree->viewport()->width(), rect.height());
+        return QRect(m_tree->viewport()->mapTo(in, full.topLeft()), full.size());
+    }
+    return QRect();
+}
+
+void ScenePanel::addProperty(const QJsonObject& it, const QString& property)
+{
+    if (!m_source) return;
+    // (the rows must be of the text that is in the editor: the line it is written under comes from them)
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh)
+    {
+        refuseOutOfDate();
+        return;
+    }
+    const QString var = it["var"].toString();
+    if (var.isEmpty()) return;
+    const QStringList lines = m_source().split('\n');
+    // The name: the property and a number (`stress_1`, then `stress_2` ...), one the script does not use yet
+    const QString src = m_source();
+    QString name;
+    for (int n = 1;; ++n)
+    {
+        name = property + "_" + QString::number(n);
+        if (!QRegularExpression("\\b" + QRegularExpression::escape(name) + "\\b").match(src).hasMatch()) break;
+    }
+    const QString text = name + " = " + var + "." + property;
+    const int at = groupEnd(it);
+    QList<TextEdit> edits;
+    if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
+    else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
+    m_selectNew = name;                 // (selected once it is a model of the script: a number is none, and the wait gives up)
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Take " + property + " of " + var));
+}
+
+void ScenePanel::liveRenameSection(QTreeWidgetItem* row, const QString& typed)
+{
+    const QJsonObject so = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    const int line = so["line"].toInt() - 1;
+    if (!m_sectionRename.active || m_sectionRename.line != line)
+    {
+        static const QRegularExpression heading(R"(^\s*#\s*(SECTION\b|%%))");
+        const QString text = lineText(line);
+        if (!heading.match(text).hasMatch())
+        {
+            refuseOutOfDate();
+            return;
+        }
+        const QJsonArray span = so["span"].toArray();
+        SectionRename r;
+        r.active = true;
+        r.line = line;
+        r.original = so["name"].toString();
+        r.current = r.original;
+        r.col = span.size() == 4 ? span[1].toInt() : int(text.size());
+        r.length = span.size() == 4 ? span[3].toInt() - span[1].toInt() : 0;
+        // (`#SECTION` with no name yet: the name is written after a space)
+        if (r.length == 0 && r.col > 0 && r.col <= text.size() && !text.at(r.col - 1).isSpace()) r.lead = " ";
+        m_sectionRename = r;
+    }
+    QString name = typed;
+    name.replace('\n', ' ');
+    const QString written = m_sectionRename.lead + name;
+    emit(editScriptLive(QList<TextEdit>{TextEdit{line, m_sectionRename.col, line, m_sectionRename.col + m_sectionRename.length, written}},
+                        "Rename section"));
+    m_sectionRename.length = int(written.size());
+    m_sectionRename.current = name.trimmed();
+    // The rows follow what is typed (the run that answers is on its way, and the tree can be built again before it comes)
+    QJsonArray sections = m_scene["sections"].toArray();
+    for (int s = 0; s < sections.size(); ++s)
+    {
+        QJsonObject o = sections[s].toObject();
+        if (o["line"].toInt() - 1 != line) continue;
+        const QString oldKey = sectionKey(s);
+        o["name"] = name.trimmed();
+        o["span"] = QJsonArray{line + 1, m_sectionRename.col, line + 1, m_sectionRename.col + m_sectionRename.length};
+        sections[s] = o;
+        m_scene["sections"] = sections;
+        const QString newKey = sectionKey(s);
+        if (newKey != oldKey)
+        {
+            if (m_expandState.contains(oldKey)) m_expandState[newKey] = m_expandState.take(oldKey);
+            if (m_selectedKey == oldKey) m_selectedKey = newKey;
+            for (auto& k : m_selectOrder) if (k == oldKey) k = newKey;
+            row->setData(COL_NAME, ROLE_KEY, newKey);
+            m_expandSaveTimer.start();
+        }
+        row->setData(COL_NAME, ROLE_ITEM, o);
+        row->setData(COL_NAME, ROLE_RENAME, name.trimmed());
+        row->setText(COL_NAME, name.trimmed().isEmpty() ? T("(unnamed section)") : name.trimmed());
+        break;
+    }
+}
+
+void ScenePanel::endSectionRename(bool keep)
+{
+    const SectionRename r = m_sectionRename;
+    m_sectionRename = SectionRename();
+    if (!keep) m_revertClock.start();
+    // (Escape: the name it had before it was typed on)
+    if (!keep && r.active)
+        emit(editScriptLive(QList<TextEdit>{TextEdit{r.line, r.col, r.line, r.col + r.length, r.original}}, "Rename section"));
 }
 
 }   // namespace FielDes

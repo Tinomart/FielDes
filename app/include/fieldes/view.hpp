@@ -20,11 +20,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QElapsedTimer>
+#include <QHash>
+#include <QMutex>
 #include <QJsonObject>
 #include <QSet>
 #include <QPair>
 #include <atomic>
 #include <functional>
+#include <memory>
 
 #include <QFutureWatcher>
 #include <QOpenGLWidget>
@@ -92,7 +95,9 @@ public:
     int m_renderLogged = -1;
 
 public slots:
-    void setShapes(QList<Shape*> shapes);
+    /*  The shapes of a run.  With keepFromLine >= 0 (a partial picture: the run is not over) the shapes shown that come from statements at or
+     *  after that line, and are not in the list, stay -- they are not made yet in this run, and a render that is going on is not stopped  */
+    void setShapes(QList<Shape*> shapes, int keepFromLine = -1);
 
     /*  Model-tree selection: highlight the shapes displayed by these
      *  (0-based) script lines  */
@@ -365,6 +370,9 @@ protected:
     /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
      *  their own menu: `simulations` says which of the two is listed (the boundary conditions and the analyses are in it)  */
     void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);
+    /*  The lattice section of a menu: the operations that fill a model with a lattice (and make points for it), then a menu for each family of
+     *  cells -- struts, TPMS, planar patterns, non-periodic, custom -- each entry making that cell at once (no model is needed)  */
+    void fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line);
     /*  The entry that makes a body from the field of the model at `line` (-1: the selected field the viewer shows)  */
     void addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale);
     /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of a simulation
@@ -495,6 +503,9 @@ protected:
     bool m_liveWaiting = false;                 // a newer picture has been published while those were meshing: it is next
     QVector3D m_liveMin, m_liveMax;             // the region they are rendered over
     std::function<QString()> m_liveSettings;    // the render settings the script has given so far (JSON), asked for while it runs
+    std::function<libfive::Tree(const QString&)> m_exactResolver;
+    std::shared_ptr<QMutex> m_exactMutex = std::make_shared<QMutex>();
+    std::shared_ptr<QHash<QString, libfive::Tree>> m_exactTrees = std::make_shared<QHash<QString, libfive::Tree>>();
     void pollLive();
     void startLive();
     void swapLive();
@@ -502,13 +513,27 @@ protected:
     void placeLivePanel();
     /*  The entries of the first menu of a body that are used all the time -- center, bounding_box: not under a group  */
     void addQuickOperations(QMenu* menu, int line, const QVector3D& point, double scale);
+    /*  The Export submenu of the menu of a model: its mesh in every mesh format, a field on a grid, an analysis as a finite-element model and as results
+     *  -- what the model can be exported as; the window asks where the file goes  */
+    void addExportMenu(QMenu* menu, int line);
 public:
     void setLiveSettings(std::function<QString()> probe) { m_liveSettings = std::move(probe); }
+    /*  Where a field viewer gets the exact distance of an imported part (asked for by FieldSource::exactKey, from the sampling's own thread)  */
+    void setExactResolver(std::function<libfive::Tree(const QString&)> resolver) { m_exactResolver = std::move(resolver); }
 private:
     int m_playMode = 0;                 // 0 loop, 1 back and forth, 2 once (stop at the end)
     float m_playSpeed = 1.0f;           // steps per second = 10 x this
     float m_flowOpacity = 1.0f;         // how opaque a flow is drawn (the result card's slider): the body in it shows through a lower one
     int m_playDir = 1;                  // (back and forth: which way)
+    /*  What was chosen on the result card, kept by the view and not by the shapes: every new result shape -- the result of the next run,
+     *  and every picture of an optimisation that runs (a new one after every iteration) -- is made to look as the one before it did, so that
+     *  what you set (the field shown, the magnification, the opacity of a flow, the elements, the streamlines) stays while the design
+     *  changes.  -1: not chosen (the shape's own)  */
+    QString m_choiceChannel;            // the name of the field (not its position: another result has other fields)
+    float m_choiceDeform = -1.0f;       // the magnification, as a multiple of the result's own automatic one
+    int m_choiceElements = -1;
+    int m_choiceLines = -1;
+    void applyViewerChoices(Shape* s) const;
 
     /*  For click-to-select: where the press happened and what it hit  */
     QPoint press_pos;
@@ -672,6 +697,8 @@ protected:
     float handleLength(const QVector3D& pivot) const;
     HandleGrip handleAt(QPoint pos) const;
     void drawHandles(QPainter& painter);
+    /*  The points of a set of points (Shape::markers), each as the dot in the middle of a gizmo -- and no handles: they are data  */
+    void drawMarkers(QPainter& painter);
     void beginHandleDrag(const HandleGrip& g, QPoint pos);
     void dragHandle(QPoint pos);
     bool ringPoint(QPoint pos, const QVector3D& pivot, const QVector3D& axis, QVector3D& out) const;

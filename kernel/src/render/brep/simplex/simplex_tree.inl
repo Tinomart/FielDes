@@ -23,6 +23,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "libfive/render/brep/region.hpp"
 #include "libfive/render/brep/settings.hpp"
+#include "libfive/render/brep/spawn.hpp"
 #include "libfive/render/brep/neighbor_tables.hpp"
 
 #include "libfive/render/axes.hpp"
@@ -865,7 +866,7 @@ void SimplexTree<N>::assignIndices(const BRepSettings& settings) const
     std::vector<std::future<void>> futures;
     futures.resize(settings.workers);
     for (unsigned i=0; i < settings.workers; ++i) {
-        futures[i] = std::async(std::launch::async,
+        futures[i] = spawn(settings.low_priority,
             [&done, &settings, &tasks, &global_index]() {
                 assignIndicesWorker(tasks, global_index, done, settings.cancel);
             });

@@ -42,6 +42,8 @@ QHash<QString, Kind>& kinds()
         {"material",   {"Material",     QColor("#c9a66b")}},
         {"conditions", {"Conditions",   QColor("#e08f58")}},
         {"cell",       {"Lattice cell", QColor("#d4b43c")}},
+        {"lattice",    {"Lattice",      QColor("#e0709c")}},
+        {"points",     {"Point set",    QColor("#f0a24c")}},
         {"import",     {"Import",       QColor("#2aa198")}},
         {"block",      {"Custom block", QColor("#8da2c0")}},
     };
@@ -166,6 +168,29 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         p.drawEllipse(QPointF(8, 8), 1.6, 1.6);
+    }
+    else if (type == "lattice")
+    {
+        // a body filled with cells: a small cube of struts -- the edges and the diagonals of its faces
+        const QPointF v0(3.2, 4.4), v1(11.2, 4.4), v2(13.2, 2.4), v3(5.2, 2.4), v4(3.2, 12.4), v5(11.2, 12.4), v6(13.2, 10.4), v7(5.2, 10.4);
+        p.setPen(QPen(alpha(c, 200), 1.25, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawLine(v0, v1); p.drawLine(v1, v2); p.drawLine(v2, v3); p.drawLine(v3, v0);
+        p.drawLine(v4, v5); p.drawLine(v5, v6); p.drawLine(v6, v7); p.drawLine(v7, v4);
+        p.drawLine(v0, v4); p.drawLine(v1, v5); p.drawLine(v2, v6); p.drawLine(v3, v7);
+        p.setPen(QPen(c, 1.25, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(v0, v5); p.drawLine(v1, v6); p.drawLine(v7, v0);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        for (const QPointF& n : {v0, v1, v4, v5}) p.drawEllipse(n, 1.5, 1.5);
+    }
+    else if (type == "points")
+    {
+        // a set of points: a scatter
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        const QPointF dots[7] = {QPointF(3.4, 4.2), QPointF(8.2, 2.8), QPointF(12.6, 5.6), QPointF(6.0, 8.6), QPointF(11.0, 10.8),
+                                 QPointF(3.6, 12.6), QPointF(8.6, 13.0)};
+        for (int k = 0; k < 7; ++k) p.drawEllipse(dots[k], k % 3 == 0 ? 1.9 : 1.5, k % 3 == 0 ? 1.9 : 1.5);
     }
     else if (type == "import")
     {

@@ -19,6 +19,7 @@ MODULES = [
     ('importing', 'Importing models', 'fieldes.stdlib.importing'),
     ('cad_import', 'The region and resolution of imported models', 'fieldes.stdlib.cad_import'),
     ('mesh_import', 'Triangle meshes', 'fieldes.stdlib.mesh_import'),
+    ('exporting', 'Exporting files', 'fieldes.stdlib.exporting'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
     ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
     ('measure', 'Measuring a body', 'fieldes.stdlib.measure'),

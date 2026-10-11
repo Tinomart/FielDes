@@ -187,7 +187,7 @@ THROUGH = {
     'thermal': ['thermal_analysis'],
     'fluid': ['fluid_analysis'],
     'selection': ['select_surface', 'surface_from_bodies'],
-    'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom'],
+    'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom', 'random_points'],
     'conformal': ['lattice_surface_conform'],
     'fields': ['render_mesh', 'distance_to_surface', 'depth_below', 'signed_distance', 'clamp', 'ramp', 'remap_field',
                'normalize', 'lerp', 'mix', 'smoothstep', 'step_field', 'sum_fields', 'evaluate', 'sample_grid',
@@ -221,8 +221,8 @@ NO_BODY = {
                'distance_to_plane', 'attractor', 'wave', 'field_from_points', 'field_from_csv', 'noise_field',
                'low_level_field', 'low_level_body'],
     'lattices': ['cartesian', 'cylindrical', 'spherical', 'tpms', 'unit_cell_beams', 'strut_lattice', 'planar_lattice',
-                 'cell_periodic', 'cell_non_periodic', 'cell_custom_truss', 'cell_custom_tpms', 'graph_lattice',
-                 'points_graph'],
+                 'cell_periodic', 'cell_custom_truss', 'cell_custom_tpms', 'graph_lattice',
+                 'points_graph', 'voronoi_lattice', 'delaunay_lattice'],      # (the two lattices take the body from their points, and fill it with the guarded fill)
 }
 
 

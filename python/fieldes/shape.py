@@ -97,6 +97,8 @@ class Shape:
             return out
         elif isinstance(t, cls):
             return t
+        elif getattr(type(t), '_as_field', None) is not None:
+            return cls.wrap(t._as_field())          # (a result of an analysis or an optimisation: its field -- see fea.FieldResult)
         else:
             raise RuntimeError("Cannot convert {} into a Shape".format(t))
 
@@ -340,6 +342,14 @@ class Shape:
         return verts, tris
 
 ################################################################################
+
+def field_shape(ptr):
+    ''' A field a solver calculated (a stress, a temperature, a speed, a density ...), made from the tree `ptr`: a FIELD, not a body -- a value at
+        every point of space, which is not drawn, is not a part, and shows in the field viewer when it is selected '''
+    out = Shape(ptr)
+    out._kind = 'field'
+    return out
+
 
 def shape(f):
     ''' Decorator which converts a target function into a Shape

@@ -237,6 +237,23 @@ light = offset_by(bracket, 0.02 * result.von_mises)
 and they feed lattices (see [Field-driven design](lattices.md#driving-a-lattice-from-a-field) and
 `examples/10_field_driven_design.py`).
 
+**Every result is a field.** A result of an analysis or of an optimisation goes wherever a shape goes (`offset(result, 1)`,
+`difference(part, result)`, `result * 2`, the part of the next analysis), and it is its own field there:
+
+| Result of | is the field |
+|---|---|
+| `topology_optimization`, `flow_topology_optimization` | the final design (the shape it made) |
+| `static_analysis` | the von Mises stress |
+| `modal_analysis` | the displacement of the first mode |
+| `thermal_analysis` | the temperature |
+| `fluid_analysis` | the speed |
+
+`result.fields` lists every field the result calculated, as `{name: field}` (`shape` and `density` for a topology optimisation,
+`mode_1`, `mode_2`, … for the modes, `von_mises`, `displacement`, `ux` … for a static analysis): keep it in a variable
+(`stress = result.fields['von_mises']`) or use the attributes by those names (`result.pressure`). What the result is made visible
+as -- the optimisation's iterations that can be played back, the flow's streamlines -- is how it is shown when it is stated on its own;
+passing it on does not change that, and it can still be shown whole.
+
 ## Modal analysis
 
 ```python

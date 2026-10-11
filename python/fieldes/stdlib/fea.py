@@ -52,7 +52,7 @@ from collections import OrderedDict
 
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
-from fieldes.shape import Shape
+from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
@@ -205,9 +205,63 @@ class _Thermal(_Condition):
 
 
 def _shape(x, what):
+    x = _field_of(x)
     if not isinstance(x, Shape):
         raise TypeError('{} must be a Shape (a region), not {!r}'.format(what, type(x).__name__))
     return x
+
+
+def _field_of(x):
+    ''' A result of an analysis or an optimisation is a field like any other: where a shape goes, a result goes, and it is its field there '''
+    if not isinstance(x, Shape) and getattr(type(x), '_as_field', None) is not None:
+        return x._as_field()
+    return x
+
+
+class FieldResult:
+    ''' What every result is -- of an analysis or of an optimisation: a FIELD, like any shape.  Wherever a shape goes (`offset(result, 1)`,
+        `difference(part, result)`, `result * 2`, the part of the next analysis) the result goes, and it is its own field there:
+
+            an optimisation       the final design (the shape it made)
+            static_analysis       the von Mises stress          modal_analysis      the first mode's displacement
+            thermal_analysis      the temperature               fluid_analysis      the speed
+
+        and `result.fields` lists every field it calculated -- `{name: field}` -- the others being attributes by those names (`result.pressure`).
+        Whatever the result is made visible as -- the optimisation's iterations, the flow's streamlines -- is how it is shown when it is
+        stated on its own: the field it is passed as does not change that. '''
+
+    def _as_field(self):
+        raise TypeError('{} has no field of its own'.format(type(self).__name__))
+
+    @property
+    def fields(self):
+        ''' Every field the result calculated, as {name: field} '''
+        return OrderedDict()
+
+    def __getattr__(self, name):
+        # (a name the result does not have is a name of its field: `result.min(...)`, `result.sqrt()` -- never the private ones)
+        if name.startswith('_') or self.__dict__.get('_resolving'):
+            raise AttributeError(name)
+        self.__dict__['_resolving'] = True
+        try:
+            field = self._as_field()
+        except Exception:
+            raise AttributeError(name) from None
+        finally:
+            self.__dict__['_resolving'] = False
+        return getattr(field, name)
+
+
+def _delegate(name):
+    def op(self, *args):
+        return getattr(self._as_field(), name)(*args)
+    op.__name__ = name
+    return op
+
+
+for _name in ('__add__', '__radd__', '__sub__', '__rsub__', '__mul__', '__rmul__', '__truediv__', '__rtruediv__', '__pow__', '__neg__',
+              '__abs__'):
+    setattr(FieldResult, _name, _delegate(_name))
 
 
 # The conditions an analysis is given, one input for each kind (the name of the input is the name of the kind: a force goes in `loads`).  Every
@@ -262,6 +316,11 @@ def _with_conditions(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        # (a result is a field: the part of an analysis -- or its body, its domain -- may be the result of another)
+        args = tuple(_field_of(a) for a in args[:2]) + tuple(args[2:])
+        for key in ('body', 'domain', 'part', 'shape'):
+            if key in kwargs:
+                kwargs[key] = _field_of(kwargs[key])
         old = [k for k in ('walls', 'slips') if k in kwargs and 'boundaries' in sig.parameters]
         if old:
             raise TypeError('{fn}: {old} {is_} not an input any more -- the walls and the slips are one input, boundaries, that takes wall(...) and slip(...) '
@@ -474,7 +533,7 @@ class _Handle:
             self.ptr = None
 
 
-class Result:
+class Result(FieldResult):
     ''' The solved analysis.  Fields (Shapes whose value is the result at
         each point, usable in any expression): von_mises, displacement,
         ux, uy, uz, sxx .. szx, max_principal, min_principal,
@@ -492,7 +551,7 @@ class Result:
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
             ptr = lib.libfive_fea_field(p, i)
-            setattr(self, name, Shape(ptr))
+            setattr(self, name, field_shape(ptr))
             self._ranges[name] = (lib.libfive_fea_field_min(p, i), lib.libfive_fea_field_max(p, i))
         stat = lambda k: lib.libfive_fea_stat(p, k)
         # (the solver counts cells of the grid; a cell of tetrahedra is six elements)
@@ -536,6 +595,13 @@ class Result:
         self.max_displacement = self._ranges['displacement'][1]
         ys = material.yield_strength
         self.safety_factor = (ys / self.max_von_mises) if ys and self.max_von_mises > 0 else None
+
+    def _as_field(self):
+        return self.von_mises
+
+    @property
+    def fields(self):
+        return OrderedDict((name, getattr(self, name)) for name in _FIELDS)
 
     def range(self, field='von_mises'):
         ''' (min, max) of a field over the part: of the smooth field (the nodal values;
@@ -810,7 +876,7 @@ class TetResult(Result):
         p = handle.ptr
         self._ranges = {}
         for i, name in enumerate(_FIELDS):
-            setattr(self, name, Shape(lib.libfive_tetfea_field(p, i)))
+            setattr(self, name, field_shape(lib.libfive_tetfea_field(p, i)))
             self._ranges[name] = (lib.libfive_tetfea_field_min(p, i), lib.libfive_tetfea_field_max(p, i))
         stat = lambda k: lib.libfive_tetfea_stat(p, k)
         self.elements = int(stat(0))
@@ -883,6 +949,12 @@ class TetResult(Result):
         return out
 
 
+def _remember_conditions(result, supports, loads):
+    ''' The supports and loads a static analysis was solved with, kept on its result: export_fea() writes them into a model file '''
+    result._conditions = (list(supports), list(loads))
+    return result
+
+
 def _static_analysis_tet(shape, supports, loads, material, element_size, region, size, max_iterations,
                          tolerance, cache, ekey=None):
     ''' static_analysis on a body-fitted tetrahedral mesh '''
@@ -891,7 +963,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetfea', ekey, 'static analysis')
     if loaded is not None:
-        return TetResult(_TetHandle(loaded[0]), shape, material, element_size, size)
+        return _remember_conditions(TetResult(_TetHandle(loaded[0]), shape, material, element_size, size), supports, loads)
     # (a Young's modulus that is a field is measured against 1 MPa: each element has its own value of it)
     ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
     handle = _TetHandle(ptr)
@@ -926,7 +998,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
         lib.libfive_tetfea_set_salt(ptr, result_cache.salt('tetfea', ekey))
     if not lib.libfive_tetfea_solve(ptr, int(max_iterations), float(tolerance)):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
-    result = TetResult(handle, shape, material, element_size, size)
+    result = _remember_conditions(TetResult(handle, shape, material, element_size, size), supports, loads)
     result_cache.save('tetfea', ekey, ptr, 'static analysis')
     if cache:
         _cache[key] = result
@@ -955,7 +1027,7 @@ class Mode:
         p = handle.ptr
         self._ranges = {}
         for name, f in (('displacement', 1), ('ux', 2), ('uy', 3), ('uz', 4)):
-            setattr(self, name, Shape(lib.libfive_fea_mode_field(p, index, f)))
+            setattr(self, name, field_shape(lib.libfive_fea_mode_field(p, index, f)))
             self._ranges[name] = (lib.libfive_fea_mode_field_min(p, index, f),
                                   lib.libfive_fea_mode_field_max(p, index, f))
 
@@ -1004,7 +1076,7 @@ class TetMode(Mode):
         p = handle.ptr
         self._ranges = {}
         for name, f in (('displacement', 1), ('ux', 2), ('uy', 3), ('uz', 4)):
-            setattr(self, name, Shape(lib.libfive_tetfea_mode_field(p, index, f)))
+            setattr(self, name, field_shape(lib.libfive_tetfea_mode_field(p, index, f)))
             self._ranges[name] = (lib.libfive_tetfea_mode_field_min(p, index, f),
                                   lib.libfive_tetfea_mode_field_max(p, index, f))
 
@@ -1012,7 +1084,7 @@ class TetMode(Mode):
         return self._size
 
 
-class ModalResult:
+class ModalResult(FieldResult):
     ''' The result of modal_analysis(): .frequencies (Hz, lowest first),
         .modes (a Mode each: its shape as fields), .seconds.  Stated on its
         own it shows the first mode (result.modes[1] the second, ...). '''
@@ -1036,6 +1108,23 @@ class ModalResult:
 
     def __getitem__(self, i):
         return self.modes[i]
+
+    def _as_field(self):
+        mode = self.modes[0]
+        for name in ('displacement', 'shape'):
+            f = getattr(mode, name, None)
+            if isinstance(f, Shape):
+                return f
+        raise TypeError('modal_analysis: the first mode has no displacement field')
+
+    @property
+    def fields(self):
+        out = OrderedDict()
+        for k, mode in enumerate(self.modes):
+            f = getattr(mode, 'displacement', None)
+            if isinstance(f, Shape):
+                out['mode_%d' % (k + 1)] = f
+        return out
 
     def __len__(self):
         return len(self.modes)
@@ -1179,7 +1268,7 @@ def colored(shape, field, range=None, label=None, colormap='turbo'):
 ################################################################################
 # Topology optimization
 
-class TopologyResult:
+class TopologyResult(FieldResult):
     ''' The result of topology_optimization():
         .density     a field, 0 (no material) .. 1 (solid), in the part
         .shape()     the optimized part, keeping the volume fraction asked
@@ -1507,7 +1596,7 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
 
     def finish(handle, ptr, seconds, symmetric=None):
         ''' The result from a solved problem (just optimised, or read back from its file: `symmetric`, what the file says) '''
-        density = Shape(fn('density')(ptr))
+        density = field_shape(fn('density')(ptr))
         hist = (ctypes.c_double * 1000)()
         m = fn('history')(ptr, hist, 1000)
         history = [hist[i] for i in range(min(m, 1000))]
@@ -1518,7 +1607,7 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
             p = at(ptr, k) if at else None
             if not p:
                 break
-            densities.append(Shape(p))
+            densities.append(field_shape(p))
         stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history), 'seconds': seconds}
         if len(history) >= settings['iterations'] and len(history) > 12 and history[-1] > 0:
             # (the last iteration was the limit, not a design that had settled: say how far from it the part still was)
@@ -1702,3 +1791,8 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
     result = finish(handle, ptr, time.time() - t0)
     keep_result(result)
     return result
+
+
+# (the final design of an optimisation is its field; the fields it calculated are listed: see FieldResult)
+TopologyResult._as_field = lambda self: self.shape()
+TopologyResult.fields = property(lambda self: OrderedDict([('shape', self.shape()), ('density', self.density)]))

@@ -11,7 +11,17 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <iostream>
 #include <cassert>
 
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#elif defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 #include "libfive/render/brep/progress.hpp"
+#include "libfive/render/brep/spawn.hpp"
 
 namespace libfive {
 
@@ -78,7 +88,7 @@ void ProgressHandler::nextPhase(uint64_t total) {
     // conditional detects that case and starts the worker thread.
     if (current_phase == phases.end()) {
         current_phase = phases.begin();
-        future = std::async(std::launch::async, [this]() { run(); });
+        future = spawn([this]() { run(); });
     } else {
         std::lock_guard<std::mutex> lock(phase_mut);
 
@@ -115,6 +125,16 @@ void ProgressHandler::finish()
 void ProgressHandler::tick(uint64_t i)
 {
     current_phase->counter += i;
+}
+
+void lowerThreadPriority()
+{
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#elif defined(__linux__)
+    // (a thread is a task of its own here: its niceness is its own)
+    setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 10);
+#endif
 }
 
 }   // namespace libfive

@@ -2,10 +2,16 @@
 
 ## Running FielDes
 
+**Installer (Windows x64).** Run `FielDes-<version>-windows-x64-setup.exe`: it asks for the language and the folder, installs for your user (no administrator rights) and starts FielDes when
+you click Finish.
+
 **Portable folder (Windows x64).** Unzip it anywhere and run `FielDes.exe`. The folder contains the
-application, its libraries, a private Python runtime, the Python library, the examples and these
-documents. Nothing is installed and nothing is written outside your user settings and the cache files
+application, its libraries (Qt and the Visual C++ runtime too), a private Python runtime, the Python library, the examples and these
+documents -- **nothing else has to be installed**. Nothing is written outside your user settings and the cache files
 next to the STEP files you import.
+
+**Linux and macOS.** `sh FielDes-<version>-linux-x64-installer.run` (or the `.deb`, or the `.tar.gz` unpacked and run), `FielDes.app` from the disk image or the installer package: the same, with Qt, Python and
+the libraries inside. See [Building](building.md) for how they are made and what is tried.
 
 **From source.** See [Building from source](building.md).
 
@@ -109,6 +115,6 @@ if it is not found): prints appear in the console, nothing is drawn.
 ## Where to go next
 
 - The [tutorial](tutorial.md): the idea, the controls that matter, habits that pay off.
-- Open the scripts in `examples/` in order; each is commented (01–13 and 15 start from an imported part; 14 and 16–21 need no file).
+- Open the scripts in `examples/` in order; each is commented (01–13 and 15 start from an imported part; 14 and 16–22 need no file).
 - [Scripting](scripting.md) for the language of shapes and fields.
 - [Analysis](analysis.md) and [Lattices](lattices.md) for the two big toolboxes.

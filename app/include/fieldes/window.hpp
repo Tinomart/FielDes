@@ -62,6 +62,10 @@ protected slots:
     bool onSaveAs(bool=false);
     bool onNew(bool=false);
     void onExport(bool=false);
+    /*  An Export entry of a menu: the model `var` as `kind` in the format `ext`.  The file is asked for, then written by the library in the
+     *  background (the same functions a script calls: export_mesh, export_fea, export_results, export_field)  */
+    void exportModel(const QString& var, const QString& kind, const QString& ext);
+    void exportModelTo(const QString& var, const QString& kind, const QString& path);
     void onAbout(bool=false);
     bool loadTourModel();
     bool onLoadDefault(bool=false);

@@ -22,7 +22,7 @@ does; *Clear list* empties it; a file that is gone is left out). Then the menus:
 
 | Menu | Holds |
 |---|---|
-| **File** | New, Open, Open recent, **Open example file** (the small scripts of the `examples` folder next to the program, one for each family of features: open one, run it, change it), Import model, Open as viewer, Load the default script, Revert to saved, Save, Save As, Export STL, Export / copy screenshot, Quit |
+| **File** | New, Open, Open recent, **Open example file** (the small scripts of the `examples` folder next to the program, one for each family of features: open one, run it, change it), Import model, Open as viewer, Load the default script, Revert to saved, Save, Save As, Export mesh, Export / copy screenshot, Quit |
 | **Edit** | Undo and redo, Find and replace, Go to (definition, line, the editor's tabs), Lines, Breakpoints, Folding, Autocomplete |
 | **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, Model tree, Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
 | **Settings** | **Keyboard shortcuts…**, **Blocks folder…** and **Show the blocks folder** (your [custom blocks](blocks.md)), editor text bigger / smaller, Automatically reload changes, Rotation mode, Rotation sensitivity, Zoom center |
@@ -149,8 +149,10 @@ The viewport's right-click menus are not only the viewport's: **the same menu op
 on a **line of the script** that defines a model, and on its **row in the model tree** -- and means the same there, as if that
 model had been right-clicked in the viewport:
 
-- On a line (or row) that defines a model: **Operation**, **Simulation**, **Select Surface** (greyed outside the viewport: the
-  selection spreads from the place you click on the surface) and **Delete**, written for that model.
+- On a line (or row) that defines a model: **Operation**, **Lattice**, **Simulation**, **Select Surface** (greyed outside the viewport: the
+  selection spreads from the place you click on the surface) and **Delete**, written for that model. **Lattice** is a section of its own
+  (not a group of the operations): the operations that fill a model with a lattice, the three steps of a foam (random points, then a Voronoi or Delaunay lattice made of them) and a menu for every family of
+  cells, each entry making that cell (see [Lattices](lattices.md#in-the-menus-and-the-model-tree)); on empty space it is **Add lattice**.
 - On a line of the script that defines no model (a blank line, a comment, the imports): the menu of empty space, **New 3D shape**
   and the rest, and what you make is written **under that line** (a line that is indented, opens a block or is in the middle of a
   call would be cut in two, so the new line goes to the end of the script instead). In the empty space of the tree, and in the
@@ -214,7 +216,9 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 | bars, red | **simulation** | a solved analysis or optimisation |
 | hatched block, tan | **material** | what a part (or a fluid) is made of: `Material(...)`, steel, aluminium, water ...; an analysis is given one (`material=steel`). A model like the others: it is in the tree, and dragged onto an analysis it becomes its `material=` (or `fluid=`) |
 | arrow on a base, orange | **conditions** | what an analysis is given: supports, loads, thermal and flow boundary conditions. Dragged onto an analysis, its **boundary conditions** row or the placeholder of its kind, one or several of them go into the input of their kind, as a list |
-| hexagon, gold | **lattice cell** | what a lattice is made of: a cell, a cell map, a graph of beams |
+| hexagon, gold | **lattice cell** | what a lattice is made of: a cell (a strut cell, a TPMS, a planar pattern, a custom cell), a cell map, a graph of beams |
+| small cube of struts, rose | **lattice** | a body filled with cells: what `lattice()` and `lattice_surface_conform()` make |
+| scattered dots, orange | **point set** | what `random_points()` makes: the points a foam is made around (`voronoi_lattice`, `delaunay_lattice`). Drawn in the viewport, each as the dot of a gizmo without its handles |
 | dashed square, pink | **selection** | a patch picked on a surface |
 | open box, teal | **import** | a file read in |
 | **f** badge on any of them | **custom block** | the model was made by one of your [blocks](blocks.md) |
@@ -237,6 +241,14 @@ nesting, renesting and denesting is an edit of the arguments of a call**, writte
 | drag a **shadow** | only that reference moves (or goes): the model, and its other references, stay |
 | drag a **locked** model | it is **read-only**, so a drag never moves it: **it is always a copy**, a new shadow, as if Ctrl were held -- the model keeps its row and its place in the script. Locking a model (the lock button, `R`) is how you say that dragging it must only make references |
 | **Ctrl**+drag a row or a shadow | a **new shadow**, and **the original does not move**: the model keeps its row and its place in the script, and its name is written into the call you drop it in, where it shows as a shadow. A label with a **+** and a green mark say it is a copy; releasing `Ctrl` mid-drag makes it a move again. A copy only makes sense inside a call: dropped on top level it is refused, as is a model that is an input of the call already. A model that **nothing else uses yet** stays a top-level row, and the call shows a shadow of it: the call's statement gets a `# shadow: name` comment (written by the drop, like the `# hidden:` lines), which says that the call only *holds a reference* to it and is not its first user; drag the model onto that call without Ctrl and the comment goes: the row moves in. **A shadow cannot go above its original** (see below) |
+
+**Arguments are rows too.** Under every model, the arguments its call is written with that are not models -- `radius = 4`, `center = (3, 0, 0)`, `steps = 2` -- are **dim rows of their own, in the order of the call**, so that the tree reads like the code. **A click on one selects its value in the code editor**, ready to type over, as a click on a placeholder does. A statement whose only children are its arguments starts **closed** (as the tree looked before it showed them); the arrow opens it.
+
+**Sections.** A comment **`# SECTION name`** (`# %% name` and `# region name` fold the same way) is a section, and it is a row of the tree: the models defined below it, up to the next section, stand **under its row**, and the arrow closes it. A section is a chapter of the script, so **nesting stops at its border**: a model made in one section and used in a later one has its row where it is made, and the later statement shows a shadow of it (a section that held nothing but models used further down would otherwise be empty). To start a section **move the mouse into the gap between two rows**: the gap lights up with a *+ new section* label; click it and `# SECTION Section 1` is written above that row (above the models it is made of, too) and its **name is already open for typing** -- the comment follows every key, `Enter` keeps it, `Esc` gives the old name back. **Double-click a section's name to rename it** the same way. The bin of a section row deletes its heading only (the models stay, and join the section above); dropping a model **above or below a section's row** moves it into the neighbouring section, as a drop between two rows does. The heading of a section is never moved along with the model below it.
+
+**Closing rows is remembered, and it is the editor's folding too.** What you close in the tree is kept **for each file** and comes back when the file is opened. Closing a statement's row folds its lines in the code editor (a call that spans several lines), closing a section folds the section, and **folding in the editor's gutter closes the row** -- the same in both directions, kept together. **A row that holds a placeholder is never closed**: that is where you have to write, so it stays open (and its lines unfolded) whatever was saved, and a collapse of it is undone at once.
+
+**Properties.** A **result** (an analysis, an optimisation) has more to give than its picture. **Move the mouse over its row: a small teal tab comes out of the right edge of the tree**, level with the row. Click it and a **drawer** opens beside it, listing what the result has -- its **fields** (`von_mises`, `displacement`, `ux` ..., `pressure` ...) and its **numbers** (`max_von_mises`, `safety_factor`, `reaction`, `drag_force` ...) with their values. **Click one and it is written under the statement as a model of its own**: `von_mises_1 = result.von_mises` -- a **field** (every field a solver calculates is one, not a body: it is shown with the field viewer, sliced, used in other models), a number is a line you can use. A property is **not made of the result**: its row has no child for it and no shadow of it, as an operation's has for the models it is made of. The drawer's last button writes the result's **key numbers as a text file**. The tab is there once the analysis has run.
 
 **Boundary conditions.** A simulation has one row of its own for its conditions, **boundary conditions**, with a **placeholder row for every kind it still waits for** (`inlets`,
 `outlets`, `boundaries` ...) and the conditions it has under them, in the order the simulation takes them. Each condition is a model of its own with **its own eye**: shown, it draws only
@@ -426,6 +438,8 @@ Shown at the bottom right when an analysis result is displayed (a result stated 
 - the **field** drop-down (von Mises, displacement, each component, principal stresses, strain energy;
   temperature and heat flux; speed, pressure, vorticity, ...) above the colour bar — hover the part to read
   the value under the cursor;
+- the **key numbers** under it: what the result found that matters (maximum stress and displacement, safety factor, reactions; drag and lift of a flow and their
+  coefficients, pressure drop; temperatures; natural frequencies) -- the same numbers `export_results(result, "numbers.txt")` writes;
 - a short note under the bar says what the values are: **Nodal average** (the elements' values averaged at
   each node: peaks are lower than the elements' own), **Element values**, or **Solver values at nodes**;
   hover it for the explanation;
@@ -442,7 +456,13 @@ Shown at the bottom right when an analysis result is displayed (a result stated 
   are. The result line and the safety factor use the elements' peak. The elements carry the result's own
   values, so the button is there at the result's own step (the full load, the last time);
 - **Flow** (a fluid result): the streamlines from the inlets, coloured by the speed, with particles moving
-  along them, drawn over the fluid (which is drawn like every other result, coloured by its field).
+  along them, drawn over the fluid (which is drawn like every other result, coloured by its field); its
+  **Opacity** slider lowers how opaque the fluid is drawn, so that the body in it shows.
+
+**What you choose on the card stays.** The field shown, the deformation (as a multiple of the result's own automatic one),
+Elements, Flow and the opacity are kept by the window, not by one result: the next run's result, and every picture of an
+optimisation that is running (a new one after every iteration), is drawn the way you set the last one. A field the new result
+does not have is left alone (it shows its own first one).
 
 ## Status bar and progress
 
@@ -452,9 +472,16 @@ progress of the operation in it.
 
 ## Exporting
 
-- **File → Export STL…** (`Ctrl+E`, `F7`): the shapes in the viewport as STL meshes.
+- **File → Export mesh…** (`Ctrl+E`, `F7`): the shapes in the viewport as one mesh, in the format of the file you name -- **STL, OBJ, PLY, 3MF, glTF (`.glb`, `.gltf`), FBX, OFF, DXF**.
+- **Right-click a model (in the viewport or on its row) → Export:**
+  - a **body**: **Mesh** in any of those formats (the surface at the scene's resolution);
+  - a **field**: **Field on a grid** (VTK image data `.vti`, or a CSV table) -- the field sampled on a regular grid for other programs;
+  - a **result**: **Finite-element model** (Abaqus / CalculiX `.inp`, Nastran `.bdf`, Gmsh `.msh`) and **Results** (VTK `.vtu`, CSV tables, **key numbers as text** `.txt`). The model and its mesh are those of a static analysis; the others export their key numbers and their fields.
+
+  The file is asked for, then written in the background by the same functions a script calls, so the window stays alive.
 - **Export screenshot…** (`Ctrl+Shift+E`) and **Copy screenshot to clipboard** (`Ctrl+Alt+C`).
-- A script can export by itself: `shape.save_stl(path, lower, upper, resolution)`.
+- A script exports by itself with `export_mesh(part, "part.stl")`, `export_fea(result, "bracket.inp")`, `export_results(result, "bracket.vtu")` and `export_field(field, "stress.vti")` -- see [Exporting and importing files](meshes.md#exporting-and-importing-meshes).
+- **Key numbers on the screen:** the result card prints the numbers that matter under its field drop-down -- the maximum stress, displacement and safety factor of a static analysis, the drag and lift (and their coefficients), flows and pressure drop of a flow, the temperatures of a thermal analysis, the natural frequencies of a modal analysis -- and the same numbers are the **Export key numbers as text** button of the result's property drawer.
 
 ## Language
 
@@ -471,7 +498,7 @@ improve one or add a language.
 ## The guided tour
 
 The first time FielDes starts, a card offers a tour; **Help → Guided tour** starts it at any time. It runs on the program itself, not
-on a script: short cards of one or two sentences, 17 steps, about two minutes (among them the section view, and the Ctrl+drag that makes a shadow reference). Each step
+on a script: short cards of one or two sentences, 23 steps, about three minutes: the script and the viewport, **selecting a model** and the gizmo first, then the model tree (children, argument rows, renaming), a **placeholder you make from the right-click menu and fill in yourself**, sections and closing rows, the section view, a field in place of a number, **a model used in two places (the Ctrl+drag that makes a shadow reference, and why)**, and the property tab of a result. The steps that need more than the plate -- a field, a reference, a result -- **work on a small model of their own**, so that only what the step is about is there, and the tree shows only the rows it is about; your model is back when the step is left. Each step
 
 - **dims** the window except what it is about, and puts a **glowing frame** round it (and round the line or field it means);
 - shows the **script and the picture as one thing**: the lines of the script a step is about stay lit and framed in the editor even
@@ -492,7 +519,7 @@ on a script: short cards of one or two sentences, 17 steps, about two minutes (a
 - can be **skipped** (*Skip step*), gone back from (*Back*), or left altogether (*Skip the tour*, also on the first card: *No thanks*).
 
 The tour works on a model of its own (a plate with a hole, loaded as a new script: your files are not touched; a question asks first
-if the script in the editor has unsaved changes). It builds a field and a second model as it goes, so the later steps have something
+if the script in the editor has unsaved changes). It builds a field, a second model and a small analysis as it goes, so the later steps have something
 to show. When it is done, the model stays for you to play with.
 
 ## Keyboard shortcuts

@@ -14,6 +14,7 @@ from fieldes.stdlib.excluded import *
 from fieldes.stdlib.tessellated_import import *
 from fieldes.stdlib.mesh_import import *
 from fieldes.stdlib.importing import *
+from fieldes.stdlib.exporting import *
 from fieldes.stdlib.fea import *
 from fieldes.stdlib.boundary_conditions import *
 from fieldes.stdlib.selection import *
@@ -28,6 +29,10 @@ from fieldes.stdlib.measure import *
 from fieldes.stdlib.lattices import *
 from fieldes.stdlib.conformal import *
 from fieldes.stdlib.content_cache import cache_info, clear_caches
+
+# The key numbers of every result, for the result card (see fieldes.stdlib.exporting)
+from fieldes.stdlib.exporting import _install_key_results
+_install_key_results()
 
 # What every operation does with a shape that has an excluded region (see fieldes.stdlib.excluded)
 import fieldes.stdlib.excluded as _excluded

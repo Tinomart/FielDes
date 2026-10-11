@@ -88,6 +88,9 @@ public:
      *  holds the script that is run and rendered; the others hold files opened for editing only (see
      *  openFile)  */
     Script* scriptWidget() const;
+    /*  What the file that is open is kept under (the breakpoints, what is collapsed in the model tree): its absolute path, lower case on
+     *  Windows; empty for a script with no file of its own  */
+    QString foldKey() const { return m_breakpointPath; }
     FindBar* findBar() const;
 
     /*  The file of the script (empty when it has none): tells the first tab's name, and where
@@ -158,6 +161,11 @@ public slots:
     void goToLine(int line0);
     /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over  */
     void goToPlaceholder(int line0, int col0);
+    /*  Selects a value in the code (an argument row of the model tree was clicked), marked to be replaced as a placeholder is  */
+    void goToSpan(int line0, int col0, int endLine0, int endCol0);
+    /*  Folds or unfolds the lines under the (0-based) line of the rendered script, as the arrow in its gutter does (the model tree's rows
+     *  are tied to these folds)  */
+    void setFold(int line0, bool folded);
 
     /*  Continues a script stopped at a breakpoint (does nothing otherwise)  */
     void continueRun();
@@ -198,6 +206,7 @@ signals:
      *  Emitted when the interpreter delivers us a list of shapes
      */
     void shapes(QList<Shape*> shapes);
+    void partialShapes(QList<Shape*> shapes, int keepFromLine);
 
     /*  The field models of the script (they are not shapes: the section viewer shows the one that is selected)  */
     void fieldSources(QList<FieldEntry> fields);
@@ -237,6 +246,9 @@ signals:
     /*  The text of that script is in the editor now (it has not run yet): the model tree shows the tree it kept of that text  */
     void scriptLoaded();
 
+    /*  The lines under a fold header of the rendered script were folded or unfolded (the 0-based line of the header)  */
+    void foldToggled(int line0, bool folded);
+
     /*  A short message for the status bar  */
     void notice(QString text);
 
@@ -257,6 +269,8 @@ protected slots:
     /*  Marks the whole script as changed, which triggers re-highlighting */
     void onSyntaxReady();
 
+    /*  What a run in progress has shown so far, for the viewport (see Interpreter::partialResult)  */
+    void onInterpreterPartialResult(Result r);
     /*  What a run in progress has made so far, for the model tree (see Interpreter::partialScene)  */
     void onInterpreterPartialScene(QString json);
 

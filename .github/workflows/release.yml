@@ -1,0 +1,80 @@
+# Builds the Linux and macOS packages on GitHub's machines.
+#
+# Linux is built on Ubuntu 22.04 on purpose: a program asks for a C library as new as the one it was built with, and the oldest common one is the one
+# that opens on the most systems.  The package carries Qt, Python and every other library with it, so it opens with nothing installed -- the last step
+# starts it in a bare Ubuntu with only a virtual display to prove it.
+#
+# It runs when started by hand (Actions -> Release builds -> Run workflow) and when a tag such as v0.6.1 is pushed; each package is an artifact of the run.
+name: Release builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qtbase5-dev qtbase5-private-dev libqt5opengl5-dev libboost-dev libeigen3-dev libpng-dev python3-dev libtbb-dev \
+              libgl-dev libglu1-mesa-dev cmake ninja-build g++ pkg-config rsync patchelf git
+
+      - name: Build and package
+        run: bash scripts/build-linux.sh --package
+
+      - name: Start it in a bare Ubuntu (nothing installed but a virtual display)
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:22.04 bash -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 fontconfig >/dev/null
+            mkdir /t && tar -xzf /dist/FielDes-linux-x64.tar.gz -C /t
+            cd /t/FielDes-linux
+            printf "wait 3000\nquit\n" > /tmp/auto.txt
+            FIELDES_AUTOMATION=/tmp/auto.txt timeout 180 xvfb-run -a -s "-screen 0 1280x800x24" ./FielDes 2>&1 | tee /tmp/out.txt
+            grep -q "automation" /tmp/out.txt'
+
+      - name: The installer, in a bare Ubuntu
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:22.04 bash -c '
+            set -e
+            sh /dist/FielDes-*-linux-x64-installer.run --prefix /opt/fieldes-test
+            test -x /opt/fieldes-test/FielDes
+            test -f "$HOME/.local/share/applications/fieldes.desktop"
+            /opt/fieldes-test/uninstall.sh
+            test ! -e /opt/fieldes-test'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FielDes-linux-x64
+          path: |
+            dist/FielDes-linux-x64.tar.gz
+            dist/FielDes-*-linux-x64-installer.run
+            dist/FielDes_*_amd64.deb
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]       # Intel, Apple silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build dependencies
+        run: brew install cmake ninja qt@5 boost eigen libpng python@3.12 tbb pkg-config manifold clipper2 dylibbundler create-dmg
+
+      - name: Build and package
+        run: bash scripts/build-macos.sh --dmg --pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FielDes-macos-${{ matrix.os }}
+          path: |
+            dist/FielDes-macos-*.dmg
+            dist/FielDes-macos-*.pkg
