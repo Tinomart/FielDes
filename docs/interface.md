@@ -80,7 +80,7 @@ A code editor for the Python script, with:
 
 `Ctrl`+click (or `F12`) on a name opens the place where it is defined. In the script itself the cursor
 simply moves there. When the name is defined **in another file** — a library function such as
-`box_exact`, a method such as `.max`, or a function from a module that sits next to your script
+`box`, a method such as `.max`, or a function from a module that sits next to your script
 (`from bracket import make_bracket`) — the file opens in a **new tab** above the editor, at the
 definition, and the name is selected. From there `F12` goes on: a name defined in that file moves the cursor,
 one it imports opens the next tab. FielDes reads the files and follows the imports, nothing is run.

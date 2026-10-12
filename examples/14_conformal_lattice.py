@@ -21,7 +21,7 @@ x, y, z = Shape.X(), Shape.Y(), Shape.Z()
 
 # the surface: where this field is zero (negative below it, positive above it), and the patch of it wanted: 60 x 40 mm
 wave = z - 8 * (0.12 * x).sin()
-patch = box_exact((-30, -20, -14), (30, 20, 14))
+patch = box((-30, -20, -14), (30, 20, 14))
 
 # a custom cell, coordinates 0..1 across it, one corner drawn and mirrored in x, y and z: from the corner "o" beams run along the
 # edges to their middles ("ex", "ey", "ez"), from the centre "c" to the middles of the faces at that corner ("fx", "fy", "fz")

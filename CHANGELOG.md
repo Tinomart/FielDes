@@ -14,11 +14,19 @@
 - **FielDes takes over the file type.** The Windows installer registers `.fieldesapp` for the user (and removes it with the program); the Linux installer and the `.deb` bring the MIME type. The first time an app is exported FielDes asks whether a double click should open it, and **Settings → Open .fieldesapp files with FielDes** does it for a copy that was not installed.
 - **`examples/24_app_bracket_maker.py`** is a complete app: a model file (the bracket comes along inside it), a mode, a wall thickness and where to save the result, with the comments that say how an app is made.
 
+### Every shape is ONE primitive
+- **One primitive per shape, with that shape and nothing else.** The library had several of nearly every shape; now there is one: **`box(a, b)`** (a true distance outside it; was `box_exact` -- `box_mitered`, `cube`, `box_centered`,
+  `box_exact_centered`, `box_mitered_centered`, `cube_centered` are gone), **`rounded_box`** (`rounded_cube` is gone), **`cylinder(radius, height, base)`** (was `cylinder_z`), **`cone(radius, height, base)`** (was `cone_z`; the
+  angle form `cone_ang` is gone), **`torus`** (was `torus_z`), **`pyramid`** (was `pyramid_z`), **`rectangle(a, b)`** (was `rectangle_exact`; `rectangle_centered_exact` is gone), and `gyroid` is not a primitive
+  (a gyroid is `cell_periodic('gyroid')`). The 3D shapes stand along z, the 2D shapes lie in z = 0; one that stands another way is turned (`rotate_x`, `rotate_y`, `rotate_z`), one that sits elsewhere is moved (`move`).
+  **The old names are gone, not aliased** (a beta change): the examples, the docs, the tour, the menus (*New 3D shape*, *New 2D shape*) and the library say the new ones. A script from before needs the names changed.
+
 ### Dragging a surface moves that surface and nothing else
 - **A face you drag is the only thing that changes.** Dragging a cylinder's wall (or a hole's, or a sphere's) changes its **radius** and leaves its **centre** where it is; dragging one face of a box moves that face and the opposite one stays; dragging the top of a cylinder leaves its bottom. The same
   for the faces of an imported part: its hole walls keep their axes. (The centre of a round feature has a heavy weight in the drag's solver; it only moves when nothing else can take the drag.)
 - **The gizmo's pivot no longer moves while you drag faces.** A part that the gizmo rotates or scales turns about the middle of its box -- and dragging a face changed the box, so the part jumped sideways when the script ran again. The pivot is now the middle of the box the shape had before its faces were dragged.
 - **A press next to the gizmo is a drag of the surface.** Over a surface that can be dragged, the gizmo's arrows, rings and squares only take a press where they are drawn (a drag of a face beside a scale square used to scale the part). Away from the part the gizmo keeps its generous reach.
+- **`handles(...)` is one line.** The numbers of a shape's surfaces are written on a single line, however many there are (the exception to the one-argument-to-a-line layout of every other call): nobody edits them by hand, they are dragged, and the call stays out of the way in the editor.
 - **One fold arrow per model.** The line that defines a variable folds together with its `handles(...)`, `gizmo(...)` and `lock(...)` statements, instead of an arrow on each of them; the model tree's row closes with it.
 
 ### The viewport is Z up by default

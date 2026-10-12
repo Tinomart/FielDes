@@ -204,11 +204,8 @@ THROUGH = {
 # (modules whose functions never take a shape that could be excluded)
 NO_BODY_MODULES = ['text', 'importing', 'tessellated_import', 'mesh_import', 'regression', 'surfaces']
 NO_BODY = {
-    'shapes': ['circle', 'ring', 'polygon', 'rectangle', 'rounded_rectangle', 'rectangle_exact',
-               'rectangle_centered_exact', 'triangle', 'box_mitered', 'box_mitered_centered', 'box_exact_centered',
-               'box_exact', 'rounded_box', 'sphere', 'half_space', 'cylinder_z', 'cone_ang_z', 'cone_z', 'pyramid_z',
-               'torus_z', 'gyroid', 'emptiness', 'cube', 'cube_centered', 'box', 'box_centered', 'rounded_cube',
-               'cylinder', 'cone_ang', 'cone', 'torus'],
+    'shapes': ['circle', 'ring', 'polygon', 'rectangle', 'rounded_rectangle', 'triangle', 'box', 'rounded_box', 'sphere', 'half_space',
+               'cylinder', 'cone', 'pyramid', 'torus', 'emptiness'],
     'cad_import': ['step_length_unit_mm',
                    'exact_field'],
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],
@@ -377,7 +374,7 @@ def exclude(shape, *regions, source=None, quality=64, threshold=1.0):
         is Combining > exclude, with the shape first and the regions after it.)
 
             part = import_model('bracket.step')[0][0]
-            part = exclude(part, sphere(12, (0, 0, 6)), box_exact((0, 0, 0), (5, 5, 5)))
+            part = exclude(part, sphere(12, (0, 0, 6)), box((0, 0, 0), (5, 5, 5)))
             light = shell(part, 2)           # shelled everywhere but inside the sphere and the box
 
         A region is any shape -- a sphere, a box, a part, a part offset by some distance, a union of those: the

@@ -27,7 +27,7 @@ along it -- the "conformal" lattice of nTop.
     # an open surface of no thickness -- a field that is zero on it (negative below, positive above) -- with a patch
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
-    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box_exact((-30, -20, -14), (30, 20, 14)),
+    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((-30, -20, -14), (30, 20, 14)),
                                     side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls

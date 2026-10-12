@@ -75,8 +75,8 @@ def smooth_min(a, b, k):
 
 
 ball = low_level_body(ball_of)
-torus = low_level_body(torus_of)
-joined = shifted(smooth_min(ball, shifted(torus, 9), 6), 56)
+doughnut = low_level_body(torus_of)
+joined = shifted(smooth_min(ball, shifted(doughnut, 9), 6), 56)
 joined
 
 
@@ -98,6 +98,6 @@ print('cube at (0, 0, 0), (6, 0, 0), (10, 0, 0):', cube(0, 0, 0), cube(6, 0, 0),
 print('a tree:', low_level_field(lambda x, y, z: (x * y + 1).sqrt() - z))
 
 # ...and what comes out of all this is a body like any other: here a twisted cube with a slot cut through it by the library's own
-# box_exact and difference.  (A shape made from a max is not an exact distance: an offset of it is only about as large as it says.)
-slotted = difference(shifted(twisted_by(cube, 0.14), 112), box_exact((108, -1.5, -10), (116, 1.5, 10)))
+# box and difference.  (A shape made from a max is not an exact distance: an offset of it is only about as large as it says.)
+slotted = difference(shifted(twisted_by(cube, 0.14), 112), box((108, -1.5, -10), (116, 1.5, 10)))
 slotted

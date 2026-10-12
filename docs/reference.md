@@ -14,6 +14,10 @@ project; the generator is not part of FielDes, so this file is now maintained by
 
 This is fieldes.stdlib.shapes
 
+Every shape has ONE primitive, with that shape and nothing else: `box`, `cylinder`, `sphere`, ... (no centred or mitered or `_z` variants:
+a shape that stands another way is turned with rotate_x / rotate_y / rotate_z, one that sits somewhere else is moved with move).
+The 3D shapes stand along z, the 2D shapes lie in the plane z = 0.
+
 ### `array_polar(shape, n, center=(0, 0))`
 
 Iterates a shape about an optional center position
@@ -36,30 +40,7 @@ Iterates a part in a 3D array
 
 ### `box(a, b)`
 
-A box with the given bounds, which will stay creased if offset
-
-### `box_centered(size, center=(0, 0, 0))`
-
-A box with the given size and (optional) center, with edges that
-will stay sharp if offset.
-
-### `box_exact(a, b)`
-
-A box with the given bounds with a Euclidean distance metric
-
-### `box_exact_centered(size, center=(0, 0, 0))`
-
-A box with the given size, centered around the given point,
-with a Euclidean distance metric
-
-### `box_mitered(a, b)`
-
-A box with the given bounds, which will stay creased if offset
-
-### `box_mitered_centered(size, center=(0, 0, 0))`
-
-A box with the given size and (optional) center, with edges that
-will stay sharp if offset.
+A box between two opposite corners (a true distance outside it: an offset of it has rounded edges)
 
 ### `circle(r, center=(0, 0))`
 
@@ -67,38 +48,11 @@ A 2D circle with the given radius and optional center
 
 ### `cone(radius, height, base=(0, 0, 0))`
 
-A cone defined by its radius, height, and (optional) base location
-
-### `cone_ang(angle, height, base=(0, 0, 0))`
-
-A cone defined by its slope angle, height, and (optional) base location
-
-### `cone_ang_z(angle, height, base=(0, 0, 0))`
-
-A cone defined by its slope angle, height, and (optional) base location
-
-### `cone_z(radius, height, base=(0, 0, 0))`
-
-A cone defined by its radius, height, and (optional) base location
-
-### `cube(a, b)`
-
-A box with the given bounds, which will stay creased if offset
-
-### `cube_centered(size, center=(0, 0, 0))`
-
-A box with the given size and (optional) center, with edges that
-will stay sharp if offset.
+A cone with the given base radius and height, standing along z on the (optional) base position
 
 ### `cylinder(r, h, base=(0, 0, 0))`
 
-A cylinder with the given radius and height, extruded from the
-(optional) base position.
-
-### `cylinder_z(r, h, base=(0, 0, 0))`
-
-A cylinder with the given radius and height, extruded from the
-(optional) base position.
+A cylinder with the given radius and height, standing along z on the (optional) base position
 
 ### `emptiness()`
 
@@ -107,10 +61,6 @@ A value which is empty everywhere
 ### `extrude_z(t, zmin, zmax)`
 
 Extrudes a 2D shape between zmin and zmax
-
-### `gyroid(period, thickness)`
-
-A volume-filling gyroid with the given periods and thickness
 
 ### `half_space(norm, point=(0, 0, 0))`
 
@@ -121,31 +71,19 @@ normal and a single point on the plane
 
 A polygon with center-to-vertex distance r and n sides
 
-### `pyramid_z(a, b, zmin, height)`
+### `pyramid(a, b, zmin, height)`
 
 A pyramid defined by its base rectangle, lower Z value, and height
 
 ### `rectangle(a, b)`
 
-A rectangle with the given bounding corners
-
-### `rectangle_centered_exact(size, center=(0, 0))`
-
-An exact-field rectangle at the (optional) center
-
-### `rectangle_exact(a, b)`
-
-A rectangle from an exact distance field
+A rectangle with the given bounding corners (a true distance outside it: an offset of it is a rounded rectangle)
 
 ### `ring(ro, ri, center=(0, 0))`
 
 A 2D ring with the given outer/inner radii and optional center
 
 ### `rounded_box(a, b, r)`
-
-Rounded box with the given bounds and radius (as a 0-1 fraction)
-
-### `rounded_cube(a, b, r)`
 
 Rounded box with the given bounds and radius (as a 0-1 fraction)
 
@@ -159,11 +97,7 @@ A sphere with the given radius and (optional) center
 
 ### `torus(ro, ri, center=(0, 0, 0))`
 
-A torus with the given outer radius, inner radius, and (optional) center
-
-### `torus_z(ro, ri, center=(0, 0, 0))`
-
-A torus with the given outer radius, inner radius, and (optional) center
+A torus lying round the z axis, with the given outer radius, inner radius, and (optional) center
 
 ### `triangle(a, b, c)`
 
@@ -823,16 +757,11 @@ Two ways of editing by dragging work together, and the first has priority where 
                with plain numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
                `handles()` makes the numbers that place its surfaces variables:
 
-                   part = handles(
-                       part,
-                       [
-                           var(6),
-                           var(40),
-                       ],
-                   )
+                   part = handles(part, [var(6), var(40)])
 
-               Dragging a face changes the number of that face (a plane's position, a radius) in the script
-               text.  FielDes writes the call itself when you select the shape.
+               One line, however many numbers (nobody edits them by hand: they are dragged).  Dragging a face changes
+               the number of that face (a plane's position, a radius) in the script text; a round feature keeps its centre,
+               a box keeps the face opposite the one dragged.  FielDes writes the call itself when you select the shape.
 
 A lock button beside it (key R) is a separate switch: a locked shape cannot be dragged at all, neither by the
 gizmo nor by its handles, and keeps its gizmo mode, which comes back when it is unlocked:
@@ -976,7 +905,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `bounding_box(body)`
 
-The smallest box, aligned with the axes, that holds `body`: a body of its own (`box_exact` between the body's lowest and highest
+The smallest box, aligned with the axes, that holds `body`: a body of its own (`box` between the body's lowest and highest
 corner).  Use it as a region, as the space to lay something out in, or to read the size of a part:
 
     box = bounding_box(part)
@@ -1900,7 +1829,7 @@ A cell of ANY geometry of your own -- a box for the extent of the cell and a fie
 is the intersection of the two, and it repeats like any periodic cell: on a straight grid, or on a
 cylindrical or spherical cell map.
 
-region      the box the cell is: box(...), box_exact(...), cube(...) -- any box, its faces are the cell's
+region      the box the cell is: box(...) -- any box, its faces are the cell's
             faces and its size the cell's size
 geometry    the field in it: any shape -- spheres, rods, a TPMS, a boolean of those ... -- that may reach
             out of the box (only what is inside is the cell)
@@ -1909,7 +1838,7 @@ check       warn when the cell does not tile: what the geometry does on a face o
             a sphere on a corner must be on all eight)
 
     cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
-                       union(sphere(3, (5, 5, 5)), cylinder_z(1.0, 20, (5, 5, -5))))
+                       union(sphere(3, (5, 5, 5)), cylinder(1.0, 20, (5, 5, -5))))
     lattice(part, cell)                                    # cells of 10 mm, as modelled
     lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
     lattice(part, cell, cell_map=cylindrical(cells_around=12))
@@ -2165,7 +2094,7 @@ along it -- the "conformal" lattice of nTop.
     # an open surface of no thickness -- a field that is zero on it (negative below, positive above) -- with a patch
     # of it: one layer of cells on its positive side, cut off at the edge of the patch
     wave = Shape.Z() - 8 * (0.12 * Shape.X()).sin()
-    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box_exact((-30, -20, -14), (30, 20, 14)),
+    layer = lattice_surface_conform(wave, cell_periodic('bcc'), within=box((-30, -20, -14), (30, 20, 14)),
                                     side='outside', cell_thickness=6)
 
     # a periodic surface instead of struts: a gyroid skin that follows the part, 6 mm periods, 1 mm walls
@@ -2960,13 +2889,13 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
 
     from fieldes import *
 
-    duct = box_exact((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
-    post = cylinder_z(5, 6, (24, 20, -1))                # the BODY the flow goes around
+    duct = box((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
+    post = cylinder(5, 6, (24, 20, -1))                # the BODY the flow goes around
     result = fluid_analysis(
         post,
         duct,
-        inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
-        outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
+        inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
+        outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
         boundaries=[],                                                                               # (none: the rest of the surface is wall)
         fluid=water, element_size=1.0)
     result                                               # the flow (FielDes: the fluid coloured by the speed,
@@ -3273,7 +3202,7 @@ fields).  Raises Uncacheable for anything else
 
 The render cache: keep what FielDes meshes, so a shape that has not changed is on screen at once.
 
-    part = difference(box_exact((0, 0, 0), (40, 30, 10)), sphere(8))
+    part = difference(box((0, 0, 0), (40, 30, 10)), sphere(8))
     part                            # its mesh is kept: nothing to write
     part = render_cache(part, False)    # ... unless you opt out (the model tree's cache button writes this line)
 

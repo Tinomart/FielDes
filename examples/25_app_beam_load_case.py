@@ -23,7 +23,7 @@ view.set_bounds((-10, -15, -15), (75, 35, 25))
 view.set_resolution(2)
 view.set_quality(8)
 
-beam = difference(box_exact((0, 0, 0), (60, 20, 10)), cylinder_z(3, 20, (30, 10, -5)))
+beam = difference(box((0, 0, 0), (60, 20, 10)), cylinder(3, 20, (30, 10, -5)))
 beam = lock(beam)
 
 # The load point: a point with a gizmo.  Its dot is always there; click it and drag.
@@ -34,8 +34,8 @@ pull = gizmo(
 )
 
 # The beam is held at its left end; the load pulls down where the point is (a block round it: the force is spread over the beam's surface in it)
-support = fixed(box_exact((-1, -1, -1), (1, 21, 11)))
-load = force(move(box_exact((-6, -11, -6), (6, 11, 6)), pull), (0, 0, -force_n))
+support = fixed(box((-1, -1, -1), (1, 21, 11)))
+load = force(move(box((-6, -11, -6), (6, 11, 6)), pull), (0, 0, -force_n))
 
 body = beam
 if app.running():

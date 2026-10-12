@@ -40,9 +40,9 @@ hole). Nothing is selected by clicking faces: you describe where.
 | `thermal_expansion(temperature, reference=20)` | See [Thermal stress](#thermal-stress). |
 
 ```python
-plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
-               box_exact((45, 5, -61), (76, 36, 29)))
-lugs = box_exact((-60, -90, -61), (60, -60, 29))
+plates = union(box((-76, 5, -61), (-45, 36, 29)),
+               box((45, 5, -61), (76, 36, 29)))
+lugs = box((-60, -90, -61), (60, -60, 29))
 ```
 
 View the regions by displaying them together with the part (and hide them afterwards with the eye in the
@@ -396,13 +396,13 @@ three kinds of boundary conditions, the fluid) and solves the flow once, around 
 `flow_topology_optimization` what `static_analysis` is to `topology_optimization`:
 
 ```python
-slab = box_exact((0, 0, 0), (80, 40, 4))                           # a thin slab of water, open at its sides...
-post = cylinder_z(5, 6, (24, 20, -1))                              # ...with a round post standing in it
-faces = union(box_exact((-1, -1, -1), (81, 41, 0.01)), box_exact((-1, -1, 3.99), (81, 41, 5)))
-sides = union(box_exact((-1, -1, -1), (81, 0.01, 5)), box_exact((-1, 39.99, -1), (81, 41, 5)))
+slab = box((0, 0, 0), (80, 40, 4))                           # a thin slab of water, open at its sides...
+post = cylinder(5, 6, (24, 20, -1))                              # ...with a round post standing in it
+faces = union(box((-1, -1, -1), (81, 41, 0.01)), box((-1, -1, 3.99), (81, 41, 5)))
+sides = union(box((-1, -1, -1), (81, 0.01, 5)), box((-1, 39.99, -1), (81, 41, 5)))
 flow = fluid_analysis(post, slab,
-                      inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4.0)],       # Re = U D / nu = 40
-                      outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],
+                      inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4.0)],       # Re = U D / nu = 40
+                      outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],
                       boundaries=[slip(faces), slip(sides)],          # a two-dimensional flow (the post is a wall at rest: so is everything not named)
                       fluid=water, element_size=1.0)
 print(flow)                              # the flows, the pressure drop, the Reynolds number, the drag on the post

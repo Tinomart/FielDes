@@ -7,13 +7,13 @@ script you open in FielDes, like `sphere()` or `lattice()`, with its call tip, c
 # blocks/my_blocks.py
 def perforate(body, hole_radius=2.0, spacing=10.0):
     ''' Drills a grid of round holes right through a body, along z '''
-    holes = repeat(cylinder_z(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
+    holes = repeat(cylinder(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
     return difference(body, holes)
 ```
 
 ```python
 # any script
-plate = box_exact((0, 0, 0), (60, 40, 6))
+plate = box((0, 0, 0), (60, 40, 6))
 drilled = perforate(plate, 2.5, 10)
 drilled
 ```

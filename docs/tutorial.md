@@ -66,7 +66,7 @@ view.set_resolution(6)                           # samples per mm
 view.set_quality(8)
 ```
 
-and builds a plate with a hole. Change `box_exact((-30, -20, 0), (30, 20, var(6)))` — make the plate 12 mm thick — and the
+and builds a plate with a hole. Change `box((-30, -20, 0), (30, 20, var(6)))` — make the plate 12 mm thick — and the
 viewport updates a moment after you stop typing. The **last expression** of a script is what is shown; give other things names
 (`plate = ...`) and they appear in the tree, where the eye shows or hides each. (A bare name on a line of its own, `plate`,
 shows it too.)
@@ -180,7 +180,7 @@ is there in *every* script, like `sphere()` or `lattice()`, with its call tip, c
 # blocks/my_blocks.py
 def perforate(body, hole_radius=2.0, spacing=10.0):
     ''' Drills a grid of round holes right through a body, along z '''
-    holes = repeat(cylinder_z(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
+    holes = repeat(cylinder(hole_radius, 100000, (0, 0, -50000)), (spacing, spacing, 0))
     return difference(body, holes)
 ```
 

@@ -1,7 +1,7 @@
 '''
 The render cache: keep what FielDes meshes, so a shape that has not changed is on screen at once.
 
-    part = difference(box_exact((0, 0, 0), (40, 30, 10)), sphere(8))
+    part = difference(box((0, 0, 0), (40, 30, 10)), sphere(8))
     part                            # its mesh is kept: nothing to write
     part = render_cache(part, False)    # ... unless you opt out (the model tree's cache button writes this line)
 

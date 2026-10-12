@@ -1203,7 +1203,7 @@ def _region_box(region, who='cell_custom'):
     from fieldes.stdlib.fields import evaluate, find_extent
     found = find_extent(region)
     if found is None:
-        raise ValueError('{}: the region must be a box (box(...), box_exact(...), cube(...)): the extent of this shape '
+        raise ValueError('{}: the region must be a box (box(...)): the extent of this shape '
                          'could not be found, it is empty or not closed'.format(who))
     lo0, hi0 = found
     size0 = max(hi0[i] - lo0[i] for i in range(3))
@@ -1379,7 +1379,7 @@ def cell_custom(region=None, geometry=None, check=True, **removed):
         is the intersection of the two, and it repeats like any periodic cell: on a straight grid, or on a
         cylindrical or spherical cell map.
 
-        region      the box the cell is: box(...), box_exact(...), cube(...) -- any box, its faces are the cell's
+        region      the box the cell is: box(...) -- any box, its faces are the cell's
                     faces and its size the cell's size
         geometry    the field in it: any shape -- spheres, rods, a TPMS, a boolean of those ... -- that may reach
                     out of the box (only what is inside is the cell)
@@ -1388,7 +1388,7 @@ def cell_custom(region=None, geometry=None, check=True, **removed):
                     a sphere on a corner must be on all eight)
 
             cell = cell_custom(box((0, 0, 0), (10, 10, 10)),
-                               union(sphere(3, (5, 5, 5)), cylinder_z(1.0, 20, (5, 5, -5))))
+                               union(sphere(3, (5, 5, 5)), cylinder(1.0, 20, (5, 5, -5))))
             lattice(part, cell)                                    # cells of 10 mm, as modelled
             lattice(part, cell, cell_size=6)                       # the cell scaled to 6 mm
             lattice(part, cell, cell_map=cylindrical(cells_around=12))

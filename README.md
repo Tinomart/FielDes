@@ -173,7 +173,7 @@ view.set_bounds([-35, -25, -8], [35, 25, 30])    # the region the viewport meshe
 view.set_resolution(6)                           # samples per mm
 view.set_quality(8)
 
-plate   = box_exact((-30, -20, 0), (30, 20, var(6)))        # var(...): a number you can drag in the viewport
+plate   = box((-30, -20, 0), (30, 20, var(6)))        # var(...): a number you can drag in the viewport
 anchor  = point(20, 10, 6)                                    # a point is a model, and a value where a coordinate goes
 swell   = ramp(distance_to_point(anchor), (0, 45), (3.0, 0.5))   # 3 mm at the anchor, 0.5 mm 45 mm away: a field
 offset(plate, swell)                                          # a field where a number goes

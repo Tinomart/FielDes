@@ -227,8 +227,8 @@ distance (`depth_below`, `distance_to_point`), a regression over measured data, 
 
 Three functions make a custom cell, and every lattice operation takes it like a standard cell.
 
-**Any geometry** — `cell_custom(region, geometry)` — is the cell you model yourself: `region` is a **box** (`box(...)`,
-`box_exact(...)`, `cube(...)`) that gives the extent of the cell, and `geometry` is **any field** that says what is in
+**Any geometry** — `cell_custom(region, geometry)` — is the cell you model yourself: `region` is a **box** (`box(...)`)
+that gives the extent of the cell, and `geometry` is **any field** that says what is in
 it. The cell is the **intersection** of the two, so the geometry may reach out of the box (a rod longer than the cell, a
 sphere on a corner): only what is inside is the cell. The cell repeats on any cell map: a straight grid, a cylindrical
 or a spherical one.
@@ -315,7 +315,7 @@ part_with_ribs = union(part, ribs, radius=1.0)       # blended into the part wit
 # side of it -- side='outside' is the side where the field is positive, 'inside' the side where it is negative --
 # and it is cut off at the edge of the region `patch`: nothing goes round an edge, there is no other face
 wave = z_field() - 8 * (0.12 * x_field()).sin()
-patch = box_exact((-30, -20, -14), (30, 20, 14))
+patch = box((-30, -20, -14), (30, 20, 14))
 layer = lattice_surface_conform(wave, cell_periodic('octet'), within=patch, side='outside', cell_thickness=6, cell_size=6, radius=0.6)
 ```
 

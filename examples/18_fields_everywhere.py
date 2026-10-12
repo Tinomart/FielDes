@@ -20,7 +20,7 @@ view.set_resolution(4)
 view.set_quality(8)
 
 # 1. A plate, grown more near the anchor.  The anchor is a point: anything that wants a coordinate takes it.
-plate = box_exact((0, 0, 0), (60, 40, 6))
+plate = box((0, 0, 0), (60, 40, 6))
 anchor = point(52, 8, 6)
 anchor = gizmo(
     anchor,
@@ -34,18 +34,12 @@ grown = offset(plate, swell)
 grown
 
 # 2. The blend radius of a smooth union as a field of x: 0.5 mm at the left, 8 mm at the right.
-post = cylinder_z(10, 30, (105, 20, 0))
-block = box_exact((80, 8, 0), (140, 32, 10))
+post = cylinder(10, 30, (105, 20, 0))
+block = box((80, 8, 0), (140, 32, 10))
 blend = ramp(x_field(), (80, 140), (0.5, 8.0))
 cells = ramp(x_field(), (160, 220), (16.0, 6.0))
 joined = smooth_union(post, block, blend)
-joined = handles(
-    joined,
-    [
-        var(105.0), var(20.0), var(10.0), var(30.0), var(0.0), var(110.0), var(30.0), var(20.0),
-        var(12.0), var(5.0), var(5.0), var(80.0), var(10.0),
-    ],
-)
+joined = handles(joined, [var(105.0), var(20.0), var(10.0), var(30.0), var(0.0), var(110.0), var(30.0), var(20.0), var(12.0), var(5.0), var(5.0), var(80.0), var(10.0)])
 joined = gizmo(
     joined,
     move=(var(0), var(0), var(0)),
@@ -55,15 +49,9 @@ joined = gizmo(
 joined
 # 3. A lattice whose cell size is a field.  Big cells where the field is large, small ones where it is small;
 #    a graded cell size blends lattices a factor of two apart, so it can change by a factor of up to 16.
-core = box_exact((160, 0, 0), (220, 40, 30))
+core = box((160, 0, 0), (220, 40, 30))
 foam = lattice(core, cell_periodic('gyroid'), cell_size=cells, thickness=1.0)
-foam = handles(
-    foam,
-    [
-        var(0.5), var(160.0), var(1.0), var(0.5), var(1.0), var(1.0), var(0.5), var(2.0),
-        var(1.0), var(190.0), var(30.0), var(20.0), var(20.0), var(15.0), var(15.0),
-    ],
-)
+foam = handles(foam, [var(0.5), var(160.0), var(1.0), var(0.5), var(1.0), var(1.0), var(0.5), var(2.0), var(1.0), var(190.0), var(30.0), var(20.0), var(20.0), var(15.0), var(15.0)])
 foam = gizmo(
     foam,
     move=(var(0), var(0), var(0)),

@@ -5,12 +5,18 @@ Originally generated from the C++ standard library (kernel/stdlib/libfive_stdlib
 project; the generator is not part of FielDes, so this file is now maintained by hand.
 
 This is fieldes.stdlib.shapes
+
+Every shape has ONE primitive, with that shape and nothing else: `box`, `cylinder`, `sphere`, ... (no centred or mitered or `_z` variants:
+a shape that stands another way is turned with rotate_x / rotate_y / rotate_z, one that sits somewhere else is moved with move).
+The 3D shapes stand along z, the 2D shapes lie in the plane z = 0.
 """
 
 from fieldes.ffi import libfive_tree, tfloat, tvec2, tvec3, stdlib
 from fieldes.shape import Shape
 
 import ctypes
+
+# ---------------------------------------------------------------------------------------------------------------------------------------- 2D
 
 stdlib.circle.argtypes = [tfloat, tvec2]
 stdlib.circle.restype = libfive_tree
@@ -44,13 +50,13 @@ def polygon(r, n, center=(0, 0)):
         args[1],
         tvec2(*[a.ptr for a in args[2]])))
 
-stdlib.rectangle.argtypes = [tvec2, tvec2]
-stdlib.rectangle.restype = libfive_tree
+stdlib.rectangle_exact.argtypes = [tvec2, tvec2]
+stdlib.rectangle_exact.restype = libfive_tree
 def rectangle(a, b):
-    """ A rectangle with the given bounding corners
+    """ A rectangle with the given bounding corners (a true distance outside it: an offset of it is a rounded rectangle)
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    return Shape(stdlib.rectangle(
+    return Shape(stdlib.rectangle_exact(
         tvec2(*[a.ptr for a in args[0]]),
         tvec2(*[a.ptr for a in args[1]])))
 
@@ -65,26 +71,6 @@ def rounded_rectangle(a, b, r):
         tvec2(*[a.ptr for a in args[1]]),
         args[2].ptr))
 
-stdlib.rectangle_exact.argtypes = [tvec2, tvec2]
-stdlib.rectangle_exact.restype = libfive_tree
-def rectangle_exact(a, b):
-    """ A rectangle from an exact distance field
-    """
-    args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    return Shape(stdlib.rectangle_exact(
-        tvec2(*[a.ptr for a in args[0]]),
-        tvec2(*[a.ptr for a in args[1]])))
-
-stdlib.rectangle_centered_exact.argtypes = [tvec2, tvec2]
-stdlib.rectangle_centered_exact.restype = libfive_tree
-def rectangle_centered_exact(size, center=(0, 0)):
-    """ An exact-field rectangle at the (optional) center
-    """
-    args = [list([Shape.wrap(i) for i in size]), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.rectangle_centered_exact(
-        tvec2(*[a.ptr for a in args[0]]),
-        tvec2(*[a.ptr for a in args[1]])))
-
 stdlib.triangle.argtypes = [tvec2, tvec2, tvec2]
 stdlib.triangle.restype = libfive_tree
 def triangle(a, b, c):
@@ -96,42 +82,12 @@ def triangle(a, b, c):
         tvec2(*[a.ptr for a in args[1]]),
         tvec2(*[a.ptr for a in args[2]])))
 
-stdlib.box_mitered.argtypes = [tvec3, tvec3]
-stdlib.box_mitered.restype = libfive_tree
-def box_mitered(a, b):
-    """ A box with the given bounds, which will stay creased if offset
-    """
-    args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    return Shape(stdlib.box_mitered(
-        tvec3(*[a.ptr for a in args[0]]),
-        tvec3(*[a.ptr for a in args[1]])))
-
-stdlib.box_mitered_centered.argtypes = [tvec3, tvec3]
-stdlib.box_mitered_centered.restype = libfive_tree
-def box_mitered_centered(size, center=(0, 0, 0)):
-    """ A box with the given size and (optional) center, with edges that
-        will stay sharp if offset.
-    """
-    args = [list([Shape.wrap(i) for i in size]), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.box_mitered_centered(
-        tvec3(*[a.ptr for a in args[0]]),
-        tvec3(*[a.ptr for a in args[1]])))
-
-stdlib.box_exact_centered.argtypes = [tvec3, tvec3]
-stdlib.box_exact_centered.restype = libfive_tree
-def box_exact_centered(size, center=(0, 0, 0)):
-    """ A box with the given size, centered around the given point,
-        with a Euclidean distance metric
-    """
-    args = [list([Shape.wrap(i) for i in size]), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.box_exact_centered(
-        tvec3(*[a.ptr for a in args[0]]),
-        tvec3(*[a.ptr for a in args[1]])))
+# ---------------------------------------------------------------------------------------------------------------------------------------- 3D
 
 stdlib.box_exact.argtypes = [tvec3, tvec3]
 stdlib.box_exact.restype = libfive_tree
-def box_exact(a, b):
-    """ A box with the given bounds with a Euclidean distance metric
+def box(a, b):
+    """ A box between two opposite corners (a true distance outside it: an offset of it has rounded edges)
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
     return Shape(stdlib.box_exact(
@@ -172,9 +128,8 @@ def half_space(norm, point=(0, 0, 0)):
 
 stdlib.cylinder_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.cylinder_z.restype = libfive_tree
-def cylinder_z(r, h, base=(0, 0, 0)):
-    """ A cylinder with the given radius and height, extruded from the
-        (optional) base position.
+def cylinder(r, h, base=(0, 0, 0)):
+    """ A cylinder with the given radius and height, standing along z on the (optional) base position
     """
     args = [Shape.wrap(r), Shape.wrap(h), list([Shape.wrap(i) for i in base])]
     return Shape(stdlib.cylinder_z(
@@ -182,21 +137,10 @@ def cylinder_z(r, h, base=(0, 0, 0)):
         args[1].ptr,
         tvec3(*[a.ptr for a in args[2]])))
 
-stdlib.cone_ang_z.argtypes = [tfloat, tfloat, tvec3]
-stdlib.cone_ang_z.restype = libfive_tree
-def cone_ang_z(angle, height, base=(0, 0, 0)):
-    """ A cone defined by its slope angle, height, and (optional) base location
-    """
-    args = [Shape.wrap(angle), Shape.wrap(height), list([Shape.wrap(i) for i in base])]
-    return Shape(stdlib.cone_ang_z(
-        args[0].ptr,
-        args[1].ptr,
-        tvec3(*[a.ptr for a in args[2]])))
-
 stdlib.cone_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.cone_z.restype = libfive_tree
-def cone_z(radius, height, base=(0, 0, 0)):
-    """ A cone defined by its radius, height, and (optional) base location
+def cone(radius, height, base=(0, 0, 0)):
+    """ A cone with the given base radius and height, standing along z on the (optional) base position
     """
     args = [Shape.wrap(radius), Shape.wrap(height), list([Shape.wrap(i) for i in base])]
     return Shape(stdlib.cone_z(
@@ -206,7 +150,7 @@ def cone_z(radius, height, base=(0, 0, 0)):
 
 stdlib.pyramid_z.argtypes = [tvec2, tvec2, tfloat, tfloat]
 stdlib.pyramid_z.restype = libfive_tree
-def pyramid_z(a, b, zmin, height):
+def pyramid(a, b, zmin, height):
     """ A pyramid defined by its base rectangle, lower Z value, and height
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(zmin), Shape.wrap(height)]
@@ -218,24 +162,14 @@ def pyramid_z(a, b, zmin, height):
 
 stdlib.torus_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.torus_z.restype = libfive_tree
-def torus_z(ro, ri, center=(0, 0, 0)):
-    """ A torus with the given outer radius, inner radius, and (optional) center
+def torus(ro, ri, center=(0, 0, 0)):
+    """ A torus lying round the z axis, with the given outer radius, inner radius, and (optional) center
     """
     args = [Shape.wrap(ro), Shape.wrap(ri), list([Shape.wrap(i) for i in center])]
     return Shape(stdlib.torus_z(
         args[0].ptr,
         args[1].ptr,
         tvec3(*[a.ptr for a in args[2]])))
-
-stdlib.gyroid.argtypes = [tvec3, tfloat]
-stdlib.gyroid.restype = libfive_tree
-def gyroid(period, thickness):
-    """ A volume-filling gyroid with the given periods and thickness
-    """
-    args = [list([Shape.wrap(i) for i in period]), Shape.wrap(thickness)]
-    return Shape(stdlib.gyroid(
-        tvec3(*[a.ptr for a in args[0]]),
-        args[1].ptr))
 
 stdlib.emptiness.argtypes = []
 stdlib.emptiness.restype = libfive_tree
@@ -245,6 +179,8 @@ def emptiness():
     args = []
     return Shape(stdlib.emptiness(
         ))
+
+# ------------------------------------------------------------------------------------------------------------------------ repeating, extruding
 
 stdlib.array_x.argtypes = [libfive_tree, ctypes.c_int, tfloat]
 stdlib.array_x.restype = libfive_tree
@@ -304,13 +240,4 @@ def extrude_z(t, zmin, zmax):
         args[1].ptr,
         args[2].ptr))
 
-cube = box_mitered
-cube_centered = box_mitered_centered
-box = box_mitered
-box_centered = box_mitered_centered
-rounded_cube = rounded_box
-cylinder = cylinder_z
-cone_ang = cone_ang_z
-cone = cone_z
-torus = torus_z
 array_polar = array_polar_z

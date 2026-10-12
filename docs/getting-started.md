@@ -57,7 +57,7 @@ view.set_quality(8)
 
 r = var(4)
 ball = sphere(r)
-hole = cylinder_z(1.5, 30, (0, 0, -15))
+hole = cylinder(1.5, 30, (0, 0, -15))
 difference(ball, hole)
 ```
 

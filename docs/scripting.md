@@ -53,7 +53,7 @@ After the script runs the viewport shows:
 
 ```python
 ball = sphere(5)
-hole = cylinder_z(1, 12, (0, 0, -6))
+hole = cylinder(1, 12, (0, 0, -6))
 # hidden: hole
 difference(ball, hole)          # displayed
 ball                            # also displayed: a second model
@@ -96,17 +96,16 @@ its own); see [Region and resolution](step-import.md#region-and-resolution).
 
 ## Primitives
 
-3D: `sphere`, `box`, `box_exact`, `box_centered`, `box_exact_centered`, `box_mitered`, `rounded_box`,
-`cube`, `cylinder`, `cylinder_z`, `cone`, `cone_z`, `cone_ang`, `cone_ang_z`, `pyramid_z`, `torus`,
-`torus_z`, `half_space`, `gyroid`; 2D: `circle`, `ring`, `rectangle`, `rounded_rectangle`, `triangle`,
-`polygon`; `extrude_z` turns a 2D shape into a solid; `text` makes lettering; `emptiness` is the empty
+3D: `sphere`, `box`, `rounded_box`, `cylinder`, `cone`, `torus`, `pyramid`, `half_space`; 2D: `circle`, `ring`, `rectangle`,
+`rounded_rectangle`, `triangle`, `polygon`; `extrude_z` turns a 2D shape into a solid; `text` makes lettering; `emptiness` is the empty
 shape. Free-form and analytic surfaces: `ellipsoid`, `elliptic_cylinder`, `hyperboloid`, `paraboloid`,
 `quadric`, `extruded_curve`, `revolved_curve`, `helical_curve`, `helical_sweep`, `helical_revolve`,
 `coil_spring`, `wave_block`.
 
-`box(a, b)` is the box between two corners; the `_exact` variants have a Euclidean distance metric
-(a true distance outside the box, which matters for offsets and analyses), `_mitered` ones keep sharp
-edges when offset.
+**Every shape has one primitive, with that shape and nothing else.** `box(a, b)` is the box between two opposite corners (a true distance
+outside it, which matters for offsets and analyses); there is no centred box, no cube, no mitered box -- a `box` is a box. The 3D shapes stand
+along z (`cylinder(radius, height, base)` stands on `base`), the 2D shapes lie in the plane z = 0; one that stands another way is turned with
+`rotate_x` / `rotate_y` / `rotate_z`, one that sits somewhere else is moved with `move`.
 
 ## Combining shapes
 
@@ -140,7 +139,7 @@ thick = part - 0.02 * result.von_mises      # grow the part where it is highly s
 ```
 
 Numbers and shapes mix freely, and sequences of three numbers are points
-(`cylinder_z(1, 12, (0, 0, -6))`, each coordinate may be a `var()` or a field).
+(`cylinder(1, 12, (0, 0, -6))`, each coordinate may be a `var()` or a field).
 
 **Field × field works like number × number**, pointwise -- a number is only a field with the same value everywhere:
 

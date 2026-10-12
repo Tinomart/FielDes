@@ -91,7 +91,7 @@ def _cell_entries():
     listed(L.TPMS_KINDS, 'TPMS cells')
     for kind in L.PLANAR_KINDS:
         out.append(('cell_' + kind, 'Planar cells', "cell_periodic('%s')" % kind, kind))
-    out.append(('cell_custom', 'Custom cells', 'cell_custom(box_exact((0, 0, 0), ({s}, {s}, {s})), sphere({h}, ({h}, {h}, {h})))',
+    out.append(('cell_custom', 'Custom cells', 'cell_custom(box((0, 0, 0), ({s}, {s}, {s})), sphere({h}, ({h}, {h}, {h})))',
                 'custom'))
     out.append(('cell_custom_truss', 'Custom cells',
                 "cell_custom_truss({{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}}, [('c', 'o')], mirror='xyz')", 'custom_truss'))
@@ -122,32 +122,16 @@ HINTS = {
 # (function, group, template)
 PRIMITIVES = [
     ('sphere', '3D', 'sphere({h}, ({x}, {y}, {z}))'),
-    ('box_exact_centered', '3D', 'box_exact_centered(({s}, {s}, {s}), ({x}, {y}, {z}))'),
-    ('box_exact', '3D', 'box_exact(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))'),
-    ('box_centered', '3D', 'box_centered(({s}, {s}, {s}), ({x}, {y}, {z}))'),
     ('box', '3D', 'box(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))'),
-    ('box_mitered_centered', '3D', 'box_mitered_centered(({s}, {s}, {s}), ({x}, {y}, {z}))'),
-    ('box_mitered', '3D', 'box_mitered(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))'),
-    ('cube_centered', '3D', 'cube_centered(({s}, {s}, {s}), ({x}, {y}, {z}))'),
-    ('cube', '3D', 'cube(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}))'),
     ('rounded_box', '3D', 'rounded_box(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}), {r})'),
-    ('rounded_cube', '3D', 'rounded_cube(({xm}, {ym}, {zm}), ({xp}, {yp}, {zp}), {r})'),
-    ('cylinder_z', '3D', 'cylinder_z({h}, {s}, ({x}, {y}, {zm}))'),
     ('cylinder', '3D', 'cylinder({h}, {s}, ({x}, {y}, {zm}))'),
-    ('cone_z', '3D', 'cone_z({h}, {s}, ({x}, {y}, {zm}))'),
     ('cone', '3D', 'cone({h}, {s}, ({x}, {y}, {zm}))'),
-    ('cone_ang_z', '3D', 'cone_ang_z({angle_rad}, {s}, ({x}, {y}, {zm}))'),
-    ('cone_ang', '3D', 'cone_ang({angle_rad}, {s}, ({x}, {y}, {zm}))'),
-    ('torus_z', '3D', 'torus_z({h}, {q}, ({x}, {y}, {z}))'),
     ('torus', '3D', 'torus({h}, {q}, ({x}, {y}, {z}))'),
-    ('pyramid_z', '3D', 'pyramid_z(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
+    ('pyramid', '3D', 'pyramid(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
     ('half_space', '3D', 'half_space((0, 0, 1), ({x}, {y}, {z}))'),
-    ('gyroid', '3D', 'gyroid(({s}, {s}, {s}), {t})'),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
     ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),
-    ('rectangle_exact', '2D', 'rectangle_exact(({xm}, {ym}), ({xp}, {yp}))'),
-    ('rectangle_centered_exact', '2D', 'rectangle_centered_exact(({s}, {s}), ({x}, {y}))'),
     ('rounded_rectangle', '2D', 'rounded_rectangle(({xm}, {ym}), ({xp}, {yp}), {r})'),
     ('ring', '2D', 'ring({h}, {q}, ({x}, {y}))'),
     ('polygon', '2D', 'polygon({h}, {n}, ({x}, {y}))'),
@@ -208,10 +192,7 @@ PARAMS = {
     'lattice': {'cell': 'gyroid', 'cs': '$cs', 'ct': '$ct'},
     'lattice_surface_conform': {'cell': 'octet', 'cs': '$cs'},
     'rounded_box': {'r': 0.3},
-    'rounded_cube': {'r': 0.3},
     'rounded_rectangle': {'r': 0.3},
-    'cone_ang_z': {'angle': 30},
-    'cone_ang': {'angle': 30},
     'polygon': {'n': 6},
     'noise_field': {'n': 3},
     'static_analysis': {'es': '$es'},

@@ -14,10 +14,10 @@ view.set_bounds(*roi(parts))
 view.set_resolution(roi_resolution(parts))
 view.set_quality(8)
 
-plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
-               box_exact((45, 5, -61), (76, 36, 29)))           # bolted to the cold plate
-lugs = box_exact((-60, -90, -61), (60, -60, 29))                 # where the bearing heats it
-air = difference(box_exact((lo[0] - 5, lo[1] - 5, lo[2] - 5), (hi[0] + 5, hi[1] + 5, hi[2] + 5)), plates)   # every other surface
+plates = union(box((-76, 5, -61), (-45, 36, 29)),
+               box((45, 5, -61), (76, 36, 29)))           # bolted to the cold plate
+lugs = box((-60, -90, -61), (60, -60, 29))                 # where the bearing heats it
+air = difference(box((lo[0] - 5, lo[1] - 5, lo[2] - 5), (hi[0] + 5, hi[1] + 5, hi[2] + 5)), plates)   # every other surface
 
 result = thermal_analysis(bracket,
                           fixed_temperatures=[fixed_temperature(plates, 25.0)],

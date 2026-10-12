@@ -711,7 +711,7 @@ void Tutorial::buildSteps()
     // The model of the steps that work on a field: a plate, a point, a field made of the point -- how far every place is from it -- and the plate
     // grown by it (`linked`: by the field; else by 1)
     auto fieldModel = [](bool linked) {
-        return QString("block = box_exact((-30, -20, 0), (30, 20, 6))\n"
+        return QString("block = box((-30, -20, 0), (30, 20, 6))\n"
                        "anchor = point(24, 12, 6)\n"
                        "anchor\n"
                        "swell = ramp(distance_to_point(anchor), (0, 50), (4.0, 0.3))\n"
@@ -1387,8 +1387,8 @@ void Tutorial::buildSteps()
             useScript(tourHeader(QString()) +
                       "knob = sphere(4, (15, 0, 4))\n"
                       "knob\n"
-                      "cap = cylinder_z(7, 3, (-15, 0, 0))\n"
-                      "ring = cylinder_z(9, 1, (-15, 0, 0))\n"
+                      "cap = cylinder(7, 3, (-15, 0, 0))\n"
+                      "ring = cylinder(9, 1, (-15, 0, 0))\n"
                       "capped = union(cap, ring)\n"
                       "capped");
             scene()->clearSelection();
@@ -1421,9 +1421,9 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 2) +
-                      "beam = box_exact((0, 0, 0), (60, 20, 10))\n"
-                      "support = fixed(box_exact((-1, -1, -1), (1, 21, 11)))\n"
-                      "load = force(box_exact((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
+                      "beam = box((0, 0, 0), (60, 20, 10))\n"
+                      "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
+                      "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
                       "result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=5)\n"
                       "result");
             scene()->clearSelection();

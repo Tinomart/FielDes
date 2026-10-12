@@ -16,9 +16,9 @@ view.set_bounds(*roi(parts))
 view.set_resolution(4)
 view.set_quality(8)
 
-plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
-               box_exact((45, 5, -61), (76, 36, 29)))
-lugs = box_exact((-60, -90, -61), (60, -60, 29))
+plates = union(box((-76, 5, -61), (-45, 36, 29)),
+               box((45, 5, -61), (76, 36, 29)))
+lugs = box((-60, -90, -61), (60, -60, 29))
 
 # 1) analysis: bolted at the plates, pulled at the lugs
 support = fixed(plates)

@@ -18,9 +18,9 @@ view.set_resolution(roi_resolution(parts))
 view.set_quality(8)
 
 # Regions (mm): the bolted plates at the back, and the lugs at the front
-plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
-               box_exact((45, 5, -61), (76, 36, 29)))
-lugs = box_exact((-60, -90, -61), (60, -60, 29))
+plates = union(box((-76, 5, -61), (-45, 36, 29)),
+               box((45, 5, -61), (76, 36, 29)))
+lugs = box((-60, -90, -61), (60, -60, 29))
 
 # The problem: every condition is a model of its own, with its own eye in the model tree -- the surfaces where the part is
 # held (blue, with pads) and pulled (red, with arrows: 2000 N).  The "boundary conditions" row of the analysis shows or hides them all

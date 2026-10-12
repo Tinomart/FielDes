@@ -19,10 +19,10 @@ view.set_bounds([-5, -5, -15], [105, 25, 15])
 view.set_resolution(4)
 view.set_quality(8)
 
-beam = box_exact((0, 0, 0), (100, 20, 10))
-wall = box_exact((-1, -1, -1), (0.01, 21, 11))
-tip = box_exact((99.99, -1, -1), (101, 21, 11))
-top = box_exact((-1, -1, 9.99), (101, 21, 11))
+beam = box((0, 0, 0), (100, 20, 10))
+wall = box((-1, -1, -1), (0.01, 21, 11))
+tip = box((99.99, -1, -1), (101, 21, 11))
+top = box((-1, -1, 9.99), (101, 21, 11))
 deflection = lambda r: -evaluate(r.uz, (100, 10, 5))
 
 

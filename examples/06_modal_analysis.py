@@ -14,8 +14,8 @@ view.set_bounds(*roi(parts))
 view.set_resolution(roi_resolution(parts))
 view.set_quality(8)
 
-plates = union(box_exact((-76, 5, -61), (-45, 36, 29)),
-               box_exact((45, 5, -61), (76, 36, 29)))         # held by their bolts
+plates = union(box((-76, 5, -61), (-45, 36, 29)),
+               box((45, 5, -61), (76, 36, 29)))         # held by their bolts
 
 support = fixed(plates)
 support                           # shown: where the part is held (the eye of the "boundary conditions" row of the analysis shows them all)

@@ -17,7 +17,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 from fieldes.shape import Shape
 from fieldes.stdlib.fields import _shape_bounds
 from fieldes.stdlib.points import point
-from fieldes.stdlib.shapes import box_exact
+from fieldes.stdlib.shapes import box
 
 __all__ = ['bounding_box', 'center']
 
@@ -50,7 +50,7 @@ def _extent(body, what):
 
 
 def bounding_box(body):
-    ''' The smallest box, aligned with the axes, that holds `body`: a body of its own (`box_exact` between the body's lowest and highest
+    ''' The smallest box, aligned with the axes, that holds `body`: a body of its own (`box` between the body's lowest and highest
         corner).  Use it as a region, as the space to lay something out in, or to read the size of a part:
 
             box = bounding_box(part)
@@ -59,7 +59,7 @@ def bounding_box(body):
         It is measured when the script runs, from the extent the body knows exactly (a box, an imported part) or the one found by
         searching its field. '''
     lo, hi = _extent(body, 'bounding_box')
-    out = box_exact(tuple(float(c) for c in lo), tuple(float(c) for c in hi))
+    out = box(tuple(float(c) for c in lo), tuple(float(c) for c in hi))
     out._bounds = (tuple(float(c) for c in lo), tuple(float(c) for c in hi))
     return out
 

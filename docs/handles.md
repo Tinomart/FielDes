@@ -99,7 +99,7 @@ stand = gizmo(
 )
 ```
 
-one argument per line, like the arguments of an operation, so each is easy to find and change. What you drag is written into those
+one argument per line, like the arguments of an operation, so each is easy to find and change (the `handles(...)` call is the exception: see below). What you drag is written into those
 `var()` numbers. The shape is `stand` scaled about its centre, rotated (x, then y, then z; degrees) and moved. `about=` sets another
 centre. `mode=` says when the gizmo is shown: `'click'` (the default, left out), `'never'` or `'always'`; the placement stays
 whatever the mode. (`mode='gizmo'` and `mode='handles'`, from before surfaces could always be dragged, are refused.) An imported
@@ -114,19 +114,12 @@ For a shape written with **plain numbers** — a primitive, or a part imported f
 of such primitives — FielDes writes, under the definition,
 
 ```python
-bracket = handles(
-    bracket,
-    [
-        var(6),
-        var(40),
-        var(12.5),
-        …
-    ],
-)
+bracket = handles(bracket, [var(6), var(40), var(12.5), …])
 ```
 
 where the list holds the numbers that place the part's surfaces, in order, as `var()`s with their current
-values: one per line up to 12 numbers, eight to a line beyond that. Dragging a face then edits one of them.
+values. **The call is one line, however many numbers there are** -- the one exception to the layout of the other calls (one argument to a
+line): nobody edits those numbers by hand, they are dragged, so the call stays out of the way in the editor. Dragging a face edits one of them.
 `handles()` is the same shape if you change nothing, to the last float digit.
 
 Rules:
@@ -152,15 +145,7 @@ numbers in a `handles()` call once it is selected, so its handles work and it is
 
 ```python
 sphere_1 = sphere(1)
-sphere_1 = handles(
-    sphere_1,
-    [
-        var(0.0),
-        var(0.0),
-        var(0.0),
-        var(1.0),
-    ],
-)
+sphere_1 = handles(sphere_1, [var(0.0), var(0.0), var(0.0), var(1.0)])
 sphere_1
 ```
 

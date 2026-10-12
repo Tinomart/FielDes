@@ -19,21 +19,21 @@ view.set_resolution(2)
 view.set_quality(8)
 
 # SECTION The part
-beam = difference(box_exact((0, 0, 0), (60, 20, 10)), cylinder_z(3, 20, (30, 10, -5)))
+beam = difference(box((0, 0, 0), (60, 20, 10)), cylinder(3, 20, (30, 10, -5)))
 beam
 
 # SECTION The analysis
-support = fixed(box_exact((-1, -1, -1), (1, 21, 11)))
-load = force(box_exact((59, -1, -1), (61, 21, 11)), (0, 0, -300))
+support = fixed(box((-1, -1, -1), (1, 21, 11)))
+load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))
 result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=3)
 result
 
 # SECTION The files
 out = os.path.join(tempfile.gettempdir(), "fieldes-exports")
-box = ((-1, -1, -1), (61, 21, 11))
+region = ((-1, -1, -1), (61, 21, 11))
 for ext in (".stl", ".obj", ".ply", ".3mf", ".glb", ".fbx", ".off", ".dxf"):
     if not os.path.exists(os.path.join(out, "beam" + ext)):
-        export_mesh(beam, os.path.join(out, "beam" + ext), bounds=box, resolution=2)
+        export_mesh(beam, os.path.join(out, "beam" + ext), bounds=region, resolution=2)
 for ext in (".inp", ".bdf", ".msh"):
     if not os.path.exists(os.path.join(out, "beam" + ext)):
         export_fea(result, os.path.join(out, "beam" + ext))

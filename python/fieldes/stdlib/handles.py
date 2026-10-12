@@ -25,16 +25,11 @@
                    with plain numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
                    `handles()` makes the numbers that place its surfaces variables:
 
-                       part = handles(
-                           part,
-                           [
-                               var(6),
-                               var(40),
-                           ],
-                       )
+                       part = handles(part, [var(6), var(40)])
 
-                   Dragging a face changes the number of that face (a plane's position, a radius) in the script
-                   text.  FielDes writes the call itself when you select the shape.
+                   One line, however many numbers (nobody edits them by hand: they are dragged).  Dragging a face changes
+                   the number of that face (a plane's position, a radius) in the script text; a round feature keeps its centre,
+                   a box keeps the face opposite the one dragged.  FielDes writes the call itself when you select the shape.
 
     A lock button beside it (key R) is a separate switch: a locked shape cannot be dragged at all, neither by the
     gizmo nor by its handles, and keeps its gizmo mode, which comes back when it is unlocked:

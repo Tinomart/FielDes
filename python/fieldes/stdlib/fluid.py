@@ -3,13 +3,13 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
 
     from fieldes import *
 
-    duct = box_exact((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
-    post = cylinder_z(5, 6, (24, 20, -1))                # the BODY the flow goes around
+    duct = box((0, 0, 0), (80, 40, 4))             # the DOMAIN: the fluid, and the place the body is in
+    post = cylinder(5, 6, (24, 20, -1))                # the BODY the flow goes around
     result = fluid_analysis(
         post,
         duct,
-        inlets=[inlet(box_exact((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
-        outlets=[outlet(box_exact((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
+        inlets=[inlet(box((-1, -1, -1), (0.01, 41, 5)), speed=4)],                             # mm/s, in
+        outlets=[outlet(box((79.99, -1, -1), (81, 41, 5)), pressure=0)],                       # MPa
         boundaries=[],                                                                               # (none: the rest of the surface is wall)
         fluid=water, element_size=1.0)
     result                                               # the flow (FielDes: the fluid coloured by the speed,

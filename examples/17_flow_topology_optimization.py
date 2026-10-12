@@ -32,16 +32,16 @@ view.set_bounds((-4, -4, -4), (W + 4, H + 4, T + 4))
 view.set_resolution(5)
 view.set_quality(8)
 
-post = cylinder_z(D / 2, T + 2, (24.0, 20.0, -1.0))
-slab = box_exact((0, 0, 0), (W, H, T))     # the fluid domain holds the body's place too
+post = cylinder(D / 2, T + 2, (24.0, 20.0, -1.0))
+slab = box((0, 0, 0), (W, H, T))     # the fluid domain holds the body's place too
 # hidden: slab
-region = box_exact((12, 8, -1), (56, 32, T + 1))   # where material may be: around the post, well inside the slab
+region = box((12, 8, -1), (56, 32, T + 1))   # where material may be: around the post, well inside the slab
 # hidden: region
 
-faces = union(box_exact((-1, -1, -1), (W + 1, H + 1, 0.01)), box_exact((-1, -1, T - 0.01), (W + 1, H + 1, T + 1)))
-sides = union(box_exact((-1, -1, -1), (W + 1, 0.01, T + 1)), box_exact((-1, H - 0.01, -1), (W + 1, H + 1, T + 1)))
-inlet_face = box_exact((-1, -1, -1), (0.01, H + 1, T + 1))
-outlet_face = box_exact((W - 0.01, -1, -1), (W + 1, H + 1, T + 1))
+faces = union(box((-1, -1, -1), (W + 1, H + 1, 0.01)), box((-1, -1, T - 0.01), (W + 1, H + 1, T + 1)))
+sides = union(box((-1, -1, -1), (W + 1, 0.01, T + 1)), box((-1, H - 0.01, -1), (W + 1, H + 1, T + 1)))
+inlet_face = box((-1, -1, -1), (0.01, H + 1, T + 1))
+outlet_face = box((W - 0.01, -1, -1), (W + 1, H + 1, T + 1))
 
 design = flow_topology_optimization(post, slab,
                                     inlets=[inlet(inlet_face, speed=U)], outlets=[outlet(outlet_face, pressure=0)],

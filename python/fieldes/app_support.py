@@ -904,8 +904,9 @@ def blocks_used(source):
 
 def handles_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
-        draggable -- "name = handles(name, [var(...), ...])", laid out as the arguments of a call are, one number to a line (a shape
-        with many numbers: eight to a line) -- for FielDes to write under its definition.  Raises ValueError with the reason when it cannot be done. '''
+        draggable -- "name = handles(name, [var(...), ...])" -- for FielDes to write under its definition.  It is ONE line, whatever the number of
+        numbers (the exception to the layout of every other call): nobody edits those numbers by hand, they are dragged, and the call stays out of the
+        way in the editor.  Raises ValueError with the reason when it cannot be done. '''
     from fieldes import runner
     from fieldes.shape import Shape
     from fieldes.stdlib.handles import handle_values
@@ -924,11 +925,7 @@ def handles_text(name):
     if len(values) > _MAX_HANDLES:
         raise ValueError('%s has %d numbers that place its surfaces: too many to write into the script '
                          '(the limit is %d)' % (name, len(values), _MAX_HANDLES))
-    per_line = 1 if len(values) <= 12 else 8
-    rows = []
-    for i in range(0, len(values), per_line):
-        rows.append('        ' + ', '.join('var(%s)' % v for v in values[i:i + per_line]) + ',')
-    return '%s = handles(\n    %s,\n    [\n%s\n    ],\n)' % (name, name, '\n'.join(rows))
+    return '%s = handles(%s, [%s])' % (name, name, ', '.join('var(%s)' % v for v in values))
 
 
 def _handle_count(shape):
