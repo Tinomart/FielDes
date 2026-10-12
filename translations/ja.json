@@ -180,7 +180,6 @@
  "The region the viewport meshes (mm): nothing outside it is drawn": "ビューポートがメッシュ化する領域 (mm): その外側は描画されません",
  "Auto scale": "自動スケール",
  "on": "オン",
- "On (the default): the region follows the models in the script: it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller.\nOff: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch.": "オン（既定）：領域はスクリプト内のモデルに追従します。モデルが領域からはみ出すと（動かしたときも入力したときも）広がり、モデルがずっと小さくなると縮みます。\nオフ：領域はスクリプトに書かれたとおりで、その外側は描画されません。クリックで切り替えます。",
  "Resolution": "解像度",
  "Samples per mm: more is a finer picture and a slower one": "1 mm あたりのサンプル数: 多いほど細かく、遅くなります",
  "Quality": "品質",
@@ -574,7 +573,6 @@
  "A result has more to give than its picture. Point at result: a tab comes out at the edge of the tree. Click it, then click a field -- von_mises, say.": "結果には画像以上のものがあります。result にマウスを重ねると、ツリーの端にタブが出ます。それをクリックし、フィールド（たとえば von_mises）をクリックしてください。",
  "The drawer lists the fields and the numbers of the result; the one you click is written under it as a model of its own: von_mises_1 = result.von_mises -- a field, which can be shown, sliced and used in other models. The tab is there once the analysis has run. Or press Show me.": "引き出しには結果のフィールドと数値が並びます。クリックしたものは、その下に独立したモデルとして書き込まれます: von_mises_1 = result.von_mises -- 表示・断面・他のモデルでの利用ができるフィールドです。タブは解析の実行後に現れます。または「実演」を押してください。",
  "Nice. It is a field like any other: shown, sliced, used in other models.": "いいですね。他と同じフィールドとして、表示・断面・他のモデルでの利用ができます。",
- "The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.": "領域と解像度はコードの行です。枠で囲まれた行で解像度を 4 から 6 に変更してください。",
  "More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.": "1 mm あたりのサンプル数が多いほど、画像は細かくなり、処理は遅くなります。ツリーの「レンダリング設定」の行には数値が表示され (読み取り専用)、クリックするとその行へ移動します。または「実演」を押してください。",
  "Nice. The viewport meshes again at the new resolution.": "いいですね。ビューポートが新しい解像度でメッシュを作り直しました。",
  "Custom function from block": "ブロックからのカスタム関数",
@@ -1188,5 +1186,7 @@
  "I  isolate": "I  単独表示",
  "V  show or hide": "V  表示 / 非表示",
  "Shift+X  section view": "Shift+X  断面表示",
- "Home  frame everything": "Home  すべてをフレームに収める"
+ "Home  frame everything": "Home  すべてをフレームに収める",
+ "The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.": "領域と解像度はコードの行です（auto_scale=True にすると、領域がモデルに追従します）。枠で囲まれた行で解像度を 4 から 6 に変更してください。",
+ "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（既定）: 領域はスクリプト内のモデルに追従します。モデルを動かしたり数値で大きくして領域の外にはみ出すと領域が広がり、モデルがずっと小さくなると縮みます。また、各モデルは領域に対するサイズに応じて拡大縮小された独自の解像度でメッシュ化されます。\nauto_scale=False: 領域はスクリプトに書かれたとおりで、その外側は描画されず、すべてのモデルはシーンの解像度でメッシュ化されます。クリックで切り替えます。"
 }

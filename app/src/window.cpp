@@ -3627,7 +3627,7 @@ void Window::importModel(const QString& path)
                 if (re.match(lines[i]).hasMatch()) drop[i] = true;
         }
     }
-    code << "view.set_bounds(*roi(" + roiArgs + "))";
+    code << "view.set_bounds(*roi(" + roiArgs + "), auto_scale=True)";       // (written out although it is the default: what the script does is in the script)
     code << "view.set_resolution(roi_resolution(" + roiArgs + "))";
 
     // The quality statement moves along with them (keeping its value), so

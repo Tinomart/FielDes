@@ -14,7 +14,7 @@ import os
 import tempfile
 from fieldes import *
 
-view.set_bounds((-5, -10, -10), (65, 30, 20))
+view.set_bounds((-5, -10, -10), (65, 30, 20), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

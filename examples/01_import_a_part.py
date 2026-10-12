@@ -9,7 +9,7 @@ from fieldes import *
 parts = import_model("step/PivotBearingSupportBracket.STEP")   # one (shape, bounds) per solid
 part, (lo, hi) = parts[0]
 
-view.set_bounds(*roi(parts))                   # the region the viewport meshes
+view.set_bounds(*roi(parts), auto_scale=True)                   # the region the viewport meshes
 view.set_resolution(roi_resolution(parts))     # samples per mm, chosen for the part
 view.set_quality(8)
 

@@ -337,10 +337,10 @@ The keys you type are one step of `Ctrl+Z`.
 (or the defaults, dimmed, when it has not set them: the strip under the editor offers the line). **They are read here and written in the code editor**:
 a click on a row goes to its line. The rows have no bin: a render setting is a line of the code, and it is changed or deleted there.
 The corners the program writes are **whole numbers** (a minimum is rounded down and a maximum up, so the region still covers what it
-covered), with two decimals only for what is under 1, a part a few millimetres across. **The region follows the models** (*Auto scale*, on by default; the
-row of that name in *Render settings* switches it, as `auto_scale=False` in the call does): the numbers of `view.set_bounds` are rewritten in the code editor, live,
-as you work. When a model reaches out of the region -- you drag it, type a bigger number, add a model -- the region grows to hold it, with a little room (a tenth
-of the models' size, at least 1 mm); when the models have become much smaller than the region, or the big one is gone, it shrinks to them. With no model left it
+covered), with two decimals only for what is under 1, a part a few millimetres across. **The region follows the models** (*Auto scale*, on by default and written in the call as
+`auto_scale=True`; the row of that name in *Render settings* switches it, as `auto_scale=False` does; it also sets each model's own resolution): the numbers of `view.set_bounds` are rewritten in the code editor, live,
+as you work. When a model reaches out of the region -- you drag it, pull one of its faces, type a bigger number, add a model -- the region grows to hold it, with a little room (a tenth
+of the models' size, at least 1 mm); while a model's extent cannot be found the region is not shrunk (it might be what holds that model); when the models have become much smaller than the region, or the big one is gone, it shrinks to them. With no model left it
 stays as it is (there is nothing to fit it to), and a file that is just opened is only ever grown, never shrunk, so a region you made large on purpose is kept.
 A script that gets its region from `roi(...)` keeps it, the models' box given to `roi`. With Auto scale **off** the region is exactly what the script says, and what
 is outside it is not drawn.

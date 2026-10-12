@@ -50,6 +50,18 @@
 - **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are lines.
 
 ### Two kinds of duplication, one scale handle, and a tidier work plane
+- **A model moved out of the render region is taken in again, whatever it is.** The region follows the models (Auto scale), but a primitive that was
+  moved with its gizmo kept reporting the box it had before the move, so the region did not grow and the model was cut off at its wall. The box a model reports is now
+  the box of what it is *at the end of the script* -- after `handles(...)` and `gizmo(...)` have placed it -- for every model: a model that has no box of its own (a
+  difference, an offset, a lattice, anything made of other models) gets it searched for once, kept by its expression, so moving it only moves the box. A face that is pulled
+  out of a box (or a radius made larger) widens the box by what the numbers have changed, so it is held too. Checked in real windows: a box and a drilled plate dragged far out of
+  a small region, a face pulled out of a box -- the region grew and nothing was cut.
+- **The region is never made smaller while a model that is meshed in it has no known extent** (it might be what holds that model): a model that the search for its box ran out of
+  time on made the region shrink round the others, and cut that one off. The search itself has more time (0.4 s for a first look, 1 s for the second, 1.5 s for a scene, not 0.08 /
+  0.5 / 0.6) and is kept by the model's expression, not by every number of the script, so dragging one model no longer makes every other one be searched again.
+- **`auto_scale=True` is in the script.** It was the default, and a default was never written, so a script said nothing about the region following the models or about every model being
+  meshed at the resolution of its own size. Now every `view.set_bounds(...)` FielDes writes -- a new script, the region growing, *Auto scale* switched back on, an import's `roi(...)`, the
+  guided tour and the 28 examples -- has `auto_scale=True` in it (`auto_scale=False` as before turns it off), and the tooltip of the *Auto scale* row says that it also sets each model's resolution.
 - **The guided tour covers the new tools**: *Draw on a work plane* (Shift+W; Show me draws a rectangle), *Pull a point out of an edge*, *Corner or spline point* (double-click), *The gizmo of a point*, *Hold Shift* (the plane squares and the one ring),
   *Copy or link* (Shift+D, Ctrl+D) and *Keys worth knowing*; and three new examples show them: **26** sketches and sweeps, **27** copies and linked copies, **28** a sketch on a plane and the work plane. Translated in all six languages.
 - **Dragging a gizmo no longer meshes the shape again at every mouse move.** What a drag of a gizmo's numbers does is place the same mesh somewhere else, so the mesh that is drawn is drawn again with the move / turn / scale matrix of the numbers

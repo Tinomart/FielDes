@@ -436,7 +436,7 @@ def _import_log_entry(path):
 
 
 _SEARCH = 1.0e6          # half-size of the box searched for a shape's extent
-_BOUNDS_SECONDS = 0.6    # time budget per scene for estimating extents
+_BOUNDS_SECONDS = 1.5    # time budget per scene for estimating extents
 
 
 def _var_values():
@@ -462,16 +462,72 @@ def _var_values():
     return (libfive_tree * len(trees))(*trees), (ctypes.c_float * len(values))(*values), len(trees)
 
 
+def _look_for_box(s, known, half, box, limit):
+    ''' One search of the extent of shape `s`: in the cube of half-size `half` about the origin, or -- `box` given -- in a cube round that box.
+        (found, box, open: it reaches a side of the cube searched, so that it may go on beyond it, seconds it took) '''
+    import ctypes
+    import time
+    from fieldes.ffi import lib, libfive_region_t
+    search = libfive_region_t()
+    for k, axis in enumerate((search.X, search.Y, search.Z)):
+        if box is None:
+            axis.lower, axis.upper = -half, half
+        else:
+            # (a cube round the box: a search over a box that is not a cube does not come to an end in the time it has)
+            side = 0.51 * max(box[1][i] - box[0][i] for i in range(3)) + 1e-3
+            centre = 0.5 * (box[0][k] + box[1][k])
+            axis.lower, axis.upper = centre - side, centre + side
+    out = libfive_region_t()
+    open_sides = ctypes.c_int(0)
+    started = time.time()
+    if known is not None:
+        found = lib.libfive_tree_bounds_vars(s.ptr, search, 100000, limit, ctypes.byref(out),
+                                             ctypes.byref(open_sides), known[0], known[1], known[2])
+    else:
+        found = lib.libfive_tree_bounds(s.ptr, search, 100000, limit, ctypes.byref(out), ctypes.byref(open_sides))
+    took = time.time() - started
+    if not found:
+        return False, None, False, took
+    return True, ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper)), bool(open_sides.value), took
+
+
+def _search_extent(s, deadline):
+    ''' The box of a shape searched for with interval arithmetic, or None when there is none to be had in the time: it has no inside, it
+        goes on for ever (a half-space), or the search runs out of its time '''
+    import time
+    from fieldes.ffi import lib
+    known = _var_values() if hasattr(lib, 'libfive_tree_bounds_vars') else None
+    # A search that is cut short while it refines returns the coarser box it had got to -- a 500 mm box round a part of 30 mm, when the
+    # machine is busy.  It is searched again inside the box that was found (the shape is in it), as long as that makes the box
+    # smaller and there is time, so that the extent -- and what is sized by it: the element size of a simulation, the framing -- is
+    # right whatever the load.  When there is no time for that look the coarse box is not an extent: nothing is returned (it is
+    # measured when the script has run again), for the render region would grow round it
+    if time.time() > deadline:
+        return None
+    first_limit = 0.4               # (a part is found in tens of milliseconds, one that has var()s in a few hundred)
+    found, box, opened, took = _look_for_box(s, known, _SEARCH, None, first_limit)
+    if not found or opened:
+        return None
+    coarse = took >= 0.9 * first_limit                  # (it used all its time: the box may be a coarse one)
+    rounds = 0
+    while coarse and rounds < 3 and time.time() < deadline:
+        rounds += 1
+        size_before = sum(box[1][i] - box[0][i] for i in range(3))
+        found, again, opened, took = _look_for_box(s, known, _SEARCH, box, 1.0)
+        if not found or opened:
+            break                           # (no better box than the coarse one: that is not an extent)
+        smaller = sum(again[1][i] - again[0][i] for i in range(3)) <= 0.98 * size_before
+        box = again
+        coarse = smaller and took >= 0.9            # (it made the box smaller and was cut short again: look once more)
+    return None if coarse else box
+
+
 def _estimate_bounds(shapes, deadline):
     ''' Bounding box of one or more Shapes' interiors, from their own
         _bounds when known, else estimated with interval arithmetic
         (libfive_tree_bounds).  None if unknown, unbounded or too slow. '''
-    import ctypes
-    import time
-    from fieldes.ffi import lib, libfive_region_t
     from fieldes.stdlib.content_cache import cache_for, shape_key
-    from fieldes.stdlib.fields import _vars_key
-    memory = cache_for('scene_bounds', 256)         # (the extents found, by the expression and the numbers of the script's variables)
+    memory = cache_for('scene_bounds', 256)         # (the extents found, by the expression -- a var() of the script is its number there)
     boxes = []
     for s in shapes:
         b = getattr(s, '_bounds', None)
@@ -480,7 +536,7 @@ def _estimate_bounds(shapes, deadline):
             continue
         key = None
         try:
-            key = (shape_key(s), _vars_key())
+            key = shape_key(s)
         except Exception:
             pass
         if key is not None:
@@ -488,52 +544,8 @@ def _estimate_bounds(shapes, deadline):
             if hit:
                 boxes.append(kept)
                 continue
-        if time.time() > deadline:
-            return None
-        known = _var_values() if hasattr(lib, 'libfive_tree_bounds_vars') else None
-        box = None
-        coarse = False
-        # A search that is cut short (80 ms) returns the coarser box it had got to -- a 500 mm box round a part of 30 mm, when the
-        # machine is busy.  It is searched again inside the box that was found (the shape is in it), as long as that makes the box
-        # smaller and there is time, so that the extent -- and what is sized by it: the element size of a simulation, the framing -- is
-        # right whatever the load.  When there is no time for that look the coarse box is not an extent: nothing is returned (it is
-        # measured when the script has run again), for the render region would grow round it
-        for attempt in range(2):
-            search = libfive_region_t()
-            for k, axis in enumerate((search.X, search.Y, search.Z)):
-                if box is None:
-                    axis.lower, axis.upper = -_SEARCH, _SEARCH
-                else:
-                    # (a cube round the box: a search over a box that is not a cube does not come to an end in the time it has)
-                    half = 0.51 * max(box[1][i] - box[0][i] for i in range(3)) + 1e-3
-                    centre = 0.5 * (box[0][k] + box[1][k])
-                    axis.lower, axis.upper = centre - half, centre + half
-            out = libfive_region_t()
-            open_sides = ctypes.c_int(0)
-            started = time.time()
-            limit = 0.08 if attempt == 0 else 0.5       # (the first look is quick; the one inside the box it found takes the time it needs)
-            if known is not None:
-                found = lib.libfive_tree_bounds_vars(s.ptr, search, 100000, limit, ctypes.byref(out),
-                                                     ctypes.byref(open_sides), known[0], known[1], known[2])
-            else:
-                found = lib.libfive_tree_bounds(s.ptr, search, 100000, limit, ctypes.byref(out),
-                                                ctypes.byref(open_sides))
-            if not found or open_sides.value:
-                break                       # (nothing better than the box that was found before, if there is one)
-            found_box = ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
-            size_before = sum(box[1][i] - box[0][i] for i in range(3)) if box else None
-            box = found_box
-            coarse = False
-            if size_before is None:
-                # (the first answer may be a coarse one -- the search ran out of its 80 ms: look again inside it; one that came quickly is final)
-                if time.time() - started >= 0.06:
-                    coarse = True
-                    if time.time() < deadline:
-                        continue
-                break
-            if sum(box[1][i] - box[0][i] for i in range(3)) > 0.98 * size_before or time.time() > deadline:
-                break
-        if box is None or coarse:
+        box = _search_extent(s, deadline)
+        if box is None:
             return None
         if key is not None:
             memory.put(key, box)

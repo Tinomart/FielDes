@@ -266,7 +266,7 @@ namespace Python {
 const static QString SET_QUALITY_STR = "view.set_quality(%1)\n";
 const static QString SET_RESOLUTION_STR = "view.set_resolution(%1)\n";
 const static QString SET_BOUNDS_STR = "view.set_bounds([%1, %2, %3], "
-                                                        "[%4, %5, %6])\n";
+                                                        "[%4, %5, %6], auto_scale=True)\n";     // (written out although it is the default: what the script does is in the script)
 
 Interpreter::Interpreter() {
     // Nothing to do here

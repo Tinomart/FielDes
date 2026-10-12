@@ -21,7 +21,7 @@ parts = import_model("step/PivotBearingSupportBracket.STEP")
 space, (lo, hi) = parts[0]
 # hidden: space
 
-view.set_bounds(*roi(parts, ((-75.01, -85.07, -60.02), (75.01, 35.06, 28))))
+view.set_bounds(*roi(parts, ((-75.01, -85.07, -60.02), (75.01, 35.06, 28))), auto_scale=True)
 view.set_resolution(roi_resolution(parts, ((-75.01, -85.07, -60.02), (75.01, 35.06, 28))))
 view.set_quality(8)
 

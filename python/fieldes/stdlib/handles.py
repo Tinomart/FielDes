@@ -182,10 +182,24 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # run.  A placed part that lost its box would have to be searched for its extent by whatever is made from it -- a surface
     # selected on it, a lattice on that -- and that search fails on a mesh)
     b = getattr(shape, '_bounds', None)
+    loose = bool(getattr(shape, '_bounds_loose', False))
+    if not b and not hasattr(shape, 'xyz') and getattr(shape, '_point_pos', None) is None:
+        # A shape that does not know its box has it searched for -- once: the search is kept by the shape's expression, which does not change
+        # when the numbers of this gizmo do -- so that the box of what is moved follows the numbers at once, however the shape is made.  (The
+        # render region is made to hold the models by these boxes: a model that is moved out of it must be known to be)
+        try:
+            import time
+            from fieldes.app_support import _estimate_bounds
+            b = _estimate_bounds([shape], time.time() + 2.0)
+            loose = True
+        except Exception:
+            b = None
     if b:
         placed = _placed_box(b, c, move, rotate, scale)
         if placed is not None:
             out._bounds = placed
+            if loose:
+                out._bounds_loose = True
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
     out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
@@ -388,4 +402,34 @@ def handles(shape, values=None, **removed):
     cad_import._carry_exact(out, shape)
     from fieldes.kinds import keep_kind
     keep_kind(out, shape)
+    _widen_box(out, shape, values)
     return out
+
+
+def _widen_box(out, shape, values):
+    ''' The box a shape had is the box of its own numbers: when a surface has been dragged (a number is not what the shape was made with)
+        the part reaches further than the box says -- a face pulled out of a box, a radius made larger -- and the render region would cut it
+        off.  A surface moves by no more than the numbers have changed (each is a position or a length), so the box grows by the sum of
+        the changes on every side: not the exact extent, one that holds the part (`_bounds_loose`: it is not offered as an exact box) '''
+    b = getattr(out, '_bounds', None)
+    if not b:
+        return
+    try:
+        nums = _var_numbers(values)
+        orig = [float(x) for x in handle_values(shape)]
+        if nums is None or len(orig) != len(nums):
+            _forget_box(out)
+            return
+        grow = sum(abs(a - b0) for a, b0 in zip(nums, orig))
+        if grow > 1e-9:
+            out._bounds = (tuple(float(v) - grow for v in b[0]), tuple(float(v) + grow for v in b[1]))
+            out._bounds_loose = True
+    except Exception:
+        _forget_box(out)                # (not known: it is searched for, with the numbers it has now)
+
+
+def _forget_box(out):
+    try:
+        del out._bounds
+    except AttributeError:
+        pass

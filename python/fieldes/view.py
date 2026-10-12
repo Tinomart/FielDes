@@ -1,8 +1,9 @@
 '''
 How the viewport renders a script: the region, the resolution and the quality.
 
-    view.set_bounds((-10, -10, -10), (10, 10, 10))   # the region meshed (mm); FielDes rewrites these numbers, live, to follow the
-                                                     # models (grown when one reaches out, shrunk when they get much smaller)
+    view.set_bounds((-10, -10, -10), (10, 10, 10), auto_scale=True)   # the region meshed (mm); FielDes rewrites these numbers, live,
+                                                     # to follow the models (grown when one reaches out, shrunk when they get much
+                                                     # smaller), and meshes every model at a resolution of its own size
                                                      # -- unless you write auto_scale=False: then it is what you wrote
     view.set_resolution(10)                          # samples per mm
     view.set_quality(8)                              # mesh accuracy, 1 to 10
@@ -21,8 +22,9 @@ except ImportError:
 
     def set_bounds(lo, hi, auto_scale=True):
         ''' The region the viewport meshes: its lower and upper corner (mm).  auto_scale (the default): FielDes rewrites these numbers in the
-            script to follow the models -- grown when a model reaches out of the region, shrunk when the models get much smaller; False: the
-            region is exactly what is written '''
+            script to follow the models -- grown when a model reaches out of the region, shrunk when the models get much smaller -- and
+            meshes every model at the scene's resolution scaled by its size next to the region; False: the region is exactly what is
+            written, and every model is meshed at the scene's resolution '''
         settings['bounds'] = (tuple(lo), tuple(hi))
         settings['auto_scale'] = bool(auto_scale)
 

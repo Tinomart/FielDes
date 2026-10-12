@@ -15,7 +15,7 @@
 # The work plane is a tool of the viewport: it is not saved in the script, the points and the sketches are.
 from fieldes import *
 
-view.set_bounds([-15, -15, -10], [70, 70, 60])
+view.set_bounds([-15, -15, -10], [70, 70, 60], auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

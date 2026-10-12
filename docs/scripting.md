@@ -80,15 +80,19 @@ numbers), which the model tree writes for you; `lock(part)` makes a shape undrag
 ## Viewport settings
 
 ```python
-view.set_bounds([-10, -10, -10], [10, 10, 10])    # the region meshed (mm); auto_scale=True (the default)
+view.set_bounds([-10, -10, -10], [10, 10, 10], auto_scale=True)    # the region meshed (mm); it follows the models
 view.set_resolution(10)                           # samples per mm
 view.set_quality(8)                               # mesh accuracy, 1 (coarse) to 10
 ```
 
 They are statements like any other and appear under *Render settings* in the tree. **The region follows your models**: with
-`auto_scale=True` (the default; `view.set_bounds(lo, hi, auto_scale=False)` turns it off, as does the *Auto scale* row of the
-tree) FielDes rewrites the numbers of the call, live, when a model reaches out of the region or the models have become much smaller
-than it -- type `sphere(30)` where there was `sphere(3)` and watch the region grow. With it off, the region is exactly what you wrote.
+`auto_scale=True` (the default, and written in the call so that it is in plain sight; `auto_scale=False` turns it off, as does the
+*Auto scale* row of the tree) FielDes rewrites the numbers of the call, live, when a model reaches out of the region or the models have
+become much smaller than it -- type `sphere(30)` where there was `sphere(3)`, or drag a model out of the region, and watch the region
+grow. **A model that is moved, stretched or typed out of the region is taken in: the region grows to hold it.**
+`auto_scale` also sets how finely each model is meshed: with it on, every model gets the resolution of the scene scaled by its size next to
+the region (a small part beside a big one has samples enough across it); with it off, every model is meshed at the scene's resolution and
+the region is exactly what you wrote.
 For imports,
 `view.set_bounds(*roi(parts))` sets the region to enclose them and
 `view.set_resolution(roi_resolution(parts))` picks a resolution for the parts (each part is meshed at

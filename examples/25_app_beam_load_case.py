@@ -19,7 +19,7 @@ force_n = app.number('Force', 300, min=10, max=5000, unit='N', help='Pulling dow
 material = app.choice('Material', ['steel', 'aluminium'], 'steel')
 report = app.save_as('Report', 'beam_load_case.txt', 'Text files (*.txt)', 'The key numbers of the analysis, as text')
 
-view.set_bounds((-10, -15, -15), (75, 35, 25))
+view.set_bounds((-10, -15, -15), (75, 35, 25), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

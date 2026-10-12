@@ -656,7 +656,7 @@ void Tutorial::typeOver(int line0, int col0, int col1, const QString& text, std:
 // The first lines of a model that a step makes for itself (the render region, how fine it is drawn, how smooth)
 static QString tourHeader(const QString& bounds, int resolution = 4)
 {
-    return QString("# The guided tour's model\nfrom fieldes import *\n\nview.set_bounds(%1)\nview.set_resolution(%2)\nview.set_quality(8)\n\n")
+    return QString("# The guided tour's model\nfrom fieldes import *\n\nview.set_bounds(%1, auto_scale=True)\nview.set_resolution(%2)\nview.set_quality(8)\n\n")
         .arg(bounds.isEmpty() ? QString("[-35, -25, -8], [35, 25, 30]") : bounds)
         .arg(resolution);
 }
@@ -1700,7 +1700,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Render settings");
-        s.text = T("The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.");
+        s.text = T("The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.");
         s.hint = T("More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.");
         s.focus = [this] { return scriptLineRect(std::max(0, scriptLine("view.set_resolution"))); };
         s.holes = holesOf(scriptWidget);

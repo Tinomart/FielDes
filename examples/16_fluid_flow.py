@@ -25,7 +25,7 @@ W, H, T = 80.0, 40.0, 4.0                  # the slab of fluid: 80 x 40 mm, 4 mm
 D = 10.0                                   # the post's diameter
 U = 4.0                                    # mm/s: Re = U D / nu = 40 in water (nu = 1 mm^2/s)
 
-view.set_bounds((-4, -4, -4), (W + 4, H + 4, T + 4))
+view.set_bounds((-4, -4, -4), (W + 4, H + 4, T + 4), auto_scale=True)
 view.set_resolution(5)
 view.set_quality(8)
 

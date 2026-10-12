@@ -15,7 +15,7 @@
 # the cell, and the tile follows.
 from fieldes import *
 
-view.set_bounds([-22, -22, -22], [110, 154, 22])
+view.set_bounds([-22, -22, -22], [110, 154, 22], auto_scale=True)
 view.set_resolution(4)
 view.set_quality(8)
 

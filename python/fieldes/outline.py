@@ -177,7 +177,9 @@ def facts_of(v):
     b = getattr(v, '_bounds', None) if shape else None
     if b:
         f['bounds'] = A._bounds_list(b)
-        f['exact_bounds'] = True        # (the shape knows its extent: the region of interest can be made from it; an estimate is not that)
+        # (the shape knows its extent: the region of interest can be made from it; an estimate is not that, nor is the box of a part whose
+        # surfaces have been dragged -- one that holds it)
+        f['exact_bounds'] = not getattr(v, '_bounds_loose', False)
     used = getattr(v, '_custom_resolution_used', None)
     if isinstance(used, (int, float)):
         f['custom_used'] = used
@@ -349,6 +351,17 @@ def finish(source, gs, out):
                         except Exception:
                             pass
                     shapes = [] if facts.get('failed') else _display_shapes(v)
+                    if shapes and isinstance(v, Shape):
+                        # (the box a statement was given when it ran is the box of the shape then: the statements after it -- handles(), gizmo() --
+                        # move and stretch it, and the model is what they have made of it.  A box that is kept from before would leave a model that
+                        # was moved out of the render region, which is made to hold the models by it, cut off)
+                        final = getattr(v, '_bounds', None)
+                        if final:
+                            facts['bounds'] = A._bounds_list(final)
+                            facts['exact_bounds'] = not getattr(v, '_bounds_loose', False)
+                        else:
+                            facts.pop('bounds', None)
+                            facts.pop('exact_bounds', None)
                     if shapes:
                         has_var = any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
                                       for n in ast.walk(stmt))

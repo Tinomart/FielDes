@@ -21,7 +21,7 @@ parts = tessellate("step/PivotBearingSupportBracket.STEP")
 bracket, (lo, hi) = parts[0]
 bracket
 
-view.set_bounds(*roi(parts))
+view.set_bounds(*roi(parts), auto_scale=True)
 view.set_resolution(roi_resolution(parts))
 view.set_quality(8)
 

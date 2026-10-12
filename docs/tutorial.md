@@ -61,7 +61,7 @@ The tour's model (**Help → Guided tour**) starts with
 ```python
 from fieldes import *
 
-view.set_bounds([-35, -25, -8], [35, 25, 30])    # the region the viewport meshes
+view.set_bounds([-35, -25, -8], [35, 25, 30], auto_scale=True)    # the region the viewport meshes
 view.set_resolution(6)                           # samples per mm
 view.set_quality(8)
 ```

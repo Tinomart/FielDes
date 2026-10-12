@@ -180,7 +180,6 @@
  "The region the viewport meshes (mm): nothing outside it is drawn": "La région que la vue 3D maille (mm) : rien en dehors n'est dessiné",
  "Auto scale": "Échelle automatique",
  "on": "activée",
- "On (the default): the region follows the models in the script: it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller.\nOff: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch.": "Activée (par défaut) : la région suit les modèles dans le script : elle s’agrandit quand un modèle en sort, que vous le déplaciez ou le tapiez, et se resserre quand les modèles deviennent bien plus petits.\nDésactivée : la région est exactement ce que dit le script, et ce qui est en dehors n’est pas dessiné.  Cliquez pour basculer.",
  "Resolution": "Résolution",
  "Samples per mm: more is a finer picture and a slower one": "Échantillons par mm : plus il y en a, plus l'image est fine et lente",
  "Quality": "Qualité",
@@ -574,7 +573,6 @@
  "A result has more to give than its picture. Point at result: a tab comes out at the edge of the tree. Click it, then click a field -- von_mises, say.": "Un résultat a plus à offrir que son image. Pointez result : un onglet sort du bord de l'arbre. Cliquez dessus, puis sur un champ -- von_mises, par exemple.",
  "The drawer lists the fields and the numbers of the result; the one you click is written under it as a model of its own: von_mises_1 = result.von_mises -- a field, which can be shown, sliced and used in other models. The tab is there once the analysis has run. Or press Show me.": "Le tiroir liste les champs et les nombres du résultat ; celui sur lequel vous cliquez est écrit dessous comme un modèle à part entière : von_mises_1 = result.von_mises -- un champ, qu'on peut afficher, couper et utiliser dans d'autres modèles. L'onglet est là une fois l'analyse exécutée. Ou appuyez sur Montrez-moi.",
  "Nice. It is a field like any other: shown, sliced, used in other models.": "Bien. C'est un champ comme un autre : affiché, coupé, utilisé dans d'autres modèles.",
- "The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.": "La région et la résolution sont des lignes du code. Passez la résolution de 4 à 6 dans la ligne encadrée.",
  "More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.": "Plus d’échantillons par mm : une image plus fine, plus lente. La ligne Rendu de l’arbre montre les nombres (en lecture seule) ; un clic dessus mène à la ligne. Ou appuyez sur Montrez-moi.",
  "Nice. The viewport meshes again at the new resolution.": "Très bien. La vue 3D remaille avec la nouvelle résolution.",
  "Custom function from block": "Fonction personnalisée issue d'un bloc",
@@ -1188,5 +1186,7 @@
  "I  isolate": "I  isoler",
  "V  show or hide": "V  afficher ou masquer",
  "Shift+X  section view": "Maj+X  vue en coupe",
- "Home  frame everything": "Origine  tout cadrer"
+ "Home  frame everything": "Origine  tout cadrer",
+ "The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.": "La région et la résolution sont des lignes du code (auto_scale=True fait suivre la région par vos modèles). Changez la résolution de 4 à 6 dans la ligne encadrée.",
+ "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True (par défaut) : la région suit les modèles dans le script -- elle s'agrandit quand un modèle en sort, que vous le déplaciez ou le saisissiez, et rétrécit quand les modèles deviennent bien plus petits -- et chaque modèle est maillé à sa propre résolution, mise à l'échelle selon sa taille par rapport à la région.\nauto_scale=False : la région est exactement ce que dit le script, rien n'est dessiné en dehors, et chaque modèle est maillé à la résolution de la scène.  Cliquez pour basculer."
 }

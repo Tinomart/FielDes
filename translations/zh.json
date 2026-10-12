@@ -180,7 +180,6 @@
  "The region the viewport meshes (mm): nothing outside it is drawn": "视口生成网格的区域（毫米）：区域外的内容不会绘制",
  "Auto scale": "自动缩放",
  "on": "开",
- "On (the default): the region follows the models in the script: it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller.\nOff: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch.": "开（默认）：区域会跟随脚本中的模型：当模型超出区域时（无论是移动还是键入）它会扩大，当模型变得小得多时它会缩小。\n关：区域严格按脚本所写，区域之外的内容不会绘制。  点击切换。",
  "Resolution": "分辨率",
  "Samples per mm: more is a finer picture and a slower one": "每毫米采样数：越多图像越精细，也越慢",
  "Quality": "质量",
@@ -574,7 +573,6 @@
  "A result has more to give than its picture. Point at result: a tab comes out at the edge of the tree. Click it, then click a field -- von_mises, say.": "结果能提供的不只是图像。把鼠标指向 result：模型树边缘会伸出一个标签。单击它，再单击一个场，例如 von_mises。",
  "The drawer lists the fields and the numbers of the result; the one you click is written under it as a model of its own: von_mises_1 = result.von_mises -- a field, which can be shown, sliced and used in other models. The tab is there once the analysis has run. Or press Show me.": "抽屉列出结果的场和数值；单击的那一项会作为独立的模型写在其下：von_mises_1 = result.von_mises —— 这是一个场，可以显示、剖切并用于其他模型。分析运行后才会出现这个标签。也可以按“演示”。",
  "Nice. It is a field like any other: shown, sliced, used in other models.": "很好。它和其他场一样：可以显示、剖切，也可用于其他模型。",
- "The region and the resolution are lines of the code. Change the resolution from 4 to 6 in the framed line.": "区域和分辨率是代码中的行。请在框起的行中把分辨率从 4 改为 6。",
  "More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.": "每毫米采样越多，画面越精细，也越慢。树中的“渲染设置”行显示数值（只读），点击它会跳到该行。也可以按“演示”。",
  "Nice. The viewport meshes again at the new resolution.": "很好。视口按新的分辨率重新生成了网格。",
  "Custom function from block": "来自块的自定义函数",
@@ -1188,5 +1186,7 @@
  "I  isolate": "I  孤立显示",
  "V  show or hide": "V  显示或隐藏",
  "Shift+X  section view": "Shift+X  截面视图",
- "Home  frame everything": "Home  显示全部"
+ "Home  frame everything": "Home  显示全部",
+ "The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.": "区域和分辨率都是代码中的行（auto_scale=True 会让区域跟随你的模型）。请在框出的那一行把分辨率从 4 改为 6。",
+ "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（默认）：区域在脚本中跟随模型——当模型超出区域时（无论是移动还是输入数值）区域会扩大，当模型变得小很多时区域会缩小——并且每个模型按其相对区域的大小缩放，以各自的分辨率划分网格。\nauto_scale=False：区域严格按脚本所写，区域之外不绘制任何内容，所有模型都按场景的分辨率划分网格。点击可切换。"
 }

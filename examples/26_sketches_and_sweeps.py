@@ -14,7 +14,7 @@
 #   * Shift+D copies a model, Ctrl+D links it (see example 27).
 from fieldes import *
 
-view.set_bounds([-10, -10, -10], [115, 70, 55])
+view.set_bounds([-10, -10, -10], [115, 70, 55], auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

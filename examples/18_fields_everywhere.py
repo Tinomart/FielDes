@@ -15,7 +15,7 @@
 # its name over it, and a click on the icon opens the field viewer -- a plane through the field with a position slider.
 from fieldes import *
 
-view.set_bounds([-10, -10, -10], [225, 55, 45])
+view.set_bounds([-10, -10, -10], [225, 55, 45], auto_scale=True)
 view.set_resolution(4)
 view.set_quality(8)
 

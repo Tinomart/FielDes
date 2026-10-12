@@ -16,7 +16,7 @@
 #   * Select the bolt and press Ctrl+D for a fourth one; Operation > Repeating > instance does the same.
 from fieldes import *
 
-view.set_bounds([-15, -15, -5], [95, 55, 40])
+view.set_bounds([-15, -15, -5], [95, 55, 40], auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

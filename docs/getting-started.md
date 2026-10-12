@@ -51,7 +51,7 @@ Replace the script with:
 ```python
 from fieldes import *
 
-view.set_bounds([-12, -12, -12], [12, 12, 12])
+view.set_bounds([-12, -12, -12], [12, 12, 12], auto_scale=True)
 view.set_resolution(8)
 view.set_quality(8)
 
@@ -67,7 +67,8 @@ difference(ball, hole)
   number in the script changes as you drag.
 - `view.set_bounds`, `view.set_resolution` and `view.set_quality` say where and how finely the
   viewport meshes the shape. They are plain statements in the script. The region follows your
-  models by itself (`auto_scale=True`): make a shape larger and the numbers of `view.set_bounds` grow with it.
+  models by itself (`auto_scale=True`, written in the call): make a shape larger, or drag it out of the region, and the numbers of
+  `view.set_bounds` grow with it; the same argument gives every model its own resolution.
 
 ## Making things from the menu
 

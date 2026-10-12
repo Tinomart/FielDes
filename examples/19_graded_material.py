@@ -15,7 +15,7 @@
 # No STEP file is needed.
 from fieldes import *
 
-view.set_bounds([-5, -5, -15], [105, 25, 15])
+view.set_bounds([-5, -5, -15], [105, 25, 15], auto_scale=True)
 view.set_resolution(4)
 view.set_quality(8)
 

@@ -42,7 +42,7 @@ target = app.save_as('Export path', 'bracket_maker.stl', 'Mesh files (*.stl *.ob
 parts = import_model(model)
 bracket, (low, high) = parts[0]
 
-view.set_bounds(*roi(parts))
+view.set_bounds(*roi(parts), auto_scale=True)
 view.set_resolution(roi_resolution(parts))
 view.set_quality(8)
 

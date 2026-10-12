@@ -1851,9 +1851,15 @@ void ScenePanel::setScene(const QString& json)
 
 void ScenePanel::fitRegion()
 {
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
     if (m_predicted || !m_source || m_scene["errored"].toBool() || !m_scene["run_done"].toBool() ||
         m_scene["source_md5"].toString() != md5Hex(m_source()))
+    {
+        if (timing)
+            std::cerr << "[region] not fitted: predicted " << m_predicted << " errored " << m_scene["errored"].toBool() << " run_done "
+                      << m_scene["run_done"].toBool() << " same text " << (m_source && m_scene["source_md5"].toString() == md5Hex(m_source())) << std::endl;
         return;
+    }
     const auto settings = m_scene["settings"].toObject();
     const auto setBounds = settings["set_bounds"].toObject();
     // Auto scale off: the region is what the script says
@@ -1862,6 +1868,9 @@ void ScenePanel::fitRegion()
     // The box of the models that are shown and drawn (a point is not drawn, and neither is a field: they do not say how far the region reaches)
     double nlo[3], nhi[3];
     bool any = false;
+    int unknown = 0;                // (bodies that are meshed in the region and whose extent is not known: the region cannot be said to hold them.
+                                    // A sketch or a line is drawn from its points, not meshed: the region has nothing to hold of it)
+    auto drawnBody = [](const QString& t) { return t == "solid" || t == "lattice" || t == "import"; };
     for (const auto v : m_scene["items"].toArray())
     {
         const auto it = v.toObject();
@@ -1870,7 +1879,12 @@ void ScenePanel::fitRegion()
         const QString type = it["type"].toString();
         if (type == "point" || type == "points" || type == "field") continue;
         const auto b = it["bounds"].toArray();
-        if (b.size() != 2) continue;
+        if (b.size() != 2)
+        {
+            if (drawnBody(type)) ++unknown;
+            if (timing) std::cerr << "[region] " << it["var"].toString().toStdString() << " (" << type.toStdString() << ") has no box" << std::endl;
+            continue;
+        }
         double l[3], h[3];
         bool ok = true;
         for (int k = 0; k < 3; ++k)
@@ -1879,7 +1893,14 @@ void ScenePanel::fitRegion()
             h[k] = b[1].toArray()[k].toDouble();
             ok = ok && sane(l[k]) && sane(h[k]) && h[k] >= l[k];
         }
-        if (!ok) continue;
+        if (timing)
+            std::cerr << "[region] " << it["var"].toString().toStdString() << " (" << type.toStdString() << ") box (" << l[0] << ", " << l[1] << ", " << l[2] << ")-("
+                      << h[0] << ", " << h[1] << ", " << h[2] << ")" << (ok ? "" : " (not usable)") << std::endl;
+        if (!ok)
+        {
+            if (drawnBody(type)) ++unknown;
+            continue;
+        }
         for (int k = 0; k < 3; ++k)
         {
             nlo[k] = any ? std::min(nlo[k], l[k]) : l[k];
@@ -1905,11 +1926,16 @@ void ScenePanel::fitRegion()
         // default one is not what is in the script -- nothing is written on a guess
         return;
     }
-    // (the first scene of a file only grows the region: what the file says is not rewritten just for being larger than its models)
-    const bool allowShrink = m_regionFitted;
+    // (the first scene of a file only grows the region: what the file says is not rewritten just for being larger than its models.  And it
+    // is never made smaller while a model that is drawn has no known extent: the region may be what holds it)
+    const bool allowShrink = m_regionFitted && unknown == 0;
     m_regionFitted = true;
     bool outside = false;
     for (int k = 0; k < 3; ++k) outside = outside || nlo[k] < lo[k] - 1e-6 || nhi[k] > hi[k] + 1e-6;
+    if (timing)
+        std::cerr << "[region] models (" << nlo[0] << ", " << nlo[1] << ", " << nlo[2] << ")-(" << nhi[0] << ", " << nhi[1] << ", " << nhi[2] << ") region ("
+                  << lo[0] << ", " << lo[1] << ", " << lo[2] << ")-(" << hi[0] << ", " << hi[1] << ", " << hi[2] << ") outside " << outside << " may shrink "
+                  << allowShrink << " unknown " << unknown << std::endl;
     // Room round the models: a tenth of their size, at least 1 mm
     const double boxLongest = std::max(nhi[0] - nlo[0], std::max(nhi[1] - nlo[1], nhi[2] - nlo[2]));
     const double room = std::max(1.0, 0.1 * boxLongest);
@@ -1929,7 +1955,8 @@ void ScenePanel::fitRegion()
                                     : regionNumber(nhi[k] > hi[k] ? nhi[k] + room : hi[k], 1));
         }
     }
-    const QString call = QString("view.set_bounds([%1, %2, %3], [%4, %5, %6])").arg(text[0], text[1], text[2], text[3], text[4], text[5]);
+    // (auto_scale is written out although it is the default: what the script does is in the script, not hidden in a default)
+    const QString call = QString("view.set_bounds([%1, %2, %3], [%4, %5, %6], auto_scale=True)").arg(text[0], text[1], text[2], text[3], text[4], text[5]);
     if (!settings.contains("set_bounds") || !setBounds.contains("span"))
     {
         insertSettingLine(call, "set_bounds", true);
@@ -1944,8 +1971,9 @@ void ScenePanel::fitRegion()
     static const QRegularExpression autoArg(R"((\s*,\s*auto_scale\s*=\s*\w+)\s*\)$)");
     const auto m = fromRoi.match(current);
     const auto a = autoArg.match(current);
-    const QString extra = a.hasMatch() ? a.captured(1) : QString();
-    QString replacement = call;
+    // (the argument the call has stays as it is; one that has none is given auto_scale=True, which it was running with)
+    const QString extra = a.hasMatch() ? a.captured(1) : QString(", auto_scale=True");
+    QString replacement = call.left(call.size() - QString(", auto_scale=True)").size()) + extra + ")";
     if (m.hasMatch())
     {
         QStringList lowText, highText;
@@ -1955,10 +1983,6 @@ void ScenePanel::fitRegion()
             highText << regionNumber(nhi[k], 1);
         }
         replacement = "view.set_bounds(*roi(" + m.captured(1) + ", ((" + lowText.join(", ") + "), (" + highText.join(", ") + ")))" + extra + ")";
-    }
-    else if (!extra.isEmpty())
-    {
-        replacement = call.left(call.size() - 1) + extra + ")";
     }
     if (replacement == current) return;
     // (the same text written again within a moment would be a region that cannot hold the model: not a loop)
@@ -1985,13 +2009,22 @@ void ScenePanel::toggleAutoScale()
     static const QRegularExpression autoArg(R"(\s*,\s*auto_scale\s*=\s*\w+)");
     if (on)
     {
-        const int close = call.lastIndexOf(')');
-        if (close < 0) return;
-        call.insert(close, ", auto_scale=False");
+        // (off: written as False -- in place of a True that is there)
+        if (autoArg.match(call).hasMatch())
+        {
+            call.replace(autoArg, ", auto_scale=False");
+        }
+        else
+        {
+            const int close = call.lastIndexOf(')');
+            if (close < 0) return;
+            call.insert(close, ", auto_scale=False");
+        }
     }
     else
     {
-        call.remove(autoArg);
+        // (on: written as True -- the default is not left to be guessed)
+        call.replace(autoArg, ", auto_scale=True");
     }
     const QList<TextEdit> edits{TextEdit{span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt(), call}};
     emit(editScript(edits, on ? "Auto scale off" : "Auto scale on"));
@@ -2229,8 +2262,8 @@ void ScenePanel::rebuild()
             auto c = makeRow(row, T("Auto scale") + "   " + (autoOn ? T("on") : T("off")), QIcon(), "setting", QJsonObject(), "setting:auto_scale");
             c->setData(COL_NAME, ROLE_LINE, -1);
             c->setForeground(COL_NAME, autoOn ? QColor(0xee, 0xe8, 0xd5) : kDim);
-            c->setToolTip(COL_NAME, T("On (the default): the region follows the models in the script: it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller.\n"
-                                    "Off: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch."));
+            c->setToolTip(COL_NAME, T("auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\n"
+                                    "auto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch."));
         }
         const auto res = settings["resolution"].toObject(), qual = settings["quality"].toObject();
         settingRow("set_resolution", T("Resolution"), res.contains("value") ? number(res["value"]) : QString("10"),
@@ -5142,7 +5175,15 @@ bool ScenePanel::roiEdits(const QJsonObject& it, QList<TextEdit>& edits) const
     {
         return false;
     }
-    const QString boundsStmt = "view.set_bounds(*roi(" + expr + "))";
+    // (auto_scale stays as the call has it; a call that is written is written with auto_scale=True, the default, in plain sight)
+    QString autoText = ", auto_scale=True";
+    if (settings.contains("set_bounds"))
+    {
+        static const QRegularExpression autoArg(R"((\s*,\s*auto_scale\s*=\s*\w+)\s*\)$)");
+        const auto had = autoArg.match(spanText(settings["set_bounds"].toObject()["span"].toArray()));
+        if (had.hasMatch()) autoText = had.captured(1);
+    }
+    const QString boundsStmt = "view.set_bounds(*roi(" + expr + ")" + autoText + ")";
 
     const int after = it["end_line"].toInt() - 1;
     if (settings.contains("set_bounds"))

@@ -19,7 +19,7 @@
 # analyses ...) take it as they take a box or a sphere.  Change a number and look.
 from fieldes import *
 
-view.set_bounds([-12, -12, -14], [124, 12, 14])
+view.set_bounds([-12, -12, -14], [124, 12, 14], auto_scale=True)
 view.set_resolution(6)
 view.set_quality(8)
 

@@ -10,7 +10,7 @@ from fieldes import *
 parts = import_model("step/PivotBearingSupportBracket.STEP")
 body, (lo, hi) = parts[0]
 
-view.set_bounds(*roi(parts))
+view.set_bounds(*roi(parts), auto_scale=True)
 view.set_resolution(2)                         # samples per mm: thin walls want a fine mesh
 view.set_quality(8)
 

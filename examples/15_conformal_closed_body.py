@@ -15,7 +15,7 @@ from fieldes import *
 parts = import_model("step/PivotBearingSupportBracket.STEP")
 bracket = parts[0][0]
 
-view.set_bounds(*roi(parts))
+view.set_bounds(*roi(parts), auto_scale=True)
 view.set_resolution(4.8)                   # samples per mm: a strut 1.1 mm thick wants about five
 view.set_quality(8)
 
