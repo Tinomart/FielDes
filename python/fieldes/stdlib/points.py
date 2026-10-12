@@ -75,7 +75,7 @@ class Point(Shape):
 
     def __init__(self, x=0.0, y=0.0, z=0.0):
         self.xyz = (_coord(x), _coord(y), _coord(z))
-        self._kind = 'point'                    # (an instance attribute: it goes with the point through handles() and the like)
+        self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
         ball = self._ball(radius)               # (held: its tree is freed with it)
@@ -125,7 +125,7 @@ class Surface(Shape):
     def __init__(self, field):
         field = Shape.wrap(field)
         super().__init__(lib.libfive_tree_copy(field.ptr))
-        self._kind = 'surface'                  # (an instance attribute: it goes with the surface through handles() and the like)
+        self._kind = 'surface'                  # (an instance attribute: it goes with the surface through gizmo() and the like)
 
     def _display(self):
         return _as(self, abs(self) - _eps())

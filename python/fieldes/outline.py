@@ -41,16 +41,16 @@ _DISPLAYS = {}
 _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
-_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_handles', 'condition_role', 'cls', 'bounds', 'can_expose',
-              'expose_count', 'expose_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports')
+_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'bounds', 'can_handles',
+              'handle_count', 'handle_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
-_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_handles', 'condition_role', 'cls', 'is_list', 'is_pair', 'surface_selection')
+_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
 # Calls that make nothing a model (a statement that is only such a call is not a displayed model)
 _NOT_MODELS = {
     'print', 'len', 'range', 'int', 'float', 'str', 'list', 'dict', 'tuple', 'set', 'sum', 'min', 'max', 'abs', 'round', 'sorted',
     'enumerate', 'zip', 'open', 'map', 'filter', 'any', 'all', 'bool', 'type', 'isinstance', 'input', 'var', 'roi', 'roi_resolution',
-    'progress', 'expose', 'handles', 'lock', 'render_cache', 'custom_resolution', 'export_stl', 'export_mesh', 'export_step',
+    'progress', 'handles', 'gizmo', 'lock', 'render_cache', 'custom_resolution', 'export_stl', 'export_mesh', 'export_step',
     'export_fea', 'export_results', 'export_field', 'result_summary',
     'mass_properties', 'volume_of', 'field_range', 'find_extent', 'evaluate', 'sample_grid',
 }
@@ -159,7 +159,7 @@ def facts_of(v):
     mkind = None if failed else kind_of(v)
     shown = shape or result
     f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'type': mkind,
-         'shown': shown, 'no_handles': bool(getattr(v, '_no_handles', False)) or result or not shown,
+         'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown,
          'is_list': isinstance(v, list), 'is_pair': isinstance(v, tuple) and len(v) == 2}
     if failed:
         f['error'] = v.error
@@ -371,10 +371,10 @@ def finish(source, gs, out):
                 break
             if view.get('_has_var') or facts.get('colored') or not view.get('_own'):
                 continue
-            n = A._expose_count(shapes[0])
-            facts['can_expose'] = 0 < n <= A._MAX_EXPOSED
-            facts['expose_count'] = n
-            facts['expose_cap'] = A._MAX_EXPOSED
+            n = A._handle_count(shapes[0])
+            facts['can_handles'] = 0 < n <= A._MAX_HANDLES
+            facts['handle_count'] = n
+            facts['handle_cap'] = A._MAX_HANDLES
     except Exception:
         if os.environ.get('FIELDES_OUTLINE_DEBUG'):
             import traceback
@@ -394,8 +394,8 @@ def seed(items_json):
             if not var or it.get('kind') == 'import':
                 continue
             facts = {'model': True, 'failed': bool(it.get('failed')), 'result': bool(it.get('result')), 'type': it.get('type'),
-                     'shown': it.get('displayable') is not False, 'no_handles': bool(it.get('no_handles'))}
-            for k in ('error', 'condition_role', 'cls', 'bounds', 'can_expose', 'expose_count', 'expose_cap'):
+                     'shown': it.get('displayable') is not False, 'no_gizmo': bool(it.get('no_gizmo'))}
+            for k in ('error', 'condition_role', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap'):
                 if k in it:
                     facts[k] = it[k]
             _LATEST.setdefault(var, (None, it.get('callee', ''), facts))
@@ -653,10 +653,10 @@ def outline_json(arg):
             items.append(item)
             continue
 
-        # --- "x = handles(x, ...)" / "x = expose(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the shape x
+        # --- "x = gizmo(x, ...)" / "x = handles(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the shape x
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name) and \
                 isinstance(stmt.value, ast.Call) and \
-                A._short_name(A._call_name(stmt.value)) in ('handles', 'expose', 'render_cache', 'lock', 'custom_resolution') and \
+                A._short_name(A._call_name(stmt.value)) in ('gizmo', 'handles', 'render_cache', 'lock', 'custom_resolution') and \
                 stmt.value.args and isinstance(stmt.value.args[0], ast.Name) and \
                 stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
             target = by_name[stmt.targets[0].id]
@@ -690,8 +690,8 @@ def outline_json(arg):
             if what == 'lock':
                 target['locked'] = {'line': line, 'end_line': end, 'call': A._span(stmt.value), 'text': A._short(src.segment(stmt), 60)}
                 continue
-            if what == 'expose':
-                target['exposed'] = {'line': line, 'end_line': end, 'call': A._span(stmt.value), 'text': A._short(src.segment(stmt), 60)}
+            if what == 'handles':
+                target['handles'] = {'line': line, 'end_line': end, 'call': A._span(stmt.value), 'text': A._short(src.segment(stmt), 60)}
                 target['has_var'] = True
                 continue
             mode, mode_span = None, None
@@ -700,7 +700,7 @@ def outline_json(arg):
                     mode, mode_span = kw.value.value, A._span(kw.value)
             if mode not in ('click', 'never', 'always'):
                 mode = 'click'
-            target['handles'] = {
+            target['gizmo'] = {
                 'line': line, 'end_line': end, 'mode': mode, 'mode_span': mode_span,
                 'call': A._span(stmt.value), 'text': src.segment(stmt),
                 'has_scale': any(kw.arg == 'scale' for kw in stmt.value.keywords),
@@ -733,8 +733,8 @@ def outline_json(arg):
                     shown = facts.get('shown', mkind not in ('field', 'material', 'cell'))      # (a condition shows itself: it has an eye)
                     item = {'kind': 'failed' if failed else 'shape', 'line': line, 'end_line': end, 'var': t.id, 'label': t.id,
                             'result': bool(facts.get('result', mkind == 'simulation')),     # (what an analysis makes is a result, before it has run too)
-                            'no_handles': facts.get('no_handles', not shown or mkind in ('simulation', 'conditions')
-                                                  or bool(getattr(ns.get(callee), '_makes_no_handles', False))),
+                            'no_gizmo': facts.get('no_gizmo', not shown or mkind in ('simulation', 'conditions')
+                                                  or bool(getattr(ns.get(callee), '_makes_no_gizmo', False))),
                             'text': A._short(src.segment(stmt.value), 70), 'deps': deps}
                     if mkind:
                         item['type'] = mkind
@@ -782,10 +782,10 @@ def outline_json(arg):
                             item['bounds'] = facts['bounds']
                             if facts.get('exact_bounds'):
                                 item['roi_expr'] = t.id
-                        if 'can_expose' in facts:
-                            item['can_expose'] = facts['can_expose']
-                            item['expose_count'] = facts['expose_count']
-                            item['expose_cap'] = facts['expose_cap']
+                        if 'can_handles' in facts:
+                            item['can_handles'] = facts['can_handles']
+                            item['handle_count'] = facts['handle_count']
+                            item['handle_cap'] = facts['handle_cap']
                     # placeholders: `...` written where an argument goes (such a statement does not run, nor does what is made from it)
                     if _holes(stmt):
                         spans = sorted(A._span(n) for n in ast.walk(stmt.value)
@@ -855,9 +855,9 @@ def outline_json(arg):
                                       for n in ast.walk(stmt)) or any(by_name[d].get('has_var') for d in deps)
             if facts.get('bounds'):
                 item['bounds'] = facts['bounds']
-            if 'can_expose' in facts:
-                item['can_expose'], item['expose_count'], item['expose_cap'] = (
-                    facts['can_expose'], facts['expose_count'], facts['expose_cap'])
+            if 'can_handles' in facts:
+                item['can_handles'], item['handle_count'], item['handle_cap'] = (
+                    facts['can_handles'], facts['handle_count'], facts['handle_cap'])
             items.append(item)
 
     # --- "# hidden: <expr>" comment lines (top level)
@@ -900,7 +900,7 @@ def outline_json(arg):
             it['mode'], it['mode_explicit'] = 'click', False
         elif 'var' in it:
             it['visible'] = 'display_line' in it
-            h = it.get('handles')
+            h = it.get('gizmo')
             if h:
                 it['mode'], it['mode_explicit'] = h['mode'], True
             else:

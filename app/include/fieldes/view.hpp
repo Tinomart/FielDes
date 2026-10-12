@@ -134,9 +134,9 @@ public:
 
     /*  The section handle's knob and arrow tip in widget coordinates
      *  (for scripted tests); false if there is no handle  */
-    /*  The widget position of a grip of the first part with handles (for
+    /*  The widget position of a grip of the gizmo of the first part (for
      *  scripted tests): kind 0 = move arrow, 1 = rotation ring; the axis 0-2  */
-    bool handleGripPoint(int kind, int axis, QPoint& pos) const;
+    bool gizmoGripPoint(int kind, int axis, QPoint& pos) const;
 
     /*  Where a point of the model is in the widget (for the guided tour)  */
     QPoint screenPoint(const QVector3D& p) const { return toScreen(p).toPoint(); }
@@ -158,7 +158,7 @@ public:
 
 public slots:
 
-    /*  The gizmo of the selected model, at once.  The gizmo is made of numbers in the script (a `handles(...)` line), which a model gets
+    /*  The gizmo of the selected model, at once.  The gizmo is made of numbers in the script (a `gizmo(...)` line), which a model gets
      *  when it is selected, and the script has to run for them to exist: that takes a moment.  Until then the gizmo is drawn from where
      *  the model is (`pivot`: the middle of its box, the same point the real one has), a little transparent, so that it is there the
      *  moment the model is selected.  Pressing it before it is ready does not lose the press: the drag starts as soon as the real
@@ -646,31 +646,31 @@ protected:
     float field_len = 0;
     QPointF toScreen(const QVector3D& p) const;
 
-    /*  The gizmo of placed parts (Shape::handles, fieldes.stdlib.handles): move
+    /*  The gizmo of placed parts (Shape::gizmo, fieldes.stdlib.handles): move
      *  arrows along the axes, rotation rings and scale knobs at the part's pivot,
      *  dragged to change the script's numbers.  kind 0 = move, 1 = rotate,
      *  2 = scale (Shift: all three axes together)  */
-    struct HandleGrip
+    struct GizmoGrip
     {
         Shape* shape = nullptr;
         int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move)
         int axis = 0;
         bool group = false;         // the gizmo shared by all the selected shapes (kinds 0 and 3 only)
-        bool operator==(const HandleGrip& o) const
+        bool operator==(const GizmoGrip& o) const
         { return shape == o.shape && kind == o.kind && axis == o.axis && group == o.group; }
     };
     /*  Two or more shapes are selected (the multi-select state): one gizmo, at the middle of the pivots of the ones that
      *  have numbers to move them by, moves them all, whatever way of editing each of them is in when it is alone (its
      *  arrows and its dot; turning and scaling are one shape at a time).  Gives them and the gizmo's place; false when
      *  fewer than two are selected (every shape then has its own gizmo, as usual)  */
-    bool groupHandles(QList<Shape*>& members, QVector3D& center) const;
+    bool groupGizmo(QList<Shape*>& members, QVector3D& center) const;
     /*  How many shapes are selected (lit up as the model tree's selection)  */
     int selectedShapeCount() const;
     /*  The numbers a gizmo drag changes: each shape's move number for an axis, with its value when the drag began  */
-    struct HandleVar { libfive::Tree::Id id; int axis; float value0; };
-    QVector<HandleVar> handle_vars;
+    struct GizmoVar { libfive::Tree::Id id; int axis; float value0; };
+    QVector<GizmoVar> gizmo_vars;
     QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
-    HandleGrip handle_hover;
+    GizmoGrip gizmo_hover;
     // The provisional gizmo (see setProvisionalGizmo), and a press on it that waits for the real one
     bool m_prov = false;
     QVector3D m_provPivot;
@@ -683,27 +683,27 @@ protected:
     void drawProvisional(QPainter& painter);
     void startWaitingGrip();
     void cancelWaitingGrip();
-    HandleGrip handle_active;
-    bool handle_drag = false;
-    libfive::Tree::Id handle_id = nullptr;
-    float handle_value0 = 0;            // the number when the drag began
-    QPoint handle_press;
-    QPointF handle_dir;                 // a move arrow on the screen
-    float handle_len = 0;               // ...and its length in the model
-    QVector3D handle_pivot, handle_axis, handle_vec;   // a ring's
-    float handle_turn = 0;              // degrees turned so far
-    float handle_scale0[3] = {1, 1, 1}; // the scale numbers when a scale drag began
-    libfive::Tree::Id handle_scale_id[3] = {nullptr, nullptr, nullptr};
-    float handleLength(const QVector3D& pivot) const;
-    HandleGrip handleAt(QPoint pos) const;
-    void drawHandles(QPainter& painter);
+    GizmoGrip gizmo_active;
+    bool gizmo_drag = false;
+    libfive::Tree::Id gizmo_id = nullptr;
+    float gizmo_value0 = 0;            // the number when the drag began
+    QPoint gizmo_press;
+    QPointF gizmo_dir;                 // a move arrow on the screen
+    float gizmo_len = 0;               // ...and its length in the model
+    QVector3D gizmo_pivot, gizmo_axis, gizmo_vec;   // a ring's
+    float gizmo_turn = 0;              // degrees turned so far
+    float gizmo_scale0[3] = {1, 1, 1}; // the scale numbers when a scale drag began
+    libfive::Tree::Id gizmo_scale_id[3] = {nullptr, nullptr, nullptr};
+    float gizmoLength(const QVector3D& pivot) const;
+    GizmoGrip gizmoAt(QPoint pos) const;
+    void drawGizmo(QPainter& painter);
     /*  The points of a set of points (Shape::markers), each as the dot in the middle of a gizmo -- and no handles: they are data  */
     void drawMarkers(QPainter& painter);
-    void beginHandleDrag(const HandleGrip& g, QPoint pos);
-    void dragHandle(QPoint pos);
+    void beginGizmoDrag(const GizmoGrip& g, QPoint pos);
+    void dragGizmo(QPoint pos);
     bool ringPoint(QPoint pos, const QVector3D& pivot, const QVector3D& axis, QVector3D& out) const;
-    void applyHandleNumber(libfive::Tree::Id id, float value);
-    void applyHandleNumbers(const std::map<libfive::Tree::Id, float>& numbers);
+    void applyGizmoNumber(libfive::Tree::Id id, float value);
+    void applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& numbers);
 
     QString m_errorText;
     int m_errorLine = -1;

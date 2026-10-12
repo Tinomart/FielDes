@@ -72,7 +72,7 @@ def completion_info():
     for name in ('set_bounds', 'set_resolution', 'set_quality'):
         out.append('member\tview\t' + name)
     out.append('tip\tset_bounds\tview.set_bounds([xmin, ymin, zmin], [xmax, ymax, zmax], auto_scale=True)'
-               '  --  render region; it grows in the script when a model reaches out of it, unless auto_scale=False')
+               '  --  render region; it follows the models (grows, shrinks) in the script, unless auto_scale=False')
     out.append('tip\tset_resolution\tview.set_resolution(res)  --  voxels per unit')
     out.append('tip\tset_quality\tview.set_quality(q)  --  mesh accuracy (1-10)')
     return out
@@ -528,7 +528,7 @@ def _estimate_bounds(shapes, deadline):
 
 # (a part with more than this is left alone: hundreds of thousands of var()s make a script slow to run
 # and the numbers of a free-form surface's fit are not something to drag anyway)
-_MAX_EXPOSED = 6000
+_MAX_HANDLES = 6000
 
 
 def menu_catalog(_arg=''):
@@ -884,46 +884,47 @@ def blocks_used(source):
     return '1' if any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(tree)) else ''
 
 
-def expose_text(name):
+def handles_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
-        draggable -- "name = expose(name, [var(...), ...])", one line per eight numbers -- for FielDes
-        to write under its definition.  Raises ValueError with the reason when it cannot be done. '''
+        draggable -- "name = handles(name, [var(...), ...])", laid out as the arguments of a call are, one number to a line (a shape
+        with many numbers: eight to a line) -- for FielDes to write under its definition.  Raises ValueError with the reason when it cannot be done. '''
     from fieldes import runner
     from fieldes.shape import Shape
-    from fieldes.stdlib.handles import exposed_values
+    from fieldes.stdlib.handles import handle_values
     shape = runner.last_globals.get(name)
     if not isinstance(shape, Shape):
         raise ValueError('%s is not a shape of the last run' % name)
-    # (the variable may hold the shape under a gizmo -- name = handles(name, ...): its own numbers are
-    # the shape it was made from, whose definition the exposed numbers go under)
-    while getattr(shape, '_handles', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
+    # (the variable may hold the shape under a gizmo -- name = gizmo(name, ...): its own numbers are
+    # the shape it was made from, whose definition the numbers of its surfaces go under)
+    while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
         shape = shape._placed_from
     if getattr(shape, '_locks', None):
         raise ValueError('%s has an excluded part: dragging its surfaces would move that too (use the gizmo)' % name)
-    values = exposed_values(shape)
+    values = handle_values(shape)
     if not values:
-        raise ValueError('%s has no numbers that place its surfaces to expose' % name)
-    if len(values) > _MAX_EXPOSED:
+        raise ValueError('%s has no numbers that place its surfaces to make handles of' % name)
+    if len(values) > _MAX_HANDLES:
         raise ValueError('%s has %d numbers that place its surfaces: too many to write into the script '
-                         '(the limit is %d)' % (name, len(values), _MAX_EXPOSED))
+                         '(the limit is %d)' % (name, len(values), _MAX_HANDLES))
+    per_line = 1 if len(values) <= 12 else 8
     rows = []
-    for i in range(0, len(values), 8):
-        rows.append('    ' + ', '.join('var(%s)' % v for v in values[i:i + 8]) + ',')
-    return '%s = expose(%s, [\n%s\n])' % (name, name, '\n'.join(rows))
+    for i in range(0, len(values), per_line):
+        rows.append('        ' + ', '.join('var(%s)' % v for v in values[i:i + per_line]) + ',')
+    return '%s = handles(\n    %s,\n    [\n%s\n    ],\n)' % (name, name, '\n'.join(rows))
 
 
-def _expose_count(shape):
-    ''' How many numbers place the shape's surfaces (what expose() would write), 0 when there are none or it cannot be
-        done (a shape under a gizmo is asked about the shape it was made from, as expose_text does) '''
+def _handle_count(shape):
+    ''' How many numbers place the shape's surfaces (what handles() would write), 0 when there are none or it cannot be
+        done (a shape under a gizmo is asked about the shape it was made from, as handles_text does) '''
     try:
         from fieldes.shape import Shape
-        from fieldes.stdlib.handles import _exposed_count
-        while getattr(shape, '_handles', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
+        from fieldes.stdlib.handles import _handle_count
+        while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
             shape = shape._placed_from
         if getattr(shape, '_locks', None) or getattr(shape, '_kind', None) in ('point', 'field', 'const'):
             return 0                # (a point is moved by its gizmo, not by pulling the surface of its ball; a field has no
                                     # surface to pull: its numbers are written in the script, or moved by its gizmo)
-        return int(_exposed_count(shape))
+        return int(_handle_count(shape))
     except Exception:
         return 0
 

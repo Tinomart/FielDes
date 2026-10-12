@@ -73,7 +73,7 @@ class SurfaceSelection(Shape):
         nearest point of the surface is in the patch), .cover (how far the surface of the patch can be from a sample: the
         patch and the whole differ by less than that where the nearest surface is in the patch) '''
 
-    _no_handles = True             # (not something to drag: FielDes hides the handles button)
+    _no_gizmo = True             # (not something to drag: FielDes hides the handles button)
 
     def _display(self):
         ''' What FielDes shows for the selection stated on its own: the part it was picked on, drawn only where the
@@ -287,5 +287,5 @@ def surface_from_bodies(body, *others, tolerance=None, bounds=None):
 
 
 # (what these make is not something to drag: the model tree knows it before they have run, from the function that makes it)
-select_surface._makes_no_handles = True
-surface_from_bodies._makes_no_handles = True
+select_surface._makes_no_gizmo = True
+surface_from_bodies._makes_no_gizmo = True

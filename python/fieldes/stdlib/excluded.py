@@ -176,11 +176,11 @@ REFUSES = {
                    'attract', 'attract_x', 'attract_y', 'attract_z', 'attract_xy', 'attract_yz', 'attract_xz',
                    'revolve_y', 'twirl_x', 'twirl_axis_x', 'twirl_y', 'twirl_axis_y', 'twirl_z', 'twirl_axis_z'],
     'fields': ['repeat', 'repeat_polar', 'mirror_x', 'mirror_y', 'mirror_z', 'twist_z', 'bend_z'],
-    'handles': ['expose'],
+    'handles': ['handles'],
 }
 
 THROUGH = {
-    'handles': ['handles', 'lock', 'exposed_values'],
+    'handles': ['gizmo', 'lock', 'handle_values'],
     'render_cache': ['render_cache', 'render_cache_key'],
     'custom_resolution': ['custom_resolution'],
     'fea': ['static_analysis', 'modal_analysis'],
@@ -294,9 +294,9 @@ def _decorates(name, fn):
 def _refuses(name, fn):
     def g(*args, **kwargs):
         if _operands(args, kwargs, False):
-            if name == 'expose':
-                raise ExcludedError("expose(): an excluded shape cannot be dragged by its surfaces (that would move "
-                                    "its locked part too). Drag the shape with its gizmo, or expose() before exclude().")
+            if name == 'handles':
+                raise ExcludedError("handles(): an excluded shape cannot be dragged by its surfaces (that would move "
+                                    "its locked part too). Drag the shape with its gizmo, or call handles() before exclude().")
             raise ExcludedError("%s() cannot work on an excluded shape: it copies or deforms the shape, which would "
                                 "tear its locked part away from the rest. Do it before exclude(), e.g. "
                                 "exclude(%s(part, ...), region)." % (name, name))

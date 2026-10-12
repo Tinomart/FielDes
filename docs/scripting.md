@@ -74,18 +74,22 @@ sphere(r)
 The argument must be a constant (`var(3)`, `var(-2.5)`). Shapes made from `var()`s are dragged natively:
 the viewport finds the `var` numbers that place the surface under the cursor. For everything else —
 a part imported from STEP, a shape written with plain numbers — use [handles](handles.md):
-`handles(part, …)` (a gizmo) and `expose(part, [var(..), …])` (the surfaces of the part as draggable
+`gizmo(part, …)` (a gizmo) and `handles(part, [var(..), …])` (the surfaces of the part as draggable
 numbers), which the model tree writes for you; `lock(part)` makes a shape undraggable again.
 
 ## Viewport settings
 
 ```python
-view.set_bounds([-10, -10, -10], [10, 10, 10])    # the region meshed (mm)
+view.set_bounds([-10, -10, -10], [10, 10, 10])    # the region meshed (mm); auto_scale=True (the default)
 view.set_resolution(10)                           # samples per mm
 view.set_quality(8)                               # mesh accuracy, 1 (coarse) to 10
 ```
 
-They are statements like any other and appear under *Render settings* in the tree. For imports,
+They are statements like any other and appear under *Render settings* in the tree. **The region follows your models**: with
+`auto_scale=True` (the default; `view.set_bounds(lo, hi, auto_scale=False)` turns it off, as does the *Auto scale* row of the
+tree) FielDes rewrites the numbers of the call, live, when a model reaches out of the region or the models have become much smaller
+than it -- type `sphere(30)` where there was `sphere(3)` and watch the region grow. With it off, the region is exactly what you wrote.
+For imports,
 `view.set_bounds(*roi(parts))` sets the region to enclose them and
 `view.set_resolution(roi_resolution(parts))` picks a resolution for the parts (each part is meshed at
 its own); see [Region and resolution](step-import.md#region-and-resolution).

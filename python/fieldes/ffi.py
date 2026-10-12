@@ -125,7 +125,7 @@ lib.libfive_tree_print.restype = ctypes.c_void_p # actually a c_char_p,
 lib.libfive_free_str.argtypes = [ctypes.c_char_p]
 
 try:
-    # The numbers of a tree that place its surfaces, as variables (fieldes.stdlib.handles.expose)
+    # The numbers of a tree that place its surfaces, as variables (fieldes.stdlib.handles.handles)
     lib.libfive_tree_expose_count.argtypes = [libfive_tree]
     lib.libfive_tree_expose_count.restype = ctypes.c_int
     lib.libfive_tree_expose_values.argtypes = [libfive_tree, ctypes.POINTER(ctypes.c_float)]

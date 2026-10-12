@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Handles and the gizmo have their own names: `handles()` and `gizmo()`
+- **`expose()` is now `handles()`, and the old `handles()` is now `gizmo()`.** The names were the wrong way round: the *handles* you drag on a shape's surfaces were made by `expose()`, and the arrows, rings and squares of the *gizmo* by `handles()`. Now the word means the same thing in the interface, the documentation and the script:
+  `x = gizmo(x, move=(var(0), ...), rotate=(...), scale=(...), mode='click')` writes the gizmo; `x = handles(x, [var(...), ...])` makes the surfaces of a shape draggable. `lock()` is unchanged.
+  **The old forms are gone** (a beta change, no compatibility shims): `expose(...)` no longer exists, and `handles(x, move=..., rotate=..., scale=..., mode=...)` is refused with a message that says it is `gizmo(...)` now. Files from before need
+  the two names swapped, and the examples (04, 18, 20) are converted. The model tree, the keys (`E` for the gizmo mode, `R` for the lock), the tour and the translations say *gizmo* and *handles* in the same way.
+- **Both calls are written one argument per line, like the arguments of an operation**, so each can be found and changed by hand:
+  ```python
+  sphere_1 = gizmo(
+      sphere_1,
+      move=(var(0), var(0), var(0)),
+      rotate=(var(0), var(0), var(0)),
+      scale=(var(1), var(1), var(1)),
+  )
+  sphere_1 = handles(
+      sphere_1,
+      [
+          var(0.0),
+          var(0.0),
+          var(0.0),
+          var(1.0),
+      ],
+  )
+  ```
+  The list of numbers of `handles()` is one number to a line up to 12 numbers, eight to a line beyond that. Changing the gizmo's mode (the button, the key `E`) writes `mode=` into that call as one more line.
+
+### Auto scale: the render region follows the models, and every model is meshed at its own resolution
+- **`view.set_bounds(lo, hi, auto_scale=True)`** -- on by default. The numbers of the region stay in the script, and with Auto scale on FielDes **rewrites them live**: the region grows when a model reaches out of it (you drag it, type a bigger number, add a model -- you see the call change as you type), and
+  **shrinks** when the models have become much smaller or the big one is gone. A file that is just opened is only grown; a scene with no model left does not touch the region (no region of zero size). With `auto_scale=False` the region is exactly what is written. **Render settings has an *Auto scale* row** that switches it.
+- **Every model is meshed at a resolution of its own, scaled from `view.set_resolution`.** The number is for a model as big as the region; a smaller model is meshed finer in proportion to the square root of how much smaller it is (at most 2000 samples across it), so a large and a small part render at the same time without the
+  small one being a jumble of triangles, and raising `view.set_resolution` raises every model. **The quick first picture (the "LOD") is sized by the model, not by the region**: a really small model used to get a handful of triangles first.
+  Models with a resolution of their own (an imported part's, a render hint) keep it.
+
 ## 0.6.1 — the flow analysis takes a body, the guided tour works again, points are only their gizmo, one look for the planes
 
 ### Cells and lattices are their own kind, with a section of their own in the menus, and random points for foams

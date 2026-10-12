@@ -66,7 +66,8 @@ difference(ball, hole)
 - `var(4)` makes the number **draggable**: hover the sphere and drag its surface, or use the gizmo. The
   number in the script changes as you drag.
 - `view.set_bounds`, `view.set_resolution` and `view.set_quality` say where and how finely the
-  viewport meshes the shape. They are plain statements in the script.
+  viewport meshes the shape. They are plain statements in the script. The region follows your
+  models by itself (`auto_scale=True`): make a shape larger and the numbers of `view.set_bounds` grow with it.
 
 ## Making things from the menu
 

@@ -24,7 +24,7 @@ field a fraction of a second a part; meshing it, in FielDes or for an export,
 0.5 to 2.8 times as long as the main importer's formulas (about as long for
 free-form parts, 2.2 to 2.8 times for analytic ones).  What it is not: a
 rebuilt solid -- the planes and cylinders of the part are triangles here, and
-the faces cannot be dragged (expose) -- so reconstruct() is the choice for parts
+the faces cannot be dragged (handles) -- so reconstruct() is the choice for parts
 that are mostly analytic (import_model() makes it for you, part by part).
 
 A file of SURFACES (a surface model: shells of faces that are not closed, as a CAD program exports a sheet or a

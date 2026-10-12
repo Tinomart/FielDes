@@ -296,11 +296,17 @@ QString Interpreter::defaultScript() {
         SET_QUALITY_STR.arg(default_settings.quality) +
         SET_RESOLUTION_STR.arg(default_settings.res) +
         // (the starting sphere is what the viewport's "New 3D shape" makes: named, and with its numbers exposed, so
-        // that its handles work at once and it is a model of its own in a selection of several)
+        // that its surfaces can be dragged at once and it is a model of its own in a selection of several)
         "\nsphere_1 = sphere(1)\n"
-        "sphere_1 = expose(sphere_1, [\n"
-        "    var(0.0), var(0.0), var(0.0), var(1.0),\n"
-        "])\n"
+        "sphere_1 = handles(\n"
+        "    sphere_1,\n"
+        "    [\n"
+        "        var(0.0),\n"
+        "        var(0.0),\n"
+        "        var(0.0),\n"
+        "        var(1.0),\n"
+        "    ],\n"
+        ")\n"
         "sphere_1";
 }
 
@@ -1398,8 +1404,8 @@ void Interpreter::recordShape(
 
         // A thin part meshed on its own (fieldes.stdlib.cad_import):
         // (box lo, box hi, resolution, cube side, thinnest feature)
-        // (a part placed with handles() has the hint of the part it was placed from)
-        // (a part edited with expose() and placed with handles() is two steps from the part)
+        // (a part placed with gizmo() has the hint of the part it was placed from)
+        // (a part edited with handles() and placed with gizmo() is two steps from the part)
         PyObject* hintOwner = obj;
         Py_INCREF(hintOwner);
         for (int depth = 0; hintOwner && depth < 8 && !PyObject_HasAttrString(hintOwner, "_render_hint") &&
@@ -1482,22 +1488,22 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
-        // Handles of a placed part (fieldes.stdlib.handles): (mode, about (3),
+        // The gizmo of a placed part (fieldes.stdlib.handles): (mode, about (3),
         // move (3), rotate (3), scale (3)), each number a var Shape or a plain float
         // (the mode is when the gizmo is shown: 'click', 'never' or 'always')
-        if (PyObject_HasAttrString(obj, "_handles"))
+        if (PyObject_HasAttrString(obj, "_gizmo"))
         {
-            PyObject* h = PyObject_GetAttrString(obj, "_handles");
+            PyObject* h = PyObject_GetAttrString(obj, "_gizmo");
             if (h && PyTuple_Check(h) && PyTuple_Size(h) == 5)
             {
-                Shape::Handles hd;
+                Shape::Gizmo hd;
                 hd.present = true;
                 PyObject* m = PyTuple_GetItem(h, 0);
                 if (PyUnicode_Check(m))
                 {
                     const QString name = QString::fromUtf8(PyUnicode_AsUTF8(m));
-                    hd.mode = name == "never" ? Shape::Handles::NEVER
-                            : name == "always" ? Shape::Handles::ALWAYS : Shape::Handles::CLICK;
+                    hd.mode = name == "never" ? Shape::Gizmo::NEVER
+                            : name == "always" ? Shape::Gizmo::ALWAYS : Shape::Gizmo::CLICK;
                 }
                 PyObject* about = PyTuple_GetItem(h, 1);
                 if (PyTuple_Check(about) && PyTuple_Size(about) == 3)
@@ -1523,7 +1529,7 @@ void Interpreter::recordShape(
                     if (PyTuple_Check(rt) && PyTuple_Size(rt) == 3) hd.rotate[a] = idOf(PyTuple_GetItem(rt, a));
                     if (sc && PyTuple_Check(sc) && PyTuple_Size(sc) == 3) hd.scale[a] = idOf(PyTuple_GetItem(sc, a));
                 }
-                shape->setHandles(hd);
+                shape->setGizmo(hd);
             }
             Py_XDECREF(h);
             PyErr_Clear();

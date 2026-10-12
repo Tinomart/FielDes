@@ -88,8 +88,8 @@ def _dist(v):
         distance to the infinite surfaces its faces lie on, and the cells it is built from end in places where there
         is no face): an offset or a shell of it grows blocks and fins, and a thickening has stray walls inside. So an
         imported part is replaced by its exact distance (exact_distance(): its mesh and the distance to it), which is
-        what these operations mean. A part that was moved, turned or scaled (handles(), a gizmo, transforms in the
-        script) has the same placement on its distance; one whose faces are dragged (expose()) has the distance of
+        what these operations mean. A part that was moved, turned or scaled (gizmo(), transforms in the
+        script) has the same placement on its distance; one whose faces are dragged (handles()) has the distance of
         its numbers when the script was run, and what dragging changes since. Set FIELDES_NO_EXACT_OFFSETS to use
         the part's own field. '''
     s = _s(v)

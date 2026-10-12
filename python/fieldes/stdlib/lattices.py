@@ -1485,7 +1485,7 @@ class PointSet:
         .body       the body they were made in (None when they were not made in one): a lattice made of them fills it
         len(points), iterating it, points[i] work as for a list; points.stats() says how the points really are '''
 
-    _no_handles = True             # (not something to drag: FielDes hides the handles button)
+    _no_gizmo = True             # (not something to drag: FielDes hides the handles button)
 
     def __init__(self, points, spacing, bounds=None, seed=None, body=None):
         self.points = [tuple(float(c) for c in p) for p in points]

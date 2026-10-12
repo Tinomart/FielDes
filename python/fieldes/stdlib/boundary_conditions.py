@@ -301,7 +301,7 @@ def _draw(items, part):
     # is in (the larger wins: a load is shown over a support)
     out = Shape(lib.libfive_tree_copy(part.ptr))
     out.supports, out.loads, out.notes = supports, drawn_loads, notes
-    out._no_handles = True
+    out._no_gizmo = True
     out._bounds = (tuple(lo), tuple(hi))
     colour = Shape.wrap(0.0)
     for cat, region, t in pieces:
@@ -342,7 +342,7 @@ def _draw_regions(items):
         region = region.min(r)
     # (the regions are where the field is negative: they are the picture; the colour says which is which)
     out = Shape(lib.libfive_tree_copy(region.ptr))
-    out._no_handles = True
+    out._no_gizmo = True
     boxes = [getattr(r, '_bounds', None) for _, r in pieces]
     if all(boxes):
         out._bounds = (tuple(min(b[0][i] for b in boxes) for i in range(3)), tuple(max(b[1][i] for b in boxes) for i in range(3)))

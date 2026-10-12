@@ -1213,8 +1213,8 @@ Window::Window(Arguments args)
         auto scene = view->scenePanel();
         scene->setScriptSource([this]{ return editor->getScript(); });
         // (the statement that makes a shape's surfaces draggable is written by the interpreter, which has the shape)
-        scene->setExposeSource([this](const QString& var, QString* error) {
-            return editor->callSupport("expose_text", var, error);
+        scene->setHandlesSource([this](const QString& var, QString* error) {
+            return editor->callSupport("handles_text", var, error);
         });
         connect(editor, &Editor::sceneChanged, scene, &ScenePanel::setScene);
         connect(editor, &Editor::documentReplaced, scene, &ScenePanel::clearScene);
@@ -1999,13 +1999,13 @@ Window::Window(Arguments args)
                 std::cerr << "automation: no shape at " << args.toStdString() << std::endl;
             }
         });
-        // handledrag <kind 0|1|2> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
+        // gizmodrag <kind 0|1|2> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
         // rotation ring or a scale square), drag by (dx, dy) pixels in steps, release
-        a->add("handledrag", [=](const QString& args){
+        a->add("gizmodrag", [=](const QString& args){
             const auto p = args.split(' ');
             if (p.size() < 4) return;
             QPoint from;
-            if (!view->handleGripPoint(p[0].toInt(), p[1].toInt(), from))
+            if (!view->gizmoGripPoint(p[0].toInt(), p[1].toInt(), from))
             {
                 std::cerr << "automation: no handle " << args.toStdString() << std::endl;
                 return;

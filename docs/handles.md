@@ -20,8 +20,8 @@ editing a shape by dragging work **together**:
 locked shape cannot be dragged at all, neither by the gizmo nor by its surfaces, and keeps its gizmo mode, which is
 there again when you unlock it.
 
-Selecting a shape makes it ready to be dragged: it gets the numbers its gizmo moves it by (a `handles(...)` line, in
-the mode it is in) and, when it has none, the numbers that place its surfaces (an `expose(...)` line), if they are no more than
+Selecting a shape makes it ready to be dragged: it gets the numbers its gizmo moves it by (a `gizmo(...)` call, in
+the mode it is in) and, when it has none, the numbers that place its surfaces (a `handles(...)` call), if they are no more than
 **120**: a bigger one (an imported part can have a thousand) would be pages of script. A model whose surfaces cannot be pulled
 has an **orange dot** in the model tree, right after its name, and the dot's tooltip says why: it is a mesh (tessellated: no faces
 to pull), or too many numbers place its faces. Its gizmo moves it all the same. Selecting such a model says it under the tree too.
@@ -41,7 +41,7 @@ to click, where the round starts. A mixed selection is never changed model by mo
 Two or more selected models are in the **multi-select state**. Whatever gizmo mode each has when it is selected alone,
 all of them are moved by **one shared gizmo**, at the middle of them: its arrows and its centre dot move them all
 together, and nothing is pulled by its surface. (Turning and scaling are one model at a time.) The shared gizmo is shown
-unless every selected model is set to *never*. A model that has no numbers to move it by gets a gizmo line when it
+unless every selected model is set to *never*. A model that has no numbers to move it by gets a `gizmo(...)` call when it
 joins the selection, in the mode it is in. `E` changes each model's own mode, which the tree's buttons show, for when it
 is selected alone: the viewport shows the shared gizmo until the selection is one model, and then every model has its
 own mode again.
@@ -86,16 +86,19 @@ centre of the part's bounding box. Works on every shape and every imported part.
 shape's definition:
 
 ```python
-stand = handles(stand, move=(var(0), var(0), var(0)),
-                rotate=(var(0), var(0), var(0)),
-                scale=(var(1), var(1), var(1)))
+stand = gizmo(
+    stand,
+    move=(var(0), var(0), var(0)),
+    rotate=(var(0), var(0), var(0)),
+    scale=(var(1), var(1), var(1)),
+)
 ```
 
-and what you drag is written into those `var()` numbers. The shape is `stand` scaled about its centre,
-rotated (x, then y, then z; degrees) and moved. `about=` sets another centre. `mode=` says when the gizmo is
-shown: `'click'` (the default, left out), `'never'` or `'always'`; the placement stays whatever the mode.
-(`mode='gizmo'` and `mode='handles'`, from before surfaces could always be dragged, are refused.) An imported part keeps its link to the STEP file through `handles()`, so `exclude()` (the exact
-surface) follows it.
+one argument per line, like the arguments of an operation, so each is easy to find and change. What you drag is written into those
+`var()` numbers. The shape is `stand` scaled about its centre, rotated (x, then y, then z; degrees) and moved. `about=` sets another
+centre. `mode=` says when the gizmo is shown: `'click'` (the default, left out), `'never'` or `'always'`; the placement stays
+whatever the mode. (`mode='gizmo'` and `mode='handles'`, from before surfaces could always be dragged, are refused.) An imported
+part keeps its link to the STEP file through `gizmo()`, so `exclude()` (the exact surface) follows it.
 
 ## Handles: drag a surface
 
@@ -106,46 +109,60 @@ For a shape written with **plain numbers** — a primitive, or a part imported f
 of such primitives — FielDes writes, under the definition,
 
 ```python
-bracket = expose(bracket, [var(6), var(40), var(12.5), …])
+bracket = handles(
+    bracket,
+    [
+        var(6),
+        var(40),
+        var(12.5),
+        …
+    ],
+)
 ```
 
 where the list holds the numbers that place the part's surfaces, in order, as `var()`s with their current
-values. Dragging a face then edits one of them. `expose()` is the same shape if you change nothing, to the
-last float digit.
+values: one per line up to 12 numbers, eight to a line beyond that. Dragging a face then edits one of them.
+`handles()` is the same shape if you change nothing, to the last float digit.
 
 Rules:
 
-- Only numbers that **place** a surface are exposed. Orientations and the placement of the whole part are
+- Only numbers that **place** a surface are in the list. Orientations and the placement of the whole part are
   not — a dragged face moves and neither turns nor takes the rest of the part along. Use the gizmo to move or
   rotate the whole part.
 - A plane through the origin has no number in the shape's expression; FielDes gives it one (a 0), so even
   it can be dragged.
-- If the part changes in the STEP file so that the number of exposed values differs, `expose()` raises an
+- If the part changes in the STEP file so that the number of surface numbers differs, `handles()` raises an
   error telling you to **Reimport** the part.
-- A part with more than 120 surface numbers is not exposed by being selected (that would be pages of script):
-  its menu has **Make its surfaces draggable**. A part that is too large to expose at all (over 6 000 surface
-  numbers — typical of parts full of free-form faces) is refused with a message. It can still be moved with the
+- A part with more than 120 surface numbers does not get its `handles()` call by being selected (that would be pages of
+  script): its menu has **Make its surfaces draggable**. A part that is too large to have handles at all (over 6 000
+  surface numbers — typical of parts full of free-form faces) is refused with a message. It can still be moved with the
   gizmo.
 - An **excluded** shape (`exclude()`) cannot be dragged by its surfaces (that would move its locked part too); use
   its gizmo.
 
 ## Primitives and displayed expressions
 
-The sphere a new file starts with is what the right-click menu's *New 3D shape* makes: named, with its numbers
-exposed once it is selected, so its handles work and it is a model of its own in a selection of several:
+The sphere a new file starts with is what the right-click menu's *New 3D shape* makes: named, with its surface
+numbers in a `handles()` call once it is selected, so its handles work and it is a model of its own in a selection of several:
 
 ```python
 sphere_1 = sphere(1)
-sphere_1 = expose(sphere_1, [
-    var(0.0), var(0.0), var(0.0), var(1.0),
-])
+sphere_1 = handles(
+    sphere_1,
+    [
+        var(0.0),
+        var(0.0),
+        var(0.0),
+        var(1.0),
+    ],
+)
 sphere_1
 ```
 
 A bare expression such as `sphere(3)` has no variable to hang a line under. Selecting it (or pressing the gizmo
 button) gives the expression a name — a free one, built from the function's name — `sphere_1 = sphere(3)` and a line
-`sphere_1` under it; and, once the script has run again, the gizmo line (`sphere_1 = handles(sphere_1, ...)`) and its
-`expose(...)` line under it. Then hover the sphere and drag its surface: the numbers in the list change. A list of shapes
+`sphere_1` under it; and, once the script has run again, the gizmo call (`sphere_1 = gizmo(sphere_1, ...)`) and its
+`handles(...)` call under it. Then hover the sphere and drag its surface: the numbers in the list change. A list of shapes
 (`[part for part, _ in model]`) and a model coloured by a field (`colored(...)`, an analysis result) have no button.
 
 ## Lock
@@ -163,12 +180,12 @@ where it is, whatever is made of it. What is made of a locked model holds a **re
 written below its `lock(...)` line: a surface picked on it (right-click → *Select Surface*), a `union` or an analysis chosen from
 its menu, a drop into another call -- the locked model stays at the top level and is not taken into the new call. An edit
 that would have to move it (making room for what is made of it) is refused, and says why. The lock button (or `R`) writes that line under the shape's
-definition and deletes it again; it does not touch `handles()` or `expose()`, so the gizmo mode and the placement
+definition and deletes it again; it does not touch `gizmo()` or `handles()`, so the gizmo mode and the placement
 numbers stay in the script and are there again when it is unlocked.
-`handles(mode='lock')`, from before the lock was a switch of its own, is refused: use `lock()`.
+`gizmo(mode='lock')`, from before the lock was a switch of its own, is refused: use `lock()`.
 
 A locked model that is selected on its own says why nothing can be dragged, in a line under the model tree; unlocking it
-makes it ready (it gets its gizmo line and, up to 120 numbers, its draggable surfaces). Imported parts are not locked when
+makes it ready (it gets its `gizmo()` call and, up to 120 numbers, its `handles()` call). Imported parts are not locked when
 they come in: lock the ones that should stay where the file puts them.
 
 ## Reimport and hot reload
@@ -176,7 +193,7 @@ they come in: lock the ones that should stay where the file puts them.
 | | |
 |---|---|
 | **⟳ on an import** (model tree) | Reimport: read the STEP file again. The `rev=` of the `import_model` call goes up, which is part of the cache key. |
-| **⟳ on a part** | Back to what the file says: the part's `handles()` and `expose()` lines are deleted and the file is read again. |
+| **⟳ on a part** | Back to what the file says: the part's `gizmo()` and `handles()` calls are deleted and the file is read again. |
 | **Bin on an import** | Reset: delete the import's cache and the handle edits of all its parts; import afresh. |
 | **Hot reload** | The imported files are watched. Save the STEP file from your CAD program and the script re-runs by itself; the status bar says "Reloading: part.step changed on disk". |
 
@@ -187,5 +204,5 @@ Nothing is stored anywhere but in the script (and the content-addressed import c
 - Dragging works on what is **displayed** and meshed. A shape that is too coarse or outside the render region
   has nothing to grab — frame it and raise the resolution.
 - Editing is disabled while you drag, so the script text and the drag never fight.
-- Dragging needs the shape to have draggable numbers: `var()`s, or numbers exposed by `expose()`.
+- Dragging needs the shape to have draggable numbers: `var()`s, or numbers placed in a `handles()` call.
 - Everything a drag writes can be undone with `Ctrl+Z`.

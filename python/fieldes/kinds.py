@@ -90,7 +90,7 @@ def kind_of(value):
 
 
 def keep_kind(out, shape):
-    ''' `out` is `shape` edited in a way that does not change what it is (a gizmo, exposed numbers): a 2D shape is still one,
+    ''' `out` is `shape` edited in a way that does not change what it is (a gizmo, handles): a 2D shape is still one,
         although its field now depends on z the way the edit is written (a rotation about x) '''
     if kind_of(shape) in ('profile', 'lattice'):
         out._kind = kind_of(shape)

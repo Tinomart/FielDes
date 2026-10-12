@@ -28,7 +28,7 @@ C++-defined shapes). It descends from **libfive**, Matt Keeter's kernel for impl
 
 | Folder | Holds |
 |---|---|
-| `src/tree`, `include/libfive/tree` | The expression **tree**: immutable, hash-consed expressions of `x, y, z` and constants/variables; serialisation; the structural **content key** used by every cache; `expose` (turns the numbers that place surfaces into variables) |
+| `src/tree`, `include/libfive/tree` | The expression **tree**: immutable, hash-consed expressions of `x, y, z` and constants/variables; serialisation; the structural **content key** used by every cache; `expose` (the kernel call behind `handles()`: turns the numbers that place surfaces into variables) |
 | `src/eval` | Evaluators for trees: point, array (SIMD), interval, derivative, and feature-aware evaluation |
 | `src/render/brep` | The meshers: dual contouring, simplex and hybrid, with an octree/xtree that splits regions until a cell is 1/resolution. Where an oracle is on the tape (a mesh's distance costs about a microsecond a point) the dual contouring finds the surface along an edge by bisection (10 points) instead of 4 stages of 16 |
 | `src/render/discrete` | Heightmaps and voxels |
@@ -63,7 +63,7 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `blocks.py` | The custom blocks: the files of the blocks folder, hot reload by modification time, what the editor and the menus are told about them |
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
-| `stdlib/handles.py` | `handles()`, `expose()`, `lock()` |
+| `stdlib/handles.py` | `gizmo()`, `handles()`, `lock()` |
 | `stdlib/content_cache.py` | Content-keyed caches |
 | `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement (with the blocks injected into its namespace), evaluating displays, the model tree's description (`scene_json`: items with their `type`, `inputs`, `owner`, ...), reporting progress |
 | `menu_catalog.py` | The one list of what the right-click menus offer (primitives by kind, operations, custom blocks) and the call each entry writes |
@@ -120,8 +120,8 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
    The cells the surfaces cut space into that lie inside the part are united (`min`) as cubes of the cell
    code; where two cubes meet inside the material their wall would be 0 in both, an internal wall that an
    offset, a shell or a lattice skin would keep, so the **consensus** of those two cubes (their surfaces but the one
-   between them) is added: it lies inside their union whatever the surfaces do, so a dragged surface (`expose`,
-   handles) keeps the part one continuous solid. It also leaves the field **outside** the part untouched (where the
+   between them) is added: it lies inside their union whatever the surfaces do, so a dragged surface (`handles()`)
+   keeps the part one continuous solid. It also leaves the field **outside** the part untouched (where the
    field is positive the consensus is never below the lower of the two cubes), which a section's field view, an
    outward shell or an offset read. A cube grown further than the consensus has fewer surfaces and lower values,
    and would lower the outside. Only the bridges a wall needs are added.
@@ -144,13 +144,13 @@ distance on the first call:
 
 - `reconstruct` (and `import_model`, for the parts it reconstructs) gives it to every part (`cad_import._distance_getter`; fresh or from the cache).
 - The transforms (`move`, `rotate_*`, `scale_*`, `reflect_*`: `transforms._exact_follows`) give a copy the same
-  transform of that distance with the same numbers, so `handles()` (a gizmo and its `var()`s) and placement in a
+  transform of that distance with the same numbers, so `gizmo()` (a gizmo and its `var()`s) and placement in a
   script keep it. (A transformed oracle holds its coordinate expressions itself: the evaluators hand it the
   `var()` values with `Oracle::setVar`, and `Shape::buildDeps` in the application looks inside oracles for the
   variables a shape depends on.) Other operations (union, difference, lattices, ...) give a shape without it: its
   own field is used.
-- `expose()` (`handles._exposed_distance`): the exact distance of the part with the numbers the script has *plus*
-  `exposed shape - the part with those numbers as constants`. With the part's own numbers the second term is
+- `handles()` (`handles._handle_distance`): the exact distance of the part with the numbers the script has *plus*
+  `the shape with handles - the part with those numbers as constants`. With the part's own numbers the second term is
   zero, so it is the exact distance. When a face is dragged the variable changes only the second term (the change of the
   part's own field, which is right at the face that moved and zero where it did not), so the thickened part follows
   the drag; the script is not run again for a drag, so it is exact again at the next run (with other numbers in the
@@ -415,7 +415,7 @@ in (`meshContentKey`: each triangle from its smallest corner, the triangles sort
 changes the key is another one: a miss, the usual progressive render, and the new mesh is kept. The folder is
 limited to 4 GB (`FIELDES_RENDER_CACHE_MB`), oldest files first; `Settings → Clear the caches` empties it (and the field cache).
 The model tree's cache button writes and deletes the opt-out line `x = render_cache(x, False)` under the shape's definition
-(under its `expose()` and `handles()` lines) like every other button of the tree (`ScenePanel::toggleCache`; the script
+(under its `handles()` and `gizmo()` calls) like every other button of the tree (`ScenePanel::toggleCache`; the script
 parser records the line as `cache_off`, an explicit `render_cache(x)` as `cache`).
 
 **Selecting several models.** The tree selects whole rows (`ExtendedSelection`: the view does Ctrl and Shift itself; an event
@@ -440,19 +440,19 @@ each model, gizmo or handles, which with several selected the tree's buttons sho
 **The multi-select state** (two or more models selected) is not a mode: `View::mousePressEvent` starts no surface drag, and
 `View::groupHandles` finds the shared gizmo -- all the selected shapes that have move numbers (`Shape::hasMoveVars`, in any mode)
 -- at the middle of their pivots. `ScenePanel::prepareMultiSelect` (after the selection has settled, `m_prepareTimer`) writes
-`x = handles(x, ..., mode=<its mode>)` for a selected model that has no numbers to move it by, never twice (the scene may be a run
+`x = gizmo(x, ..., mode=<its mode>)` for a selected model that has no numbers to move it by, never twice (the scene may be a run
 behind the text: `m_editPending`, and a check of the text); `stripLocked` deselects the locked models of a selection of
 several (`warnLockedMultiSelect`: the warning with a *do not show again* box in QSettings `hidden-messages/`, silent in
 automation and after a run), `updateMultiNote` says what the state is under the tree. The shared gizmo's arrows and the centre dot (grip kind 3, also on every single gizmo) are `HandleGrip`s with `group` set,
 and a drag changes the move number of every member at once (`handle_vars`: the id, the axis and the value when the drag began; the
 dot adds the displacement of the cursor's ray on the plane through the pivot that faces the camera). A plain click on empty space
-calls `ScenePanel::clearSelection`. A primitive made from the menu is exposed once it exists (`m_handlesNew`, `applyModes(..., "handles",
+calls `ScenePanel::clearSelection`. A primitive made from the menu gets its calls once it exists (`m_selectNew`, `applyModes(...,
 quiet)` from `setScene`).
 
 **Lock.** `lock(x)` (in `stdlib/handles.py`) returns a copy of `x` with `_locked = True`; the interpreter reads it into
-`Shape::setLocked`, which `hasHandles()` (the gizmo) and `nativeDragOk()` (dragging a surface) respect. It is a line of its own,
-recorded by the scene parser as `locked`, so toggling the way of editing (`handles()`'s mode, `gizmo` or `handles`) and the lock
-never write each other's lines. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
+`Shape::setLocked`, which `hasGizmo()` (the gizmo) and `nativeDragOk()` (dragging a surface) respect. It is a call of its own,
+recorded by the scene parser as `locked`, so toggling the way of editing (`gizmo()`'s mode, `gizmo` or `handles`) and the lock
+never write each other's calls. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
 
 The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Operation, and Select Surface, which opens
 `View::showSelectMenu`; `View::showEmptyMenu` on empty space: New 3D shape / 2D shape / point / surface / field / custom block, Add operation). Select emits `surfaceSelectRequested`;
@@ -535,7 +535,7 @@ once; waiting for a geometry step to finish meshing), `View::m_flowTimer` moves 
 ## The field cache
 
 `python/fieldes/field_cache.py`, called by the runner (`_continue`) for every statement `name = <expression>` that is not a
-call of a file reader (`import_*`, `load*`, `read*`, `open`, `save*`, `write*`, `export*`, `input`, `var`, `expose`, `handles`,
+call of a file reader (`import_*`, `load*`, `read*`, `open`, `save*`, `write*`, `export*`, `input`, `var`, `gizmo`, `handles`,
 `render_cache`, `progress`). `lookup` makes the key — sha1 of the statement text, the content key of every name it reads
 (`content_cache.value_key` / `shape_key`; a function or module without content makes the statement uncacheable), the
 current `var()` numbers and the code identity (the kernel library's size and time, the library's Python files' sizes and

@@ -46,7 +46,7 @@ def render_cache(shape, on=True):
         `render_cache(shape)` keeps it however quickly it was meshed.  Returns the shape itself in every
         other way: it keeps its bounds, handles, colours and exact regions.
 
-        Write it as the last line of a shape's definition, after handles() and expose():
+        Write it as the last line of a shape's definition, after gizmo() and handles():
 
             part = render_cache(part)
 

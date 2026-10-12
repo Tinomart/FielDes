@@ -905,8 +905,8 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("The gizmo");
         s.text = T("A selected model has a gizmo. Drag an arrow to move the model.");
-        s.hint = T("The gizmo is a line of the script too (handles): its numbers change as you drag. Or press Show me.");
-        s.code = linesWith("handles\\(|^\\s+(move|rotate|scale)=\\(");
+        s.hint = T("The gizmo is a line of the script too (gizmo): its numbers change as you drag. Or press Show me.");
+        s.code = linesWith("gizmo\\(|^\\s+(move|rotate|scale)=\\(");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.closeRows = true;
@@ -914,10 +914,10 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             if (!scene()->selectionKeys().contains("shape:drilled")) scene()->selectModel("drilled");
         };
-        s.point = [this] { QPoint p; return m_view->handleGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
         s.show = [this](std::function<void()> over) {
             QPoint p;
-            if (!m_view->handleGripPoint(0, 0, p)) { over(); return; }
+            if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
             fakeDrag(m_view, p, p + QPoint(60, 0), 800, over);
         };
         add(s);
@@ -1340,7 +1340,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Move the point");
         s.text = T("swell is the distance from the point anchor. Drag the arrows of anchor and watch where the growth is.");
-        s.hint = T("A point is not drawn: its gizmo is all there is of it. The gizmo is a line of the script too (handles). Or press Show me.");
+        s.hint = T("A point is not drawn: its gizmo is all there is of it. The gizmo is a line of the script too (gizmo). Or press Show me.");
         s.code = linesWith("^anchor\\b|^swell =");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
@@ -1352,9 +1352,9 @@ void Tutorial::buildSteps()
             useScript(tourHeader(QString()) + fieldModel(true));
             scene()->selectModel("anchor");
         };
-        s.point = [this] { QPoint p; return m_view->handleGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
         s.done = [this] {
-            static const QRegularExpression re(R"(^anchor = handles\(\s*anchor,\s*move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
+            static const QRegularExpression re(R"(^anchor = gizmo\(\s*anchor,\s*move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
                                                QRegularExpression::MultilineOption);
             const auto m = re.match(m_editor->getScript());
             return m.hasMatch() && (std::abs(m.captured(1).toDouble()) + std::abs(m.captured(2).toDouble()) + std::abs(m.captured(3).toDouble())) > 1e-6;
@@ -1362,7 +1362,7 @@ void Tutorial::buildSteps()
         s.doneNote = T("Nice. The field follows the point: the growth is where the point is.");
         s.show = [this](std::function<void()> over) {
             QPoint p;
-            if (!m_view->handleGripPoint(0, 0, p)) { over(); return; }
+            if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
             fakeDrag(m_view, p, p + QPoint(70, 0), 900, over);
         };
         add(s);

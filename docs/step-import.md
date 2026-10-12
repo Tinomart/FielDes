@@ -247,7 +247,7 @@ field is only roughly a distance.
 | a free-form face | a fitted closed-form surface (0.1 % to 10 % off) | the face's own surface, to the tessellation's tolerance |
 | first import | seconds to minutes (the reconstruction) | seconds: HingedTable (13 parts) 2.4 s, Bandextruder (18 parts, a worm gear) 7 s, Keukencombinatie (90 parts) 22 s, Cribadora (111 parts, 3 500 faces) 16 s |
 | meshing a part (viewport, STL export) | the formula's | the mesh's distance: 0.5 to 2.8 times as long — about the same for a part of free-form faces (the worm gear: 0.7 to 1.1), 2.2 to 2.8 times for analytic ones |
-| dragging faces (`expose`) | yes | no — the field is a mesh; `handles()` (the gizmo) works |
+| dragging faces (`handles()`) | yes | no — the field is a mesh; `gizmo()` works |
 | STEP faces it cannot handle | per part, with the reason | per part, with the reason |
 
 **Accuracy**, measured on the test files (HingedTable, Bandextruder, PT, an engine assembly, Keukencombinatie,
@@ -346,7 +346,9 @@ rendered finely without making the rest of the scene fine. Together the parts st
 small to render properly within the limits are **named** in a warning.
 
 The number it returns is the resolution of the scene, for shapes *you* make from the parts (a lattice,
-a cut): it scales all parts' own resolutions with it.
+a cut): it scales all parts' own resolutions with it. A shape you make yourself is meshed at a resolution scaled to its own size
+(see [Resolution and quality](caching-and-performance.md#resolution-and-quality)): a small cut next to a large part is not
+meshed as coarsely as the part.
 
 ## Failed parts
 

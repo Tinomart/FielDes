@@ -244,7 +244,7 @@ public:
     /*  Deletes every kept mesh; the number of files deleted  */
     static int clearRenderCache();
 
-    /*  Handles (fieldes.stdlib.handles): a placed part is the shape scaled about
+    /*  Gizmo (fieldes.stdlib.handles): a placed part is the shape scaled about
      *  `about`, rotated by three angles (degrees; x, then y, then z) and moved,
      *  by numbers that are var()s of the script.  The gizmo draws move arrows,
      *  rotation rings and scale knobs at its pivot and dragging them changes those
@@ -254,7 +254,7 @@ public:
      *  the mode; the gizmo has priority where it is shown.  A locked shape
      *  (fieldes.stdlib.handles.lock, a switch of its own that keeps the mode) lets
      *  neither be dragged.  An id is null where the number is a plain constant.  */
-    struct Handles
+    struct Gizmo
     {
         enum Mode { CLICK, NEVER, ALWAYS };
         bool present = false;
@@ -264,33 +264,33 @@ public:
         libfive::Tree::Id rotate[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id scale[3] = {nullptr, nullptr, nullptr};
     };
-    void setHandles(const Handles& h) { m_handles = h; }
-    const Handles& handles() const { return m_handles; }
+    void setGizmo(const Gizmo& h) { m_gizmo = h; }
+    const Gizmo& gizmo() const { return m_gizmo; }
     /*  A locked shape (`x = lock(x)` in the script) cannot be dragged at all  */
     void setLocked(bool l) { m_locked = l; }
     bool isLocked() const { return m_locked; }
     /*  The gizmo is shown now: with at least one number to drag, not locked, and its mode says so (ALWAYS, or CLICK while
      *  the shape is selected)  */
-    bool hasHandles() const;
-    /*  Has a number that moves it (`handles(x, move=(var, ...))`), in whatever mode, and is not locked: the shared
+    bool hasGizmo() const;
+    /*  Has a number that moves it (`gizmo(x, move=(var, ...))`), in whatever mode, and is not locked: the shared
      *  gizmo of a multi-selection can move it, whatever its own gizmo mode is  */
     bool hasMoveVars() const;
     /*  The numbers now (constants and unknown ones as 0; a scale as 1)  */
-    QVector3D handleMove() const;
-    QVector3D handleRotate() const;
-    QVector3D handleScale() const;
+    QVector3D gizmoMove() const;
+    QVector3D gizmoRotate() const;
+    QVector3D gizmoScale() const;
     /*
      *  Studio's own handles: hover a surface and drag it, which changes the numbers (the
-     *  script's var()s, or those expose() made) that place that surface.  Available when
+     *  script's var()s, or those handles() made) that place that surface.  Available when
      *  the shape has such numbers and is not locked, whatever the gizmo's mode.
      */
     bool nativeDragOk() const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
     std::set<libfive::Tree::Id> gizmoVars() const;
-    /*  Where the part turns after the move: the pivot the handles sit at  */
-    QVector3D handlePivot() const { return m_handles.about + handleMove(); }
+    /*  Where the part turns after the move: the pivot the gizmo sits at  */
+    QVector3D gizmoPivot() const { return m_gizmo.about + gizmoMove(); }
     /*  The rotation the angles make (the library's rotate_x/y/z, x first)  */
-    static QMatrix4x4 handleRotation(const QVector3D& degrees);
+    static QMatrix4x4 gizmoRotation(const QVector3D& degrees);
 
     /*  How much of this shape's render is done (0..1), counted, not
      *  predicted: the levels of the render (coarse to fine, each with about
@@ -471,7 +471,7 @@ public:
 
     /*
      *  Whether this shape depends on the variable: its tree, its colouring, its
-     *  deformation or its handles use it.  (Every shape is
+     *  deformation or its gizmo use it.  (Every shape is
      *  given all of the script's variables, so a changed number only makes a
      *  shape render again when it is one this shape uses.)
      */
@@ -660,7 +660,7 @@ protected:
     bool has_hint=false;
     QVector3D hint_lo, hint_hi;
     float hint_res=0, hint_side=0, hint_scene_res=0;
-    // ...where the part is now (its handles move and turn it): what the
+    // ...where the part is now (its gizmo moves and turns it): what the
     // render in progress uses
     QVector3D run_hint_lo, run_hint_hi;
     float run_hint_side=0;
@@ -713,7 +713,7 @@ protected:
     Settings m_last_settings;                   // (the settings that render was started with)
     libfive::BRepAlgorithm m_last_alg = libfive::BRepAlgorithm::DUAL_CONTOURING;
 
-    Handles m_handles;
+    Gizmo m_gizmo;
     bool m_locked = false;
 
     // The render cache (see setRenderCache)

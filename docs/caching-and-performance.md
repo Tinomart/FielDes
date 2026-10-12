@@ -86,7 +86,7 @@ again. A hit returns exactly what a run builds; nothing is sampled onto a grid.
 What is not kept this way:
 
 - a statement that calls something that reads or writes a file (`import_...`, `load...`, `read...`, `open`, `save...`,
-  `write...`, `export...`) or `var()`, `expose()`, `handles()` — a file may have changed (imports have their own cache next
+  `write...`, `export...`) or `var()`, `handles()`, `gizmo()` — a file may have changed (imports have their own cache next
   to the file);
 - a statement that reads a function or module of your own (it has no content to compare);
 - a statement that took less than a quarter of a second (a file would be slower than the run).
@@ -201,7 +201,7 @@ changes in the same moment -- every row is on the line the edit gave it, the cli
 waiting for the script to run. Several clicks in a row are all made, one after the other, from the tree as it is, and answered by
 one run of the last text. The tree then reads the text again, a moment later, and that is the tree that stays: a click made in
 that moment follows when it is there. The gizmo button changes its icon at once but its lines are the run's to say: a
-second click on it waits for the run. A model that is selected is made ready to be dragged (`expose`, `handles` lines) once the
+second click on it waits for the run. A model that is selected is made ready to be dragged (`handles`, `gizmo` calls) once the
 run is done, not while clicks are being followed.
 
 Building the tree is fast: 400 models take about 60 ms (the rows are made apart from the view and put into it once).
@@ -214,6 +214,11 @@ halves until a cell is no larger than `1 / resolution`, so **the cost changes in
 times the vertices at every halving: doubling a resolution that just misses a halving costs nothing extra
 until it crosses one. `roi_resolution` picks resolutions that are whole numbers of halvings.
 
+- **Every model is meshed at a resolution of its own**, scaled from `view.set_resolution`: that number is for a model as big as
+  the region; a model that is smaller gets finer in proportion to the square root of how many times smaller it is (at most 2000
+  samples across it, never below the number you set), so a large and a small part render at the same time without the small one
+  being a jumble of triangles. Raise `view.set_resolution` and every model gets finer. The quick first picture is sized by the model
+  too, not by the region. Models that have a resolution of their own (an imported part's, a render hint) keep it.
 - Too coarse: thin walls and small features vanish (a lattice with 0.6 mm walls wants 3 samples per mm or
   more).
 - Too fine for the region: minutes of meshing (and gigabytes). Cancel with `Esc` and lower it.

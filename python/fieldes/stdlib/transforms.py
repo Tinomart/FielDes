@@ -566,7 +566,7 @@ def _exact_follows(name):
         if not isinstance(t, Shape):
             return out
         # the exact distance of an imported part (fields._dist) is moved, turned and scaled with it, with the
-        # same numbers: a part placed with handles() (var()s and all) or in the script still has it
+        # same numbers: a part placed with gizmo() (var()s and all) or in the script still has it
         get = getattr(t, '_distance_of', None)
         if get is not None:
             out._distance_of = _lazy_once(lambda: prev(get(), *args, **kwargs))

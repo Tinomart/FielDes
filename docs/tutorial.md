@@ -81,7 +81,7 @@ script changes as you move. Any number you wrap in `var(...)` can be pulled this
 
 You do not have to write `var` yourself. Click a model in the viewport (or its row in the tree): FielDes gives it a
 **gizmo** — three arrows to move, three rings to rotate, three squares to scale, and a dot in the middle that moves it freely
-— and numbers on its surfaces to pull. What it adds is plain script (`plate = handles(plate, move=(var(0), ...))`).
+— and numbers on its surfaces to pull. What it adds is plain script (`plate = gizmo(plate, move=(var(0), ...))`).
 
 Three keys (with the viewport focused) turn this on and off on the selected models:
 
@@ -241,7 +241,7 @@ The `examples/` folder has a script for each of these. The ones that need no STE
 | [Scripting](scripting.md) | shapes, arithmetic on fields, view settings, what gets displayed |
 | [Fields](fields.md) | the fields of the library, regressions, data as fields |
 | [Custom blocks](blocks.md) | your own functions in every script |
-| [Handles](handles.md) | the gizmo, native handles, `expose()` |
+| [Handles](handles.md) | the gizmo, the handles on the surfaces, `gizmo()` and `handles()` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Lattices](lattices.md) | cells, graded and conformal lattices |
 | [Importing STEP files](step-import.md) | how a CAD part becomes a field |

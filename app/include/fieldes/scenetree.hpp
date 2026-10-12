@@ -60,10 +60,10 @@ public:
     /*  The current script text (edits are computed against it)  */
     void setScriptSource(std::function<QString()> f) { m_source = f; }
 
-    /*  The statement that makes a shape's surfaces draggable (expose(...)), which only the
+    /*  The statement that makes a shape's surfaces draggable (handles(...)), which only the
      *  interpreter can write: called with a variable's name, gives the text, or an empty
      *  text and the reason  */
-    void setExposeSource(std::function<QString(const QString&, QString*)> f) { m_expose = f; }
+    void setHandlesSource(std::function<QString(const QString&, QString*)> f) { m_handlesSource = f; }
 
     /*  A question to the interpreter (fieldes.app_support.<function>(arg) -> text; the reason in *error when it
      *  fails): the viewport menus' calls come from it  */
@@ -99,7 +99,7 @@ public:
     bool modelAtLine(int line0, QVector3D* centre = nullptr) const;
     /*  What kind of model the line is of ("solid", "field", ...: see fieldes.kinds), or "" when it is no model's  */
     QString typeAtLine(int line0) const;
-    /*  Whether a (0-based) line is one of a model's own: where it is displayed, its statement, its expose and handles lines  */
+    /*  Whether a (0-based) line is one of a model's own: where it is displayed, its statement, its handles and gizmo lines  */
     bool ownsLine(const QJsonObject& item, int line0) const;
 
     /*  The selection, in the order it was made (the first is the one a subtraction subtracts from): the keys of the
@@ -516,12 +516,12 @@ protected:
     void showPart(const QJsonObject& imp, int part);
     void switchPart(const QJsonObject& imp, int part);
     void showOtherPart(const QJsonObject& imp, int part);
-    /*  The item whose handles a part row edits: the part's variable's item
+    /*  The item whose gizmo a part row edits: the part's variable's item
      *  (or the import statement's own variable); empty if the part is not
      *  in the script as a variable  */
-    QJsonObject handlesTarget(const QJsonObject& imp, int part) const;
-    /*  How a shape or part is edited by dragging in the view: the gizmo (handles()) or
-     *  Studio's own handles on its surfaces (its var()s, or expose()'s).  The button toggles
+    QJsonObject gizmoTarget(const QJsonObject& imp, int part) const;
+    /*  How a shape or part is edited by dragging in the view: the gizmo (gizmo()) or
+     *  the handles on its surfaces (its var()s, or handles()'s).  The button toggles
      *  between them; setMode writes one into the script.  Whether it can be dragged at all is a
      *  switch of its own, the lock (`x = lock(x)`)  */
     void toggleEditMode(const QJsonObject& target);
@@ -536,7 +536,7 @@ protected:
     void applyLock(const QList<QJsonObject>& targets, bool lock);
     void applyCache(const QList<QJsonObject>& targets, bool on);
     /*  Which imports the edits of applyModes need (written once, not once for each model)  */
-    struct ModeImports { bool handles = false, expose = false; };
+    struct ModeImports { bool gizmo = false, handles = false; };
     /*  The edits that give one model a mode; false (and the reason) when it cannot have it  */
     bool modeEdits(const QJsonObject& target, const QString& mode, QList<TextEdit>& edits, ModeImports& imports,
                    QString* why);
@@ -547,14 +547,14 @@ protected:
     /*  A line of text under the tree (what could not be done)  */
     void notify(const QString& text);
     /*  The render cache button: a `name = render_cache(name)` line under the shape's definition (and under
-     *  its handles and expose lines) when it is turned on, deleted when it is turned off  */
+     *  its gizmo and handles lines) when it is turned on, deleted when it is turned off  */
     void toggleCache(const QJsonObject& target);
     void setCacheButton(QTreeWidgetItem* row, const QJsonObject& target);
-    /*  A part back to what the file says: its handles() and expose() lines are deleted and the
+    /*  A part back to what the file says: its gizmo() and handles() lines are deleted and the
      *  import is read again (reimport)  */
     void reimportPart(const QJsonObject& imp, int part);
-    /*  Deletes a shape's handles() line: back to where it was defined  */
-    void removeHandles(const QJsonObject& target);
+    /*  Deletes a shape's gizmo() line: back to where it was defined  */
+    void removeGizmo(const QJsonObject& target);
     /*  The delete button: the statements of a row's item (and the lines that show, hide and edit it) go
      *  from the script; asks first if the rest of the script still uses its name  */
     void deleteRow(QTreeWidgetItem* row);
@@ -563,7 +563,7 @@ protected:
     void deleteItems(const QList<QJsonObject>& items);
     /*  The edit deleting whole lines a..b (0-based), newline included  */
     TextEdit deleteLines(int a, int b) const;
-    /*  Back to the file: deletes the import's cache and the handles() lines
+    /*  Back to the file: deletes the import's cache and the gizmo() and handles() lines
      *  of its parts (after asking, if `ask`), then runs the script again  */
     void resetImport(const QJsonObject& imp, bool ask);
     QStringList visibleRoiExprs(int skipImportLine, int* endLine) const;
@@ -630,7 +630,7 @@ protected:
      *  comes back when the selection is one model).  A locked model can be in it, but then the whole selection cannot be moved
      *  or edited (lockedInMulti; a popup says so when it comes about, unless `warn` is false, and a line under the tree);
      *  prepareSelection gives each selected model that has no numbers to move it by a gizmo line, in the mode it is in, and
-     *  the numbers to pull its surfaces by (expose) when it is small  */
+     *  the numbers to pull its surfaces by (handles) when it is small  */
     bool lockedInMulti() const;
     void noteLockedInMulti(bool warn);
     void warnLockedMultiSelect();
@@ -638,12 +638,12 @@ protected:
     void updateProvisional();
     void updateFieldView();
     QString m_fieldKeyShown;
-    /*  The lines that make a model's surfaces draggable (an expose() statement), indented like its definition; empty (and
-     *  the reason) when it cannot be done.  exposeSurfaces writes them (the model's menu, for a shape too big to get them
+    /*  The lines that make a model's surfaces draggable (a handles() statement), indented like its definition; empty (and
+     *  the reason) when it cannot be done.  addHandles writes them (the model's menu, for a shape too big to get them
      *  by being selected)  */
-    QString exposeBlock(const QJsonObject& target, QString* why) const;
-    void exposeSurfaces(const QJsonObject& target);
-    QSet<QString> m_exposeTried;              // (the models prepareSelection has tried to expose: once each)
+    QString handlesBlock(const QJsonObject& target, QString* why) const;
+    void addHandles(const QJsonObject& target);
+    QSet<QString> m_handlesTried;              // (the models prepareSelection has tried to expose: once each)
     void updateMultiNote();
     bool m_lockedInMulti = false;             // (the selection of several that is there has a locked model in it)
     bool m_multiNote = false;                 // (the note under the tree is the multi-select one)
@@ -682,7 +682,7 @@ protected:
     QString lineText(int line0) const;
     /*  An edit that comments out, rewrites or deletes a line that it found by the rows asks first whether the line IS what the rows say:
      *  the line that shows the model `var` (kind "display": `x`), that hides it ("hidden": `# hidden: x`), a statement that edits it
-     *  ("lock", "handles", "expose", "render_cache", "custom_resolution": `x = lock(x)`), or its "definition".  Rows of another text than
+     *  ("lock", "gizmo", "handles", "render_cache", "custom_resolution": `x = lock(x)`), or its "definition".  Rows of another text than
      *  the script's (a scene that a run left behind, a prediction that was wrong) would have the edit land on a line that is something
      *  else -- a `lock(x)` line commented out as if it were a hidden model.  False says why in m_lineMismatch  */
     bool lineIs(int line0, const QString& var, const QString& kind) const;
@@ -723,7 +723,7 @@ protected:
     int m_startSectionRename = -1;        // (the 0-based line of a section just written: its name is typed in as soon as its row is there)
     int m_startSectionTries = 0;
     std::function<QString()> m_source;
-    std::function<QString(const QString&, QString*)> m_expose;
+    std::function<QString(const QString&, QString*)> m_handlesSource;
     std::function<QString(const QString&, const QString&, QString*)> m_support;
     bool m_collapsed=false;
     QString spanText(const QJsonArray& span) const;

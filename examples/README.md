@@ -14,7 +14,7 @@ The first import of a file takes a few seconds and is cached next to the STEP fi
 | `01_import_a_part.py` | the bracket | `import_model`, `roi`, `roi_resolution`, the view settings, `mass_properties` |
 | `02_inspect_a_part.py` | the bracket | wall thickness, overhang, curvature and depth fields painted on the part; hover probing; the section card |
 | `03_exclude_and_assembly.py` | the bracket | an assembly of three (the parts of an import are shapes like any other: move, turn, copy them); `exclude()` with a field object as the region: the STEP file's own surface where it matters |
-| `04_handles.py` | the bracket | the gizmo (click / never / always), dragging surfaces, and the lock, of the model tree |
+| `04_handles.py` | the bracket | the gizmo (`gizmo()`: click / never / always), the handles on the surfaces (`handles()`), and the lock, of the model tree |
 | `05_static_analysis.py` | the bracket | static FEA: supports, loads, result card, safety factor |
 | `06_modal_analysis.py` | the bracket | natural frequencies and mode shapes |
 | `07_thermal_analysis.py` | the bracket | conduction and convection, heat balance |

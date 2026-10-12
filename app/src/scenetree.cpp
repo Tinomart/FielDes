@@ -86,7 +86,7 @@ namespace {
 
 enum Role { ROLE_ITEM = Qt::UserRole, ROLE_TYPE, ROLE_PART, ROLE_KEY, ROLE_LINE, ROLE_RENAME };
 // (COL_DOT is the last by number and the second on the screen: the orange dot of a model whose surfaces cannot be pulled)
-enum Column { COL_NAME = 0, COL_EYE, COL_HANDLES, COL_LOCK, COL_CACHE, COL_ACTION, COL_RESET, COL_DELETE, COL_DOT };
+enum Column { COL_NAME = 0, COL_EYE, COL_GIZMO, COL_LOCK, COL_CACHE, COL_ACTION, COL_RESET, COL_DELETE, COL_DOT };
 
 const QColor kText(0xee, 0xe8, 0xd5);
 const QColor kDim(0x93, 0xa1, 0xa1);
@@ -234,7 +234,7 @@ const QIcon& lockIcon(bool locked)
 
 // A model with no numbers to pull its surfaces by gets them when it is selected, if they are no more than this many; a bigger one
 // (an imported part can have a thousand) is not made draggable by its surfaces: it is marked with an orange dot, and its gizmo moves it
-const int kAutoExposeNumbers = 120;
+const int kAutoHandleNumbers = 120;
 
 // Why a model's surfaces cannot be pulled, for the orange dot and the line under the tree: "" when they can (it has the numbers, or it
 // is given them when it is selected), or when there is nothing to pull (a point, a field, a material).  `mesh`: a tessellated part
@@ -243,16 +243,16 @@ QString noDragReason(const QJsonObject& m, bool mesh)
     if (mesh)
         return T("Its surfaces cannot be dragged: it is a mesh (tessellated), which has no faces to pull. Its gizmo moves it.");
     if (!m.contains("var") || m["failed"].toBool() || m["kind"].toString() == "display" || m["kind"].toString() == "failed") return QString();
-    if (m["has_var"].toBool() || m.contains("exposed")) return QString();
-    const int n = m["expose_count"].toInt();
+    if (m["has_var"].toBool() || m.contains("handles")) return QString();
+    const int n = m["handle_count"].toInt();
     if (n <= 0) return QString();
-    const int cap = m["expose_cap"].toInt();
+    const int cap = m["handle_cap"].toInt();
     if (cap > 0 && n > cap)
         return T("Its surfaces cannot be dragged: %1 numbers place its faces, more than the %2 FielDes writes into a script. "
                        "Its gizmo moves it.").arg(n).arg(cap);
-    if (n > kAutoExposeNumbers)
+    if (n > kAutoHandleNumbers)
         return T("Its surfaces cannot be dragged: %1 numbers place its faces, and FielDes makes the surfaces of a model draggable "
-                       "up to %2 numbers. Its gizmo moves it.").arg(n).arg(kAutoExposeNumbers);
+                       "up to %2 numbers. Its gizmo moves it.").arg(n).arg(kAutoHandleNumbers);
     return QString();
 }
 
@@ -281,7 +281,7 @@ QString nextMode(const QJsonObject& t)
 void setModeButton(QTreeWidgetItem* row, const QJsonObject& target)
 {
     const QString mode = target["mode"].toString("click");
-    row->setIcon(COL_HANDLES, modeIcon(mode));
+    row->setIcon(COL_GIZMO, modeIcon(mode));
     QString tip;
     if (mode == "never") tip = T("Gizmo: never shown");
     else if (mode == "always") tip = T("Gizmo: always shown");
@@ -289,7 +289,7 @@ void setModeButton(QTreeWidgetItem* row, const QJsonObject& target)
     const QString surfaces = target["tessellated"].toBool()
         ? T("  ·  a mesh (tessellated): its faces cannot be dragged, the gizmo moves it")
         : T("  ·  its surfaces can always be dragged");
-    row->setToolTip(COL_HANDLES, tip + surfaces + T("  ·  click: %1  ·  key E").arg(T(nextMode(target))));
+    row->setToolTip(COL_GIZMO, tip + surfaces + T("  ·  click: %1  ·  key E").arg(T(nextMode(target))));
 }
 
 // What a shape's lock button says and does
@@ -545,7 +545,7 @@ bool lineMatches(const QString& text, const QString& var, const QString& kind)
     else if (kind == "definition")
     {
         // (a statement of the model that is none of the ones that edit it: its name stands on the left of the =)
-        for (const char* fn : {"lock", "handles", "expose", "render_cache", "custom_resolution"})
+        for (const char* fn : {"lock", "gizmo", "handles", "render_cache", "custom_resolution"})
         {
             if (lineMatches(text, var, QString::fromLatin1(fn))) return false;
         }
@@ -1466,7 +1466,7 @@ ScenePanel::ScenePanel(QWidget* parent)
     m_tree->header()->setSectionResizeMode(COL_NAME, QHeaderView::Stretch);
     m_tree->header()->setMinimumSectionSize(16);
     m_tree->header()->setDefaultSectionSize(20);
-    for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE)})
+    for (int c : {int(COL_EYE), int(COL_GIZMO), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE)})
     {
         m_tree->header()->setSectionResizeMode(c, QHeaderView::Fixed);
         m_tree->header()->resizeSection(c, 20);
@@ -1578,7 +1578,7 @@ ScenePanel::ScenePanel(QWidget* parent)
             endRenaming(hint != QAbstractItemDelegate::RevertModelCache);
         });
         m_tree->setItemDelegateForColumn(COL_NAME, renamer);
-        for (int c : {int(COL_EYE), int(COL_HANDLES), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE), int(COL_DOT)})
+        for (int c : {int(COL_EYE), int(COL_GIZMO), int(COL_LOCK), int(COL_CACHE), int(COL_ACTION), int(COL_RESET), int(COL_DELETE), int(COL_DOT)})
         {
             auto none = new NoEditDelegate;
             none->setParent(m_tree);
@@ -2017,7 +2017,7 @@ void ScenePanel::clearScene()
     m_editPending = false;
     m_prepareAgain = false;
     m_prepareTimer.stop();
-    m_exposeTried.clear();
+    m_handlesTried.clear();
     m_isolated = false;
     m_isolateRestore.clear();
     m_isolatedKey.clear();
@@ -2229,7 +2229,7 @@ void ScenePanel::rebuild()
             auto c = makeRow(row, T("Auto scale") + "   " + (autoOn ? T("on") : T("off")), QIcon(), "setting", QJsonObject(), "setting:auto_scale");
             c->setData(COL_NAME, ROLE_LINE, -1);
             c->setForeground(COL_NAME, autoOn ? QColor(0xee, 0xe8, 0xd5) : kDim);
-            c->setToolTip(COL_NAME, T("On (the default): the region grows in the script when a model reaches out of it, as you move it or type it out.\n"
+            c->setToolTip(COL_NAME, T("On (the default): the region follows the models in the script: it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller.\n"
                                     "Off: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch."));
         }
         const auto res = settings["resolution"].toObject(), qual = settings["quality"].toObject();
@@ -2296,7 +2296,7 @@ void ScenePanel::rebuild()
                 // (a primitive stands on its own; an operation is made of other models, its children)
                 if (it["role"].toString() == "operation") head += T("  ·  operation");
                 else if (it["role"].toString() == "primitive") head += T("  ·  primitive");
-                if (it["has_var"].toBool() || it.contains("exposed")) head += T("  ·  can be dragged");
+                if (it["has_var"].toBool() || it.contains("handles")) head += T("  ·  can be dragged");
                 if (it.contains("block")) head += T("  ·  block %1").arg(it["block"].toString());
                 tip = head + "\n" + tip;
             }
@@ -2355,7 +2355,7 @@ void ScenePanel::rebuild()
         if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool())
         {
             // (every model can be locked, whatever it is -- an analysis, a condition, a point: the gizmo's mode is only for what has a gizmo)
-            if (!it["no_handles"].toBool()) setModeButton(row, it);
+            if (!it["no_gizmo"].toBool()) setModeButton(row, it);
             setLockButton(row, it);
         }
         else if (!failed && kind == "display" && it["can_name"].toBool() && it["visible"].toBool())
@@ -2459,7 +2459,7 @@ void ScenePanel::rebuild()
                     c->setFlags(c->flags() | Qt::ItemIsDragEnabled);
                 }
                 // Handles work on a part that is in the script (as a variable)
-                const QJsonObject target = handlesTarget(it, k);
+                const QJsonObject target = gizmoTarget(it, k);
                 // (a mesh has no faces to pull, and a part with more numbers than FielDes makes draggable cannot be pulled either:
                 // the dot says so from the start, which parts have handles and which have not)
                 if (ok)
@@ -3658,7 +3658,7 @@ void ScenePanel::toggleVisible(const QJsonObject& it)
     }
 }
 
-QJsonObject ScenePanel::handlesTarget(const QJsonObject& imp, int part) const
+QJsonObject ScenePanel::gizmoTarget(const QJsonObject& imp, int part) const
 {
     const auto parts = imp["parts"].toArray();
     if (part < 0 || part >= parts.size()) return QJsonObject();
@@ -3681,7 +3681,7 @@ namespace {
 QString gizmoLine(const QString& var, const QString& mode = "click", const QString& indent = QString())
 {
     const QString in = indent + "    ";
-    return var + " = handles(\n" +
+    return var + " = gizmo(\n" +
            in + var + ",\n" +
            in + "move=(var(0), var(0), var(0)),\n" +
            in + "rotate=(var(0), var(0), var(0)),\n" +
@@ -3697,7 +3697,7 @@ QJsonObject ScenePanel::selectedTarget() const
     auto editable = [&](QTreeWidgetItem* row) -> QJsonObject {
         const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
         const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
-        if (type == "part") return handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt());
+        if (type == "part") return gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt());
         if (type != "item" || it["failed"].toBool() || it["reassigned"].toBool()) return QJsonObject();
         const QString kind = it["kind"].toString();
         if (kind == "display") return (it["can_name"].toBool() && it["visible"].toBool()) ? it : QJsonObject();
@@ -3722,7 +3722,7 @@ QList<QJsonObject> ScenePanel::editTargets() const
     // The selected models that can be edited by dragging, in the order they were selected; when none is, what
     // selectedTarget() falls back on
     auto editable = [](const QJsonObject& it) {
-        if (it["failed"].toBool() || it["reassigned"].toBool() || it["no_handles"].toBool()) return false;
+        if (it["failed"].toBool() || it["reassigned"].toBool() || it["no_gizmo"].toBool()) return false;
         const QString kind = it["kind"].toString();
         if (kind == "display") return it["can_name"].toBool() && it["visible"].toBool();
         return it.contains("var") && kind != "failed";
@@ -3954,15 +3954,15 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
     }
     // (a line that is not the one the rows say: nothing is written, not even for the models whose lines are right)
     if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
+    if (imports.gizmo) addImportIfMissing(edits, "gizmo", "handles");
     if (imports.handles) addImportIfMissing(edits, "handles", "handles");
-    if (imports.expose) addImportIfMissing(edits, "expose", "handles");
     if (edits.isEmpty())
     {
         if (!why.isEmpty() && !quiet) notify(why);
         return;
     }
     emit(editScript(edits, "Edit " + names.join(", ") + ": " + next));
-    // The buttons say the new mode at once, and the rows know it for the next click.  The lines the edit wrote (a handles() line, its
+    // The buttons say the new mode at once, and the rows know it for the next click.  The lines the edit wrote (a gizmo() line, its
     // mode) are the run's to say: until its scene is there the rows are the old ones and the next edit waits for it
     auto sameModel = [&](const QJsonObject& a, const QJsonObject& b) {
         return a["var"].toString() == b["var"].toString() && a["line"].toInt() == b["line"].toInt();
@@ -3984,7 +3984,7 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
     for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
     {
         QTreeWidgetItem* row = *i;
-        if (row->icon(COL_HANDLES).isNull()) continue;
+        if (row->icon(COL_GIZMO).isNull()) continue;
         QJsonObject model = modelOfRow(row);
         if (model.isEmpty()) continue;
         for (const auto& t : changed)
@@ -4024,7 +4024,7 @@ void ScenePanel::applyLock(const QList<QJsonObject>& targets, bool lock)
             if (!lineIs(t["line"].toInt() - 1, var, "definition")) { refuseOutOfDate(); return; }
             // Under the definition, and under the numbers exposed for its surfaces, its handles and its cache
             int after = t["end_line"].toInt() - 1;
-            for (const char* key : {"exposed", "handles", "cache", "cache_off", "custom_resolution"})
+            for (const char* key : {"handles", "gizmo", "cache", "cache_off", "custom_resolution"})
             {
                 if (t.contains(key)) after = std::max(after, t[key].toObject()["end_line"].toInt() - 1);
             }
@@ -4077,16 +4077,16 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     const QString var = target["var"].toString();
     const int a = target["line"].toInt() - 1, b = target["end_line"].toInt() - 1;
     const QString indent = indentOf(lineText(a));
-    const bool hasHandles = target.contains("handles"), hasExposed = target.contains("exposed");
-    const auto h = target["handles"].toObject();
+    const bool hasGizmo = target.contains("gizmo"), hasHandles = target.contains("handles");
+    const auto h = target["gizmo"].toObject();
     // (the lines this edit is written at are checked to be what the rows say: the caller writes nothing when m_lineMismatch says one is not)
     if (!lineIs(a, var, "definition")) return false;
-    if (hasHandles && !lineIs(h["line"].toInt() - 1, var, "handles")) return false;
-    if (hasExposed && !lineIs(target["exposed"].toObject()["line"].toInt() - 1, var, "expose")) return false;
+    if (hasGizmo && !lineIs(h["line"].toInt() - 1, var, "gizmo")) return false;
+    if (hasHandles && !lineIs(target["handles"].toObject()["line"].toInt() - 1, var, "handles")) return false;
 
     // Under the definition, or under the numbers exposed for its surfaces
-    const int after = hasExposed ? target["exposed"].toObject()["end_line"].toInt() - 1 : b;
-    // The mode of the handles() line there is
+    const int after = hasHandles ? target["handles"].toObject()["end_line"].toInt() - 1 : b;
+    // The mode of the gizmo() line there is
     auto writeMode = [&](const QString& m) {
         const QString quoted = "'" + m + "'";
         if (h["mode_span"].isArray())
@@ -4122,13 +4122,13 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
             edits << TextEdit{ll, cc, ll, cc, ",\n" + closing + "    mode=" + quoted};
     };
 
-    if (hasHandles && h["has_numbers"].toBool())
+    if (hasGizmo && h["has_numbers"].toBool())
     {
         writeMode(next);
     }
-    else if (hasHandles)
+    else if (hasGizmo)
     {
-        // (a handles() line without numbers to drag: its line becomes the gizmo's)
+        // (a gizmo() line without numbers to drag: its line becomes the gizmo's)
         const int e = h["end_line"].toInt() - 1;
         edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent)};
     }
@@ -4137,15 +4137,15 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
         const QString t = lineText(after);
         edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent)};
     }
-    imports.handles = true;
+    imports.gizmo = true;
     return true;
 }
 
-QString ScenePanel::exposeBlock(const QJsonObject& target, QString* why) const
+QString ScenePanel::handlesBlock(const QJsonObject& target, QString* why) const
 {
-    // The lines that make a shape's surfaces draggable (`x = expose(x, [var(...), ...])`), indented like its definition
+    // The lines that make a shape's surfaces draggable (`x = handles(x, [var(...), ...])`), indented like its definition
     QString error;
-    const QString text = m_expose ? m_expose(target["var"].toString(), &error) : QString();
+    const QString text = m_handlesSource ? m_handlesSource(target["var"].toString(), &error) : QString();
     if (text.isEmpty())
     {
         const QString reason = error.isEmpty() ? T("the script has not been run") : error;
@@ -4160,13 +4160,13 @@ QString ScenePanel::exposeBlock(const QJsonObject& target, QString* why) const
     return lines.join('\n');
 }
 
-void ScenePanel::exposeSurfaces(const QJsonObject& target)
+void ScenePanel::addHandles(const QJsonObject& target)
 {
-    if (deferItems({target}, T("making its surfaces draggable"), [this](const QList<QJsonObject>& f) { exposeSurfaces(f[0]); })) return;
+    if (deferItems({target}, T("making its surfaces draggable"), [this](const QList<QJsonObject>& f) { addHandles(f[0]); })) return;
     // (the shape's menu: the numbers of a shape too big to get them by being selected)
     if (target.isEmpty() || !target.contains("var")) return;
     QString why;
-    const QString block = exposeBlock(target, &why);
+    const QString block = handlesBlock(target, &why);
     if (block.isEmpty())
     {
         notify(why);
@@ -4176,7 +4176,7 @@ void ScenePanel::exposeSurfaces(const QJsonObject& target)
     const QString last = lineText(b);
     QList<TextEdit> edits;
     edits << TextEdit{b, int(last.size()), b, int(last.size()), "\n" + block};
-    addImportIfMissing(edits, "expose", "handles");
+    addImportIfMissing(edits, "handles", "handles");
     emit(editScript(edits, "Make " + target["var"].toString() + " draggable by its surfaces"));
 }
 
@@ -4210,7 +4210,7 @@ void ScenePanel::setCacheStates(const QHash<int, QString>& states)
         if (row->icon(COL_CACHE).isNull()) continue;
         const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
         const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
-        const auto target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        const auto target = type == "part" ? gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
         if (!target.isEmpty()) setCacheButton(row, target);
     }
 }
@@ -4270,7 +4270,7 @@ void ScenePanel::applyCache(const QList<QJsonObject>& targets, bool on)
                 // that it keeps the shape as it is shown
                 if (!lineIs(t["line"].toInt() - 1, var, "definition")) { refuseOutOfDate(); return; }
                 int after = t["end_line"].toInt() - 1;
-                for (const char* key : {"exposed", "handles", "locked", "custom_resolution"})
+                for (const char* key : {"handles", "gizmo", "locked", "custom_resolution"})
                 {
                     if (t.contains(key)) after = std::max(after, t[key].toObject()["end_line"].toInt() - 1);
                 }
@@ -4470,8 +4470,8 @@ QString renamedIn(const QString& text, const QString& from, const QString& to)
 
 }   // namespace
 
-// The lines of a model's statements as they are in the script: its definition, the line that shows or hides it, its handles(),
-// expose(), render_cache() and lock() lines
+// The lines of a model's statements as they are in the script: its definition, the line that shows or hides it, its gizmo(),
+// handles(), render_cache() and lock() lines
 QString ScenePanel::groupText(const QJsonObject& it) const
 {
     QStringList out;
@@ -4692,8 +4692,8 @@ void ScenePanel::deleteByLine(int line0)
 void ScenePanel::deleteItems(const QList<QJsonObject>& items)
 {
     if (deferItems(items, "deleting", [this](const QList<QJsonObject>& f) { deleteItems(f); })) return;
-    // What goes: the statement(s) of each item, the line showing it, the line hiding it, its handles() and
-    // expose() lines -- and, for a list of an import's parts, the same for every part variable made from it
+    // What goes: the statement(s) of each item, the line showing it, the line hiding it, its gizmo() and
+    // handles() lines -- and, for a list of an import's parts, the same for every part variable made from it
     QList<QJsonObject> all;
     QStringList whats;
     QSet<QString> seen;
@@ -4714,7 +4714,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
     }
     if (all.isEmpty()) return;
     // Every line that goes is checked to be the line the rows say it is (see lineIs): rows of another text than the script's would
-    // have a definition, a lock or a handles line of ANOTHER model deleted.  Nothing is written when one is not
+    // have a definition, a lock or a gizmo line of ANOTHER model deleted.  Nothing is written when one is not
     m_lineMismatch.clear();
     for (const auto& o : all)
     {
@@ -4725,7 +4725,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
             if (o.contains("display_line")) lineIs(o["display_line"].toInt() - 1, var, "display");
             if (o.contains("hidden_line")) lineIs(o["hidden_line"].toInt() - 1, var, "hidden");
             static const QList<QPair<const char*, const char*>> blocks = {
-                {"handles", "handles"}, {"exposed", "expose"}, {"cache", "render_cache"}, {"cache_off", "render_cache"},
+                {"gizmo", "gizmo"}, {"handles", "handles"}, {"cache", "render_cache"}, {"cache_off", "render_cache"},
                 {"locked", "lock"}, {"custom_resolution", "custom_resolution"}};
             for (const auto& b : blocks)
             {
@@ -4749,7 +4749,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
         ranges << qMakePair(o["line"].toInt() - 1, o["end_line"].toInt() - 1);
         if (o.contains("display_line")) ranges << qMakePair(o["display_line"].toInt() - 1, o["display_line"].toInt() - 1);
         if (o.contains("hidden_line")) ranges << qMakePair(o["hidden_line"].toInt() - 1, o["hidden_line"].toInt() - 1);
-        for (const char* key : {"handles", "exposed", "cache", "cache_off", "locked", "custom_resolution"})
+        for (const char* key : {"gizmo", "handles", "cache", "cache_off", "locked", "custom_resolution"})
         {
             if (!o.contains(key)) continue;
             const auto h = o[key].toObject();
@@ -4858,27 +4858,27 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
     editFollowed(edits, "Delete " + what, [](QJsonObject&, const QVector<int>&) {});
 }
 
-void ScenePanel::removeHandles(const QJsonObject& target)
+void ScenePanel::removeGizmo(const QJsonObject& target)
 {
-    if (deferItems({target}, T("removing its handles"), [this](const QList<QJsonObject>& f) { removeHandles(f[0]); })) return;
-    if (!target.contains("handles")) return;
-    const auto h = target["handles"].toObject();
-    if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), "handles")) { refuseOutOfDate(); return; }
+    if (deferItems({target}, T("removing its gizmo"), [this](const QList<QJsonObject>& f) { removeGizmo(f[0]); })) return;
+    if (!target.contains("gizmo")) return;
+    const auto h = target["gizmo"].toObject();
+    if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), "gizmo")) { refuseOutOfDate(); return; }
     emit(editScript({deleteLines(h["line"].toInt() - 1, h["end_line"].toInt() - 1)},
-                    "Remove the handles of " + target["var"].toString()));
+                    "Remove the gizmo of " + target["var"].toString()));
 }
 
 void ScenePanel::reimportPart(const QJsonObject& imp, int part)
 {
     if (deferItems({imp}, T("importing the part again"), [this, part](const QList<QJsonObject>& f) { reimportPart(f[0], part); })) return;
-    // What was done to the part in the script is undone (its handles() and expose() lines are deleted)...
+    // What was done to the part in the script is undone (its gizmo() and handles() lines are deleted)...
     QList<TextEdit> edits;
-    const QJsonObject target = handlesTarget(imp, part);
-    for (const char* key : {"handles", "exposed"})
+    const QJsonObject target = gizmoTarget(imp, part);
+    for (const char* key : {"gizmo", "handles"})
     {
         if (!target.contains(key)) continue;
         const auto h = target[key].toObject();
-        if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), QString::fromLatin1(key[0] == 'h' ? "handles" : "expose")))
+        if (!lineIs(h["line"].toInt() - 1, target["var"].toString(), QString::fromLatin1(key[0] == 'g' ? "gizmo" : "handles")))
         {
             refuseOutOfDate();
             return;
@@ -4900,10 +4900,10 @@ void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
     const QString cacheFile = path + ".fieldes-cache.py";
     const QString treesDir = path + ".fieldes-cache.trees";
 
-    // The handle edits of the import's parts: their handles() and expose() lines
+    // The edits of the import's parts by dragging: their gizmo() and handles() lines
     QList<QJsonObject> handled;
     auto consider = [&](const QJsonObject& o) {
-        if (!o.isEmpty() && (o.contains("handles") || o.contains("exposed"))) handled << o;
+        if (!o.isEmpty() && (o.contains("gizmo") || o.contains("handles"))) handled << o;
     };
     if (imp.contains("var")) consider(imp);
     for (const auto pv : imp["parts"].toArray())
@@ -4928,15 +4928,15 @@ void ScenePanel::resetImport(const QJsonObject& imp, bool ask)
         if (box.exec() != QMessageBox::Yes) return;
     }
 
-    // Delete each handles() and expose() line
+    // Delete each gizmo() and handles() line
     QList<TextEdit> edits;
     for (const auto& t : handled)
     {
-        for (const char* key : {"handles", "exposed"})
+        for (const char* key : {"gizmo", "handles"})
         {
             if (!t.contains(key)) continue;
             const auto h = t[key].toObject();
-            if (!lineIs(h["line"].toInt() - 1, t["var"].toString(), QString::fromLatin1(key[0] == 'h' ? "handles" : "expose")))
+            if (!lineIs(h["line"].toInt() - 1, t["var"].toString(), QString::fromLatin1(key[0] == 'g' ? "gizmo" : "handles")))
             {
                 refuseOutOfDate();
                 return;                         // (before the cache is deleted: nothing has been done)
@@ -5381,14 +5381,14 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
         }
         return;
     }
-    if (column == COL_HANDLES && !row->icon(COL_HANDLES).isNull())
+    if (column == COL_GIZMO && !row->icon(COL_GIZMO).isNull())
     {
-        toggleEditMode(type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
+        toggleEditMode(type == "part" ? gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it);
         return;
     }
     if (column == COL_LOCK && !row->icon(COL_LOCK).isNull())
     {
-        const QJsonObject target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        const QJsonObject target = type == "part" ? gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
         if (target.contains("var") && m_pressedSelection.size() >= 2 &&
             m_pressedSelection.contains(row->data(COL_NAME, ROLE_KEY).toString()))
         {
@@ -5426,7 +5426,7 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
     }
     if (column == COL_CACHE && !row->icon(COL_CACHE).isNull())
     {
-        const QJsonObject target = type == "part" ? handlesTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
+        const QJsonObject target = type == "part" ? gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
         if (target.contains("var") && target["kind"].toString() != "display")
         {
             QJsonObject now = target;
@@ -5600,7 +5600,7 @@ bool ScenePanel::describeModel(const QJsonObject& target, QString* source, int* 
         src = target["var"].toString();
         // (the lines that go on making the model after its statement: what a new statement under it has to stay below -- the numbers that
         // drag it, its gizmo, its lock: `c = lock(c)` is the model that is used, not the one before it)
-        for (const char* key : {"exposed", "handles", "locked"})
+        for (const char* key : {"handles", "gizmo", "locked"})
         {
             if (target.contains(key)) aft = std::max(aft, target[key].toObject()["end_line"].toInt() - 1);
         }
@@ -5627,10 +5627,10 @@ bool ScenePanel::describeModel(const QJsonObject& target, QString* source, int* 
 bool ScenePanel::ownsLine(const QJsonObject& o, int line0) const
 {
     // A model's own lines: the line that displays it (what a click in the viewport gives), its statement, and the lines that make
-    // it draggable (expose, handles) -- what a click in the text editor or in the model tree gives is one of those
+    // it draggable (handles, gizmo) -- what a click in the text editor or in the model tree gives is one of those
     if (linesOf(o).contains(line0)) return true;
     if (line0 >= o["line"].toInt() - 1 && line0 <= o["end_line"].toInt() - 1) return true;
-    for (const char* key : {"exposed", "handles"})
+    for (const char* key : {"handles", "gizmo"})
     {
         if (!o.contains(key)) continue;
         const auto block = o[key].toObject();
@@ -5683,7 +5683,7 @@ void ScenePanel::addCustomResolution(int line0)
     double res = m_scene["settings"].toObject()["resolution"].toObject()["value"].toDouble(0.0);
     if (!(res > 0)) res = 10.0;
     int last = target["end_line"].toInt() - 1;
-    for (const char* key : {"exposed", "handles", "locked", "cache", "cache_off"})
+    for (const char* key : {"handles", "gizmo", "locked", "cache", "cache_off"})
     {
         if (target.contains(key)) last = std::max(last, target[key].toObject()["end_line"].toInt() - 1);
     }
@@ -5902,7 +5902,7 @@ void ScenePanel::updateMultiNote()
     const auto models = selectedModels();
     const int n = models.size();
     int movable = 0;                            // (a condition has no gizmo: it is not moved with the others)
-    for (const Model& m : models) movable += m.item["no_handles"].toBool() ? 0 : 1;
+    for (const Model& m : models) movable += m.item["no_gizmo"].toBool() ? 0 : 1;
     QString mine;
     if (n >= 2 && lockedInMulti())
     {
@@ -5974,10 +5974,10 @@ void ScenePanel::updateProvisional()
     if (models.size() == 1)
     {
         const QJsonObject t = models[0].item;
-        const bool numbers = t.contains("handles") && t["handles"].toObject()["has_numbers"].toBool();
+        const bool numbers = t.contains("gizmo") && t["gizmo"].toObject()["has_numbers"].toBool();
         const auto b = t["bounds"].toArray();
         if (!numbers && b.size() == 2 && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool() &&
-            !t["no_handles"].toBool() && !t.contains("locked") && t["mode"].toString("click") != "never" && !linesOf(t).isEmpty())
+            !t["no_gizmo"].toBool() && !t.contains("locked") && t["mode"].toString("click") != "never" && !linesOf(t).isEmpty())
         {
             const auto lo = b[0].toArray(), hi = b[1].toArray();
             const QVector3D pivot(float(lo[0].toDouble() + hi[0].toDouble()) / 2, float(lo[1].toDouble() + hi[1].toDouble()) / 2,
@@ -5992,10 +5992,10 @@ void ScenePanel::updateProvisional()
 void ScenePanel::prepareSelection()
 {
     // The selected models are made ready to be dragged.  Pulling a shape's surfaces is always there, so a model that has
-    // no numbers to pull them by gets them -- an `expose(x, [...])` line -- when they are no more than kAutoExposeNumbers (a bigger one
+    // no numbers to pull them by gets them -- a `handles(x, [...])` line -- when they are no more than kAutoHandleNumbers (a bigger one
     // has an orange dot in the tree and is moved by its gizmo).  The gizmo is shown by its mode (click: while the model is selected) and
     // moves what has numbers to move it
-    // by -- a `handles(x, move=(var, ...))` line, which a model that has none gets too, in the mode it is in (click, when
+    // by -- a `gizmo(x, move=(var, ...))` line, which a model that has none gets too, in the mode it is in (click, when
     // it has no line).  Nothing else about the model changes
     const auto models = selectedModels();
     // (a selection of several with a locked model in it is not moved or edited: nothing is written for it)
@@ -6032,31 +6032,31 @@ void ScenePanel::prepareSelection()
     // Whether a model is made ready: it is shown (a model that is not shown has nothing to drag, and its numbers stay as they
     // are for the models made of it), and it has no gizmo line with numbers or no way of pulling its surfaces yet
     const QString allText = m_source ? m_source() : QString();
-    auto prepares = [&](const QJsonObject& t, bool* gizmoOut, bool* exposeOut) {
+    auto prepares = [&](const QJsonObject& t, bool* gizmoOut, bool* handlesOut) {
         if (t["kind"].toString() == "display" || t["failed"].toBool() || t["reassigned"].toBool() ||
-            t["no_handles"].toBool() || !t.contains("var") || t.contains("locked") || !t["visible"].toBool() ||
+            t["no_gizmo"].toBool() || !t.contains("var") || t.contains("locked") || !t["visible"].toBool() ||
             t["type"].toString() == "field")                // (a field is not drawn: it has nothing to drag)
             return false;
         const QString var = t["var"].toString();
-        const bool hasHandles = t.contains("handles");
-        bool needGizmo = !(hasHandles && t["handles"].toObject()["has_numbers"].toBool());
+        const bool hasGizmo = t.contains("gizmo");
+        bool needGizmo = !(hasGizmo && t["gizmo"].toObject()["has_numbers"].toBool());
         // (the scene may be a run behind the text: a line that is there already is never written twice)
-        if (needGizmo && !hasHandles &&
-            QRegularExpression(QString("^\\s*%1\\s*=\\s*handles\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
+        if (needGizmo && !hasGizmo &&
+            QRegularExpression(QString("^\\s*%1\\s*=\\s*gizmo\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
                                QRegularExpression::MultilineOption).match(allText).hasMatch())
             needGizmo = false;
-        bool needExpose = !t["has_var"].toBool() && !t.contains("exposed") && t["can_expose"].toBool() &&
-                          t["expose_count"].toInt() <= kAutoExposeNumbers && !m_exposeTried.contains(keyOf(t));
-        if (needExpose &&
-            QRegularExpression(QString("^\\s*%1\\s*=\\s*expose\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
+        bool needHandles = !t["has_var"].toBool() && !t.contains("handles") && t["can_handles"].toBool() &&
+                          t["handle_count"].toInt() <= kAutoHandleNumbers && !m_handlesTried.contains(keyOf(t));
+        if (needHandles &&
+            QRegularExpression(QString("^\\s*%1\\s*=\\s*handles\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
                                QRegularExpression::MultilineOption).match(allText).hasMatch())
-            needExpose = false;
+            needHandles = false;
         *gizmoOut = needGizmo;
-        *exposeOut = needExpose;
-        return needGizmo || needExpose;
+        *handlesOut = needHandles;
+        return needGizmo || needHandles;
     };
-    // A model made of another has that one's numbers among its own: when the other gets numbers of its own (an expose() and a
-    // gizmo line), an expose() line of the model made of it no longer fits its numbers.  That line goes -- what it is made of
+    // A model made of another has that one's numbers among its own: when the other gets numbers of its own (a handles() and a
+    // gizmo() line), a handles() line of the model made of it no longer fits its numbers.  That line goes -- what it is made of
     // has the numbers to pull its surfaces by -- and a model made of it is not given one
     QSet<QString> madeOfPrepared, dropped;
     for (const Model& m : models)
@@ -6073,8 +6073,8 @@ void ScenePanel::prepareSelection()
     for (const auto v : m_scene["items"].toArray())
     {
         const auto d = v.toObject();
-        if (!madeOfPrepared.contains(keyOf(d)) || !d.contains("exposed") || dropped.contains(keyOf(d))) continue;
-        const auto ex = d["exposed"].toObject();
+        if (!madeOfPrepared.contains(keyOf(d)) || !d.contains("handles") || dropped.contains(keyOf(d))) continue;
+        const auto ex = d["handles"].toObject();
         edits << deleteLines(ex["line"].toInt() - 1, ex["end_line"].toInt() - 1);
         dropped.insert(keyOf(d));
         names << d["var"].toString();
@@ -6108,28 +6108,28 @@ void ScenePanel::prepareSelection()
             continue;
         }
         reselect << keyOf(t);
-        bool needGizmo = false, needExpose = false;
-        if (!prepares(t, &needGizmo, &needExpose)) continue;
-        if (madeOfPrepared.contains(keyOf(t))) needExpose = false;
-        if (!needGizmo && !needExpose) continue;
+        bool needGizmo = false, needHandles = false;
+        if (!prepares(t, &needGizmo, &needHandles)) continue;
+        if (madeOfPrepared.contains(keyOf(t))) needHandles = false;
+        if (!needGizmo && !needHandles) continue;
         const QString var = t["var"].toString();
-        const bool hasHandles = t.contains("handles");
-        const bool hasExposed = t.contains("exposed") && !dropped.contains(keyOf(t));
+        const bool hasGizmo = t.contains("gizmo");
+        const bool hasHandles = t.contains("handles") && !dropped.contains(keyOf(t));
         const QString indent = indentOf(lineText(t["line"].toInt() - 1));
         const int b = t["end_line"].toInt() - 1;
         QString block;
-        if (needExpose)
+        if (needHandles)
         {
-            m_exposeTried << keyOf(t);                  // (once: a shape that cannot be exposed is not asked again)
-            block = exposeBlock(t, nullptr);
-            if (!block.isEmpty()) imports.expose = true;
+            m_handlesTried << keyOf(t);                  // (once: a shape that cannot be exposed is not asked again)
+            block = handlesBlock(t, nullptr);
+            if (!block.isEmpty()) imports.handles = true;
         }
         if (!needGizmo && block.isEmpty()) continue;
         const QString mode = t["mode"].toString("click");
-        if (needGizmo && hasHandles)
+        if (needGizmo && hasGizmo)
         {
-            // (a handles() line without numbers: its line becomes the gizmo's)
-            const auto h = t["handles"].toObject();
+            // (a gizmo() line without numbers: its line becomes the gizmo's)
+            const auto h = t["gizmo"].toObject();
             const int e = h["end_line"].toInt() - 1;
             edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent)};
             if (!block.isEmpty())
@@ -6138,14 +6138,14 @@ void ScenePanel::prepareSelection()
         else
         {
             // Under the definition, or under the numbers exposed for its surfaces
-            const int after = hasExposed ? t["exposed"].toObject()["end_line"].toInt() - 1 : b;
+            const int after = hasHandles ? t["handles"].toObject()["end_line"].toInt() - 1 : b;
             QString text;
             if (!block.isEmpty()) text += "\n" + block;
             if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent);
             const QString last = lineText(after);
             edits << TextEdit{after, int(last.size()), after, int(last.size()), text};
         }
-        if (needGizmo) imports.handles = true;
+        if (needGizmo) imports.gizmo = true;
         names << var;
     }
     if (edits.isEmpty())
@@ -6159,8 +6159,8 @@ void ScenePanel::prepareSelection()
         }
         return;
     }
+    if (imports.gizmo) addImportIfMissing(edits, "gizmo", "handles");
     if (imports.handles) addImportIfMissing(edits, "handles", "handles");
-    if (imports.expose) addImportIfMissing(edits, "expose", "handles");
     m_editPending = true;
     m_editClock.start();
     if (naming)
@@ -6870,8 +6870,8 @@ void ScenePanel::debugShiftLines(int delta, bool blocks)
         }
         else
         {
-            // (the lines of the statements that edit a model: lock, handles, expose, the render cache, its resolution)
-            for (const char* key : {"locked", "handles", "exposed", "cache", "cache_off", "custom_resolution"})
+            // (the lines of the statements that edit a model: lock, gizmo, handles, the render cache, its resolution)
+            for (const char* key : {"locked", "gizmo", "handles", "cache", "cache_off", "custom_resolution"})
             {
                 if (!o.contains(key)) continue;
                 QJsonObject b = o[key].toObject();
@@ -6905,7 +6905,7 @@ QString ScenePanel::dumpState() const
                    .arg(it["mode"].toString())
                    .arg(r->data(COL_EYE, Qt::UserRole).toBool() ? "on" : "off")
                    .arg(r->toolTip(COL_LOCK).startsWith("Locked") ? "locked" : "unlocked")
-                   .arg(r->toolTip(COL_HANDLES).section(" ", 1, 2));
+                   .arg(r->toolTip(COL_GIZMO).section(" ", 1, 2));
     }
     out += QString("state: predicted=%1 pending=%2 partial=%3 stale=%4\n")
                .arg(m_predicted ? 1 : 0).arg(m_rebuildPending ? 1 : 0).arg(0).arg(sceneIsStale() ? 1 : 0);
@@ -7600,7 +7600,7 @@ QList<QPair<int, int>> ScenePanel::groupRanges(const QJsonObject& it, bool comme
     {
         if (it.contains(key)) { const int L = it[key].toInt() - 1; r << qMakePair(L, L); }
     }
-    for (const char* key : {"handles", "exposed", "locked", "cache", "cache_off", "custom_resolution"})
+    for (const char* key : {"gizmo", "handles", "locked", "cache", "cache_off", "custom_resolution"})
     {
         if (it.contains(key))
         {
@@ -7824,7 +7824,7 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
     };
 
     static const QSet<QString> lineKeys = {"line", "end_line", "display_line", "hidden_line", "part_of"};
-    static const QStringList blockKeys = {"handles", "exposed", "locked", "cache", "cache_off", "custom_resolution"};
+    static const QStringList blockKeys = {"gizmo", "handles", "locked", "cache", "cache_off", "custom_resolution"};
     std::function<QJsonValue(const QString&, const QJsonValue&)> walk;
     walk = [&](const QString& key, const QJsonValue& v) -> QJsonValue {
         if (v.isObject())
@@ -8278,11 +8278,11 @@ bool ScenePanel::wireStage(const Rewire& w, QStringList& lines, QStringList* tar
     for (const auto v : m_scene["items"].toArray())
     {
         const auto d = v.toObject();
-        if (!d.contains("exposed") || !d.contains("var")) continue;
+        if (!d.contains("handles") || !d.contains("var")) continue;
         bool hit = false;
         for (const auto& c : changed) hit = hit || d["var"].toString() == c["var"].toString() || dependsOn(d, c);
         if (!hit) continue;
-        const auto ex = d["exposed"].toObject();
+        const auto ex = d["handles"].toObject();
         for (int l = ex["line"].toInt() - 1; l <= ex["end_line"].toInt() - 1; ++l)
             if (l >= 0 && l < lines.size()) lines[l] = kGone;
     }
@@ -8959,14 +8959,14 @@ void ScenePanel::dropOnModel(const QList<QJsonObject>& models, const QJsonObject
                 for (int l = target["line"].toInt() - 1; l <= target["end_line"].toInt() - 1 && l < lines.size(); ++l)
                     lines[l] = unmarkShadow(lines[l], plan.drop);
         }
-        // The numbers of the target, and of what is made of it, are not what they were: an expose() line written for them
+        // The numbers of the target, and of what is made of it, are not what they were: a handles() line written for them
         // does not fit any more (the lines are marked, and go once the models have been moved)
         for (const auto v : m_scene["items"].toArray())
         {
             const auto d = v.toObject();
-            if (!d.contains("exposed") || !d.contains("var")) continue;
+            if (!d.contains("handles") || !d.contains("var")) continue;
             if (d["var"].toString() != tname && !dependsOn(d, target)) continue;
-            const auto ex = d["exposed"].toObject();
+            const auto ex = d["handles"].toObject();
             for (int l = ex["line"].toInt() - 1; l <= ex["end_line"].toInt() - 1; ++l)
                 if (l >= 0 && l < lines.size()) lines[l] = kGone;
         }

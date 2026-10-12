@@ -252,15 +252,15 @@ std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const doub
     return out;
 }
 
-bool Shape::hasHandles() const
+bool Shape::hasGizmo() const
 {
-    if (m_locked || !m_handles.present || m_handles.mode == Handles::NEVER) return false;
-    if (m_handles.mode == Handles::CLICK && !isSelected()) return false;
+    if (m_locked || !m_gizmo.present || m_gizmo.mode == Gizmo::NEVER) return false;
+    if (m_gizmo.mode == Gizmo::CLICK && !isSelected()) return false;
     for (int a = 0; a < 3; ++a)
     {
-        if ((m_handles.move[a] && vars.count(m_handles.move[a])) ||
-            (m_handles.rotate[a] && vars.count(m_handles.rotate[a])) ||
-            (m_handles.scale[a] && vars.count(m_handles.scale[a])))
+        if ((m_gizmo.move[a] && vars.count(m_gizmo.move[a])) ||
+            (m_gizmo.rotate[a] && vars.count(m_gizmo.rotate[a])) ||
+            (m_gizmo.scale[a] && vars.count(m_gizmo.scale[a])))
         {
             return true;
         }
@@ -270,10 +270,10 @@ bool Shape::hasHandles() const
 
 bool Shape::hasMoveVars() const
 {
-    if (m_locked || !m_handles.present) return false;
+    if (m_locked || !m_gizmo.present) return false;
     for (int a = 0; a < 3; ++a)
     {
-        if (m_handles.move[a] && vars.count(m_handles.move[a])) return true;
+        if (m_gizmo.move[a] && vars.count(m_gizmo.move[a])) return true;
     }
     return false;
 }
@@ -283,7 +283,7 @@ std::set<libfive::Tree::Id> Shape::gizmoVars() const
     std::set<libfive::Tree::Id> out;
     for (int a = 0; a < 3; ++a)
     {
-        for (const auto id : {m_handles.move[a], m_handles.rotate[a], m_handles.scale[a]})
+        for (const auto id : {m_gizmo.move[a], m_gizmo.rotate[a], m_gizmo.scale[a]})
         {
             if (id) out.insert(id);
         }
@@ -308,34 +308,34 @@ bool Shape::nativeDragOk() const
     return false;
 }
 
-static float handleNumber(const std::map<libfive::Tree::Id, float>& vars, libfive::Tree::Id id)
+static float gizmoNumber(const std::map<libfive::Tree::Id, float>& vars, libfive::Tree::Id id)
 {
     const auto it = id ? vars.find(id) : vars.end();
     return it == vars.end() ? 0.0f : it->second;
 }
 
-QVector3D Shape::handleMove() const
+QVector3D Shape::gizmoMove() const
 {
-    return QVector3D(handleNumber(vars, m_handles.move[0]), handleNumber(vars, m_handles.move[1]),
-                     handleNumber(vars, m_handles.move[2]));
+    return QVector3D(gizmoNumber(vars, m_gizmo.move[0]), gizmoNumber(vars, m_gizmo.move[1]),
+                     gizmoNumber(vars, m_gizmo.move[2]));
 }
 
-QVector3D Shape::handleScale() const
+QVector3D Shape::gizmoScale() const
 {
     auto one = [&](libfive::Tree::Id id) {
         const auto it = id ? vars.find(id) : vars.end();
         return it == vars.end() ? 1.0f : it->second;
     };
-    return QVector3D(one(m_handles.scale[0]), one(m_handles.scale[1]), one(m_handles.scale[2]));
+    return QVector3D(one(m_gizmo.scale[0]), one(m_gizmo.scale[1]), one(m_gizmo.scale[2]));
 }
 
-QVector3D Shape::handleRotate() const
+QVector3D Shape::gizmoRotate() const
 {
-    return QVector3D(handleNumber(vars, m_handles.rotate[0]), handleNumber(vars, m_handles.rotate[1]),
-                     handleNumber(vars, m_handles.rotate[2]));
+    return QVector3D(gizmoNumber(vars, m_gizmo.rotate[0]), gizmoNumber(vars, m_gizmo.rotate[1]),
+                     gizmoNumber(vars, m_gizmo.rotate[2]));
 }
 
-QMatrix4x4 Shape::handleRotation(const QVector3D& degrees)
+QMatrix4x4 Shape::gizmoRotation(const QVector3D& degrees)
 {
     // The matrices of fieldes.stdlib.transforms (rotate_x/y/z, as the exact
     // regions apply them): Rx = [1 0 0; 0 c -s; 0 s c], Ry = [c 0 -s; 0 1 0; s 0 c],
@@ -454,7 +454,7 @@ int Shape::defaultDivFor(const Settings& s)
 bool Shape::ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
                       QVector3D& lo, QVector3D& hi, double& res) const
 {
-    // The region a shape with a resolution of its own is meshed over, and that resolution.  The shape's box (placed by its handles) in
+    // The region a shape with a resolution of its own is meshed over, and that resolution.  The shape's box (placed by its gizmo) in
     // the scene's region: a cube round the box, `side` long (a power of two of cells of that resolution).  An absolute resolution
     // (custom_resolution: the scene's resolution does not enter) is the shape's wherever it is: a body that reaches out of the scene's
     // region is meshed at it over the part of the cube that is in the region (nothing outside the region is drawn, as for every shape)
@@ -485,33 +485,33 @@ void Shape::placedHint(QVector3D& out_lo, QVector3D& out_hi, float& out_side) co
     out_lo = hint_lo;
     out_hi = hint_hi;
     out_side = hint_side;
-    if (!has_hint || !m_handles.present)
+    if (!has_hint || !m_gizmo.present)
     {
         return;
     }
-    // The part's own-resolution cube follows its handles: scaled, moved by the
+    // The part's own-resolution cube follows its gizmo: scaled, moved by the
     // translation and, once turned, big enough for any turn of the box
-    const QVector3D turn = handleRotate();
-    const QVector3D grow = handleScale();
+    const QVector3D turn = gizmoRotate();
+    const QVector3D grow = gizmoScale();
     QVector3D c = 0.5f * (hint_lo + hint_hi);
     QVector3D half = 0.5f * (hint_hi - hint_lo);
     float side = hint_side;
     if (grow != QVector3D(1, 1, 1))
     {
-        c = m_handles.about + QVector3D(grow.x() * (c.x() - m_handles.about.x()),
-                                        grow.y() * (c.y() - m_handles.about.y()),
-                                        grow.z() * (c.z() - m_handles.about.z()));
+        c = m_gizmo.about + QVector3D(grow.x() * (c.x() - m_gizmo.about.x()),
+                                        grow.y() * (c.y() - m_gizmo.about.y()),
+                                        grow.z() * (c.z() - m_gizmo.about.z()));
         half = QVector3D(half.x() * std::fabs(grow.x()), half.y() * std::fabs(grow.y()),
                          half.z() * std::fabs(grow.z()));
         side *= std::max({std::fabs(grow.x()), std::fabs(grow.y()), std::fabs(grow.z()), 1e-3f});
     }
     if (turn != QVector3D(0, 0, 0))
     {
-        c = m_handles.about + handleRotation(turn).map(c - m_handles.about);
+        c = m_gizmo.about + gizmoRotation(turn).map(c - m_gizmo.about);
         half *= 1.75f;
         side *= 1.75f;
     }
-    c += handleMove();
+    c += gizmoMove();
     out_lo = c - half;
     out_hi = c + half;
     out_side = side;
@@ -1675,9 +1675,9 @@ void Shape::drawElements(const QMatrix4x4& M, bool monochrome, QColor color)
 bool Shape::updateFrom(const Shape* other)
 {
     assert(other->id() == id());
-    // (the same tree: only whether its handles are shown, and their pivot,
+    // (the same tree: only whether its gizmo is shown, and its pivot,
     // can differ, and whether it is locked)
-    m_handles = other->m_handles;
+    m_gizmo = other->m_gizmo;
     m_locked = other->m_locked;
     bool started = false;
     // The part's own render (its cube and resolution) is what the script says NOW: roi_resolution gives other ones when the models
@@ -1746,9 +1746,9 @@ void Shape::buildDeps() const
         for (const auto& c : m_channels) add(c.tree);
         for (int a = 0; a < 3; ++a)
         {
-            if (m_handles.move[a]) m_deps.insert(m_handles.move[a]);
-            if (m_handles.rotate[a]) m_deps.insert(m_handles.rotate[a]);
-            if (m_handles.scale[a]) m_deps.insert(m_handles.scale[a]);
+            if (m_gizmo.move[a]) m_deps.insert(m_gizmo.move[a]);
+            if (m_gizmo.rotate[a]) m_deps.insert(m_gizmo.rotate[a]);
+            if (m_gizmo.scale[a]) m_deps.insert(m_gizmo.scale[a]);
         }
         m_deps_known = true;
     }
@@ -2572,7 +2572,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
             color_evals.resize(std::max(color_evals.size(), T));
             std::atomic<size_t> next{0}, done{0};
             auto work = [&](size_t t) {
-                // (with the script's numbers: a colour field may hold var()s -- a selection on a part placed with handles())
+                // (with the script's numbers: a colour field may hold var()s -- a selection on a part placed with gizmo())
                 if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field, vars));
                 auto& e = *color_evals[t];
                 for (size_t b; (b = next.fetch_add(1)) < batches; )

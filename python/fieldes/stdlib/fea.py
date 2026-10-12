@@ -155,7 +155,7 @@ class _Condition:
         boundary_conditions).  It is drawn on the body of the simulation it was given to, or -- while no simulation has it yet -- on the body
         its surfaces were picked on.  It has no body in it: the simulation is given the body '''
 
-    _no_handles = True                # (not something to drag: FielDes hides the handles button)
+    _no_gizmo = True                # (not something to drag: FielDes hides the handles button)
 
     def __repr__(self):
         # (what the result line shows when a condition is the last thing a script made: what it is, not where it is in memory)

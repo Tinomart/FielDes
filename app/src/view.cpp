@@ -868,7 +868,7 @@ void View::paintOverlay(QPainter& painter)
         drawFieldGizmo(painter);
     }
     drawMarkers(painter);
-    drawHandles(painter);
+    drawGizmo(painter);
     if (!section_readout.isEmpty() && !section_drag)
     {
         QFont font = painter.font();
@@ -1575,9 +1575,9 @@ void View::mouseMoveEvent(QMouseEvent* event)
         mouse.pos = event->pos();
         return;
     }
-    if (handle_drag)
+    if (gizmo_drag)
     {
-        dragHandle(event->pos());
+        dragGizmo(event->pos());
         mouse.pos = event->pos();
         return;
     }
@@ -1591,10 +1591,10 @@ void View::mouseMoveEvent(QMouseEvent* event)
     }
     if (mouse.state == mouse.RELEASED)
     {
-        const HandleGrip grip = handleAt(event->pos());
-        if (!(grip == handle_hover))
+        const GizmoGrip grip = gizmoAt(event->pos());
+        if (!(grip == gizmo_hover))
         {
-            handle_hover = grip;
+            gizmo_hover = grip;
             m_overlay->update();
         }
         const int part = fieldGizmoHit(event->pos());
@@ -1670,9 +1670,9 @@ void View::mouseMoveEvent(QMouseEvent* event)
     else
     {
         checkHoverTarget(event->pos());
-        if (handle_hover.kind >= 0)
+        if (gizmo_hover.kind >= 0)
         {
-            setCursor(handle_hover.kind == 3 ? Qt::SizeAllCursor : Qt::PointingHandCursor);
+            setCursor(gizmo_hover.kind == 3 ? Qt::SizeAllCursor : Qt::PointingHandCursor);
         }
     }
     mouse.pos = event->pos();
@@ -1732,11 +1732,11 @@ void View::mousePressEvent(QMouseEvent* event)
         if (event->button() == Qt::LeftButton)
         {
             // A part's handle (a move arrow or a rotation ring)
-            const HandleGrip grip = handleAt(event->pos());
+            const GizmoGrip grip = gizmoAt(event->pos());
             if (grip.kind >= 0)
             {
-                beginHandleDrag(grip, event->pos());
-                if (handle_drag)
+                beginGizmoDrag(grip, event->pos());
+                if (gizmo_drag)
                 {
                     press_pos = QPoint(-100000, -100000);   // not a selection click
                     press_target = nullptr;
@@ -1897,11 +1897,11 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         cancelWaitingGrip();        // (a press that waited for the real gizmo and was let go: nothing to do)
         return;
     }
-    if (handle_drag)
+    if (gizmo_drag)
     {
-        handle_drag = false;
-        handle_hover = handleAt(event->pos());
-        setCursor(handle_hover.kind >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        gizmo_drag = false;
+        gizmo_hover = gizmoAt(event->pos());
+        setCursor(gizmo_hover.kind >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         redrawPicker();
         emit(dragEnd());
         m_overlay->update();
@@ -3501,21 +3501,21 @@ void View::paintNormalArrow(QPainter& painter, QPointF p, QPointF q, bool hot)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Handles of placed parts
+// Gizmo of placed parts
 
 namespace {
 
-const QColor kHandleColor[3] = {QColor(0xdc, 0x32, 0x2f), QColor(0x74, 0xb8, 0x1f), QColor(0x26, 0x8b, 0xd2)};
+const QColor kGizmoColor[3] = {QColor(0xdc, 0x32, 0x2f), QColor(0x74, 0xb8, 0x1f), QColor(0x26, 0x8b, 0xd2)};
 
 // The axes the three rotation rings turn about (turning right-handed about
 // each is a positive change of its angle).  The part turns by Rz * Ry * Rx, so
 // the z ring is the world's z, the y ring's is z-turned, and the x ring's has
 // both turns applied: a gimbal.  (The library's y rotation goes the other
 // way about +y, hence the minus.)
-void handleAxes(const QVector3D& turn, QVector3D ring[3])
+void gizmoAxes(const QVector3D& turn, QVector3D ring[3])
 {
-    const QMatrix4x4 rz = Shape::handleRotation(QVector3D(0, 0, turn.z()));
-    const QMatrix4x4 rzy = Shape::handleRotation(QVector3D(0, turn.y(), turn.z()));
+    const QMatrix4x4 rz = Shape::gizmoRotation(QVector3D(0, 0, turn.z()));
+    const QMatrix4x4 rzy = Shape::gizmoRotation(QVector3D(0, turn.y(), turn.z()));
     ring[2] = QVector3D(0, 0, 1);
     ring[1] = rz.mapVector(QVector3D(0, -1, 0));
     ring[0] = rzy.mapVector(QVector3D(1, 0, 0));
@@ -3552,7 +3552,7 @@ QVector3D unitAxis(int a)
 
 }   // anonymous namespace
 
-float View::handleLength(const QVector3D& pivot) const
+float View::gizmoLength(const QVector3D& pivot) const
 {
     // A model length that spans about 80 pixels at this pivot
     const QVector3D size = settings.max - settings.min;
@@ -3576,7 +3576,7 @@ int View::selectedShapeCount() const
     return n;
 }
 
-bool View::groupHandles(QList<Shape*>& members, QVector3D& center) const
+bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
 {
     // The multi-select state: two or more shapes selected.  The ones that can be moved (they have move numbers) share
     // one gizmo, whatever gizmo mode each has when it is selected alone -- unless all of them say never
@@ -3590,7 +3590,7 @@ bool View::groupHandles(QList<Shape*>& members, QVector3D& center) const
         anyLocked |= s->isLocked();
         if (!s->hasMoveVars()) continue;
         members << s;
-        anyShown |= s->handles().mode != Shape::Handles::NEVER;
+        anyShown |= s->gizmo().mode != Shape::Gizmo::NEVER;
     }
     // (a locked shape in the selection: the selection is not moved or edited -- there is no gizmo for it)
     if (selected < 2 || anyLocked || members.isEmpty() || !anyShown) return false;
@@ -3598,7 +3598,7 @@ bool View::groupHandles(QList<Shape*>& members, QVector3D& center) const
     bool first = true;
     for (const Shape* s : members)
     {
-        const QVector3D P = s->handlePivot();
+        const QVector3D P = s->gizmoPivot();
         lo = first ? P : QVector3D(std::min(lo.x(), P.x()), std::min(lo.y(), P.y()), std::min(lo.z(), P.z()));
         hi = first ? P : QVector3D(std::max(hi.x(), P.x()), std::max(hi.y(), P.y()), std::max(hi.z(), P.z()));
         first = false;
@@ -3614,7 +3614,7 @@ bool anyMoveVar(const QList<Shape*>& shapes, int a)
 {
     for (const Shape* s : shapes)
     {
-        const auto& h = s->handles();
+        const auto& h = s->gizmo();
         if (h.move[a] && s->getVars().count(h.move[a])) return true;
     }
     return false;
@@ -3622,25 +3622,25 @@ bool anyMoveVar(const QList<Shape*>& shapes, int a)
 
 }   // anonymous namespace
 
-View::HandleGrip View::handleAt(QPoint pos) const
+View::GizmoGrip View::gizmoAt(QPoint pos) const
 {
-    HandleGrip best;
+    GizmoGrip best;
     double bestDist = 9.0;
     const QPointF at(pos);
     // Several shapes selected, all in the gizmo mode: one gizmo for them all (arrows and the dot in the middle)
     QList<Shape*> members;
     QVector3D groupCenter;
-    const bool group = groupHandles(members, groupCenter);
+    const bool group = groupGizmo(members, groupCenter);
     if (group)
     {
-        const float L = handleLength(groupCenter);
+        const float L = gizmoLength(groupCenter);
         if (L > 0)
         {
             const QPointF p0 = toScreen(groupCenter);
             if (std::hypot(at.x() - p0.x(), at.y() - p0.y()) <= 8.0 &&
                 (anyMoveVar(members, 0) || anyMoveVar(members, 1) || anyMoveVar(members, 2)))
             {
-                return HandleGrip{members[0], 3, 0, true};
+                return GizmoGrip{members[0], 3, 0, true};
             }
             for (int a = 0; a < 3; ++a)
             {
@@ -3648,17 +3648,17 @@ View::HandleGrip View::handleAt(QPoint pos) const
                 QVector3D e;
                 e[a] = L;
                 const double d = distanceToSegment(at, p0, toScreen(groupCenter + e));
-                if (d < bestDist) { bestDist = d; best = HandleGrip{members[0], 0, a, true}; }
+                if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 0, a, true}; }
             }
         }
     }
     for (Shape* s : shapes)
     {
-        if (!s->hasHandles() || (group && members.contains(s))) continue;
-        const auto& h = s->handles();
+        if (!s->hasGizmo() || (group && members.contains(s))) continue;
+        const auto& h = s->gizmo();
         const auto& vars = s->getVars();
-        const QVector3D P = s->handlePivot();
-        const float L = handleLength(P);
+        const QVector3D P = s->gizmoPivot();
+        const float L = gizmoLength(P);
         if (!(L > 0)) continue;
         const QPointF p0 = toScreen(P);
         // (the dot in the middle drags the shape freely: it wins over everything near it)
@@ -3678,7 +3678,7 @@ View::HandleGrip View::handleAt(QPoint pos) const
             if (d < bestDist) { bestDist = d; best = {s, 0, a}; }
         }
         // (the scale knobs are on the part's own axes, turned with it: they win over the arrow behind them)
-        const QMatrix4x4 R = Shape::handleRotation(s->handleRotate());
+        const QMatrix4x4 R = Shape::gizmoRotation(s->gizmoRotate());
         for (int a = 0; a < 3; ++a)
         {
             if (!h.scale[a] || !vars.count(h.scale[a])) continue;
@@ -3687,7 +3687,7 @@ View::HandleGrip View::handleAt(QPoint pos) const
             if (d < bestDist) { bestDist = d; best = {s, 2, a}; }
         }
         QVector3D ring[3];
-        handleAxes(s->handleRotate(), ring);
+        gizmoAxes(s->gizmoRotate(), ring);
         for (int a = 0; a < 3; ++a)
         {
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
@@ -3710,14 +3710,14 @@ View::HandleGrip View::handleAt(QPoint pos) const
     return best;
 }
 
-bool View::handleGripPoint(int kind, int axis, QPoint& pos) const
+bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
 {
     QList<Shape*> members;
     QVector3D groupCenter;
-    if (groupHandles(members, groupCenter))
+    if (groupGizmo(members, groupCenter))
     {
         // (the shared gizmo of several selected shapes has the arrows and the dot only)
-        const float L = handleLength(groupCenter);
+        const float L = gizmoLength(groupCenter);
         if (!(L > 0) || (kind != 0 && kind != 3)) return false;
         QVector3D e;
         if (kind == 0) e[axis] = 0.6f * L;
@@ -3726,9 +3726,9 @@ bool View::handleGripPoint(int kind, int axis, QPoint& pos) const
     }
     for (Shape* s : shapes)
     {
-        if (!s->hasHandles()) continue;
-        const QVector3D P = s->handlePivot();
-        const float L = handleLength(P);
+        if (!s->hasGizmo()) continue;
+        const QVector3D P = s->gizmoPivot();
+        const float L = gizmoLength(P);
         if (!(L > 0)) continue;
         if (kind == 3)
         {
@@ -3742,13 +3742,13 @@ bool View::handleGripPoint(int kind, int axis, QPoint& pos) const
         }
         else if (kind == 2)
         {
-            pos = toScreen(P + Shape::handleRotation(s->handleRotate()).mapVector(unitAxis(axis)) *
+            pos = toScreen(P + Shape::gizmoRotation(s->gizmoRotate()).mapVector(unitAxis(axis)) *
                                    (kKnobAt * L)).toPoint();
         }
         else
         {
             QVector3D ring[3], u, v;
-            handleAxes(s->handleRotate(), ring);
+            gizmoAxes(s->gizmoRotate(), ring);
             planeBasis(ring[axis], u, v);
             const float t = float(M_PI / 4);
             pos = toScreen(P + (0.62f * L) * (std::cos(t) * u + std::sin(t) * v)).toPoint();
@@ -3772,7 +3772,7 @@ bool View::provisionalVisible() const
     for (const Shape* s : shapes)
     {
         // (the real gizmo is there: it is the one that is drawn, and dragged)
-        if (m_provLines.contains(s->sourceLine()) && s->hasHandles()) return false;
+        if (m_provLines.contains(s->sourceLine()) && s->hasGizmo()) return false;
     }
     return true;
 }
@@ -3781,7 +3781,7 @@ bool View::provisionalGripAt(QPoint pos, int* kind, int* axis) const
 {
     if (!provisionalVisible()) return false;
     const QVector3D P = m_provPivot;
-    const float L = handleLength(P);
+    const float L = gizmoLength(P);
     if (!(L > 0)) return false;
     const QPointF at(pos), p0 = toScreen(P);
     if (std::hypot(at.x() - p0.x(), at.y() - p0.y()) <= 8.0)
@@ -3829,7 +3829,7 @@ void View::drawProvisional(QPainter& painter)
 {
     if (!provisionalVisible()) return;
     const QVector3D P = m_provPivot;
-    const float L = handleLength(P);
+    const float L = gizmoLength(P);
     if (!(L > 0)) return;
     const QPointF p0 = toScreen(P);
     painter.save();
@@ -3848,7 +3848,7 @@ void View::drawProvisional(QPainter& painter)
         painter.setBrush(Qt::NoBrush);
         painter.setPen(QPen(QColor(0, 0, 0, 90), 4.5));
         painter.drawPolyline(poly);
-        painter.setPen(QPen(kHandleColor[a], 2.2));
+        painter.setPen(QPen(kGizmoColor[a], 2.2));
         painter.drawPolyline(poly);
     }
     for (int a = 0; a < 3; ++a)
@@ -3858,7 +3858,7 @@ void View::drawProvisional(QPainter& painter)
         const QPointF q = toScreen(P + e);
         painter.setPen(QPen(QColor(0, 0, 0, 90), 5, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(p0, q);
-        painter.setPen(QPen(kHandleColor[a], 2.5, Qt::SolidLine, Qt::RoundCap));
+        painter.setPen(QPen(kGizmoColor[a], 2.5, Qt::SolidLine, Qt::RoundCap));
         painter.drawLine(p0, q);
         const QPointF dir = q - p0;
         const double l = std::hypot(dir.x(), dir.y());
@@ -3867,14 +3867,14 @@ void View::drawProvisional(QPainter& painter)
         QPolygonF head;
         head << q + u * 6 << q - u * 8 + w * 6 << q - u * 8 - w * 6;
         painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
-        painter.setBrush(kHandleColor[a]);
+        painter.setBrush(kGizmoColor[a]);
         painter.drawPolygon(head);
     }
     for (int a = 0; a < 3; ++a)
     {
         const QPointF q = toScreen(P + unitAxis(a) * (kKnobAt * L));
         painter.setPen(QPen(QColor(0, 0, 0, 140), 1.5));
-        painter.setBrush(kHandleColor[a]);
+        painter.setBrush(kGizmoColor[a]);
         painter.drawRect(QRectF(q.x() - 5.5, q.y() - 5.5, 11, 11));
     }
     painter.setPen(QPen(QColor(0xee, 0xe8, 0xd5), 1.5));
@@ -3903,13 +3903,13 @@ void View::startWaitingGrip()
     }
     for (Shape* s : shapes)
     {
-        if (!m_wait.lines.contains(s->sourceLine()) || !s->hasHandles()) continue;
-        const HandleGrip g{s, m_wait.kind, m_wait.axis};
+        if (!m_wait.lines.contains(s->sourceLine()) || !s->hasGizmo()) continue;
+        const GizmoGrip g{s, m_wait.kind, m_wait.axis};
         const QPoint pos = mapFromGlobal(QCursor::pos());
         m_wait.on = false;
         m_waitTimer.stop();
         unsetCursor();
-        beginHandleDrag(g, pos);
+        beginGizmoDrag(g, pos);
         return;
     }
 }
@@ -3922,7 +3922,7 @@ void View::drawMarkers(QPainter& painter)
     for (Shape* s : shapes)
     {
         if (s->markers().empty()) continue;
-        // The dot of a gizmo (see drawHandles), the same colours; lit up while the set is the model tree's selection
+        // The dot of a gizmo (see drawGizmo), the same colours; lit up while the set is the model tree's selection
         const bool on = s->isSelected();
         painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.0));
         painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
@@ -3938,7 +3938,7 @@ void View::drawMarkers(QPainter& painter)
     painter.restore();
 }
 
-void View::drawHandles(QPainter& painter)
+void View::drawGizmo(QPainter& painter)
 {
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
@@ -3952,16 +3952,16 @@ void View::drawHandles(QPainter& painter)
     // of their pivots; they move them all
     QList<Shape*> members;
     QVector3D groupCenter;
-    const bool group = groupHandles(members, groupCenter);
+    const bool group = groupGizmo(members, groupCenter);
     if (group)
     {
-        const float L = handleLength(groupCenter);
+        const float L = gizmoLength(groupCenter);
         if (L > 0)
         {
             const QPointF p0 = toScreen(groupCenter);
             auto hotG = [&](int kind, int a) {
-                const HandleGrip g{members[0], kind, a, true};
-                return g == handle_hover || (handle_drag && g == handle_active);
+                const GizmoGrip g{members[0], kind, a, true};
+                return g == gizmo_hover || (gizmo_drag && g == gizmo_active);
             };
             for (int a = 0; a < 3; ++a)
             {
@@ -3970,7 +3970,7 @@ void View::drawHandles(QPainter& painter)
                 e[a] = L;
                 const QPointF q = toScreen(groupCenter + e);
                 const bool on = hotG(0, a);
-                QColor c = kHandleColor[a];
+                QColor c = kGizmoColor[a];
                 if (on) c = c.lighter(140);
                 painter.setPen(QPen(QColor(0, 0, 0, 90), on ? 6.5 : 5, Qt::SolidLine, Qt::RoundCap));
                 painter.drawLine(p0, q);
@@ -3991,20 +3991,20 @@ void View::drawHandles(QPainter& painter)
     }
     for (Shape* s : shapes)
     {
-        if (!s->hasHandles() || (group && members.contains(s))) continue;
-        const auto& h = s->handles();
+        if (!s->hasGizmo() || (group && members.contains(s))) continue;
+        const auto& h = s->gizmo();
         const auto& vars = s->getVars();
-        const QVector3D P = s->handlePivot();
-        const float L = handleLength(P);
+        const QVector3D P = s->gizmoPivot();
+        const float L = gizmoLength(P);
         if (!(L > 0)) continue;
         const QPointF p0 = toScreen(P);
         auto hot = [&](int kind, int a) {
-            const HandleGrip g{s, kind, a};
-            return g == handle_hover || (handle_drag && g == handle_active);
+            const GizmoGrip g{s, kind, a};
+            return g == gizmo_hover || (gizmo_drag && g == gizmo_active);
         };
 
         QVector3D ring[3];
-        handleAxes(s->handleRotate(), ring);
+        gizmoAxes(s->gizmoRotate(), ring);
         for (int a = 0; a < 3; ++a)
         {
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
@@ -4020,7 +4020,7 @@ void View::drawHandles(QPainter& painter)
             painter.setBrush(Qt::NoBrush);
             painter.setPen(QPen(QColor(0, 0, 0, 90), on ? 6 : 4.5));
             painter.drawPolyline(poly);
-            QColor c = kHandleColor[a];
+            QColor c = kGizmoColor[a];
             if (on) c = c.lighter(140);
             painter.setPen(QPen(c, on ? 3.5 : 2.2));
             painter.drawPolyline(poly);
@@ -4032,7 +4032,7 @@ void View::drawHandles(QPainter& painter)
             e[a] = L;
             const QPointF q = toScreen(P + e);
             const bool on = hot(0, a);
-            QColor c = kHandleColor[a];
+            QColor c = kGizmoColor[a];
             if (on) c = c.lighter(140);
             painter.setPen(QPen(QColor(0, 0, 0, 90), on ? 6.5 : 5, Qt::SolidLine, Qt::RoundCap));
             painter.drawLine(p0, q);
@@ -4049,13 +4049,13 @@ void View::drawHandles(QPainter& painter)
             painter.drawPolygon(head);
         }
         // The scale knobs: a square on each of the part's own axes
-        const QMatrix4x4 R = Shape::handleRotation(s->handleRotate());
+        const QMatrix4x4 R = Shape::gizmoRotation(s->gizmoRotate());
         for (int a = 0; a < 3; ++a)
         {
             if (!h.scale[a] || !vars.count(h.scale[a])) continue;
             const QPointF q = toScreen(P + R.mapVector(unitAxis(a)) * (kKnobAt * L));
             const bool on = hot(2, a);
-            QColor c = kHandleColor[a];
+            QColor c = kGizmoColor[a];
             if (on) c = c.lighter(140);
             const double r = on ? 6.5 : 5.5;
             painter.setPen(QPen(QColor(0, 0, 0, 140), 1.5));
@@ -4081,12 +4081,12 @@ bool View::ringPoint(QPoint pos, const QVector3D& pivot, const QVector3D& axis, 
     return std::isfinite(out.x()) && std::isfinite(out.y()) && std::isfinite(out.z());
 }
 
-void View::applyHandleNumber(libfive::Tree::Id id, float value)
+void View::applyGizmoNumber(libfive::Tree::Id id, float value)
 {
-    applyHandleNumbers({{id, value}});
+    applyGizmoNumbers({{id, value}});
 }
 
-void View::applyHandleNumbers(const std::map<libfive::Tree::Id, float>& m)
+void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
 {
     emit(varsDragged(QMap<libfive::Tree::Id, float>(m)));
     bool changed = false;
@@ -4118,7 +4118,7 @@ void View::applyHandleNumbers(const std::map<libfive::Tree::Id, float>& m)
     m_overlay->update();
 }
 
-void View::beginHandleDrag(const HandleGrip& g, QPoint pos)
+void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
 {
     if (g.kind == 0 || g.kind == 3)
     {
@@ -4126,132 +4126,132 @@ void View::beginHandleDrag(const HandleGrip& g, QPoint pos)
         // shape, for the gizmo they share -- are noted with the values they have now
         QList<Shape*> members;
         QVector3D groupCenter;
-        if (g.group) { if (!groupHandles(members, groupCenter)) return; }
+        if (g.group) { if (!groupGizmo(members, groupCenter)) return; }
         else members << g.shape;
-        handle_vars.clear();
+        gizmo_vars.clear();
         for (const Shape* s : members)
         {
-            const auto& h = s->handles();
+            const auto& h = s->gizmo();
             const auto& vars = s->getVars();
             for (int a = 0; a < 3; ++a)
             {
                 if (g.kind == 0 && a != g.axis) continue;
                 const auto it = h.move[a] ? vars.find(h.move[a]) : vars.end();
-                if (it != vars.end()) handle_vars.append({h.move[a], a, it->second});
+                if (it != vars.end()) gizmo_vars.append({h.move[a], a, it->second});
             }
         }
-        if (handle_vars.isEmpty()) return;
-        handle_active = g;
-        handle_press = pos;
-        handle_pivot = g.group ? groupCenter : g.shape->handlePivot();
+        if (gizmo_vars.isEmpty()) return;
+        gizmo_active = g;
+        gizmo_press = pos;
+        gizmo_pivot = g.group ? groupCenter : g.shape->gizmoPivot();
         if (g.kind == 0)
         {
-            handle_len = handleLength(handle_pivot);
+            gizmo_len = gizmoLength(gizmo_pivot);
             // (a move arrow is along the world's axis)
-            handle_dir = toScreen(handle_pivot + unitAxis(g.axis) * handle_len) - toScreen(handle_pivot);
-            if (std::hypot(handle_dir.x(), handle_dir.y()) < 1.0) return;    // pointing at the camera
+            gizmo_dir = toScreen(gizmo_pivot + unitAxis(g.axis) * gizmo_len) - toScreen(gizmo_pivot);
+            if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
         }
         else
         {
             // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera
             free_normal = camera.towardViewer().normalized();
-            if (!ringPoint(pos, handle_pivot, free_normal, free_hit0)) return;
+            if (!ringPoint(pos, gizmo_pivot, free_normal, free_hit0)) return;
         }
-        handle_drag = true;
+        gizmo_drag = true;
         this->setCursor(g.kind == 3 ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
         emit(dragStart());
         m_overlay->update();
         return;
     }
-    const auto& h = g.shape->handles();
-    handle_id = g.kind == 1 ? h.rotate[g.axis] : h.scale[g.axis];
+    const auto& h = g.shape->gizmo();
+    gizmo_id = g.kind == 1 ? h.rotate[g.axis] : h.scale[g.axis];
     const auto& vars = g.shape->getVars();
-    const auto it = vars.find(handle_id);
+    const auto it = vars.find(gizmo_id);
     if (it == vars.end()) return;
-    handle_value0 = it->second;
-    handle_active = g;
-    handle_press = pos;
-    handle_pivot = g.shape->handlePivot();
+    gizmo_value0 = it->second;
+    gizmo_active = g;
+    gizmo_press = pos;
+    gizmo_pivot = g.shape->gizmoPivot();
     for (int a = 0; a < 3; ++a)
     {
-        handle_scale_id[a] = h.scale[a];
+        gizmo_scale_id[a] = h.scale[a];
         const auto sv = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
-        handle_scale0[a] = sv == vars.end() ? 1.0f : sv->second;
+        gizmo_scale0[a] = sv == vars.end() ? 1.0f : sv->second;
     }
     if (g.kind == 2)
     {
-        handle_len = handleLength(handle_pivot);
+        gizmo_len = gizmoLength(gizmo_pivot);
         // (a scale knob is along the part's own axis)
-        const QVector3D e = Shape::handleRotation(g.shape->handleRotate()).mapVector(unitAxis(g.axis)) * handle_len;
-        handle_dir = toScreen(handle_pivot + e) - toScreen(handle_pivot);
-        if (std::hypot(handle_dir.x(), handle_dir.y()) < 1.0) return;    // pointing at the camera
+        const QVector3D e = Shape::gizmoRotation(g.shape->gizmoRotate()).mapVector(unitAxis(g.axis)) * gizmo_len;
+        gizmo_dir = toScreen(gizmo_pivot + e) - toScreen(gizmo_pivot);
+        if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
     }
     else
     {
         QVector3D ring[3];
-        handleAxes(g.shape->handleRotate(), ring);
-        handle_axis = ring[g.axis];
+        gizmoAxes(g.shape->gizmoRotate(), ring);
+        gizmo_axis = ring[g.axis];
         QVector3D at;
-        if (!ringPoint(pos, handle_pivot, handle_axis, at)) return;
-        handle_vec = at - handle_pivot;
-        handle_turn = 0;
+        if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
+        gizmo_vec = at - gizmo_pivot;
+        gizmo_turn = 0;
     }
-    handle_drag = true;
+    gizmo_drag = true;
     this->setCursor(Qt::ClosedHandCursor);
     emit(dragStart());
     m_overlay->update();
 }
 
-void View::dragHandle(QPoint pos)
+void View::dragGizmo(QPoint pos)
 {
-    if (handle_active.kind == 0)
+    if (gizmo_active.kind == 0)
     {
-        const double l2 = QPointF::dotProduct(handle_dir, handle_dir);
+        const double l2 = QPointF::dotProduct(gizmo_dir, gizmo_dir);
         if (l2 < 1) return;
-        const double t = QPointF::dotProduct(QPointF(pos - handle_press), handle_dir) / l2;
+        const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
         std::map<libfive::Tree::Id, float> numbers;          // (every shape that moves with the arrow)
-        for (const auto& v : handle_vars) numbers[v.id] = v.value0 + float(t * handle_len);
-        applyHandleNumbers(numbers);
+        for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + float(t * gizmo_len);
+        applyGizmoNumbers(numbers);
     }
-    else if (handle_active.kind == 3)
+    else if (gizmo_active.kind == 3)
     {
         // The dot: where the cursor's ray meets the plane facing the camera, against where it met it at the start
         QVector3D at;
-        if (!ringPoint(pos, handle_pivot, free_normal, at)) return;
+        if (!ringPoint(pos, gizmo_pivot, free_normal, at)) return;
         const QVector3D d = at - free_hit0;
         std::map<libfive::Tree::Id, float> numbers;
-        for (const auto& v : handle_vars) numbers[v.id] = v.value0 + d[v.axis];
-        applyHandleNumbers(numbers);
+        for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + d[v.axis];
+        applyGizmoNumbers(numbers);
     }
-    else if (handle_active.kind == 2)
+    else if (gizmo_active.kind == 2)
     {
-        const double l2 = QPointF::dotProduct(handle_dir, handle_dir);
+        const double l2 = QPointF::dotProduct(gizmo_dir, gizmo_dir);
         if (l2 < 1) return;
         // (the knob sits at kKnobAt of the arrow: pulling it out by a share of that grows the part by it)
-        const double t = QPointF::dotProduct(QPointF(pos - handle_press), handle_dir) / l2;
+        const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
         const float factor = float(1.0 + t / kKnobAt);
         std::map<libfive::Tree::Id, float> numbers;
         const bool together = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
         for (int a = 0; a < 3; ++a)
         {
-            if (!handle_scale_id[a]) continue;
-            if (!together && a != handle_active.axis) continue;
-            numbers[handle_scale_id[a]] = std::max(0.01f, handle_scale0[a] * factor);
+            if (!gizmo_scale_id[a]) continue;
+            if (!together && a != gizmo_active.axis) continue;
+            numbers[gizmo_scale_id[a]] = std::max(0.01f, gizmo_scale0[a] * factor);
         }
-        if (!numbers.empty()) applyHandleNumbers(numbers);
+        if (!numbers.empty()) applyGizmoNumbers(numbers);
     }
     else
     {
         QVector3D at;
-        if (!ringPoint(pos, handle_pivot, handle_axis, at)) return;
-        const QVector3D now = at - handle_pivot;
-        if (now.length() < 1e-9f || handle_vec.length() < 1e-9f) return;
+        if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
+        const QVector3D now = at - gizmo_pivot;
+        if (now.length() < 1e-9f || gizmo_vec.length() < 1e-9f) return;
         // the turn since the last move (small, so never across +-180)
-        const float s = QVector3D::dotProduct(handle_axis, QVector3D::crossProduct(handle_vec, now));
-        const float c = QVector3D::dotProduct(handle_vec, now);
-        handle_turn += float(std::atan2(s, c) * 180.0 / M_PI);
-        handle_vec = now;
-        applyHandleNumber(handle_id, handle_value0 + handle_turn);
+        const float s = QVector3D::dotProduct(gizmo_axis, QVector3D::crossProduct(gizmo_vec, now));
+        const float c = QVector3D::dotProduct(gizmo_vec, now);
+        gizmo_turn += float(std::atan2(s, c) * 180.0 / M_PI);
+        gizmo_vec = now;
+        applyGizmoNumber(gizmo_id, gizmo_value0 + gizmo_turn);
     }
 }
 

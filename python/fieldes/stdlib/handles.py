@@ -1,39 +1,48 @@
-''' Handles: edit a shape -- an imported part too -- by dragging in FielDes's viewport.
+''' Handles and the gizmo: edit a shape -- an imported part too -- by dragging in FielDes's viewport.
 
     Two ways of editing by dragging work together, and the first has priority where they meet:
 
-      the gizmo    the part's own move arrows, rotation rings and scale knobs: `handles()` writes, under the shape's
+      the gizmo    the part's own move arrows, rotation rings and scale knobs: `gizmo()` writes, under the shape's
                    definition,
 
-                       part = handles(part, move=(var(0), var(0), var(0)),
-                                      rotate=(var(0), var(0), var(0)),
-                                      scale=(var(1), var(1), var(1)))
+                       part = gizmo(
+                           part,
+                           move=(var(0), var(0), var(0)),
+                           rotate=(var(0), var(0), var(0)),
+                           scale=(var(1), var(1), var(1)),
+                       )
 
                    so what the gizmo does is ordinary script text, like any dragged var().  The shape is `part`
                    scaled about its centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown
-                   is the `mode` of that line (the model tree's gizmo button, key E, goes through them):
+                   is the `mode` of that call (the model tree's gizmo button, key E, goes through them):
 
                        'click'   (the default) the gizmo is shown while the shape is selected, i.e. after you click it
                        'never'   it is never shown, so that it cannot get in the way
                        'always'  it is shown on the shape whether it is selected or not
 
-      handles      FielDes's own handles: hover a surface of the shape and drag it.  This is always there, whatever
-                   the mode of the gizmo.  Any shape with `var()` numbers has them; for a shape written with plain
-                   numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
-                   `expose()` makes the numbers that place its surfaces variables:
+      handles      the handles on the shape's own surfaces: hover a surface of the shape and drag it.  They are always
+                   there, whatever the mode of the gizmo.  Any shape with `var()` numbers has them; for a shape written
+                   with plain numbers -- a primitive, or a part imported from a STEP file, which is made of primitives --
+                   `handles()` makes the numbers that place its surfaces variables:
 
-                       part = expose(part, [var(6), var(40), ...])
+                       part = handles(
+                           part,
+                           [
+                               var(6),
+                               var(40),
+                           ],
+                       )
 
                    Dragging a face changes the number of that face (a plane's position, a radius) in the script
-                   text.  FielDes writes the line itself when you select the shape.
+                   text.  FielDes writes the call itself when you select the shape.
 
     A lock button beside it (key R) is a separate switch: a locked shape cannot be dragged at all, neither by the
-    gizmo nor by its surfaces, and keeps its gizmo mode, which comes back when it is unlocked:
+    gizmo nor by its handles, and keeps its gizmo mode, which comes back when it is unlocked:
 
                    part = lock(part)
 
-    Nothing is stored anywhere but in the script: delete the `expose(...)` and `handles(...)` lines of a part
-    (FielDes's Reimport does) and it is the file's version again; the `lock(...)` line only keeps it from being
+    Nothing is stored anywhere but in the script: delete the `handles(...)` and `gizmo(...)` calls of a part
+    (FielDes's Reimport does) and it is the file's version again; the `lock(...)` call only keeps it from being
     dragged. '''
 import ctypes
 import math
@@ -43,7 +52,7 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.transforms import move as _move, rotate_x, rotate_y, rotate_z, scale_xyz, _lazy_once
 
-__all__ = ['handles', 'expose', 'lock']
+__all__ = ['gizmo', 'handles', 'lock']
 
 MODES = ('click', 'never', 'always')
 
@@ -106,7 +115,7 @@ def _placed_box(box, centre, move, rotate, scale):
     return tuple(tuple(v[i] + m[i] for i in range(3)) for v in (lo, hi))
 
 
-def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
+def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
         scale: (x, y, z) factors about the shape's centre, `rotate`: (x, y, z)
@@ -115,26 +124,26 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
         them: FielDes's model tree does that for you.
         about: the centre (default: the middle of the shape's box)
         mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
-        'always'.  The shape's own surfaces (see expose()) can be dragged whatever the mode, and the gizmo has
+        'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
         priority where it is shown.
         To make a shape undraggable, lock it: `shape = lock(shape)`. '''
     if mode is None:
         mode = 'click'
     if mode in ('gizmo', 'handles'):
-        raise ValueError("handles(): mode='%s' is gone: a shape's surfaces can always be dragged now, and the gizmo's "
+        raise ValueError("gizmo(): mode='%s' is gone: a shape's surfaces can always be dragged now, and the gizmo's "
                          "mode is 'click' (shown while the shape is selected: the default), 'never' or 'always'" % mode)
     if mode not in MODES:
-        raise ValueError("handles(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
+        raise ValueError("gizmo(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
-        raise ValueError('handles(): move=, rotate= and scale= take three numbers each')
+        raise ValueError('gizmo(): move=, rotate= and scale= take three numbers each')
     if not isinstance(shape, Shape) and callable(getattr(shape, '_display', None)):
         # The result of an analysis or an optimisation is not a shape: it has no surface of its own to place (what it shows is made from
         # its part).  Placed by nothing it is the result itself; placed by something, there is nothing it could mean
         nums = _var_numbers(list(move) + list(rotate) + list(scale))
         if nums is not None and all(n == 0 for n in nums[:6]) and all(n == 1 for n in nums[6:]):
             return shape
-        raise TypeError('handles(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
-                        'Place the part it was made from (handles() on that part) -- the result follows it.' % type(shape).__name__)
+        raise TypeError('gizmo(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
+                        'Place the part it was made from (gizmo() on that part) -- the result follows it.' % type(shape).__name__)
     c = tuple(about) if about is not None else _centre_of(shape)
     to_rad = math.pi / 180.0
     out = shape
@@ -161,7 +170,7 @@ def handles(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None
             out._bounds = placed
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
-    out._handles = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
+    out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
     return out
 
 
@@ -170,7 +179,7 @@ def lock(shape):
         line is deleted.  It is the shape itself in every other way (its bounds, handles, colours and exact regions
         stay), and the way of editing it had (gizmo or handles) comes back when it is unlocked.
 
-        Write it under a shape's definition, with its handles() and expose() lines:
+        Write it under a shape's definition, with its gizmo() and handles() calls:
 
             part = lock(part)
 
@@ -230,31 +239,31 @@ def _float32_text(v):
     return repr(v)
 
 
-def _exposed_count(shape):
+def _handle_count(shape):
     fn = getattr(lib, 'libfive_tree_expose_count', None)
     if fn is None:
-        raise RuntimeError('this FielDes library is too old for expose()')
+        raise RuntimeError('this FielDes library is too old for handles()')
     return fn(shape.ptr)
 
 
-def exposed_values(shape):
-    ''' The numbers expose() makes variables, in its order, as the text to write them as '''
-    n = _exposed_count(shape)
+def handle_values(shape):
+    ''' The numbers handles() makes variables, in its order, as the text to write them as '''
+    n = _handle_count(shape)
     buf = (ctypes.c_float * max(1, n))()
     lib.libfive_tree_expose_values(shape.ptr, buf)
     return [_float32_text(buf[i]) for i in range(n)]
 
 
-def _exposed_distance(shape, out, values, get):
-    ''' The distance for the offsets, shells and thickenings of an exposed part: the exact distance of the part with
+def _handle_distance(shape, out, values, get):
+    ''' The distance for the offsets, shells and thickenings of a part with handles: the exact distance of the part with
         the numbers it has now, and what dragging them changes after that (the change of the part's own field, which
         follows the variables). With the part's own numbers that is its exact distance. Faces that were dragged
         before the script was run give the exact distance of the part as edited (meshed again, cached by content). '''
     base, ref = get(), shape
     nums = _var_numbers(values)
-    orig = [float(x) for x in exposed_values(shape)]
+    orig = [float(x) for x in handle_values(shape)]
     if nums is not None and len(nums) == len(orig) and             any(abs(a - b) > 1e-4 * max(1.0, abs(b)) for a, b in zip(nums, orig)):
-        ref = expose(shape, nums)                       # the part as edited, with plain numbers
+        ref = handles(shape, nums)                       # the part as edited, with plain numbers
         b = getattr(shape, '_bounds', None)
         if b:
             pad = 0.15 * max(float(b[1][i]) - float(b[0][i]) for i in range(3))
@@ -274,7 +283,7 @@ def forget_literals():
 
 
 def _follow_literals(shape, values):
-    ''' The number you change in the call of a shape that has been dragged wins.  `expose` holds the dragged numbers (the list of var()s below the
+    ''' The number you change in the call of a shape that has been dragged wins.  `handles` holds the dragged numbers (the list of var()s below the
         call), and a number written in the call -- `cylinder(15, 10, ...)` -- is only what the shape was made with: editing it did nothing, the list
         below the call went on saying what the shape is.  Here the run notices that a number of the call is not what it was at the last run while
         the list is as it was (nothing was dragged): the number of the call is taken, and the list is rewritten to say it, by the editor, once the
@@ -285,7 +294,7 @@ def _follow_literals(shape, values):
         return
     entries = getattr(host, '__vars', None) or []
     where = {id(e[0]): e for e in entries}
-    own = [float(x) for x in exposed_values(shape)]
+    own = [float(x) for x in handle_values(shape)]
     for v, c in zip(values, own):
         entry = where.get(id(v))
         if entry is None:
@@ -306,8 +315,8 @@ def _follow_literals(shape, values):
             pass
 
 
-def expose(shape, values):
-    ''' A shape whose surfaces can be dragged: the numbers that place its
+def handles(shape, values=None, **removed):
+    ''' A shape whose surfaces have handles: the numbers that place its
         surfaces -- a plane's position, a radius, the faces of a box -- are
         replaced by `values`, in the order of their appearance in the shape
         (FielDes writes them as var(...) with the shape's own numbers, which
@@ -317,12 +326,20 @@ def expose(shape, values):
 
         With the shape's own numbers the result is the very same shape.  If the
         shape has a different number of them (the part was changed in the STEP
-        file) it raises ValueError: reimport the part. '''
+        file) it raises ValueError: reimport the part.
+
+        (This is what expose() was called.  The gizmo -- the arrows, rings and knobs
+        that move, turn and scale a shape -- is gizmo(shape, move=..., rotate=..., scale=...).) '''
+    if removed or values is None or isinstance(values, (str, bytes)):
+        raise TypeError('handles(shape, [numbers]) makes the surfaces of a shape draggable: its second argument is the list of numbers that '
+                        'place them (FielDes writes it when the shape is selected).  It does not take %s -- the gizmo, the arrows that move, '
+                        'turn and scale a shape, is gizmo(shape, move=(...), rotate=(...), scale=(...))'
+                        % ('move=, rotate=, scale=, about= or mode=' if removed else 'no numbers'))
     values = list(values)
-    n = _exposed_count(shape)
+    n = _handle_count(shape)
     if len(values) != n:
-        raise ValueError('expose(): the shape has %d numbers to expose, %d were given -- the part has '
-                         'changed since (Reimport it in the model tree)' % (n, len(values)))
+        raise ValueError('handles(): the shape has %d numbers that place its surfaces, %d were given -- the part has changed since '
+                         '(Reimport it in the model tree).  (The gizmo is gizmo(shape, move=..., rotate=..., scale=...))' % (n, len(values)))
     _follow_literals(shape, values)
     # (the wrapped numbers stay alive until the call has returned: plain numbers wrap to shapes
     # that would otherwise be freed with their pointers still in `arr`)
@@ -330,13 +347,13 @@ def expose(shape, values):
     arr = (ctypes.c_void_p * max(1, n))(*[w.ptr for w in wrapped])
     p = lib.libfive_tree_expose(shape.ptr, arr, n)
     if not p:
-        raise ValueError('expose(): the shape could not be rebuilt with those numbers')
+        raise ValueError('handles(): the shape could not be rebuilt with those numbers')
     out = Shape(p)
     _carry(out, shape)
     # an offset, a shell or a thickening of it (fields._dist) uses the exact distance of the part
     get = getattr(shape, '_distance_of', None)
     if get is not None:
-        out._distance_of = _lazy_once(lambda: _exposed_distance(shape, out, values, get))
+        out._distance_of = _lazy_once(lambda: _handle_distance(shape, out, values, get))
     # (what the importer, roi() and the viewport read off a part: its box, its colouring, its exact regions)
     from fieldes.stdlib import cad_import
     for name in ('_bounds', '_render_hint') + tuple(cad_import._CARRIED):

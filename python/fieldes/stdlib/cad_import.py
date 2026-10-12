@@ -1027,8 +1027,8 @@ def _reconstruct_step(path, cache=True, units='mm', rev=None, auto_exclude=False
             shape._exact_source = _ExactSource(step_path, ref[0], ref[1], scale)
     for shape, bounds in parts:
         # the part as it is in the file (fresh or from the cache): its offsets, shells and thickenings use its exact
-        # distance (fields._dist), made when one is asked for. Placed copies (transforms, handles) and exposed
-        # copies (expose) derive theirs from it.
+        # distance (fields._dist), made when one is asked for. Placed copies (transforms, gizmo) and copies with
+        # handles (handles) derive theirs from it.
         if isinstance(shape, Shape) and not isinstance(shape, FailedPart):
             shape._distance_of = _distance_getter(shape, bounds)
     if auto_exclude:
