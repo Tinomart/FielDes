@@ -62,8 +62,22 @@ path = spline(
     [q1, q2, q3, q4],
 )
 path
+# The profile of the tube is a sketch as well: four spline points round the origin, the face they enclose. Move one of them, or pull a point out of its outline, and the tube follows.
+s1 = point(3, 0, 0)
+s1
+s2 = point(0, 3, 0)
+s2
+s3 = point(-3, 0, 0)
+s3
+s4 = point(0, -3, 0)
+s4
+profile = sketch(
+    [s1, s2, s3, s4],
+    smooth=True,
+)
+profile
 tube = path_extrude(
-    circle(3),
+    profile,
     path,
 )
 tube
