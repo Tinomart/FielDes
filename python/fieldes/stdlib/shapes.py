@@ -16,6 +16,21 @@ from fieldes.shape import Shape
 
 import ctypes
 
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _bounded(shape, lo, hi):
+    ''' `shape`, told its own extent -- the box it fills, (x, y, z) low and high corners -- when the numbers it is made of are plain numbers.  The gizmo is
+        put at the middle of that box, and the region a model is shown in is worked out from it, at once and exactly: without it the extent is searched for
+        (and a small shape in a large search is not found in the time there is, which put the gizmo of a new box at the origin) '''
+    corners = list(lo) + list(hi)
+    if len(corners) == 6 and all(_number(c) and c == c and abs(c) < 1e12 for c in corners):
+        shape._bounds = (tuple(float(min(corners[i], corners[3 + i])) for i in range(3)), tuple(float(max(corners[i], corners[3 + i])) for i in range(3)))
+    return shape
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------- 2D
 
 stdlib.circle.argtypes = [tfloat, tvec2]
@@ -24,9 +39,12 @@ def circle(r, center=(0, 0)):
     """ A 2D circle with the given radius and optional center
     """
     args = [Shape.wrap(r), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.circle(
+    out = Shape(stdlib.circle(
         args[0].ptr,
         tvec2(*[a.ptr for a in args[1]])))
+    if _number(r) and len(center) == 2 and all(_number(c) for c in center):
+        _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))
+    return out
 
 stdlib.ring.argtypes = [tfloat, tfloat, tvec2]
 stdlib.ring.restype = libfive_tree
@@ -34,10 +52,13 @@ def ring(ro, ri, center=(0, 0)):
     """ A 2D ring with the given outer/inner radii and optional center
     """
     args = [Shape.wrap(ro), Shape.wrap(ri), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.ring(
+    out = Shape(stdlib.ring(
         args[0].ptr,
         args[1].ptr,
         tvec2(*[a.ptr for a in args[2]])))
+    if _number(ro) and len(center) == 2 and all(_number(c) for c in center):
+        _bounded(out, (center[0] - ro, center[1] - ro, 0), (center[0] + ro, center[1] + ro, 0))
+    return out
 
 stdlib.polygon.argtypes = [tfloat, ctypes.c_int, tvec2]
 stdlib.polygon.restype = libfive_tree
@@ -45,10 +66,13 @@ def polygon(r, n, center=(0, 0)):
     """ A polygon with center-to-vertex distance r and n sides
     """
     args = [Shape.wrap(r), n, list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.polygon(
+    out = Shape(stdlib.polygon(
         args[0].ptr,
         args[1],
         tvec2(*[a.ptr for a in args[2]])))
+    if _number(r) and len(center) == 2 and all(_number(c) for c in center):
+        _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))     # (the corners are within r of the centre: a box that holds it)
+    return out
 
 stdlib.rectangle_exact.argtypes = [tvec2, tvec2]
 stdlib.rectangle_exact.restype = libfive_tree
@@ -56,9 +80,12 @@ def rectangle(a, b):
     """ A rectangle with the given bounding corners (a true distance outside it: an offset of it is a rounded rectangle)
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    return Shape(stdlib.rectangle_exact(
+    out = Shape(stdlib.rectangle_exact(
         tvec2(*[a.ptr for a in args[0]]),
         tvec2(*[a.ptr for a in args[1]])))
+    if len(a) == 2 and len(b) == 2:
+        _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+    return out
 
 stdlib.rounded_rectangle.argtypes = [tvec2, tvec2, tfloat]
 stdlib.rounded_rectangle.restype = libfive_tree
@@ -66,10 +93,13 @@ def rounded_rectangle(a, b, r):
     """ A rectangle with rounded corners
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(r)]
-    return Shape(stdlib.rounded_rectangle(
+    out = Shape(stdlib.rounded_rectangle(
         tvec2(*[a.ptr for a in args[0]]),
         tvec2(*[a.ptr for a in args[1]]),
         args[2].ptr))
+    if len(a) == 2 and len(b) == 2:
+        _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+    return out
 
 stdlib.triangle.argtypes = [tvec2, tvec2, tvec2]
 stdlib.triangle.restype = libfive_tree
@@ -77,10 +107,13 @@ def triangle(a, b, c):
     """ A 2D triangle
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), list([Shape.wrap(i) for i in c])]
-    return Shape(stdlib.triangle(
+    out = Shape(stdlib.triangle(
         tvec2(*[a.ptr for a in args[0]]),
         tvec2(*[a.ptr for a in args[1]]),
         tvec2(*[a.ptr for a in args[2]])))
+    if all(len(p) == 2 and all(_number(v) for v in p) for p in (a, b, c)):
+        _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
+    return out
 
 # ---------------------------------------------------------------------------------------------------------------------------------------- 3D
 
@@ -90,9 +123,12 @@ def box(a, b):
     """ A box between two opposite corners (a true distance outside it: an offset of it has rounded edges)
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    return Shape(stdlib.box_exact(
+    out = Shape(stdlib.box_exact(
         tvec3(*[a.ptr for a in args[0]]),
         tvec3(*[a.ptr for a in args[1]])))
+    if len(a) == 3 and len(b) == 3:
+        _bounded(out, a, b)
+    return out
 
 stdlib.rounded_box.argtypes = [tvec3, tvec3, tfloat]
 stdlib.rounded_box.restype = libfive_tree
@@ -100,10 +136,13 @@ def rounded_box(a, b, r):
     """ Rounded box with the given bounds and radius (as a 0-1 fraction)
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(r)]
-    return Shape(stdlib.rounded_box(
+    out = Shape(stdlib.rounded_box(
         tvec3(*[a.ptr for a in args[0]]),
         tvec3(*[a.ptr for a in args[1]]),
         args[2].ptr))
+    if len(a) == 3 and len(b) == 3:
+        _bounded(out, a, b)
+    return out
 
 stdlib.sphere.argtypes = [tfloat, tvec3]
 stdlib.sphere.restype = libfive_tree
@@ -111,9 +150,12 @@ def sphere(radius, center=(0, 0, 0)):
     """ A sphere with the given radius and (optional) center
     """
     args = [Shape.wrap(radius), list([Shape.wrap(i) for i in center])]
-    return Shape(stdlib.sphere(
+    out = Shape(stdlib.sphere(
         args[0].ptr,
         tvec3(*[a.ptr for a in args[1]])))
+    if _number(radius) and len(center) == 3 and all(_number(c) for c in center):
+        _bounded(out, [c - radius for c in center], [c + radius for c in center])
+    return out
 
 stdlib.half_space.argtypes = [tvec3, tvec3]
 stdlib.half_space.restype = libfive_tree
@@ -132,10 +174,13 @@ def cylinder(r, h, base=(0, 0, 0)):
     """ A cylinder with the given radius and height, standing along z on the (optional) base position
     """
     args = [Shape.wrap(r), Shape.wrap(h), list([Shape.wrap(i) for i in base])]
-    return Shape(stdlib.cylinder_z(
+    out = Shape(stdlib.cylinder_z(
         args[0].ptr,
         args[1].ptr,
         tvec3(*[a.ptr for a in args[2]])))
+    if _number(r) and _number(h) and len(base) == 3 and all(_number(c) for c in base):
+        _bounded(out, (base[0] - r, base[1] - r, base[2]), (base[0] + r, base[1] + r, base[2] + h))
+    return out
 
 stdlib.cone_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.cone_z.restype = libfive_tree
@@ -143,10 +188,13 @@ def cone(radius, height, base=(0, 0, 0)):
     """ A cone with the given base radius and height, standing along z on the (optional) base position
     """
     args = [Shape.wrap(radius), Shape.wrap(height), list([Shape.wrap(i) for i in base])]
-    return Shape(stdlib.cone_z(
+    out = Shape(stdlib.cone_z(
         args[0].ptr,
         args[1].ptr,
         tvec3(*[a.ptr for a in args[2]])))
+    if _number(radius) and _number(height) and len(base) == 3 and all(_number(c) for c in base):
+        _bounded(out, (base[0] - radius, base[1] - radius, base[2]), (base[0] + radius, base[1] + radius, base[2] + height))
+    return out
 
 stdlib.pyramid_z.argtypes = [tvec2, tvec2, tfloat, tfloat]
 stdlib.pyramid_z.restype = libfive_tree
@@ -154,11 +202,14 @@ def pyramid(a, b, zmin, height):
     """ A pyramid defined by its base rectangle, lower Z value, and height
     """
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(zmin), Shape.wrap(height)]
-    return Shape(stdlib.pyramid_z(
+    out = Shape(stdlib.pyramid_z(
         tvec2(*[a.ptr for a in args[0]]),
         tvec2(*[a.ptr for a in args[1]]),
         args[2].ptr,
         args[3].ptr))
+    if len(a) == 2 and len(b) == 2 and _number(zmin) and _number(height):
+        _bounded(out, (a[0], a[1], zmin), (b[0], b[1], zmin + height))
+    return out
 
 stdlib.torus_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.torus_z.restype = libfive_tree

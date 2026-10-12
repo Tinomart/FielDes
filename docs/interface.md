@@ -157,6 +157,9 @@ model had been right-clicked in the viewport:
   selection spreads from the place you click on the surface) and **Delete**, written for that model. **Lattice** is a section of its own
   (not a group of the operations): the operations that fill a model with a lattice, the three steps of a foam (random points, then a Voronoi or Delaunay lattice made of them) and a menu for every family of
   cells, each entry making that cell (see [Lattices](lattices.md#in-the-menus-and-the-model-tree)); on empty space it is **Add lattice**.
+- **A right-click on a model in the viewport also has the *New ...* entries of empty space** (New 3D shape, New 2D shape, New point ...), made at the place you clicked on its surface -- a model can be all
+  there is under the cursor, and somewhere to put a point is not only empty space. **A point made from the menu is exactly where the cursor was**: on the surface under it, else in the plane through the origin that faces
+  the view (on the work plane while its view is open), not rounded to a grid and not moved into the drawn region (a dot is drawn wherever it is).
 - On a line of the script that defines no model (a blank line, a comment, the imports): the menu of empty space, **New 3D shape**
   and the rest, and what you make is written **under that line** (a line that is indented, opens a block or is in the middle of a
   call would be cut in two, so the new line goes to the end of the script instead). In the empty space of the tree, and in the
@@ -420,7 +423,7 @@ read out under them. **Turning the camera with the middle mouse button leaves th
 by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a sketch moves all its points together, any other
 2D shape moves through its own move numbers.
 
-**What a click does.** The three buttons -- **Line**, **Spline** and **Point** -- pick what a click draws; `E` goes round them. **None of them on is not drawing**, and there is no button for it: the view opens that way, and clicks work as they do
+**What a click does.** The three buttons -- **Line**, **Spline** and **Point** -- pick what a click draws; `E` goes round them. **None of them on is not drawing**, and there is no button for it: the view **opens in Line**, so a click draws at once, and with none on clicks work as they do
 everywhere -- things are selected, moved, turned and scaled. Click the button that is on to turn it off, or press `Q`. You can tell which you are in: while drawing the pointer is a crosshair and a **marker shows the point a click will put down**
 -- a **square** for a line (a corner), a **round point with a ring** for a spline, a plain **dot** for a point, as the points of the script look -- the points already put down have the same marks, and the line under the buttons says what a click does. Not
 drawing there is no marker, no readout of the cursor's place, and the pointer is the usual arrow. In a drawing mode **every click puts a point down**, also on a point that is already there -- the line attaches to it, it does not select it -- and

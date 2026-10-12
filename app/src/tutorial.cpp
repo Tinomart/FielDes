@@ -776,7 +776,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Welcome to FielDes");
-        s.text = T("A short tour of the basics: two minutes. You can skip any step, or the whole tour.");
+        s.text = T("A short tour of the basics. You can skip any step, or the whole tour.");
         s.hint = T("It starts again from Help ▸ Guided tour.");
         s.welcome = true;
         s.place = Center;
@@ -1405,7 +1405,227 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
-    // 20: the property tab of a result (a model of its own: one beam, held at one end and pulled at the other)
+    // The model of the steps on sketches: four points and the sketch through them (`smooth`: the corner at the top right is a spline point)
+    auto sketchModel = [](bool smooth) {
+        return QString("a = point(-20, -12, 0)\na\nb = point(20, -12, 0)\nb\n") +
+               (smooth ? "c = point(20, 12, 0, smooth=True)\n" : "c = point(20, 12, 0)\n") +
+               "c\nd = point(-20, 12, 0)\nd\nplate = sketch(\n    [a, b, c, d],\n    smooth=False,\n)\nplate";
+    };
+    // (the sketch's points: how many the call lists)
+    auto sketchPoints = [this]() {
+        static const QRegularExpression re(R"(plate\s*=\s*sketch\(\s*\[([^\]]*)\])");
+        const auto m = re.match(m_editor->getScript());
+        return m.hasMatch() ? int(m.captured(1).count(',')) + 1 : 0;
+    };
+
+    // 20: the work plane: a grid to draw a shape on (Shift+W; a click puts a point down, the first one closes it)
+    {
+        Step s;
+        s.title = T("Draw on a work plane");
+        s.text = T("Press Shift+W in the viewport for a work plane: a grid to draw on. Click to put down the corners of a shape, then click the first one to close it.")
+                 + "\n\n" + T("E picks line, spline or point; Q stops drawing.");
+        s.hint = T("The plane opens in Line, so the first click draws. Nothing is written until the shape is closed. Or press Show me.");
+        s.code = linesWith("sketch\\(|^\\w+_p\\d+ = ");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.keys = true;
+        s.group = "workplane";
+        s.closeRows = true;
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            if (QAction* a = sectionAction()) a->setChecked(false);
+            useScript(tourHeader(QString()) + "pad = box((-30, -22, -4), (30, 22, 0))\npad");
+            scene()->clearSelection();
+            m_view->setWorkPlaneOpen(false);
+            m_view->standardView(View::VIEW_TOP);              // (the plane that opens is parallel to the view: the one the points go on)
+            m_view->setFocus(Qt::OtherFocusReason);            // (Shift+W acts while the viewport has the keyboard)
+        };
+        s.done = [this] { return m_editor->getScript().contains("sketch("); };
+        s.doneNote = T("Nice. The points and the sketch are in the script, as plain numbers.");
+        s.show = [this](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Shift+W";                 // (the shortcut is pressed: a key cap by the cursor says so)
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(900, [this, over] {
+                m_view->setWorkPlaneOpen(true);
+                m_busy = false;
+                hideCursor();
+                // (the corners of a rectangle, and the first one again: it closes the shape)
+                const QVector<QVector3D> corners{{-18, -12, 0}, {18, -12, 0}, {18, 12, 0}, {-18, 12, 0}, {-18, -12, 0}};
+                auto click = std::make_shared<std::function<void(int)>>();
+                *click = [this, corners, click, over](int i) {
+                    if (i >= corners.size()) { over(); return; }
+                    fakeClick(m_view, m_view->screenPoint(corners[i]), Qt::LeftButton, [click, i] { (*click)(i + 1); });
+                };
+                after(700, [click] { (*click)(0); });
+            });
+        };
+        s.leave = [this] { m_view->setWorkPlaneOpen(false); };
+        add(s);
+    }
+    // 21: a point pulled out of an edge
+    {
+        Step s;
+        s.title = T("Pull a point out of an edge");
+        s.text = T("A 2D shape has a blue outline. Press an edge and drag: a new point comes out of it and becomes part of the shape.");
+        s.hint = T("The new point is a model of its own, put in the list of the sketch. Or press Show me.");
+        s.code = linesWith("^plate =|^\\s+\\[\\w+");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.group = "sketch";
+        s.closeRows = true;
+        s.enter = [this, scene, sketchModel] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + sketchModel(false));
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_TOP);
+        };
+        s.done = [sketchPoints] { return sketchPoints() >= 5; };
+        s.doneNote = T("Nice. The sketch has another point.");
+        s.show = [this](std::function<void()> over) {
+            const QPoint from = m_view->screenPoint(QVector3D(0, 12, 0));       // (the middle of the top edge)
+            if (!m_view->isVisible() || from.isNull()) { over(); return; }
+            fakeDrag(m_view, from, from + QPoint(0, -48), 900, over);
+        };
+        add(s);
+    }
+    // 22: a corner and a spline point
+    {
+        Step s;
+        s.title = T("Corner or spline point");
+        s.text = T("Double-click a point: a corner (a square dot, a hard edge) becomes a spline point (a round dot with a ring), and the outline goes smoothly through it. Again, and it is a corner.");
+        s.hint = T("It is written as smooth=True on the point. Or press Show me.");
+        s.code = linesWith("smooth=|^\\w+ = point\\(");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.group = "sketch";
+        s.closeRows = true;
+        s.enter = [this, scene, sketchModel] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + sketchModel(false));
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_TOP);
+        };
+        s.done = [this] { return m_editor->getScript().contains(QRegularExpression(R"(point\([^)]*smooth=True)")); };
+        s.doneNote = T("Nice. The outline goes smoothly through that point.");
+        s.show = [this](std::function<void()> over) {
+            const QPoint at = m_view->screenPoint(QVector3D(20, 12, 0));
+            m_busy = true;
+            setCursor(m_view->mapTo(m_window, at));
+            sendMouse(m_view, QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+            after(700, [this, at, over] {
+                for (const QEvent::Type t : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease, QEvent::MouseButtonDblClick, QEvent::MouseButtonRelease})
+                    sendMouse(m_view, t, at, Qt::LeftButton, t == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton);
+                after(900, [this, over] { m_busy = false; hideCursor(); over(); });
+            });
+        };
+        add(s);
+    }
+    // 23: the gizmo of a point
+    {
+        Step s;
+        s.title = T("The gizmo of a point");
+        s.text = T("Select a point and press its dot to move it, in the plane of the sketch. The gold ring scales it, evenly; the blue ring (on a spline point) turns the direction the curve leaves it.");
+        s.hint = T("A corner has neither ring: it has no direction and no strength. In a sweep along a line, the scale of a point is how thick the sweep is there.");
+        s.code = linesWith("^c = |^c$");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.group = "sketch";
+        s.closeRows = true;
+        s.undone = true;
+        s.enter = [this, scene, sketchModel] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + sketchModel(true));
+            m_view->standardView(View::VIEW_TOP);
+            scene()->selectModel("c");
+        };
+        add(s);
+    }
+    // 24: the other gizmo, with Shift
+    {
+        Step s;
+        s.title = T("Hold Shift");
+        s.text = T("Hold Shift with a model selected: the arrows become flat squares that move it along a plane, and the three scale squares become one gold ring that scales it evenly.");
+        s.hint = T("Release Shift for the normal gizmo. Or press Show me.");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.closeRows = true;
+        s.undone = true;
+        s.enter = [this] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            m_view->holdShift(false);
+            selectAgain({"drilled"}, 12);           // (the step's model replaces the one before: it is selected once it is in the tree)
+        };
+        s.show = [this](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Shift";
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(600, [this, over] {
+                m_view->holdShift(true);
+                after(2600, [this, over] { m_view->holdShift(false); m_busy = false; hideCursor(); over(); });
+            });
+        };
+        s.leave = [this] { m_view->holdShift(false); };
+        add(s);
+    }
+    // 25: a copy, and a linked copy
+    {
+        Step s;
+        s.title = T("Copy or link");
+        s.text = T("Shift+D copies the selected model. Ctrl+D links it: the copy IS the model, follows every change of it, and can only be moved and rotated.")
+                 + "\n\n" + T("Select bolt and press Ctrl+D.");
+        s.hint = T("The copy is written bolt_2 = instance(bolt) with # shadow: bolt: bolt keeps its own row and the copy shows a faded shadow of it. Or press Show me.");
+        s.code = linesWith("^bolt\\w* =|^bolt\\w*$|#\\s*shadow:");
+        s.holes = both;
+        s.place = Right;
+        s.keys = true;
+        s.group = "copies";
+        s.closeRows = true;
+        s.enter = [this] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + "bolt = cylinder(3, 14, (0, 0, 0))\nbolt");
+            m_view->standardView(View::VIEW_ISO);
+            selectAgain({"bolt"}, 12);              // (it is in the tree once the script has run)
+            m_view->setFocus(Qt::OtherFocusReason);            // (Ctrl+D acts while the viewport has the keyboard)
+        };
+        s.done = [this] { return m_editor->getScript().contains("instance("); };
+        s.doneNote = T("Nice. bolt_2 is bolt: change bolt and it follows.");
+        s.show = [this, scene](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Ctrl+D";
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(900, [this, scene, over] {
+                scene()->duplicateLinkedSelected();
+                after(900, [this, over] { m_busy = false; hideCursor(); over(); });
+            });
+        };
+        add(s);
+    }
+    // 26: the keys worth knowing
+    {
+        Step s;
+        s.title = T("Keys worth knowing");
+        // (one key a line: the card is narrow, and a line with several keys wraps in the middle of a key in most languages)
+        s.text = T("With the viewport focused:") + "\n\n" +
+                 T("Shift+W  work plane") + "\n" +
+                 T("Ctrl+Shift+W  new work plane") + "\n" +
+                 T("W  look at the work plane") + "\n" +
+                 T("E  next gizmo mode, or next kind of drawing") + "\n" +
+                 T("Q  stop drawing") + "\n" +
+                 T("Shift+D  copy") + "\n" +
+                 T("Ctrl+D  link") + "\n" +
+                 T("D  delete") + "\n" +
+                 T("R  lock") + "\n" +
+                 T("I  isolate") + "\n" +
+                 T("V  show or hide") + "\n" +
+                 T("Shift+X  section view") + "\n" +
+                 T("Home  frame everything");
+        s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show sketches, linked copies and the work plane.");
+        s.place = Right;
+        s.enter = [this] { m_view->holdShift(false); m_view->setWorkPlaneOpen(false); };
+        add(s);
+    }
+    // 27: the property tab of a result (a model of its own: one beam, held at one end and pulled at the other)
     {
         Step s;
         s.title = T("Properties");

@@ -391,6 +391,19 @@ public:
     /*  The rotation the angles make (the library's rotate_x/y/z, x first)  */
     static QMatrix4x4 gizmoRotation(const QVector3D& degrees);
 
+    /*
+     *  A DRAG OF THE GIZMO does not change what a shape IS, only where it is: its gizmo's numbers (move, rotate, scale) place the same mesh.  While they are
+     *  dragged the mesh that is drawn already is drawn again with the matrix that takes it from where it was made to where the numbers say now, and nothing is
+     *  meshed again; the real render is done once, when the drag ends (endGizmoPreview).  `changed` are the numbers dragged: when they are all this shape's own
+     *  gizmo numbers, and it is a plain mesh (no colours, no result, nothing cut by the section), this takes them and returns true -- the caller does not
+     *  update the shape.  False: the shape is another shape for these numbers (it is made of something that moves, or its surfaces are dragged) and renders again
+     */
+    bool previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, bool allowed);
+    /*  The drag is over: the mesh is made again at the numbers the shape has now (it goes on being shown moved until that mesh is there)  */
+    void endGizmoPreview();
+    /*  The matrix of a gizmo's numbers: scaled about its centre, turned there (x, then y, then z), moved  */
+    QMatrix4x4 gizmoMatrix(const QVector3D& move, const QVector3D& rotate, const QVector3D& scale) const;
+
     /*  How much of this shape's render is done (0..1), counted, not
      *  predicted: the levels of the render (coarse to fine, each with about
      *  4x the cells of the one before -- halving the cell size along a
@@ -857,6 +870,15 @@ protected:
     bool next_follows = false;                  // `next` is the next level of this render, not a newer request
     // The numbers the evaluators hold: a snapshot of `vars` made where they are given them (the keys are of those)
     std::map<libfive::Tree::Id, float> cache_vars;
+    // The drag preview (see previewGizmoVars): the gizmo numbers the mesh that is shown was made with, those of the render that is going on, and the matrix that takes
+    // the mesh from the first to the numbers now
+    struct GizmoNumbers { QVector3D move, rotate, scale{1, 1, 1}; };
+    GizmoNumbers m_meshGizmo, m_runGizmo;
+    QMatrix4x4 m_previewXform;
+    bool m_previewShown = false;                 // the mesh is shown moved (m_previewXform is not the identity)
+    GizmoNumbers gizmoNumbersIn(const std::map<libfive::Tree::Id, float>& v) const;
+    void refreshPreview();                       // the matrix from what the mesh was made with to the numbers now
+    QMatrix4x4 previewed(const QMatrix4x4& M) const { return m_previewShown ? M * m_previewXform : M; }
     unsigned long cache_vars_gen = 1, cache_tree_gen = 0;
     std::string cache_tree_key;                 // (of the expression and the colours: made once per snapshot)
     std::string cache_miss_key;                 // the last key that was looked for and not found

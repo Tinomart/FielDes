@@ -482,6 +482,9 @@ protected:
      *  and Add simulation (which also holds the materials, fluids, supports, loads and conditions).  `atLine` (from the text
      *  editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
+    /*  The "New ..." entries of the menus of empty space and of a model: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
+    void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, double scale, int atLine);
+    QVector3D placementExact(QPoint pos) const;
     /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
      *  their own menu: `simulations` says which of the two is listed (the boundary conditions and the analyses are in it)  */
     void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);

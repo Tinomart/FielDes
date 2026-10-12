@@ -203,7 +203,10 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
   model tree) and the **field viewer** opens beside it, showing the field on a plane inside the field's bounds, with a position slider: the two are separate, and
   both can be open at once.
 
-The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20 and 21.
+The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20, 21 and 26 to 28 (sketches and sweeps, copies and linked copies, a sketch on a plane).
+
+The **guided tour** (Help ▸ Guided tour) ends with the newer tools: a shape drawn on a **work plane** (`Shift+W`), a point **pulled out of an edge**, a **corner turned into a spline point**, the gizmo of a point and
+the one you get with **Shift**, **`Shift+D` and `Ctrl+D`** (a copy and a linked copy), and the keys worth knowing.
 
 ## The controls that matter
 

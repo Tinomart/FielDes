@@ -219,6 +219,16 @@ def path_extrude(profile, path, twist=0):
     n = len(V)
     if n < 2:
         return C.owned(Shape.wrap(1e9))
+    # A sweep is a field of one piece for each piece of the path, each carrying the whole profile: a path of hundreds of pieces is a field that takes the renderer
+    # minutes.  A path that long is thinned -- every point that was made stays (the corners and the places the twist and the thickness are given), the pieces of the
+    # curves between them are made fewer -- so that the sweep can be drawn
+    limit = 160
+    if n > limit + 1:
+        every = -(-n // limit)
+        keep = [j for j in range(n) if j % every == 0 or owners[j][1] == 0.0 or j == n - 1]
+        V = [V[j] for j in keep]
+        owners = [owners[j] for j in keep]
+        n = len(V)
     closed = path.closed
     pieces = n if closed else n - 1
     T = [C.unit(C.sub(V[(k + 1) % n], V[k])) for k in range(pieces)]

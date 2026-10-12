@@ -2153,6 +2153,46 @@ Window::Window(Arguments args)
             }
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
         });
+        // gizmodragpaced <kind> <axis> <dx> <dy> <steps> <frame ms>: the same drag, a move every <frame ms> with the event loop running between them (as a hand moves the mouse), and how
+        // late each frame came back -- the time the viewport was busy with something else.  Printed: the whole drag, the worst and the mean lateness
+        a->add("gizmodragpaced", [=](const QString& args){
+            const auto p = args.split(' ');
+            if (p.size() < 6) return;
+            QPoint from;
+            if (!view->gizmoGripPoint(p[0].toInt(), p[1].toInt(), from))
+            {
+                std::cerr << "automation: no handle " << args.toStdString() << std::endl;
+                return;
+            }
+            const QPoint d(p[2].toInt(), p[3].toInt());
+            const int steps = std::max(1, p[4].toInt()), frame = std::max(1, p[5].toInt());
+            auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            QElapsedTimer whole;
+            whole.start();
+            double worst = 0, sum = 0;
+            for (int i = 1; i <= steps; ++i)
+            {
+                QElapsedTimer one;
+                one.start();
+                send(QEvent::MouseMove, from + d * i / steps, Qt::NoButton, Qt::LeftButton);
+                view->repaint();                                        // (what is drawn now: the frame the mouse move makes)
+                QEventLoop loop;
+                QTimer::singleShot(frame, &loop, &QEventLoop::quit);
+                loop.exec();
+                const double late = std::max(0.0, double(one.elapsed()) - frame);
+                worst = std::max(worst, late);
+                sum += late;
+            }
+            const qint64 drag = whole.elapsed();
+            send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+            std::cerr << "automation: paced drag of " << steps << " steps at " << frame << " ms: " << drag << " ms, frames late by at most " << worst
+                      << " ms, on average " << sum / steps << " ms" << std::endl;
+        });
         // viewshift <on|off>: Shift is held for the gizmo (the squares of the planes instead of the arrows, and the one gold ring that scales all three axes instead of the scale knobs)
         a->add("viewshift", [=](const QString& args){ view->holdShift(args.trimmed() == "on"); });
         // varsteps <line>: the numbers of the var()s on a (0-based) line of the script are set in steps that each move another set

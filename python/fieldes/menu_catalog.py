@@ -560,6 +560,17 @@ def _from_selection(name, models, values):
     return None
 
 
+def _own_point_names(shape_name):
+    ''' The names of the points the model `shape_name` is made of (the corners of a sketch): the variables of the last run that hold those very points '''
+    try:
+        from fieldes import runner
+        names = runner.last_globals
+        mine = {id(p) for p in (getattr(names.get(shape_name), 'points', None) or [])}
+        return {n for n, value in names.items() if id(value) in mine}
+    except Exception:
+        return set()
+
+
 def _build_operation(name, v, others):
     ''' The text of an operation that is given the models selected with the body (see OPERATIONS: 'optional'), or None when they say
         nothing it can use -- the template is written then '''
@@ -594,7 +605,10 @@ def _build_operation(name, v, others):
         models = [dict(v.get('body_info') or {}, name=body)] + list(others)
         profile = next((m['name'] for m in models if m.get('type') == 'profile'), None)
         path = next((m['name'] for m in models if m.get('type') == 'curve'), None)
-        points = [m['name'] for m in models if m.get('type') == 'point']
+        # (the points a 2D shape is made of are not points of the path: selecting a sketch together with the points along its path must not put the sketch's own
+        # corners into the path -- a path that goes round the sketch's outline too is a sweep of dozens of pieces)
+        own = _own_point_names(profile)
+        points = [m['name'] for m in models if m.get('type') == 'point' and m['name'] not in own]
         if profile and path:
             return 'path_extrude(%s, %s)' % (profile, path)
         if profile and len(points) >= 2:
@@ -725,6 +739,9 @@ def _values(r):
     name = r['name']
     s = _nice(float(r.get('scale', 10.0)))
     step = _step(s)
+
+    if name == 'point':
+        step = s / 1000.0                   # (a point is where the cursor is, to a thousandth of the span of a hundred pixels: not rounded to a grid of the view)
 
     def snap(v):
         return round(float(v) / step) * step

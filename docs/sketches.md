@@ -34,7 +34,7 @@ under **Operation → Extruding**, and are offered only when what is selected fi
 | Operation | Select | What it makes |
 |---|---|---|
 | **Extruding → extrude** | a 2D shape | a solid: the face pulled up |
-| **Extruding → path_extrude** | a 2D shape and a line (in either order) -- or the shape and the **points** of the path, which get a spline of their own | the shape swept along the path |
+| **Extruding → path_extrude** | a 2D shape and a line (in either order) -- or the shape and the **points** of the path, which get a spline of their own (the points the shape is made of are **not** part of the path, so selecting the sketch together with its path's points is fine) | the shape swept along the path |
 
 Hold the mouse on an entry for what it takes. A **tube round a line** is `offset` of it (*Operation → Offsets and walls*), and so are the other things a distance field does: a line is a model
 like any other, and as a field it is the distance to it.

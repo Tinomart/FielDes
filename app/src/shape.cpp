@@ -587,6 +587,95 @@ QMatrix4x4 Shape::gizmoRotation(const QVector3D& degrees)
     return Rz * Ry * Rx;
 }
 
+QMatrix4x4 Shape::gizmoMatrix(const QVector3D& move, const QVector3D& rotate, const QVector3D& scale) const
+{
+    // What gizmo() does to a shape (fieldes.stdlib.handles): scaled about its centre, turned about it (x, then y, then z), moved
+    QMatrix4x4 A;
+    A.translate(m_gizmo.about + move);
+    A *= gizmoRotation(rotate);
+    QMatrix4x4 S;
+    S.scale(scale.x(), scale.y(), scale.z());
+    A *= S;
+    A.translate(-m_gizmo.about);
+    return A;
+}
+
+Shape::GizmoNumbers Shape::gizmoNumbersIn(const std::map<libfive::Tree::Id, float>& v) const
+{
+    auto get = [&](libfive::Tree::Id id, float otherwise) {
+        const auto it = id ? v.find(id) : v.end();
+        return it == v.end() ? otherwise : it->second;
+    };
+    GizmoNumbers g;
+    g.move = QVector3D(get(m_gizmo.move[0], 0.0f), get(m_gizmo.move[1], 0.0f), get(m_gizmo.move[2], 0.0f));
+    g.rotate = QVector3D(get(m_gizmo.rotate[0], 0.0f), get(m_gizmo.rotate[1], 0.0f), get(m_gizmo.rotate[2], 0.0f));
+    g.scale = QVector3D(get(m_gizmo.scale[0], 1.0f), get(m_gizmo.scale[1], 1.0f), get(m_gizmo.scale[2], 1.0f));
+    return g;
+}
+
+void Shape::refreshPreview()
+{
+    const GizmoNumbers now = gizmoNumbersIn(vars);
+    if (now.move == m_meshGizmo.move && now.rotate == m_meshGizmo.rotate && now.scale == m_meshGizmo.scale)
+    {
+        m_previewShown = false;                     // (the mesh is of the numbers it has: nothing to move)
+        m_previewXform.setToIdentity();
+        return;
+    }
+    const QMatrix4x4 from = gizmoMatrix(m_meshGizmo.move, m_meshGizmo.rotate, m_meshGizmo.scale);
+    bool invertible = false;
+    const QMatrix4x4 back = from.inverted(&invertible);
+    if (!invertible)
+    {
+        m_previewShown = false;
+        return;
+    }
+    m_previewXform = gizmoMatrix(now.move, now.rotate, now.scale) * back;
+    m_previewShown = true;
+}
+
+bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, bool allowed)
+{
+    // Only a plain mesh of this shape can be moved as it is: with colours (they are values of a field at the places of the mesh), a result, a deformation, steps, a
+    // face or a line of points, an imported part (its triangles are placed by a matrix of their own) or a mesh that is not there yet it is made again
+    if (!allowed || !m_gizmo.present || m_locked || !mesh || has_color || has_result || has_deform || m_flat || hasControls() || m_isPoint ||
+        exactCurrent() || m_exact || !m_steps.empty())
+        return false;
+    const auto own = gizmoVars();
+    bool affects = false;
+    for (const auto& kv : changed)
+    {
+        const auto it = vars.find(kv.first);
+        if (it == vars.end() || it->second == kv.second || !usesVar(kv.first)) continue;
+        if (!own.count(kv.first)) return false;     // (a number that is not its gizmo's changes what the shape IS: it is made again)
+        affects = true;
+    }
+    if (!affects) return false;                     // (not this shape's numbers: updateVars keeps its numbers in step)
+    std::map<libfive::Tree::Id, float> next = vars;
+    for (const auto& kv : changed)
+    {
+        const auto it = next.find(kv.first);
+        if (it != next.end()) it->second = kv.second;
+    }
+    const GizmoNumbers now = gizmoNumbersIn(next);
+    for (int a = 0; a < 3; ++a)
+        if (std::fabs(now.scale[a]) < 1e-4f) return false;       // (scaled to nothing: it cannot be taken back from that)
+    for (const auto& kv : changed)
+    {
+        const auto it = vars.find(kv.first);
+        if (it != vars.end()) it->second = kv.second;
+    }
+    refreshPreview();
+    return true;
+}
+
+void Shape::endGizmoPreview()
+{
+    if (!m_previewShown || !m_geometry_known) return;
+    // (the numbers are in `vars`: the render takes them, and the mesh that is shown goes on being shown moved until the new one is there)
+    startRender(RenderSettings { m_last_settings, MESH_DIV_NEW_VARS, m_last_alg });
+}
+
 void Shape::placeHint()
 {
     placedHint(run_hint_lo, run_hint_hi, run_hint_side);
@@ -2210,8 +2299,9 @@ void Shape::draw(const QMatrix4x4& M)
                         0.03 * s, 0.21 * s, 0.26 * s, 0.0f);
         }
         glUniform1i(Shader::basic->uniformLocation("shading"), colored ? 3 : 2);
+        const QMatrix4x4 shown = previewed(M);          // (a shape that is being dragged is drawn where its numbers say now, from the mesh it has)
         glUniformMatrix4fv(Shader::basic->uniformLocation("M"),
-                           1, GL_FALSE, M.data());
+                           1, GL_FALSE, shown.data());
         glUniform1i(Shader::basic->uniformLocation("use_rest"), 1);
         glUniform1i(Shader::basic->uniformLocation("patch_mode"), (has_cutoff || has_floor) ? 1 : 0);
         vao.bind();
@@ -2233,8 +2323,9 @@ void Shape::drawMonochrome(const QMatrix4x4& M, QColor color)
     if (gl_ready)
     {
         Shader::basic->bind();
+        const QMatrix4x4 shown = previewed(M);
         glUniformMatrix4fv(Shader::basic->uniformLocation("M"),
-                           1, GL_FALSE, M.data());
+                           1, GL_FALSE, shown.data());
         glUniform1i(Shader::basic->uniformLocation("shading"), 0);
         glUniform4f(Shader::basic->uniformLocation("color_add"),
                 color.redF(), color.greenF(), color.blueF(), 1.0f);
@@ -2318,6 +2409,7 @@ void Shape::startRender(RenderSettings s)
         }
 
         target_div = s.div;
+        m_runGizmo = gizmoNumbersIn(cache_vars);        // (the gizmo numbers this render's mesh will be of: the ones the evaluators hold)
 
         // (a level waiting in the thread pool has done nothing yet: without
         // this it would still show the last level's finished meshing)
@@ -2510,6 +2602,8 @@ void Shape::onFutureFinished()
         step_disp.clear();
         lines_dirty = true;
         mesh.reset(bm.mesh);
+        m_meshGizmo = m_runGizmo;                       // (the new mesh is of the numbers its render started with; shown moved when the shape has been dragged since)
+        refreshPreview();
         m_outlines = std::move(bm.outlines);
         prev_div = mesh_div;
         prev_seq = mesh_seq;

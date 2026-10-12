@@ -50,6 +50,12 @@
 - **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are lines.
 
 ### Two kinds of duplication, one scale handle, and a tidier work plane
+- **The guided tour covers the new tools**: *Draw on a work plane* (Shift+W; Show me draws a rectangle), *Pull a point out of an edge*, *Corner or spline point* (double-click), *The gizmo of a point*, *Hold Shift* (the plane squares and the one ring),
+  *Copy or link* (Shift+D, Ctrl+D) and *Keys worth knowing*; and three new examples show them: **26** sketches and sweeps, **27** copies and linked copies, **28** a sketch on a plane and the work plane. Translated in all six languages.
+- **Dragging a gizmo no longer meshes the shape again at every mouse move.** What a drag of a gizmo's numbers does is place the same mesh somewhere else, so the mesh that is drawn is drawn again with the move / turn / scale matrix of the numbers
+  and nothing is meshed until the drag ends (one real render, at the numbers it ends on). On a heavy lattice, a 40-step drag: 43 meshings became 1, and the frames that came late (mean) from 136 ms to 20 ms -- the display's own refresh. The moved mesh
+  differs from the real render in under 0.2 % of the picture. Shapes that really change still mesh as before: those made of what moves (a union that holds the dragged part), coloured by a field, results, and anything cut by the section view.
+- **The work plane opens in Line**, so the first click draws.
 - **`Shift+D` copies a model, `Ctrl+D` links it.** Shift+D is the duplicate that was Ctrl+D (the statements written again under the model with free names). **Ctrl+D writes `copy = instance(model)`**: a block that **is** the model and follows every change of
   it, and can only be **moved and rotated** (its gizmo has no scale, its surfaces cannot be dragged). The original is held by a **shadow reference** (`# shadow: model`) **always**, locked or not, so it keeps its own row in the model tree. Also
   *Operation → Repeating → instance*. In the editor `Ctrl+D` is still the next occurrence.
@@ -62,6 +68,14 @@
   dots stayed as they were, and a second sketch could vanish. A shape made of points is now told apart by its points (how many, what each says of itself, which numbers make them), so an edit that changes them makes it again. The in-plane move of a
   sketch no longer writes a tiny number such as `-7e-08` in the z move.
 - **Fixed: the blue outline of a sketch was not drawn.** Since sketches are drawn straight from their points they were no longer counted as flat shapes, and only flat shapes and lines had their outline drawn.
+- **A point from the right-click menu is exactly where you clicked.** It was moved into the drawn region and rounded to whole millimetres (four clicks gave points up to 600 px from the pointer, two of them in the same place); now it is on the surface
+  under the cursor, else in the plane through the origin facing the view (the work plane while it is open), with the numbers of the click.
+- **A right-click on a model keeps the *New ...* entries.** The menu of a model had no way to make a shape or a point, so a place to put one could be hard to find when everything under the cursor was a surface; they are in it now, made where you clicked on the surface.
+- **`path_extrude` leaves the shape's own points out of the path.** Selecting a sketch together with the points along its path put the sketch's corners into the path too: a spline round the outline and along the path, dozens of pieces each carrying the whole profile,
+  which made the renderer hang. The profile's points are left out, and a path of more than about 160 pieces is thinned (every point that was made stays) so a long sweep can still be drawn.
+- **A new box's gizmo is at its centre.** The centre was searched for in the time there is, and a small shape in a large search was not found, which put the gizmo at the origin. The primitives (box, sphere, cylinder, cone, pyramid, rounded box and the 2D shapes)
+  know their own extent, so the gizmo, and the region a model is shown in, come from it at once and exactly.
+- **The corner of a sketch has no scale ring** (as it has no rotation ring): its scale does nothing there.
 - **The work plane's modes look like what they make.** There is no *Select* button: **Line**, **Spline** and **Point** are three buttons with a picture of what each makes, and none on is not drawing (click the one that is on, or `Q`). While drawing the pointer is a
   crosshair and a marker shows the point a click puts down -- a square for a line, a round point with a ring for a spline, a dot for a point; the points already put down have the same marks. Not drawing, there is no marker or readout and the pointer is the usual one.
 
@@ -69,7 +83,7 @@
 - **`Shift+W` opens a work plane view; `Ctrl+Shift+W` makes a new work plane; `W` turns the camera to face it.** A light version of a CAD program's sketch plane that writes nothing into the script by itself: the plane is drawn with a grid and has a card
   (grid, snap to grid, snap to points, step, offset, set the view to the plane / the plane to the view). A new plane is the plane of the selected 2D shape, or parallel to the camera view through the origin. The camera turning with
   the middle button leaves the view.
-- **Draw in it:** three kinds of drawing, picked in the card or with `E` (line, spline, point), and **`Q` to stop drawing** (nothing is put down, and things are selected, moved, turned and scaled as usual; the view opens that way;
+- **Draw in it:** three kinds of drawing, picked in the card or with `E` (line, spline, point), and **`Q` to stop drawing** (nothing is put down, and things are selected, moved, turned and scaled as usual; the view opens in Line, so the first click draws;
   in a drawing mode a click always puts a point down, attaching to a point that is there). Click to put down the points of a line -- **a click on the first point closes it and makes a sketch** (`Enter` or a double click ends it open as a
   `polyline`), the same with a spline (`smooth=True` when closed), or a point at a click. Nothing is written until the line ends; then the points and the shape are one undo step. The points are exact: snapped to the grid, and to the points
   that are there.

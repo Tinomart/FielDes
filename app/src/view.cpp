@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSettings>
 #include <QWidgetAction>
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
@@ -764,6 +765,18 @@ void View::redrawPicker()
 
 void View::paintGL()
 {
+    // (for the timing logs: what a frame costs while a gizmo is dragged)
+    struct FrameClock
+    {
+        QElapsedTimer t;
+        bool on = false;
+        ~FrameClock() { if (on) std::fprintf(stderr, "[drag] frame drawn in %.1f ms\n", double(t.nsecsElapsed()) / 1e6); }
+    } frameClock;
+    if (gizmo_drag && std::getenv("FIELDES_TIMING"))
+    {
+        frameClock.on = true;
+        frameClock.t.start();
+    }
     if (!gl_checked)
     {
         auto def = QSurfaceFormat::defaultFormat();
@@ -2256,6 +2269,8 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     if (gizmo_drag)
     {
         gizmo_drag = false;
+        // (the shapes that were only drawn moved while it was dragged are made again at the numbers they have now: the one real render of the drag)
+        for (Shape* s : shapes) s->endGizmoPreview();
         gizmo_hover = gizmoAt(event->pos());
         setCursor(gizmo_hover.kind >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         redrawPicker();
@@ -2472,6 +2487,8 @@ void View::setWorkPlaneOpen(bool open)
 {
     if (open && !m_wp.exists) makeWorkPlane();
     if (!open) m_wpPlaced.clear();
+    // Opening it starts in Line: a click draws at once -- a view that opens and does nothing leaves the first thing to do a guess (Q stops drawing)
+    if (open && !m_wp.open) m_wp.mode = 1;
     m_wp.open = open;
     m_wpCursorValid = false;
     if (!open) emit(workPlaneReadout(QString()));
@@ -2482,6 +2499,7 @@ void View::newWorkPlane()
 {
     m_wpPlaced.clear();
     makeWorkPlane();
+    if (!m_wp.open) m_wp.mode = 1;                  // (opening it starts in Line, as setWorkPlaneOpen does)
     m_wp.open = true;
     announceWorkPlane();
 }
@@ -2687,6 +2705,7 @@ void View::createAt(const QString& name, QPoint pos)
     QVector3D point;
     double scale = 10;
     placementAt(pos, point, scale);
+    if (name == "point") point = placementExact(pos);          // (as the menu does: a point is exactly under the cursor)
     emit(createRequested("primitive", name, point, scale, -1, -1));
 }
 
@@ -3133,47 +3152,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
         addBodyFromField(menu, -1, point, scale);
         menu->addSeparator();
     }
-    // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces,
-    // fields, and the custom blocks that need no model.  (A kind with one entry is that entry.)  What a simulation is made of --
-    // materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu, not here
-    const QJsonArray list = m_catalog["primitives"].toArray();
-    if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
-    {
-        static const QHash<QString, QString> titles = {
-            {"1D", T("New 1D shape")}, {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
-            {"Fields", T("New field")}, {"Custom blocks", T("New custom block")}};
-        QStringList order;
-        QHash<QString, QList<QJsonObject>> groups;
-        for (const auto v : list)
-        {
-            const auto p = v.toObject();
-            const QString g = p["group"].toString();
-            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Add simulation, Add lattice)
-            if (!groups.contains(g)) order << g;
-            groups[g] << p;
-        }
-        for (const QString& g : order)
-        {
-            const auto& entries = groups[g];
-            const QString type = entries.first()["type"].toString("solid");
-            auto make = [&](QMenu* into, const QJsonObject& p) {
-                const QString name = p["name"].toString();
-                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
-                                              this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
-                if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
-                return action;
-            };
-            if (entries.size() == 1 && g != "Custom blocks")
-            {
-                auto a = make(menu, entries.first());
-                a->setText(titles.value(g, T("New %1").arg(entries.first()["name"].toString())));
-                continue;
-            }
-            auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
-            sub->setToolTipsVisible(true);
-            for (const auto& p : entries) make(sub, p);
-        }
-    }
+    addCreateEntries(menu, point, placementExact(pos), scale, atLine);
     menu->addSeparator();
     {
         auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
@@ -3204,6 +3183,64 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     menu->popup(globalPos);
 }
 
+// What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces, fields, and the custom blocks that need no model.
+// (A kind with one entry is that entry.)  What a simulation is made of -- materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu,
+// not here.  `point` is where a shape is made, inside what is drawn; a POINT is made exactly at `exact`, where the cursor is -- a dot is drawn wherever it is
+void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, double scale, int atLine)
+{
+    const QJsonArray list = m_catalog["primitives"].toArray();
+    if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
+    {
+        static const QHash<QString, QString> titles = {
+            {"1D", T("New 1D shape")}, {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
+            {"Fields", T("New field")}, {"Custom blocks", T("New custom block")}};
+        QStringList order;
+        QHash<QString, QList<QJsonObject>> groups;
+        for (const auto v : list)
+        {
+            const auto p = v.toObject();
+            const QString g = p["group"].toString();
+            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Add simulation, Add lattice)
+            if (!groups.contains(g)) order << g;
+            groups[g] << p;
+        }
+        for (const QString& g : order)
+        {
+            const auto& entries = groups[g];
+            const QString type = entries.first()["type"].toString("solid");
+            auto make = [&](QMenu* into, const QJsonObject& p) {
+                const QString name = p["name"].toString();
+                const QVector3D at = p["group"].toString() == "Points" ? exact : point;
+                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
+                                              this, [=]{ emit(createRequested("primitive", name, at, scale, atLine, -1)); });
+                if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
+                return action;
+            };
+            if (entries.size() == 1 && g != "Custom blocks")
+            {
+                auto a = make(menu, entries.first());
+                a->setText(titles.value(g, T("New %1").arg(entries.first()["name"].toString())));
+                continue;
+            }
+            auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
+            sub->setToolTipsVisible(true);
+            for (const auto& p : entries) make(sub, p);
+        }
+    }
+}
+
+// Where a click puts a POINT: exactly under the cursor -- on the work plane, snapped, while its view is open; else in the plane through the origin that faces the
+// viewer (the point of the ray there).  Not moved into the drawn region and not rounded: a dot is drawn wherever it is
+QVector3D View::placementExact(QPoint pos) const
+{
+    if (m_wp.open && m_wp.exists)
+    {
+        QVector3D hit;
+        if (ringPoint(pos, m_wp.origin(), m_wp.normal(), hit)) return snapToWorkPlane(hit);
+    }
+    return placeOnRay(pos);
+}
+
 void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface)
 {
     loadMenuCatalog();
@@ -3226,6 +3263,14 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     fillSimulationPrimitives(sims, point, scale, line);
     sims->addSeparator();
     fillOperations(sims, line, point, scale, true);
+    if (onSurface)
+    {
+        // What can be made is offered on a model too, at the place that was clicked on its surface (a point exactly there): somewhere to put a point is not only
+        // empty space, and a model can be all there is under the cursor
+        menu->addSeparator();
+        addCreateEntries(menu, point, point, scale, -1);
+        menu->addSeparator();
+    }
     {
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
         const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
@@ -5070,7 +5115,8 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            if (any)
+            // (the corner of a sketch has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, which a corner is not)
+            if (any && !(inPlane && pointStyleOf(s) != 2))
             {
                 // (the ring: within a few pixels of the circle round the middle)
                 const double d = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
@@ -5746,7 +5792,7 @@ void View::drawGizmo(QPainter& painter)
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            if (any)
+            if (any && !(inPlane && pointStyleOf(s) != 2))              // (not on the corner of a sketch: see gizmoAt)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
                 const bool on = now.kind == 2 && now.shape == s;
@@ -5822,12 +5868,22 @@ void View::applyGizmoNumber(libfive::Tree::Id id, float value)
 
 void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
 {
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+    QElapsedTimer clock;
+    if (timing) clock.start();
     emit(varsDragged(QMap<libfive::Tree::Id, float>(m)));
-    bool changed = false;
+    const qint64 written = timing ? clock.nsecsElapsed() : 0;
+    bool changed = false, moved = false;
+    // A drag of a gizmo's numbers moves a shape, it does not change it: its mesh is drawn where the numbers say, with nothing meshed, and made again when the drag ends
+    // (Shape::previewGizmoVars).  Not with the section view cutting: the cut is made in the mesh's own places.  A shape that is made of what moves is made again as ever
+    static const bool off = std::getenv("FIELDES_NO_DRAG_PREVIEW") != nullptr;          // (for comparing: the old way, every number meshes the shape again)
+    const bool allowed = gizmo_drag && !off && !(section.enabled && section.clip);
     for (auto& s : shapes)
     {
+        if (s->previewGizmoVars(m, allowed)) { moved = true; continue; }
         changed |= s->updateVars(m);
     }
+    if (moved) update();
     if (changed)
     {
         busy.show();
@@ -5851,6 +5907,9 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         if (fieldChanged) requestFieldSlice(viewer);
     }
     m_overlay->update();
+    if (timing)
+        std::fprintf(stderr, "[drag] numbers: %.1f ms in all, %.1f ms of it writing the script; %s\n", double(clock.nsecsElapsed()) / 1e6, double(written) / 1e6,
+                     moved ? (changed ? "some shapes moved, others meshed" : "shapes moved, nothing meshed") : (changed ? "meshed again" : "nothing changed"));
 }
 
 void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
