@@ -115,6 +115,9 @@ public slots:
      *  shapes, a click on a shape would otherwise select the row of another model, and the row that is selected would light up another shape  */
     void moveSourceLines(QVector<int> moved);
 
+    /*  The point put on an outline is displayed by this line (-1: none was made): the press that put it there goes on as the drag of its dot  */
+    void expectNewPoint(int line0);
+
     /*  Frames the camera on a box, or (if the box is empty) on the meshes
      *  of the shapes displayed by the given lines  */
     void focusOn(QVector3D min, QVector3D max, QList<int> lines0);
@@ -323,6 +326,21 @@ signals:
     void shapesRectSelected(QList<int> lines0, bool add);
 
     /*
+     *  The same rectangle, for the fields whose icon lies inside it (a field is not a shape: it has no line that displays it, so it is named by its
+     *  key, as in fieldIconClicked); with `add` they join the selection instead of replacing it
+     */
+    void fieldsRectSelected(QStringList keys, bool add);
+
+    /*
+     *  The outline of a sketch or the line of a curve was pressed: a point is to be put there (the 0-based line that displays the model, where in
+     *  space).  The view waits for the new point (expectNewPoint) and drags it with the mouse while the button is down
+     */
+    void outlineInsertRequested(int line0, QVector3D at);
+
+    /*  A double click on the dot of a point of a sketch or a curve: it is to change between a corner and a spline point (the 0-based line that displays it)  */
+    void pointToggleRequested(int line0);
+
+    /*
      *  The menu of a right-click on a shape was confirmed: select the surface of the shape displayed by
      *  the (0-based) line `line0` around `point` (a flood fill: mode "flat" or "smooth", the angle in
      *  degrees, the radius in mm, 0 = no limit)
@@ -368,6 +386,19 @@ protected:
     /*  The dot of a point (the middle point of a gizmo, always drawn), the point whose dot is at a widget position, and the names of an app  */
     void drawPointDots(QPainter& painter);
     Shape* pointDotAt(QPoint pos) const;
+    /*  The outlines of sketches and the lines of curves, drawn blue: the one the mouse is over is brighter  */
+    void drawOutlines(QPainter& painter);
+    /*  What a click or a double click does where the mouse is, in a few words beside it (on the outline of a sketch or a curve, on the dot of one of
+        their points)  */
+    void drawHints(QPainter& painter);
+    /*  The editable outline (of a sketch, a curve) that passes under a widget position (within a few pixels): its shape, the point of it that is
+        there, and the number of the piece of the line (counted over all its polylines)  */
+    bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const;
+    Shape* m_outlineHover = nullptr;
+    /*  A press on the line of a curve: a click selects the curve, a drag puts a point there (a curve has no face to click: its line is all there is)  */
+    Shape* m_curvePress = nullptr;
+    QVector3D m_curveHit;
+    QPoint m_curvePressPos;
     void drawNameLabels(QPainter& painter);
     bool m_appMode = false;
     Shape* m_dotHover = nullptr;
@@ -458,6 +489,8 @@ protected:
     bool press_ctrl = false;
     /*  The 0-based lines of the shapes whose whole mesh lies inside a rectangle of the widget  */
     QList<int> linesInside(const QRect& r) const;
+    /*  The keys of the fields whose icon is inside a rectangle of the widget  */
+    QStringList fieldKeysInside(const QRect& r) const;
 
     QList<Shape*> shapes;
     bool settings_enabled=true;

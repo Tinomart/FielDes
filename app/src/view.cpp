@@ -97,6 +97,7 @@ View::View(QWidget* parent)
     // Clicking the viewport focuses it, so its own keys (standard views)
     // work without stealing them from the editor
     setFocusPolicy(Qt::ClickFocus);
+    setObjectName("FielDesView");               // (the automation finds the viewport by it)
     connect(&camera, &Camera::changed, this, &View::update);
 
     connect(&camera, &Camera::animDone, this, &View::redrawPicker);
@@ -477,16 +478,64 @@ QList<int> View::highlightedLines() const
     return out;
 }
 
+QStringList View::fieldKeysInside(const QRect& r) const
+{
+    QStringList out;
+    const QRectF rect(r);
+    const auto layout = iconLayout();
+    for (auto it = layout.constBegin(); it != layout.constEnd(); ++it)
+    {
+        if (rect.contains(it.value())) out << it.key();
+    }
+    return out;
+}
+
 QList<int> View::linesInside(const QRect& r) const
 {
-    // A shape is inside when every vertex of its mesh -- as drawn from this camera -- is in the rectangle
+    // A shape is inside when every vertex of its mesh -- as drawn from this camera -- is in the rectangle; a point when its dot is, and a set of
+    // points when all of its dots are (they are not painted: their dots are what there is of them on the screen)
     QList<int> out;
     const QMatrix4x4 M = camera.M();
     const QRectF rect(r);
     const float W = float(width()), H = float(height());
+    auto inFront = [&](const QVector3D& p) {
+        return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
+    };
     for (const auto* s : shapes)
     {
-        if (!s->hasMesh() || s->sourceLine() < 0 || out.contains(s->sourceLine())) continue;
+        if (s->sourceLine() < 0 || out.contains(s->sourceLine())) continue;
+        QVector3D dot;
+        if (s->isPoint() && s->dotPosition(dot))
+        {
+            if (inFront(dot) && rect.contains(toScreen(dot))) out << s->sourceLine();
+            continue;
+        }
+        if (!s->markers().empty())
+        {
+            bool all = true;
+            for (const QVector3D& p : s->markers())
+            {
+                if (!inFront(p) || !rect.contains(toScreen(p))) { all = false; break; }
+            }
+            if (all) out << s->sourceLine();
+            continue;
+        }
+        if (s->isCurve())
+        {
+            bool all = !s->outlines().empty();
+            for (const auto& line : s->outlines())
+            {
+                for (const auto& v : line)
+                {
+                    const QVector3D p(v.x(), v.y(), v.z());
+                    if (!inFront(p) || !rect.contains(toScreen(p))) { all = false; break; }
+                }
+                if (!all) break;
+            }
+            if (all) out << s->sourceLine();
+            continue;
+        }
+        if (!s->hasMesh()) continue;
         const libfive::Mesh* m = s->getMesh();
         if (!m || m->verts.empty()) continue;
         // (the vertices the triangles use: a mesh keeps a first vertex at the origin that nothing refers to, which
@@ -887,9 +936,11 @@ void View::paintOverlay(QPainter& painter)
         drawSectionHandle(painter);
     }
     drawFieldIcons(painter);
+    drawOutlines(painter);
     drawMarkers(painter);
     drawPointDots(painter);
     drawGizmo(painter);
+    drawHints(painter);
     if (!section_readout.isEmpty() && !section_drag)
     {
         QFont font = painter.font();
@@ -1570,6 +1621,26 @@ void View::mouseMoveEvent(QMouseEvent* event)
     QOpenGLWidget::mouseMoveEvent(event);
     event->accept();
 
+    if (m_curvePress)
+    {
+        // (a press on the line of a curve that moves: the point is put there, and dragged)
+        if ((event->pos() - m_curvePressPos).manhattanLength() >= 4)
+        {
+            const int line = m_curvePress->sourceLine();
+            const QVector3D hit = m_curveHit;
+            m_curvePress = nullptr;
+            if (QApplication::mouseButtons() & Qt::LeftButton)
+            {
+                m_wait = WaitGrip{true, 3, 0, 0, QList<int>()};
+                m_waitTimer.start();
+                setCursor(Qt::BusyCursor);
+                emit(outlineInsertRequested(line, hit));
+            }
+        }
+        mouse.pos = event->pos();
+        return;
+    }
+
     if (m_iconPress)
     {
         // (an icon that is held: a click that moves is a drag of it)
@@ -1635,14 +1706,24 @@ void View::mouseMoveEvent(QMouseEvent* event)
         }
         // (the dot of a point lights up under the mouse: it can be clicked)
         Shape* dot = (grip.kind < 0 && !onField) ? pointDotAt(event->pos()) : nullptr;
+        // (and the outline of a sketch or a curve: a press on it puts a point there)
+        Shape* lineShape = nullptr;
+        QVector3D lineHit;
+        int linePiece = 0;
+        if (grip.kind < 0 && !onField && !dot && !outlineAt(event->pos(), lineShape, lineHit, linePiece)) lineShape = nullptr;
         const bool hover = sectionHandleHit(event->pos());
+        if (lineShape != m_outlineHover)
+        {
+            m_outlineHover = lineShape;
+            m_overlay->update();
+        }
         if (gripChanged || dot != m_dotHover || hover != section_hover || icon != m_iconHover || !(fgrip == m_fieldGrip))
         {
             m_dotHover = dot;
             section_hover = hover;
             m_iconHover = icon;
             m_fieldGrip = fgrip;
-            setCursor(hover ? Qt::SizeAllCursor : (dot || icon || fgrip.v || grip.kind >= 0) ? Qt::PointingHandCursor : Qt::ArrowCursor);
+            setCursor(hover ? Qt::SizeAllCursor : (dot || icon || fgrip.v || grip.kind >= 0 || m_outlineHover) ? Qt::PointingHandCursor : Qt::ArrowCursor);
             m_overlay->update();
         }
         updateSectionReadout(event->pos());
@@ -1873,6 +1954,34 @@ void View::mousePressEvent(QMouseEvent* event)
             syncPicker();
             auto picked = pick_img.valid(event->pos())
                 ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
+            // The outline of a sketch, the line of a curve: a press on it puts a point there, which follows the mouse while the button is down
+            if (!(event->modifiers() & Qt::ControlModifier))
+            {
+                Shape* lineShape = nullptr;
+                QVector3D lineHit;
+                int linePiece = 0;
+                const bool onLine = outlineAt(event->pos(), lineShape, lineHit, linePiece);
+                if (std::getenv("FIELDES_OUTLINE_LOG")) std::fprintf(stderr, "[outline] press at %d,%d: %s\n", event->pos().x(), event->pos().y(), onLine ? "on a line" : "no line");
+                if (onLine && lineShape->sourceLine() >= 0 && !lineShape->isLocked())
+                {
+                    press_pos = QPoint(-100000, -100000);   // not a selection click
+                    press_target = nullptr;
+                    drag_target = nullptr;
+                    if (lineShape->isCurve())
+                    {
+                        // (a click on a curve selects it; a drag puts a point on it, see mouseMoveEvent)
+                        m_curvePress = lineShape;
+                        m_curveHit = lineHit;
+                        m_curvePressPos = event->pos();
+                        return;
+                    }
+                    m_wait = WaitGrip{true, 3, 0, 0, QList<int>()};
+                    m_waitTimer.start();
+                    setCursor(Qt::BusyCursor);
+                    emit(outlineInsertRequested(lineShape->sourceLine(), lineHit));
+                    return;
+                }
+            }
             drag_target = (picked && int(picked) <= shapes.size())
                 ? shapes.at(picked - 1) : nullptr;
             press_pos = event->pos();
@@ -1932,6 +2041,14 @@ void View::mouseReleaseEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
+    if (m_curvePress)
+    {
+        // (a click on the line of a curve: the curve is selected)
+        const int line = m_curvePress->sourceLine();
+        m_curvePress = nullptr;
+        if (event->button() == Qt::LeftButton) emit(shapeClicked(line));
+        return;
+    }
     if (m_iconPress)
     {
         FieldViewer* held = m_iconPress;
@@ -1987,7 +2104,9 @@ void View::mouseReleaseEvent(QMouseEvent* event)
             if (r.width() >= 4 && r.height() >= 4)
             {
                 const QList<int> lines = linesInside(r);
+                const QStringList fields = fieldKeysInside(r);
                 if (!lines.isEmpty()) emit(shapesRectSelected(lines, rect_add));
+                if (!fields.isEmpty()) emit(fieldsRectSelected(fields, rect_add || !lines.isEmpty()));
             }
             press_ctrl = false;
             press_target = nullptr;
@@ -2387,7 +2506,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
     {
         static const QHash<QString, QString> titles = {
-            {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
+            {"1D", T("New 1D shape")}, {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
             {"Fields", T("New field")}, {"Custom blocks", T("New custom block")}};
         QStringList order;
         QHash<QString, QList<QJsonObject>> groups;
@@ -2599,6 +2718,13 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     menu.popup(globalPos);
 }
 
+void View::expectNewPoint(int line0)
+{
+    if (!m_wait.on) return;
+    if (line0 < 0) { cancelWaitingGrip(); return; }
+    m_wait.lines = QList<int>{line0};
+}
+
 void View::mouseDoubleClickEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton ||
@@ -2608,6 +2734,16 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
     event->accept();
+
+    // A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, and the other way
+    if (Shape* dot = pointDotAt(event->pos()))
+    {
+        if (dot->pointStyle() != 0 && dot->sourceLine() >= 0)
+        {
+            emit(pointToggleRequested(dot->sourceLine()));
+            return;
+        }
+    }
 
     // Double-click a shape to frame it, or the background to frame all
     syncPicker();
@@ -3999,7 +4135,7 @@ bool View::overDraggableSurface(QPoint pos) const
 
 bool View::pullableAt(const Shape* s, QPoint pos, QVector3D* edge) const
 {
-    if (!s || !s->nativeDragOk()) return false;
+    if (!s || s->isEditable() || !s->nativeDragOk()) return false;          // (the outline of a sketch is where a point is put, not an edge to pull)
     if (!s->isFlat()) return true;
     // A flat face has no surface inside it: what is pulled is its nearest edge, when that is close to the cursor
     QVector3D p = toModelPos(pos);
@@ -4343,9 +4479,160 @@ void View::drawPointDots(QPainter& painter)
         painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.5));
         painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
         const double r = on ? 6.0 : 5.0;
-        painter.drawEllipse(q, r, r);
+        if (s->pointStyle() == 1)
+        {
+            // a corner of a sketch or a curve: a square, a hard edge
+            painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
+        }
+        else if (s->pointStyle() == 2)
+        {
+            // a spline point: a circle with a ring round it, the curve goes smoothly through it
+            painter.drawEllipse(q, r, r);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5, 170), 1.0));
+            painter.drawEllipse(q, r + 3.0, r + 3.0);
+            // the direction the curve leaves it in, while it is selected (or the mouse is on it): a line through the dot, its rotation turns it
+            QVector3D tg;
+            if (on && s->hasTangent() && s->tangentNow(tg))
+            {
+                const QPointF d = toScreen(p + tg.normalized() * gizmoLength(p)) - q;
+                const double len = std::hypot(d.x(), d.y());
+                if (len > 2.0)
+                {
+                    const QPointF u = d / len;
+                    const QPointF tip = q + u * 46.0;
+                    painter.setPen(QPen(QColor(120, 195, 255), 1.6, Qt::DashLine));
+                    painter.drawLine(q - u * 46.0, tip);
+                    painter.setPen(QPen(QColor(120, 195, 255), 1.8));
+                    const QPointF n(-u.y(), u.x());
+                    painter.drawLine(tip, tip - u * 8.0 + n * 4.0);
+                    painter.drawLine(tip, tip - u * 8.0 - n * 4.0);
+                }
+            }
+        }
+        else
+        {
+            painter.drawEllipse(q, r, r);
+        }
     }
     painter.restore();
+}
+
+// The outline of the face of a sketch and the line of a curve are drawn blue: a place to press (a point is put where it is pressed), and to
+// see where a 2D shape ends
+void View::drawOutlines(QPainter& painter)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QMatrix4x4 M = camera.M();
+    auto inFront = [&](const QVector3D& p) {
+        return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
+    };
+    for (Shape* s : shapes)
+    {
+        if (s->outlines().empty() || (!s->isFlat() && !s->isCurve())) continue;
+        const bool hot = s == m_outlineHover || (s->isHovered() && s->isFlat());
+        const bool on = s->isSelected();
+        QColor c = hot ? QColor(120, 195, 255) : on ? QColor(105, 180, 255) : QColor(52, 140, 245);
+        painter.setPen(QPen(c, hot ? 3.4 : on ? 2.8 : 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        for (const auto& line : s->outlines())
+        {
+            QPolygonF poly;
+            for (const auto& v : line)
+            {
+                const QVector3D p(v.x(), v.y(), v.z());
+                if (!inFront(p))
+                {
+                    if (poly.size() > 1) painter.drawPolyline(poly);
+                    poly.clear();
+                    continue;
+                }
+                poly << toScreen(p);
+            }
+            if (poly.size() > 1) painter.drawPolyline(poly);
+        }
+    }
+    painter.restore();
+}
+
+void View::drawHints(QPainter& painter)
+{
+    if (mouse.state != mouse.RELEASED || m_wait.on) return;
+    QString text;
+    if (m_dotHover && m_dotHover->pointStyle() != 0) text = T("Double-click: corner or spline point");
+    else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to put a point here") : T("Click to put a point here");
+    if (text.isEmpty()) return;
+    painter.save();
+    QFont font = painter.font();
+    font.setPointSizeF(8.5);
+    painter.setFont(font);
+    const QFontMetrics fm(font);
+    QPointF at = QPointF(mouse.pos) + QPointF(16, 18);
+    QRectF box(at, QSizeF(fm.horizontalAdvance(text) + 12, fm.height() + 6));
+    if (box.right() > width() - 4) box.moveRight(width() - 4);
+    if (box.bottom() > height() - 4) box.moveBottom(mouse.pos.y() - 8);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(22, 76, 94, 225));
+    painter.drawRoundedRect(box, 4, 4);
+    painter.setPen(QColor(0xee, 0xe8, 0xd5));
+    painter.drawText(box, Qt::AlignCenter, text);
+    painter.restore();
+}
+
+// The editable outline that passes under a position: the nearest piece of any line of any editable shape
+bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const
+{
+    double best = 8.0 * 8.0;
+    bool found = false;
+    const QMatrix4x4 M = camera.M();
+    auto inFront = [&](const QVector3D& p) {
+        return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
+    };
+    const QPointF c(pos);
+    for (Shape* s : shapes)
+    {
+        if (!s->isEditable() || s->outlines().empty()) continue;
+        int count = 0;
+        for (const auto& line : s->outlines())
+        {
+            for (size_t i = 0; i + 1 < line.size(); ++i, ++count)
+            {
+                const QVector3D p0(line[i].x(), line[i].y(), line[i].z()), p1(line[i + 1].x(), line[i + 1].y(), line[i + 1].z());
+                if (!inFront(p0) || !inFront(p1)) continue;
+                const QPointF a = toScreen(p0), b = toScreen(p1);
+                const QPointF d = b - a;
+                const double l2 = d.x() * d.x() + d.y() * d.y();
+                double t = l2 > 1e-9 ? ((c.x() - a.x()) * d.x() + (c.y() - a.y()) * d.y()) / l2 : 0.0;
+                t = std::max(0.0, std::min(1.0, t));
+                const QPointF q = a + d * t;
+                const double dist = (q.x() - c.x()) * (q.x() - c.x()) + (q.y() - c.y()) * (q.y() - c.y());
+                if (dist < best)
+                {
+                    best = dist;
+                    shape = s;
+                    hit = p0 + (p1 - p0) * float(t);
+                    piece = count;
+                    found = true;
+                }
+            }
+        }
+    }
+    if (found && pick_img.valid(pos))
+    {
+        // (something drawn nearer than the line, at that place, is what is under the mouse)
+        const int at = pos.x() + pick_img.width() * (pick_img.height() - pos.y() - 1);
+        if (at >= 0 && at < pick_depth.size())
+        {
+            const float pickZ = 2 * pick_depth.at(at) - 1;
+            const QVector3D n = M.map(hit);
+            const auto picked = pick_img.pixel(pos) & 0xFFFFFF;
+            if (std::getenv("FIELDES_OUTLINE_LOG"))
+                std::fprintf(stderr, "[outline] at %d,%d: piece %d, depth of the line %.5f, of what is drawn there %.5f, picked %u\n", pos.x(), pos.y(), piece,
+                             double(n.z()), double(pickZ), unsigned(picked));
+            if (picked && pickZ < n.z() - 0.003f) found = false;
+        }
+    }
+    return found;
 }
 
 // The point whose dot is under a widget position (within a few pixels), the nearest one
@@ -4629,8 +4916,15 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         }
         else
         {
-            // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera
+            // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera -- a point of a sketch in the plane of the sketch
+            // (that is where its outline is, and a point dragged out of it is put back onto it), unless that plane is edge on to the eye
             free_normal = camera.towardViewer().normalized();
+            QVector3D planeNormal;
+            if (!g.group && g.shape->dragNormalNow(planeNormal))
+            {
+                planeNormal.normalize();
+                if (std::fabs(QVector3D::dotProduct(planeNormal, free_normal)) > 0.2f) free_normal = planeNormal;
+            }
             if (!ringPoint(pos, gizmo_pivot, free_normal, free_hit0)) return;
         }
         gizmo_drag = true;

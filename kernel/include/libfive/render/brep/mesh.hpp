@@ -44,19 +44,24 @@ public:
             const BRepSettings& settings);
 
     /*
-     *  The face of a 2D shape: the part of the plane z = `z` where the field is
+     *  The face of a 2D shape: the part of a plane where the field is
      *  negative, as flat triangles -- a sheet with no thickness, not a body.
-     *  The field is read at that plane only (a 2D shape does not depend on z).
-     *  vars holds the values of the tree's variables.  The face stops a cell
-     *  and a half short of the region's edge (so that its outline is closed).
+     *  The plane is z = 0 when `frame` is null, else the plane through the point
+     *  (frame[0..2]) spanned by the two unit vectors u = frame[3..5] and
+     *  v = frame[6..8] (the face is seen from the side u x v points to).  The field
+     *  is read in that plane only (a 2D shape does not depend on the distance from
+     *  its plane).  vars holds the values of the tree's variables.  The face stops
+     *  a cell and a half short of the region's edge (so that its outline is closed).
      *
      *  Returns an empty mesh when the plane is outside the region, and nullptr
      *  if cancel is set partway through the computation.  The progress handler
-     *  is used as for render()
+     *  is used as for render().  When `outlines` is given it receives the outline
+     *  of the face: closed loops of points in space (the first point is the last)
      */
     static std::unique_ptr<Mesh> renderFlat(
             const Tree& t, const std::map<Tree::Id, float>& vars,
-            const Region<3>& r, double z, BRepSettings& settings);
+            const Region<3>& r, const double* frame, BRepSettings& settings,
+            std::vector<std::vector<Eigen::Vector3f>>* outlines = nullptr);
 
     /*
      *  Writes the mesh to a file

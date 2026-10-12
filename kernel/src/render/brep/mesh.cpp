@@ -131,20 +131,65 @@ std::unique_ptr<Mesh> Mesh::render(
 
 std::unique_ptr<Mesh> Mesh::renderFlat(
         const Tree& t, const std::map<Tree::Id, float>& vars,
-        const Region<3>& r, double z, BRepSettings& settings)
+        const Region<3>& r, const double* frame, BRepSettings& settings,
+        std::vector<std::vector<Eigen::Vector3f>>* outlines)
 {
     auto out = std::make_unique<Mesh>();
-    if (!(z >= r.lower.z() && z <= r.upper.z())) {
+    if (outlines) {
+        outlines->clear();
+    }
+
+    // The plane: a point and two unit vectors
+    Eigen::Vector3d o(0, 0, 0), u(1, 0, 0), v(0, 1, 0);
+    if (frame) {
+        o = Eigen::Vector3d(frame[0], frame[1], frame[2]);
+        u = Eigen::Vector3d(frame[3], frame[4], frame[5]);
+        v = Eigen::Vector3d(frame[6], frame[7], frame[8]);
+        if (!(u.norm() > 1e-9) || !(v.norm() > 1e-9) || !o.allFinite() ||
+            !u.allFinite() || !v.allFinite()) {
+            return out;
+        }
+        u.normalize();
+        v -= u * u.dot(v);
+        if (!(v.norm() > 1e-9)) {
+            return out;
+        }
+        v.normalize();
+    }
+    const Eigen::Vector3d n = u.cross(v);
+
+    // Where the plane is in the region: the extent of the corners in the
+    // plane's own coordinates (s along u, t along v), and whether the plane is
+    // between them at all
+    double smin = 1e300, smax = -1e300, tmin = 1e300, tmax = -1e300;
+    double wmin = 1e300, wmax = -1e300;
+    for (int k = 0; k < 8; ++k) {
+        const Eigen::Vector3d c(
+            (k & 1) ? r.upper.x() : r.lower.x(),
+            (k & 2) ? r.upper.y() : r.lower.y(),
+            (k & 4) ? r.upper.z() : r.lower.z());
+        const Eigen::Vector3d d = c - o;
+        smin = std::min(smin, d.dot(u));
+        smax = std::max(smax, d.dot(u));
+        tmin = std::min(tmin, d.dot(v));
+        tmax = std::max(tmax, d.dot(v));
+        wmin = std::min(wmin, d.dot(n));
+        wmax = std::max(wmax, d.dot(n));
+    }
+    if (!(wmin <= 0 && wmax >= 0)) {
         return out;
     }
 
     // The face is cut by a box a cell and a half inside the region, so that a
     // shape that reaches the region's edge still has a closed outline
     const double inset = 1.5 * settings.min_feature;
-    const double lo[2] = {r.lower.x() + inset, r.lower.y() + inset};
-    const double hi[2] = {r.upper.x() - inset, r.upper.y() - inset};
-    if (!(hi[0] > lo[0] && hi[1] > lo[1])) {
-        return out;
+    double lo[3], hi[3];
+    for (int a = 0; a < 3; ++a) {
+        lo[a] = r.lower[a] + inset;
+        hi[a] = r.upper[a] - inset;
+        if (!(hi[a] > lo[a])) {
+            return out;
+        }
     }
     auto slab = [&](const Tree& axis, int a) {
         return Tree::binary(Opcode::OP_SUB,
@@ -152,8 +197,20 @@ std::unique_ptr<Mesh> Mesh::renderFlat(
                 Tree::binary(Opcode::OP_SUB, axis, Tree(0.5 * (lo[a] + hi[a])))),
             Tree(0.5 * (hi[a] - lo[a])));
     };
-    const Tree clipped = Tree::binary(Opcode::OP_MAX, t,
-        Tree::binary(Opcode::OP_MAX, slab(Tree::X(), 0), slab(Tree::Y(), 1)));
+    const Tree box = Tree::binary(Opcode::OP_MAX, slab(Tree::X(), 0),
+        Tree::binary(Opcode::OP_MAX, slab(Tree::Y(), 1), slab(Tree::Z(), 2)));
+    Tree clipped = Tree::binary(Opcode::OP_MAX, t, box);
+
+    // The field read in the plane: x, y, z are the point o + s u + t v
+    auto place = [&](int a) {
+        return Tree::binary(Opcode::OP_ADD,
+            Tree::binary(Opcode::OP_ADD, Tree(o[a]),
+                Tree::binary(Opcode::OP_MUL, Tree(u[a]), Tree::X())),
+            Tree::binary(Opcode::OP_MUL, Tree(v[a]), Tree::Y()));
+    };
+    if (frame) {
+        clipped = clipped.remap(place(0), place(1), place(2));
+    }
 
     std::vector<Evaluator, Eigen::aligned_allocator<Evaluator>> es;
     es.reserve(settings.workers);
@@ -165,8 +222,7 @@ std::unique_ptr<Mesh> Mesh::renderFlat(
         // Pool::build, Dual::walk
         settings.progress_handler->start({1, 1, 1});
     }
-    const Region<2> plane({r.lower.x(), r.lower.y()}, {r.upper.x(), r.upper.y()},
-                          Region<2>::Perp(z));
+    const Region<2> plane({smin, tmin}, {smax, tmax}, Region<2>::Perp(0.0));
     auto cs = Contours::render(es.data(), plane, settings);
     if (settings.progress_handler) {
         settings.progress_handler->finish();
@@ -194,9 +250,9 @@ std::unique_ptr<Mesh> Mesh::renderFlat(
     auto area = [](const std::vector<Eigen::Vector2d>& p) {
         double a = 0;
         for (size_t i=0; i < p.size(); ++i) {
-            const auto& u = p[i];
-            const auto& v = p[(i + 1) % p.size()];
-            a += u.x() * v.y() - v.x() * u.y();
+            const auto& a0 = p[i];
+            const auto& b0 = p[(i + 1) % p.size()];
+            a += a0.x() * b0.y() - b0.x() * a0.y();
         }
         return 0.5 * a;
     };
@@ -213,12 +269,22 @@ std::unique_ptr<Mesh> Mesh::renderFlat(
         }
     }
 
+    auto at = [&](const Eigen::Vector2d& q) {
+        const Eigen::Vector3d p = o + u * q.x() + v * q.y();
+        return Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z()));
+    };
     manifold::PolygonsIdx polygons;
     for (const auto& p : loops) {
         manifold::SimplePolygonIdx poly;
+        std::vector<Eigen::Vector3f> line;
         for (const auto& q : p) {
             poly.push_back({manifold::vec2(q.x(), q.y()), int(out->verts.size())});
-            out->verts.push_back(Eigen::Vector3f(float(q.x()), float(q.y()), float(z)));
+            out->verts.push_back(at(q));
+            line.push_back(out->verts.back());
+        }
+        if (outlines) {
+            line.push_back(line.front());
+            outlines->push_back(std::move(line));
         }
         polygons.push_back(std::move(poly));
     }

@@ -86,9 +86,10 @@ class Point(Shape):
         bounds of what is made of it: nothing of the ball is painted.) '''
     _kind = 'point'
 
-    def __init__(self, x=0.0, y=0.0, z=0.0):
+    def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
+        self._smooth = None if smooth is None else bool(smooth)      # (what it is in a sketch: a spline point or a corner; None: what the sketch says)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
@@ -146,11 +147,13 @@ class Surface(Shape):
         return _as(self, self)
 
 
-def point(x=0.0, y=0.0, z=0.0):
-    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows '''
+def point(x=0.0, y=0.0, z=0.0, smooth=None):
+    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
+        In a `sketch` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
+        its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  A double click on its dot toggles it '''
     if isinstance(x, (tuple, list)) and y == 0.0 and z == 0.0 and len(x) == 3:
         x, y, z = x
-    return Point(x, y, z)
+    return Point(x, y, z, smooth)
 
 
 def surface(field):
@@ -186,7 +189,8 @@ def displayed(shape):
     ''' What FielDes draws for a shape (see the top of this file) '''
     kind = kind_of(shape)
     if kind == 'profile':
-        # The same field: the app meshes it as the face where it is negative, in the plane z = 0 (libfive Mesh::renderFlat), not as a body
+        # The same field: the app meshes it as the face where it is negative, in the plane z = 0 -- or the plane the shape says it lies in, `_flat_frame`
+        # (origin, u, v: a sketch) -- (libfive Mesh::renderFlat), not as a body
         out = _as(shape, shape)
         out._flat2d = True
         return out

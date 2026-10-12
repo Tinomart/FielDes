@@ -175,7 +175,7 @@ def helical_sweep(profile, lead, center=(0, 0, 0)):
         per `lead` of height (negative: the other way).  A gear outline gives
         a helical gear, a drill's outline its twisted flutes (for threads and
         springs, whose profile is drawn through the axis: helical_revolve).
-        Unbounded along z -- cut it to length, e.g. with extrude_z.  Kept
+        Unbounded along z -- cut it to length, e.g. with extrude.  Kept
         close to a distance by dividing out the twist's stretching.
     '''
     k = 2 * math.pi / lead

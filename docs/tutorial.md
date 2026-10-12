@@ -244,6 +244,7 @@ The `examples/` folder has a script for each of these. The ones that need no STE
 | [Custom blocks](blocks.md) | your own functions in every script |
 | [Apps](apps.md) | a script as a program for other people: a form, a Run button, one `.fieldesapp` file |
 | [Handles](handles.md) | the gizmo, the handles on the surfaces, `gizmo()` and `handles()` |
+| [Sketches](sketches.md) | 2D, 1D and 3D shapes made of points: `sketch`, `curve`, `extrude`, `path_extrude` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Lattices](lattices.md) | cells, graded and conformal lattices |
 | [Importing STEP files](step-import.md) | how a CAD part becomes a field |

@@ -5788,6 +5788,67 @@ void ScenePanel::selectFieldKey(const QString& key, bool toggle)
     else selectByLine(line0);
 }
 
+void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& at)
+{
+    if (!m_support || !m_source)
+    {
+        emit(pointEditDone(-1));
+        return;
+    }
+    QJsonObject request;
+    request["op"] = op;
+    request["source"] = m_source();
+    request["line"] = line0 + 1;
+    request["x"] = double(at.x());
+    request["y"] = double(at.y());
+    request["z"] = double(at.z());
+    QString error;
+    const QString answer = m_support("sketch_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    if (answer.isEmpty())
+    {
+        notify(error.isEmpty() ? T("The points could not be edited") : error);
+        emit(pointEditDone(-1));
+        return;
+    }
+    const QJsonObject doc = QJsonDocument::fromJson(answer.toUtf8()).object();
+    QList<TextEdit> edits;
+    for (const auto v : doc["edits"].toArray())
+    {
+        const auto a = v.toArray();
+        if (a.size() == 5) edits << TextEdit{a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), a[4].toString()};
+    }
+    if (edits.isEmpty())
+    {
+        emit(pointEditDone(-1));
+        return;
+    }
+    const QString name = doc["name"].toString();
+    if (op == "insert" && !name.isEmpty())
+    {
+        m_selectNew = name;                      // (the new point is selected once the script has run: its gizmo is there to drag)
+        m_selectNewTries = 0;
+    }
+    emit(editScript(edits, doc["label"].toString()));
+    emit(pointEditDone(op == "insert" ? doc["line"].toInt(-1) : -1));
+}
+
+void ScenePanel::selectFieldKeys(const QStringList& keys, bool add)
+{
+    QList<int> lines;
+    for (const QString& key : keys)
+    {
+        int line0 = -1;
+        if (key.startsWith("line:")) line0 = key.mid(5).toInt() - 1;
+        else
+        {
+            const QJsonObject it = itemForVar(key);
+            if (it.contains("display_line")) line0 = it["display_line"].toInt() - 1;
+        }
+        if (line0 >= 0 && !lines.contains(line0)) lines << line0;
+    }
+    if (!lines.isEmpty()) selectLines(lines, add);
+}
+
 void ScenePanel::toggleByLine(int line0)
 {
     auto r = rowForLine(line0);
@@ -6285,6 +6346,7 @@ bool ScenePanel::combines(const QString& operation) const
         {
             const auto p = v.toObject();
             if (p["with_bodies"].toBool()) m_withBodies.insert(p["name"].toString());
+            if (p["from_selection"].toBool()) m_fromSelection.insert(p["name"].toString());
         }
     }
     return m_combining.value(operation, false);
@@ -6311,6 +6373,12 @@ bool ScenePanel::takesBodies(const QString& primitive) const
 {
     combines(primitive);            // (reads the interpreter's list the first time)
     return m_withBodies.contains(primitive);
+}
+
+bool ScenePanel::fromSelection(const QString& primitive) const
+{
+    combines(primitive);            // (reads the interpreter's list the first time)
+    return m_fromSelection.contains(primitive);
 }
 
 bool ScenePanel::needsSecond(const QString& operation) const
@@ -6409,7 +6477,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         return type == "surface" || type == "field";
     };
     const bool regionOnly = picked.size() == 1 && regionKind(picked[0].item) && (line0 >= 0 || !selectedModels().isEmpty());
-    const bool withBodies = picked.size() >= 2 || regionOnly;
+    const bool withBodies = picked.size() >= 2 || regionOnly || (kind == "primitive" && !picked.isEmpty() && fromSelection(name));
     if (!operation && !withBodies) return true;             // (no model is needed for it, or none is selected)
     const QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
     if (operands.isEmpty()) return true;                    // (no model to work on: the menu says so itself -- a simulation writes placeholders)
@@ -6552,7 +6620,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         return type == "surface" || type == "field";
     };
     const bool regionOnly = picked.size() == 1 && regionKind(picked[0].item) && (line0 >= 0 || !selectedModels().isEmpty());
-    const bool withBodies = picked.size() >= 2 || regionOnly;
+    const bool withBodies = picked.size() >= 2 || regionOnly || (kind == "primitive" && !picked.isEmpty() && fromSelection(name));
     if (operation && generation >= 0 && generation != m_generation && !selectedModels().isEmpty())
     {
         // The script was run again since the menu was opened (the edit that makes the selected models ready to be

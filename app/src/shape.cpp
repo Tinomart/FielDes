@@ -307,23 +307,95 @@ std::set<libfive::Tree::Id> Shape::gizmoVars() const
     return out;
 }
 
+double Shape::evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const
+{
+    libfive::ArrayEvaluator e(t, v);
+    e.set(Eigen::Vector3f::Zero(), 0);
+    return double(e.values(1)[0]);
+}
+
+void Shape::setFlatFrame(std::vector<libfive::Tree> trees)
+{
+    m_frame_trees = std::move(trees);
+    updateFrameNumbers();
+}
+
+// The plane of a flat shape, as the numbers of the script are now
+void Shape::updateFrameNumbers()
+{
+    m_frame_now_valid = false;
+    if (m_frame_trees.size() != 9) return;
+    double f[9];
+    for (int i = 0; i < 9; ++i)
+    {
+        f[i] = evalConstant(m_frame_trees[size_t(i)], vars);
+        if (!std::isfinite(f[i])) return;
+    }
+    for (int i = 0; i < 9; ++i) m_frame_now[i] = f[i];
+    m_frame_now_valid = true;
+}
+
+bool Shape::tangentNow(QVector3D& out) const
+{
+    if (m_tangent_trees.size() != 3) return false;
+    double t[3];
+    for (int a = 0; a < 3; ++a)
+    {
+        t[a] = evalConstant(m_tangent_trees[size_t(a)], vars);
+        if (!std::isfinite(t[a])) return false;
+    }
+    out = QVector3D(float(t[0]), float(t[1]), float(t[2]));
+    return out.length() > 1e-9f;
+}
+
+bool Shape::dragNormalNow(QVector3D& out) const
+{
+    if (m_normal_trees.size() != 3) return false;
+    double t[3];
+    for (int a = 0; a < 3; ++a)
+    {
+        t[a] = evalConstant(m_normal_trees[size_t(a)], vars);
+        if (!std::isfinite(t[a])) return false;
+    }
+    out = QVector3D(float(t[0]), float(t[1]), float(t[2]));
+    return out.length() > 1e-9f;
+}
+
+void Shape::setCurve(std::vector<libfive::Tree> trees, bool closed)
+{
+    m_curve = true;
+    m_curve_closed = closed;
+    m_curve_trees = std::move(trees);
+}
+
 bool Shape::flatEdgeFrom(QVector3D& p) const
 {
+    // The plane: z = 0, or the shape's own
+    Eigen::Vector3d o(0, 0, 0), n(0, 0, 1);
+    if (m_frame_now_valid)
+    {
+        o = Eigen::Vector3d(m_frame_now[0], m_frame_now[1], m_frame_now[2]);
+        n = Eigen::Vector3d(m_frame_now[3], m_frame_now[4], m_frame_now[5]).cross(
+                Eigen::Vector3d(m_frame_now[6], m_frame_now[7], m_frame_now[8]));
+        if (!(n.norm() > 1e-9)) return false;
+        n.normalize();
+    }
+    auto onPlane = [&](Eigen::Vector3d q) { return q - n * (q - o).dot(n); };
+    Eigen::Vector3d q = onPlane(Eigen::Vector3d(p.x(), p.y(), p.z()));
     libfive::JacobianEvaluator e(tree, vars);
     for (int i = 0; i < 12; ++i)
     {
-        const Eigen::Vector3f at(p.x(), p.y(), 0.0f);
+        const Eigen::Vector3f at(float(q.x()), float(q.y()), float(q.z()));
         const auto vt = e.valueAndPush(at);
         const auto g = e.deriv(at, *vt.second);
-        const double g2 = double(g.x()) * g.x() + double(g.y()) * g.y();
+        Eigen::Vector3d gd(g.x(), g.y(), g.z());
+        gd -= n * gd.dot(n);                                // (along the plane)
+        const double g2 = gd.squaredNorm();
         if (!(g2 > 1e-12)) return false;
         if (std::fabs(vt.first) < 1e-5f) break;
-        const double step = double(vt.first) / g2;
-        p.setX(float(p.x() - step * g.x()));
-        p.setY(float(p.y() - step * g.y()));
-        p.setZ(0.0f);
+        q = onPlane(q - gd * (double(vt.first) / g2));
     }
-    p.setZ(0.0f);
+    p = QVector3D(float(q.x()), float(q.y()), float(q.z()));
     return true;
 }
 
@@ -443,6 +515,7 @@ void Shape::measureExtent(const Settings& s)
 {
     m_ext_valid = false;
     if (!s.autoScale || has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return;
+    if (m_curve || (m_flat && hasFlatFrame())) return;          // (a line, or a face in a plane of its own: no extent is measured)
     std::vector<libfive_tree> var_trees;
     std::vector<float> values;
     for (const auto& kv : vars)
@@ -2136,7 +2209,10 @@ void Shape::startRender(RenderSettings s)
             const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
             run_heavy = force_low || expected > 150000.0;
         }
-        if (m_flat) run_flat_vars = vars;
+        if (m_flat || m_curve) run_flat_vars = vars;
+        updateFrameNumbers();
+        run_has_frame = m_flat && m_frame_now_valid;
+        for (int i = 0; i < 9; ++i) run_frame[i] = m_frame_now[i];
         timer.start();
         running = true;
 #if QT_VERSION >= 0x060000
@@ -2292,6 +2368,7 @@ void Shape::onFutureFinished()
         step_disp.clear();
         lines_dirty = true;
         mesh.reset(bm.mesh);
+        m_outlines = std::move(bm.outlines);
         prev_div = mesh_div;
         prev_seq = mesh_seq;
         prev_verts = mesh_verts;
@@ -2537,10 +2614,30 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     }
 
     static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-    auto m = run_step_exact ? exactMeshOf(*run_step_exact, identity, r)
-           : exactCurrent() ? exactMeshIn(r)
-           : m_flat ? libfive::Mesh::renderFlat(tree, run_flat_vars, mesh_region, 0.0, mesh_settings)
-           : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+    std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
+    std::unique_ptr<libfive::Mesh> m;
+    if (m_curve)
+    {
+        // A curve is not painted: the line through its points, as the script's numbers have them (the mesh is empty)
+        m = std::make_unique<libfive::Mesh>();
+        std::vector<Eigen::Vector3f> line;
+        for (size_t i = 0; i + 2 < m_curve_trees.size(); i += 3)
+        {
+            Eigen::Vector3f q;
+            for (int a = 0; a < 3; ++a) q[a] = float(evalConstant(m_curve_trees[i + size_t(a)], run_flat_vars));
+            if (q.allFinite()) line.push_back(q);
+        }
+        if (m_curve_closed && !line.empty()) line.push_back(line.front());
+        if (line.size() >= 2) flat_outlines.push_back(std::move(line));
+    }
+    else
+    {
+        m = run_step_exact ? exactMeshOf(*run_step_exact, identity, r)
+          : exactCurrent() ? exactMeshIn(r)
+          : m_flat ? libfive::Mesh::renderFlat(tree, run_flat_vars, mesh_region, run_has_frame ? run_frame : nullptr, mesh_settings,
+                                               &flat_outlines)
+          : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+    }
     // A flat face is a few big triangles: a colour read at the vertices only would run across them.  Where it is coloured by a field, the
     // triangles are cut (at the middles of their edges) until they are about as small as the cells of the render
     if (m_flat && has_color && m && !m->branes.empty())
@@ -2621,6 +2718,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     BoundedMesh out;
     out.mesh = m.release();
     out.region = r;
+    out.outlines = std::move(flat_outlines);
 
     // A result: every field and the displacements at every vertex
     if (has_result && out.mesh)
@@ -2907,7 +3005,7 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
         cache_tree_key = renderCacheTreeKey();
         cache_tree_gen = cache_vars_gen;
     }
-    if (cache_tree_key.empty()) return std::string();
+    if (cache_tree_key.empty() || m_flat || m_curve) return std::string();         // (a face and a line are quick to make, and have outlines)
     char buf[400];
     std::snprintf(buf, sizeof(buf), "|%a %a %a %a %a %a|%a|%a|%d",
                   region.lower.x(), region.lower.y(), region.lower.z(),

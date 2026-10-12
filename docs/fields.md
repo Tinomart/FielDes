@@ -170,7 +170,7 @@ What an excluded shape does with the rest of the library:
 | `union`, `intersection`, `blend*`, `morph`, `smooth_*`, `chamfer_union`, `union_all`, `intersection_all` | the same, for the locked fields of every excluded shape given |
 | `difference(a, b)`, `clearance`, `blend_difference`, `smooth_difference` | the locked fields of `a` (a tool that is excluded is only subtracted) |
 | `move`, `rotate*`, `scale_*`, `reflect_*`, `gizmo()` | the whole thing moves: the locked field and its region go with the shape |
-| `array_*`, `symmetric_*`, `repeat*`, `mirror_*`, `loft*`, `extrude_z`, `twist_z`, `bend_z`, `taper_*`, `shear_x_y`, `attract_*`, `repel_*`, `twirl_*`, `revolve_y`, `handles` | would separate the two fields (copy or deform them differently), so they raise an `ExcludedError` — do them first and `exclude()` the result |
+| `array_*`, `symmetric_*`, `repeat*`, `mirror_*`, `loft*`, `extrude`, `twist_z`, `bend_z`, `taper_*`, `shear_x_y`, `attract_*`, `repel_*`, `twirl_*`, `revolve_y`, `handles` | would separate the two fields (copy or deform them differently), so they raise an `ExcludedError` — do them first and `exclude()` the result |
 | analyses, `colored`, `render_cache`, `lock`, queries (`volume_of`, `evaluate`, ...) | see the whole shape; `colored` and `lock` keep it excluded |
 
 Raw field arithmetic (`a + b`, `a.min(b)`, `a.max(b)`) is not an operation of the library: it works on the whole field

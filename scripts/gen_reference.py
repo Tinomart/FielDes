@@ -22,6 +22,8 @@ MODULES = [
     ('exporting', 'Exporting files', 'fieldes.stdlib.exporting'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
     ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
+    ('curves', 'Curves: 1D shapes made of points', 'fieldes.stdlib.curves'),
+    ('sketch', 'Sketches and extrusions', 'fieldes.stdlib.sketch'),
     ('measure', 'Measuring a body', 'fieldes.stdlib.measure'),
     ('fields', 'Fields', 'fieldes.stdlib.fields'),
     ('regression', 'Regressions and data', 'fieldes.stdlib.regression'),

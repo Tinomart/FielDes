@@ -209,7 +209,8 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 | Icon | Kind | Is |
 |---|---|---|
 | cube, blue | **3D shape** | a body: its field is negative inside |
-| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn as a flat face in the z = 0 plane, with no thickness; pulled by its edges |
+| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn as a flat face in the z = 0 plane, with no thickness, its **edges blue**; pulled by its edges. A **sketch** is a 2D shape made of points, in the plane of its first three: click an edge to put a point there, double-click a point to make it a corner or a spline point -- see [Sketches](sketches.md) |
+| curve, light | **1D shape** | a `curve` through points: a blue line in the viewport, the path of `path_extrude`, the outline of a `sketch`; as a field the distance to it. Select it by a click on its line; press the line and drag to put a point on it |
 | soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: it has an icon in the viewport (with its name over it) and an eye in the tree, and selecting it opens its [field viewer](#the-field-viewer) |
 | sheet, purple | **surface** | the zero of a field with no body behind it; drawn as the sheet itself, with no thickness |
 | cross, amber | **point** | a point: a dot in the viewport (the middle point of a gizmo), always there while the point is shown (its eye); click the dot to select it, and its full gizmo shows |

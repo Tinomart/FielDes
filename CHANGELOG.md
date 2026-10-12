@@ -21,6 +21,22 @@
   (a gyroid is `cell_periodic('gyroid')`). The 3D shapes stand along z, the 2D shapes lie in z = 0; one that stands another way is turned (`rotate_x`, `rotate_y`, `rotate_z`), one that sits elsewhere is moved (`move`).
   **The old names are gone, not aliased** (a beta change): the examples, the docs, the tour, the menus (*New 3D shape*, *New 2D shape*) and the library say the new ones. A script from before needs the names changed.
 
+### Shapes made of points: sketches, curves and extrusions
+- **A 2D shape from any number of points: `sketch([a, b, c, d])`.** The face a closed outline through the points encloses, in **the plane through the first three points** -- every other point is projected onto that plane, so it works
+  whatever the points are. Each point is a **corner** (a hard edge) or a **spline point** (the outline goes smoothly through it): `sketch(points, smooth=False)` says which a point is that does not say itself (a hard edge by default),
+  `point(x, y, z, smooth=True)` says it for one point. A sketch is an exact distance field, concave outlines too, so it offsets, shells and extrudes like any 2D shape.
+- **A 1D shape: `curve([a, b, c])`.** A new kind of model -- a line or a spline through points, open or `closed=True`, drawn as a line, with its own icon. It stands on its own: it is the path of `path_extrude`, the outline `sketch(curve)` fills,
+  and, as the distance to the line, `offset(curve, 1.5)` is a tube round it.
+- **The rotation of a point turns the direction a spline leaves it.** A point has had a gizmo with rotation rings and no use for them; now the rotate numbers of a spline point turn its tangent (no rotation: Catmull-Rom, from the neighbours). A line through the
+  selected point shows the direction.
+- **`path_extrude(profile, curve)` sweeps a 2D shape along a curve**, turning with it, with mitered joints; the same rotation of a point **twists** the profile about the path there. **`extrude(shape, a, b)`** is the straight one,
+  and follows the plane of a sketch (it replaces `extrude_z`, which is gone: for a shape in z = 0 it is the same call).
+- **Edit them in the viewport.** The edges of every 2D shape are drawn **blue** (and the lines of curves); **click an edge** and a point is put there, **keep the button down** and it follows the mouse; on a curve **press the line and drag**.
+  **Double-click a point** to change it between a corner (a square dot) and a spline point (a round dot with a ring) -- written as `smooth=True` / `smooth=False` on the point. A hint beside the mouse says what a click does.
+- **The menus make them from what is selected.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for *New 1D shape → curve*, *New 3D shape → extrude*
+  (a selected 2D shape) and *→ path_extrude* (a selected 2D shape and a curve). See [Sketches](docs/sketches.md).
+- **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are curves.
+
 ### A 2D shape is a face, not a thin body
 - **A 2D shape is drawn as what it is: a flat face in the plane z = 0, with no thickness.** It used to be cut out of a thin slab (a tenth of a millimetre or so), which showed edges and a back when you looked at it from the side. The face is made from the shape's own field (its outline is found where the field is
   zero, the inside is filled with flat triangles), so a hole is a hole and an offset is an offset; a shape that is coloured by a field has the face cut small enough for the colour. It is a sheet in the same sense as a surface, with no curvature.

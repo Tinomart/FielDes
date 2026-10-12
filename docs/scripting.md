@@ -97,7 +97,8 @@ its own); see [Region and resolution](step-import.md#region-and-resolution).
 ## Primitives
 
 3D: `sphere`, `box`, `rounded_box`, `cylinder`, `cone`, `torus`, `pyramid`, `half_space`; 2D: `circle`, `ring`, `rectangle`,
-`rounded_rectangle`, `triangle`, `polygon`; `extrude_z` turns a 2D shape into a solid; `text` makes lettering; `emptiness` is the empty
+`rounded_rectangle`, `triangle`, `polygon`, and `sketch` (any number of points: see [Sketches](sketches.md), which also has the 1D
+`curve`); `extrude` turns a 2D shape into a solid and `path_extrude` sweeps it along a curve; `text` makes lettering; `emptiness` is the empty
 shape. Free-form and analytic surfaces: `ellipsoid`, `elliptic_cylinder`, `hyperboloid`, `paraboloid`,
 `quadric`, `extruded_curve`, `revolved_curve`, `helical_curve`, `helical_sweep`, `helical_revolve`,
 `coil_spring`, `wave_block`.

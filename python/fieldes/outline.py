@@ -70,7 +70,7 @@ _MAKES = (
     ('lattice', ('lattice', 'lattice_surface_conform')),
     ('field', ('fit', 'fit_csv', 'fit_field', 'interpolate_field', 'X', 'Y', 'Z')),
 )
-_GEOMETRIC = ('solid', 'profile', 'field', 'surface', 'lattice')
+_GEOMETRIC = ('solid', 'profile', 'curve', 'field', 'surface', 'lattice')
 _FUNCTION_KINDS = {}
 
 

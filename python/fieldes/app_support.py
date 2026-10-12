@@ -936,7 +936,7 @@ def _handle_count(shape):
         from fieldes.stdlib.handles import _handle_count
         while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
             shape = shape._placed_from
-        if getattr(shape, '_locks', None) or getattr(shape, '_kind', None) in ('point', 'field', 'const'):
+        if getattr(shape, '_locks', None) or getattr(shape, '_kind', None) in ('point', 'field', 'const') or getattr(shape, '_editable', False):
             return 0                # (a point is moved by its gizmo, not by pulling the surface of its ball; a field has no
                                     # surface to pull: its numbers are written in the script, or moved by its gizmo)
         return int(_handle_count(shape))
@@ -1650,3 +1650,9 @@ def app_cli(arg):
                 stream.flush()
             except Exception:
                 pass
+
+
+def sketch_edit(arg):
+    ''' The edits that put a point on the outline of a sketch or a curve, or toggle one of its points between a corner and a spline point (see fieldes.sketch_edit) '''
+    from fieldes import sketch_edit as _edit
+    return _edit.edit(arg)

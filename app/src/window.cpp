@@ -1323,6 +1323,13 @@ Window::Window(Arguments args)
             scene->selectLines(lines, add);
             view->setFocus(Qt::MouseFocusReason);
         });
+        connect(view, &View::outlineInsertRequested, scene, [=](int line, QVector3D at) { scene->editPoints("insert", line, at); });
+        connect(view, &View::pointToggleRequested, scene, [=](int line) { scene->editPoints("toggle", line, QVector3D()); });
+        connect(scene, &ScenePanel::pointEditDone, view, &View::expectNewPoint);
+        connect(view, &View::fieldsRectSelected, this, [=](QStringList keys, bool add) {
+            scene->selectFieldKeys(keys, add);
+            view->setFocus(Qt::MouseFocusReason);
+        });
         connect(view, &View::surfaceSelectRequested, scene, &ScenePanel::addSurfaceSelection);
         // The context menus create primitives and operations: the interpreter lists them and writes the calls
         scene->setSupport([this](const QString& function, const QString& arg, QString* error) {

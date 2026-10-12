@@ -5,6 +5,7 @@ Everything a script makes is one of a few kinds, and FielDes shows the kind with
 (and in the right-click menus that create them):
 
     solid       a 3D shape (a body: the field is negative inside it)
+    curve       a 1D shape: a line or a spline through points (drawn as a line; as a field the distance to it)
     profile     a 2D shape (a field that does not depend on z: drawn flat, in the z = 0 plane)
     field       a field that is not a body: a distance, a ramp, noise, a stress ... (a value at every point of space)
     surface     an open surface (the zero set of a field, with no body behind it); a patch picked on a surface is one too
@@ -29,6 +30,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 # kind: (the words for it, its colour)
 KINDS = {
     'solid':      ('3D shape',    '#4aa8e8'),
+    'curve':      ('1D shape',    '#c9d3e6'),
     'profile':    ('2D shape',    '#35c4b3'),
     'field':      ('Field',       '#82cc58'),
     'surface':    ('Surface',     '#b583ee'),
@@ -73,7 +75,7 @@ def kind_of(value):
     from fieldes.shape import Shape
     if isinstance(value, Shape):
         k = getattr(value, '_kind', None)
-        if k in ('point', 'points', 'surface', 'field', 'profile', 'lattice'):
+        if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice'):
             return k
         if k == 'const':
             return 'field'

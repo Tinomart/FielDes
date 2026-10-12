@@ -229,15 +229,4 @@ def array_polar_z(shape, n, center=(0, 0)):
         args[1],
         tvec2(*[a.ptr for a in args[2]])))
 
-stdlib.extrude_z.argtypes = [libfive_tree, tfloat, tfloat]
-stdlib.extrude_z.restype = libfive_tree
-def extrude_z(t, zmin, zmax):
-    """ Extrudes a 2D shape between zmin and zmax
-    """
-    args = [Shape.wrap(t), Shape.wrap(zmin), Shape.wrap(zmax)]
-    return Shape(stdlib.extrude_z(
-        args[0].ptr,
-        args[1].ptr,
-        args[2].ptr))
-
 array_polar = array_polar_z

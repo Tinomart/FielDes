@@ -240,6 +240,7 @@ takes a few seconds and is cached next to it.
 | [Apps](docs/apps.md) | A script as a program for other people: inputs, the form, `.fieldesapp`, `FielDes run`, watch |
 | [Importing STEP files](docs/step-import.md) | Reconstruction, B-spline fits, `exclude()`, `auto_exclude`, the tessellated importer, assemblies, units, caches |
 | [Handles](docs/handles.md) | The gizmo, the handles on the surfaces, `gizmo()` and `handles()`, reimport |
+| [Sketches, curves and extrusions](docs/sketches.md) | Shapes made of points: `sketch`, `curve`, `extrude`, `path_extrude`; click an edge to add a point, double-click for a spline |
 | [Analysis](docs/analysis.md) | Static, modal, thermal, thermal stress, topology optimization, fields in analyses; seeing the boundary conditions |
 | [Selecting surfaces](docs/selecting-surfaces.md) | Right-click a face: a flood-filled surface as a field, for supports, loads and lattices |
 | [Lattices](docs/lattices.md) | Every lattice type and parameter |

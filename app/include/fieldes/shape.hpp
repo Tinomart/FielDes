@@ -127,8 +127,45 @@ public:
     void setFlat(bool on) { m_flat = on; }
     bool isFlat() const { return m_flat; }
 
-    /*  The point of the outline of a flat shape that is nearest to `p` (in the plane z = 0): `p` is moved onto it.  False when there is none  */
+    /*  The point of the outline of a flat shape that is nearest to `p` (in its plane): `p` is moved onto it.  False when there is none  */
     bool flatEdgeFrom(QVector3D& p) const;
+
+    /*
+     *  The plane a flat shape lies in when it is not z = 0 (fieldes.stdlib.sketch: the plane through the first three points): the point and the
+     *  two unit vectors that span it, nine expressions of the script's numbers -- they move with the points that make the plane
+     */
+    void setFlatFrame(std::vector<libfive::Tree> trees);
+    bool hasFlatFrame() const { return m_frame_trees.size() == 9; }
+
+    /*
+     *  The outline of the face of a flat shape, and the line of a curve: polylines in space (closed ones end where they begin)
+     */
+    const std::vector<std::vector<Eigen::Vector3f>>& outlines() const { return m_outlines; }
+
+    /*
+     *  A curve (a 1D shape: fieldes.stdlib.curves) is not painted: it is a line through points, each three expressions of the script's numbers
+     */
+    void setCurve(std::vector<libfive::Tree> trees, bool closed);
+    bool isCurve() const { return m_curve; }
+
+    /*  A shape whose outline is a place to press (a sketch, a curve): a click on it puts a point there, one that is drawn blue  */
+    void setEditable(bool on) { m_editable = on; }
+    bool isEditable() const { return m_editable; }
+
+    /*  How the dot of a point is drawn: 0 as any point, 1 a corner of a sketch or a curve (a square), 2 a spline point (a circle with a ring)  */
+    void setPointStyle(int s) { m_point_style = s; }
+    int pointStyle() const { return m_point_style; }
+
+    /*  The direction a spline point of a sketch or a curve leaves in (three expressions of the script's numbers): drawn as a line through its dot while it
+        is selected.  tangentNow gives it with the numbers the script has now  */
+    void setTangent(std::vector<libfive::Tree> trees) { m_tangent_trees = std::move(trees); }
+    bool hasTangent() const { return m_tangent_trees.size() == 3; }
+    bool tangentNow(QVector3D& out) const;
+
+    /*  The normal of the plane a point of a sketch is dragged in (three expressions): the plane of the sketch, where its outline is.  dragNormalNow gives it  */
+    void setDragNormal(std::vector<libfive::Tree> trees) { m_normal_trees = std::move(trees); }
+    bool dragNormalNow(QVector3D& out) const;
+    bool isHovered() const { return hover; }
 
     /*
      *  A point (fieldes.stdlib.points.Point) is drawn as a dot: the middle point of a gizmo, wherever it is and whatever its gizmo's mode.
@@ -576,6 +613,7 @@ protected:
         std::vector<float> values;      // colour field at the vertices
         std::vector<std::vector<float>> channels;   // result fields at the vertices
         std::vector<Eigen::Vector3f> disp;          // displacements at the vertices
+        std::vector<std::vector<Eigen::Vector3f>> outlines;     // the outline of a flat face, the line of a curve
     };
 
     void startRender(RenderSettings s);
@@ -587,6 +625,19 @@ protected:
     bool no_paint=false;
     bool m_flat=false;
     std::map<libfive::Tree::Id, float> run_flat_vars;     // (the numbers a flat face is meshed with: those of the moment the render started)
+    std::vector<libfive::Tree> m_frame_trees;             // (the plane of a flat shape: see setFlatFrame)
+    double m_frame_now[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};  // (what they are now: updated when a render starts)
+    bool m_frame_now_valid = false;
+    double run_frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};    // (what the render in the thread uses)
+    bool run_has_frame = false;
+    bool m_curve = false, m_curve_closed = false, m_editable = false;
+    int m_point_style = 0;
+    std::vector<libfive::Tree> m_curve_trees;
+    std::vector<libfive::Tree> m_tangent_trees;
+    std::vector<libfive::Tree> m_normal_trees;
+    std::vector<std::vector<Eigen::Vector3f>> m_outlines;
+    double evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const;
+    void updateFrameNumbers();
     float opacity=1.0f;
     int source_line=-1;
 

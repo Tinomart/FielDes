@@ -34,6 +34,7 @@ QHash<QString, Kind>& kinds()
 {
     static QHash<QString, Kind> k = {
         {"solid",      {"3D shape",     QColor("#4aa8e8")}},
+        {"curve",      {"1D shape",     QColor("#c9d3e6")}},
         {"profile",    {"2D shape",     QColor("#35c4b3")}},
         {"field",      {"Field",        QColor("#82cc58")}},
         {"surface",    {"Surface",      QColor("#b583ee")}},
@@ -78,7 +79,21 @@ QColor alpha(QColor c, int a)
 
 void drawKind(QPainter& p, const QString& type, const QColor& c)
 {
-    if (type == "profile")
+    if (type == "curve")
+    {
+        // a line through points: a spline with its two ends marked
+        QPainterPath path;
+        path.moveTo(2.4, 11.2);
+        path.cubicTo(5.0, 2.6, 9.4, 14.2, 13.6, 4.8);
+        p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawEllipse(QPointF(2.4, 11.2), 1.7, 1.7);
+        p.drawEllipse(QPointF(13.6, 4.8), 1.7, 1.7);
+    }
+    else if (type == "profile")
     {
         // a flat shape: a square with its fill
         p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));

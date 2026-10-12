@@ -1147,6 +1147,12 @@ void AppWindow::ensureViewport()
             for (int l : lines) m_selected.insert(l);
             applySelection();
         });
+        connect(m_view, &View::fieldsRectSelected, this, [this](QStringList keys, bool add) {
+            if (add) { for (const QString& k : keys) if (!m_openFields.contains(k)) m_openFields << k; }
+            else m_openFields = keys;
+            if (!add && !m_selected.isEmpty()) { m_selected.clear(); applySelection(); }
+            m_view->setOpenFields(m_openFields);
+        });
         connect(m_view, &View::dragStart, this, [this] { m_dragging = true; });
         connect(m_view, &View::varsDragged, this, [this](QMap<libfive::Tree::Id, float> vs) { applyVarValues(vs); });
         connect(m_view, &View::dragEnd, this, [this] {

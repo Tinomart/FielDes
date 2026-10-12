@@ -119,6 +119,49 @@ HINTS = {
                            'made in.  Select points first (random_points)'),
 }
 
+# A sketch or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
+# rotates it), in the horizontal plane at the place of the click
+_SKETCH = '''{var}_p1 = point({xm}, {ym}, {z})
+{var}_p1
+{var}_p2 = point({xp}, {ym}, {z})
+{var}_p2
+{var}_p3 = point({xp}, {yp}, {z})
+{var}_p3
+{var}_p4 = point({xm}, {yp}, {z})
+{var}_p4
+#@@#
+sketch([{var}_p1, {var}_p2, {var}_p3, {var}_p4])'''
+
+_CURVE = '''{var}_p1 = point({xm}, {y}, {z})
+{var}_p1
+{var}_p2 = point({x}, {yp}, {z})
+{var}_p2
+{var}_p3 = point({xp}, {y}, {z})
+{var}_p3
+#@@#
+curve([{var}_p1, {var}_p2, {var}_p3])'''
+
+_SWEEP = '''{var}_p1 = point({xm}, {y}, {z})
+{var}_p1
+{var}_p2 = point({x}, {yp}, {z})
+{var}_p2
+{var}_p3 = point({xp}, {y}, {z})
+{var}_p3
+{var}_path = curve([{var}_p1, {var}_p2, {var}_p3])
+{var}_path
+#@@#
+path_extrude(circle({q}), {var}_path)'''
+
+# What the entries that are made of the models selected say when the mouse rests on them (the shape the model tree has: points, a curve, a 2D shape)
+FROM_SELECTION = {
+    'sketch': tr('A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  '
+                 'Click its edge to put a point there; double-click a point to make it a corner or a spline point'),
+    'curve': tr('A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  '
+                'Click the line and drag to put a point there; double-click a point to make it a corner or a spline point'),
+    'extrude': tr('A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made'),
+    'path_extrude': tr('A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made'),
+}
+
 # (function, group, template)
 PRIMITIVES = [
     ('sphere', '3D', 'sphere({h}, ({x}, {y}, {z}))'),
@@ -136,6 +179,10 @@ PRIMITIVES = [
     ('ring', '2D', 'ring({h}, {q}, ({x}, {y}))'),
     ('polygon', '2D', 'polygon({h}, {n}, ({x}, {y}))'),
     ('triangle', '2D', 'triangle(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}))'),
+    ('sketch', '2D', _SKETCH),
+    ('curve', '1D', _CURVE),
+    ('extrude', '3D', 'extrude(rectangle(({xm}, {ym}), ({xp}, {yp})), 0, {s})'),
+    ('path_extrude', '3D', _SWEEP),
     ('point', 'Points', 'point({x}, {y}, {z})'),
     ('plane', 'Surfaces', 'plane(({x}, {y}, {z}), (0, 0, 1))'),
     ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
@@ -250,7 +297,7 @@ BODY_CONDITIONS = {
 }
 
 # What a group of primitives makes (the kind: see fieldes.kinds), for the icon beside each entry
-GROUP_KINDS = {'3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field',
+GROUP_KINDS = {'1D': 'curve', '3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field',
                'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
                'Thermal conditions': 'conditions', 'Flow conditions': 'conditions',
                'Strut cells': 'cell', 'TPMS cells': 'cell', 'Planar cells': 'cell', 'Custom cells': 'cell'}
@@ -352,8 +399,10 @@ def catalog():
     blocks = _blocks()
     return json.dumps({
         'kinds': describe(),
-        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS},
-                            **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}))
+        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION,
+                             'from_selection': n in FROM_SELECTION},
+                            **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
+                            **({'doc': FROM_SELECTION[n]} if n in FROM_SELECTION else {}))
                        for n, g, _ in PRIMITIVES]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
@@ -406,7 +455,7 @@ def _fluids(others):
 # takes: a list of SIGNATURES -- the tags it accepts, and the tags it must be given at least one of.  A selection fits an entry when all of
 # its models are accepted by ONE signature and the signature's needs are met; an entry it does not fit is greyed out in the menu (nothing is
 # said: it is not offered).  A model of no known kind (not run yet) fits anything, and so does an entry that declares nothing (a custom block).
-_SHAPES = frozenset(('solid', 'profile', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))      # (what a geometric operation works on)
+_SHAPES = frozenset(('solid', 'profile', 'curve', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))      # (what a geometric operation works on)
 _PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
 
@@ -432,6 +481,7 @@ def _slots_of(name):
 def _takes(name):
     if name == 'distance_to_point':
         return [({'point'}, [])]                # (the distance from a point: a point is what it is made of)
+
     # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all
     # it takes -- they know the model it fills)
     if name in ('lattice', 'lattice_surface_conform'):
@@ -490,6 +540,34 @@ def _body_first(body, info, others):
         return '', {}, [first] + list(others)
     return (main['name'], {'type': main.get('type'), 'role': '', 'cls': main.get('cls') or '', 'part': ''},
             [first] + [o for o in others if o is not main])
+
+
+def _from_selection(name, models, values):
+    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), a
+        curve a sketch is the outline of, the 2D shape an extrusion pulls and the curve it is swept along -- or None when what is selected is not what
+        the entry takes (it is made from its own template then, with new points) '''
+    points = [m['name'] for m in models if m.get('type') == 'point']
+    curves = [m['name'] for m in models if m.get('type') == 'curve']
+    profiles = [m['name'] for m in models if m.get('type') == 'profile']
+    if name == 'sketch':
+        if len(points) >= 3:
+            return 'sketch([%s])' % ', '.join(points)
+        if curves and not points:
+            return 'sketch(%s)' % curves[0]
+    elif name == 'curve':
+        if len(points) >= 2:
+            return 'curve([%s])' % ', '.join(points)
+    elif name == 'extrude':
+        if profiles:
+            return 'extrude(%s, 0, %s)' % (profiles[0], values.get('s', 10))
+    elif name == 'path_extrude':
+        if profiles and curves:
+            return 'path_extrude(%s, %s)' % (profiles[0], curves[0])
+        if profiles and len(points) >= 2:
+            # (the shape and the points of the path: the points make a curve of their own, which is shown and edited like any other)
+            var = values.get('var') or 'path_extrude_1'
+            return '%s_path = curve([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profiles[0], var)
+    return None
 
 
 def _build_operation(name, v, others):
@@ -657,7 +735,7 @@ KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'vo
 
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)
-_PLACED_GROUPS = ('3D', '2D', 'Points', 'Surfaces', 'Fields', 'Materials', 'Fluids',
+_PLACED_GROUPS = ('1D', '3D', '2D', 'Points', 'Surfaces', 'Fields', 'Materials', 'Fluids',
                   'Strut cells', 'TPMS cells', 'Planar cells', 'Custom cells')
 
 
@@ -683,6 +761,10 @@ def _call(r):
             kind, name, ([r['body_info']] if r.get('body') and r.get('body_info') else []) + list(others)):
         # (the menu greys the entry out for such a selection, so this is not reached from it)
         raise ValueError('%s does not take what is selected' % name)
+    if kind == 'primitive' and name in FROM_SELECTION and selected:
+        built = _from_selection(name, selected, values)
+        if built:
+            return built
     if kind == 'primitive' and name in BODY_CONDITIONS and selected:
         # a condition made of the regions selected: whatever is selected says where it acts -- a surface, a field, a body.  The conditions
         # have no body in them: the simulation is given the body

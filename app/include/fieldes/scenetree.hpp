@@ -234,6 +234,16 @@ public slots:
      *  variable's name or "line:N" -- is the selection, which opens its viewer; with `toggle` (Ctrl) it joins the selection or leaves it  */
     void selectFieldKey(const QString& key, bool toggle);
 
+    /*  A selection rectangle that holds the icons of fields: those fields are the selection (with `add`, they join it)  */
+    void selectFieldKeys(const QStringList& keys, bool add);
+
+    /*
+     *  Editing the points of a sketch or a curve from the viewport: `op` is "insert" (a point on its outline, where the mouse pressed: `at`) or
+     *  "toggle" (the point displayed by the line: a corner becomes a spline point and the other way).  `line0` is the 0-based line that displays
+     *  the model.  Both are edits of the script; pointEditDone says which line displays the new point (-1 when none)
+     */
+    void editPoints(const QString& op, int line0, const QVector3D& at);
+
     /*  A selection rectangle drawn in the viewport: the models displayed by these lines are the selection
      *  (with `add`, they join the selection that there is)  */
     void selectLines(QList<int> lines0, bool add);
@@ -287,6 +297,9 @@ signals:
     /*  An edit of the script was followed by the tree before it was run: every (0-based) line of the old text is moved[line] now, or -1
      *  when it is gone.  The viewport's shapes know the lines they were made on only from a run: they are told  */
     void sourceLinesMoved(QVector<int> moved);
+
+    /*  A point was put on an outline: the 0-based line that displays it once the edit is in the script (-1: nothing was done)  */
+    void pointEditDone(int line0);
 
     /*  Frame the camera on a box; if the box is empty, on the shapes
      *  displayed by the given lines  */
@@ -620,6 +633,7 @@ protected:
     /*  Whether a primitive of the menu -- a support, a load, a thermal or flow condition -- is made for a body and the regions it acts on
      *  when several models are selected (otherwise it is a box laid at the cursor)  */
     bool takesBodies(const QString& primitive) const;
+    bool fromSelection(const QString& primitive) const;
     /*  The (0-based) lines that show the selected rows, for highlighting them in the viewport  */
     QList<int> selectedLines() const;
     QList<int> rowLines(QTreeWidgetItem* row) const;
@@ -669,6 +683,7 @@ protected:
     mutable QHash<QString, bool> m_combining;
     mutable QHash<QString, bool> m_needsSecond;
     mutable QSet<QString> m_withBodies;
+    mutable QSet<QString> m_fromSelection;      // (the entries that are made of the models selected: sketch, curve, extrude, path_extrude)
     mutable QSet<QString> m_simulations;
 
     /*  A variable to select once the script that creates it has run (tries counts the runs waited)  */
