@@ -921,7 +921,6 @@
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "Ein stochastisches Fachwerk: Stäbe entlang der Delaunay-Kanten zwischen den gewählten Punkten, das das Modell füllt, in dem die Punkte erzeugt wurden. Wählen Sie zuerst Punkte (random_points)",
  "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "Eine 2D-Form aus Punkten. Mit ausgewählten Punkten: aus ihnen gemacht, in der Reihenfolge der Auswahl. Ohne: vier neue Punkte zum Ziehen. Klick auf ihre Kante setzt dort einen Punkt; Doppelklick auf einen Punkt macht ihn zur Ecke oder zum Spline-Punkt",
  "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "Eine Linie durch Punkte. Mit ausgewählten Punkten: aus ihnen gemacht, in der Reihenfolge der Auswahl. Ohne: drei neue Punkte zum Ziehen. Klicken und Ziehen auf der Linie setzt dort einen Punkt; Doppelklick auf einen Punkt macht ihn zur Ecke oder zum Spline-Punkt",
- "A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made": "Eine 3D-Form aus einer 2D-Form: mit ausgewählter 2D-Form wird sie nach oben gezogen; ohne Auswahl entsteht eine neue",
  "the menu has no %s called %s": "das Menü hat kein %s namens „%s“",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s wirkt dort, wo eine Fläche, ein Feld oder ein Körper es angibt: wählen Sie eines oder mehrere davon aus",
  "static analysis": "statische Analyse",
@@ -1107,5 +1106,5 @@
  "qt:QDialogButtonBox|OK": "OK",
  "qt:QDialogButtonBox|Cancel": "Abbrechen",
  "qt:QDialogButtonBox|Close": "Schließen",
- "A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made": "Eine 2D-Form, entlang einer Kurve gezogen: beide auswählen, oder die Form und die Punkte des Pfads. Ohne Auswahl entstehen ein neuer Kreis und ein Pfad"
+ "Extruding": "Extrudieren"
 }

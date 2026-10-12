@@ -921,7 +921,6 @@
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "確率的トラス：選択した点群の間のドロネー辺に沿った梁で、点群が作られたモデルを満たします。先に点群（random_points）を選択してください",
  "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "点から作る 2D 形状。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 4 つ作ります。縁をクリックするとそこに点が置かれ、点をダブルクリックすると角とスプライン点が切り替わります",
  "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "点を通る線。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 3 つ作ります。線をクリックしてドラッグするとそこに点が置かれ、点をダブルクリックすると角とスプライン点が切り替わります",
- "A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made": "2D 形状から作る 3D 形状。2D 形状を選択している場合は上に押し出され、ない場合は新しく作られます",
  "the menu has no %s called %s": "メニューには %s「%s」がありません",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s は、サーフェス・フィールド・形状が示す場所に作用します。それらを 1 つまたは複数選択してください",
  "static analysis": "静解析",
@@ -1107,5 +1106,5 @@
  "qt:QDialogButtonBox|OK": "OK",
  "qt:QDialogButtonBox|Cancel": "キャンセル",
  "qt:QDialogButtonBox|Close": "閉じる",
- "A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made": "曲線に沿って掃引される 2D 形状。両方を選択するか、形状とパスの点を選択してください。選択がない場合は、新しい円とパスが作られます"
+ "Extruding": "押し出し"
 }

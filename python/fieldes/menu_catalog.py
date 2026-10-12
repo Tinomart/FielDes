@@ -141,25 +141,12 @@ _CURVE = '''{var}_p1 = point({xm}, {y}, {z})
 #@@#
 curve([{var}_p1, {var}_p2, {var}_p3])'''
 
-_SWEEP = '''{var}_p1 = point({xm}, {y}, {z})
-{var}_p1
-{var}_p2 = point({x}, {yp}, {z})
-{var}_p2
-{var}_p3 = point({xp}, {y}, {z})
-{var}_p3
-{var}_path = curve([{var}_p1, {var}_p2, {var}_p3])
-{var}_path
-#@@#
-path_extrude(circle({q}), {var}_path)'''
-
 # What the entries that are made of the models selected say when the mouse rests on them (the shape the model tree has: points, a curve, a 2D shape)
 FROM_SELECTION = {
     'sketch': tr('A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  '
                  'Click its edge to put a point there; double-click a point to make it a corner or a spline point'),
     'curve': tr('A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  '
                 'Click the line and drag to put a point there; double-click a point to make it a corner or a spline point'),
-    'extrude': tr('A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made'),
-    'path_extrude': tr('A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made'),
 }
 
 # (function, group, template)
@@ -181,8 +168,6 @@ PRIMITIVES = [
     ('triangle', '2D', 'triangle(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}))'),
     ('sketch', '2D', _SKETCH),
     ('curve', '1D', _CURVE),
-    ('extrude', '3D', 'extrude(rectangle(({xm}, {ym}), ({xp}, {yp})), 0, {s})'),
-    ('path_extrude', '3D', _SWEEP),
     ('point', 'Points', 'point({x}, {y}, {z})'),
     ('plane', 'Surfaces', 'plane(({x}, {y}, {z}), (0, 0, 1))'),
     ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
@@ -327,6 +312,9 @@ OPERATIONS = [
     ('array_x', 'Repeating', 'array_x({body}, {n}, {s})', False),
     ('array_xy', 'Repeating', 'array_xy({body}, {nx}, {ny}, ({dx}, {dy}))', False),
     ('array_polar_z', 'Repeating', 'array_polar_z({body}, {n})', False),
+    # Extruding: a 2D shape pulled into a solid, straight or along a curve (a curve, or points that make one)
+    ('extrude', 'Extruding', 'extrude({body}, 0, {s})', False),
+    ('path_extrude', 'Extruding', 'path_extrude({body}, {other})', True),
     ('union', 'Combining', 'union({body}, {other})', True),
     ('difference', 'Combining', 'difference({body}, {other})', True),
     ('intersection', 'Combining', 'intersection({body}, {other})', True),
@@ -481,6 +469,10 @@ def _slots_of(name):
 def _takes(name):
     if name == 'distance_to_point':
         return [({'point'}, [])]                # (the distance from a point: a point is what it is made of)
+    if name == 'extrude':
+        return [({'profile'}, [{'profile'}])]                               # (a 2D shape)
+    if name == 'path_extrude':
+        return [({'profile', 'curve', 'point'}, [{'profile'}, {'curve', 'point'}])]      # (a 2D shape, and the curve it is swept along or the points of one)
 
     # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all
     # it takes -- they know the model it fills)
@@ -543,9 +535,9 @@ def _body_first(body, info, others):
 
 
 def _from_selection(name, models, values):
-    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), a
-        curve a sketch is the outline of, the 2D shape an extrusion pulls and the curve it is swept along -- or None when what is selected is not what
-        the entry takes (it is made from its own template then, with new points) '''
+    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), or
+        a curve a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own template then, with new
+        points) '''
     points = [m['name'] for m in models if m.get('type') == 'point']
     curves = [m['name'] for m in models if m.get('type') == 'curve']
     profiles = [m['name'] for m in models if m.get('type') == 'profile']
@@ -557,16 +549,6 @@ def _from_selection(name, models, values):
     elif name == 'curve':
         if len(points) >= 2:
             return 'curve([%s])' % ', '.join(points)
-    elif name == 'extrude':
-        if profiles:
-            return 'extrude(%s, 0, %s)' % (profiles[0], values.get('s', 10))
-    elif name == 'path_extrude':
-        if profiles and curves:
-            return 'path_extrude(%s, %s)' % (profiles[0], curves[0])
-        if profiles and len(points) >= 2:
-            # (the shape and the points of the path: the points make a curve of their own, which is shown and edited like any other)
-            var = values.get('var') or 'path_extrude_1'
-            return '%s_path = curve([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profiles[0], var)
     return None
 
 
@@ -599,6 +581,17 @@ def _build_operation(name, v, others):
         cells = [o['name'] for o in others if o.get('type') == 'cell']
         if cells:
             return 'lattice_surface_conform({body}, %s, cell_size={cs})'.format(**v) % cells[0]
+    if name == 'path_extrude':
+        # (the 2D shape and the path, whichever was selected first; points make a curve of their own, which is shown and edited like any other)
+        models = [dict(v.get('body_info') or {}, name=body)] + list(others)
+        profile = next((m['name'] for m in models if m.get('type') == 'profile'), None)
+        path = next((m['name'] for m in models if m.get('type') == 'curve'), None)
+        points = [m['name'] for m in models if m.get('type') == 'point']
+        if profile and path:
+            return 'path_extrude(%s, %s)' % (profile, path)
+        if profile and len(points) >= 2:
+            var = v.get('var') or 'path_extrude_1'
+            return '%s_path = curve([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profile, var)
     slot = FIELD_SLOTS.get(name)
     if slot:
         fields = [o['name'] for o in others if o.get('type') == 'field']
@@ -731,7 +724,7 @@ def call(request):
     return head + marker + expression
 
 
-KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice')
+KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'extrude')
 
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)

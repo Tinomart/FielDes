@@ -921,7 +921,6 @@
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "Una celosía estocástica: barras a lo largo de las aristas de Delaunay entre los puntos seleccionados, que llena el modelo en el que se hicieron los puntos. Seleccione antes los puntos (random_points)",
  "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "Una forma 2D a partir de puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: cuatro puntos nuevos para arrastrar. Haz clic en su borde para poner un punto allí; haz doble clic en un punto para hacerlo esquina o punto de spline",
  "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "Una línea que pasa por puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: tres puntos nuevos para arrastrar. Haz clic en la línea y arrastra para poner un punto allí; haz doble clic en un punto para hacerlo esquina o punto de spline",
- "A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made": "Una forma 3D a partir de una forma 2D: con una forma 2D seleccionada se extruye hacia arriba; sin selección se crea una nueva",
  "the menu has no %s called %s": "el menú no tiene ningún %s llamado «%s»",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s actúa donde lo indica una superficie, un campo o un cuerpo: selecciona uno o varios de ellos",
  "static analysis": "análisis estático",
@@ -1107,5 +1106,5 @@
  "qt:QDialogButtonBox|OK": "Aceptar",
  "qt:QDialogButtonBox|Cancel": "Cancelar",
  "qt:QDialogButtonBox|Close": "Cerrar",
- "A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made": "Una forma 2D barrida a lo largo de una curva: selecciona ambas, o la forma y los puntos de la trayectoria. Sin selección se crean un círculo nuevo y una trayectoria"
+ "Extruding": "Extrusión"
 }

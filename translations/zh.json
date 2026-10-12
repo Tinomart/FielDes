@@ -921,7 +921,6 @@
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "随机桁架：沿所选点之间的 Delaunay 边布置杆件，填充这些点所在的模型。请先选中点（random_points）",
  "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "由点生成的 2D 形状。选中了点时:按选择顺序用这些点生成。没有选中时:生成四个可拖动的新点。单击它的边可在该处放置一个点;双击某个点可将其切换为拐角或样条点",
  "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "穿过点的线。选中了点时:按选择顺序用这些点生成。没有选中时:生成三个可拖动的新点。在线上单击并拖动可在该处放置一个点;双击某个点可将其切换为拐角或样条点",
- "A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made": "由 2D 形状生成的 3D 形状:选中 2D 形状时将其向上拉伸;没有选中时新建一个",
  "the menu has no %s called %s": "菜单中没有 %s “%s”",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s 作用于曲面、场或实体所指明的位置：请选中其中一个或多个",
  "static analysis": "静力分析",
@@ -1107,5 +1106,5 @@
  "qt:QDialogButtonBox|OK": "确定",
  "qt:QDialogButtonBox|Cancel": "取消",
  "qt:QDialogButtonBox|Close": "关闭",
- "A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made": "沿曲线扫掠的 2D 形状:同时选中两者,或选中该形状和路径上的点。没有选中时,会新建一个圆和一条路径"
+ "Extruding": "拉伸"
 }

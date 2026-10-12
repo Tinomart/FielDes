@@ -26,10 +26,16 @@ Right-click empty space:
 |---|---|---|
 | **New 2D shape** | `sketch` | a sketch. With **three or more points selected** it is made from them, in the order you selected them; with none selected it makes four new points and a sketch of them |
 | **New 1D shape** | `curve` | a curve. With **two or more points selected**, from them; with none, three new points |
-| **New 3D shape** | `extrude` | a solid from a 2D shape: with one selected, that one is pulled up; with none, a new rectangle |
-| **New 3D shape** | `path_extrude` | a 2D shape swept along a curve: select both (in either order) -- or the shape and the **points** of the path, which get a curve of their own; with none, a new circle and a path |
 
-Hold the mouse on an entry for what it takes. A **tube round a curve** is `offset` of the curve (*Operation → Offsets and walls*), and so are the other things a
+`sketch` and `curve` are **shapes** (nouns), so they are under **New ... shape**. `extrude` and `path_extrude` are **operations** (verbs): they work on what is selected, so they are
+under **Operation → Extruding**, and are offered only when what is selected fits:
+
+| Operation | Select | What it makes |
+|---|---|---|
+| **Extruding → extrude** | a 2D shape | a solid: the face pulled up |
+| **Extruding → path_extrude** | a 2D shape and a curve (in either order) -- or the shape and the **points** of the path, which get a curve of their own | the shape swept along the path |
+
+Hold the mouse on `sketch` or `curve` for what it takes. A **tube round a curve** is `offset` of the curve (*Operation → Offsets and walls*), and so are the other things a
 distance field does with it: a curve is a model like any other, and as a field it is the distance to the curve.
 
 The **selection rectangle** (drag on empty space) selects every kind of model: shapes, points, point sets and fields.

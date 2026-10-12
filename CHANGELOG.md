@@ -33,8 +33,8 @@
   and follows the plane of a sketch (it replaces `extrude_z`, which is gone: for a shape in z = 0 it is the same call).
 - **Edit them in the viewport.** The edges of every 2D shape are drawn **blue** (and the lines of curves); **click an edge** and a point is put there, **keep the button down** and it follows the mouse; on a curve **press the line and drag**.
   **Double-click a point** to change it between a corner (a square dot) and a spline point (a round dot with a ring) -- written as `smooth=True` / `smooth=False` on the point. A hint beside the mouse says what a click does.
-- **The menus make them from what is selected.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for *New 1D shape → curve*, *New 3D shape → extrude*
-  (a selected 2D shape) and *→ path_extrude* (a selected 2D shape and a curve). See [Sketches](docs/sketches.md).
+- **The menus follow the library's own naming: shapes are nouns, operations are verbs.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for *New 1D shape → curve*.
+  `extrude` and `path_extrude` are operations: *Operation → Extruding*, offered for a selected 2D shape (and a curve, or the points of a path). See [Sketches](docs/sketches.md).
 - **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are curves.
 
 ### A 2D shape is a face, not a thin body

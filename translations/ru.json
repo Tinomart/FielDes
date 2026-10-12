@@ -921,7 +921,6 @@
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "Стохастическая ферма: стержни вдоль рёбер Делоне между выбранными точками, заполняющая модель, в которой созданы точки. Сначала выделите точки (random_points)",
  "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "2D-форма по точкам. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: четыре новые точки, которые можно перетаскивать. Щелчок по её краю ставит там точку; двойной щелчок по точке делает её углом или точкой сплайна",
  "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "Линия через точки. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: три новые точки, которые можно перетаскивать. Щелчок и перетаскивание по линии ставят там точку; двойной щелчок по точке делает её углом или точкой сплайна",
- "A 3D shape from a 2D shape: with a 2D shape selected it is pulled up; with none, a new one is made": "3D-форма из 2D-формы: если выбрана 2D-форма, она вытягивается вверх; если нет, создаётся новая",
  "the menu has no %s called %s": "в меню нет %s «%s»",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s действует там, где указывает поверхность, поле или тело: выберите одно или несколько из них",
  "static analysis": "статический анализ",
@@ -1107,5 +1106,5 @@
  "qt:QDialogButtonBox|OK": "ОК",
  "qt:QDialogButtonBox|Cancel": "Отмена",
  "qt:QDialogButtonBox|Close": "Закрыть",
- "A 2D shape swept along a curve: select both -- or the shape and the points of the path.  With none selected, a new circle and a path are made": "2D-форма, протянутая вдоль кривой: выберите обе или форму и точки пути. Если ничего не выбрано, создаются новый круг и путь"
+ "Extruding": "Выдавливание"
 }
