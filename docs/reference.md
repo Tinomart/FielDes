@@ -3489,4 +3489,5 @@ writes its new numbers into the script the app runs, which runs again for the pi
 there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it
 was made from; click the icon and the field is shown on a plane inside the field's bounds, with a slider for its position.
 
-In the editor it shows the same models.  `labels=False` leaves the names out.
+It is a setting of the app: the editor draws nothing for it and the model tree has no row for it -- the models are in the tree as they are,
+shown by their eyes; File > Preview as app shows the viewport.  `labels=False` leaves the names out.

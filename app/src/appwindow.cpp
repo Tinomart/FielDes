@@ -1128,12 +1128,14 @@ void AppWindow::ensureViewport()
             if (ctrl) { if (m_openFields.contains(key)) m_openFields.removeAll(key); else m_openFields << key; }
             else if (m_openFields == QStringList{key}) m_openFields.clear();
             else m_openFields = QStringList{key};
+            if (!ctrl && !m_selected.isEmpty()) { m_selected.clear(); applySelection(); }       // (one selection: a field and a model are not selected together)
             m_view->setOpenFields(m_openFields);
         });
         connect(m_view, &View::shapeClicked, this, [this](int line) {
             m_selected.clear();
             if (line >= 0) m_selected.insert(line);
             applySelection();
+            if (!m_openFields.isEmpty()) { m_openFields.clear(); m_view->setOpenFields(m_openFields); }
         });
         connect(m_view, &View::fieldViewersChanged, this, [this] { m_openFields = m_view->openFieldKeys(); });
         connect(m_view, &View::shapeToggled, this, [this](int line) {
@@ -1474,6 +1476,20 @@ void AppWindow::registerAutomation()
         send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
         send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
         send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appfieldarrow", [this](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        QPoint from;
+        if (p.size() < 4 || !m_view || !m_view->fieldGripPoint(p[0], p[1].toInt(), from)) { std::cerr << "automation: no field arrow " << args.toStdString() << "\n"; return; }
+        const QPoint d(p[2].toInt(), p[3].toInt());
+        auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+            QMouseEvent e(t, pos, m_view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+            QApplication::sendEvent(m_view, &e);
+        };
+        send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
     });
     a->add("appfielddrag", [this](const QString& args) {
         const auto p = args.split(' ', Qt::SkipEmptyParts);

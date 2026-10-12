@@ -2063,6 +2063,26 @@ Window::Window(Arguments args)
         a->add("varsteps", [=](const QString& args){
             std::cerr << "automation: varsteps found " << editor->testVarSteps(args.trimmed().toInt()) << " numbers" << std::endl;
         });
+        // fieldarrow <key> <axis 0-2> <dx> <dy>: the move arrow of an open viewer (the gizmo of its icon) for that world axis is taken in the middle and
+        // dragged by (dx, dy) pixels in steps
+        a->add("fieldarrow", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            QPoint from;
+            if (p.size() < 4 || !view->fieldGripPoint(p[0], p[1].toInt(), from))
+            {
+                std::cerr << "automation: no field arrow " << args.toStdString() << std::endl;
+                return;
+            }
+            const QPoint d(p[2].toInt(), p[3].toInt());
+            auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+        });
         // fielddrag <key> <dx> <dy> [steps]: the icon of a field (a variable's name, or line:N) is taken by the mouse, dragged by (dx, dy) pixels in
         // steps, and let go (the viewer of the field goes with it, if it is open); fieldclick <key>: a click on the icon
         a->add("fielddrag", [=](const QString& args){

@@ -357,12 +357,16 @@ def _viewport_fields():
 
 
 class _Viewport:
-    ''' What app.viewport(...) returns: a statement that shows its models (the viewport of an app window, and the editor's viewport) '''
+    ''' What app.viewport(...) returns: what the viewport of an app window shows.  In the editor it is only a setting (the model tree has no row
+        for it: the models are in it as they are, shown by their own eyes); File > Preview as app shows the viewport '''
+    _is_viewport = True
 
     def __init__(self, models, labels):
         self.models, self.labels = models, labels
 
     def _display(self):
+        if not in_app():
+            return []
         shown = []
         fields = []
         for name, model in self.models:
@@ -400,7 +404,8 @@ def viewport(models=None, *more, labels=True):
         there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it
         was made from; click the icon and the field is shown on a plane inside the field's bounds, with a slider for its position.
 
-        In the editor it shows the same models.  `labels=False` leaves the names out. '''
+        It is a setting of the app: the editor draws nothing for it and the model tree has no row for it -- the models are in the tree as they are,
+        shown by their eyes; File > Preview as app shows the viewport.  `labels=False` leaves the names out. '''
     if models is None:
         pairs = []
     elif isinstance(models, dict):

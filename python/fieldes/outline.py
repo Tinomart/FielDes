@@ -167,6 +167,10 @@ def facts_of(v):
         f['condition_role'] = A._condition_role(v)
     if mkind in ('conditions', 'material', 'surface'):
         f['cls'] = type(v).__name__
+    if getattr(v, '_is_viewport', False):
+        f['viewport'] = True            # (app.viewport(...): a setting of an app, not a model: no row)
+        f['shown'] = False
+        f['model'] = False
     f['surface_selection'] = bool(mkind == 'surface' and type(v).__name__ == 'SurfaceSelection')
     f['colored'] = hasattr(v, '_color_field')       # (a shape coloured by a field: it cannot be given a name to be edited by dragging)
     b = getattr(v, '_bounds', None) if shape else None
@@ -820,6 +824,8 @@ def outline_json(arg):
             if isinstance(stmt.value, ast.Name) and stmt.value.id in by_name:
                 by_name[stmt.value.id]['display_line'] = line
                 continue
+            if isinstance(stmt.value, ast.Call) and A._call_name(stmt.value).startswith('app.'):
+                continue                # (app.title(...), app.viewport(...): settings of an app, not models)
             with _LOCK:
                 facts = _DISPLAYS.get(text)
             if facts is not None:

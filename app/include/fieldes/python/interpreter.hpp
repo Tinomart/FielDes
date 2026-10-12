@@ -65,10 +65,11 @@ protected:
     // breakpoint) and emits done()
     void evaluate(QString script, bool resuming);
 
-    // If the given PyObject represents a shape, record it in out.shapes
+    // If the given PyObject represents a shape, record it in out.shapes (`viewport`: it is shown by app.viewport(...), the statement that is
+    // recorded: only then it is a model of the app's viewport -- the same model displayed by its name is not)
     void recordShape(
         PyObject* obj, Result &out, std::map<libfive::Tree::Id, float>& vars,
-        int line=-1);
+        int line=-1, bool viewport=false);
 
     PyObject* m_runFunc=NULL;
     PyObject* m_resumeFunc=NULL;

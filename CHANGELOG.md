@@ -21,6 +21,9 @@
   is made again; **Reset the picture** takes it back.
 - **The picture is made on its own -- when the app opens, when an input changes, after a drag -- and the work waits for Run.** `app.running()` is False while the picture is made and True when the person presses Run (and in the command line); the analysis and the
   files go under `if app.running():`. See `examples/25_app_beam_load_case.py` (a locked beam, a load point to drag, the stresses on Run) and [Apps](docs/apps.md).
+- **In the editor the viewport is only a setting**: it draws nothing and has no row (no block) in the model tree; the models it names are in the tree as
+  they are, shown by their eyes, and *File → Preview as app* shows the viewport. In the app only what the viewport names is shown (a model that the script
+  also displays by its name is not drawn twice).
 - **The app window has the FielDes look**: the dark teal of the viewport, cream text, the same fields, buttons and check boxes, the form on the left and the viewport on the right.
 
 ### Points are always there, as the middle point of their gizmo
@@ -33,7 +36,10 @@
   -- and a field that is made from nothing starts at the origin. **Click the icon** (or the field's row in the model tree) and the field's viewer opens; **drag the icon** and the plane of the viewer goes with it.
 - **Each field has its own viewer, inside the bounds of the field** (the box of the object it was made from, else the render region): a plane (X, Y or Z) coloured by the field, with a **Position slider** like the section view's, the opacity, the legend, the
   value under the mouse and the flat 2D view. Several fields can be open at once, a drop-down on the card chooses the one it is about. The old disc that followed the mouse is gone.
-- **The eye of a field shows or hides its icon and its viewer** (it writes the same `# hidden:` line as for a body; a field the script displays is shown). A field made from the menu is displayed at once. A field has no gizmo: its icon is what is dragged. In an app's
+- **The icon never hides a point.** A field made from a point starts on it; its icon is drawn beside the point's dot (several icons that would overlap are moved
+  apart too), so a click on the dot selects the point and shows its gizmo. An open viewer has **move arrows** at its icon: drag one and the icon and the plane move
+  along that world axis, inside the bounds of the field.
+- **The eye of a field shows or hides its icon and its viewer** (it writes the same `# hidden:` line as for a body; a field the script displays is shown). A field made from the menu is displayed at once. A field has no model gizmo: its icon (with its move arrows while the viewer is open) is what is moved. In an app's
   viewport a field of `app.viewport(...)` is an icon too, so the person can slice a distance, a stress or a temperature where they look.
 
 ### Handles and the gizmo have their own names: `handles()` and `gizmo()`

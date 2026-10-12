@@ -119,10 +119,15 @@ app.viewport({'Beam': body, 'Load point': pull}, support, load)
   sees them), and the script runs again for the picture, so everything that depends on them follows -- the arrows of a load, a region, a lattice. **Reset the picture** (under
   the viewport, when something was dragged) takes it all back. The edits are not saved in the app file.
 - **A point is its dot** -- the middle point of a gizmo, always drawn while the point is shown. Click it to select the point, then drag the dot (freely, in the plane
-  facing you) or an arrow. That makes a point the simplest thing to give a person to place: a load, a start, a centre.
+  facing you) or an arrow. That makes a point the simplest thing to give a person to place: a load, a start, a centre. (The icon of a field made from the point is
+  drawn beside the dot, not on it: the dot stays yours to click.)
 - **The picture is made on its own:** when the app is opened, a moment after an input changes, and after something was dragged. Those runs have `app.running()`
   `False`: put what takes long and what writes files under `if app.running():`, which only the Run button (and the command line) makes `True`. The result of Run is shown
   in the viewport too (as the `body` above), until the next picture. In the editor the script runs as always and `app.running()` is `False`.
+- **In the editor the viewport is only a setting.** It draws nothing there and has no row in the model tree: the models it names are in the tree as they are, shown by
+  their own eyes (write their names as display lines, as in any script). **File > Preview as app** shows the viewport the way the person sees it. In the app
+  it is the other way round: **only what `app.viewport(...)` names is shown** -- a model that the script also displays by its name is not drawn twice, and a
+  field that the script displays has no icon there.
 - **The region** of the picture is the script's: `view.set_bounds(...)` (and `view.set_resolution(...)`) as in any script; a model dragged out of it is not drawn.
 - `examples/25_app_beam_load_case.py` is a complete app of this kind: drag the load point along the beam, choose the force, press Run.
 

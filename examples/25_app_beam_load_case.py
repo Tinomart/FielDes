@@ -46,4 +46,13 @@ if app.running():
 
 # A field in the viewport is an icon (with its name over it) where the object it was made from is -- here the load point: click the icon and the viewer of
 # the field opens, a plane through it inside its bounds with a position slider.  This one is the distance from the load point.
-app.viewport({'Beam': body, 'Load point': pull, 'Distance': distance_to_point(pull)}, support, load)
+distance = distance_to_point(pull)
+app.viewport({'Beam': body, 'Load point': pull, 'Distance': distance}, support, load)
+
+# The viewport is a setting of the app: in the editor it draws nothing and has no row in the model tree.  What the editor shows is what is written
+# below (the models are in the tree as they are, with their eyes); File > Preview as app shows the viewport the way the person sees it.
+body
+pull
+support
+load
+distance

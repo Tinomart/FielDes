@@ -207,6 +207,8 @@ public slots:
     void setFieldView(QString key, FieldViewSettings s);
     /*  Where a field's icon is on the screen (for scripted tests); false when it is not in the scene  */
     bool fieldIconPoint(const QString& key, QPoint& out) const;
+    /*  Where the middle of a move arrow of an open viewer is on the screen (for scripted tests); false when there is none  */
+    bool fieldGripPoint(const QString& key, int axis, QPoint& out) const;
 
     void toOrthographic() { camera.toOrthographic();  }
     void toPerspective()  { camera.toPerspective();   }
@@ -632,6 +634,13 @@ protected:
         QPair<float, float> range;               // the colours of the field, found when it is first shown and kept until the script runs again
         Plane plane;
     };
+    /*  A move arrow of an open viewer (the gizmo of its icon): the viewer and the world axis it moves the plane along  */
+    struct FieldGrip
+    {
+        FieldViewer* v = nullptr;
+        int axis = 0;
+        bool operator==(const FieldGrip& o) const { return v == o.v && axis == o.axis; }
+    };
     std::map<QString, std::unique_ptr<FieldViewer>> m_viewers;
     QString m_activeField;
     FieldViewer* viewer(const QString& key) const;
@@ -657,6 +666,22 @@ protected:
     bool m_iconCtrl = false;
     QPoint m_iconPressPos;
     QVector3D m_iconGrab;
+    QPointF m_iconOffset;                 // (how far the icon that is held was drawn from its place when it was taken: it keeps that while it is dragged)
+    /*  Where the icons are drawn: at the place of the field, moved aside when the dot of a point or another icon is there, so that the dot can be clicked  */
+    QHash<QString, QPointF> iconLayout() const;
+    /*  The move arrows of an open viewer, along the world's axes from the rim of its icon (as long as the arrows of a gizmo): where one is, the one
+     *  under a widget position, and the drag of one -- the plane goes with the icon, kept inside the bounds of the field  */
+    bool fieldArrow(const FieldViewer& v, const QPointF& icon, int axis, QPointF& from, QPointF& to, float& len) const;
+    FieldGrip fieldGripAt(QPoint pos) const;
+    void beginFieldGrip(const FieldGrip& g, QPoint pos);
+    void dragFieldGrip(QPoint pos);
+    FieldGrip m_fieldGrip;                // (the one under the mouse)
+    FieldGrip m_fieldGripActive;          // (the one that is being dragged)
+    bool m_fieldGripDrag = false;
+    QPoint m_fgPress;
+    QVector3D m_fgStart;
+    QPointF m_fgDir;
+    float m_fgLen = 0;
     bool activeFieldOpen() const;
     void startSliceAt(Plane& plane, bool fine, FieldViewer* viewer = nullptr);
     void onSliceFinished(Plane& plane, FieldViewer* viewer = nullptr);

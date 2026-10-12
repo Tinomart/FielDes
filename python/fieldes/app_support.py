@@ -1033,12 +1033,17 @@ def field_sources():
         displays it); bounds is the box of the object it was made from, or None (the render region).  An app's viewport adds the fields it is given '''
     out = []
     seen = set()
-    for key, shape, shown in _FIELD_SOURCES:
+    try:
+        from fieldes import app as _app
+        in_app = _app.in_app()
+    except Exception:
+        _app, in_app = None, False
+    # (in an app only the viewport shows fields: the ones the script displays by their names are for the editor)
+    for key, shape, shown in ([] if in_app else _FIELD_SOURCES):
         origin = getattr(shape, '_field_origin', None)
         out.append((key, shape, _origin_numbers(origin), bool(shown), _origin_box(origin)))
         seen.add(key)
     try:
-        from fieldes import app as _app
         for key, shape in _app._viewport_fields():
             if key in seen:
                 continue

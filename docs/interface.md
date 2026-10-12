@@ -405,8 +405,11 @@ A *field* model (a distance, a ramp, noise, `field_from_body(...)`, anything mad
   conditions), so that where there are several fields you tell at a glance which is which. It sits **where the field is about**: the place of the
   object it was made from (`distance_to_point(anchor)` at `anchor`, `depth_below(part)` at the middle of `part`; a field made of those, such as
   `ramp(distance_to_point(anchor), ...)` or `a * b`, at the first of them) -- a field made of nothing, such as `x_field()`, at the origin.
-  **Drag the icon** to put it somewhere else: it is positionable, in the plane facing you, and stays inside the field's bounds. (A field has no gizmo:
-  the icon is what you drag.)
+  **Drag the icon** to put it somewhere else: it is positionable, in the plane facing you, and stays inside the field's bounds. When a point's dot is
+  where the icon would be -- a field made from a point starts on it -- the icon is drawn beside the dot, so the dot can be clicked to select the point (and
+  show its gizmo); several icons that would be on top of each other are moved apart in the same way.
+- **The icon has a gizmo of its own while its viewer is open:** three move arrows, along the world's axes, from the icon. Drag one to move the icon -- and the
+  plane with it -- along that axis, inside the bounds of the field. (A field has no model gizmo: nothing of it is moved in the script, the viewer is.)
 - **Show and hide.** A field has an **eye** in the model tree, like every model: when it is off, the icon and the viewer of the field are not in the scene
   at all. (A field is shown when the script displays it -- the eye writes that line, and a field made from the menu is displayed at once. A field
   that only feeds other models, such as the cell size of a lattice, stays hidden until you turn its eye on.)

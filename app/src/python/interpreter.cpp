@@ -1013,6 +1013,7 @@ void Interpreter::evaluate(QString script, bool resuming)
             }
             PyObject* obj = shown ? shown : s;
             recordShape(obj, out, vars, line);
+            const bool viaViewport = s && PyObject_HasAttrString(s, "_is_viewport");
 
             const auto iter = PyObject_GetIter(obj);
             if (iter) {
@@ -1020,7 +1021,7 @@ void Interpreter::evaluate(QString script, bool resuming)
                 while ((item = PyIter_Next(iter))) {
                     PyObject* d = displayOf(item);
                     if (!d) PyErr_Clear();
-                    recordShape(d ? d : item, out, vars, line);
+                    recordShape(d ? d : item, out, vars, line, viaViewport);
                     Py_XDECREF(d);
                     Py_DECREF(item);
                 }
@@ -1340,6 +1341,7 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
         }
         PyObject* obj = shown ? shown : s;
         recordShape(obj, out, vars, line);
+        const bool viaViewport = s && PyObject_HasAttrString(s, "_is_viewport");
         const auto iter = PyObject_GetIter(obj);
         if (iter)
         {
@@ -1348,7 +1350,7 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
             {
                 PyObject* d = displayOf(item);
                 if (!d) PyErr_Clear();
-                recordShape(d ? d : item, out, vars, line);
+                recordShape(d ? d : item, out, vars, line, viaViewport);
                 Py_XDECREF(d);
                 Py_DECREF(item);
             }
@@ -1365,7 +1367,8 @@ void Interpreter::recordShape(
         PyObject* obj,
         Result &out,
         std::map<libfive::Tree::Id, float>& vars,
-        int line)
+        int line,
+        bool viewport)
 {
     if (PyObject_IsInstance(obj, m_shapeClass)) {
         const auto ptr_obj = PyObject_GetAttrString(obj, "ptr");
@@ -1571,7 +1574,7 @@ void Interpreter::recordShape(
         }
 
         // A model the app's viewport shows, and the name it was given there (fieldes.app.viewport)
-        if (PyObject_HasAttrString(obj, "_app_shown"))
+        if (viewport && PyObject_HasAttrString(obj, "_app_shown"))
         {
             PyObject* v = PyObject_GetAttrString(obj, "_app_shown");
             const bool shown = v && PyObject_IsTrue(v) == 1;
