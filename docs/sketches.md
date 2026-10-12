@@ -90,6 +90,15 @@ A point has the gizmo of any model, and two of its handles mean something to the
   it as straight as a corner). In a `path_extrude`, **the scale of a point is how thick the profile is there**, tapering smoothly between points: a point with scale 2 makes the tube twice as thick at that point.
 - **Shift + the mouse wheel** scales what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 
+## How `extrude` works
+
+`extrude(shape, a, b)` pulls a 2D shape into a solid: the part of space between the distances **`a` and `b` from the plane of the shape, along its normal**. `a` is where the solid starts and `b` where it ends, both measured
+from the plane: `extrude(plate, 0, 5)` is a plate 5 thick that sits on the sketch's plane and grows to **one side** of it; `extrude(plate, -2.5, 2.5)` is 5 thick with the sketch in the middle; a negative `b` grows the other way. (For a
+shape that lies in z = 0 -- a circle, a rectangle -- `a` and `b` are `zmin` and `zmax`.) **Which side is "up" is decided by the order of the first three points of the sketch**: the normal is `u x v` of the plane, which
+points **towards you when the points go counter-clockwise** as you look at the sketch, and away from you when they go clockwise -- so a sketch drawn clockwise is extruded *down* by `extrude(plate, 0, 5)` (use `-5`, or draw it the other way).
+In the model tree the call has its `a` and `b` as dim rows: click one to change it in the code. A sketch that is outside the render region does not stop its extrusion from being seen: **the region grows to hold it**
+(see *Auto scale* in [the interface](interface.md)).
+
 ## The plane of a sketch
 
 A sketch lies in **the plane through its first three points** (the first that is not on a line with the first two). A point that is not on that plane is **projected onto it** wherever the sketch is built, so a sketch always works:
@@ -106,8 +115,20 @@ every other shape: look at smaller and smaller pieces of space and drop what is 
   hundred edges cost about what the few near the point cost. An outline that crosses itself cannot be cut and uses the winding of the outline round the point instead (slower, the same answer).
 - A **line** is the unsigned distance to it: the least of the distances to its straight pieces.
 - `path_extrude` carries the profile along the line in pieces (the line is cut into short straight pieces, 14 to a curved segment) with mitered joints, turning the profile with the line without twisting about it;
-  the ends are cut square. The profile's own origin travels along the path -- the origin for a circle or a rectangle, the first point of a sketch.
+  the ends are cut square. The profile's own origin travels along the path -- the origin for a circle or a rectangle, **the middle of the box of its outline for a sketch** (the path runs through the middle of what is swept, whichever of its points is first; the thickness of a point scales the profile about that middle).
+  **A sketch is where the sweep starts**: the line says how the sweep travels, not where from. The whole sweep is moved so that the first point of the line is the middle of the sketch, and **the first ring is the sketch itself, in its
+  own plane, at whatever angle the line leaves it** (the sweep is then slanted, like an extrusion pushed sideways, and the end is the same sketch carried to the end of the line; a sketch whose plane lies along the line has nothing to sweep and is
+  turned across it), so editing the sketch is editing the base of what it is swept into. A line that already starts at the middle of the sketch is not moved. (A circle or a rectangle has no place of its own, so it is carried along the line where the line is.)
+  **The path is drawn where the sweep goes, at all times**: from the middle of the sketch, through the middle of the cross-section, its points with it -- whatever numbers its own points have in the script (only the shape of the path matters,
+  not where it was drawn: the first point of it is the middle of the sketch). A point of the path is dragged where you see it, and the first point stays at the middle of the sketch. A path that is used by no sweep of a sketch is drawn where its numbers are.
   The result is a field like any other shape: offset it, shell it, put a lattice in it, analyse it.
 
-What you see while you drag a point is not the field: the viewport draws the outline and the face of a sketch, and the line, straight from the numbers of the points, so it follows the mouse at once. The solid made from it
-(an extrusion, a sweep) is made again when you let go.
+What you see while you drag a point is not the field: the viewport draws the outline and the face of a sketch, and the line, straight from the numbers of the points, so it follows the mouse at once. **A straight
+`extrude` of a sketch of points follows it too**: it is a *prism* -- the outline pulled along its normal -- and the viewport makes it from the numbers of the points (and of `a` and `b`) at every frame, the way it makes the face, with no
+script run and no field meshed: drag a point and the solid follows it, and nothing is calculated when you let go. It stays a prism while its numbers are what it was made with (its gizmo has not placed it, no face of it has been pulled);
+with another number, or an outline that crosses itself, its field is meshed as any shape's is. **A sweep (`path_extrude`) of a sketch along a line of points is drawn the same way**: the viewport carries the outline along
+the path, a ring at every piece, in the frame the field of the sweep has (turned by the rotation of the points, scaled by their scale, cut square at the ends or by the plane that bisects a corner), and closes the ends with the face of the profile.
+Nothing of the field is meshed -- and its tree is not even optimised, compiled or searched until something reads it (a difference, an offset, an analysis) -- so changing a number of a point of the sketch, of the path, of the twist -- by dragging,
+or by typing in the script -- shows the new sweep at once (a smooth sketch of 15 points swept along a path of 3 points: the script runs in half a second and the sweep is on the screen 0.1 s later; preparing the field of the same sweep took 6 s and
+a search through it 15 s of a window that did not answer, and meshing it at resolution 1 takes minutes). A sweep of a circle or a rectangle (a profile that is not made of points), a sweep that has a colour field, a channel or a result, and what is made *of*
+an extrusion or a sweep (a difference, an offset ...) are made from the field, again when you let go. Set the environment variable `FIELDES_NO_NATIVE=1` to see every prism and sweep drawn from its field, to compare.

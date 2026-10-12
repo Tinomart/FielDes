@@ -6716,8 +6716,15 @@ void ScenePanel::setWorkPlane(bool active, QVector3D origin, QVector3D u, QVecto
     m_workPlaneStep = step;
 }
 
-void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth)
+void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also)
 {
+    m_placedAlso = QJsonArray();
+    for (const auto& stroke : also)
+    {
+        QJsonArray one;
+        for (const QVector3D& p : stroke) one.append(QJsonArray{double(p.x()), double(p.y()), double(p.z())});
+        m_placedAlso.append(one);
+    }
     QJsonArray list;
     QVector3D centre;
     for (const QVector3D& p : points)
@@ -6730,6 +6737,7 @@ void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth
     m_placedSmooth = smooth;
     createFromMenu("primitive", name, centre, 10.0, -1, -1);
     m_placed = QJsonArray();
+    m_placedAlso = QJsonArray();
 }
 
 void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation)
@@ -6737,6 +6745,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     if (!m_support) return;
     // (what createPlaced is making: its own points, whatever is selected)
     const QJsonArray placed = m_placed;
+    const QJsonArray placedAlso = m_placedAlso;
     const bool placedSmooth = m_placedSmooth;
     const bool operation = kind == "operation";
     // A support, a load or another condition of a simulation, when several models are selected: the first is the body, the others are
@@ -6764,6 +6773,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         // what a menu on one of them stands for (and what the click that opened it had just selected)
         m_afterRun = [=] {
             m_placed = placed;
+            m_placedAlso = placedAlso;
             m_placedSmooth = placedSmooth;
             createFromMenu(kind, name, point, scale,
                            (operation && !selectedModels().isEmpty()) || (withBodies && !regionOnly && selectedModels().size() >= 2) ? -1 : line0);
@@ -6887,6 +6897,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     {
         request["points"] = placed;
         request["smooth"] = placedSmooth;
+        if (!placedAlso.isEmpty()) request["also"] = placedAlso;
     }
     request["body"] = body;
     request["other"] = other;

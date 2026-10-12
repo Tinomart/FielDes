@@ -1493,6 +1493,166 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
+            // (a straight extrusion of a sketch of points -- a prism: its points, and a and b, as expressions of the script's numbers, and the numbers that must still be what
+            // they were; the viewport makes it from them natively at every render: see Shape::setPrism and fieldes.stdlib.sketch.extrude)
+            PyObject* pp = PyObject_GetAttrString(obj, "_prism_pos");
+            if (pp && PyList_Check(pp) && PyList_Size(pp) > 0)
+            {
+                PyObject* pr = PyObject_GetAttrString(obj, "_prism_rot");
+                PyObject* ps = PyObject_GetAttrString(obj, "_prism_scale");
+                PyObject* pf = PyObject_GetAttrString(obj, "_prism_flag");
+                PyObject* pd = PyObject_GetAttrString(obj, "_prism_default");
+                PyObject* pa = PyObject_GetAttrString(obj, "_prism_a");
+                PyObject* pb = PyObject_GetAttrString(obj, "_prism_b");
+                PyObject* pg = PyObject_GetAttrString(obj, "_prism_guard");
+                std::vector<Shape::ControlPoint> points;
+                bool good = true;
+                for (Py_ssize_t i = 0; i < PyList_Size(pp) && good; ++i)
+                {
+                    PyObject* at = PyList_GetItem(pp, i);
+                    if (!PyTuple_Check(at) || PyTuple_Size(at) != 3) { good = false; break; }
+                    Shape::ControlPoint c;
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        c.pos[a] = treeOfShape(PyTuple_GetItem(at, a));
+                        if (!c.pos[a].is_valid()) { good = false; break; }
+                    }
+                    PyObject* rot = (pr && PyList_Check(pr) && i < PyList_Size(pr)) ? PyList_GetItem(pr, i) : nullptr;
+                    if (good && rot && PyTuple_Check(rot) && PyTuple_Size(rot) == 3)
+                    {
+                        c.hasRot = true;
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            c.rot[a] = treeOfShape(PyTuple_GetItem(rot, a));
+                            if (!c.rot[a].is_valid()) { good = false; break; }
+                        }
+                    }
+                    PyObject* sc = (ps && PyList_Check(ps) && i < PyList_Size(ps)) ? PyList_GetItem(ps, i) : nullptr;
+                    if (sc && sc != Py_None)
+                    {
+                        c.scale = treeOfShape(sc);
+                        c.hasScale = c.scale.is_valid();
+                    }
+                    PyObject* flag = (pf && PyList_Check(pf) && i < PyList_Size(pf)) ? PyList_GetItem(pf, i) : nullptr;
+                    if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
+                    points.push_back(std::move(c));
+                }
+                const libfive::Tree treeA = treeOfShape(pa), treeB = treeOfShape(pb);
+                std::vector<std::pair<libfive::Tree::Id, float>> guard;
+                for (Py_ssize_t i = 0; pg && PyList_Check(pg) && i < PyList_Size(pg) && good; ++i)
+                {
+                    PyObject* item = PyList_GetItem(pg, i);
+                    if (!PyTuple_Check(item) || PyTuple_Size(item) != 2) { good = false; break; }
+                    // (a number of the script that must still be what it was: a var(), the one number its expression is made of)
+                    const libfive::Tree::Id id = Shape::soleVarOf(treeOfShape(PyTuple_GetItem(item, 0)));
+                    if (!id) { good = false; break; }
+                    guard.push_back({id, float(PyFloat_AsDouble(PyTuple_GetItem(item, 1)))});
+                }
+                if (good && treeA.is_valid() && treeB.is_valid()) shape->setPrism(std::move(points), pd && PyObject_IsTrue(pd) == 1, treeA, treeB, std::move(guard));
+                Py_XDECREF(pr);
+                Py_XDECREF(ps);
+                Py_XDECREF(pf);
+                Py_XDECREF(pd);
+                Py_XDECREF(pa);
+                Py_XDECREF(pb);
+                Py_XDECREF(pg);
+            }
+            Py_XDECREF(pp);
+            PyErr_Clear();
+        }
+        {
+            // (a sweep of a sketch of points along a curve of points: both lists of points, the twist and where the gizmo places it -- the viewport makes it from the numbers
+            // natively at every render: see Shape::setSweep and fieldes.stdlib.sketch.path_extrude)
+            PyObject* pp = PyObject_GetAttrString(obj, "_sweep_ppos");
+            PyObject* qp = PyObject_GetAttrString(obj, "_sweep_qpos");
+            if (pp && PyList_Check(pp) && PyList_Size(pp) > 0 && qp && PyList_Check(qp) && PyList_Size(qp) > 0)
+            {
+                auto readPoints = [&](const char* pos, const char* rot, const char* scale, const char* flag, std::vector<Shape::ControlPoint>& points) -> bool {
+                    PyObject* cp = PyObject_GetAttrString(obj, pos);
+                    PyObject* cr = PyObject_GetAttrString(obj, rot);
+                    PyObject* cs = PyObject_GetAttrString(obj, scale);
+                    PyObject* cf = PyObject_GetAttrString(obj, flag);
+                    bool good = cp && PyList_Check(cp);
+                    for (Py_ssize_t i = 0; good && i < PyList_Size(cp); ++i)
+                    {
+                        PyObject* at = PyList_GetItem(cp, i);
+                        if (!PyTuple_Check(at) || PyTuple_Size(at) != 3) { good = false; break; }
+                        Shape::ControlPoint c;
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            c.pos[a] = treeOfShape(PyTuple_GetItem(at, a));
+                            if (!c.pos[a].is_valid()) { good = false; break; }
+                        }
+                        PyObject* r = (cr && PyList_Check(cr) && i < PyList_Size(cr)) ? PyList_GetItem(cr, i) : nullptr;
+                        if (good && r && PyTuple_Check(r) && PyTuple_Size(r) == 3)
+                        {
+                            c.hasRot = true;
+                            for (int a = 0; a < 3; ++a)
+                            {
+                                c.rot[a] = treeOfShape(PyTuple_GetItem(r, a));
+                                if (!c.rot[a].is_valid()) { good = false; break; }
+                            }
+                        }
+                        PyObject* sc = (cs && PyList_Check(cs) && i < PyList_Size(cs)) ? PyList_GetItem(cs, i) : nullptr;
+                        if (sc && sc != Py_None)
+                        {
+                            c.scale = treeOfShape(sc);
+                            c.hasScale = c.scale.is_valid();
+                        }
+                        PyObject* fl = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
+                        if (fl && PyLong_Check(fl)) c.flag = int(PyLong_AsLong(fl));
+                        points.push_back(std::move(c));
+                    }
+                    Py_XDECREF(cp);
+                    Py_XDECREF(cr);
+                    Py_XDECREF(cs);
+                    Py_XDECREF(cf);
+                    return good;
+                };
+                std::vector<Shape::ControlPoint> profile, path;
+                bool good = readPoints("_sweep_ppos", "_sweep_prot", "_sweep_pscale", "_sweep_pflag", profile) &&
+                            readPoints("_sweep_qpos", "_sweep_qrot", "_sweep_qscale", "_sweep_qflag", path);
+                PyObject* pd = PyObject_GetAttrString(obj, "_sweep_pdefault");
+                PyObject* qd = PyObject_GetAttrString(obj, "_sweep_qdefault");
+                PyObject* qc = PyObject_GetAttrString(obj, "_sweep_qclosed");
+                PyObject* tw = PyObject_GetAttrString(obj, "_sweep_twist");
+                const libfive::Tree twist = treeOfShape(tw);
+                bool placed = false;
+                double about[3] = {0, 0, 0};
+                libfive::Tree move[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+                libfive::Tree rotate[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+                libfive::Tree scale[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+                PyObject* pl = PyObject_GetAttrString(obj, "_sweep_place");
+                if (pl && PyTuple_Check(pl) && PyTuple_Size(pl) == 4)
+                {
+                    placed = true;
+                    PyObject* ab = PyTuple_GetItem(pl, 0);
+                    for (int a = 0; a < 3 && ab && PyTuple_Check(ab) && a < PyTuple_Size(ab); ++a) about[a] = PyFloat_AsDouble(PyTuple_GetItem(ab, a));
+                    for (int part = 1; part <= 3; ++part)
+                    {
+                        PyObject* triple = PyTuple_GetItem(pl, part);
+                        for (int a = 0; a < 3 && triple && PyTuple_Check(triple) && a < PyTuple_Size(triple); ++a)
+                        {
+                            const libfive::Tree t = treeOfShape(PyTuple_GetItem(triple, a));
+                            if (!t.is_valid()) good = false;
+                            (part == 1 ? move : part == 2 ? rotate : scale)[a] = t;
+                        }
+                    }
+                }
+                if (good && twist.is_valid())
+                    shape->setSweep(std::move(profile), pd && PyObject_IsTrue(pd) == 1, std::move(path), qd && PyObject_IsTrue(qd) == 1, qc && PyObject_IsTrue(qc) == 1, twist,
+                                    placed, about, move, rotate, scale);
+                Py_XDECREF(pd);
+                Py_XDECREF(qd);
+                Py_XDECREF(qc);
+                Py_XDECREF(tw);
+                Py_XDECREF(pl);
+            }
+            Py_XDECREF(pp);
+            Py_XDECREF(qp);
+            PyErr_Clear();
+        }
+        {
             // (a sketch, a curve: its outline is a place to press that puts a point there)
             PyObject* ed = PyObject_GetAttrString(obj, "_editable");
             shape->setEditable(ed && PyObject_IsTrue(ed) == 1);
@@ -2132,6 +2292,7 @@ void Interpreter::recordShape(
                         PyErr_Clear();
             }
         }
+        shape->settleField();               // (the field of a shape that is not drawn from numbers is made here, in the script's thread)
         shape->moveToThread(QApplication::instance()->thread());
         out.shapes.push_back(shape);
 

@@ -419,6 +419,13 @@ The card (top right, below the section card when that is open) has three buttons
 **offset** along its normal, and the buttons **Set view to work plane** (as `W`), **Set work plane to view** (the plane made parallel to the view through the origin) and **New work plane**. The cursor's place on the plane is
 read out under them. **Turning the camera with the middle mouse button leaves the work plane view**, and so does closing the card; the plane is kept for the next time you open it.
 
+**Symmetry.** The card has a **Symmetry** row: **Off**, **1**, **2**, **3** or **4**. With axes on, the view draws them as dashed magenta lines through one centre, **equally spaced** (one axis, two at right
+angles, three 60 degrees apart, four 45 degrees apart), and **everything you put down is put down at its images too**: a point gets a point of its own at every mirror image across each axis and every turn between
+them (2, 4, 6 or 8 points in all), and a line, a spline or a shape gets a shape of its own for each image, drawn in lighter lines while you draw and written as `sketch_1_m1`, `sketch_1_m2` ... beside it (an image that is the shape
+itself over again is left out; the mirror images are written in the reverse order, so that they face the same way and extrude the same way). The **dot** where the axes cross is **dragged to move them** (it lands on the grid
+or on a point that is there), the **knob** on the first axis is **dragged to turn them** (in steps of 5 degrees while the plane snaps; the angle is shown beside it). A new work plane starts with its axes at its origin.
+The images are shapes of their own, made when the shape is: they do not follow the original afterwards.
+
 **What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a sketch made of new points is made in the plane's own axes, not horizontal), and the points you drag --
 by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a sketch moves all its points together, any other
 2D shape moves through its own move numbers.

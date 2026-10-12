@@ -170,10 +170,13 @@ def edit(arg):
     if len(points) != len(plist.elts):
         raise ValueError('the list of points of %s is not one point to an element' % name)
     V = [tuple(v) for v in obj.vertices]
+    # (the path of a sweep of a sketch is DRAWN where the sweep goes -- shifted, see Curve._display -- so what the press and the drop say is where it is seen: the numbers of the
+    # script are the shift away)
+    shift = getattr(obj, '_weld_shift', None) or (0.0, 0.0, 0.0)
     # (the piece that was pressed, from where the press was; the point goes where it was let go)
-    press = (float(req.get('px', req['x'])), float(req.get('py', req['y'])), float(req.get('pz', req['z'])))
+    press = (float(req.get('px', req['x'])) - shift[0], float(req.get('py', req['y'])) - shift[1], float(req.get('pz', req['z'])) - shift[2])
     piece, _on_the_line = _nearest_piece(V, bool(getattr(obj, 'closed', False)), press)
-    at = (float(req['x']), float(req['y']), float(req['z']))
+    at = (float(req['x']) - shift[0], float(req['y']) - shift[1], float(req['z']) - shift[2])
     i = obj._owners[piece][0]
     elt = plist.elts[i]
     # the new point: a model of its own, with its gizmo, when the others are names; else an element of the list
