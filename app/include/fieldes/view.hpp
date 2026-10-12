@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/camera.hpp"
 #include "fieldes/shape.hpp"
 #include "fieldes/section.hpp"
+#include "fieldes/workplane.hpp"
 #include "fieldes/result.hpp"
 #include "fieldes/result_panel.hpp"
 #include "fieldes/live_panel.hpp"
@@ -196,6 +197,39 @@ public slots:
     /*  Section view / field viewer  */
     void setSection(SectionSettings s);
 
+    /*  The work plane (see workplane.hpp): a plane to put points in, with a grid.  Its view is opened and closed with Shift+W (a plane is made when there is
+     *  none), a new plane -- the plane of the selected 2D shape, or parallel to the view through the origin -- is Ctrl+Shift+W, and W turns the camera to face it  */
+    const WorkPlane& workPlane() const { return m_wp; }
+    void setWorkPlaneOpen(bool open);
+    void newWorkPlane();
+    void workPlaneFromView();
+    void faceWorkPlane();
+    void setWorkPlaneOptions(bool grid, bool snap, bool snapPoints, float spacing);
+    void setWorkPlaneOffset(float offset);
+    /*  The step of the grid now (the one the card gives, or what automatic works out to from how large the picture is)  */
+    float workPlaneStep() const;
+    /*  `p` moved to the nearest point that is there (a dot, within a few pixels) and then onto the grid, as the plane is set to snap; unchanged while its view is closed.
+        `exclude` is the point that is being dragged; `snapped` says what was done  */
+    QVector3D snapToWorkPlane(const QVector3D& p, const Shape* exclude = nullptr, bool* snapped = nullptr, bool toPoints = true) const;
+    /*  What a click does: 0 nothing of its own -- things are selected, moved, turned and scaled as usual (Q) --, 1 puts down the points of a line, 2 of a spline, 3 a point.
+        E goes round 1, 2, 3 while the work plane view is open  */
+    void setWorkPlaneMode(int mode);
+    void cycleWorkPlaneMode();
+    /*  The plane set to a frame at once: its origin and its two axes (for scripted tests)  */
+    void setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const QVector3D& v);
+    /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
+        into a sketch), or a point of its own.  Nothing of a line or a spline is written until it ends: `finishPlacement` ends it (closed: a sketch; open: the line or the
+        spline), `cancelPlacement` drops it, `undoPlacedPoint` takes the last point back  */
+    void placeAt(QPoint pos);
+    void finishPlacement(bool close);
+    void cancelPlacement();
+    void undoPlacedPoint();
+    int placedCount() const { return m_wpPlaced.size(); }
+    /*  Where a new model made at `pos` goes, and how large it is: on the work plane while its view is open, snapped; else the place on the ray under the cursor.
+        `createAt` makes one as the menu of empty space does (for scripted tests)  */
+    void placementAt(QPoint pos, QVector3D& point, double& scale) const;
+    void createAt(const QString& name, QPoint pos);
+
     /*  The field models of the script, after a run: every field has an icon in the scene (a card with its name over it, at the place of the
      *  object it was made from) while it is shown, and a viewer -- a plane of its field inside the bounds of the field -- while it is open  */
     void setFieldSources(QList<FieldEntry> fields);
@@ -250,6 +284,15 @@ public slots:
     void onSettingsFromScript(Settings s, bool first);
 
 signals:
+    /*  The work plane changed (its view opened or closed, a new plane, its options): for its card ...  */
+    void workPlaneStateChanged(FielDes::WorkPlane plane, float step);
+    /*  ... for the scene, which writes what is made on it in its axes: whether new models go on it, where it is, its axes, and the step the places snap to (0: none)  */
+    void workPlaneChanged(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
+    /*  Where the cursor is on the plane, in its coordinates (empty: not on it)  */
+    void workPlaneReadout(QString text);
+    /*  A line or a spline was put down (or a sketch: closed): its name in the library (`sketch`, `polyline`, `spline`), its points, and whether the outline is smooth  */
+    void placementFinished(QString name, QList<QVector3D> points, bool smooth);
+
     /*
      *  Called to kick off a render and start the busy spinner running
      */
@@ -429,6 +472,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 
     /*  A right-click (not a pan) on a shape: first a menu with Operation (the operations, on that shape) and
      *  Select Surface, which opens the menu of the surface selection  */
@@ -451,6 +495,23 @@ protected:
     void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine);
     /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
     QVector3D placeOnRay(QPoint pos) const;
+    /*  The work plane's state and its pieces in the viewport  */
+    WorkPlane m_wp;
+    QVector3D m_wpCursor;                    // (where the cursor is on the plane, snapped)
+    QList<QVector3D> m_wpPlaced;             // (the points of the line or spline that is being put down: not in the script yet)
+    QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
+    bool m_faceHasRef = false;
+    bool m_wpCursorValid = false;
+    bool m_wpCursorSnapped = false;
+    void makeWorkPlane();
+    void announceWorkPlane();
+    bool planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const;
+    void planeOfView(QVector3D& origin, QVector3D& u, QVector3D& v) const;
+    void updateWorkPlaneCursor(QPoint pos);
+    void drawWorkPlane(QPainter& painter);
+    void wpMarker(QPainter& painter, const QPointF& q, int mode, double alpha, bool lit) const;
+    /*  The grid's step as a round number of about `want` mm  */
+    static float roundStep(double want);
     /*  How many mm about a hundred pixels span, at the depth of a point  */
     double scaleAt(QPoint pos, const QVector3D& point) const;
     QPoint right_press_pos = QPoint(-100000, -100000);
@@ -462,6 +523,12 @@ protected:
 
     void leaveEvent(QEvent* event) override
     {
+        if (m_wpCursorValid)
+        {
+            m_wpCursorValid = false;
+            emit(workPlaneReadout(QString()));
+            m_overlay->update();
+        }
         if (triad_hover >= 0)
         {
             triad_hover = -1;       // no stale highlight on the triad
@@ -796,6 +863,10 @@ protected:
     QPoint gizmo_press;
     QPointF gizmo_dir;                 // a move arrow on the screen
     float gizmo_len = 0;               // ...and its length in the model
+    bool gizmo_uniform = false;        // the scale handle being dragged is the ring of a point or of the Shift gizmo: it scales all three numbers together
+    float gizmo_factor = 1.0f;         // ...and the factor it has scaled by so far (shown beside it)
+    QPointF gizmo_centre;              // ...the middle of the ring on the screen, and how far from it the ring was pressed
+    double gizmo_press_r = 1.0;
     QVector3D gizmo_pivot, gizmo_axis, gizmo_vec;   // a ring's
     float gizmo_turn = 0;              // degrees turned so far
     float gizmo_scale0[3] = {1, 1, 1}; // the scale numbers when a scale drag began
@@ -808,6 +879,8 @@ protected:
     bool m_leftDown = false;             // (the left button, as the mouse events of the viewport say: a script that sends events sets it as a real mouse does)
     /*  A point of a sketch has ONE rotation ring, in the plane of the sketch (about its normal): whether `s` is one, and that normal  */
     bool planarRingNormal(const Shape* s, QVector3D& normal) const;
+    /*  Whether all of `members` are points of sketches that lie in one plane -- selected together they have the dot that moves them in that plane, and no arrows  */
+    bool groupInSketchPlane(const QList<Shape*>& members, QVector3D& normal) const;
     /*  What a point's dot says: 1 a corner (a square), 2 a spline point (a round dot with a ring), 0 neither (a plain round dot: it belongs to no sketch or curve).
         Taken from the sketch or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
         the library made on it  */

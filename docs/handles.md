@@ -57,8 +57,9 @@ rows): they are all unlocked, and still selected.
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
 
-**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, all three
-scale squares move it -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a sketch has no arrows**: its dot, pressed and dragged, moves it in the plane of the sketch, and it has one rotation ring (in the plane) and the scale squares. See [Sketches](sketches.md).
+**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, always uniform, dragged with the one
+gold ring round the dot -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a sketch has no arrows**: its dot, pressed and dragged, moves it in the plane of the sketch (several points of one sketch selected
+together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Sketches](sketches.md).
 
 A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
 (its eye in the model tree: a point whose eye is off draws nothing). **Click the dot to select the point**; then its full gizmo shows (the arrows; `mode='never'`
@@ -67,6 +68,7 @@ shows the dot, with its name over it.
 
 - [`var()`: a number you can drag](#var-a-number-you-can-drag)
 - [The gizmo](#the-gizmo)
+- [Copies: Shift+D and Ctrl+D](#copies-shiftd-and-ctrld)
 - [Handles: drag a surface](#handles-drag-a-surface)
 - [Primitives and displayed expressions](#primitives-and-displayed-expressions)
 - [Lock](#lock)
@@ -91,7 +93,8 @@ The numbers are ordinary Python values in an ordinary script: copy them, rename 
 
 The part's own **move arrows, rotation rings and scale squares**, at the centre of the part's bounding box. Works on every shape and every imported part.
 **Hold Shift** and the gizmo changes: the three move arrows become three **flat squares** -- each one moves the part **along a plane** (the colour of a square is the axis that is the plane's normal: the blue
-square moves it in x and y) -- and the three scale squares turn **gold**: whichever you drag, **all three axes scale together**. **Shift + the mouse wheel** scales what is selected without a gizmo
+square moves it in x and y) -- and the three scale squares are replaced by **one gold ring round the middle**, the uniform scale handle of Blender's scale gizmo (Maya, Unity and Unreal have a cube in the middle instead; here the middle is the dot that moves):
+drag it outward to grow the part, inward to shrink it, and **all three axes scale together**. A faint ring stays at the size you started from and the factor is shown while you drag. (A point has this one handle always.) **Shift + the mouse wheel** scales what is selected without a gizmo
 to aim at: every selected model by the scale numbers of its gizmo, all three together (a notch is 10 %), and the numbers are written when the wheel has rested a moment; a model that cannot be scaled leaves the wheel
 to zoom. It writes, under the shape's definition:
 
@@ -109,6 +112,27 @@ one argument per line, like the arguments of an operation, so each is easy to fi
 centre. `mode=` says when the gizmo is shown: `'click'` (the default, left out), `'never'` or `'always'`; the placement stays
 whatever the mode. (`mode='gizmo'` and `mode='handles'`, from before surfaces could always be dragged, are refused.) An imported
 part keeps its link to the STEP file through `gizmo()`, so `exclude()` (the exact surface) follows it.
+
+## Copies: Shift+D and Ctrl+D
+
+Two ways to duplicate a model, with the viewport or the model tree focused:
+
+- **`Shift+D` copies**: the model's statements are written again under it with free names (`box_1` becomes `box_2`; copies of several models refer to each other's copies). The copy is a model of its own -- change either and the other stays.
+- **`Ctrl+D` links**: under the model, a block of its own that **is** the model:
+
+```python
+plate_2 = instance(plate)  # shadow: plate
+plate_2 = gizmo(
+    plate_2,
+    move=(var(0), var(0), var(0)),
+    rotate=(var(0), var(0), var(0)),
+)
+```
+
+  The copy's shape, sizes, colours and every other property are the original's, so **when the original changes the copy changes with it**. All it has of its own is where it is: it can be **moved and rotated** with its gizmo (which has no
+  scale knob), and nothing else -- its surfaces cannot be dragged and `gizmo(copy, scale=...)` and `handles(copy, ...)` are refused, because they would change the original's shape. The original is only **referred to**, always (the mark `# shadow: plate`),
+  whether it is locked or not: it keeps its own row in the model tree and the copy shows a shadow of it -- taking the original into the copy would move its row away and make it look like what the copy is made of. *Operation → Repeating → instance*
+  writes the same block. A sketch or a curve cannot be linked (it is made of its points: link those, or copy it with `Shift+D`); a number, a material or the result of an analysis has no shape to follow.
 
 ## Handles: drag a surface
 

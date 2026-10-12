@@ -1262,7 +1262,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Cut a section");
-        s.text = T("Press Ctrl+Shift+X (View ▸ Section view). A plane cuts the model open. Drag the arrow of the plane through the model.");
+        s.text = T("Press Shift+X in the viewport (View ▸ Section view). A plane cuts the model open. Drag the arrow of the plane through the model.");
         s.hint = T("The section view is yours to switch on; its card has the plane's settings. The field viewer is another viewer, which "
                  "opens by itself when you select a field: both can be open together. Or press Show me.");
         s.holes = holesOf(viewWidget);
@@ -1272,6 +1272,7 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             if (QAction* a = sectionAction()) a->setChecked(false);
             scene()->clearSelection();
+            m_view->setFocus(Qt::OtherFocusReason);              // (Shift+X acts while the viewport has the keyboard)
         };
         s.done = [this] {
             // (switched on, and the plane moved since: the plane starts where the section view puts it, through the model)
@@ -1287,7 +1288,7 @@ void Tutorial::buildSteps()
             if (!a) { over(); return; }
             m_busy = true;
             // (the shortcut is pressed: a key cap by the cursor says so)
-            static_cast<TourLayer*>(m_layer)->cursorKey = "Ctrl+Shift+X";
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Shift+X";
             setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
             after(900, [this, a, over] {
                 a->setChecked(true);

@@ -161,7 +161,7 @@ start by clicking the gap between two rows (they fold in the code editor too), a
 2. The **guided tour** (it opens by itself the first time; later **Help → Guided tour**) walks through the basics; **File → Import model…** (`Ctrl+I`) brings in a STEP
    file; or open a script from `examples/` (every one runs as it is: the bracket that comes with FielDes, or geometry the script makes).
 3. Right-click empty space to make a shape; click a row in the model tree and drag the gizmo; open the section card
-   (`Ctrl+Shift+X`); hover the model.
+   (`Shift+X`); hover the model.
 4. `Shift+F1` opens the guide with every feature and shortcut; `F1` the shape reference.
 
 The smallest script:

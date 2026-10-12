@@ -42,7 +42,7 @@ _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
 _FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'bounds', 'can_handles',
-              'handle_count', 'handle_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports')
+              'handle_count', 'handle_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
 _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
@@ -172,6 +172,7 @@ def facts_of(v):
         f['shown'] = False
         f['model'] = False
     f['surface_selection'] = bool(mkind == 'surface' and type(v).__name__ == 'SurfaceSelection')
+    f['linked'] = bool(getattr(v, '_linked', False))          # (a linked copy, instance(x): moved and turned only -- its gizmo has no scale)
     f['colored'] = hasattr(v, '_color_field')       # (a shape coloured by a field: it cannot be given a name to be edited by dragging)
     b = getattr(v, '_bounds', None) if shape else None
     if b:

@@ -32,10 +32,10 @@
 - **Two 1D shapes, a set of lines and a smooth curve: `polyline([a, b, c])` and `spline([a, b, c])`.** A new kind of model, open or `closed=True`, drawn as a line, with its own icon, and **two entries under New 1D shape** (not one
   entry with a switch inside): the point of each can still say otherwise (`point(..., smooth=...)`). A line stands on its own: it is the path of `path_extrude`, the outline `sketch(line)` fills,
   and, as the distance to the line, `offset(line, 1.5)` is a tube round it.
-- **A point of a sketch is moved by its dot, in the plane of the sketch.** Press the dot (selected or not) and drag; it has no move arrows and no plane squares -- only the dot, **one rotation ring** in the plane, and the scale squares.
+- **A point of a sketch is moved by its dot, in the plane of the sketch.** Press the dot (selected or not) and drag; it has no move arrows and no plane squares -- only the dot, **one rotation ring** in the plane (on a spline point), and the one scale handle.
 - **The rotation of a point turns the direction a spline leaves it -- one angle, in the plane of the sketch, for a point of a sketch.** A point has had a gizmo with rotation rings and no use for them; now the rotate numbers of a spline point turn its tangent
   (no rotation: Catmull-Rom, from the neighbours). **A point of a sketch has one rotation ring, in the plane of the sketch**; a point of a line in space has the three. A line through the selected point shows the direction.
-- **The scale of a point is how strongly a spline leaves it and how thick a sweep is there.** A point has one scale (the three scale squares of its gizmo move it together; so does Shift + wheel): `1` is the Catmull-Rom curve, more is a rounder bulge, less
+- **The scale of a point is how strongly a spline leaves it and how thick a sweep is there.** A point has one scale (its one scale handle moves the three numbers of its gizmo together; so does Shift + wheel): `1` is the Catmull-Rom curve, more is a rounder bulge, less
   is tighter. In `path_extrude` it is the thickness of the profile at that point, tapering smoothly between points: a path with a point of scale 2 makes a tube twice as thick there.
 - **`path_extrude(profile, line)` sweeps a 2D shape along a line**, turning with it, with mitered joints; the same rotation of a point **twists** the profile about the path there. **`extrude(shape, a, b)`** is the straight one,
   and follows the plane of a sketch (it replaces `extrude_z`, which is gone: for a shape in z = 0 it is the same call).
@@ -48,6 +48,34 @@
 - **The menus follow the library's own naming: shapes are nouns, operations are verbs.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for
   *New 1D shape → polyline* and *spline* (two or more points). `extrude` and `path_extrude` are operations: *Operation → Extruding*, offered for a selected 2D shape (and a line, or the points of a path). See [Sketches](docs/sketches.md).
 - **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are lines.
+
+### Two kinds of duplication, one scale handle, and a tidier work plane
+- **`Shift+D` copies a model, `Ctrl+D` links it.** Shift+D is the duplicate that was Ctrl+D (the statements written again under the model with free names). **Ctrl+D writes `copy = instance(model)`**: a block that **is** the model and follows every change of
+  it, and can only be **moved and rotated** (its gizmo has no scale, its surfaces cannot be dragged). The original is held by a **shadow reference** (`# shadow: model`) **always**, locked or not, so it keeps its own row in the model tree. Also
+  *Operation → Repeating → instance*. In the editor `Ctrl+D` is still the next occurrence.
+- **One scale handle for a point, and for the Shift gizmo of any shape: a ring.** A point scales uniformly only: one gold ring round its dot -- drag it outward to grow, inward to shrink; a faint ring stays at the starting size and the factor is shown --
+  instead of three axis squares. The Shift gizmo of any 3D shape has the same ring in place of its three gold squares. (It is the uniform scale handle of Blender's scale gizmo; Maya, Unity and Unreal put a cube in the middle, which here is the dot that moves
+  the point.) The normal gizmo keeps its three axis squares.
+- **A point of a sketch shows only what it can use.** Selected, it has no arrows (its dot moves it in the plane), the **scale handle**, and a **rotation ring only when it is a spline point** (a corner does not leave in a direction). Several points of one sketch
+  selected together have just the dot.
+- **Fixed: a sketch drawn from its points went out of date after an edit.** Adding a point (pulling it out of an edge, or the work plane's), or changing a point between a corner and a spline point, kept the old shape on the screen -- the face, the blue outline and the
+  dots stayed as they were, and a second sketch could vanish. A shape made of points is now told apart by its points (how many, what each says of itself, which numbers make them), so an edit that changes them makes it again. The in-plane move of a
+  sketch no longer writes a tiny number such as `-7e-08` in the z move.
+- **Fixed: the blue outline of a sketch was not drawn.** Since sketches are drawn straight from their points they were no longer counted as flat shapes, and only flat shapes and lines had their outline drawn.
+- **The work plane's modes look like what they make.** There is no *Select* button: **Line**, **Spline** and **Point** are three buttons with a picture of what each makes, and none on is not drawing (click the one that is on, or `Q`). While drawing the pointer is a
+  crosshair and a marker shows the point a click puts down -- a square for a line, a round point with a ring for a spline, a dot for a point; the points already put down have the same marks. Not drawing, there is no marker or readout and the pointer is the usual one.
+
+### A work plane to draw on
+- **`Shift+W` opens a work plane view; `Ctrl+Shift+W` makes a new work plane; `W` turns the camera to face it.** A light version of a CAD program's sketch plane that writes nothing into the script by itself: the plane is drawn with a grid and has a card
+  (grid, snap to grid, snap to points, step, offset, set the view to the plane / the plane to the view). A new plane is the plane of the selected 2D shape, or parallel to the camera view through the origin. The camera turning with
+  the middle button leaves the view.
+- **Draw in it:** three kinds of drawing, picked in the card or with `E` (line, spline, point), and **`Q` to stop drawing** (nothing is put down, and things are selected, moved, turned and scaled as usual; the view opens that way;
+  in a drawing mode a click always puts a point down, attaching to a point that is there). Click to put down the points of a line -- **a click on the first point closes it and makes a sketch** (`Enter` or a double click ends it open as a
+  `polyline`), the same with a spline (`smooth=True` when closed), or a point at a click. Nothing is written until the line ends; then the points and the shape are one undo step. The points are exact: snapped to the grid, and to the points
+  that are there.
+- **The new things go where the plane is:** right-click → New ... places at the plane, a sketch made of new points is in the plane's own axes, the dots of points move in the plane and land on the grid, and pressing a 2D shape in the plane
+  moves it about in the plane in steps of the grid (in select mode).
+- **The section view is `Shift+X`** (was `Ctrl+Shift+X`): a single key with Shift, like the work plane's, it acts while the viewport -- or the model tree -- has the keyboard, so it never types over the editor.
 
 ### Sketches, lines and sweeps are plain math, and fast
 - **No black box: the field of a sketch, a line and a sweep is an expression of x, y and z.** A sketch is the distance to its outline (the least of the distances to its edges) with its side taken from triangles the outline is cut into

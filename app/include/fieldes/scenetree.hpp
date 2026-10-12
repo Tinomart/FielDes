@@ -175,6 +175,12 @@ public slots:
      *  or "operation" (on the model displayed by the (0-based) line `line0`, or, for a negative line, the
      *  selected model; written under its definition)  */
     void createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation = -1);
+    /*  The work plane, while its view is open: what the menu makes at a place is made in its axes (a sketch's points are in the plane, not horizontal); `step` is
+        the grid the places snap to, 0 when they do not  */
+    void setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
+    /*  A line, a spline or a sketch put down on the work plane (`name` is polyline, spline or sketch): written into the script with its points, each a model of its own
+        with its gizmo, as one step; `smooth` makes the points of a sketch spline points  */
+    void createPlaced(QString name, QList<QVector3D> points, bool smooth);
     /*  Which run of the script the model tree shows (it counts up with every run): a menu remembers it, so that an entry
      *  chosen after the script changed is known not to mean the line the menu was opened on  */
     int generation() const { return m_generation; }
@@ -209,10 +215,14 @@ public slots:
      *  lock them), as one undoable step; it asks once if the rest of the script still uses their names  */
     void deleteSelected();
 
-    /*  Ctrl+D: a copy of each selected model under it; Ctrl+C: the selected models (their statements) are kept, and
+    /*  Shift+D: a copy of each selected model under it; Ctrl+C: the selected models (their statements) are kept, and
      *  Ctrl+V puts copies of them under the selected model, or at the end of the script -- with names that are free, and
      *  the copies referring to each other's copies.  Written like every other edit of the tree: one undoable step  */
     void duplicateSelected();
+    /*  Ctrl+D: a LINKED copy of each selected model -- `copy = instance(model)`, a block of its own that is the model (it follows every change of it) and can only be
+     *  moved and turned, written under the model.  The model is held by reference only, always (`# shadow: model`): it keeps its own row whether it is locked or not.
+     *  One undoable step  */
+    void duplicateLinkedSelected();
     void copySelected();
     void pasteModels();
     /*  The viewport's Delete entry on the model displayed by (0-based) line `line0`: that model, or all the selected
@@ -691,6 +701,11 @@ protected:
     QString m_copiedText;                        // (what the clipboard held then: a paste is of this only)
     QSet<QString> m_copiedPart;                  // (which of them were parts of an import)
     QString m_selectNew;
+    bool m_workPlaneActive = false;
+    QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
+    bool m_placedSmooth = false;
+    QVector3D m_workPlaneOrigin, m_workPlaneU, m_workPlaneV;
+    float m_workPlaneStep = 0;
     int m_selectNewTries = 0;
     /*  Isolation: the keys of the models that were shown before, the one isolated, whether it is on  */
     bool m_isolated = false;

@@ -125,13 +125,15 @@ offending line underlined in the editor. The error's text is red, everything els
 | **Right-click** a model (or a line of the script that defines it, or its row in the model tree: see below) | **center** and **bounding_box** (the middle of the model's box, as a point, and the smallest axis-aligned box that holds it, as a body: library functions of their own, used all the time, so at the top of the menu), **Operation** (the same list, written with that model as its argument, under its definition; with **several models selected** and the one you right-click among them, the operations that combine models work on all of them, in the order you selected them: *union* unites all, *difference* takes every one after the first from the first, *intersection* keeps what they share, *exclude* locks the others as regions of the first (see [Excluded regions](fields.md#excluded-regions-exclude)); **Surfaces → surface_from_bodies** makes the first one's surface where the others meet it, and of one model alone, all of its surface (see [Selecting surfaces](selecting-surfaces.md#by-other-bodies)); the others work on the model you right-clicked), **Simulation** (*static_analysis*, *modal_analysis*, *topology_optimization*, *thermal_analysis*, *fluid_analysis*: the call is written with that model as the part, and a **placeholder for every kind of boundary condition** the analysis takes -- `supports=...`, `loads=...`; `inlets=...`, `outlets=...`, `boundaries=...` -- that you then fill in the model tree or the script; the result is a model of its own, shown when it is solved. **With several models selected** the body is the part and the conditions among them go in the input of their kind: see below), **Delete** (the model, or all the selected ones) and **Select Surface**, which opens the menu of the **surface selection**: the mode, the angle and the radius of a flood fill over the surface from the point you clicked; **Select** writes a `select_surface(...)` line into the script, under the model's definition. See [Selecting surfaces](selecting-surfaces.md) |
 | **Wheel** | Zoom (about the cursor or the scene: **Settings → Zoom center**) |
 | **Shift+wheel** | **Scale** what is selected: every selected model by its gizmo's scale numbers (a point by its scale), a notch is 10 %, written to the script when the wheel rests. With nothing selected that can be scaled, the wheel zooms |
-| **Hold Shift** on a selected model | The gizmo changes: the move arrows become **flat squares** that move the model along a plane, and the scale squares turn gold and scale all three axes together |
+| **Hold Shift** on a selected model | The gizmo changes: the move arrows become **flat squares** that move the model along a plane, and the three scale squares become **one gold ring** round the middle that scales all three axes together: drag it outward to grow, inward to shrink; a faint ring stays at the size you started from and the factor is shown while you drag |
 | **Double-click** a model / the background | Frame that model / everything (`Home`) |
 | **Click a model** | Select it: its row in the tree and its code in the editor. The keyboard stays in the viewport (also when it was in the editor before), so the single keys that work on the selection — `E`, `R`, `V`, `C`, `I`, `D` — are never typed into the script |
 | **Click empty space** | Deselect everything (not with Shift or Ctrl held). The keys that work on the selection then have nothing to work on until you click a model |
 | **Ctrl+click** a model | Add it to the selection, or take it out when it is in: select several models one by one |
 | **`I`** (viewport or model tree focused) | **Isolate** the selected models: only they are shown, every other model hidden (script edits, undoable); `I` again shows what was shown before. Select another model while isolated and press `I` to isolate that one instead |
 | **`D`** (viewport or model tree focused) | **Delete** the selected models from the script: their definitions and the lines that show, hide, edit and lock them go, as one undoable step. If the rest of the script still uses their names it asks once first. Also in the right-click menu of a model (**Delete**; with several models selected and the one you right-click among them, it deletes all of them) |
+| **`Shift+D`** (viewport or model tree focused) | **Copy** the selected models: their statements are written again under them with free names, as one undoable step (a copy that is its own model, changed independently) |
+| **`Ctrl+D`** (viewport or model tree focused) | **Link** the selected models: under each, `copy = instance(model)` -- a block that **is** the model and follows every change of it, and can only be **moved and rotated** (its gizmo has no scale and its surfaces cannot be dragged). The model is held by reference (`# shadow: model`), always, locked or not, so it keeps its own row and the copy shows a shadow of it. Also *Operation → Repeating → instance*. In the editor `Ctrl+D` is still the next occurrence |
 | **Hover a model** | Highlights it; shows the point under the cursor at the bottom left |
 
 Standard views: front `1`, back `Ctrl+1`, right `3`, left `Ctrl+3`, top `7`, bottom `Ctrl+7`,
@@ -378,7 +380,7 @@ button changes its icon at once, and the lines it writes are known when the run 
 
 ## The section card
 
-`Ctrl+Shift+X` (or **View → Section view**) opens a card at the top right of the viewport. The section view is a viewer **you switch
+`Shift+X` (or **View → Section view**; the key acts while the viewport -- or the model tree -- has the keyboard, so it never types over the editor) opens a card at the top right of the viewport. The section view is a viewer **you switch
 on** when you want it; it cuts models. It is separate from the [field viewer](#the-field-viewer), which shows fields on planes inside their bounds: they
 work on different things, and **both can be open at the same time** (the field viewer's card then sits below the section card).
 
@@ -398,6 +400,39 @@ Every pixel of the plane is the field itself evaluated at that point — nothing
 
 **Fields have their own card, the field viewer** (next section): select a field -- by its icon in the viewport or its row -- and its viewer opens, whether or not the
 section view is on.
+
+## The work plane
+
+A **work plane** is a plane to put points in -- a small, light version of the sketch planes of a CAD program: nothing about it is written into your script, only what you make on it (points, lines, shapes) is, as ordinary
+models with ordinary numbers. Three keys, all of which act while the viewport (or the model tree) has the keyboard:
+
+| Key | |
+|---|---|
+| `Shift+W` (or **View → Work plane**) | opens and closes the **work plane view**: the plane is drawn with a grid, and its card is shown. A plane is made when there is none |
+| `Ctrl+Shift+W` (or **View → New work plane**) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a sketch, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
+| `W` (or **View → Set view to work plane**) | turns the camera to **look straight at** the plane. It only moves the camera: it never changes the script |
+
+The card (top right, below the section card when that is open) has three buttons that say what a click draws -- **Line**, **Spline**, **Point**, each with a picture of what it makes -- a line that says whether you are drawing, and the plane's settings: **Grid** on and off, **Snap to grid** and **Snap to points**, the **grid step** (automatic, from how large the picture is, or a number), the plane's
+**offset** along its normal, and the buttons **Set view to work plane** (as `W`), **Set work plane to view** (the plane made parallel to the view through the origin) and **New work plane**. The cursor's place on the plane is
+read out under them. **Turning the camera with the middle mouse button leaves the work plane view**, and so does closing the card; the plane is kept for the next time you open it.
+
+**What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a sketch made of new points is made in the plane's own axes, not horizontal), and the points you drag --
+by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a sketch moves all its points together, any other
+2D shape moves through its own move numbers.
+
+**What a click does.** The three buttons -- **Line**, **Spline** and **Point** -- pick what a click draws; `E` goes round them. **None of them on is not drawing**, and there is no button for it: the view opens that way, and clicks work as they do
+everywhere -- things are selected, moved, turned and scaled. Click the button that is on to turn it off, or press `Q`. You can tell which you are in: while drawing the pointer is a crosshair and a **marker shows the point a click will put down**
+-- a **square** for a line (a corner), a **round point with a ring** for a spline, a plain **dot** for a point, as the points of the script look -- the points already put down have the same marks, and the line under the buttons says what a click does. Not
+drawing there is no marker, no readout of the cursor's place, and the pointer is the usual arrow. In a drawing mode **every click puts a point down**, also on a point that is already there -- the line attaches to it, it does not select it -- and
+that is what not drawing is for. A **double click on a point** of a sketch or a line changes it between a corner and a spline point, drawing or not.
+
+- **Line**: every click puts down a point of a line; the line through them follows the cursor. **A click on the first point closes it, and a shape is made out of it**: a sketch with hard corners. `Enter` or a double click
+  ends it open, as a `polyline`. `Backspace` takes the last point back, `Esc` drops the whole line.
+- **Spline**: the same with a smooth curve through the points; closed, a sketch with spline points (`smooth=True`); open, a `spline`.
+- **Point**: every click puts a point on the plane.
+
+Nothing of a line or a spline is written until it ends, and then it is one step (one undo): the points, each a model of its own with its gizmo, and the `sketch(...)`, `polyline(...)` or `spline(...)` through them. (Shift and Ctrl keep their
+meaning in every mode: Shift turns the view, Ctrl adds to the selection.) See [Sketches](sketches.md).
 
 ## The field viewer
 
@@ -552,7 +587,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 |---|---|
 | Undo / redo | `Ctrl+Z` / `Ctrl+Y` |
 | Find / replace / next / previous | `Ctrl+F` / `Ctrl+H` / `F3` / `Shift+F3` |
-| Next occurrence (multi-cursor) | `Ctrl+D` |
+| Next occurrence (multi-cursor); with the viewport or the tree focused, link the selected models | `Ctrl+D` |
 | Go to definition / line | `F12` / `Ctrl+G` |
 | Back to the rendered script / next tab / previous tab / close tab | `Alt+←` / `Ctrl+Page Down` / `Ctrl+Page Up` / `Ctrl+W` |
 | Toggle comment | `Ctrl+/` |
@@ -567,7 +602,10 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | View | |
 |---|---|
 | Model tree | `Ctrl+Shift+T` |
-| Section view | `Ctrl+Shift+X` |
+| Section view | `Shift+X` (viewport focused) |
+| Copy / link the selected models (viewport or tree focused) | `Shift+D` / `Ctrl+D` |
+| Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `Ctrl+Shift+W`, `W` (viewport focused) |
+| In the work plane view: next kind of drawing (line, spline, point) / stop drawing / end a line / take a point back / cancel | `E` / `Q` / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |
 | Frame all | `Home` |
 | Cancel a render | `Esc` |

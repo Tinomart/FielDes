@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Sketches and extrusions](#sketches-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Sketches and extrusions](#sketches-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -818,6 +818,38 @@ Write it under a shape's definition, with its gizmo() and handles() calls:
     part = lock(part)
 
 (FielDes's model tree has a lock button on every model -- shapes, results, conditions, materials, points -- and the key R toggles it.)
+
+## Linked copies
+
+Linked copies: `instance(shape)`.
+
+A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
+(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: it can be moved and rotated
+(with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs, and its surfaces cannot be dragged, since its shape is the
+original's.  (A copy that is scaled, or whose surfaces are pulled, is another shape: copy the model's statements instead -- Shift+D in FielDes.)
+
+FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
+
+    plate_2 = instance(plate)  # shadow: plate
+    plate_2 = gizmo(
+        plate_2,
+        move=(var(0), var(0), var(0)),
+        rotate=(var(0), var(0), var(0)),
+    )
+
+The original is only REFERRED to: the mark `# shadow: plate` keeps it where it is in the model tree (a shadow of it is shown under the copy), whether it is
+locked or not -- taking the original into the copy would move its row away and make the copy look like what the original is made of.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `instance(shape)`
+
+A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
+moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  Its surfaces cannot be dragged and it cannot be scaled: its shape is the
+original's.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
+locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D)
 
 ## Points and surfaces
 

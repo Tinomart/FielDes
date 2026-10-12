@@ -117,6 +117,7 @@ HINTS = {
                           'Select points first (random_points)'),
     'delaunay_lattice': tr('A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were '
                            'made in.  Select points first (random_points)'),
+    'instance': tr('A linked copy of the selected model: the same shape, following every change of it, that can only be moved and rotated (Ctrl+D)'),
 }
 
 # A sketch or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
@@ -311,6 +312,8 @@ OPERATIONS = [
     ('symmetric_x', 'Moving', 'symmetric_x({body})', False),
     ('symmetric_y', 'Moving', 'symmetric_y({body})', False),
     ('symmetric_z', 'Moving', 'symmetric_z({body})', False),
+    # A linked copy (Ctrl+D): the model itself, placed where its own gizmo says -- written with the model held by reference (`# shadow:`)
+    ('instance', 'Repeating', 'instance({body})', False),
     ('array_x', 'Repeating', 'array_x({body}, {n}, {s})', False),
     ('array_xy', 'Repeating', 'array_xy({body}, {nx}, {ny}, ({dx}, {dy}))', False),
     ('array_polar_z', 'Repeating', 'array_polar_z({body}, {n})', False),
@@ -688,6 +691,35 @@ def _regions(r, scale):
             'cs': _num(_nice(longest / 10.0)), 'ct': _num(_nice(longest / 10.0) / 8.0)}
 
 
+def _plane_template(name, r):
+    ''' A sketch or a line made on the work plane (`r['plane']`: origin, u, v, and the step of its grid, 0 for none): its points are laid out in the plane's own axes
+        round the place of the click -- the corners of a square for a sketch -- not in the horizontal plane, and on the grid when the plane snaps '''
+    plane = r['plane']
+    u = tuple(float(c) for c in plane['u'])
+    v = tuple(float(c) for c in plane['v'])
+    centre = tuple(float(r.get(k, 0.0)) for k in ('x', 'y', 'z'))
+    h = _nice(float(r.get('scale', 10.0))) / 2.0
+    step = float(plane.get('step') or 0.0)
+    if step > 0:
+        h = max(step, round(h / step) * step)               # (the points are on the grid too)
+
+    def at(a, b):
+        return tuple(_num(c + a * x + b * y) for c, x, y in zip(centre, u, v))
+
+    places = [at(-h, -h), at(h, -h), at(h, h), at(-h, h)] if name == 'sketch' else [at(-h, 0.0), at(0.0, h), at(h, 0.0)]
+    points, listing = _points(*places)
+    return points + '#@@#\n' + name + '([' + listing + '])'
+
+
+def _placed_template(name, r):
+    ''' A sketch, a polyline or a spline put down on the work plane: the points the user clicked, each a model of its own with its gizmo, and the call through them.
+        A sketch of a spline (`smooth`) has spline points '''
+    places = [tuple(_num(float(c)) for c in p) for p in r['points']]
+    points, listing = _points(*places)
+    call = '%s([%s]%s)' % (name, listing, ', smooth=True' if name == 'sketch' and r.get('smooth') else '')
+    return points + '#@@#\n' + call
+
+
 def _values(r):
     ''' What the templates are filled from: the place, the size, the models, and the boxes and numbers worked out from them '''
     name = r['name']
@@ -697,7 +729,11 @@ def _values(r):
     def snap(v):
         return round(float(v) / step) * step
 
-    x, y, z = snap(r.get('x', 0.0)), snap(r.get('y', 0.0)), snap(r.get('z', 0.0))
+    if r.get('plane'):
+        # (made on the work plane: the place is where its grid says, in the plane's axes -- rounding each of the world's coordinates would take it off the plane)
+        x, y, z = (float(r.get(k, 0.0)) for k in ('x', 'y', 'z'))
+    else:
+        x, y, z = snap(r.get('x', 0.0)), snap(r.get('y', 0.0)), snap(r.get('z', 0.0))
     h = s / 2.0
     values = {
         'x': _num(x), 'y': _num(y), 'z': _num(z), 's': _num(s), 'h': _num(h), 't': _num(s / 10.0), 'q': _num(s / 6.0),
@@ -775,6 +811,12 @@ def _call(r):
         built = _build_operation(name, values, others)
         if built:
             return built
+    if kind == 'primitive' and r.get('points') and name in ('sketch', 'polyline', 'spline'):
+        r['_templated'] = True
+        return _placed_template(name, r).format(**values)
+    if kind == 'primitive' and r.get('plane') and name in ('sketch', 'polyline', 'spline'):
+        r['_templated'] = True
+        return _plane_template(name, r).format(**values)
     if kind == 'primitive':
         for n, _, template in PRIMITIVES:
             if n == name:

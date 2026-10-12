@@ -55,7 +55,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_linked', '_instance_of', '_no_handles')
 
 
 def _is_number(v):
@@ -142,6 +142,13 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         raise ValueError("gizmo(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
         raise ValueError('gizmo(): move=, rotate= and scale= take three numbers each')
+    if getattr(shape, '_linked', False):
+        # A linked copy is only moved and rotated: its shape is its original's.  A scale of numbers other than 1 would make it another shape -- refused; scale numbers
+        # that are var()s (an older gizmo line, or one written before the copy was known to be linked) mean 1, and are not offered to be dragged
+        if any(_is_number(s) and s != 1 for s in scale):
+            raise ValueError('gizmo(): a linked copy (instance) can only be moved and rotated: its shape is its original\'s, so it is not scaled.  '
+                             'Leave scale= out; a copy that has a shape of its own is a copy of the statements (Shift+D in FielDes)')
+        scale = (1, 1, 1)
     if not isinstance(shape, Shape) and callable(getattr(shape, '_display', None)):
         # The result of an analysis or an optimisation is not a shape: it has no surface of its own to place (what it shows is made from
         # its part).  Placed by nothing it is the result itself; placed by something, there is nothing it could mean
@@ -346,6 +353,9 @@ def handles(shape, values=None, **removed):
                         'place them (FielDes writes it when the shape is selected).  It does not take %s -- the gizmo, the arrows that move, '
                         'turn and scale a shape, is gizmo(shape, move=(...), rotate=(...), scale=(...))'
                         % ('move=, rotate=, scale=, about= or mode=' if removed else 'no numbers'))
+    if getattr(shape, '_linked', False):
+        raise TypeError('handles(): a linked copy (instance) has no surfaces of its own to drag -- its shape is its original\'s: drag the original\'s surfaces, '
+                        'and the copy follows')
     values = list(values)
     n = _handle_count(shape)
     if len(values) != n:

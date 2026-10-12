@@ -50,6 +50,7 @@ set(SRCS
     src/typeicons.cpp
     src/view.cpp
     src/window.cpp
+    src/workplane.cpp
 
     src/python/formatter.cpp
     src/python/interpreter.cpp
@@ -82,6 +83,7 @@ set(QOBJECTS
     include/fieldes/tutorial.hpp
     include/fieldes/view.hpp
     include/fieldes/window.hpp
+    include/fieldes/workplane.hpp
 )
 
 if(WIN32)

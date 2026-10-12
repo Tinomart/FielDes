@@ -21,6 +21,7 @@ MODULES = [
     ('mesh_import', 'Triangle meshes', 'fieldes.stdlib.mesh_import'),
     ('exporting', 'Exporting files', 'fieldes.stdlib.exporting'),
     ('handles', 'Handles: editing shapes by dragging', 'fieldes.stdlib.handles'),
+    ('instances', 'Linked copies', 'fieldes.stdlib.instances'),
     ('points', 'Points and surfaces', 'fieldes.stdlib.points'),
     ('curves', 'Lines and curves: 1D shapes made of points', 'fieldes.stdlib.curves'),
     ('sketch', 'Sketches and extrusions', 'fieldes.stdlib.sketch'),

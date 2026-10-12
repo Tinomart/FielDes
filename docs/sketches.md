@@ -44,6 +44,12 @@ numbers in the script are changed, in the same step that makes the sketch, so on
 
 The **selection rectangle** (drag on empty space) selects every kind of model: shapes, points, point sets and fields.
 
+## Drawing in the work plane
+
+Open a **work plane** (`Shift+W`, or `Ctrl+Shift+W` for a new one -- the plane of the selected 2D shape, or parallel to the view) and click the plane: in **line** mode every click is the next point of a line, **a click on the first point
+closes it and makes a sketch of it**, `Enter` ends it open (a `polyline`); in **spline** mode the same with a smooth curve; in **point** mode every click is a point. `E` goes round the three drawing modes; **`Q` (or the button that is on, clicked again) stops drawing**: nothing is put down and things are selected, moved, turned and scaled as usual, and no marker shows on the plane. While drawing a marker shows the point a click puts down -- a square for a line, a round point with a ring for a spline, a dot for a point. The grid and snapping keep the points
+exact, and the points land on the plane, written as ordinary numbers. When not drawing, a sketch (or any 2D shape) in the plane is moved about in it by pressing it. See [The work plane](interface.md#the-work-plane).
+
 ## A sketch from a surface
 
 Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **New 2D shape → sketch**: the line written is `sketch(top)`, and what you get is a
@@ -77,9 +83,10 @@ Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(
 A point has the gizmo of any model, and two of its handles mean something to the lines and sketches it belongs to:
 
 - **Rotate a spline point** and the direction in which the curve leaves it turns (a line through the selected point shows it). With no rotation the direction comes from the neighbouring points (a Catmull-Rom spline).
-  **A point of a sketch has one rotation ring, in the plane of the sketch**: it turns the direction about the plane's normal. A point of a line in space has the three rings of any gizmo. In a `path_extrude` the rotation
-  of a point **twists** the profile about the path there (between points the twist runs smoothly).
-- **Scale a point** (its scale knobs: a point has **one** scale, all three knobs move it) and a spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
+  **A point of a sketch has one rotation ring, in the plane of the sketch, and only a spline point has it**: it turns the direction about the plane's normal, and a corner does not leave in a direction, so its ring is not shown.
+  A point of a line in space has the three rings of any gizmo. In a `path_extrude` the rotation of a point **twists** the profile about the path there (between points the twist runs smoothly).
+- **Scale a point** with its **one scale handle**, a gold **ring** round the dot (the uniform scale handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has one scale,
+  always uniform; the three numbers of its `gizmo(...)` are moved together. A spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
   it as straight as a corner). In a `path_extrude`, **the scale of a point is how thick the profile is there**, tapering smoothly between points: a point with scale 2 makes the tube twice as thick at that point.
 - **Shift + the mouse wheel** scales what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 

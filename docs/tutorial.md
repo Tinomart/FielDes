@@ -198,7 +198,7 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
   show, the load step, the deformation, the elements); `part - 0.02 * result.von_mises` uses it as geometry.
   Materials and loads take fields too: `Material('graded', ramp(x_field(), (0, 100), (69e3, 7e3)), 0.33)`. See
   [Analysis](analysis.md).
-- The **section card** (`Ctrl+Shift+X`) cuts the model and paints the field on the plane; **hover** a coloured model to read
+- The **section card** (`Shift+X`) cuts the model and paints the field on the plane; **hover** a coloured model to read
   the value under the cursor. It is a viewer you switch on yourself. A *field* has an **icon** in the viewport, with its name over it: click it (or its row in the
   model tree) and the **field viewer** opens beside it, showing the field on a plane inside the field's bounds, with a position slider: the two are separate, and
   both can be open at once.
@@ -216,8 +216,10 @@ The `examples/` folder has a script for each of these. The ones that need no STE
 | left-drag a rectangle, `Ctrl`+click, `Shift`+click (tree) | select |
 | right-click | make things / operate on a model |
 | `E` `R` `V` `C` `I` `D` (viewport focused) | gizmo mode, lock, show / hide, render cache, isolate, delete |
+| `Shift+D` / `Ctrl+D` (viewport focused) | copy the selected models / link them (`instance`: a copy that follows the original, moved and rotated only) |
 | `Esc` | cancel a slow render |
-| `Ctrl+Shift+X`, `Ctrl+Shift+T` | the section card, the model tree |
+| `Shift+X` (viewport focused), `Ctrl+Shift+T` | the section card, the model tree |
+| `Shift+W`, `Ctrl+Shift+W`, `W` (viewport focused) | the work plane view, a new work plane, the view set to the plane |
 | `Shift+F1`, `F1` | the guide, the library reference |
 | `Ctrl+K Ctrl+S` | every shortcut, rebindable |
 

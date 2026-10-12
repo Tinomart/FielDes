@@ -171,6 +171,8 @@ public:
     bool controlsNow(std::vector<libfive::pointshapes::Control>& out) const;
     /*  The plane of a face now (origin, u, v), and the direction the line leaves control i in  */
     bool planeNow(double frame[9]) const;
+    /*  The plane a 2D shape lies in -- (origin, u, v), nine numbers -- as it is now: a sketch's, a flat shape's own, z = 0 for the others; false when it is not a 2D shape  */
+    bool flatPlane(double frame[9]) const;
     bool tangentAt(int i, QVector3D& out) const;
     /*  Which control of this shape a point is (by the numbers that move it), or -1  */
     int controlOf(const Shape* point) const;
@@ -360,6 +362,10 @@ public:
     /*  A locked shape (`x = lock(x)` in the script) cannot be dragged at all  */
     void setLocked(bool l) { m_locked = l; }
     bool isLocked() const { return m_locked; }
+    /*  A linked copy of another shape (`instance(shape)`): it is that shape, so its own surfaces are not dragged (they are the original's numbers) -- only its gizmo
+        moves and turns it  */
+    void setLinked(bool l) { m_linked = l; }
+    bool isLinked() const { return m_linked; }
     /*  The gizmo is shown now: with at least one number to drag, not locked, and its mode says so (ALWAYS, or CLICK while
      *  the shape is selected)  */
     bool hasGizmo() const;
@@ -615,6 +621,12 @@ public:
     libfive::Tree::Id getUniqueId(
         std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical);
 
+    /*  What tells this shape from the others of a run, next to its tree: its colours, and -- for a line or a face of points, which is shown with a tree
+     *  that says nothing of them -- the points: how many, what each says of itself (corner or spline point) and the numbers its place, rotation and scale are
+     *  made of (their VALUES are not part of it: a drag changes those, and the shape goes on).  A sketch whose point was added, or toggled, is another
+     *  shape: it is made again from its points, not kept with the points it had.  */
+    QString identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical);
+
 signals:
     void gotMesh();
     void redraw();
@@ -827,6 +839,7 @@ protected:
 
     Gizmo m_gizmo;
     bool m_locked = false;
+    bool m_linked = false;
     bool m_isPoint = false;
     bool m_hasPointPos = false;
     QVector3D m_pointPos;

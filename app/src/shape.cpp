@@ -416,6 +416,15 @@ bool Shape::controlsNow(std::vector<libfive::pointshapes::Control>& out) const
     return controlNumbers(vars, out);
 }
 
+bool Shape::flatPlane(double frame[9]) const
+{
+    if (isFace() && planeNow(frame)) return true;
+    if (!isFlat()) return false;
+    static const double z0[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    for (int i = 0; i < 9; ++i) frame[i] = m_frame_now_valid ? m_frame_now[i] : z0[i];
+    return true;
+}
+
 bool Shape::planeNow(double frame[9]) const
 {
     std::vector<libfive::pointshapes::Control> cs;
@@ -522,7 +531,8 @@ bool Shape::nativeDragOk() const
 {
     // (locked: the shape is not pulled by its surface; the gizmo's mode does not matter, and the gizmo has priority
     // where it is shown)
-    if (m_locked) return false;
+    // (a linked copy: the numbers in its tree are its original's -- dragging a surface of the copy would change the original too)
+    if (m_locked || m_linked) return false;
     buildDeps();
     const auto gizmo = gizmoVars();
     for (const void* d : m_deps)
@@ -1908,6 +1918,7 @@ bool Shape::updateFrom(const Shape* other)
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
     m_locked = other->m_locked;
+    m_linked = other->m_linked;
     m_isPoint = other->m_isPoint;
     m_hasPointPos = other->m_hasPointPos;
     m_pointPos = other->m_pointPos;
@@ -2628,6 +2639,24 @@ libfive::Tree::Id Shape::getUniqueId(
     std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical)
 {
     return base_tree.cooptimize(canonical).id();
+}
+
+QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical)
+{
+    QString key = colorKey();
+    if (m_controls.empty()) return key;
+    key += QString("|controls %1 %2%3%4").arg(m_controls.size()).arg(m_controls_default ? 1 : 0).arg(m_controls_closed ? 1 : 0).arg(m_controls_face ? 1 : 0);
+    // (the same canonical map as the tree's: expressions that are the same come out as the same node, the script's numbers -- its var()s -- as themselves)
+    const auto id = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
+    for (const ControlPoint& c : m_controls)
+    {
+        key += QString(";%1").arg(c.flag);
+        for (int a = 0; a < 3; ++a) key += QString(",%1").arg(id(c.pos[a]));
+        if (c.hasRot)
+            for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(id(c.rot[a]));
+        if (c.hasScale) key += QString(",s%1").arg(id(c.scale));
+    }
+    return key;
 }
 
 namespace {

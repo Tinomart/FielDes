@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <QSignalBlocker>
 #include <QActionGroup>
 #include <QDockWidget>
 #include <QAbstractButton>
@@ -610,12 +611,12 @@ Window::Window(Arguments args)
             [=]{ find_bar()->findNext(); });
         cmd(find_menu, "edit.find-previous", T("Find previous"), {QKeySequence(Qt::SHIFT | Qt::Key_F3)},
             [=]{ find_bar()->findPrevious(); });
-        cmd(find_menu, "edit.select-next-occurrence", T("Add next occurrence to selection (multi-cursor); duplicate the selected models"),
+        cmd(find_menu, "edit.select-next-occurrence", T("Add next occurrence to selection (multi-cursor); link the selected models"),
             {QKeySequence(Qt::CTRL | Qt::Key_D)}, [=]{
-                // (the same key in the viewport and the model tree: a copy of every selected model under it)
+                // (the same key in the viewport and the model tree: a linked copy of every selected model, under it -- Shift+D is the plain copy)
                 QWidget* f = QApplication::focusWidget();
                 if (f && view && (f == view || view->isAncestorOf(f)) && !qobject_cast<QLineEdit*>(f))
-                    view->scenePanel()->duplicateSelected();
+                    view->scenePanel()->duplicateLinkedSelected();
                 else
                     script()->selectNextOccurrence();
             });
@@ -895,7 +896,11 @@ Window::Window(Arguments args)
         auto section_action = view_menu->addAction(T("Section view"));
         section_action->setCheckable(true);
         sectionToggle = section_action;
-        Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X)});
+        // (Shift+X, like the work plane's keys: a single key with Shift, so it acts while the viewport -- or the model tree on it -- has the keyboard, and
+        // never types over the editor)
+        Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::SHIFT | Qt::Key_X)});
+        section_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(section_action);
         // Every field has an icon in the scene (with its name over it) while it is shown, and a viewer -- a plane of the field inside the
         // bounds of the field -- while it is selected: in the model tree or by clicking its icon.  The card edits the viewer of the field it is
         // about; with several fields open a menu in it chooses.  It closes when no field is open.  The section card is not touched
@@ -939,6 +944,57 @@ Window::Window(Arguments args)
         connect(panel, &SectionPanel::closeRequested, section_action, [=]{
             section_action->setChecked(false);
         });
+    }
+
+    {   // The work plane: a plane to put points in, with a grid.  Single keys like the standard views: they act while the viewport has the keyboard
+        auto panel = new WorkPlanePanel(view);
+        panel->hide();
+        auto openAction = view_menu->addAction(T("Work plane"));
+        openAction->setCheckable(true);
+        openAction->setToolTip(T("Open the work plane view: a plane with a grid, that new points and the points you drag go on"));
+        auto newAction = view_menu->addAction(T("New work plane"));
+        newAction->setToolTip(T("A new plane: the plane of the selected 2D shape, or parallel to the view through the origin; its view is opened"));
+        auto faceAction = view_menu->addAction(T("Set view to work plane"));
+        faceAction->setToolTip(T("Turn the camera to look straight at the work plane"));
+        Shortcuts::add(openAction, "view.workplane", {QKeySequence(Qt::SHIFT | Qt::Key_W)});
+        Shortcuts::add(newAction, "view.workplane-new", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W)});
+        Shortcuts::add(faceAction, "view.workplane-face", {QKeySequence(Qt::Key_W)});
+        // Q: the nothing mode of the work plane view -- things are selected, moved, turned and scaled as usual, nothing is put down.  It is there only while the view
+        // is open (a disabled action does not take the key)
+        auto selectAction = view_menu->addAction(T("Work plane: select, do not draw"));
+        selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual"));
+        selectAction->setEnabled(false);
+        Shortcuts::add(selectAction, "view.workplane-select", {QKeySequence(Qt::Key_Q)});
+        for (QAction* a : {openAction, newAction, faceAction, selectAction})
+        {
+            a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+            view->addAction(a);
+        }
+        connect(openAction, &QAction::toggled, this, [=](bool on) { view->setWorkPlaneOpen(on); });
+        connect(newAction, &QAction::triggered, this, [=] { view->newWorkPlane(); });
+        connect(faceAction, &QAction::triggered, this, [=] { view->faceWorkPlane(); });
+        connect(selectAction, &QAction::triggered, this, [=] { view->setWorkPlaneMode(0); });
+        // (the view says what the plane is: the menu entry, the card and the scene follow it, whoever changed it)
+        connect(view, &View::workPlaneStateChanged, this, [=](WorkPlane plane, float step) {
+            {
+                QSignalBlocker block(openAction);
+                openAction->setChecked(plane.open);
+            }
+            selectAction->setEnabled(plane.open);
+            panel->setPlane(plane, step);
+            panel->setVisible(plane.open);
+            if (plane.open) panel->raise();
+        });
+        connect(view, &View::workPlaneReadout, panel, &WorkPlanePanel::setReadout);
+        connect(view, &View::workPlaneChanged, view->scenePanel(), &ScenePanel::setWorkPlane);
+        connect(panel, &WorkPlanePanel::optionsChanged, view, &View::setWorkPlaneOptions);
+        connect(panel, &WorkPlanePanel::modeChanged, view, &View::setWorkPlaneMode);
+        connect(view, &View::placementFinished, view->scenePanel(), &ScenePanel::createPlaced);
+        connect(panel, &WorkPlanePanel::offsetChanged, view, &View::setWorkPlaneOffset);
+        connect(panel, &WorkPlanePanel::faceRequested, view, &View::faceWorkPlane);
+        connect(panel, &WorkPlanePanel::fromViewRequested, view, &View::workPlaneFromView);
+        connect(panel, &WorkPlanePanel::newRequested, view, &View::newWorkPlane);
+        connect(panel, &WorkPlanePanel::closeRequested, this, [=] { view->setWorkPlaneOpen(false); });
     }
 
     {   // Standard views; single keys, so they only act while the viewport
@@ -985,7 +1041,11 @@ Window::Window(Arguments args)
             view->addAction(a);
             const QString mode = m.mode;
             auto scene = view->scenePanel();
-            if (mode == "toggle") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedEdit(); });
+            // (E goes round the three kinds of what is put down while the work plane view is open: a click there is not a gizmo's)
+            if (mode == "toggle") connect(a, &QAction::triggered, scene, [=]{
+                if (view->workPlane().open) view->cycleWorkPlaneMode();
+                else scene->toggleSelectedEdit();
+            });
             else if (mode == "lock") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedLock(); });
             else if (mode == "visible") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedVisible(); });
             else if (mode == "cache") connect(a, &QAction::triggered, scene, [=]{ scene->toggleSelectedCache(); });
@@ -1008,6 +1068,16 @@ Window::Window(Arguments args)
         view->addAction(del);
         auto scene = view->scenePanel();
         connect(del, &QAction::triggered, scene, &ScenePanel::deleteSelected);
+    }
+
+    {   // Shift+D: a copy of each selected model, its statements written again under it with free names (Ctrl+D is the LINKED copy, `instance`).  A key of the
+        // viewport and the model tree only, so it never eats typing in the editor
+        auto dup = view_menu->addAction(T("Copy the selected models under themselves"));
+        Shortcuts::add(dup, "view.duplicate-models", {QKeySequence(Qt::SHIFT | Qt::Key_D)});
+        dup->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(dup);
+        auto scene = view->scenePanel();
+        connect(dup, &QAction::triggered, scene, &ScenePanel::duplicateSelected);
     }
 
     {   // Copy and paste of models: Ctrl+C and Ctrl+V with the viewport or the model tree focused (a text field of the
@@ -2083,7 +2153,7 @@ Window::Window(Arguments args)
             }
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
         });
-        // viewshift <on|off>: Shift is held for the gizmo (the squares of the planes instead of the arrows, the scale knobs all one colour and together)
+        // viewshift <on|off>: Shift is held for the gizmo (the squares of the planes instead of the arrows, and the one gold ring that scales all three axes instead of the scale knobs)
         a->add("viewshift", [=](const QString& args){ view->holdShift(args.trimmed() == "on"); });
         // varsteps <line>: the numbers of the var()s on a (0-based) line of the script are set in steps that each move another set
         // of them (Editor::testVarSteps) -- what a drag that moves different numbers of a line at each step writes
@@ -2172,6 +2242,40 @@ Window::Window(Arguments args)
         a->add("createprimitive", [=](const QString& name){
             view->scenePanel()->createFromMenu("primitive", name.trimmed(), QVector3D(0, 0, 0), 5.0, -1, -1);
         });
+        // workplane <open|close|new|face|fromview|state|offset N|options grid snap points [step]>: the work plane, as its keys and its card drive it
+        a->add("workplane", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            const QString what = p.value(0);
+            if (what == "open") view->setWorkPlaneOpen(true);
+            else if (what == "close") view->setWorkPlaneOpen(false);
+            else if (what == "new") view->newWorkPlane();
+            else if (what == "face") view->faceWorkPlane();
+            else if (what == "fromview") view->workPlaneFromView();
+            else if (what == "offset") view->setWorkPlaneOffset(p.value(1).toFloat());
+            else if (what == "mode") view->setWorkPlaneMode(p.value(1).toInt());
+            else if (what == "set" && p.size() >= 10)
+                view->setWorkPlaneFrame(QVector3D(p[1].toFloat(), p[2].toFloat(), p[3].toFloat()), QVector3D(p[4].toFloat(), p[5].toFloat(), p[6].toFloat()),
+                                        QVector3D(p[7].toFloat(), p[8].toFloat(), p[9].toFloat()));
+            else if (what == "cycle") view->cycleWorkPlaneMode();
+            else if (what == "place") view->placeAt(QPoint(p.value(1).toInt(), p.value(2).toInt()));
+            else if (what == "finish") view->finishPlacement(p.value(1) == "close");
+            else if (what == "undo") view->undoPlacedPoint();
+            else if (what == "cancel") view->cancelPlacement();
+            else if (what == "options")
+                view->setWorkPlaneOptions(p.value(1) != "0", p.value(2) != "0", p.value(3) != "0", p.value(4).toFloat());
+            const WorkPlane& w = view->workPlane();
+            const QVector3D n = w.normal(), o = w.origin(), toward = view->towardViewer();
+            std::cerr << "automation: workplane exists " << w.exists << " open " << w.open << " origin " << o.x() << "," << o.y() << "," << o.z()
+                      << " u " << w.u.x() << "," << w.u.y() << "," << w.u.z() << " v " << w.v.x() << "," << w.v.y() << "," << w.v.z()
+                      << " normal " << n.x() << "," << n.y() << "," << n.z() << " facing " << QVector3D::dotProduct(n, toward)
+                      << " mode " << w.mode << " placed " << view->placedCount() << " grid " << w.grid << " snap " << w.snap << " snapPoints " << w.snapPoints << " step " << view->workPlaneStep() << std::endl;
+        });
+        // createat <name> <x> <y>: a new model made at that place of the viewport, as the menu of empty space makes it (on the work plane while its view is open)
+        a->add("createat", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            view->createAt(p[0], QPoint(p[1].toInt(), p[2].toInt()));
+        });
         a->add("dotstate", [=](const QString&){
             int i = 0;
             for (Shape* s : view->allShapes())
@@ -2183,6 +2287,22 @@ Window::Window(Arguments args)
                 std::cerr << "automation: dot " << i++ << " line " << s->sourceLine() << " selected " << s->isSelected() << " locked " << s->isLocked()
                           << " gizmo " << s->hasGizmo() << " style " << s->pointStyle() << " at " << at.x() << "," << at.y() << " (" << (has ? p.x() : 0) << ", " << (has ? p.y() : 0) << ", "
                           << (has ? p.z() : 0) << ")" << std::endl;
+            }
+        });
+        // duplicate <copy|link>: Shift+D (a copy of the selected models) or Ctrl+D (a linked copy of them), as the viewport's keys do
+        a->add("duplicate", [=](const QString& args){
+            if (args.trimmed() == "link") view->scenePanel()->duplicateLinkedSelected();
+            else view->scenePanel()->duplicateSelected();
+        });
+        // outlinestate: what each shape has of the blue outline (its flags, and how many lines it has)
+        a->add("outlinestate", [=](const QString&){
+            for (Shape* s : view->allShapes())
+            {
+                if (s->isPoint()) continue;
+                size_t points = 0;
+                for (const auto& line : s->outlines()) points += line.size();
+                std::cerr << "automation: outline line " << s->sourceLine() << " flat " << s->isFlat() << " curve " << s->isCurve() << " face " << s->isFace()
+                          << " editable " << s->isEditable() << " selected " << s->isSelected() << " lines " << s->outlines().size() << " points " << points << std::endl;
             }
         });
         a->add("fieldclick", [=](const QString& args){

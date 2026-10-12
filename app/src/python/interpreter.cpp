@@ -1707,6 +1707,14 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        // A linked copy of another shape (`instance(x)`): its surfaces are not dragged, only its gizmo moves and turns it
+        {
+            PyObject* v = PyObject_GetAttrString(obj, "_linked");
+            shape->setLinked(v && PyObject_IsTrue(v) == 1);
+            Py_XDECREF(v);
+            PyErr_Clear();
+        }
+
         // Kept in the render cache: on unless the script says render_cache(x, False)
         // (fieldes.stdlib.render_cache.render_cache); written for every shape that took a while to mesh, and for
         // one under an explicit render_cache(x) always

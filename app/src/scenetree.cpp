@@ -3678,14 +3678,22 @@ namespace {
 // The gizmo's statement under a shape's definition (the numbers its arrows, rings and knobs drag; `mode` is when the gizmo is
 // shown: 'click' (the default, not written), 'never' or 'always').  Laid out as the arguments of an operation are: one named argument to a
 // line, so that each is read and changed where it stands.  The first line is not indented here (the caller puts `indent` before it)
-QString gizmoLine(const QString& var, const QString& mode = "click", const QString& indent = QString())
+// A linked copy of another model (`copy = instance(model)`): it is only moved and turned.  Known from what the statement calls as well as from what the run said
+// of it: the copy is made ready to be dragged as soon as it is written, before a run has said anything
+bool linkedModel(const QJsonObject& it)
+{
+    return it["linked"].toBool() || it["callee"].toString() == "instance";
+}
+
+// (`scale` false: a linked copy, which is only moved and turned -- its gizmo has no scale numbers, so no knobs)
+QString gizmoLine(const QString& var, const QString& mode = "click", const QString& indent = QString(), bool scale = true)
 {
     const QString in = indent + "    ";
     return var + " = gizmo(\n" +
            in + var + ",\n" +
            in + "move=(var(0), var(0), var(0)),\n" +
            in + "rotate=(var(0), var(0), var(0)),\n" +
-           in + "scale=(var(1), var(1), var(1)),\n" +
+           (scale ? in + "scale=(var(1), var(1), var(1)),\n" : QString()) +
            (mode == "click" ? QString() : in + "mode='" + mode + "',\n") +
            indent + ")";
 }
@@ -4130,12 +4138,12 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     {
         // (a gizmo() line without numbers to drag: its line becomes the gizmo's)
         const int e = h["end_line"].toInt() - 1;
-        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent)};
+        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent, !linkedModel(target))};
     }
     else
     {
         const QString t = lineText(after);
-        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent)};
+        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent, !linkedModel(target))};
     }
     imports.gizmo = true;
     return true;
@@ -4545,6 +4553,55 @@ void ScenePanel::duplicateSelected()
     m_selectNew = made.last();
     m_selectNewTries = 0;
     emit(editScript(edits, "Duplicate " + made.join(", ")));
+}
+
+void ScenePanel::duplicateLinkedSelected()
+{
+    const QList<QJsonObject> selected = copyableModels();
+    if (selected.isEmpty()) { notify(T("Select a model to link first.")); return; }
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { duplicateLinkedSelected(); };       // (the script is being edited to get the models ready: the scene is a run behind)
+        return;
+    }
+    // What can be linked: a shape (a body, a 2D shape, a surface, a lattice).  A sketch or a curve is made of its points, a number or a material has no shape to follow
+    QList<QJsonObject> items;
+    QStringList refused;
+    for (const auto& it : selected)
+    {
+        const QString type = it["type"].toString(), callee = it["callee"].toString();
+        const bool shape = type.isEmpty() || type == "solid" || type == "profile" || type == "surface" || type == "lattice";
+        if (shape && callee != "sketch" && callee != "polyline" && callee != "spline") items << it;
+        else refused << it["var"].toString();
+    }
+    if (!refused.isEmpty())
+        notify(T("%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A sketch or a curve is made of its points, which are the models to link; "
+                 "Shift+D copies a model with all it is made of.").arg(refused.join(", ")));
+    if (items.isEmpty()) return;
+    const QString src = m_source ? m_source() : QString();
+    const QStringList lines = src.split('\n');
+    QSet<QString> taken;
+    QList<TextEdit> edits;
+    QStringList made;
+    for (const auto& it : items)
+    {
+        const QString old = it["var"].toString();
+        const QString fresh = copyName(old, taken, it.contains("part_of"));
+        taken << fresh;
+        const QString indent = indentOf(lineText(it["line"].toInt() - 1));
+        // (the original is only referred to -- `# shadow:` -- always: taken into the copy it would move away from where it is and look like what the copy is made of)
+        const QString statement = markShadow(indent + fresh + " = instance(" + old + ")", old);
+        const QString text = statement + "\n" + indent + fresh;
+        const int at = groupEnd(it);
+        if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
+        else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
+        made << fresh;
+    }
+    static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
+    if (!starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
+    m_selectNew = made.last();
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Link " + made.join(", ")));
 }
 
 void ScenePanel::copySelected()
@@ -6210,7 +6267,7 @@ void ScenePanel::prepareSelection()
             // (a gizmo() line without numbers: its line becomes the gizmo's)
             const auto h = t["gizmo"].toObject();
             const int e = h["end_line"].toInt() - 1;
-            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent)};
+            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent, !linkedModel(t))};
             if (!block.isEmpty())
                 edits << TextEdit{b, int(lineText(b).size()), b, int(lineText(b).size()), "\n" + block};
         }
@@ -6220,7 +6277,7 @@ void ScenePanel::prepareSelection()
             const int after = hasHandles ? t["handles"].toObject()["end_line"].toInt() - 1 : b;
             QString text;
             if (!block.isEmpty()) text += "\n" + block;
-            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent);
+            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent, !linkedModel(t));
             const QString last = lineText(after);
             edits << TextEdit{after, int(last.size()), after, int(last.size()), text};
         }
@@ -6609,13 +6666,41 @@ static bool canInsertAfter(const QStringList& lines, int line0)
     return depth <= 0;
 }
 
+void ScenePanel::setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step)
+{
+    m_workPlaneActive = active;
+    m_workPlaneOrigin = origin;
+    m_workPlaneU = u;
+    m_workPlaneV = v;
+    m_workPlaneStep = step;
+}
+
+void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth)
+{
+    QJsonArray list;
+    QVector3D centre;
+    for (const QVector3D& p : points)
+    {
+        list.append(QJsonArray{double(p.x()), double(p.y()), double(p.z())});
+        centre += p;
+    }
+    if (!points.isEmpty()) centre /= float(points.size());
+    m_placed = list;
+    m_placedSmooth = smooth;
+    createFromMenu("primitive", name, centre, 10.0, -1, -1);
+    m_placed = QJsonArray();
+}
+
 void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation)
 {
     if (!m_support) return;
+    // (what createPlaced is making: its own points, whatever is selected)
+    const QJsonArray placed = m_placed;
+    const bool placedSmooth = m_placedSmooth;
     const bool operation = kind == "operation";
     // A support, a load or another condition of a simulation, when several models are selected: the first is the body, the others are
     // where the condition is -- made of them like an operation (with one model selected, or none, it has a placeholder where it acts)
-    const QList<Model> picked = (kind == "primitive" && takesBodies(name)) ? operandsFor(line0) : QList<Model>();
+    const QList<Model> picked = (kind == "primitive" && takesBodies(name) && placed.isEmpty()) ? operandsFor(line0) : QList<Model>();
     // ONE model that is a surface (a patch picked on a part) or a field (a distance, a ramp ...) is where the condition is: it is passed in as
     // the region, there is no body to name -- the condition acts where the part meets it.  (One body, or none: a placeholder)
     const auto regionKind = [](const QJsonObject& it) {
@@ -6637,6 +6722,8 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         // and the lines it names would be the wrong ones.  It is done when the run is: on the selected models, which is
         // what a menu on one of them stands for (and what the click that opened it had just selected)
         m_afterRun = [=] {
+            m_placed = placed;
+            m_placedSmooth = placedSmooth;
             createFromMenu(kind, name, point, scale,
                            (operation && !selectedModels().isEmpty()) || (withBodies && !regionOnly && selectedModels().size() >= 2) ? -1 : line0);
         };
@@ -6657,7 +6744,8 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         const QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
         for (const Model& m : operands)
         {
-            if (m.item.contains("locked") && m.item.contains("var")) lockedNames << m.item["var"].toString();
+            // (a linked copy -- `instance` -- always holds its original by reference, locked or not: see duplicateLinkedSelected)
+            if ((m.item.contains("locked") || (operation && name == "instance")) && m.item.contains("var")) lockedNames << m.item["var"].toString();
         }
         if (operands.isEmpty() && operation && isSimulation(name))
         {
@@ -6743,6 +6831,22 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     request["y"] = point.y();
     request["z"] = point.z();
     request["scale"] = scale;
+    if (m_workPlaneActive && kind == "primitive")
+    {
+        // (a new model made while the work plane's view is open: where it is, and the plane's axes, which the points of a sketch are laid out in)
+        auto vec = [](const QVector3D& a) { return QJsonArray{double(a.x()), double(a.y()), double(a.z())}; };
+        QJsonObject plane;
+        plane["origin"] = vec(m_workPlaneOrigin);
+        plane["u"] = vec(m_workPlaneU);
+        plane["v"] = vec(m_workPlaneV);
+        plane["step"] = double(m_workPlaneStep);
+        request["plane"] = plane;
+    }
+    if (!placed.isEmpty())
+    {
+        request["points"] = placed;
+        request["smooth"] = placedSmooth;
+    }
     request["body"] = body;
     request["other"] = other;
     if (!othersInfo.isEmpty()) request["others"] = othersInfo;
