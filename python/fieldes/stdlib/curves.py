@@ -219,6 +219,13 @@ class Curve(Shape):
         for name, v in self.__dict__.items():
             if name != 'ptr':
                 out.__dict__[name] = v
+        shift = getattr(self, '_weld_shift', None)
+        if shift is not None:
+            # The path of a sweep of a sketch is drawn where the sweep goes -- from the middle of the sketch, through the middle of the cross-section -- whatever its own numbers
+            # say (the sweep starts at the sketch: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen
+            out._ctrl_pos = [tuple(c + s for c, s in zip(expr, shift)) for expr in self._ctrl_pos]
+            out.vertices = [tuple(a + s for a, s in zip(v, shift)) for v in self.vertices]
+            out._editable = False               # (a point put on its line would be written where it is seen, not where the numbers are)
         return out
 
 

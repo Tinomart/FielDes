@@ -11,10 +11,11 @@ a shape that stands another way is turned with rotate_x / rotate_y / rotate_z, o
 The 3D shapes stand along z, the 2D shapes lie in the plane z = 0.
 """
 
-from fieldes.ffi import libfive_tree, tfloat, tvec2, tvec3, stdlib
+from fieldes.ffi import libfive_tree, tfloat, tvec2, tvec3, stdlib, lib
 from fieldes.shape import Shape
 
 import ctypes
+import math
 
 
 def _number(v):
@@ -74,38 +75,120 @@ def polygon(r, n, center=(0, 0)):
         _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))     # (the corners are within r of the centre: a box that holds it)
     return out
 
-stdlib.rectangle_exact.argtypes = [tvec2, tvec2]
-stdlib.rectangle_exact.restype = libfive_tree
-def rectangle(a, b):
-    """ A rectangle with the given bounding corners (a true distance outside it: an offset of it is a rounded rectangle)
-    """
-    args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b])]
-    out = Shape(stdlib.rectangle_exact(
-        tvec2(*[a.ptr for a in args[0]]),
-        tvec2(*[a.ptr for a in args[1]])))
-    if len(a) == 2 and len(b) == 2:
-        _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+def _own(field):
+    ''' A shape that owns a copy of the tree of `field` (`field` is held by the caller for the whole call: a pointer read off a temporary would be of a tree that is already
+        freed) '''
+    return Shape(lib.libfive_tree_copy(field.ptr))
+
+
+def _plain(v):
+    ''' The number a value has now (a number, or a var() / an expression of var()s) '''
+    if isinstance(v, Shape):
+        return float(v(0.0, 0.0, 0.0))
+    return float(v)
+
+
+def _parametric(out, params, rebuild, centre):
+    ''' What a shape made of a few numbers of its own tells `handles()` and `gizmo()`: `params` the numbers (in the order its handles list them), `rebuild(values)` the same
+        shape made of other values (plain numbers or var()s), `centre(values)` the middle of its box as an expression of them.  A rectangle's handles are its four sides, a
+        rounded rectangle's the four sides and the radius -- a number each, not the numbers a tree of constants happens to have -- and the gizmo stays at the middle of the
+        shape whatever side is pulled '''
+    out._handle_params = [_plain(p) for p in params]
+    out._handle_rebuild = rebuild
+    out._handle_centre = centre
     return out
 
-stdlib.rounded_rectangle.argtypes = [tvec2, tvec2, tfloat]
-stdlib.rounded_rectangle.restype = libfive_tree
-def rounded_rectangle(a, b, r):
-    """ A rectangle with rounded corners
+
+def _rect_distance(a0, a1, b0, b1, r=None):
+    ''' The signed distance to the rectangle between the corners (a0, a1) and (b0, b1) (exact: a true distance outside, negative inside), made of the four numbers each
+        standing for ONE side -- so a side pulled moves that side and no other -- and, with `r`, of the corners rounded by r: the box of the corners drawn in by r, grown by r
+        again, which is tangent to the sides at any numbers.  (A tree of x - centre and half sizes ties the opposite sides to each other, and a rounded rectangle of
+        a rectangle and four circles comes apart at the corners when a side is pulled.) '''
+    X, Y = Shape.X(), Shape.Y()
+    dx = (Shape.wrap(a0) - X).max(X - Shape.wrap(b0))
+    dy = (Shape.wrap(a1) - Y).max(Y - Shape.wrap(b1))
+    if r is not None:
+        r = Shape.wrap(r)
+        dx, dy = dx + r, dy + r
+    inside = dx.max(dy).min(0)
+    # (a hair under the square root -- 1e-6 mm of distance -- so that the field has a gradient ON the sides: the square root of zero has none, and a side that a press landed on
+    # exactly could not be pulled)
+    outside = (dx.max(0).square() + dy.max(0).square() + 1e-12).sqrt()
+    return inside + outside if r is None else inside + outside - r
+
+
+def rectangle(a, b):
+    """ A rectangle between the corners a (the low one) and b (the high one) (a true distance outside it: an offset of it is a rounded rectangle).  Its four numbers are
+        its four sides, so the handles of a rectangle pull one side each
     """
-    args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(r)]
-    out = Shape(stdlib.rounded_rectangle(
-        tvec2(*[a.ptr for a in args[0]]),
-        tvec2(*[a.ptr for a in args[1]]),
-        args[2].ptr))
+    out = _own(_rect_distance(a[0], a[1], b[0], b[1]))
     if len(a) == 2 and len(b) == 2:
         _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
-    return out
+    return _parametric(out, [a[0], a[1], b[0], b[1]], lambda v: rectangle((v[0], v[1]), (v[2], v[3])),
+                       lambda v: ((v[0] + v[2]) * 0.5, (v[1] + v[3]) * 0.5, 0.0))
+
+
+def rounded_rectangle(a, b, r):
+    """ A rectangle with rounded corners of radius r, between the corners a (the low one) and b (the high one) (a true distance outside it).  The corners are tangent to the
+        sides whatever the numbers are: its handles pull a side each (the radius with them)
+    """
+    out = _own(_rect_distance(a[0], a[1], b[0], b[1], r))
+    if len(a) == 2 and len(b) == 2:
+        _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+    return _parametric(out, [a[0], a[1], b[0], b[1], r], lambda v: rounded_rectangle((v[0], v[1]), (v[2], v[3]), v[4]),
+                       lambda v: ((v[0] + v[2]) * 0.5, (v[1] + v[3]) * 0.5, 0.0))
 
 stdlib.triangle.argtypes = [tvec2, tvec2, tvec2]
 stdlib.triangle.restype = libfive_tree
+def _triangle_planes(normals, offsets):
+    ''' The triangle of three straight sides, each the line n . (x, y) = c with its normal n (a unit vector, out of the triangle) fixed and its offset c a number of its own: the
+        greatest of the three distances to the lines.  A side that is pulled moves along its normal -- parallel to itself -- and no other side moves '''
+    X, Y = Shape.X(), Shape.Y()
+    out = None
+    for (nx, ny), c in zip(normals, offsets):
+        side = X * nx + Y * ny - Shape.wrap(c)
+        out = side if out is None else out.max(side)
+    return out
+
+
+def _triangle_centre(normals, offsets):
+    ''' The middle of the box of the triangle as an expression of the three offsets: its corners are where two sides meet (the normals are numbers, so each corner is a
+        linear combination of two offsets) '''
+    xs, ys = [], []
+    for i in range(3):
+        (ax, ay), (bx, by) = normals[i - 1], normals[i]
+        det = ax * by - ay * bx
+        # the corner between side i-1 and side i: n_{i-1} . p = c_{i-1}, n_i . p = c_i
+        c0, c1 = Shape.wrap(offsets[i - 1]), Shape.wrap(offsets[i])
+        xs.append((c0 * by - c1 * ay) * (1.0 / det))
+        ys.append((c1 * ax - c0 * bx) * (1.0 / det))
+    lo_x, hi_x = xs[0].min(xs[1]).min(xs[2]), xs[0].max(xs[1]).max(xs[2])
+    lo_y, hi_y = ys[0].min(ys[1]).min(ys[2]), ys[0].max(ys[1]).max(ys[2])
+    return ((lo_x + hi_x) * 0.5, (lo_y + hi_y) * 0.5, 0.0)
+
+
 def triangle(a, b, c):
-    """ A 2D triangle
+    """ A 2D triangle between three corners.  Its handles pull a side each: a side moves parallel to itself, and the gizmo stays at the middle of the triangle
     """
+    corners = [tuple(a), tuple(b), tuple(c)]
+    if all(len(p) == 2 and all(_number(v) for v in p) for p in corners):
+        area = sum(corners[i][0] * corners[(i + 1) % 3][1] - corners[(i + 1) % 3][0] * corners[i][1] for i in range(3))
+        if abs(area) > 1e-12:
+            sign = 1.0 if area > 0 else -1.0
+            normals, offsets = [], []
+            for i in range(3):
+                (px, py), (qx, qy) = corners[i], corners[(i + 1) % 3]
+                ex, ey = qx - px, qy - py
+                length = math.hypot(ex, ey)
+                if length < 1e-12:
+                    break
+                nx, ny = sign * ey / length, -sign * ex / length            # (out of the triangle)
+                normals.append((nx, ny))
+                offsets.append(nx * px + ny * py)
+            if len(normals) == 3:
+                out = _own(_triangle_planes(normals, offsets))
+                _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
+                return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), list([Shape.wrap(i) for i in c])]
     out = Shape(stdlib.triangle(
         tvec2(*[a.ptr for a in args[0]]),
@@ -114,6 +197,11 @@ def triangle(a, b, c):
     if all(len(p) == 2 and all(_number(v) for v in p) for p in (a, b, c)):
         _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
     return out
+
+
+def _rebuilt_triangle(normals, offsets):
+    out = _own(_triangle_planes(normals, offsets))
+    return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
 
 # ---------------------------------------------------------------------------------------------------------------------------------------- 3D
 

@@ -692,7 +692,9 @@ static bool bounds_impl(const Tree& root, const std::map<Tree::Id, float>& vars,
     const auto start = std::chrono::steady_clock::now();
     auto outOfBudget = [&]() {
         if (evals > max_evals) return true;
-        if ((evals & 255) == 0 && max_seconds > 0)
+        // (the clock is read at every evaluation: one evaluation of the field of a sweep takes tens of milliseconds, and the 256 that went by between two readings were
+        // seconds past a budget of a few milliseconds -- in the GUI's thread)
+        if (max_seconds > 0)
         {
             const std::chrono::duration<float> dt = std::chrono::steady_clock::now() - start;
             if (dt.count() > max_seconds) return true;

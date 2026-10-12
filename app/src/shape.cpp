@@ -64,21 +64,25 @@ const int Shape::MESH_DIV_NEW_VARS;
 const int Shape::MESH_DIV_NEW_VARS_SMALL;
 const int Shape::MESH_DIV_NEW_TREE;
 
+// (FIELDES_TIMING: what making a shape's tree costs, to stderr)
+static libfive::Tree optimizedTimed(const libfive::Tree& t)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    libfive::Tree o = t.optimized();
+    if (std::getenv("FIELDES_TIMING"))
+        fprintf(stderr, "[shape] optimized the tree in %.0f ms\n", 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    return o;
+}
+
 Shape::Shape(const libfive::Tree& t,
              std::map<libfive::Tree::Id, float> vars)
-    : tree(t.optimized()), built_tree(t), vars(vars),
+    : tree(t), built_tree(t), vars(vars),
       vert_vbo(QOpenGLBuffer::VertexBuffer),
       tri_vbo(QOpenGLBuffer::IndexBuffer)
 {
     cache_vars = vars;
 
-    // Construct evaluators to run meshing (in parallel)
-    es.reserve(8);
-    for (unsigned i=0; i < es.capacity(); ++i)
-    {
-        es.emplace_back(libfive::Evaluator(tree, vars));
-    }
-    base_tree = tree;
+    // (the optimised tree and the evaluators that mesh it are made when something reads the field: see ensureField)
 
     // The watcher that reports a finished level is the shape's child, so that it goes where the shape goes: a shape is made
     // by the script's thread and moved to the GUI thread (Interpreter::recordShape), and a watcher left behind delivers its
@@ -88,6 +92,34 @@ Shape::Shape(const libfive::Tree& t,
     connect(this, &Shape::gotMesh, this, &Shape::redraw);
     connect(&mesh_watcher, &decltype(mesh_watcher)::finished,
             this, &Shape::onFutureFinished);
+}
+
+void Shape::ensureField() const
+{
+    if (!m_field_ready.load()) const_cast<Shape*>(this)->buildField();
+}
+
+void Shape::buildField()
+{
+    std::lock_guard<std::mutex> lock(m_field_mutex);
+    if (m_field_ready.load()) return;
+    tree = optimizedTimed(built_tree);
+    base_tree = tree;
+    // Construct evaluators to run meshing (in parallel)
+    const auto tEval = std::chrono::steady_clock::now();
+    m_tree_nodes = tree.size();
+    es.clear();
+    es.reserve(8);
+    for (unsigned i = 0; i < 8; ++i) es.emplace_back(libfive::Evaluator(tree, vars));
+    if (std::getenv("FIELDES_TIMING"))
+        fprintf(stderr, "[shape] eight evaluators in %.0f ms\n", 1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tEval).count());
+    m_deps_known = false;
+    m_field_ready.store(true);
+}
+
+void Shape::settleField()
+{
+    if (!drawnFromNumbers()) ensureField();
 }
 
 Shape::~Shape()
@@ -337,14 +369,20 @@ void Shape::updateFrameNumbers()
 
 bool Shape::controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out) const
 {
+    return controlNumbersOf(m_controls, m_controls_face, v, out, this);
+}
+
+bool Shape::controlNumbersOf(const std::vector<ControlPoint>& points, bool face, const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out,
+                             const Shape* owner)
+{
     out.clear();
-    for (const ControlPoint& c : m_controls)
+    for (const ControlPoint& c : points)
     {
         libfive::pointshapes::Control k;
         double n[3];
         for (int a = 0; a < 3; ++a)
         {
-            n[a] = evalConstant(c.pos[a], v);
+            n[a] = owner->evalConstant(c.pos[a], v);
             if (!std::isfinite(n[a])) return false;
         }
         k.pos = Eigen::Vector3d(n[0], n[1], n[2]);
@@ -353,7 +391,7 @@ bool Shape::controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vec
         {
             for (int a = 0; a < 3; ++a)
             {
-                n[a] = evalConstant(c.rot[a], v);
+                n[a] = owner->evalConstant(c.rot[a], v);
                 if (!std::isfinite(n[a])) return false;
             }
             k.rotate = Eigen::Vector3d(n[0], n[1], n[2]);
@@ -361,14 +399,14 @@ bool Shape::controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vec
         }
         if (c.hasScale)
         {
-            const double s = evalConstant(c.scale, v);
+            const double s = owner->evalConstant(c.scale, v);
             if (!std::isfinite(s)) return false;
             k.scale = std::max(0.0, s);
         }
         out.push_back(k);
     }
     // The points of a face turn about the normal of its plane, by one angle
-    if (m_controls_face)
+    if (face)
     {
         std::vector<Eigen::Vector3d> p;
         for (const auto& k : out) p.push_back(k.pos);
@@ -401,6 +439,349 @@ libfive::Tree::Id Shape::soleVarOf(const libfive::Tree& expression)
         }
     }
     return count == 1 ? found : nullptr;
+}
+
+void Shape::setPrism(std::vector<ControlPoint> points, bool smoothDefault, libfive::Tree a, libfive::Tree b, std::vector<std::pair<libfive::Tree::Id, float>> guard)
+{
+    m_prism_points = std::move(points);
+    m_prism_default = smoothDefault;
+    m_prism_a = a;
+    m_prism_b = b;
+    m_prism_guard = std::move(guard);
+}
+
+bool Shape::prismNow(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& cs, double& a, double& b) const
+{
+    static const bool off = std::getenv("FIELDES_NO_NATIVE") != nullptr;
+    if (off || m_prism_points.empty() || !m_prism_a.is_valid() || !m_prism_b.is_valid()) return false;
+    // (what colours or bends the shape is not a prism's to draw)
+    if (color_field.is_valid() || has_result || !m_channels.empty()) return false;
+    for (const auto& g : m_prism_guard)
+    {
+        const auto it = v.find(g.first);
+        if (it == v.end() || std::fabs(it->second - g.second) > 1e-6f * std::max(1.0f, std::fabs(g.second))) return false;
+    }
+    if (!controlNumbersOf(m_prism_points, true, v, cs, this) || cs.size() < 3) return false;
+    a = evalConstant(m_prism_a, v);
+    b = evalConstant(m_prism_b, v);
+    return std::isfinite(a) && std::isfinite(b);
+}
+
+void Shape::setSweep(std::vector<ControlPoint> profile, bool profileDefault, std::vector<ControlPoint> path, bool pathDefault, bool closed, libfive::Tree twist,
+                     bool placed, const double about[3], const libfive::Tree move[3], const libfive::Tree rotate[3], const libfive::Tree scale[3])
+{
+    m_sweep_profile = std::move(profile);
+    m_sweep_profile_default = profileDefault;
+    m_sweep_path = std::move(path);
+    m_sweep_path_default = pathDefault;
+    m_sweep_closed = closed;
+    m_sweep_twist = twist;
+    m_sweep_placed = placed;
+    for (int a = 0; a < 3; ++a)
+    {
+        m_sweep_about[a] = about[a];
+        m_sweep_move[a] = move[a];
+        m_sweep_rotate[a] = rotate[a];
+        m_sweep_scale[a] = scale[a];
+    }
+}
+
+struct Shape::SweepNumbers
+{
+    std::vector<libfive::pointshapes::Control> profile, path;
+    bool profileDefault = false, pathDefault = false, closed = false, placed = false;
+    double twist = 0;                                                       // (degrees)
+    Eigen::Vector3d about = Eigen::Vector3d::Zero(), move = Eigen::Vector3d::Zero(), rotate = Eigen::Vector3d::Zero(), scale = Eigen::Vector3d::Ones();
+};
+
+bool Shape::sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& out) const
+{
+    static const bool off = std::getenv("FIELDES_NO_NATIVE") != nullptr;          // (for comparing with the field: every sweep and prism is meshed from its field)
+    if (off || !hasSweep() || !m_sweep_twist.is_valid()) return false;
+    if (color_field.is_valid() || has_result || !m_channels.empty()) return false;
+    if (!controlNumbersOf(m_sweep_profile, true, v, out.profile, this) || out.profile.size() < 3) return false;
+    if (!controlNumbersOf(m_sweep_path, false, v, out.path, this) || out.path.size() < 2) return false;
+    out.profileDefault = m_sweep_profile_default;
+    out.pathDefault = m_sweep_path_default;
+    out.closed = m_sweep_closed;
+    out.twist = evalConstant(m_sweep_twist, v);
+    if (!std::isfinite(out.twist)) return false;
+    out.placed = m_sweep_placed;
+    if (m_sweep_placed)
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            out.about[a] = m_sweep_about[a];
+            out.move[a] = m_sweep_move[a].is_valid() ? evalConstant(m_sweep_move[a], v) : 0.0;
+            out.rotate[a] = m_sweep_rotate[a].is_valid() ? evalConstant(m_sweep_rotate[a], v) : 0.0;
+            out.scale[a] = m_sweep_scale[a].is_valid() ? evalConstant(m_sweep_scale[a], v) : 1.0;
+            if (!std::isfinite(out.move[a]) || !std::isfinite(out.rotate[a]) || !std::isfinite(out.scale[a])) return false;
+        }
+    }
+    return true;
+}
+
+bool Shape::drawnFromNumbers() const
+{
+    if (hasPrism())
+    {
+        std::vector<libfive::pointshapes::Control> cs;
+        double pa = 0, pb = 0;
+        return prismNow(vars, cs, pa, pb);
+    }
+    if (hasSweep())
+    {
+        SweepNumbers sn;
+        return sweepNow(vars, sn);
+    }
+    return false;
+}
+
+// The mesh of a sweep: the outline of the profile (from the middle of its box) carried along the path, a ring of it at both ends of every piece of the path -- in the frame
+// that piece has (the one the field of `path_extrude` has: carried along without turning about the path, turned by the points' rotations, scaled by their thickness) and cut
+// by the planes that bisect the corners (square at the ends of an open path) -- and the walls between the rings; the profile's face closes an open path's ends
+std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
+{
+    using Vec = Eigen::Vector3d;
+    // The profile in the coordinates of its own plane, from the middle of the box of its outline
+    std::vector<Vec> where;
+    for (const auto& c : in.profile) where.push_back(c.pos);
+    double frame[9];
+    if (!libfive::pointshapes::planeOf(where, frame)) return nullptr;
+    const Vec o(frame[0], frame[1], frame[2]), pu(frame[3], frame[4], frame[5]), pv(frame[6], frame[7], frame[8]);
+    const auto outline = libfive::pointshapes::polyline(in.profile, in.profileDefault, true, 14);
+    if (outline.size() < 3) return nullptr;
+    std::vector<Eigen::Vector2d> prof;
+    double lox = 1e300, hix = -1e300, loy = 1e300, hiy = -1e300;
+    for (const auto& p : outline)
+    {
+        prof.emplace_back((p - o).dot(pu), (p - o).dot(pv));
+        lox = std::min(lox, prof.back().x());
+        hix = std::max(hix, prof.back().x());
+        loy = std::min(loy, prof.back().y());
+        hiy = std::max(hiy, prof.back().y());
+    }
+    const double cx = 0.5 * (lox + hix), cy = 0.5 * (loy + hiy);
+    std::vector<Vec> flat;
+    double area = 0;
+    for (auto& q : prof)
+    {
+        q.x() -= cx;
+        q.y() -= cy;
+        flat.push_back(Vec(q.x(), q.y(), 0));
+    }
+    const size_t E = prof.size();
+    for (size_t i = 0; i < E; ++i) area += prof[i].x() * prof[(i + 1) % E].y() - prof[(i + 1) % E].x() * prof[i].y();
+    static const double unitFrame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    const auto cap = libfive::pointshapes::face(flat, unitFrame);                // (the triangles of the profile's face, as indices of its outline)
+    if (!cap) return nullptr;
+    // (a mesh of libfive has a first vertex that is nobody's: the loop's vertices are the ones after it, and so are the indices of the triangles)
+    const uint32_t capFirst = uint32_t(cap->verts.size()) - uint32_t(E);
+
+    // The path
+    std::vector<std::pair<int, double>> owners;
+    auto V = libfive::pointshapes::polyline(in.path, in.pathDefault, in.closed, 14, &owners);
+    const int n = int(V.size());
+    if (n < 2) return nullptr;
+    // The sweep starts at the sketch: the path says how it travels, not where from.  The first point of the path is the middle of the box of the profile (path_extrude of sketch.py
+    // moves the field the same way)
+    {
+        const Vec shift = (o + pu * cx + pv * cy) - V[0];
+        for (auto& p : V) p += shift;
+    }
+    const bool closed = in.closed;
+    const int pieces = closed ? n : n - 1;
+    std::vector<Vec> T;
+    T.resize(size_t(pieces));
+    for (int k = 0; k < pieces; ++k)
+    {
+        const Vec d = V[size_t((k + 1) % n)] - V[size_t(k)];
+        const double l = d.norm();
+        T[size_t(k)] = l > 1e-12 ? Vec(d / l) : (k > 0 ? T[size_t(k - 1)] : Vec(Vec::UnitZ()));
+    }
+    auto tangentAt = [&](int k) -> Vec {
+        Vec t;
+        if (closed) t = T[size_t((k + pieces - 1) % pieces)] + T[size_t(k % pieces)];
+        else if (k == 0) return T[0];
+        else if (k == n - 1) return T[size_t(pieces - 1)];
+        else t = T[size_t(k - 1)] + T[size_t(k)];
+        const double l = t.norm();
+        return l > 1e-12 ? Vec(t / l) : T[size_t(std::min(k, pieces - 1))];
+    };
+    // The frames.  The sketch is carried along the path as it is -- its two axes u and v, each next frame carried along without turning about the path (the double reflection of
+    // Wang et al.) -- so the first ring is the sketch itself, at whatever angle the path leaves it.  A sketch whose plane holds the direction of the path (nothing could be swept) is
+    // turned the least that puts it across the path (path_extrude of sketch.py does the same)
+    std::vector<Vec> Uf, Wf, N, B;
+    Uf.resize(size_t(pieces));
+    Wf.resize(size_t(pieces));
+    N.resize(size_t(pieces));
+    B.resize(size_t(pieces));
+    {
+        const Vec ns = pu.cross(pv).normalized();
+        if (std::fabs(ns.dot(T[0])) >= 0.1)
+        {
+            Uf[0] = pu;
+            Wf[0] = pv;
+        }
+        else
+        {
+            Vec n0 = pu - T[0] * pu.dot(T[0]);
+            if (n0.squaredNorm() < 1e-12) n0 = pv - T[0] * pv.dot(T[0]);
+            n0 = n0.norm() > 1e-12 ? Vec(n0.normalized()) : Vec(Vec::UnitX());
+            Uf[0] = n0;
+            Wf[0] = T[0].cross(n0);
+        }
+    }
+    auto carried = [&](const Vec& w, int k) -> Vec {
+        const Vec v1 = V[size_t(k + 1)] - V[size_t(k)];
+        const double c1 = v1.dot(v1) + 1e-300;
+        const Vec rl = w - v1 * (v1.dot(w) * 2 / c1);
+        const Vec tl = T[size_t(k)] - v1 * (v1.dot(T[size_t(k)]) * 2 / c1);
+        const Vec v2 = T[size_t(k + 1)] - tl;
+        const double c2 = v2.dot(v2) + 1e-300;
+        return rl - v2 * (v2.dot(rl) * 2 / c2);
+    };
+    for (int k = 0; k + 1 < pieces; ++k)
+    {
+        const Vec nu = carried(Uf[size_t(k)], k), nw = carried(Wf[size_t(k)], k);
+        Uf[size_t(k + 1)] = nu.norm() > 1e-12 ? Vec(nu.normalized()) : Uf[size_t(k)];
+        Wf[size_t(k + 1)] = nw.norm() > 1e-12 ? Vec(nw.normalized()) : Wf[size_t(k)];
+    }
+    // (the frame the twist is measured in, across the path: u across it -- v when u lies along it -- u itself when the sketch is across the path)
+    for (int k = 0; k < pieces; ++k)
+    {
+        Vec across = Uf[size_t(k)] - T[size_t(k)] * Uf[size_t(k)].dot(T[size_t(k)]);
+        if (across.squaredNorm() < 1e-12) across = Wf[size_t(k)] - T[size_t(k)] * Wf[size_t(k)].dot(T[size_t(k)]);
+        N[size_t(k)] = across.norm() > 1e-12 ? Vec(across.normalized()) : Vec(Vec::UnitX());
+        B[size_t(k)] = T[size_t(k)].cross(N[size_t(k)]);
+    }
+    auto turned = [](const Vec& v, const Vec& t, double cs, double sn) -> Vec { return v * cs + t.cross(v) * sn + t * (t.dot(v) * (1.0 - cs)); };
+    // The twist: the rotation of a point turns its normal about the path; between the points the angle runs along the line
+    const int m = int(in.path.size());
+    std::map<int, double> angleOf;
+    for (int i = 0; i < m; ++i)
+    {
+        if (!in.path[size_t(i)].turned) continue;
+        int vertex = -1;
+        for (int j = 0; j < n; ++j) if (owners[size_t(j)].first == i && owners[size_t(j)].second == 0.0) { vertex = j; break; }
+        if (vertex < 0) continue;
+        const int k = std::min(vertex, pieces - 1);
+        Vec r = N[size_t(k)];
+        for (int a = 0; a < 3; ++a)
+        {
+            const double angle = in.path[size_t(i)].rotate[a];
+            if (std::fabs(angle) < 1e-12) continue;
+            const double rad = angle * M_PI / 180.0, c = std::cos(rad), s = std::sin(rad);
+            if (a == 0) r = Vec(r.x(), r.y() * c - r.z() * s, r.y() * s + r.z() * c);
+            else if (a == 1) r = Vec(r.x() * c + r.z() * s, r.y(), r.z() * c - r.x() * s);
+            else r = Vec(r.x() * c - r.y() * s, r.x() * s + r.y() * c, r.z());
+        }
+        angleOf[i] = std::atan2(r.dot(B[size_t(k)]), r.dot(N[size_t(k)]));
+    }
+    auto angleAt = [&](int i) { const auto it = angleOf.find(i); return it == angleOf.end() ? 0.0 : it->second; };
+    auto rollAt = [&](int j) {
+        const int i = owners[size_t(j)].first;
+        const double t = owners[size_t(j)].second;
+        const double a0 = angleAt(i);
+        const int i1 = (i + 1) % m;
+        const double a1 = (closed || i + 1 < m) ? angleAt(i1) : a0;
+        return a0 * (1 - t) + a1 * t;
+    };
+    auto sizeAt = [&](int j) {
+        const int i = owners[size_t(j)].first;
+        const double t = owners[size_t(j)].second;
+        const double s0 = in.path[size_t(i)].scale;
+        const int i1 = (i + 1) % m;
+        const double s1 = (closed || i + 1 < m) ? in.path[size_t(i1)].scale : s0;
+        return std::max(s0 * (1 - t) + s1 * t, 1e-3);
+    };
+    const double total = in.twist * M_PI / 180.0;
+
+    auto out = std::make_unique<libfive::Mesh>();
+    using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+    for (int k = 0; k < pieces; ++k)
+    {
+        const int j = (k + 1) % n;
+        const double phi = 0.5 * (rollAt(k) + rollAt(j)) + total;
+        const double cs = std::cos(phi), sn = std::sin(phi);
+        const Vec Tk = T[size_t(k)];
+        const Vec nk = turned(Uf[size_t(k)], Tk, cs, sn), bk = turned(Wf[size_t(k)], Tk, cs, sn);
+        // (which way the profile faces along the path: a sketch that the path leaves backwards is swept the other way round)
+        const double facing = nk.cross(bk).dot(Tk) >= 0 ? 1.0 : -1.0;
+        const uint32_t base = uint32_t(out->verts.size());
+        // (the ring at the start of the piece, then the one at its end: the profile in this piece's frame, slid along the piece onto the plane that bisects the corner)
+        for (int end = 0; end < 2; ++end)
+        {
+            const int at = end == 0 ? k : j;
+            const Vec centre = V[size_t(at)];
+            const double size = sizeAt(at);
+            const Vec cut = tangentAt(at);
+            const double slope = cut.dot(Tk);
+            // (the ends of an open path are the profile itself -- the sketch at the start, its copy at the end -- not cut square across the path)
+            const bool freeEnd = !closed && ((end == 0 && k == 0) || (end == 1 && k == pieces - 1));
+            for (const auto& q : prof)
+            {
+                Vec p = centre + (nk * q.x() + bk * q.y()) * size;
+                if (!freeEnd && std::fabs(slope) > 1e-6) p -= Tk * (cut.dot(p - centre) / slope);
+                out->verts.push_back(Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z())));
+            }
+        }
+        for (size_t i = 0; i < E; ++i)
+        {
+            const uint32_t a = base + uint32_t(i), b = base + uint32_t((i + 1) % E), c = base + uint32_t(E) + uint32_t((i + 1) % E), d = base + uint32_t(E) + uint32_t(i);
+            if (area * facing >= 0)
+            {
+                out->branes.push_back(Tri(a, b, c));
+                out->branes.push_back(Tri(a, c, d));
+            }
+            else
+            {
+                out->branes.push_back(Tri(a, c, b));
+                out->branes.push_back(Tri(a, d, c));
+            }
+        }
+        // (the triangles of the face face the way the profile's own normal does: the start cap faces back along the path, the end cap on along it)
+        if (!closed && k == 0)
+            for (const Tri& t : cap->branes)
+                out->branes.push_back(facing > 0 ? Tri(base + t[0] - capFirst, base + t[2] - capFirst, base + t[1] - capFirst)
+                                                 : Tri(base + t[0] - capFirst, base + t[1] - capFirst, base + t[2] - capFirst));
+        if (!closed && k == pieces - 1)
+            for (const Tri& t : cap->branes)
+                out->branes.push_back(facing > 0 ? Tri(base + uint32_t(E) + t[0] - capFirst, base + uint32_t(E) + t[1] - capFirst, base + uint32_t(E) + t[2] - capFirst)
+                                                 : Tri(base + uint32_t(E) + t[0] - capFirst, base + uint32_t(E) + t[2] - capFirst, base + uint32_t(E) + t[1] - capFirst));
+    }
+    if (std::getenv("FIELDES_SWEEP_DEBUG"))
+    {
+        double longest = 0;
+        uint32_t worst = 0, highest = 0;
+        for (size_t t = 0; t < out->branes.size(); ++t)
+        {
+            const auto& tri = out->branes[t];
+            for (int e = 0; e < 3; ++e)
+            {
+                highest = std::max(highest, tri[e]);
+                const double l = (out->verts[tri[e]] - out->verts[tri[(e + 1) % 3]]).norm();
+                if (l > longest) { longest = l; worst = uint32_t(t); }
+            }
+        }
+        const auto& tri = out->branes[worst];
+        fprintf(stderr, "[sweep] %zu vertices, %zu triangles, highest index %u; longest edge %.2f in triangle %u: (%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f); ring %zu, pieces %d\n", out->verts.size(), out->branes.size(),
+                highest, longest, worst, out->verts[tri[0]].x(), out->verts[tri[0]].y(), out->verts[tri[0]].z(), out->verts[tri[1]].x(), out->verts[tri[1]].y(), out->verts[tri[1]].z(),
+                out->verts[tri[2]].x(), out->verts[tri[2]].y(), out->verts[tri[2]].z(), E, pieces);
+    }
+    // Placed by the gizmo: scaled about its point, turned about x, then y, then z (degrees), then moved -- as `gizmo()` places a shape
+    if (in.placed)
+    {
+        const Eigen::Matrix3d R = (Eigen::AngleAxisd(in.rotate.z() * M_PI / 180.0, Vec::UnitZ()) * Eigen::AngleAxisd(in.rotate.y() * M_PI / 180.0, Vec::UnitY()) *
+                                   Eigen::AngleAxisd(in.rotate.x() * M_PI / 180.0, Vec::UnitX())).toRotationMatrix();
+        for (auto& p : out->verts)
+        {
+            const Vec q = Vec(p.x(), p.y(), p.z()) - in.about;
+            const Vec placed = in.about + in.move + R * Vec(q.x() * in.scale.x(), q.y() * in.scale.y(), q.z() * in.scale.z());
+            p = Eigen::Vector3f(float(placed.x()), float(placed.y()), float(placed.z()));
+        }
+    }
+    return out;
 }
 
 void Shape::setControls(std::vector<ControlPoint> points, bool smoothDefault, bool closed, bool face)
@@ -510,7 +891,9 @@ bool Shape::flatEdgeFrom(QVector3D& p) const
     }
     auto onPlane = [&](Eigen::Vector3d q) { return q - n * (q - o).dot(n); };
     Eigen::Vector3d q = onPlane(Eigen::Vector3d(p.x(), p.y(), p.z()));
+    ensureField();
     libfive::JacobianEvaluator e(tree, vars);
+    int nudges = 0;
     for (int i = 0; i < 12; ++i)
     {
         const Eigen::Vector3f at(float(q.x()), float(q.y()), float(q.z()));
@@ -519,6 +902,15 @@ bool Shape::flatEdgeFrom(QVector3D& p) const
         Eigen::Vector3d gd(g.x(), g.y(), g.z());
         gd -= n * gd.dot(n);                                // (along the plane)
         const double g2 = gd.squaredNorm();
+        if (!std::isfinite(g2) && nudges < 3)
+        {
+            // (exactly on a side of a shape whose distance has no gradient there -- the square root of zero: a hair away it has one)
+            Eigen::Vector3d w = n.cross(Eigen::Vector3d::UnitX());
+            if (w.norm() < 1e-3) w = n.cross(Eigen::Vector3d::UnitY());
+            q = onPlane(q + w.normalized() * (1e-3 * double(1 + nudges)));
+            ++nudges;
+            continue;
+        }
         if (!(g2 > 1e-12)) return false;
         if (std::fabs(vt.first) < 1e-5f) break;
         q = onPlane(q - gd * (double(vt.first) / g2));
@@ -533,6 +925,9 @@ bool Shape::nativeDragOk() const
     // where it is shown)
     // (a linked copy: the numbers in its tree are its original's -- dragging a surface of the copy would change the original too)
     if (m_locked || m_linked) return false;
+    // (a sweep has no surfaces to pull -- its numbers are the points', which have their own gizmos -- and pulling one meant making and compiling its whole field, in the GUI's
+    // thread, when a click that missed a point of the path landed on the tube beside it: seconds to minutes of a window that did not answer)
+    if (hasSweep()) return false;
     buildDeps();
     const auto gizmo = gizmoVars();
     for (const void* d : m_deps)
@@ -543,6 +938,27 @@ bool Shape::nativeDragOk() const
         }
     }
     return false;
+}
+
+bool Shape::curveTangentAt(int index, QVector3D& t) const
+{
+    if (!hasControls() || m_controls_face) return false;
+    std::vector<libfive::pointshapes::Control> cs;
+    if (!controlNumbers(vars, cs) || index < 0 || index >= int(cs.size()) || cs.size() < 2) return false;
+    std::vector<std::pair<int, double>> owners;
+    const auto V = libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14, &owners);
+    const int n = int(V.size());
+    int at = -1;
+    for (int j = 0; j < n; ++j)
+        if (owners[size_t(j)].first == index && owners[size_t(j)].second == 0.0) { at = j; break; }
+    if (at < 0 || n < 2) return false;
+    const int before = at > 0 ? at - 1 : (m_controls_closed ? n - 1 : at);
+    const int after = at + 1 < n ? at + 1 : (m_controls_closed ? 0 : at);
+    Eigen::Vector3d d = V[size_t(after)] - V[size_t(before)];
+    if (!(d.norm() > 1e-12)) return false;
+    d.normalize();
+    t = QVector3D(float(d.x()), float(d.y()), float(d.z()));
+    return true;
 }
 
 static float gizmoNumber(const std::map<libfive::Tree::Id, float>& vars, libfive::Tree::Id id)
@@ -734,6 +1150,13 @@ void Shape::measureExtent(const Settings& s)
     m_ext_valid = false;
     if (!s.autoScale || has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return;
     if (hasControls() || (m_flat && hasFlatFrame())) return;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
+    // (a sweep or a prism: it is drawn from the numbers of its points, and a search through the field of a sweep -- a piece for every piece of the path -- took seconds, in the
+    // GUI's thread, for an extent only the field's own render could use; if it has to be meshed from its field it is at the scene's resolution)
+    if (hasSweep() || hasPrism()) return;
+    ensureField();
+    // (a tree of more than 100000 nodes -- anything made of a sweep's field -- costs more to be made ready for the search, in the GUI's thread, than the extent is worth: it is
+    // not searched, and the shape is rendered at the scene's resolution)
+    if (m_tree_nodes > 100000) return;
     std::vector<libfive_tree> var_trees;
     std::vector<float> values;
     for (const auto& kv : vars)
@@ -748,8 +1171,9 @@ void Shape::measureExtent(const Settings& s)
     if (m_flat) search.Z = {-1e-3f, 1e-3f};         // (a flat shape is in the plane z = 0: its extent is that of its face)
     libfive_region3 out;
     int open = 0;
-    // (a search of a few milliseconds: a shape it cannot bound in that time is rendered as it was before)
-    if (!libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, 0.004f, &out, &open,
+    // (a search of at most 50 ms, in the GUI's thread -- the clock is read at every evaluation: a shape it cannot bound in that time is rendered as it was before.  The few
+    // milliseconds that the shapes of the examples take are well inside it)
+    if (!libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, 0.05f, &out, &open,
                                   var_trees.data(), values.data(), int(var_trees.size())))
         return;
     m_ext_lo = QVector3D(out.X.lower, out.Y.lower, out.Z.lower);
@@ -1258,6 +1682,7 @@ void Shape::rebuildEvaluators()
 
 void Shape::setSteps(std::vector<Step> steps, int current)
 {
+    ensureField();
     // (a plain shape may have steps that bring their own geometry only: the body of a flow shape optimisation)
     if (!has_result)
         for (auto& st : steps) st.channels.clear();
@@ -1317,6 +1742,7 @@ void Shape::stashStepMesh()
 void Shape::setStep(int k)
 {
     if (m_steps.empty() || k < 0 || k >= int(m_steps.size()) || k == m_step) return;
+    ensureField();
     stashStepMesh();
     m_step = k;
     applyStepState();
@@ -2074,7 +2500,12 @@ void Shape::buildDeps() const
                 }
             }
         };
-        add(tree);
+        // (the field of a sweep or a prism that is not made is not walked: the numbers it is made of are the ones of its points, which are below)
+        if (m_field_ready.load() || !(hasSweep() || hasPrism()))
+        {
+            ensureField();
+            add(tree);
+        }
         add(color_field);
         for (const ControlPoint& c : m_controls)
         {
@@ -2084,6 +2515,37 @@ void Shape::buildDeps() const
                 if (c.hasRot) add(c.rot[a]);
             }
             if (c.hasScale) add(c.scale);
+        }
+        for (const ControlPoint& c : m_prism_points)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                add(c.pos[a]);
+                if (c.hasRot) add(c.rot[a]);
+            }
+            if (c.hasScale) add(c.scale);
+        }
+        add(m_prism_a);
+        add(m_prism_b);
+        for (const auto& g : m_prism_guard) m_deps.insert(g.first);
+        for (const auto* list : {&m_sweep_profile, &m_sweep_path})
+        {
+            for (const ControlPoint& c : *list)
+            {
+                for (int a = 0; a < 3; ++a)
+                {
+                    add(c.pos[a]);
+                    if (c.hasRot) add(c.rot[a]);
+                }
+                if (c.hasScale) add(c.scale);
+            }
+        }
+        add(m_sweep_twist);
+        for (int a = 0; a < 3; ++a)
+        {
+            add(m_sweep_move[a]);
+            add(m_sweep_rotate[a]);
+            add(m_sweep_scale[a]);
         }
         for (int a = 0; a < 3; ++a) add(deform_tree[a]);
         for (const auto& c : m_channels) add(c.tree);
@@ -2344,7 +2806,11 @@ void Shape::drawMonochrome(const QMatrix4x4& M, QColor color)
 
 void Shape::startRender(Settings s, libfive::BRepAlgorithm alg)
 {
+    const auto t0 = std::chrono::steady_clock::now();
     measureExtent(s);
+    if (std::getenv("FIELDES_TIMING"))
+        fprintf(stderr, "[shape] line %d: measureExtent %.0f ms (%s)\n", source_line + 1,
+                1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), m_ext_valid ? "found" : "none");
     startRender(RenderSettings { s, defaultDivFor(s), alg });
 }
 
@@ -2368,10 +2834,18 @@ void Shape::startRender(RenderSettings s)
     {
         if (s.div == MESH_DIV_NEW_TREE || es_stale)
         {   // the shown step's geometry
+            const auto tRebuild = std::chrono::steady_clock::now();
             rebuildEvaluators();
+            if (std::getenv("FIELDES_TIMING"))
+                fprintf(stderr, "[shape] line %d: rebuilt the evaluators in %.0f ms\n", source_line + 1,
+                        1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tRebuild).count());
             if (s.div == MESH_DIV_NEW_TREE)
             {
+                const auto tExt = std::chrono::steady_clock::now();
                 measureExtent(s.settings);
+                if (std::getenv("FIELDES_TIMING"))
+                    fprintf(stderr, "[shape] line %d: measureExtent (new tree) %.0f ms (%s)\n", source_line + 1,
+                            1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tExt).count(), m_ext_valid ? "found" : "none");
                 s.div = default_div;
             }
         }
@@ -2440,7 +2914,7 @@ void Shape::startRender(RenderSettings s)
             const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
             run_heavy = force_low || expected > 150000.0;
         }
-        if (m_flat || hasControls()) run_flat_vars = vars;
+        if (m_flat || hasControls() || hasPrism() || hasSweep()) run_flat_vars = vars;
         m_run_virtual_on = m_virtual_on;
         m_run_virtual_after = m_virtual_after;
         m_run_virtual_pos = m_virtual_pos;
@@ -2545,12 +3019,14 @@ void Shape::setHover(bool h)
 
 std::map<libfive::Tree::Id, float> Shape::dragWeights() const
 {
+    ensureField();
     return libfive::dragWeights(tree);
 }
 
 std::pair<libfive::JacobianEvaluator*, libfive::Tape::Handle>
 Shape::dragFrom(const QVector3D& v)
 {
+    ensureField();
     auto e = new libfive::JacobianEvaluator(tree, vars);
     auto o = e->valueAndPush({v.x(), v.y(), v.z()});
     return std::make_pair(e, o.second);
@@ -2679,6 +3155,7 @@ void Shape::prefetchSteps()
         if (i != shown && m_steps[size_t(i)].tree.is_valid() && !m_steps[size_t(i)].surface && !step_meshes.count(i)) { k = i; break; }
     }
     if (k < 0) return;
+    ensureField();
     const libfive::Tree shownTree = tree;
     const bool shownTreeIsValid = shownTree.is_valid();
     stashStepMesh();                                    // (the finished mesh of the shown geometry is kept)
@@ -2732,12 +3209,42 @@ void Shape::freeGL()
 libfive::Tree::Id Shape::getUniqueId(
     std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical)
 {
+    // (a sweep or a prism whose field is not made is told from the others by its points and by the tree it was built as -- see identityKey --, not by a tree it
+    // would have to make and co-optimise: seconds for a sweep)
+    if (!m_field_ready.load() && (hasSweep() || hasPrism())) return nullptr;
+    ensureField();
     return base_tree.cooptimize(canonical).id();
 }
 
 QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical)
 {
     QString key = colorKey();
+    if (!m_prism_points.empty())
+    {
+        const auto pid = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
+        key += QString("|prism %1|f%2").arg(m_prism_points.size()).arg(quintptr(built_tree.id()));
+        for (const ControlPoint& c : m_prism_points)
+            for (int a = 0; a < 3; ++a) key += QString(",%1").arg(pid(c.pos[a]));
+        key += QString(";%1,%2").arg(pid(m_prism_a)).arg(pid(m_prism_b));
+    }
+    if (hasSweep())
+    {
+        const auto sid = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
+        key += QString("|sweep %1 %2 %3|f%4").arg(m_sweep_profile.size()).arg(m_sweep_path.size()).arg(m_sweep_closed ? 1 : 0).arg(quintptr(built_tree.id()));
+        for (const auto* list : {&m_sweep_profile, &m_sweep_path})
+        {
+            for (const ControlPoint& c : *list)
+            {
+                key += QString(";%1").arg(c.flag);
+                for (int a = 0; a < 3; ++a) key += QString(",%1").arg(sid(c.pos[a]));
+                if (c.hasRot)
+                    for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(sid(c.rot[a]));
+                if (c.hasScale) key += QString(",s%1").arg(sid(c.scale));
+            }
+        }
+        key += QString(";t%1").arg(sid(m_sweep_twist));
+        for (int a = 0; a < 3; ++a) key += QString(";g%1,%2,%3").arg(sid(m_sweep_move[a])).arg(sid(m_sweep_rotate[a])).arg(sid(m_sweep_scale[a]));
+    }
     if (m_controls.empty()) return key;
     key += QString("|controls %1 %2%3%4").arg(m_controls.size()).arg(m_controls_default ? 1 : 0).arg(m_controls_closed ? 1 : 0).arg(m_controls_face ? 1 : 0);
     // (the same canonical map as the tree's: expressions that are the same come out as the same node, the script's numbers -- its var()s -- as themselves)
@@ -2784,6 +3291,67 @@ RenderIdle g_renderIdle;
 }   // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
+// The mesh of a prism: the face of the outline the points make, at the distances a and b along the normal of its plane, and the walls between -- or null when the outline
+// cannot be cut into triangles (it crosses itself: the field's to mesh)
+std::unique_ptr<libfive::Mesh> Shape::prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b)
+{
+    std::vector<Eigen::Vector3d> where;
+    for (const auto& c : cs) where.push_back(c.pos);
+    double frame[9];
+    if (!libfive::pointshapes::planeOf(where, frame)) return nullptr;
+    const auto verts = libfive::pointshapes::polyline(cs, smoothDefault, true, 14);
+    if (verts.size() < 3) return nullptr;
+    const Eigen::Vector3d o(frame[0], frame[1], frame[2]), u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
+    const Eigen::Vector3d normal = u.cross(w).normalized();
+    std::vector<Eigen::Vector3d> loop;
+    for (const auto& p : verts) loop.push_back(o + u * (p - o).dot(u) + w * (p - o).dot(w));
+    auto cap = libfive::pointshapes::face(loop, frame);
+    if (!cap) return nullptr;
+    const size_t n = loop.size();
+    double area = 0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double x0 = (loop[i] - o).dot(u), y0 = (loop[i] - o).dot(w), x1 = (loop[(i + 1) % n] - o).dot(u), y1 = (loop[(i + 1) % n] - o).dot(w);
+        area += x0 * y1 - x1 * y0;
+    }
+    const double lo = std::min(a, b), hi = std::max(a, b);
+    if (hi - lo < 1e-9) return nullptr;             // (no thickness: nothing to draw as a solid -- the field says what it is)
+    auto out = std::make_unique<libfive::Mesh>();
+    const uint32_t off = uint32_t(out->verts.size());                       // (the first vertex of a libfive mesh is nobody's: the layers start after it)
+    const uint32_t capFirst = uint32_t(cap->verts.size()) - uint32_t(n);      // ...and so does the face's loop, in the triangles of the face
+    for (int layer = 0; layer < 2; ++layer)
+    {
+        const Eigen::Vector3d shift = normal * (layer == 0 ? lo : hi);
+        for (const auto& p : loop)
+        {
+            const Eigen::Vector3d q = p + shift;
+            out->verts.push_back(Eigen::Vector3f(float(q.x()), float(q.y()), float(q.z())));
+        }
+    }
+    using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+    for (const Tri& t : cap->branes)
+    {
+        out->branes.push_back(Tri(off + uint32_t(n) + t[0] - capFirst, off + uint32_t(n) + t[1] - capFirst, off + uint32_t(n) + t[2] - capFirst));         // (the top: facing the way the normal does)
+        out->branes.push_back(Tri(off + t[0] - capFirst, off + t[2] - capFirst, off + t[1] - capFirst));                                                  // (the bottom: facing away)
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        const uint32_t j = off + uint32_t((i + 1) % n), k = off + uint32_t(i), up = uint32_t(n);
+        // (a wall: two triangles, facing out of the outline -- the other way round for an outline that runs clockwise)
+        if (area >= 0)
+        {
+            out->branes.push_back(Tri(k, j, up + j));
+            out->branes.push_back(Tri(k, up + j, up + k));
+        }
+        else
+        {
+            out->branes.push_back(Tri(k, up + j, j));
+            out->branes.push_back(Tri(k, up + k, up + j));
+        }
+    }
+    return out;
+}
+
 // This function is called in a separate thread:
 Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
 {
@@ -2830,11 +3398,37 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     mesh_settings.max_err = pow(10, -s.settings.quality);
     mesh_settings.alg = s.alg;
 
+    static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
+    std::unique_ptr<libfive::Mesh> m;
+    // A prism -- a straight extrusion of a sketch of points -- is made from the numbers its points have now, and its a and b: no field is meshed, so it follows a point as it is
+    // dragged.  (When it cannot be -- a handle pulled, a gizmo placing it, an outline that crosses itself -- its field is meshed as ever)
+    if (hasPrism())
+    {
+        std::vector<libfive::pointshapes::Control> cs;
+        double pa = 0, pb = 0;
+        const bool ready = prismNow(run_flat_vars, cs, pa, pb);
+        if (ready) m = prismMesh(cs, m_prism_default, pa, pb);
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[prism] line %d: %s\n", source_line + 1,
+                    m ? "drawn from the numbers of its points" : ready ? "its outline cannot be cut into triangles: its field is meshed" : "its guard or its numbers do not hold: its field is meshed");
+    }
+    if (!m && hasSweep())
+    {
+        SweepNumbers sn;
+        const bool ready = sweepNow(run_flat_vars, sn);
+        if (ready) m = sweepMesh(sn);
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[sweep] line %d: %s (%.0f ms into the level)\n", source_line + 1,
+                    m ? "drawn from the numbers of its points" : ready ? "its profile cannot be cut into triangles: its field is meshed" : "its numbers cannot be read: its field is meshed",
+                    1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tLevel).count());
+    }
     // The render cache: the finished mesh of this very shape may be on disk (a coarser level is not
-    // kept: a render is read from it in one step, or meshed level by level)
+    // kept: a render is read from it in one step, or meshed level by level).  Not asked of a mesh that is made from the numbers of
+    // points: its key is a hash of the whole field, which costs seconds for a sweep, and the mesh is made faster than a file is read
     const auto renderStart = std::chrono::steady_clock::now();
     std::string cacheKey;
-    if (m_cache_on.load())
+    if (!m && m_cache_on.load())
     {
         if (has_result)
         {
@@ -2867,10 +3461,11 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         }
     }
 
-    static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
-    std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
-    std::unique_ptr<libfive::Mesh> m;
-    if (hasControls())
+    if (m)
+    {
+        // (made: the field of the shape is not read)
+    }
+    else if (hasControls())
     {
         // A line or a face of points: made from the numbers the points have now (no script is run, no field is read), the way a point being dragged needs it
         m = std::make_unique<libfive::Mesh>();
@@ -2913,6 +3508,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     }
     else
     {
+        ensureField();                     // (made here when nothing made it yet: a sweep that could not be drawn from its numbers)
         m = run_step_exact ? exactMeshOf(*run_step_exact, identity, r)
           : exactCurrent() ? exactMeshIn(r)
           : m_flat ? libfive::Mesh::renderFlat(tree, run_flat_vars, mesh_region, run_has_frame ? run_frame : nullptr, mesh_settings,

@@ -180,7 +180,8 @@ public slots:
     void setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
     /*  A line, a spline or a sketch put down on the work plane (`name` is polyline, spline or sketch): written into the script with its points, each a model of its own
         with its gizmo, as one step; `smooth` makes the points of a sketch spline points  */
-    void createPlaced(QString name, QList<QVector3D> points, bool smooth);
+    /*  What was put down on the work plane: `points`, and -- `also` -- the strokes it has in the symmetry of the plane, each a shape of its own  */
+    void createPlaced(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also = QList<QList<QVector3D>>());
     /*  Which run of the script the model tree shows (it counts up with every run): a menu remembers it, so that an entry
      *  chosen after the script changed is known not to mean the line the menu was opened on  */
     int generation() const { return m_generation; }
@@ -703,6 +704,7 @@ protected:
     QString m_selectNew;
     bool m_workPlaneActive = false;
     QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
+    QJsonArray m_placedAlso;                   // (and the strokes it has in the symmetry: each an array of points)
     bool m_placedSmooth = false;
     QVector3D m_workPlaneOrigin, m_workPlaneU, m_workPlaneV;
     float m_workPlaneStep = 0;

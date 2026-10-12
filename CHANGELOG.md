@@ -49,6 +49,45 @@
   *New 1D shape → polyline* and *spline* (two or more points). `extrude` and `path_extrude` are operations: *Operation → Extruding*, offered for a selected 2D shape (and a line, or the points of a path). See [Sketches](docs/sketches.md).
 - **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are lines.
 
+### Live extrusions, symmetry in the work plane, and points scaled and turned together
+- **A straight `extrude` of a sketch follows the points as you drag them.** The solid is a prism -- the outline pulled along its normal -- so the viewport makes it from the numbers of the points (and of `a` and `b`) at
+  every frame, the way it makes the face of the sketch: no script is run and no field is meshed, while you drag and after you let go. A spline-shaped (`smooth=True`) sketch pulled out of a 2 mm region went from a render of
+  3.4 s after every release to 0.15 s. It stays a prism while its numbers are what it was made with (a gizmo has not placed it, no face of it was pulled); otherwise its field is meshed as ever.
+- **A sweep (`path_extrude`) of a sketch along a line of points is drawn from the numbers of its points too.** The viewport carries the outline along the path -- a ring at every piece, in the frame the field of the sweep has (turned by the rotation
+  of the points, scaled by their scale, mitred at the corners, capped with the face of the profile) -- so no field is meshed, and dragging a point of the profile, of the path or its gizmo follows at once. A circle or a rectangle as the
+  profile, and a sweep with a colour field, a channel or a result, still come from the field. `FIELDES_NO_NATIVE=1` draws every prism and sweep from its field, to compare.
+- **A sweep no longer freezes the program: its field is not made unless something reads it.** The field of a sweep is a piece for every piece of the path, each holding the whole outline of the profile, and making it was most of the time:
+  optimising the tree and building the eight evaluators (together 6 s for a smooth sketch of 15 points swept along three points), keying it among the shapes of the run (0.3 s), and -- in the GUI's thread, so that the window did not answer --
+  a search through the whole field for the shape's extent (6 s, then 9 s again: 15 s of a frozen window, for a mesh that is made in 1 ms). A shape that is drawn from the numbers of its points (a sweep, a straight extrusion) now makes none of
+  that: the script runs in 0.5 s and the sweep is on the screen 0.09 s after (before: 5.9 s, then 14.6 s). Its field is made, once, by the first thing that reads it (a boolean, an offset, an analysis, a field viewer, a sweep whose numbers
+  can no longer be drawn directly), in the thread that needs it. The search for a shape's extent -- which had a budget of 4 ms but read the clock only every 256 evaluations, each one tens of milliseconds on such a field -- reads it at every
+  evaluation now (with 50 ms, which the shapes of the examples need a tenth of), and is not made at all for a tree of more than 100 000 nodes (what is made of a sweep: a difference, an offset), so no big shape can hold the window any more; it is rendered at the scene's resolution. The render cache's key -- a hash of the whole field, about 9 s for a four-point sweep -- is no longer asked of a mesh that is made from numbers either.
+- **The first ring of a sweep is the sketch itself, at any angle, and the path runs through the middle of the cross-section at all times.** A sweep used to turn the sketch across the path at its start, so a path that left the sketch at an angle gave a cap that was not
+  the sketch. The sketch is now carried along as it is -- its own plane at the start, a slanted sweep when the path is oblique -- exactly the same from the field and from the viewport. And the path is **drawn where the sweep goes**: from the middle of the sketch,
+  through the middle of the cross-section, its points with it, whatever numbers its points have in the script (its shape is what matters; before, the sweep started at the sketch and the line you drew stayed beside it, wherever you had drawn it). A point of it is
+  dragged where it is seen; the first point stays at the middle of the sketch.
+- **A point of a curve has a gizmo that faces the way the curve does.** Its blue arrow and ring are along the curve at the point, the red and green across it: the blue ring twists what is swept, the other two tilt the direction the curve leaves the point by.
+  The numbers written are the same angles and move numbers as before.
+- **The scale of a point no longer "goes back" when you let go (Shift + wheel above all).** Every change a drag or the wheel wrote into the script started a run 250 ms later -- one that began between two turns of the wheel read the text of that moment and, when it was
+  done, put its older numbers back over the ones being dragged, so some turns were lost (eight notches scaled by five). No run begins while a drag or the wheel is going, a run that was on its way when it began is not shown, and one run follows the gesture.
+- **Pressing on the tube beside a point no longer freezes the program.** A press on a sweep took it for a surface to pull and made and compiled its whole field in the GUI's thread -- seconds for a small one, minutes for a sketch of many points. A sweep has no
+  surface to pull (its numbers are its points'), so the press selects or draws a rectangle as it does on empty space.
+- **The handles of a rectangle, a rounded rectangle and a triangle.** A `rectangle` is made of its four sides (`handles` lists `[x0, y0, x1, y1]`) instead of a centre and half sizes that tied the opposite sides together, so every side can be pulled and moves
+  alone; a `rounded_rectangle` is the rectangle drawn in by the radius and grown by it again, so its corners stay tangent to the sides at any numbers (five handles: the sides and the radius; it is now an exact distance too); a `triangle` has three handles, its
+  sides, each pulled parallel to itself. The gizmo of each stays at the middle of the shape when a side is pulled -- its pivot is an expression of the handle numbers -- and nothing jumps when the script runs again.
+- **Symmetry in the work plane.** The card has a *Symmetry* row (Off, 1, 2, 3, 4): axes through one centre, equally spaced (one axis; two at right angles; three 60 degrees apart; four 45 degrees apart), drawn as dashed
+  magenta lines. Whatever you put down is put down at its images too (a point gets 2, 4, 6 or 8 points; a line, a spline or a shape gets a shape for each image, previewed while you draw and written as `sketch_1_m1` ...). The dot where the axes
+  cross is dragged to move them (onto the grid or a point), the knob on the first axis to turn them (steps of 5 degrees while snapping, the angle shown).
+- **Several selected points can be scaled and turned evenly.** The shared gizmo of a group of points has two rings round the middle of them: the gold one scales them about it (their proportions kept), the one in the plane turns them
+  about it; the factor and the angle are shown. What changes is the move numbers of each point, so every sketch and line made of them follows.
+- **The path of a sweep goes through the middle of a sketch profile, and the sweep starts at the sketch.** `path_extrude(sketch, curve)` carried the *first point* of the sketch along the path, so the profile sat beside it. It is now the middle of the box of the
+  outline (a circle or a rectangle keeps its own origin), and the thickness of a path point scales the profile about that middle. And the sketch is the base of the sweep: the whole sweep is moved so that the first point of the path is the
+  middle of the sketch, and its first ring is the sketch itself (see below for a path that leaves it at an angle), which is what you see while you edit the sketch. The path is
+  the way the sweep travels, not where it begins.
+- **`extrude` is explained** in [Sketches](docs/sketches.md): what `a` and `b` are, which side is up (the order of the first three points), and that the render region grows to hold the solid.
+- **A model's box is known for more shapes**, so that the region follows them without a search: an extrusion of a sketch (the outline's box carried along the normal), `move`, and `union` / `intersection` / `difference`
+  (a box that holds the result). Before, a sketch with `smooth=True` could not be searched for at all, so its extrusion never made the region grow.
+
 ### Two kinds of duplication, one scale handle, and a tidier work plane
 - **A model moved out of the render region is taken in again, whatever it is.** The region follows the models (Auto scale), but a primitive that was
   moved with its gizmo kept reporting the box it had before the move, so the region did not grow and the model was cut off at its wall. The box a model reports is now

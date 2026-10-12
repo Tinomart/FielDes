@@ -356,6 +356,13 @@ protected:
     // (until the next run begins)
     bool m_discardResults = false;
 
+    // A drag of the viewport (a gizmo, a handle, the wheel that scales) writes its numbers into the text as it goes.  A run of the script that began meanwhile read the text of
+    // that moment, and when it was done it put its numbers back over the ones being dragged -- the scale 'went back' by a step at every pause of the wheel -- so no run begins
+    // while a drag goes (the edit is remembered: one run follows the drag), and a run that was on its way when it began is not shown
+    bool m_dragActive = false;
+    bool m_textChangedDuringDrag = false;
+    QTimer m_dragGuard;                     // (a drag that does not say it has ended is ended after a while: the text would never run again)
+
     // The buttons at the right of the bottom row: pause / continue, run again, terminate (the red dot)
     QWidget* m_controls = nullptr;
     QToolButton* m_pauseButton = nullptr;

@@ -225,6 +225,12 @@ public slots:
     void cancelPlacement();
     void undoPlacedPoint();
     int placedCount() const { return m_wpPlaced.size(); }
+    /*  Symmetry in the work plane view: 0 none, 1 to 4 axes through one centre, 180 / n degrees apart.  Whatever is put down is put down at its images too -- turned
+        about the centre and mirrored across each axis.  The centre (a dot) is dragged to move the axes, the knob on the first axis to turn them  */
+    void setWorkPlaneSymmetry(int count);
+    void setSymmetryAxes(float s, float t, float angleDegrees);      // (where they cross, in the plane's axes; the angle of the first axis)
+    /*  Where a handle of the symmetry is on the screen (1 the centre, 2 the knob that turns the axes), for scripted tests  */
+    bool symmetryHandlePoint(int which, QPoint& pos) const;
     /*  Where a new model made at `pos` goes, and how large it is: on the work plane while its view is open, snapped; else the place on the ray under the cursor.
         `createAt` makes one as the menu of empty space does (for scripted tests)  */
     void placementAt(QPoint pos, QVector3D& point, double& scale) const;
@@ -291,7 +297,7 @@ signals:
     /*  Where the cursor is on the plane, in its coordinates (empty: not on it)  */
     void workPlaneReadout(QString text);
     /*  A line or a spline was put down (or a sketch: closed): its name in the library (`sketch`, `polyline`, `spline`), its points, and whether the outline is smooth  */
-    void placementFinished(QString name, QList<QVector3D> points, bool smooth);
+    void placementFinished(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also);
 
     /*
      *  Called to kick off a render and start the busy spinner running
@@ -502,6 +508,21 @@ protected:
     WorkPlane m_wp;
     QVector3D m_wpCursor;                    // (where the cursor is on the plane, snapped)
     QList<QVector3D> m_wpPlaced;             // (the points of the line or spline that is being put down: not in the script yet)
+    // The symmetry of the work plane view (see setWorkPlaneSymmetry)
+    bool symmetric() const;
+    QVector3D symmetryCentre() const;
+    QVector3D symmetryAxis(int j) const;                        // (the direction of axis j in the plane, a unit vector)
+    QPointF symmetryKnob() const;                               // (where the knob that turns the axes is on the screen: on the first axis, a fixed way out)
+    int symmetryHit(QPoint pos) const;                          // (1 the centre, 2 the knob, 0 neither)
+    void dragSymmetry(QPoint pos);
+    void resetSymmetryAxes();
+    /*  The images of a point of the plane: the point, then its turns about the centre (n - 1), then its mirror images across the n axes  */
+    QList<QVector3D> symmetryImages(const QVector3D& p) const;
+    /*  The strokes a stroke has in the symmetry: the stroke itself, then its images (the mirror ones in the reverse order, so that they face the same way); an image
+        that is the stroke (or another image) over again is left out  */
+    QList<QList<QVector3D>> symmetryStrokes(const QList<QVector3D>& stroke) const;
+    void drawSymmetry(QPainter& painter, float cap);
+    int m_symHover = 0, m_symDrag = 0;
     QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
     bool m_faceHasRef = false;
     bool m_wpCursorValid = false;
@@ -829,7 +850,7 @@ protected:
     struct GizmoGrip
     {
         Shape* shape = nullptr;
-        int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move), 4 a plane square (Shift: move along a plane)
+        int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move), 4 a plane square (Shift: move along a plane), 5 the ring that scales a group of points, 6 the ring that turns it
         int axis = 0;
         bool group = false;         // the gizmo shared by all the selected shapes (kinds 0, 3 and 4 only)
         bool operator==(const GizmoGrip& o) const
@@ -843,8 +864,14 @@ protected:
     /*  How many shapes are selected (lit up as the model tree's selection)  */
     int selectedShapeCount() const;
     /*  The numbers a gizmo drag changes: each shape's move number for an axis, with its value when the drag began  */
-    struct GizmoVar { libfive::Tree::Id id; int axis; float value0; };
+    struct GizmoVar { libfive::Tree::Id id; int axis; float value0; float weight = 1.0f; };       // (weight: how much of the move along the arrow this number takes)
     QVector<GizmoVar> gizmo_vars;
+    /*  Several points are selected: they share one gizmo, and two rings of it scale and turn them -- evenly, about the middle of them all, which moves each of them (it is the
+        numbers that move each that change).  Each point's place and its move numbers when a drag of a ring began  */
+    bool groupOfPoints(const QList<Shape*>& members) const;
+    QVector3D groupRingNormal(const QList<Shape*>& members) const;     // (the axis they turn about: the plane of their sketch, else the work plane's, else the way the camera looks)
+    struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; };
+    QVector<GroupPoint> gizmo_group;
     QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
     GizmoGrip gizmo_hover;
     // The provisional gizmo (see setProvisionalGizmo), and a press on it that waits for the real one
@@ -882,6 +909,17 @@ protected:
     bool m_leftDown = false;             // (the left button, as the mouse events of the viewport say: a script that sends events sets it as a real mouse does)
     /*  A point of a sketch has ONE rotation ring, in the plane of the sketch (about its normal): whether `s` is one, and that normal  */
     bool planarRingNormal(const Shape* s, QVector3D& normal) const;
+    /*  The axes the arrows, the plane squares and the rings of the gizmo of `s` are along.  The world's, except for a point of a curve: its blue axis is the way the curve faces
+        there and the red and green are across it, so that the ring about the blue axis twists what is swept along the curve and the other two tilt where the curve goes (the
+        numbers are the same ones: a turn about these axes is written as the three angles of the gizmo).  True when it is turned.  While the gizmo is dragged the axes are the
+        ones it was pressed with  */
+    bool gizmoFrame(const Shape* s, QVector3D F[3]) const;
+    bool gizmo_oriented = false;                // (the drag in progress is along the axes of a turned gizmo, noted at its start)
+    const Shape* gizmo_frame_shape = nullptr;
+    QVector3D gizmo_frame[3];
+    libfive::Tree::Id gizmo_rot_id[3] = {nullptr, nullptr, nullptr};          // ...and the rotation numbers of the shape, with the values they had at the start
+    float gizmo_rot0[3] = {0, 0, 0};
+    QPolygonF planeSquareIn(const QVector3D& pivot, float length, const QVector3D& eb, const QVector3D& ec) const;
     /*  Whether all of `members` are points of sketches that lie in one plane -- selected together they have the dot that moves them in that plane, and no arrows  */
     bool groupInSketchPlane(const QList<Shape*>& members, QVector3D& normal) const;
     /*  What a point's dot says: 1 a corner (a square), 2 a spline point (a round dot with a ring), 0 neither (a plain round dot: it belongs to no sketch or curve).
@@ -901,6 +939,10 @@ protected:
     /*  Whether the cursor is over a surface that a drag takes (a shape that is not locked and has numbers to pull by), and nothing but one shape is
      *  selected: the gizmo's arrows, rings and knobs are then only hit where they are drawn, so that a drag of a face is not taken for one of them  */
     bool overDraggableSurface(QPoint pos) const;
+    /*  What the pick image says is at `pos`: the number of the shape (1-based), 0 for nothing.  A flat shape -- a rectangle, a circle -- has pixels only inside its outline, and the
+     *  rasteriser leaves out the pixels on some of its sides: a press ON the outline, which is where it is pulled, found nothing on those sides.  Where there is nothing, the nearest
+     *  flat shape (not a face of points: it is dragged as a whole) within a few pixels is what is there  */
+    unsigned int pickedNear(QPoint pos) const;
     /*  Whether a press at `pos` on `s` pulls one of its surfaces: it has numbers to pull, and where it is a flat 2D shape, `pos` is at its
         outline (`edge` is the point of the outline that is pulled) -- there is no surface inside a face  */
     bool pullableAt(const Shape* s, QPoint pos, QVector3D* edge = nullptr) const;

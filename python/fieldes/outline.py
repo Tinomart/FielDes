@@ -380,7 +380,9 @@ def finish(source, gs, out):
                     measure.append((0, None, text, shapes, dict(facts, _has_var=False, _own=isinstance(v, Shape)), facts))
         deadline = _time.time() + A._BOUNDS_SECONDS
         for _, name, text, shapes, view, facts in sorted(measure, key=lambda m: m[0]):
-            if 'bounds' not in facts and facts.get('type') != 'field' and _time.time() < deadline:      # (a field has no extent: its viewer's bounds are the box of its origin)
+            # (only a body has an extent to search for: a field has none -- its viewer's bounds are the box of its origin --, a point or a line has no inside, and a 2D shape goes on
+            # for ever along its normal: a search for any of them cannot end well, and costs the time it is given, at every run)
+            if 'bounds' not in facts and facts.get('type') in (None, 'solid', 'lattice') and _time.time() < deadline:
                 b = A._estimate_bounds(shapes, deadline)
                 if b:
                     facts['bounds'] = b
