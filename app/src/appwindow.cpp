@@ -1081,7 +1081,7 @@ void AppWindow::ensureViewport()
         vl->setSpacing(0);
         m_view = new View(m_viewHost);
         m_view->setAppMode(true);
-        m_view->setUpAxis(QSettings().value("up-axis", "y").toString() != "z");
+        m_view->setUpAxis(QSettings().value("up-axis", "z").toString() == "y");
         vl->addWidget(m_view, 1);
         auto bar = new QWidget(m_viewHost);
         bar->setObjectName("appViewBar");

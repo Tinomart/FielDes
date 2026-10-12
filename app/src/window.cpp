@@ -766,18 +766,19 @@ Window::Window(Arguments args)
     auto rot_mode = new QActionGroup(rotation_menu);
     rot_mode->addAction(turn_y_up);
     rot_mode->addAction(turn_z_up);
-    // (the Y axis points up unless the user chose otherwise: the choice is stored under its own key, only
+    // (the Z axis points up -- the library's own axis -- unless the user chose Y up: the choice is stored under its own key, only
     // when it is made -- the old "rotation" key was written at every start, so it says nothing about a choice)
+    // (a scripted test -- FIELDES_AUTOMATION -- turns the view without writing the choice: it runs on the user's own settings)
     connect(turn_z_up, &QAction::triggered, [this](bool) {
         view->toTurnZ();
-        settings.setValue("up-axis", "z");
+        if (!qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) settings.setValue("up-axis", "z");
     });
     connect(turn_y_up, &QAction::triggered, [this](bool) {
         view->toTurnY();
-        settings.setValue("up-axis", "y");
+        if (!qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) settings.setValue("up-axis", "y");
     });
     settings_menu->addMenu(rotation_menu);
-    const bool y_is_up = settings.value("up-axis", "y").toString() != "z";
+    const bool y_is_up = settings.value("up-axis", "z").toString() == "y";
     (y_is_up ? turn_y_up : turn_z_up)->setChecked(true);
     view->setUpAxis(y_is_up);
 

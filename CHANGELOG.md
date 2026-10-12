@@ -14,6 +14,10 @@
 - **FielDes takes over the file type.** The Windows installer registers `.fieldesapp` for the user (and removes it with the program); the Linux installer and the `.deb` bring the MIME type. The first time an app is exported FielDes asks whether a double click should open it, and **Settings → Open .fieldesapp files with FielDes** does it for a copy that was not installed.
 - **`examples/24_app_bracket_maker.py`** is a complete app: a model file (the bracket comes along inside it), a mode, a wall thickness and where to save the result, with the comments that say how an app is made.
 
+### The viewport is Z up by default
+- **Z points up** in the viewport unless you choose otherwise, as the shapes of the library are made: a cylinder stands along z, an extrusion goes up along z, a 2D shape lies in the z = 0 plane.
+  **Settings → Rotation mode → Turntable (Y up)** is still there, and what you choose is kept.
+
 ### An app can have a viewport
 - **`app.viewport(models, ...)`** gives the app window a picture of what the creator names -- *opt-in*, an app without it is the form it was. `app.viewport({'Beam': body, 'Load point': pull}, support, load)`: each name is drawn over its model in a card
   in the style of the labels of boundary conditions (`labels=False` turns them off), the loose arguments are drawn without a name (the supports and loads show their symbols). The person looks around with the mouse as in the editor, **clicks a model to select it and
