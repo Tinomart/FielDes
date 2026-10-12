@@ -52,6 +52,7 @@ private:
     void finish();
     void layoutInParent();
     void remember();
+    void tameLabels();
 
     QWidget* m_card;
     QWidget* m_handle;

@@ -24,6 +24,9 @@
 - **In the editor the viewport is only a setting**: it draws nothing and has no row (no block) in the model tree; the models it names are in the tree as
   they are, shown by their eyes, and *File → Preview as app* shows the viewport. In the app only what the viewport names is shown (a model that the script
   also displays by its name is not drawn twice).
+- **The result card of an app (and of the editor) lets go of the mouse.** A click on the key numbers of the card (its rich text took the move and the
+  release of the click) left the card stuck to the cursor, following it about and not to be dragged or sized from there. The card's labels now let
+  the mouse go on to the card, and a card whose button is no longer down lets go at the next move.
 - **The app window has the FielDes look**: the dark teal of the viewport, cream text, the same fields, buttons and check boxes, the form on the left and the viewport on the right.
 
 ### Points are always there, as the middle point of their gizmo

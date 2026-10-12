@@ -1892,6 +1892,14 @@ Window::Window(Arguments args)
             std::cerr << "automation: " << name.trimmed().toStdString() << " visible=" << w->isVisible() << " at " << w->x() << "," << w->y()
                       << " size " << w->width() << "x" << w->height() << "\n";
         });
+        // widgetglobal <objectName>: where a widget is on the screen (the top left corner and the size, in the pixels Qt reports, and the device pixel ratio)
+        a->add("widgetglobal", [=](const QString& name){
+            auto w = findChild<QWidget*>(name.trimmed());
+            if (!w) { std::cerr << "automation: no widget " << name.toStdString() << "\n"; return; }
+            const QPoint g = w->mapToGlobal(QPoint(0, 0));
+            std::cerr << "automation: widgetglobal " << name.trimmed().toStdString() << " visible=" << w->isVisible() << " at " << g.x() << "," << g.y()
+                      << " size " << w->width() << "x" << w->height() << " dpr " << w->devicePixelRatioF() << "\n";
+        });
         // widgetdrag <objectName> <x0> <y0> <x1> <y1>: the left button pressed at (x0, y0) of a widget, dragged to (x1, y1) and let go
         // (in the widget's own coordinates: a card is dragged by its header, resized from its edge)
         a->add("widgetdrag", [=](const QString& args){

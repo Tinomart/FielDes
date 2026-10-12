@@ -10,6 +10,7 @@ of the License, or (at your option) any later version.
 
 #include <QAbstractButton>
 #include <QEvent>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QSettings>
 #include <QWidget>
@@ -29,6 +30,21 @@ CardController::CardController(QWidget* card, const QString& key, QWidget* handl
     card->installEventFilter(this);
     if (handle) handle->installEventFilter(this);
     if (card->parentWidget()) card->parentWidget()->installEventFilter(this);
+    tameLabels();
+}
+
+// A card that is dragged by any empty place of it: its labels let the mouse go on to the card.  (A label of rich text has a text control that
+// accepts the move and the release of a click that began on it -- selecting text, following links -- so the card never saw the release and kept
+// being moved.)  Labels with links, or with text that is meant to be selected, are left as they are
+void CardController::tameLabels()
+{
+    if (m_handle) return;
+    for (QLabel* label : m_card->findChildren<QLabel*>())
+    {
+        if (label->textInteractionFlags() & ~Qt::LinksAccessibleByMouse) continue;
+        if (label->text().contains("<a ", Qt::CaseInsensitive)) continue;
+        label->setTextInteractionFlags(Qt::NoTextInteraction);
+    }
 }
 
 bool CardController::moved(const QWidget* card) { return card->property("userMoved").toBool(); }
@@ -171,6 +187,7 @@ bool CardController::eventFilter(QObject* obj, QEvent* e)
     if (obj == m_card && e->type() == QEvent::Show)
     {
         restore();
+        tameLabels();           // (the labels that were made after the card was)
         return false;
     }
     switch (e->type())
@@ -178,6 +195,12 @@ bool CardController::eventFilter(QObject* obj, QEvent* e)
         case QEvent::MouseMove:
         {
             auto me = static_cast<QMouseEvent*>(e);
+            if (m_mode && !(me->buttons() & Qt::LeftButton))
+            {
+                // (the button is not down: the release of this drag went elsewhere -- the card lets go, as if it had seen it)
+                finish();
+                return false;
+            }
             if (m_mode)
             {
                 if ((me->globalPos() - m_press).manhattanLength() >= 3) m_dragged = true;

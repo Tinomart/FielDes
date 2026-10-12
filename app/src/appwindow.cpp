@@ -1544,6 +1544,21 @@ void AppWindow::registerAutomation()
         send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
     });
     a->add("appreset", [this](const QString&) { onResetPicture(); });
+    // widgetglobal <objectName>: where a widget is on the screen (its top left corner and size, in the pixels Qt reports, and the device pixel ratio);
+    // widgetgeom <objectName>: where it is in its parent -- for a driver that moves the real mouse over a card
+    a->add("widgetglobal", [this](const QString& name) {
+        auto w = findChild<QWidget*>(name.trimmed());
+        if (!w) { std::cerr << "automation: no widget " << name.toStdString() << "\n"; return; }
+        const QPoint g = w->mapToGlobal(QPoint(0, 0));
+        std::cerr << "automation: widgetglobal " << name.trimmed().toStdString() << " visible=" << w->isVisible() << " at " << g.x() << "," << g.y()
+                  << " size " << w->width() << "x" << w->height() << " dpr " << w->devicePixelRatioF() << "\n";
+    });
+    a->add("widgetgeom", [this](const QString& name) {
+        auto w = findChild<QWidget*>(name.trimmed());
+        if (!w) { std::cerr << "automation: no widget " << name.toStdString() << "\n"; return; }
+        std::cerr << "automation: " << name.trimmed().toStdString() << " visible=" << w->isVisible() << " at " << w->x() << "," << w->y()
+                  << " size " << w->width() << "x" << w->height() << "\n";
+    });
     a->add("apprightclick", [this, send](const QString& args) {
         const auto p = args.split(' ', Qt::SkipEmptyParts);
         if (p.size() < 2 || !m_view) return;
