@@ -458,6 +458,11 @@ protected:
     bool m_faceActive = false;
     QVector3D m_faceNormal, m_faceStart;
     QPoint m_facePressPos;
+    /*  A press on the dot of a point that has its numbers (its gizmo) begins its drag at once, with no selection and no gizmo needed.  Until the mouse has moved a few pixels
+        it is still a click, which selects the point  */
+    int m_dotPressLine = -1;
+    bool m_dotMoved = false;
+    QPoint m_dotPressPos;
     struct FaceVar { libfive::Tree::Id id; int axis; float value0; };
     QList<FaceVar> m_faceVars;
     void beginPull(QPoint pos);
@@ -489,8 +494,12 @@ protected:
      *  editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
     /*  The "New ..." entries of the menus of empty space and of a model: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
-    void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, double scale, int atLine);
+    void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine);
     QVector3D placementExact(QPoint pos) const;
+    /*  Where a 2D shape that is written with an x and a y only (it lies in the plane z = 0) is made by a click: where the ray under the cursor meets that plane, whichever way the view
+        looks (on the work plane, while its view is open)  */
+    QVector3D placementFlat(QPoint pos, double& scale) const;
+    bool flatPrimitive(const QString& name) const;
     /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
      *  their own menu: `simulations` says which of the two is listed (the boundary conditions and the analyses are in it)  */
     void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);

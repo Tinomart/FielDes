@@ -1751,6 +1751,16 @@ void View::mouseMoveEvent(QMouseEvent* event)
     }
     if (gizmo_drag)
     {
+        // (the dot of a point that was pressed: a click until the mouse has moved a few pixels -- nothing moves for it)
+        if (m_dotPressLine >= 0 && !m_dotMoved)
+        {
+            if ((event->pos() - m_dotPressPos).manhattanLength() < 4)
+            {
+                mouse.pos = event->pos();
+                return;
+            }
+            m_dotMoved = true;
+        }
         dragGizmo(event->pos());
         mouse.pos = event->pos();
         return;
@@ -2050,11 +2060,29 @@ void View::mousePressEvent(QMouseEvent* event)
             // The dot of a point: it is not in the pick buffer (nothing of it is painted), and it wins over what is behind it
             if (Shape* dot = pointDotAt(event->pos()))
             {
-                // A point of a sketch is moved by pressing its dot and dragging, in the plane of the sketch: the press selects it (which gives it the numbers
-                // it is moved by) and the drag begins as soon as they are there, if the button is still down
-                QVector3D facePlane;
-                if (!(event->modifiers() & Qt::ControlModifier) && dot->sourceLine() >= 0 && !dot->isLocked() && !dot->hasGizmo() &&
-                    planarRingNormal(dot, facePlane))
+                // A point is moved by pressing its dot and dragging -- a point of a sketch in the plane of the sketch, any other in the plane that faces the camera -- whether it is
+                // selected or not and whatever gizmo is shown.  One that has its numbers already is moved at once (a click that does not move selects it); one that has none
+                // is selected (which gives it the numbers it is moved by) and the drag begins as soon as they are there, if the button is still down.  Several selected points
+                // are moved by the dot of their group
+                int selectedCount = 0;
+                for (const Shape* s : shapes)
+                    if (s->isSelected()) ++selectedCount;
+                const bool direct = !(event->modifiers() & Qt::ControlModifier) && dot->sourceLine() >= 0 && !dot->isLocked() && !(dot->isSelected() && selectedCount > 1);
+                // (a point has its numbers when its script has the gizmo's move numbers for it: whether it is selected -- which shows the gizmo -- does not matter)
+                const bool numbers = dot->hasMoveVars();
+                if (direct && numbers)
+                {
+                    press_pos = QPoint(-100000, -100000);   // (a click is made at the release)
+                    press_target = nullptr;
+                    drag_target = nullptr;
+                    m_dotPressLine = dot->sourceLine();
+                    m_dotPressPos = event->pos();
+                    m_dotMoved = false;
+                    beginGizmoDrag(GizmoGrip{dot, 3, 0}, event->pos());
+                    if (gizmo_drag) return;
+                    m_dotPressLine = -1;
+                }
+                if (direct && !numbers)
                 {
                     m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true};
                     m_waitTimer.start();
@@ -2310,12 +2338,17 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     if (gizmo_drag)
     {
         gizmo_drag = false;
+        // (the press on the dot of a point that did not move was a click: it selects the point)
+        const int dotClickLine = (m_dotPressLine >= 0 && !m_dotMoved) ? m_dotPressLine : -1;
+        m_dotPressLine = -1;
+        m_dotMoved = false;
         // (the shapes that were only drawn moved while it was dragged are made again at the numbers they have now: the one real render of the drag)
         for (Shape* s : shapes) s->endGizmoPreview();
         gizmo_hover = gizmoAt(event->pos());
         setCursor(gizmo_hover.kind >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         redrawPicker();
         emit(dragEnd());
+        if (dotClickLine >= 0) emit(shapeClicked(dotClickLine));
         m_overlay->update();
         return;
     }
@@ -2774,7 +2807,51 @@ void View::createAt(const QString& name, QPoint pos)
     double scale = 10;
     placementAt(pos, point, scale);
     if (name == "point") point = placementExact(pos);          // (as the menu does: a point is exactly under the cursor)
+    else if (flatPrimitive(name)) point = placementFlat(pos, scale);          // (and a 2D shape where the ray meets its plane)
     emit(createRequested("primitive", name, point, scale, -1, -1));
+}
+
+bool View::flatPrimitive(const QString& name) const
+{
+    for (const auto v : m_catalog["primitives"].toArray())
+    {
+        const auto p = v.toObject();
+        if (p["name"].toString() == name) return p["flat"].toBool();
+    }
+    return false;
+}
+
+QVector3D View::placementFlat(QPoint pos, double& scale) const
+{
+    QVector3D point;
+    // (the work plane, while its view is open: the shape goes where the plane's grid says, as everything made there does)
+    if (!(m_wp.open && m_wp.exists))
+    {
+        const QVector3D a = toModelPos(pos, -1.0f), b = toModelPos(pos, 1.0f);
+        const QVector3D d = b - a;
+        // (a view that looks along the plane z = 0 has no place on it under the cursor: the plane that faces the viewer is used then)
+        if (std::fabs(d.z()) > 1e-4f * d.length())
+        {
+            const float t = -a.z() / d.z();
+            if (t > 0)
+            {
+                point = a + t * d;
+                point.setZ(0.0f);
+                scale = scaleAt(pos, point);
+                // (nothing outside the render region is drawn: a shape whose place is outside it goes to the nearest place that is inside, so that it is seen)
+                const QVector3D lo = settings.min, hi = settings.max;
+                auto inside = [&](float v, float lo1, float hi1) {
+                    const float m = float(std::min(0.5 * scale, 0.5 * double(hi1 - lo1)));
+                    return std::max(lo1 + m, std::min(hi1 - m, v));
+                };
+                if (hi.x() > lo.x() && hi.y() > lo.y())
+                    point = QVector3D(inside(point.x(), lo.x(), hi.x()), inside(point.y(), lo.y(), hi.y()), 0.0f);
+                return point;
+            }
+        }
+    }
+    placementAt(pos, point, scale);
+    return point;
 }
 
 void View::updateWorkPlaneCursor(QPoint pos)
@@ -3449,7 +3526,9 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
         addBodyFromField(menu, -1, point, scale);
         menu->addSeparator();
     }
-    addCreateEntries(menu, point, placementExact(pos), scale, atLine);
+    double flatScale = scale;
+    const QVector3D flat = placementFlat(pos, flatScale);
+    addCreateEntries(menu, point, placementExact(pos), flat, scale, flatScale, atLine);
     menu->addSeparator();
     {
         auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
@@ -3483,7 +3562,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
 // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces, fields, and the custom blocks that need no model.
 // (A kind with one entry is that entry.)  What a simulation is made of -- materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu,
 // not here.  `point` is where a shape is made, inside what is drawn; a POINT is made exactly at `exact`, where the cursor is -- a dot is drawn wherever it is
-void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, double scale, int atLine)
+void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine)
 {
     const QJsonArray list = m_catalog["primitives"].toArray();
     if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
@@ -3507,9 +3586,12 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
             const QString type = entries.first()["type"].toString("solid");
             auto make = [&](QMenu* into, const QJsonObject& p) {
                 const QString name = p["name"].toString();
-                const QVector3D at = p["group"].toString() == "Points" ? exact : point;
+                // (a point is exactly under the cursor; a 2D shape that is written with an x and a y only is where the ray under the cursor meets its plane, z = 0)
+                const bool isFlat = p["flat"].toBool();
+                const QVector3D at = p["group"].toString() == "Points" ? exact : isFlat ? flat : point;
+                const double size = isFlat ? flatScale : scale;
                 auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
-                                              this, [=]{ emit(createRequested("primitive", name, at, scale, atLine, -1)); });
+                                              this, [=]{ emit(createRequested("primitive", name, at, size, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
                 return action;
             };
@@ -3565,7 +3647,7 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         // What can be made is offered on a model too, at the place that was clicked on its surface (a point exactly there): somewhere to put a point is not only
         // empty space, and a model can be all there is under the cursor
         menu->addSeparator();
-        addCreateEntries(menu, point, point, scale, -1);
+        addCreateEntries(menu, point, point, point, scale, scale, -1);
         menu->addSeparator();
     }
     {

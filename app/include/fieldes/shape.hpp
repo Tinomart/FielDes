@@ -174,6 +174,12 @@ public:
      */
     void setSweep(std::vector<ControlPoint> profile, bool profileDefault, std::vector<ControlPoint> path, bool pathDefault, bool closed, libfive::Tree twist,
                   bool placed, const double about[3], const libfive::Tree move[3], const libfive::Tree rotate[3], const libfive::Tree scale[3]);
+    /*  The profile of the sweep is the outline of a primitive (a circle, a rectangle, ...) rather than a sketch: its corners are in the plane z = 0, its axes x and y (no plane is
+     *  worked out of them).  In every other way it is a sketch to the sweep: the sweep starts at it  */
+    void setSweepFree(bool free) { m_sweep_free = free; }
+    /*  Numbers of the script that must still be what they were for the sweep to be drawn from its outline (a gizmo's turn about x or y of the profile, its move along z: a profile
+     *  that leaves the plane z = 0 is not the outline): (a var, its value)  */
+    void setSweepGuard(std::vector<std::pair<libfive::Tree::Id, float>> guard) { m_sweep_guard = std::move(guard); }
     bool hasSweep() const { return !m_sweep_path.empty() && !m_sweep_profile.empty(); }
     /*  The one number (var) an expression of the script's numbers is made of, or null when it has none or several: what moves a point along an axis  */
     static libfive::Tree::Id soleVarOf(const libfive::Tree& expression);
@@ -724,7 +730,8 @@ protected:
                                  const Shape* owner);
     struct SweepNumbers;
     std::vector<ControlPoint> m_sweep_profile, m_sweep_path;
-    bool m_sweep_profile_default = false, m_sweep_path_default = false, m_sweep_closed = false, m_sweep_placed = false;
+    bool m_sweep_profile_default = false, m_sweep_path_default = false, m_sweep_closed = false, m_sweep_placed = false, m_sweep_free = false;
+    std::vector<std::pair<libfive::Tree::Id, float>> m_sweep_guard;
     libfive::Tree m_sweep_twist = libfive::Tree::invalid();
     double m_sweep_about[3] = {0, 0, 0};
     libfive::Tree m_sweep_move[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};

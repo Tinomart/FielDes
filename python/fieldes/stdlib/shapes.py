@@ -32,6 +32,18 @@ def _bounded(shape, lo, hi):
     return shape
 
 
+def _ringed(shape, make):
+    ''' `shape`, told how its outline is drawn from numbers: `make()` gives the corners of the outline as (x, y) pairs -- numbers, or expressions of var()s -- round the origin of the
+        plane the shape lies in, or None when the numbers it has now are not a shape that an outline can be made of.  `path_extrude` draws a sweep of such a shape natively, from the
+        numbers of its path, the way it draws the sweep of a sketch, so that a point of the path is followed at once while it is dragged (a curved outline is many short sides) '''
+    shape._ring_points = make
+    return shape
+
+
+_RING_STEPS = 72            # (the sides of the outline of a circle: 0.1 % of its radius from the circle)
+_RING_ARC = 12              # (the sides of the outline of a quarter of a rounded corner)
+
+
 # ---------------------------------------------------------------------------------------------------------------------------------------- 2D
 
 stdlib.circle.argtypes = [tfloat, tvec2]
@@ -45,7 +57,19 @@ def circle(r, center=(0, 0)):
         tvec2(*[a.ptr for a in args[1]])))
     if _number(r) and len(center) == 2 and all(_number(c) for c in center):
         _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))
+    if len(center) == 2:
+        _ringed(out, lambda: _circle_points(args[0], args[1][0], args[1][1]))
+        # (what handles() makes the ring of when it puts var()s for the numbers of a circle -- its centre and its radius, in that order -- see handles.py)
+        out._ring_params = (3, lambda v: (lambda: _circle_points(v[2], v[0], v[1])), [center[0], center[1], r])
     return out
+
+
+def _circle_points(R, cx, cy):
+    ''' The outline of a circle of radius R round (cx, cy): `_RING_STEPS` corners, as numbers or expressions of them '''
+    if _plain(R) <= 0:
+        return None
+    R, cx, cy = Shape.wrap(R), Shape.wrap(cx), Shape.wrap(cy)
+    return [(cx + R * math.cos(2 * math.pi * k / _RING_STEPS), cy + R * math.sin(2 * math.pi * k / _RING_STEPS)) for k in range(_RING_STEPS)]
 
 stdlib.ring.argtypes = [tfloat, tfloat, tvec2]
 stdlib.ring.restype = libfive_tree
@@ -73,6 +97,15 @@ def polygon(r, n, center=(0, 0)):
         tvec2(*[a.ptr for a in args[2]])))
     if _number(r) and len(center) == 2 and all(_number(c) for c in center):
         _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))     # (the corners are within r of the centre: a box that holds it)
+    if len(center) == 2 and isinstance(n, int) and n >= 3:
+        def ring():
+            if _plain(r) <= 0:
+                return None
+            # (an odd polygon has a corner straight below the centre, an even one a side: the corners follow round from there)
+            R, cx, cy = args[0], args[2][0], args[2][1]
+            first = -math.pi / 2 + (math.pi / n if n % 2 == 0 else 0.0)
+            return [(cx + R * math.cos(first + 2 * math.pi * k / n), cy + R * math.sin(first + 2 * math.pi * k / n)) for k in range(n)]
+        _ringed(out, ring)
     return out
 
 def _own(field):
@@ -124,6 +157,8 @@ def rectangle(a, b):
     out = _own(_rect_distance(a[0], a[1], b[0], b[1]))
     if len(a) == 2 and len(b) == 2:
         _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+        A0, A1, B0, B1 = (Shape.wrap(v) for v in (a[0], a[1], b[0], b[1]))
+        _ringed(out, lambda: [(A0, A1), (B0, A1), (B0, B1), (A0, B1)] if _plain(a[0]) != _plain(b[0]) and _plain(a[1]) != _plain(b[1]) else None)
     return _parametric(out, [a[0], a[1], b[0], b[1]], lambda v: rectangle((v[0], v[1]), (v[2], v[3])),
                        lambda v: ((v[0] + v[2]) * 0.5, (v[1] + v[3]) * 0.5, 0.0))
 
@@ -135,6 +170,22 @@ def rounded_rectangle(a, b, r):
     out = _own(_rect_distance(a[0], a[1], b[0], b[1], r))
     if len(a) == 2 and len(b) == 2:
         _bounded(out, (a[0], a[1], 0), (b[0], b[1], 0))
+
+        def ring():
+            wide, high, rv = abs(_plain(b[0]) - _plain(a[0])), abs(_plain(b[1]) - _plain(a[1])), _plain(r)
+            if wide < 1e-9 or high < 1e-9 or rv < 0 or 2 * rv > min(wide, high) + 1e-9:
+                return None            # (a radius that does not fit the sides is not a corner: the field says what it is)
+            A0, A1, B0, B1, R = (Shape.wrap(v) for v in (a[0], a[1], b[0], b[1], r))
+            if rv < 1e-9:
+                return [(A0, A1), (B0, A1), (B0, B1), (A0, B1)]
+            points = []
+            # (the corners one after the other, each from the side it comes in by to the side it goes out by)
+            for (cx, cy), start in (((B0 - R, A1 + R), -90.0), ((B0 - R, B1 - R), 0.0), ((A0 + R, B1 - R), 90.0), ((A0 + R, A1 + R), 180.0)):
+                for k in range(_RING_ARC + 1):
+                    t = math.radians(start + 90.0 * k / _RING_ARC)
+                    points.append((cx + R * math.cos(t), cy + R * math.sin(t)))
+            return points
+        _ringed(out, ring)
     return _parametric(out, [a[0], a[1], b[0], b[1], r], lambda v: rounded_rectangle((v[0], v[1]), (v[2], v[3]), v[4]),
                        lambda v: ((v[0] + v[2]) * 0.5, (v[1] + v[3]) * 0.5, 0.0))
 
@@ -151,17 +202,23 @@ def _triangle_planes(normals, offsets):
     return out
 
 
-def _triangle_centre(normals, offsets):
-    ''' The middle of the box of the triangle as an expression of the three offsets: its corners are where two sides meet (the normals are numbers, so each corner is a
-        linear combination of two offsets) '''
-    xs, ys = [], []
+def _triangle_corners(normals, offsets):
+    ''' The three corners of the triangle as expressions of the three offsets: a corner is where two sides meet (the normals are numbers, so each corner is a linear
+        combination of two offsets) '''
+    corners = []
     for i in range(3):
         (ax, ay), (bx, by) = normals[i - 1], normals[i]
         det = ax * by - ay * bx
         # the corner between side i-1 and side i: n_{i-1} . p = c_{i-1}, n_i . p = c_i
         c0, c1 = Shape.wrap(offsets[i - 1]), Shape.wrap(offsets[i])
-        xs.append((c0 * by - c1 * ay) * (1.0 / det))
-        ys.append((c1 * ax - c0 * bx) * (1.0 / det))
+        corners.append(((c0 * by - c1 * ay) * (1.0 / det), (c1 * ax - c0 * bx) * (1.0 / det)))
+    return corners
+
+
+def _triangle_centre(normals, offsets):
+    ''' The middle of the box of the triangle as an expression of the three offsets '''
+    corners = _triangle_corners(normals, offsets)
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
     lo_x, hi_x = xs[0].min(xs[1]).min(xs[2]), xs[0].max(xs[1]).max(xs[2])
     lo_y, hi_y = ys[0].min(ys[1]).min(ys[2]), ys[0].max(ys[1]).max(ys[2])
     return ((lo_x + hi_x) * 0.5, (lo_y + hi_y) * 0.5, 0.0)
@@ -188,6 +245,7 @@ def triangle(a, b, c):
             if len(normals) == 3:
                 out = _own(_triangle_planes(normals, offsets))
                 _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
+                _ringed(out, lambda: _triangle_corners(normals, offsets))
                 return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), list([Shape.wrap(i) for i in c])]
     out = Shape(stdlib.triangle(
@@ -196,11 +254,14 @@ def triangle(a, b, c):
         tvec2(*[a.ptr for a in args[2]])))
     if all(len(p) == 2 and all(_number(v) for v in p) for p in (a, b, c)):
         _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
+    if all(len(p) == 2 for p in (a, b, c)):
+        _ringed(out, lambda: [(args[0][0], args[0][1]), (args[1][0], args[1][1]), (args[2][0], args[2][1])])
     return out
 
 
 def _rebuilt_triangle(normals, offsets):
     out = _own(_triangle_planes(normals, offsets))
+    _ringed(out, lambda: _triangle_corners(normals, offsets))
     return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
 
 # ---------------------------------------------------------------------------------------------------------------------------------------- 3D

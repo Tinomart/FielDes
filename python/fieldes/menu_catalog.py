@@ -399,8 +399,10 @@ def catalog():
         'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION,
                              'from_selection': n in FROM_SELECTION},
                             **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
-                            **({'doc': FROM_SELECTION[n]} if n in FROM_SELECTION else {}))
-                       for n, g, _ in PRIMITIVES]
+                            **({'doc': FROM_SELECTION[n]} if n in FROM_SELECTION else {}),
+                            # (a 2D shape that is written with an x and a y only lies in the plane z = 0: the place it is made at is where the ray under the cursor meets that plane)
+                            **({'flat': True} if g == '2D' and '{z}' not in t else {}))
+                       for n, g, t in PRIMITIVES]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)

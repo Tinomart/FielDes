@@ -134,6 +134,43 @@ def _placed_box(box, centre, move, rotate, scale):
     return tuple(tuple(v[i] + m[i] for i in range(3)) for v in (lo, hi))
 
 
+def _placed_ring_guard(rotate, move):
+    ''' What must stay as it is for a shape that a gizmo has placed to still lie in the plane z = 0 -- a turn about x or y, a move along z are 0 -- for the viewport to draw a
+        sweep of it from its outline: None when one of them is not 0 now (a plain number, or a var()), else the var()s that are, with the 0 they must stay (while one is
+        dragged the sweep is drawn from its field) '''
+    from fieldes.stdlib.curves import value_of
+    guard = []
+    for v in (rotate[0], rotate[1], move[2]):
+        if isinstance(v, Shape):
+            if abs(value_of(v)) > 1e-12:
+                return None
+            guard.append((v, 0.0))
+        elif abs(float(v)) > 1e-12:
+            return None
+    return guard
+
+
+def _placed_ring(points, about, move, rotate, scale):
+    ''' The outline `points` of a 2D shape, as the gizmo places it: scaled in x and y about `about`, turned about z, moved in x and y (numbers, or expressions of the gizmo's
+        var()s: the outline follows them) '''
+    if points is None:
+        return None
+    cx, cy = Shape.wrap(about[0]), Shape.wrap(about[1])
+    sx, sy = Shape.wrap(scale[0]), Shape.wrap(scale[1])
+    mx, my = Shape.wrap(move[0]), Shape.wrap(move[1])
+    turn = not (_is_number(rotate[2]) and rotate[2] == 0)
+    if turn:
+        theta = Shape.wrap(rotate[2]) * (math.pi / 180.0)
+        cs, sn = theta.cos(), theta.sin()
+    out = []
+    for x, y in points:
+        px, py = (Shape.wrap(x) - cx) * sx, (Shape.wrap(y) - cy) * sy
+        if turn:
+            px, py = px * cs - py * sn, px * sn + py * cs
+        out.append((cx + px + mx, cy + py + my))
+    return out
+
+
 def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
@@ -202,11 +239,20 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             out._point_pos = _position_of(out.xyz)       # (where its dot is drawn when the gizmo is not there)
         except Exception:
             pass
+    # (the outline of a primitive goes on to what places it: the outline of the placed shape, made of the numbers of the gizmo -- for as long as the shape stays in the plane z = 0)
+    make = getattr(shape, '_ring_points', None)
+    if make is not None and not getattr(shape, '_linked', False):
+        guard = _placed_ring_guard(rotate, move)
+        if guard is not None:
+            out._ring_points = lambda: _placed_ring(make(), about_what, move, rotate, scale)
+            out._ring_guard = list(getattr(shape, '_ring_guard', [])) + guard
     # (a sweep drawn natively from its points is placed natively too: the viewport places it by the numbers of the gizmo, about the point `c`)
     if getattr(shape, '_sweep_ppos', None) is not None and getattr(shape, '_sweep_place', None) is None:
         for name in ('_sweep_ppos', '_sweep_prot', '_sweep_pflag', '_sweep_pscale', '_sweep_pdefault', '_sweep_qpos', '_sweep_qrot', '_sweep_qflag', '_sweep_qscale',
                      '_sweep_qdefault', '_sweep_qclosed', '_sweep_twist'):
             setattr(out, name, getattr(shape, name))
+        out._sweep_free = getattr(shape, '_sweep_free', False)          # (the sweep of a primitive: its outline is in the plane z = 0)
+        out._sweep_guard = list(getattr(shape, '_sweep_guard', []))
         out._sweep_place = (tuple(float(x) for x in c), tuple(Shape.wrap(x) for x in move), tuple(Shape.wrap(x) for x in rotate), tuple(Shape.wrap(x) for x in scale))
     # (a prism stays one while the gizmo places it nowhere: its numbers are what they are made with)
     if getattr(shape, '_prism_pos', None) is not None:
@@ -439,6 +485,15 @@ def handles(shape, values=None, **removed):
             raise ValueError('handles(): the shape could not be rebuilt with those numbers')
         out = Shape(p)
     _carry(out, shape)
+    # (a circle: the outline is made of the numbers it has now -- its centre and its radius, in that order, as var()s too)
+    spec = getattr(shape, '_ring_params', None)
+    if spec is not None and rebuild is None and len(wrapped) == spec[0]:
+        try:
+            from fieldes.stdlib.curves import value_of
+            if all(abs(float(a) - value_of(b)) < 1e-9 for a, b in zip(handle_values(shape), spec[2])):
+                out._ring_points = spec[1](wrapped)
+        except Exception:
+            pass
     # (what the shape was before its numbers were edited: the pivot of a gizmo that turns or scales it is the middle of this one's box)
     out._pivot_shape = getattr(shape, '_pivot_shape', None) or shape
     # an offset, a shell or a thickening of it (fields._dist) uses the exact distance of the part

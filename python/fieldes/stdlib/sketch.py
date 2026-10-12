@@ -220,7 +220,7 @@ def extrude(shape, a, b):
     return out
 
 
-def _profile_at(profile, a, b, size=None):
+def _profile_at(profile, a, b, size=None, centre=None):
     ''' The 2D shape as a field of two coordinates a and b (fields): where its own plane's origin is the point of the path and a, b run along its own two axes
         -- x and y for a shape in the plane z = 0, u and v for a sketch.  `size` (a field, or None): how many times as big it is there -- the shape
         is looked at from 1 / size as far, and the distance it says is made as many times as long, so that it is still a distance '''
@@ -229,7 +229,8 @@ def _profile_at(profile, a, b, size=None):
     base = inner if inner is not None else profile
     # A sketch is carried by the MIDDLE of its outline (the box of it), so that the path runs through the middle of what is swept, not along its first point; the
     # thickness of a point scales the profile about that middle too
-    cx, cy = getattr(profile, '_centre2d', (0.0, 0.0))
+    # (`centre`: the middle of the box of a shape in the plane z = 0 that is not a sketch -- see path_extrude)
+    cx, cy = centre if centre is not None else getattr(profile, '_centre2d', (0.0, 0.0))
     if size is None:
         return base.remap(a + cx if cx else a, b + cy if cy else b, Shape.wrap(0))
     return base.remap(a / size + cx if cx else a / size, b / size + cy if cy else b / size, Shape.wrap(0)) * size
@@ -253,13 +254,13 @@ def _turned(v, t, cs, sn):
 
 
 def path_extrude(profile, path, twist=0):
-    ''' A 2D shape swept along a curve: the `profile` -- its origin on the curve (for a sketch, the middle of its outline), its own axes across it (x and y for a shape in
-        the plane z = 0, the two axes of the plane of a sketch) -- carried along `path`, turning with it, without twisting about it unless the points of the curve say so.
-        A SKETCH is where the sweep starts: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
-        the sketch, and its first ring is the sketch itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted when it is oblique; a sketch whose
-        plane holds the direction of the curve is turned across it), so that the sketch you edit is the base of what it is swept into.  The path is DRAWN where the sweep goes --
-        through the middle of its cross-section, from the middle of the sketch, its points with it -- whatever its own numbers say; only its shape matters, and the first point of it
-        is the middle of the sketch:
+    ''' A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a sketch) -- carried
+        along `path`, turning with it, without twisting about it unless the points of the curve say so.
+        THE 2D SHAPE IS WHERE THE SWEEP STARTS: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
+        the shape (the middle of the box of its outline), and its first ring is the shape itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted
+        when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into.  A circle
+        or a rectangle is such a shape as a sketch is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
+        points with it -- whatever its own numbers say; only its shape matters, and the first point of it is the middle of the shape:
         the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
         smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
         with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
@@ -284,13 +285,48 @@ def path_extrude(profile, path, twist=0):
         V = [V[j] for j in keep]
         owners = [owners[j] for j in keep]
         n = len(V)
-    # A sketch is where the sweep STARTS (the path says how it travels): the sweep is moved so that the first point of the path is the middle of the sketch -- the middle of the
-    # box of its outline -- and (below) its first ring is the sketch, so that the sketch being edited is the base of what it is swept into
+    # The 2D shape is where the sweep STARTS (the path says how it travels): the sweep is moved so that the first point of the path is the middle of the shape -- the middle of
+    # the box of its outline -- and (below) its first ring is the shape, so that the shape being edited is the base of what it is swept into.  A sketch has its own plane; a
+    # shape in the plane z = 0 (a circle, a rectangle, whatever a gizmo or handles() has made of one) has the plane z = 0, its axes x and y
     base_plane = None
+    centre2d = (0.0, 0.0)
+    ring = None                 # (the outline in numbers, from the middle of the box of it: the box of the sweep, and what the viewport draws a sweep of points from)
+    primitive_ring = None       # (the same, as expressions of the numbers of a primitive: what the viewport draws a sweep of a primitive from)
+    box_ring = None             # (the four corners of the box of a shape that has no outline to give, from the middle of it)
     if isinstance(profile, (Sketch, SurfaceSketch)) and getattr(profile, 'plane', None) is not None:
         base_plane = profile.plane
+        centre2d = getattr(profile, '_centre2d', (0.0, 0.0))
+    elif not isinstance(profile, (Sketch, SurfaceSketch)):
+        outline = None
+        make = getattr(profile, '_ring_points', None) if getattr(path, '_ctrl_pos', None) else None
+        if make is not None:
+            try:
+                points = make()
+                if points:
+                    expressions = [(Shape.wrap(x), Shape.wrap(y)) for x, y in points]
+                    numbers = [(C.value_of(x), C.value_of(y)) for x, y in expressions]
+                    if all(math.isfinite(v) for xy in numbers for v in xy):
+                        primitive_ring, outline = expressions, numbers
+            except Exception:
+                primitive_ring = outline = None
+        if outline is None:
+            try:
+                (bx0, by0, bz0), (bx1, by1, bz1) = profile._bounds
+                if all(math.isfinite(v) for v in (bx0, by0, bz0, bx1, by1, bz1)) and abs(bz0) < 1e-9 and abs(bz1) < 1e-9:
+                    outline = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
+            except Exception:
+                outline = None
+        if outline:
+            centre2d = (0.5 * (min(x for x, y in outline) + max(x for x, y in outline)), 0.5 * (min(y for x, y in outline) + max(y for x, y in outline)))
+            base_plane = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+            relative = [(x - centre2d[0], y - centre2d[1]) for x, y in outline]
+            if primitive_ring is not None:
+                ring = relative
+            else:
+                box_ring = relative
+    if base_plane is not None:
         bo, bu, bv = base_plane
-        bx, by = getattr(profile, '_centre2d', (0.0, 0.0))
+        bx, by = centre2d
         middle = tuple(bo[k] + bx * bu[k] + by * bv[k] for k in range(3))
         shift = C.sub(middle, V[0])
         # The path is drawn where the sweep goes (see Curve._display and points.displayed): moved by the same amount, with its points, so that it runs through the middle of the
@@ -383,11 +419,22 @@ def path_extrude(profile, path, twist=0):
         return max(s0 * (1 - t) + s1 * t, 1e-3)
 
     # The profile as the rings of the sweep have it: the outline of a sketch, from the middle of it (the extent of the rings is the box of the sweep)
-    ring = None
     if isinstance(profile, Sketch) and getattr(profile, '_ctrl_pos', None) and getattr(path, '_ctrl_pos', None) and getattr(profile, 'plane', None) is not None:
         po, pu, pv = profile.plane
-        cx, cy = getattr(profile, '_centre2d', (0.0, 0.0))
+        cx, cy = centre2d
         ring = [(C.dot(C.sub(p, po), pu) - cx, C.dot(C.sub(p, po), pv) - cy) for p in profile.vertices]
+    # The box of the sweep.  A profile that is not drawn from numbers (an offset of a circle, a sketch of a path that is not made of points ...) is meshed from its field, and the
+    # field of a sweep has no box that can be found in the time there is: the box the profile was told (its `_bounds`) carried along the path is one that holds the sweep, so
+    # that the render region grows to hold it -- the region of the scene is not a place the sweep is cut off at
+    if box_ring is None:
+        box_ring = ring
+    if box_ring is None:
+        try:
+            (bx0, by0, _bz0), (bx1, by1, _bz1) = profile._bounds
+            if all(math.isfinite(v) for v in (bx0, by0, bx1, by1)):
+                box_ring = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)]
+        except Exception:
+            box_ring = None
     lo = [1e300] * 3
     hi = [-1e300] * 3
     best = None
@@ -403,9 +450,9 @@ def path_extrude(profile, path, twist=0):
         a = _linear(ra, -C.dot(ra, V[k]))
         b = _linear(rb, -C.dot(rb, V[k]))
         s0, s1 = size_at(k), size_at(j)
-        if ring:
+        if box_ring:
             for end, sz in ((k, s0), (j, s1)):
-                for px, py in ring:
+                for px, py in box_ring:
                     for axis in range(3):
                         x = V[end][axis] + sz * (px * nk[axis] + py * bk[axis])
                         lo[axis] = min(lo[axis], x)
@@ -416,7 +463,7 @@ def path_extrude(profile, path, twist=0):
             span = math.sqrt(C.dot(C.sub(V[j], V[k]), C.sub(V[j], V[k]))) + 1e-300
             slope = (s1 - s0) / span
             size = _linear(C.mul(T[k], slope), s0 - C.dot(T[k], V[k]) * slope).max(1e-3)
-        f = _profile_at(profile, a, b, size)
+        f = _profile_at(profile, a, b, size, centre2d)
         # the piece ends at the planes that bisect the corners (square at the ends of an open path), a hair past them, so that two pieces overlap there and
         # the joint is inside, not a plane where the field is zero
         mk, mj = tangent_at(k), tangent_at(j)
@@ -433,17 +480,31 @@ def path_extrude(profile, path, twist=0):
         body = f.max(start).max(stop)
         best = body if best is None else best.min(body)
     out = Shape(lib.libfive_tree_copy(best.ptr))
-    if ring:
-        # A sweep of a sketch is drawn natively from the numbers of the points of the sketch and of the path (as a straight extrusion is: see `extrude`), so it
-        # follows a point while the point is dragged and nothing is meshed.  Its field (above) is for what is made *of* it -- and it is not searched for or counted
-        # for handles: it is a field of thousands of terms.  Its box is that of the rings
+    if box_ring:
+        # (the box of the rings: one that holds the sweep, not its exact extent)
         pad = 0.02 * max(hi[a] - lo[a] for a in range(3)) + 1e-3
         out._bounds = (tuple(lo[a] - pad for a in range(3)), tuple(hi[a] + pad for a in range(3)))
         out._bounds_loose = True
+    if ring:
+        # A sweep of a sketch is drawn natively from the numbers of the points of the sketch and of the path (as a straight extrusion is: see `extrude`), so it
+        # follows a point while the point is dragged and nothing is meshed.  Its field (above) is for what is made *of* it -- and it is not searched for or counted
+        # for handles: it is a field of thousands of terms
         out._kind = 'solid'
         out._no_handles = True
-        out._sweep_ppos, out._sweep_prot = profile._ctrl_pos, profile._ctrl_rot
-        out._sweep_pflag, out._sweep_pscale, out._sweep_pdefault = profile._ctrl_flag, profile._ctrl_scale, profile._ctrl_default
+        if primitive_ring is not None:
+            # (the outline of a primitive: corners in the plane z = 0, its axes x and y -- the sweep starts at it, as at a sketch)
+            zero = Shape.wrap(0.0)
+            out._sweep_ppos = [(x, y, zero) for x, y in primitive_ring]
+            out._sweep_prot = [None] * len(primitive_ring)
+            out._sweep_pflag = [0] * len(primitive_ring)
+            out._sweep_pscale = [None] * len(primitive_ring)
+            out._sweep_pdefault = False
+            out._sweep_free = True
+            # (numbers that must stay what they are for the outline to be the shape's: a gizmo's turn about x or y, its move along z -- see handles.gizmo)
+            out._sweep_guard = list(getattr(profile, '_ring_guard', []))
+        else:
+            out._sweep_ppos, out._sweep_prot = profile._ctrl_pos, profile._ctrl_rot
+            out._sweep_pflag, out._sweep_pscale, out._sweep_pdefault = profile._ctrl_flag, profile._ctrl_scale, profile._ctrl_default
         out._sweep_qpos, out._sweep_qrot = path._ctrl_pos, path._ctrl_rot
         out._sweep_qflag, out._sweep_qscale, out._sweep_qdefault = path._ctrl_flag, path._ctrl_scale, path._ctrl_default
         out._sweep_qclosed = bool(path.closed)

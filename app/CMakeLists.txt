@@ -92,6 +92,13 @@ else()
     add_executable(FielDes ${SRCS} ${QOBJECTS})
 endif()
 
+# Where FielDes.exe is built: set FIELDES_OUTPUT_DIR to the folder the program is run from (dist/FielDes) and it is built straight into it -- the libraries are put beside it by the
+# steps below -- so that there is no copy of the build to make.  Empty: in the build tree, as ever.  (A running FielDes.exe cannot be replaced: close it before the link step.)
+set(FIELDES_OUTPUT_DIR "" CACHE PATH "Where FielDes.exe is built (empty: in the build tree)")
+if(FIELDES_OUTPUT_DIR)
+    set_target_properties(FielDes PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE "${FIELDES_OUTPUT_DIR}")
+endif()
+
 target_include_directories(FielDes PUBLIC include)
 if(MSVC)
     # a map of where the functions are: a crash report names places as module + offset, read with it

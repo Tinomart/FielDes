@@ -1639,9 +1639,28 @@ void Interpreter::recordShape(
                         }
                     }
                 }
+                // (numbers that must stay what they are for the sweep to be drawn from its outline: a var() and its value -- a guard that cannot be read is no sweep drawn from numbers)
+                PyObject* sg = PyObject_GetAttrString(obj, "_sweep_guard");
+                std::vector<std::pair<libfive::Tree::Id, float>> sweepGuard;
+                for (Py_ssize_t i = 0; sg && PyList_Check(sg) && i < PyList_Size(sg) && good; ++i)
+                {
+                    PyObject* item = PyList_GetItem(sg, i);
+                    if (!PyTuple_Check(item) || PyTuple_Size(item) != 2) { good = false; break; }
+                    const libfive::Tree::Id id = Shape::soleVarOf(treeOfShape(PyTuple_GetItem(item, 0)));
+                    if (!id) { good = false; break; }
+                    sweepGuard.push_back({id, float(PyFloat_AsDouble(PyTuple_GetItem(item, 1)))});
+                }
+                Py_XDECREF(sg);
                 if (good && twist.is_valid())
+                {
                     shape->setSweep(std::move(profile), pd && PyObject_IsTrue(pd) == 1, std::move(path), qd && PyObject_IsTrue(qd) == 1, qc && PyObject_IsTrue(qc) == 1, twist,
                                     placed, about, move, rotate, scale);
+                    // (the sweep of a primitive: its outline is in the plane z = 0, its axes x and y)
+                    PyObject* fr = PyObject_GetAttrString(obj, "_sweep_free");
+                    shape->setSweepFree(fr && PyObject_IsTrue(fr) == 1);
+                    Py_XDECREF(fr);
+                    shape->setSweepGuard(std::move(sweepGuard));
+                }
                 Py_XDECREF(pd);
                 Py_XDECREF(qd);
                 Py_XDECREF(qc);

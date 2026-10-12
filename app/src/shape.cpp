@@ -489,7 +489,7 @@ void Shape::setSweep(std::vector<ControlPoint> profile, bool profileDefault, std
 struct Shape::SweepNumbers
 {
     std::vector<libfive::pointshapes::Control> profile, path;
-    bool profileDefault = false, pathDefault = false, closed = false, placed = false;
+    bool profileDefault = false, pathDefault = false, closed = false, placed = false, free = false;
     double twist = 0;                                                       // (degrees)
     Eigen::Vector3d about = Eigen::Vector3d::Zero(), move = Eigen::Vector3d::Zero(), rotate = Eigen::Vector3d::Zero(), scale = Eigen::Vector3d::Ones();
 };
@@ -499,11 +499,17 @@ bool Shape::sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& 
     static const bool off = std::getenv("FIELDES_NO_NATIVE") != nullptr;          // (for comparing with the field: every sweep and prism is meshed from its field)
     if (off || !hasSweep() || !m_sweep_twist.is_valid()) return false;
     if (color_field.is_valid() || has_result || !m_channels.empty()) return false;
+    for (const auto& g : m_sweep_guard)
+    {
+        const auto it = v.find(g.first);
+        if (it == v.end() || std::fabs(it->second - g.second) > 1e-6f * std::max(1.0f, std::fabs(g.second))) return false;
+    }
     if (!controlNumbersOf(m_sweep_profile, true, v, out.profile, this) || out.profile.size() < 3) return false;
     if (!controlNumbersOf(m_sweep_path, false, v, out.path, this) || out.path.size() < 2) return false;
     out.profileDefault = m_sweep_profile_default;
     out.pathDefault = m_sweep_path_default;
     out.closed = m_sweep_closed;
+    out.free = m_sweep_free;
     out.twist = evalConstant(m_sweep_twist, v);
     if (!std::isfinite(out.twist)) return false;
     out.placed = m_sweep_placed;
@@ -546,8 +552,9 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
     // The profile in the coordinates of its own plane, from the middle of the box of its outline
     std::vector<Vec> where;
     for (const auto& c : in.profile) where.push_back(c.pos);
-    double frame[9];
-    if (!libfive::pointshapes::planeOf(where, frame)) return nullptr;
+    // (the outline of a primitive is in the plane z = 0, its axes x and y: no plane is worked out of its corners.  In every other way it is a sketch to the sweep)
+    double frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    if (!in.free && !libfive::pointshapes::planeOf(where, frame)) return nullptr;
     const Vec o(frame[0], frame[1], frame[2]), pu(frame[3], frame[4], frame[5]), pv(frame[6], frame[7], frame[8]);
     const auto outline = libfive::pointshapes::polyline(in.profile, in.profileDefault, true, 14);
     if (outline.size() < 3) return nullptr;
@@ -2543,6 +2550,7 @@ void Shape::buildDeps() const
             }
         }
         add(m_sweep_twist);
+        for (const auto& g : m_sweep_guard) m_deps.insert(g.first);
         for (int a = 0; a < 3; ++a)
         {
             add(m_sweep_move[a]);
@@ -3232,7 +3240,7 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
     if (hasSweep())
     {
         const auto sid = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
-        key += QString("|sweep %1 %2 %3|f%4").arg(m_sweep_profile.size()).arg(m_sweep_path.size()).arg(m_sweep_closed ? 1 : 0).arg(quintptr(built_tree.id()));
+        key += QString("|sweep %1 %2 %3%4|f%5").arg(m_sweep_profile.size()).arg(m_sweep_path.size()).arg(m_sweep_closed ? 1 : 0).arg(m_sweep_free ? "F" : "").arg(quintptr(built_tree.id()));
         for (const auto* list : {&m_sweep_profile, &m_sweep_path})
         {
             for (const ControlPoint& c : *list)
