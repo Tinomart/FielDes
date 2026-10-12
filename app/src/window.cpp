@@ -989,7 +989,6 @@ Window::Window(Arguments args)
         connect(view, &View::workPlaneChanged, view->scenePanel(), &ScenePanel::setWorkPlane);
         connect(panel, &WorkPlanePanel::optionsChanged, view, &View::setWorkPlaneOptions);
         connect(panel, &WorkPlanePanel::modeChanged, view, &View::setWorkPlaneMode);
-        connect(panel, &WorkPlanePanel::symmetryChanged, view, &View::setWorkPlaneSymmetry);
         connect(view, &View::placementFinished, view->scenePanel(), &ScenePanel::createPlaced);
         connect(panel, &WorkPlanePanel::offsetChanged, view, &View::setWorkPlaneOffset);
         connect(panel, &WorkPlanePanel::faceRequested, view, &View::faceWorkPlane);
@@ -2294,8 +2293,6 @@ Window::Window(Arguments args)
             else if (what == "fromview") view->workPlaneFromView();
             else if (what == "offset") view->setWorkPlaneOffset(p.value(1).toFloat());
             else if (what == "mode") view->setWorkPlaneMode(p.value(1).toInt());
-            else if (what == "symmetry") view->setWorkPlaneSymmetry(p.value(1).toInt());
-            else if (what == "symaxes" && p.size() >= 4) view->setSymmetryAxes(p[1].toFloat(), p[2].toFloat(), p[3].toFloat());
             else if (what == "set" && p.size() >= 10)
                 view->setWorkPlaneFrame(QVector3D(p[1].toFloat(), p[2].toFloat(), p[3].toFloat()), QVector3D(p[4].toFloat(), p[5].toFloat(), p[6].toFloat()),
                                         QVector3D(p[7].toFloat(), p[8].toFloat(), p[9].toFloat()));
@@ -2311,12 +2308,7 @@ Window::Window(Arguments args)
             std::cerr << "automation: workplane exists " << w.exists << " open " << w.open << " origin " << o.x() << "," << o.y() << "," << o.z()
                       << " u " << w.u.x() << "," << w.u.y() << "," << w.u.z() << " v " << w.v.x() << "," << w.v.y() << "," << w.v.z()
                       << " normal " << n.x() << "," << n.y() << "," << n.z() << " facing " << QVector3D::dotProduct(n, toward)
-                      << " mode " << w.mode << " placed " << view->placedCount() << " grid " << w.grid << " snap " << w.snap << " snapPoints " << w.snapPoints << " step " << view->workPlaneStep()
-                      << " symmetry " << w.symmetry << " centre " << w.symS << "," << w.symT << " angle " << w.symAngle;
-            QPoint handle;
-            if (view->symmetryHandlePoint(1, handle)) std::cerr << " centre_px " << handle.x() << "," << handle.y();
-            if (view->symmetryHandlePoint(2, handle)) std::cerr << " knob_px " << handle.x() << "," << handle.y();
-            std::cerr << std::endl;
+                      << " mode " << w.mode << " placed " << view->placedCount() << " grid " << w.grid << " snap " << w.snap << " snapPoints " << w.snapPoints << " step " << view->workPlaneStep() << std::endl;
         });
         // createat <name> <x> <y>: a new model made at that place of the viewport, as the menu of empty space makes it (on the work plane while its view is open)
         a->add("createat", [=](const QString& args){

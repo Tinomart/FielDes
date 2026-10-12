@@ -40,17 +40,11 @@ to click, where the round starts. A mixed selection is never changed model by mo
 
 Two or more selected models are in the **multi-select state**. Whatever gizmo mode each has when it is selected alone,
 all of them are moved by **one shared gizmo**, at the middle of them: its arrows and its centre dot move them all
-together, and nothing is pulled by its surface. (Turning and scaling are one model at a time -- except for **points**: see below.) The shared gizmo is shown
+together, and nothing is pulled by its surface. (Turning and scaling are one model at a time.) The shared gizmo is shown
 unless every selected model is set to *never*. A model that has no numbers to move it by gets a `gizmo(...)` call when it
 joins the selection, in the mode it is in. `E` changes each model's own mode, which the tree's buttons show, for when it
 is selected alone: the viewport shows the shared gizmo until the selection is one model, and then every model has its
 own mode again.
-
-**Several points selected can be scaled and turned evenly.** Select two or more points (Ctrl+click, a Shift range, a rectangle) and their shared gizmo has two rings round the middle of
-them all besides the arrows or the dot: the **gold ring scales** them -- pull it out to spread the points about the middle (every point goes along the line from the middle through
-itself, so the shape keeps its proportions), push it in to bring them together; the factor is shown beside it -- and the **ring in the plane turns** them about the middle (the plane of their
-sketch, or the work plane's while its view is open, else the plane facing the camera); the angle is shown. What changes is the move numbers of each point (its `gizmo(...)`): the points stay
-models of their own, and every sketch or line made of them follows. Points of a sketch stay in its plane.
 
 **A locked model can be in a selection of several, but then the whole selection cannot be moved or edited.** Select
 them as any models (Ctrl+click, a Shift range, a rectangle): a warning says that *when a locked object is part of a multi
@@ -66,11 +60,6 @@ that faces the camera (all the selected models together, for the shared gizmo).
 **A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, always uniform, dragged with the one
 gold ring round the dot -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a sketch has no arrows**: its dot, pressed and dragged, moves it in the plane of the sketch (several points of one sketch selected
 together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Sketches](sketches.md).
-
-**The gizmo of a point of a curve faces the way the curve does.** Its blue axis -- the arrow and the ring -- is the direction the curve (the path of a `path_extrude`) takes through the point, and the red and green are
-across it. So the **blue ring turns what is swept about the curve** (the twist of a sweep at that point), the other two rings tilt the direction the curve leaves the point by, the blue arrow slides the point along the
-curve and the red and green move it across. The numbers written are the same three rotation angles and three move numbers as ever: a turn about one of these axes is the sum of that turn and the one the point already had.
-(The gizmo keeps the axes it was pressed with while you drag it.)
 
 A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
 (its eye in the model tree: a point whose eye is off draws nothing). **Click the dot to select the point**; then its full gizmo shows (the arrows; `mode='never'`
@@ -164,9 +153,6 @@ line): nobody edits those numbers by hand, they are dragged, so the call stays o
 
 Rules:
 
-- **A shape made of a few numbers of its own lists those numbers**, one for each thing you can pull. A `rectangle` has four (its sides: `[x0, y0, x1, y1]`), a `rounded_rectangle` five (the four sides
-  and the radius), a `triangle` three (its three sides, each pulled parallel to itself). A side pulled moves that side and no other, the corners of a rounded rectangle stay tangent to its sides whatever you pull, and
-  **the gizmo stays at the middle of the shape** -- it is where the shape is after a side is pulled -- without anything jumping when the script runs again (the pivot is an expression of those numbers).
 - Only numbers that **place** a surface are in the list. Orientations and the placement of the whole part are
   not — a dragged face moves and neither turns nor takes the rest of the part along. Use the gizmo to move or
   rotate the whole part.

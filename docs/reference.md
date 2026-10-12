@@ -73,8 +73,7 @@ A pyramid defined by its base rectangle, lower Z value, and height
 
 ### `rectangle(a, b)`
 
-A rectangle between the corners a (the low one) and b (the high one) (a true distance outside it: an offset of it is a rounded rectangle).  Its four numbers are
-its four sides, so the handles of a rectangle pull one side each
+A rectangle with the given bounding corners (a true distance outside it: an offset of it is a rounded rectangle)
 
 ### `ring(ro, ri, center=(0, 0))`
 
@@ -86,8 +85,7 @@ Rounded box with the given bounds and radius (as a 0-1 fraction)
 
 ### `rounded_rectangle(a, b, r)`
 
-A rectangle with rounded corners of radius r, between the corners a (the low one) and b (the high one) (a true distance outside it).  The corners are tangent to the
-sides whatever the numbers are: its handles pull a side each (the radius with them)
+A rectangle with rounded corners
 
 ### `sphere(radius, center=(0, 0, 0))`
 
@@ -99,7 +97,7 @@ A torus lying round the z axis, with the given outer radius, inner radius, and (
 
 ### `triangle(a, b, c)`
 
-A 2D triangle between three corners.  Its handles pull a side each: a side moves parallel to itself, and the gizmo stays at the middle of the triangle
+A 2D triangle
 
 ## Combining shapes (CSG)
 
@@ -1107,13 +1105,8 @@ and the normal is the direction u x v of that plane).  `extrude(circle(5), 0, 10
 
 ### `path_extrude(profile, path, twist=0)`
 
-A 2D shape swept along a curve: the `profile` -- its origin on the curve (for a sketch, the middle of its outline), its own axes across it (x and y for a shape in
-the plane z = 0, the two axes of the plane of a sketch) -- carried along `path`, turning with it, without twisting about it unless the points of the curve say so.
-A SKETCH is where the sweep starts: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
-the sketch, and its first ring is the sketch itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted when it is oblique; a sketch whose
-plane holds the direction of the curve is turned across it), so that the sketch you edit is the base of what it is swept into.  The path is DRAWN where the sweep goes --
-through the middle of its cross-section, from the middle of the sketch, its points with it -- whatever its own numbers say; only its shape matters, and the first point of it
-is the middle of the sketch:
+A 2D shape swept along a curve: the `profile` -- its origin on the curve, its own axes across it (x and y for a shape in the plane z = 0, the
+two axes of the plane of a sketch) -- carried along `path`, turning with it, without twisting about it unless the points of the curve say so:
 the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
 smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
 with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:

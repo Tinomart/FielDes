@@ -188,22 +188,6 @@ def _round_union(a, b, r):
     return a.min(b).max(r) - (ua.square() + ub.square()).sqrt()
 
 
-def _boxed(out, box, inputs):
-    """ `out` is held by `box` -- a box that holds it, not its exact extent (what is cut away, or blended, is not taken off it).  The render region is made
-        to hold the models by these boxes, and a box that is known need not be searched for (a search does not come to an end for every shape) """
-    if box is not None and not any(out is s for s in inputs):
-        out._bounds = (tuple(float(v) for v in box[0]), tuple(float(v) for v in box[1]))
-        out._bounds_loose = True
-    return out
-
-
-def _union_box(shapes, pad=0.0):
-    boxes = [getattr(s, '_bounds', None) for s in shapes]
-    if not boxes or not all(boxes):
-        return None
-    return (tuple(min(float(b[0][k]) for b in boxes) - pad for k in range(3)), tuple(max(float(b[1][k]) for b in boxes) + pad for k in range(3)))
-
-
 def union(a, *args, radius=0):
     """ The union of any number of shapes.  radius (mm, default 0: a sharp union) blends the surfaces where they meet
         with a smooth transition of that radius, so parts that do not quite fit together are joined by a fillet --
@@ -214,21 +198,12 @@ def union(a, *args, radius=0):
         out = a
         for b in args:
             out = _round_union(out, Shape.wrap(b), radius)
-        pad = abs(float(radius)) if isinstance(radius, (int, float)) else None
-        return _boxed(out, _union_box((a,) + args, pad) if pad is not None else None, (a,) + args)
-    return _boxed(functools.reduce(_prev_union, args, a), _union_box((a,) + args), (a,) + args)
+        return out
+    return functools.reduce(_prev_union, args, a)
 
 _prev_intersection = intersection
 def intersection(a, *args):
-    out = functools.reduce(_prev_intersection, args, a)
-    # (what is common to shapes is in the box of every one of them that has one: a difference is the first one's box, as the other is turned inside out)
-    boxes = [b for b in (getattr(s, '_bounds', None) for s in (a,) + args) if b]
-    if boxes:
-        lo = tuple(max(float(b[0][k]) for b in boxes) for k in range(3))
-        hi = tuple(min(float(b[1][k]) for b in boxes) for k in range(3))
-        if all(lo[k] <= hi[k] for k in range(3)):
-            _boxed(out, (lo, hi), (a,) + args)
-    return out
+    return functools.reduce(_prev_intersection, args, a)
 intersection.__doc__ = _prev_intersection.__doc__
 
 def difference(a, b, *rest):

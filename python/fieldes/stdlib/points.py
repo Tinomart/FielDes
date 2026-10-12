@@ -49,25 +49,6 @@ def _view():
     return res, lo, hi
 
 
-def _weld_displayed(shape):
-    ''' What is drawn for a point: itself, except a point of the path of a sweep of a sketch (see path_extrude), which is drawn where the path is -- moved with it, its gizmo too --
-        so that the path and its points run through the middle of the sweep.  Dragged, it is moved by what it is dragged by, as it is seen: only where it is drawn is shifted '''
-    shift = getattr(shape, '_weld_shift', None)
-    if shift is None:
-        return shape
-    out = Shape(lib.libfive_tree_copy(shape.ptr))
-    for name, value in shape.__dict__.items():
-        if name != 'ptr':
-            out.__dict__[name] = value
-    pos = getattr(shape, '_point_pos', None)
-    if pos:
-        out._point_pos = tuple(float(p) + s for p, s in zip(pos, shift))
-    g = getattr(shape, '_gizmo', None)
-    if g is not None:
-        out._gizmo = (g[0], tuple(float(a) + s for a, s in zip(g[1], shift)), g[2], g[3], g[4])
-    return out
-
-
 def _as(source, tree):
     ''' A shape of the math of `tree` with the attributes of `source` (its handles, its name, its locks ... but not its kind) '''
     out = Shape(lib.libfive_tree_copy(tree.ptr))
@@ -149,7 +130,7 @@ class Point(Shape):
         return 'Point({})'.format(', '.join(('<field>' if isinstance(c, Shape) else '%g' % c) for c in self.xyz))
 
     def _display(self):
-        return _weld_displayed(self)
+        return self
 
 
 class Surface(Shape):
@@ -207,8 +188,6 @@ def wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0):
 def displayed(shape):
     ''' What FielDes draws for a shape (see the top of this file) '''
     kind = kind_of(shape)
-    if kind == 'point':
-        return _weld_displayed(shape)
     if kind == 'profile':
         # The same field: the app meshes it as the face where it is negative, in the plane z = 0 -- or the plane the shape says it lies in, `_flat_frame`
         # (origin, u, v: a sketch) -- (libfive Mesh::renderFlat), not as a body

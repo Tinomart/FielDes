@@ -18,23 +18,9 @@ def move(t, offset):
     """ Moves the given shape in 2D or 3D space
     """
     args = [Shape.wrap(t), list([Shape.wrap(i) for i in offset])]
-    out = Shape(stdlib.move(
+    return Shape(stdlib.move(
         args[0].ptr,
         tvec3(*[a.ptr for a in args[1]])))
-    # The box of a shape that has one is moved with it (plain numbers, or the numbers the var()s have in the script being run): the render region is
-    # made to hold the models by these boxes, and one that is known need not be searched for
-    box = getattr(t, '_bounds', None)
-    if box:
-        try:
-            from fieldes.stdlib.handles import _var_numbers      # (handles imports this module)
-            d = _var_numbers(list(offset))
-        except Exception:
-            d = None
-        if d is not None and len(d) == 3:
-            out._bounds = (tuple(float(box[0][k]) + d[k] for k in range(3)), tuple(float(box[1][k]) + d[k] for k in range(3)))
-            if getattr(t, '_bounds_loose', False):
-                out._bounds_loose = True
-    return out
 
 stdlib.reflect_x.argtypes = [libfive_tree, tfloat]
 stdlib.reflect_x.restype = libfive_tree

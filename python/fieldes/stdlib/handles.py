@@ -89,19 +89,6 @@ def _centre_of(shape):
     return tuple(0.5 * (float(b[0][i]) + float(b[1][i])) for i in range(3))
 
 
-_PRISM = ('_prism_pos', '_prism_rot', '_prism_flag', '_prism_scale', '_prism_default', '_prism_a', '_prism_b')
-
-
-def _carry_prism(out, shape, guard=(), still=True):
-    ''' What makes a shape a prism (see sketch.extrude) goes on to what places or edits it, with the numbers that must still be what they are for it to be nothing else
-        than that prism: (a var(), its value) for each.  `still` False: it is not a prism any more (a number that is plain is not what it was) '''
-    if not still or getattr(shape, '_prism_pos', None) is None:
-        return
-    for name in _PRISM:
-        setattr(out, name, getattr(shape, name))
-    out._prism_guard = list(getattr(shape, '_prism_guard', [])) + [(v, float(x)) for v, x in guard]
-
-
 def _carry(out, shape):
     for name in _CARRIED:
         if hasattr(shape, name):
@@ -170,26 +157,15 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             return shape
         raise TypeError('gizmo(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
                         'Place the part it was made from (gizmo() on that part) -- the result follows it.' % type(shape).__name__)
-    # The pivot: where `about` says, else the middle of the shape.  The middle of a shape made of numbers of its own (a rectangle's sides, handles()) is an EXPRESSION of
-    # those numbers: it is where the shape is, whatever side is pulled, and what the gizmo turns and scales it about is where the gizmo is drawn -- the same before and after
-    # the script is run again, so nothing jumps
-    centre_expr = getattr(shape, '_centre_expr', None) if about is None else None
-    if about is not None:
-        c = tuple(about)
-    elif centre_expr is not None:
-        from fieldes.stdlib.curves import value_of
-        c = tuple(value_of(e) for e in centre_expr)
-    else:
-        c = _centre_of(shape)
-    about_what = tuple(centre_expr) if centre_expr is not None else c
+    c = tuple(about) if about is not None else _centre_of(shape)
     to_rad = math.pi / 180.0
     out = shape
     if not all(_is_number(s) and s == 1 for s in scale):
-        out = scale_xyz(out, tuple(scale), about_what)
+        out = scale_xyz(out, tuple(scale), c)
     if not all(_is_number(r) and r == 0 for r in rotate):
         for rot, angle in ((rotate_x, rotate[0]), (rotate_y, rotate[1]), (rotate_z, rotate[2])):
             if not (_is_number(angle) and angle == 0):
-                out = rot(out, angle * to_rad, about_what)
+                out = rot(out, angle * to_rad, c)
     # (always a new shape, to hang the handles on: the part itself is shared)
     out = _move(out, tuple(move))
     _carry(out, shape)
@@ -202,22 +178,6 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             out._point_pos = _position_of(out.xyz)       # (where its dot is drawn when the gizmo is not there)
         except Exception:
             pass
-    # (a sweep drawn natively from its points is placed natively too: the viewport places it by the numbers of the gizmo, about the point `c`)
-    if getattr(shape, '_sweep_ppos', None) is not None and getattr(shape, '_sweep_place', None) is None:
-        for name in ('_sweep_ppos', '_sweep_prot', '_sweep_pflag', '_sweep_pscale', '_sweep_pdefault', '_sweep_qpos', '_sweep_qrot', '_sweep_qflag', '_sweep_qscale',
-                     '_sweep_qdefault', '_sweep_qclosed', '_sweep_twist'):
-            setattr(out, name, getattr(shape, name))
-        out._sweep_place = (tuple(float(x) for x in c), tuple(Shape.wrap(x) for x in move), tuple(Shape.wrap(x) for x in rotate), tuple(Shape.wrap(x) for x in scale))
-    # (a prism stays one while the gizmo places it nowhere: its numbers are what they are made with)
-    if getattr(shape, '_prism_pos', None) is not None:
-        guard, still = [], True
-        for values, rest in ((move, 0.0), (rotate, 0.0), (scale, 1.0)):
-            for v in values:
-                if _is_number(v):
-                    still = still and abs(float(v) - rest) < 1e-12
-                else:
-                    guard.append((v, rest))
-        _carry_prism(out, shape, guard, still)
     # (the box of a part follows the numbers it is placed by: plain numbers, or the numbers the var()s have in the script being
     # run.  A placed part that lost its box would have to be searched for its extent by whatever is made from it -- a surface
     # selected on it, a lattice on that -- and that search fails on a mesh)
@@ -312,9 +272,6 @@ def _float32_text(v):
 
 
 def _handle_count(shape):
-    params = getattr(shape, '_handle_params', None)
-    if params is not None:
-        return len(params)                  # (a shape made of numbers of its own: those are its handles)
     fn = getattr(lib, 'libfive_tree_expose_count', None)
     if fn is None:
         raise RuntimeError('this FielDes library is too old for handles()')
@@ -323,9 +280,6 @@ def _handle_count(shape):
 
 def handle_values(shape):
     ''' The numbers handles() makes variables, in its order, as the text to write them as '''
-    params = getattr(shape, '_handle_params', None)
-    if params is not None:
-        return [_float32_text(struct.unpack('f', struct.pack('f', float(p)))[0]) for p in params]
     n = _handle_count(shape)
     buf = (ctypes.c_float * max(1, n))()
     lib.libfive_tree_expose_values(shape.ptr, buf)
@@ -425,19 +379,11 @@ def handles(shape, values=None, **removed):
     # (the wrapped numbers stay alive until the call has returned: plain numbers wrap to shapes
     # that would otherwise be freed with their pointers still in `arr`)
     wrapped = [Shape.wrap(v) for v in values]
-    rebuild = getattr(shape, '_handle_rebuild', None)
-    if rebuild is not None:
-        # (a shape made of numbers of its own -- a rectangle's sides -- is made again of these)
-        out = rebuild(wrapped)
-        centre = getattr(shape, '_handle_centre', None)
-        if centre is not None:
-            out._centre_expr = tuple(centre(wrapped))
-    else:
-        arr = (ctypes.c_void_p * max(1, n))(*[w.ptr for w in wrapped])
-        p = lib.libfive_tree_expose(shape.ptr, arr, n)
-        if not p:
-            raise ValueError('handles(): the shape could not be rebuilt with those numbers')
-        out = Shape(p)
+    arr = (ctypes.c_void_p * max(1, n))(*[w.ptr for w in wrapped])
+    p = lib.libfive_tree_expose(shape.ptr, arr, n)
+    if not p:
+        raise ValueError('handles(): the shape could not be rebuilt with those numbers')
+    out = Shape(p)
     _carry(out, shape)
     # (what the shape was before its numbers were edited: the pivot of a gizmo that turns or scales it is the middle of this one's box)
     out._pivot_shape = getattr(shape, '_pivot_shape', None) or shape
@@ -457,19 +403,6 @@ def handles(shape, values=None, **removed):
     from fieldes.kinds import keep_kind
     keep_kind(out, shape)
     _widen_box(out, shape, values)
-    # (a prism stays one while its numbers are what it was made with: with a face pulled it is not that prism)
-    if getattr(shape, '_prism_pos', None) is not None:
-        try:
-            orig = [float(x) for x in handle_values(shape)]
-            guard, still = [], len(orig) == len(values)
-            for v, x in zip(values, orig):
-                if _is_number(v):
-                    still = still and abs(float(v) - x) < 1e-4 * max(1.0, abs(x))
-                else:
-                    guard.append((v, x))
-            _carry_prism(out, shape, guard, still)
-        except Exception:
-            pass
     return out
 
 

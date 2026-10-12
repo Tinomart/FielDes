@@ -1188,13 +1188,5 @@
  "Shift+X  section view": "Shift+X  断面表示",
  "Home  frame everything": "Home  すべてをフレームに収める",
  "The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.": "領域と解像度はコードの行です（auto_scale=True にすると、領域がモデルに追従します）。枠で囲まれた行で解像度を 4 から 6 に変更してください。",
- "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（既定）: 領域はスクリプト内のモデルに追従します。モデルを動かしたり数値で大きくして領域の外にはみ出すと領域が広がり、モデルがずっと小さくなると縮みます。また、各モデルは領域に対するサイズに応じて拡大縮小された独自の解像度でメッシュ化されます。\nauto_scale=False: 領域はスクリプトに書かれたとおりで、その外側は描画されず、すべてのモデルはシーンの解像度でメッシュ化されます。クリックで切り替えます。",
- "Symmetry": "対称",
- "No symmetry": "対称なし",
- "One axis of symmetry: what you put down is mirrored across it": "対称軸が 1 本: 置いたものがその軸に対して鏡像になります",
- "Two axes of symmetry, at right angles: what you put down is mirrored across both": "直角に交わる対称軸が 2 本: 置いたものが両方の軸に対して鏡像になります",
- "Three axes of symmetry, 60 degrees apart": "60 度ずつ離れた対称軸が 3 本",
- "Four axes of symmetry, 45 degrees apart": "45 度ずつ離れた対称軸が 4 本",
- "Drag the ring to scale the points evenly about their middle": "リングをドラッグすると、点が中心を基準に均等に拡大縮小されます",
- "Drag the ring to turn the points about their middle": "リングをドラッグすると、点が中心を軸に回転します"
+ "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（既定）: 領域はスクリプト内のモデルに追従します。モデルを動かしたり数値で大きくして領域の外にはみ出すと領域が広がり、モデルがずっと小さくなると縮みます。また、各モデルは領域に対するサイズに応じて拡大縮小された独自の解像度でメッシュ化されます。\nauto_scale=False: 領域はスクリプトに書かれたとおりで、その外側は描画されず、すべてのモデルはシーンの解像度でメッシュ化されます。クリックで切り替えます。"
 }

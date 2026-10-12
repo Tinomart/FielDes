@@ -30,7 +30,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QVector4D>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -99,7 +98,7 @@ public:
      *  Looks up the tree's ID
      */
     /*  (of the shape as the script made it: a step of a result may show another geometry)  */
-    libfive::Tree::Id id() const { return m_field_ready.load() ? base_tree.id() : built_tree.id(); }
+    libfive::Tree::Id id() const { return base_tree.id(); }
 
     /*
      *  0-based line of the script statement that displayed this shape
@@ -160,21 +159,6 @@ public:
         libfive::Tree::Id var[3] = {nullptr, nullptr, nullptr};         // the number that moves it along each axis (its gizmo's), when it has one
     };
     void setControls(std::vector<ControlPoint> points, bool smoothDefault, bool closed, bool face);
-    /*
-     *  A straight extrusion of a sketch of points (`extrude(sketch, a, b)`) is a PRISM: it is drawn from the numbers of the points and of a and b at every render -- as the face
-     *  of a sketch is -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `guard` are numbers of the script (a gizmo's, a pulled
-     *  face's) that must still have the values they were made with: with another value the shape is something else than the prism, and its field is meshed as ever
-     */
-    void setPrism(std::vector<ControlPoint> points, bool smoothDefault, libfive::Tree a, libfive::Tree b, std::vector<std::pair<libfive::Tree::Id, float>> guard);
-    bool hasPrism() const { return !m_prism_points.empty(); }
-    /*
-     *  A SWEEP -- `path_extrude(sketch, curve)` of a sketch of points along a curve of points -- is drawn the same way: ring by ring, from the numbers the points of the sketch and
-     *  of the path have now (the thickness of a path point, its rotation, the twist), placed by the numbers of the shape's gizmo.  Nothing is meshed, so a point that is dragged is
-     *  followed at once, and a sweep that took minutes to mesh takes a few milliseconds
-     */
-    void setSweep(std::vector<ControlPoint> profile, bool profileDefault, std::vector<ControlPoint> path, bool pathDefault, bool closed, libfive::Tree twist,
-                  bool placed, const double about[3], const libfive::Tree move[3], const libfive::Tree rotate[3], const libfive::Tree scale[3]);
-    bool hasSweep() const { return !m_sweep_path.empty() && !m_sweep_profile.empty(); }
     /*  The one number (var) an expression of the script's numbers is made of, or null when it has none or several: what moves a point along an axis  */
     static libfive::Tree::Id soleVarOf(const libfive::Tree& expression);
     bool hasControls() const { return !m_controls.empty(); }
@@ -249,7 +233,7 @@ public:
     bool hasMesh() const { return mesh && gl_ready; }
 
     /*  Read-only access for evaluating the field (slice viewer)  */
-    const libfive::Tree& getTree() const { ensureField(); return tree; }
+    const libfive::Tree& getTree() const { return tree; }
 
     /*
      *  Colouring by a scalar field (an FEA result, any Shape): the field is
@@ -398,9 +382,6 @@ public:
      *  the shape has such numbers and is not locked, whatever the gizmo's mode.
      */
     bool nativeDragOk() const;
-    /*  The direction the curve this shape is made of faces at its point number `index` (the line through its vertices there, from the numbers the points have now); false for
-        what is not a curve of three or more... of two or more points  */
-    bool curveTangentAt(int index, QVector3D& t) const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
     std::set<libfive::Tree::Id> gizmoVars() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
@@ -648,17 +629,6 @@ public:
     void freeGL();
 
     /*
-     *  The field of the shape -- its tree, optimised, and the evaluators that mesh it -- is made when something reads it, not when the script makes the shape.  A sweep or
-     *  a prism that is drawn from the numbers of its points never needs it, and the field of a sweep (a piece for every piece of the path, each holding the whole profile)
-     *  is seconds to minutes of work to make, to key and to search for nothing.  settleField() is what the thread that makes a shape calls when it is made: the shapes that
-     *  are not drawn from numbers have their field made there, where it always was.  Whatever reads the field calls ensureField() first (it does nothing when it is made)
-     */
-    void ensureField() const;
-    void settleField();
-    /*  Whether the shape is drawn, now, from the numbers of its points (a prism, a sweep): its field is not read to draw it  */
-    bool drawnFromNumbers() const;
-
-    /*
      *  Returns a unique ID using the given deduplication map
      */
     libfive::Tree::Id getUniqueId(
@@ -699,7 +669,6 @@ protected:
 
     void startRender(RenderSettings s);
     BoundedMesh renderMesh(RenderSettings s);
-    static std::unique_ptr<libfive::Mesh> prismMesh(const std::vector<libfive::pointshapes::Control>& cs, bool smoothDefault, double a, double b);
 
     bool grabbed=false;
     bool hover=false;
@@ -720,24 +689,6 @@ protected:
     int m_virtual_after = 0, m_run_virtual_after = 0;
     QVector3D m_virtual_pos, m_run_virtual_pos;
     bool controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out) const;
-    static bool controlNumbersOf(const std::vector<ControlPoint>& points, bool face, const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out,
-                                 const Shape* owner);
-    struct SweepNumbers;
-    std::vector<ControlPoint> m_sweep_profile, m_sweep_path;
-    bool m_sweep_profile_default = false, m_sweep_path_default = false, m_sweep_closed = false, m_sweep_placed = false;
-    libfive::Tree m_sweep_twist = libfive::Tree::invalid();
-    double m_sweep_about[3] = {0, 0, 0};
-    libfive::Tree m_sweep_move[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
-    libfive::Tree m_sweep_rotate[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
-    libfive::Tree m_sweep_scale[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
-    bool sweepNow(const std::map<libfive::Tree::Id, float>& v, SweepNumbers& out) const;
-    static std::unique_ptr<libfive::Mesh> sweepMesh(const SweepNumbers& in);
-    std::vector<ControlPoint> m_prism_points;
-    bool m_prism_default = false;
-    libfive::Tree m_prism_a = libfive::Tree::invalid(), m_prism_b = libfive::Tree::invalid();
-    std::vector<std::pair<libfive::Tree::Id, float>> m_prism_guard;
-    /*  The prism's numbers now -- its points, and the distances a and b -- when it is drawn as one (its guard holds) and everything can be read; false when it is the field's to mesh  */
-    bool prismNow(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& cs, double& a, double& b) const;
     std::vector<std::vector<Eigen::Vector3f>> m_outlines;
     double evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const;
     void updateFrameNumbers();
@@ -761,11 +712,6 @@ protected:
     // (the tree as the script built it: the render cache's key is made of it -- the optimizer's output differs
     // from run to run in the order of operands)
     libfive::Tree built_tree;
-    // (whether `tree` is the optimised one, `base_tree` is made and the evaluators `es` are: see ensureField)
-    std::atomic<bool> m_field_ready{false};
-    mutable std::mutex m_field_mutex;
-    size_t m_tree_nodes = 0;            // (the nodes of the optimised tree, counted when it is made)
-    void buildField();
     std::map<libfive::Tree::Id, float> vars;
     std::vector<libfive::Evaluator,
                 Eigen::aligned_allocator<libfive::Evaluator>> es;

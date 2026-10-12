@@ -378,9 +378,6 @@ Editor::Editor(Language::Type language)
     spinner.setInterval(150);
     connect(&spinner, &QTimer::timeout, this, &Editor::onSpinner);
 
-    m_dragGuard.setInterval(4000);
-    m_dragGuard.setSingleShot(true);
-    connect(&m_dragGuard, &QTimer::timeout, this, [this] { if (m_dragActive) onDragEnd(); });
     m_textChangedDebounce.setInterval(250);
     m_textChangedDebounce.setSingleShot(true);
     connect(&m_textChangedDebounce, &QTimer::timeout,
@@ -1050,11 +1047,6 @@ void Editor::setModified(bool m)
 
 void Editor::onTextChangedDebounce()
 {
-    if (m_dragActive)
-    {
-        m_textChangedDuringDrag = true;             // (a drag is writing numbers: the run waits for its end, see onDragEnd)
-        return;
-    }
     auto txt = script_doc->toPlainText();
     m_pauseWanted = false;          // (a run that is asked for takes the place of the one that waits: it is let go, to end)
     updateControls();
@@ -1161,10 +1153,6 @@ void Editor::onDragStart()
     m_scriptHadFocus = script->hasFocus();
     script->setEnabled(false);
     drag_should_join = false;
-    m_dragActive = true;
-    m_textChangedDuringDrag = false;
-    if (m_scriptRunning) m_discardResults = true;       // (what a run that began before the drag delivers would put its older numbers back over the dragged ones)
-    m_dragGuard.start();
 }
 
 void Editor::onDragEnd()
@@ -1172,19 +1160,10 @@ void Editor::onDragEnd()
     script->setEnabled(true);
     if (m_scriptHadFocus) script->setFocus();
     m_scriptHadFocus = false;
-    m_dragGuard.stop();
-    m_dragActive = false;
-    if (m_textChangedDuringDrag)
-    {
-        m_textChangedDuringDrag = false;
-        // (the one run of what the drag wrote: at once -- the 250 ms that wait for typing to pause are not for a gesture that has ended)
-        QTimer::singleShot(0, this, [this] { if (!m_dragActive) onTextChangedDebounce(); });
-    }
 }
 
 void Editor::setVarValues(QMap<libfive::Tree::Id, float> vs)
 {
-    if (m_dragActive) m_dragGuard.start();          // (the drag goes on: it is not left to the guard)
     // Temporarily enable the script so that we can edit the variable value
     script->setEnabled(true);
     QTextCursor drag_cursor(script_doc);

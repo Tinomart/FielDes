@@ -122,19 +122,15 @@ HINTS = {
 
 # A sketch or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
 # rotates it), in the horizontal plane at the place of the click
-def _gizmoed_point(name, x, y, z):
-    ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged) '''
-    return ('%s = point(%s, %s, %s)\n%s = gizmo(\n    %s,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n'
-            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name, name, name))
-
-
-def _points(*places, base='{var}'):
+def _points(*places):
     ''' The points a sketch or a line made from the menu is made of: each a model of its own, with its gizmo (so that it can be dragged, and the face or the line
         with all of them), written above the call.  `places` are the (x, y, z) texts of the template '''
     out = []
     for k, (x, y, z) in enumerate(places, 1):
-        out.append(_gizmoed_point('%s_p%d' % (base, k), x, y, z))
-    return ''.join(out), ', '.join('%s_p%d' % (base, k) for k in range(1, len(places) + 1))
+        name = '{var}_p%d' % k
+        out.append('%s = point(%s, %s, %s)\n%s = gizmo(\n    %s,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n'
+                   '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name, name, name))
+    return ''.join(out), ', '.join('{var}_p%d' % k for k in range(1, len(places) + 1))
 
 
 _SKETCH_POINTS, _SKETCH_LIST = _points(('{xm}', '{ym}', '{z}'), ('{xp}', '{ym}', '{z}'), ('{xp}', '{yp}', '{z}'), ('{xm}', '{yp}', '{z}'))
@@ -734,28 +730,8 @@ def _placed_template(name, r):
         A sketch of a spline (`smooth`) has spline points '''
     places = [tuple(_num(float(c)) for c in p) for p in r['points']]
     points, listing = _points(*places)
-    smooth = ', smooth=True' if name == 'sketch' and r.get('smooth') else ''
-    call = '%s([%s]%s)' % (name, listing, smooth)
-    # The images of the stroke in the work plane's symmetry (`also`: one stroke for each), each a shape of its own beside it: its points, the call through them, and its
-    # name shown (`sketch_1_m1`, `sketch_1_m2`)
-    images = ''
-    for k, stroke in enumerate(r.get('also') or [], 1):
-        base = '{var}_m%d' % k
-        pts, listing_k = _points(*[tuple(_num(float(c)) for c in p) for p in stroke], base=base)
-        # (laid out as every call FielDes writes is: one argument to a line)
-        image_call = ('sketch(\n    [%s],\n    smooth=%s,\n)' % (listing_k, 'True' if r.get('smooth') else 'False')) if name == 'sketch' else '%s([%s])' % (name, listing_k)
-        images += pts + '%s = %s\n%s\n' % (base, image_call, base)
-    return points + images + '#@@#\n' + call
-
-
-def _point_images_template(r):
-    ''' A point put down on the work plane while it has a symmetry: the point, and a point of its own for each of its images (`point_1_m1` ...) '''
-    p = r['points'][0]
-    images = ''
-    for k, stroke in enumerate(r.get('also') or [], 1):
-        x, y, z = (_num(float(c)) for c in stroke[0])
-        images += _gizmoed_point('{var}_m%d' % k, x, y, z)
-    return images + '#@@#\npoint(%s, %s, %s)' % tuple(_num(float(c)) for c in p)
+    call = '%s([%s]%s)' % (name, listing, ', smooth=True' if name == 'sketch' and r.get('smooth') else '')
+    return points + '#@@#\n' + call
 
 
 def _values(r):
@@ -855,9 +831,6 @@ def _call(r):
     if kind == 'primitive' and r.get('points') and name in ('sketch', 'polyline', 'spline'):
         r['_templated'] = True
         return _placed_template(name, r).format(**values)
-    if kind == 'primitive' and name == 'point' and r.get('points') and r.get('also'):
-        r['_templated'] = True
-        return _point_images_template(r).format(**values)
     if kind == 'primitive' and r.get('plane') and name in ('sketch', 'polyline', 'spline'):
         r['_templated'] = True
         return _plane_template(name, r).format(**values)

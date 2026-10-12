@@ -131,7 +131,7 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
 
     auto label = [](const QString& t) {
         auto l = new QLabel(t);
-        l->setFixedWidth(60);          // (wide enough for "Symmetry")
+        l->setFixedWidth(52);
         return l;
     };
 
@@ -160,31 +160,6 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
         // (the button that is on and is clicked goes off: not drawing)
         connect(m_modes[i], &QToolButton::clicked, this, [this, i](bool on) {
             if (!m_updating) emit(modeChanged(on ? i + 1 : 0));
-        });
-    }
-    // Symmetry: with axes, what is put down is put down at its images too -- the mirror images across each axis and the turns between them.  The axes are in the view: the
-    // dot where they cross is dragged to move them, the knob on the first axis is dragged to turn them
-    auto symRow = new QHBoxLayout;
-    symRow->setSpacing(3);
-    const QString symNames[5] = {T("Off"), "1", "2", "3", "4"};
-    const QString symTips[5] = {
-        T("No symmetry"),
-        T("One axis of symmetry: what you put down is mirrored across it"),
-        T("Two axes of symmetry, at right angles: what you put down is mirrored across both"),
-        T("Three axes of symmetry, 60 degrees apart"),
-        T("Four axes of symmetry, 45 degrees apart")};
-    for (int i = 0; i < 5; ++i)
-    {
-        m_sym[i] = new QToolButton;
-        m_sym[i]->setText(symNames[i]);
-        m_sym[i]->setCheckable(true);
-        m_sym[i]->setObjectName(QString("workPlaneSymmetry%1").arg(i));
-        m_sym[i]->setToolTip(symTips[i]);
-        m_sym[i]->setStyleSheet("padding: 3px 6px;");
-        m_sym[i]->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        symRow->addWidget(m_sym[i], 1);
-        connect(m_sym[i], &QToolButton::clicked, this, [this, i] {
-            if (!m_updating) emit(symmetryChanged(i));
         });
     }
     m_hint = new QLabel;
@@ -282,12 +257,6 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
     body->setSpacing(6);
     body->addLayout(modeRow);
     body->addWidget(m_hint);
-    {
-        auto symLine = new QHBoxLayout;
-        symLine->addWidget(label(T("Symmetry")));
-        symLine->addLayout(symRow, 1);
-        body->addLayout(symLine);
-    }
     body->addLayout(showRow);
     body->addLayout(snapRow);
     body->addLayout(stepRow);
@@ -345,7 +314,6 @@ void WorkPlanePanel::setPlane(const WorkPlane& plane, float step)
     {
         QSignalBlocker a(m_grid), b(m_snap), c(m_snapPoints), d(m_auto), e(m_step), f(m_offset);
         for (int i = 0; i < 3; ++i) m_modes[i]->setChecked(plane.mode == i + 1);
-        for (int i = 0; i < 5; ++i) m_sym[i]->setChecked(plane.symmetry == i);
         m_grid->setChecked(plane.grid);
         m_snap->setChecked(plane.snap);
         m_snapPoints->setChecked(plane.snapPoints);

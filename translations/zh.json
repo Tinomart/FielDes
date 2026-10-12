@@ -1188,13 +1188,5 @@
  "Shift+X  section view": "Shift+X  截面视图",
  "Home  frame everything": "Home  显示全部",
  "The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.": "区域和分辨率都是代码中的行（auto_scale=True 会让区域跟随你的模型）。请在框出的那一行把分辨率从 4 改为 6。",
- "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（默认）：区域在脚本中跟随模型——当模型超出区域时（无论是移动还是输入数值）区域会扩大，当模型变得小很多时区域会缩小——并且每个模型按其相对区域的大小缩放，以各自的分辨率划分网格。\nauto_scale=False：区域严格按脚本所写，区域之外不绘制任何内容，所有模型都按场景的分辨率划分网格。点击可切换。",
- "Symmetry": "对称",
- "No symmetry": "无对称",
- "One axis of symmetry: what you put down is mirrored across it": "一条对称轴：你放置的内容会以它为轴镜像",
- "Two axes of symmetry, at right angles: what you put down is mirrored across both": "两条互相垂直的对称轴：你放置的内容会以两者为轴镜像",
- "Three axes of symmetry, 60 degrees apart": "三条对称轴，彼此相隔 60 度",
- "Four axes of symmetry, 45 degrees apart": "四条对称轴，彼此相隔 45 度",
- "Drag the ring to scale the points evenly about their middle": "拖动圆环，可围绕这些点的中心均匀缩放它们",
- "Drag the ring to turn the points about their middle": "拖动圆环，可围绕这些点的中心旋转它们"
+ "auto_scale=True (the default): the region follows the models in the script -- it grows when a model reaches out of it, as you move it or type it out, and shrinks when the models get much smaller -- and every model is meshed at its own resolution, scaled by its size next to the region.\nauto_scale=False: the region is exactly what the script says, nothing outside it is drawn, and every model is meshed at the scene's resolution.  Click to switch.": "auto_scale=True（默认）：区域在脚本中跟随模型——当模型超出区域时（无论是移动还是输入数值）区域会扩大，当模型变得小很多时区域会缩小——并且每个模型按其相对区域的大小缩放，以各自的分辨率划分网格。\nauto_scale=False：区域严格按脚本所写，区域之外不绘制任何内容，所有模型都按场景的分辨率划分网格。点击可切换。"
 }
