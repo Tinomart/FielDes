@@ -489,6 +489,7 @@ protected:
     /*  Data to handle direct modification of shapes */
     QVector3D drag_start;
     QVector3D drag_dir;
+    std::map<libfive::Tree::Id, float> drag_weights;       // (what resists the drag of the surface that is held: see Shape::dragWeights)
     std::pair<std::unique_ptr<libfive::JacobianEvaluator>,
               std::shared_ptr<libfive::Tape>> drag_eval;
     Shape* drag_target=nullptr;
@@ -754,6 +755,9 @@ protected:
     libfive::Tree::Id gizmo_scale_id[3] = {nullptr, nullptr, nullptr};
     float gizmoLength(const QVector3D& pivot) const;
     GizmoGrip gizmoAt(QPoint pos) const;
+    /*  Whether the cursor is over a surface that a drag takes (a shape that is not locked and has numbers to pull by), and nothing but one shape is
+     *  selected: the gizmo's arrows, rings and knobs are then only hit where they are drawn, so that a drag of a face is not taken for one of them  */
+    bool overDraggableSurface(QPoint pos) const;
     void drawGizmo(QPainter& painter);
     /*  The points of a set of points (Shape::markers), each as the dot in the middle of a gizmo -- and no handles: they are data  */
     void drawMarkers(QPainter& painter);

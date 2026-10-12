@@ -73,6 +73,14 @@ def _centre_of(shape):
     pos = getattr(shape, '_point_pos', None)        # (a point: where it is, exactly -- its gizmo and its dot are there)
     if pos:
         return tuple(float(c) for c in pos)
+    # A shape whose surfaces were dragged (handles()) has its pivot where the shape was before: the middle of the box that moves with every drag
+    # would take the whole shape with it when the script runs again, if the gizmo turns or scales it
+    before = getattr(shape, '_pivot_shape', None)
+    if before is not None:
+        shape = before
+        pos = getattr(shape, '_point_pos', None)
+        if pos:
+            return tuple(float(c) for c in pos)
     b = getattr(shape, '_bounds', None)
     if not b:
         try:
@@ -358,6 +366,8 @@ def handles(shape, values=None, **removed):
         raise ValueError('handles(): the shape could not be rebuilt with those numbers')
     out = Shape(p)
     _carry(out, shape)
+    # (what the shape was before its numbers were edited: the pivot of a gizmo that turns or scales it is the middle of this one's box)
+    out._pivot_shape = getattr(shape, '_pivot_shape', None) or shape
     # an offset, a shell or a thickening of it (fields._dist) uses the exact distance of the part
     get = getattr(shape, '_distance_of', None)
     if get is not None:

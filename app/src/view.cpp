@@ -1690,7 +1690,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
                 *drag_eval.first, drag_eval.second,
                 drag_target->getVars(),
                 {cursor_pos.x(), cursor_pos.y(), cursor_pos.z()},
-                drag_target->gizmoVars());
+                drag_target->gizmoVars(), 25000, drag_weights);
         emit(varsDragged(QMap<libfive::Tree::Id, float>(sol.second)));
 
         drag_valid = fabs(sol.first) < 1e-6;
@@ -1797,6 +1797,7 @@ void View::mousePressEvent(QMouseEvent* event)
         if (event->button() == Qt::LeftButton)
         {
             // A part's handle (a move arrow or a rotation ring)
+            syncPicker();
             const GizmoGrip grip = gizmoAt(event->pos());
             if (grip.kind >= 0)
             {
@@ -1892,6 +1893,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 auto df = drag_target->dragFrom(drag_start);
                 drag_eval.first.reset(df.first);
                 drag_eval.second = df.second;
+                drag_weights = drag_target->dragWeights();
 
                 auto norm = drag_eval.first->deriv(
                         {drag_start.x(), drag_start.y(), drag_start.z()},
@@ -3987,10 +3989,17 @@ bool anyMoveVar(const QList<Shape*>& shapes, int a)
 
 }   // anonymous namespace
 
+bool View::overDraggableSurface(QPoint pos) const
+{
+    if (selectedShapeCount() >= 2 || !pick_img.valid(pos)) return false;
+    const auto picked = pick_img.pixel(pos) & 0xFFFFFF;
+    return picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->nativeDragOk();
+}
+
 View::GizmoGrip View::gizmoAt(QPoint pos) const
 {
     GizmoGrip best;
-    double bestDist = 9.0;
+    double bestDist = overDraggableSurface(pos) ? 4.0 : 9.0;
     const QPointF at(pos);
     // Several shapes selected, all in the gizmo mode: one gizmo for them all (arrows and the dot in the middle)
     QList<Shape*> members;
@@ -4155,7 +4164,7 @@ bool View::provisionalGripAt(QPoint pos, int* kind, int* axis) const
         *axis = 0;
         return true;
     }
-    double best = 9.0;
+    double best = overDraggableSurface(pos) ? 4.0 : 9.0;
     bool found = false;
     for (int a = 0; a < 3; ++a)
     {

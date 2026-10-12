@@ -14,6 +14,13 @@
 - **FielDes takes over the file type.** The Windows installer registers `.fieldesapp` for the user (and removes it with the program); the Linux installer and the `.deb` bring the MIME type. The first time an app is exported FielDes asks whether a double click should open it, and **Settings → Open .fieldesapp files with FielDes** does it for a copy that was not installed.
 - **`examples/24_app_bracket_maker.py`** is a complete app: a model file (the bracket comes along inside it), a mode, a wall thickness and where to save the result, with the comments that say how an app is made.
 
+### Dragging a surface moves that surface and nothing else
+- **A face you drag is the only thing that changes.** Dragging a cylinder's wall (or a hole's, or a sphere's) changes its **radius** and leaves its **centre** where it is; dragging one face of a box moves that face and the opposite one stays; dragging the top of a cylinder leaves its bottom. The same
+  for the faces of an imported part: its hole walls keep their axes. (The centre of a round feature has a heavy weight in the drag's solver; it only moves when nothing else can take the drag.)
+- **The gizmo's pivot no longer moves while you drag faces.** A part that the gizmo rotates or scales turns about the middle of its box -- and dragging a face changed the box, so the part jumped sideways when the script ran again. The pivot is now the middle of the box the shape had before its faces were dragged.
+- **A press next to the gizmo is a drag of the surface.** Over a surface that can be dragged, the gizmo's arrows, rings and squares only take a press where they are drawn (a drag of a face beside a scale square used to scale the part). Away from the part the gizmo keeps its generous reach.
+- **One fold arrow per model.** The line that defines a variable folds together with its `handles(...)`, `gizmo(...)` and `lock(...)` statements, instead of an arrow on each of them; the model tree's row closes with it.
+
 ### The viewport is Z up by default
 - **Z points up** in the viewport unless you choose otherwise, as the shapes of the library are made: a cylinder stands along z, an extrusion goes up along z, a 2D shape lies in the z = 0 plane.
   **Settings → Rotation mode → Turntable (Y up)** is still there, and what you choose is kept.

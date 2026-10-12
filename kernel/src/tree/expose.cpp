@@ -224,6 +224,91 @@ Tree walk(const Tree& root0, bool rebuild, const std::function<Tree(const Tree&)
 
 }   // anonymous namespace
 
+std::map<Tree::Id, float> dragWeights(const Tree& t0)
+{
+    std::map<Tree::Id, float> out;
+    if (!t0.get()) return out;
+    const Tree root = (t0.get()->flags & TreeData::TREE_FLAG_HAS_REMAP) ? t0.flatten() : t0;
+    const auto isVar = [](const Tree& n) {
+        const auto v = std::get_if<TreeNonaryOp>(n.get());          // (a free variable is a leaf: Tree::var())
+        return v && v->op == Opcode::VAR_FREE;
+    };
+    // Who uses each node
+    std::unordered_map<const TreeData*, std::vector<const TreeData*>> parents;
+    std::vector<const TreeData*> variables;
+    {
+        std::unordered_set<const TreeData*> seen;
+        std::vector<const TreeData*> todo = {root.get()};
+        while (!todo.empty())
+        {
+            const TreeData* d = todo.back();
+            todo.pop_back();
+            if (!seen.insert(d).second) continue;
+            if (auto n = std::get_if<TreeNonaryOp>(d))
+            {
+                if (n->op == Opcode::VAR_FREE) variables.push_back(d);
+            }
+            else if (auto u = std::get_if<TreeUnaryOp>(d))
+            {
+                parents[u->lhs.get()].push_back(d);
+                todo.push_back(u->lhs.get());
+            }
+            else if (auto b = std::get_if<TreeBinaryOp>(d))
+            {
+                parents[b->lhs.get()].push_back(d);
+                if (b->rhs.get() != b->lhs.get()) parents[b->rhs.get()].push_back(d);
+                todo.push_back(b->lhs.get());
+                todo.push_back(b->rhs.get());
+            }
+        }
+    }
+    // Whether the value of a node is only ever combined linearly until it is squared (every way it is used ends in a square)
+    std::unordered_map<const TreeData*, int> memo;         // 1 yes, 2 no
+    std::function<bool(const TreeData*)> endsInSquare = [&](const TreeData* n) -> bool {
+        const auto known = memo.find(n);
+        if (known != memo.end()) return known->second == 1;
+        memo[n] = 2;
+        const auto found = parents.find(n);
+        bool ok = found != parents.end() && !found->second.empty();
+        if (ok)
+        {
+            for (const TreeData* p : found->second)
+            {
+                bool good = false;
+                if (auto u = std::get_if<TreeUnaryOp>(p))
+                {
+                    if (u->op == Opcode::OP_SQUARE) good = true;
+                    else if (u->op == Opcode::OP_NEG) good = endsInSquare(p);
+                }
+                else if (auto b = std::get_if<TreeBinaryOp>(p))
+                {
+                    if (b->op == Opcode::OP_MUL && b->lhs.get() == b->rhs.get()) good = true;                // (a * a)
+                    else if (b->op == Opcode::OP_ADD || b->op == Opcode::OP_SUB) good = endsInSquare(p);
+                    else if (b->op == Opcode::OP_MUL && (isConstant(b->lhs) || isConstant(b->rhs))) good = endsInSquare(p);
+                }
+                if (!good) { ok = false; break; }
+            }
+        }
+        memo[n] = ok ? 1 : 2;
+        return ok;
+    };
+    // A variable that is only ever a centre -- every use of it is x - c, or x + c, that ends in a square -- resists
+    const float kCentre = 1e4f;
+    for (const TreeData* v : variables)
+    {
+        const auto found = parents.find(v);
+        if (found == parents.end() || found->second.empty()) continue;
+        bool centre = true;
+        for (const TreeData* p : found->second)
+        {
+            const auto b = std::get_if<TreeBinaryOp>(p);
+            if (!b || (b->op != Opcode::OP_SUB && b->op != Opcode::OP_ADD) || !endsInSquare(p)) { centre = false; break; }
+        }
+        if (centre) out[static_cast<Tree::Id>(v)] = kCentre;
+    }
+    return out;
+}
+
 std::vector<float> exposableConstants(const Tree& t)
 {
     std::vector<float> out;

@@ -68,6 +68,31 @@ bool inStringOrComment(const QString& line, int col)
     return quote != QChar(0);
 }
 
+// "name = ..." at the start of a line (not name == ...): the name
+QString assignedName(const QString& text)
+{
+    static const QRegularExpression re(R"(^([A-Za-z_]\w*)\s*=(?!=))");
+    const auto m = re.match(text);
+    return m.hasMatch() ? m.captured(1) : QString();
+}
+
+// "name = handles(name, ...", gizmo, lock ... : a statement that goes on with a model that is already defined: the name.  (FielDes writes them one
+// argument to a line -- `name = handles(` and `name,` under it -- so the first argument may be on the next line)
+QString setupOf(const QTextBlock& block)
+{
+    static const QRegularExpression head(R"(^([A-Za-z_]\w*)\s*=\s*(?:handles|gizmo|lock|render_cache|custom_resolution)\(\s*([A-Za-z_]\w*)?)");
+    static const QRegularExpression first(R"(^\s*([A-Za-z_]\w*)\s*[,)])");
+    const auto m = head.match(block.text());
+    if (!m.hasMatch()) return QString();
+    QString argument = m.captured(2);
+    if (argument.isEmpty() && block.next().isValid())
+    {
+        const auto n = first.match(block.next().text());
+        if (n.hasMatch()) argument = n.captured(1);
+    }
+    return argument == m.captured(1) ? argument : QString();
+}
+
 // Net bracket depth change of a line (outside strings and comments)
 int bracketDelta(const QString& line)
 {
@@ -717,6 +742,48 @@ bool Script::foldRange(int blockNum, int* endOut) const
             if (depth > 0)
             {
                 end = -1;
+            }
+        }
+
+        // A model and its setup are one block: the definition of a variable folds together with the statements that go on with it
+        // (`x = handles(x, ...)`, `x = gizmo(x, ...)`, `x = lock(x)` ...), and those have no arrow of their own
+        if (indentOf(b) == 0)
+        {
+            const QString setupName = setupOf(b);
+            if (!setupName.isEmpty())
+            {
+                // (part of the block above when the statement before it is the definition, or another setup, of the same variable)
+                QTextBlock p = b.previous();
+                int looked = 0;
+                while (p.isValid() && looked++ < 5000)
+                {
+                    const QString pt = p.text();
+                    const QString trimmed = pt.trimmed();
+                    const bool continuation = trimmed.isEmpty() || indentOf(p) > 0 || trimmed[0] == ')' || trimmed[0] == ']' || trimmed[0] == '}';
+                    if (!continuation) break;
+                    if (trimmed.isEmpty()) return false;        // (a blank line ends the block)
+                    p = p.previous();
+                }
+                if (p.isValid() && (assignedName(p.text()) == setupName || setupOf(p) == setupName)) return false;
+            }
+            const QString name = assignedName(text);
+            if (!name.isEmpty() && setupName.isEmpty() && setupOf(b).isEmpty())
+            {
+                int last = end > blockNum ? end : blockNum;
+                QTextBlock n = document()->findBlockByNumber(last).next();
+                while (n.isValid() && setupOf(n) == name)
+                {
+                    int statementEnd = n.blockNumber();
+                    int depth = bracketDelta(n.text());
+                    for (QTextBlock m = n.next(); depth > 0 && m.isValid(); m = m.next())
+                    {
+                        depth += bracketDelta(m.text());
+                        statementEnd = m.blockNumber();
+                    }
+                    last = statementEnd;
+                    n = document()->findBlockByNumber(last).next();
+                }
+                if (last > end) end = last;
             }
         }
     }

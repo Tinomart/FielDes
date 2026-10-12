@@ -10,6 +10,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #pragma once
 
+#include <map>
 #include <vector>
 
 #include "libfive/tree/tree.hpp"
@@ -43,5 +44,14 @@ std::vector<float> exposableConstants(const Tree& t);
  *  exactly that many; otherwise an invalid tree is returned.
  */
 Tree exposeConstants(const Tree& t, const std::vector<Tree>& with);
+
+/*
+ *  How much each free variable of a tree resists being changed when a surface is dragged (see Solver::Weights).  A variable that is only ever
+ *  the centre of a round feature -- the c of square(x - c), as in a cylinder's, a sphere's or a hole's axis -- has a big weight: dragging the
+ *  wall of a round feature changes its radius and leaves the axis where it is.  The numbers of a slab (abs(x - c) - h: a box's faces, a
+ *  plane's offset) keep a weight of 1: the smallest change of the two moves the face that was dragged and leaves the opposite one.  Variables
+ *  that are not in the result have weight 1.
+ */
+std::map<Tree::Id, float> dragWeights(const Tree& t);
 
 }   // namespace libfive

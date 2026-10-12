@@ -304,6 +304,8 @@ public:
     bool nativeDragOk() const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
     std::set<libfive::Tree::Id> gizmoVars() const;
+    /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
+    std::map<libfive::Tree::Id, float> dragWeights() const;
     /*  Where the part turns after the move: the pivot the gizmo sits at  */
     QVector3D gizmoPivot() const { return m_gizmo.about + gizmoMove(); }
     /*  The rotation the angles make (the library's rotate_x/y/z, x first)  */

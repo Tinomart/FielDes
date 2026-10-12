@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "fieldes/i18n.hpp"
 #include "fieldes/shape.hpp"
+#include "libfive/tree/expose.hpp"
 #include "libfive.h"
 #include "fieldes/shader.hpp"
 #include "fieldes/colormap.hpp"
@@ -2209,6 +2210,11 @@ void Shape::setHover(bool h)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+std::map<libfive::Tree::Id, float> Shape::dragWeights() const
+{
+    return libfive::dragWeights(tree);
+}
 
 std::pair<libfive::JacobianEvaluator*, libfive::Tape::Handle>
 Shape::dragFrom(const QVector3D& v)

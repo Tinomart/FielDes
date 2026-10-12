@@ -6,7 +6,7 @@
 #            with the numbers of its surfaces).  This is always there.
 #   gizmo    arrows (move), rings (rotate) and squares (scale) at the part; the numbers you drag
 #            are written into the var(...) arguments of the call `x = gizmo(x, move=..., rotate=..., scale=...)`
-#            below.  Where it is shown, it has priority.
+#            below.  Where it is shown it can be grabbed where it is drawn; a press next to it on the part drags the part's surface.
 # The gizmo button of the model tree row (key E) says when the gizmo is shown: click (the default: while
 # the part is selected), never, always -- E goes round them.  Try them.
 # The lock button beside it (key R) is a switch of its own: `bracket = lock(bracket)` under the part, and
