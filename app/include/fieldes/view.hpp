@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QPair>
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 
 #include <QFutureWatcher>
@@ -79,12 +80,18 @@ public:
      */
     ~View();
 
+    /*  The viewport of a FielDes app window: no model tree and no context menu -- what is there is looked at, and dragged by its gizmo and its
+     *  handles (a model that is not locked) -- and the names the app gives its models are drawn over them  */
+    void setAppMode(bool on);
+    bool appMode() const { return m_appMode; }
+
     /*  Whether any shape is still being rendered, and a ballpark of the
      *  seconds until all are (negative: no estimate yet); they render at
      *  the same time, so the longest one  */
     bool isRendering() const;
     /*  How many shapes the viewport holds (for scripted tests)  */
     int shapeCount() const { return shapes.size(); }
+    const QList<Shape*>& allShapes() const { return shapes; }
     double renderFraction() const;
 
     /*  The render's progress bar (in paintOverlay)  */
@@ -183,17 +190,23 @@ public slots:
     /*  Section view / field viewer  */
     void setSection(SectionSettings s);
 
-    /*  The field models of the script, after a run (the field viewer shows the selected one: see showField)  */
+    /*  The field models of the script, after a run: every field has an icon in the scene (a card with its name over it, at the place of the
+     *  object it was made from) while it is shown, and a viewer -- a plane of its field inside the bounds of the field -- while it is open  */
     void setFieldSources(QList<FieldEntry> fields);
-    /*  The field viewer's disc shows the field model with this key (a variable's name, or "line:N"): the field's value at every
-     *  point of the disc.  An empty key (or none that exists) ends it.  The disc is a plane of its own, with its own samples: the
-     *  section view is another one and works whether or not a field is shown  */
-    void showField(QString key);
-    bool fieldShown() const { return !m_fieldKey.isEmpty() && m_fieldSources.contains(m_fieldKey); }
-    /*  The field viewer's disc (see FieldPanel): where it is, which way it faces, how big, how opaque  */
-    void setFieldView(FieldViewSettings s);
-    /*  Where the shown field is about (the point or body it was made from; else the origin), and whether that is known  */
-    QVector3D fieldCentre(bool* known = nullptr) const;
+    /*  The fields whose viewers are open (the ones selected in the model tree, or whose icons were clicked): by key (a variable's name, or
+     *  "line:N").  A field that is not shown (its eye is off) has neither icon nor viewer  */
+    void setOpenFields(QStringList keys);
+    /*  The field the card is about (one of the open ones)  */
+    void setActiveField(QString key);
+    QString activeField() const { return m_activeField; }
+    /*  The open viewers that are in the scene, by key  */
+    QStringList openFieldKeys() const;
+    /*  A viewer's settings and the bounds of its field; false when there is none  */
+    bool fieldViewer(const QString& key, FieldViewSettings& s, QVector3D& boundsMin, QVector3D& boundsMax) const;
+    /*  The card changed a viewer: its axis, its place (the icon moves with it), its opacity  */
+    void setFieldView(QString key, FieldViewSettings s);
+    /*  Where a field's icon is on the screen (for scripted tests); false when it is not in the scene  */
+    bool fieldIconPoint(const QString& key, QPoint& out) const;
 
     void toOrthographic() { camera.toOrthographic();  }
     void toPerspective()  { camera.toPerspective();   }
@@ -271,12 +284,17 @@ signals:
 
     /*  The section plane was dragged along its normal by its handle in the viewport  */
     void sectionOffsetDragged(float offset);
-    /*  The field viewer's disc was dragged (by its arrow along its normal, by one in its plane, or by the dot in the middle)  */
-    void fieldCentreDragged(QVector3D centre);
+    /*  The icon of a field was clicked (without dragging): the window selects the field, which opens its viewer; with Ctrl it joins the
+     *  selection or leaves it  */
+    void fieldIconClicked(QString key, bool ctrl);
+    /*  The icon of a field was dragged: where it is now, and the viewer with it  */
+    void fieldMoved(QString key, FieldViewSettings s);
+    /*  Which fields are open, shown or the card's changed (the card follows)  */
+    void fieldViewersChanged();
 
     /*  The distance field under the mouse on the section plane ("" = none)  */
     void sectionReadout(QString text);
-    /*  The shown field's value under the mouse on the field viewer's disc ("" = none)  */
+    /*  The value of the field under the mouse on a field viewer's plane ("" = none)  */
     void fieldReadout(QString text);
 
     /*  Whether the section plane cuts a shown analysis result that has elements (the section
@@ -325,7 +343,6 @@ protected slots:
 
     /*  Starts (debounced) re-sampling of the section field, and of the field viewer's disc  */
     void requestSlice();
-    void requestFieldSlice();
 
 protected:
     void initializeGL() override;
@@ -345,6 +362,13 @@ protected:
      *  using a user-provided z depth
      */
     QVector3D toModelPos(QPoint pt, float z) const;
+
+    /*  The dot of a point (the middle point of a gizmo, always drawn), the point whose dot is at a widget position, and the names of an app  */
+    void drawPointDots(QPainter& painter);
+    Shape* pointDotAt(QPoint pos) const;
+    void drawNameLabels(QPainter& painter);
+    bool m_appMode = false;
+    Shape* m_dotHover = nullptr;
 
     /*  Background items to render  */
     Arrow arrow;
@@ -585,25 +609,59 @@ protected:
     /*  Section view state: the plane that cuts the models and shows the distance field on them  */
     SectionSettings section;
     Plane m_sec;
-    /*  The field viewer's disc: a plane of its own, never the section's  */
-    Plane m_fld;
 
     /*  A shape's fields as the plane samples them (copied for the worker thread)  */
     FieldSource sourceOf(Shape* s) const;
 
-    /*  The field models of the script (they are not shapes, nothing of them is drawn) and the one whose field the disc shows
-     *  (a key: a variable's name, or "line:N").  Their colour ranges are found when a field is first shown, and kept until the
-     *  script runs again  */
-    QMap<QString, FieldSource> m_fieldSources;
-    QMap<QString, QPair<float, float>> m_fieldRanges;
-    QString m_fieldKey;
-    void startSliceAt(Plane& plane, bool fine);
-    void onSliceFinished(Plane& plane);
+    /*  A field's viewer: its icon, and its plane while it is open.  Every field has its own, with its own plane and sampling.  */
+    struct FieldViewer
+    {
+        QString key;
+        FieldSource source;
+        bool shown = true;                       // its eye: icon and viewer are in the scene
+        bool hasAnchor = false;
+        QVector3D anchor;                        // where the icon starts: the place of the object the field was made from
+        bool hasBounds = false;
+        QVector3D lo, hi;                        // the box of that object (else the render region): the viewer is kept inside it
+        bool open = false;                       // the viewer's plane is open
+        bool moved = false;
+        QVector3D centre;                        // where the icon is, once it was moved by hand; the plane is at centre[axis]
+        int axis = 2;
+        float opacity = 0.9f;
+        bool rangeKnown = false;
+        QPair<float, float> range;               // the colours of the field, found when it is first shown and kept until the script runs again
+        Plane plane;
+    };
+    std::map<QString, std::unique_ptr<FieldViewer>> m_viewers;
+    QString m_activeField;
+    FieldViewer* viewer(const QString& key) const;
+    QStringList m_wantedOpen;            // (the fields that are selected: their viewers open when the field is there)
+    void settleActive();
+    void initViewer(FieldViewer* v);
+    void retireViewer(FieldViewer* v);
+    /*  The bounds a viewer is kept in (a little room round them, never flat), where its icon is, and its plane as the settings of a section  */
+    void fieldBounds(const FieldViewer& v, QVector3D& lo, QVector3D& hi) const;
+    QVector3D fieldPlace(const FieldViewer& v) const;
+    SectionSettings fieldPlane(const FieldViewer& v) const;
+    FieldViewSettings fieldSettings(const FieldViewer& v) const;
+    void requestFieldSlice(FieldViewer* v);
+    void emitActiveSlice();
+    /*  The icons of the fields, with their names; the icon under a widget position; the drag of an icon (in the plane that faces the eye)  */
+    void drawFieldIcons(QPainter& painter);
+    FieldViewer* fieldIconAt(QPoint pos) const;
+    QVector3D rayHitFacing(QPoint pos, const QVector3D& through) const;
+    void dragFieldIcon(QPoint pos);
+    FieldViewer* m_iconPress = nullptr;
+    FieldViewer* m_iconHover = nullptr;
+    bool m_iconDrag = false;
+    bool m_iconCtrl = false;
+    QPoint m_iconPressPos;
+    QVector3D m_iconGrab;
+    bool activeFieldOpen() const;
+    void startSliceAt(Plane& plane, bool fine, FieldViewer* viewer = nullptr);
+    void onSliceFinished(Plane& plane, FieldViewer* viewer = nullptr);
     void setClipUniform(bool on);
     void drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettings& at);
-
-    /*  The disc as the settings of a plane (enabled, no cut): the one that is sampled and drawn  */
-    SectionSettings fieldPlane() const;
 
     /*  Where the field is sampled (around the displayed models) and the
      *  distance outside them where the plane fades out  */
@@ -619,31 +677,6 @@ protected:
     static bool onArrow(QPoint pos, QPointF p, QPointF q);
     static void paintNormalArrow(QPainter& painter, QPointF p, QPointF q, bool hot);
 
-    /*  The field viewer's disc has the same arrow along its normal, two more in its plane, and a dot in the middle that moves it
-     *  freely in the plane: the screen points of its middle and of the tips of the two arrows (along the two axes of the plane)
-     *  and of the one along the normal  */
-    bool fieldGizmo(QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& tipN, float& length) const;
-public:
-    /*  A point that grips a part of the field viewer's disc gizmo (1, 2: the arrows in its plane; 3: the dot; 4: the arrow along
-     *  its normal), in the widget's coordinates -- for the automation's test drags  */
-    bool fieldGizmoPoint(int part, QPoint& out) const;
-    /*  Where the field viewer's disc is (its middle)  */
-    QVector3D fieldViewCentre() const { return m_fieldView.centre; }
-protected:
-    /*  What is under a widget position: 0 nothing, 1 / 2 an arrow in the plane, 3 the dot, 4 the arrow along the normal  */
-    int fieldGizmoHit(QPoint pos) const;
-    void drawFieldGizmo(QPainter& painter);
-    void dragFieldGizmo(QPoint pos);
-    float fieldRadius() const;
-    void applyFieldView();
-    FieldViewSettings m_fieldView;
-    QMap<QString, QPair<QVector3D, bool>> m_fieldCentres;
-    int field_drag = 0;                       // (which part of the gizmo is held: see fieldGizmoHit)
-    int field_hover = 0;                      // (and which is under the cursor)
-    QPoint field_press;
-    QVector3D field_press_centre, field_press_grab;
-    QPointF field_dir;                        // (the screen direction and the length in mm of the arrow that is held)
-    float field_len = 0;
     QPointF toScreen(const QVector3D& p) const;
 
     /*  The gizmo of placed parts (Shape::gizmo, fieldes.stdlib.handles): move

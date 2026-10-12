@@ -1,7 +1,7 @@
 '''
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: not drawn, its gizmo shows where it is and moves it
+    p = point(10, 0, 5)                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -13,7 +13,7 @@ What is drawn for each kind of model (Shape._display calls displayed() below):
     a 3D shape and a simulation   as they are
     a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
     a surface                     a thin sheet
-    a point                       nothing: a point is not drawn, its gizmo is all there is of it
+    a point                       a dot, the middle point of a gizmo (click it to select the point: its gizmo shows)
     a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
                                   which colours a plane through the render region by the field (move the plane to see
                                   the field in 3D)
@@ -68,14 +68,34 @@ def _coord(c):
     return c if isinstance(c, Shape) else float(c)
 
 
+def _position_of(xyz):
+    ''' Where a point is, as three numbers, when that can be told: its coordinates are numbers, or fields that are the same everywhere (a
+        var(), an expression of var()s) and have their value now.  None for a field that changes from place to place '''
+    out = []
+    for c in xyz:
+        if isinstance(c, Shape):
+            try:
+                a, b = c(0.0, 0.0, 0.0), c(1.7, -2.3, 0.9)
+            except Exception:
+                return None
+            if a != a or abs(a - b) > 1e-9 * max(1.0, abs(a)):
+                return None
+            out.append(float(a))
+        else:
+            out.append(float(c))
+    return tuple(out)
+
+
 class Point(Shape):
-    ''' A point: p.xyz is its coordinates (numbers or fields).  It is **not drawn**: select it and its gizmo shows where it is.  (As a field
-        it is a tiny ball, which gives it a place for its gizmo and for the bounds of what is made of it: nothing of it is painted.) '''
+    ''' A point: p.xyz is its coordinates (numbers or fields).  The viewport draws it as **a dot** -- the middle point of a gizmo -- wherever it is;
+        click the dot to select it, and its full gizmo shows.  (As a field it is a tiny ball, which gives it a place for its gizmo and for the
+        bounds of what is made of it: nothing of the ball is painted.) '''
     _kind = 'point'
 
     def __init__(self, x=0.0, y=0.0, z=0.0):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
+        self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
         ball = self._ball(radius)               # (held: its tree is freed with it)
@@ -132,7 +152,7 @@ class Surface(Shape):
 
 
 def point(x=0.0, y=0.0, z=0.0):
-    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is not drawn: select it, and its gizmo shows where it is '''
+    ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows '''
     if isinstance(x, (tuple, list)) and y == 0.0 and z == 0.0 and len(x) == 3:
         x, y, z = x
     return Point(x, y, z)
@@ -173,8 +193,8 @@ def displayed(shape):
     if kind == 'profile':
         return _as(shape, shape.max(abs(Shape.Z()) - _eps()))
     if kind == 'field':
-        # A field is not a body: nothing of it is drawn in the viewport.  Selecting it in the model tree opens the section
-        # viewer on it, which shows the field at every point of a plane through the render region (FielDes's field viewer)
+        # A field is not a body: nothing of it is drawn in the viewport.  A displayed field has an icon, which opens the field viewer: it shows
+        # the field at every point of a plane inside the field's bounds
         from fieldes.stdlib.shapes import emptiness
         return emptiness()
     return shape

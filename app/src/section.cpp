@@ -1124,7 +1124,7 @@ void SectionPanel::setSlice(FieldSlice s)
 FieldPanel::FieldPanel(QWidget* parent)
     : QFrame(parent),
       m_header(new QToolButton), m_combo(new QComboBox), m_comboRow(new QWidget), m_body(new QWidget),
-      m_radiusSlider(new QSlider(Qt::Horizontal)), m_radiusSpin(new QDoubleSpinBox),
+      m_positionSlider(new QSlider(Qt::Horizontal)), m_positionSpin(new QDoubleSpinBox),
       m_opacity(new QSlider(Qt::Horizontal)),
       m_legend(new FieldLegend), m_info(new QLabel),
       m_show2d(new QToolButton), m_view(new FieldView)
@@ -1158,7 +1158,7 @@ FieldPanel::FieldPanel(QWidget* parent)
         "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 3px; padding: 1px 2px;"
         "  font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
 
-    // Header: collapse only (the card is there while a field is selected: it has no close button)
+    // Header: collapse only (the card is there while a field is open: it has no close button -- its icon in the viewport closes it)
     m_header->setObjectName("FieldHeader");
     m_header->setText(QString(QChar(0x25be)) + "  " + T("Field viewer"));
     m_header->setCursor(Qt::PointingHandCursor);
@@ -1174,18 +1174,18 @@ FieldPanel::FieldPanel(QWidget* parent)
         return l;
     };
 
-    // Which of the selected fields (only when there are several)
+    // Which of the open fields (only when there are several)
     {
         auto row = new QHBoxLayout(m_comboRow);
         row->setContentsMargins(0, 0, 0, 0);
         row->addWidget(label(T("Field")));
         m_combo->setObjectName("fieldChoice");
-        m_combo->setToolTip(T("The selected fields: choose the one that is shown"));
+        m_combo->setToolTip(T("The open fields: choose the one this card is about"));
         row->addWidget(m_combo, 1);
         m_comboRow->hide();
     }
 
-    // The way the disc faces
+    // The way the plane faces
     auto axisRow = new QHBoxLayout;
     axisRow->setSpacing(2);
     axisRow->addWidget(label(T("Plane")));
@@ -1199,28 +1199,26 @@ FieldPanel::FieldPanel(QWidget* parent)
         m_axes[i]->setCheckable(true);
         m_axes[i]->setFixedWidth(30);
         m_axes[i]->setObjectName(QString("fieldAxis") + names[i]);
-        m_axes[i]->setToolTip(T("The disc faces along %1").arg(names[i]));
+        m_axes[i]->setToolTip(T("The plane faces along %1").arg(names[i]));
         group->addButton(m_axes[i], i);
         axisRow->addWidget(m_axes[i]);
     }
     m_axes[2]->setChecked(true);
     axisRow->addStretch();
 
-    // (no position slider: the disc is not kept inside anything -- the arrows in the viewport take it wherever it is to go, and a
-    // slider that spans the render region is no way to say where in space that is)
-    // Radius
-    m_radiusSlider->setObjectName("fieldRadius");
-    m_radiusSlider->setRange(0, 1000);
-    m_radiusSpin->setDecimals(3);
-    m_radiusSpin->setRange(1e-3, 1e6);
-    m_radiusSpin->setKeyboardTracking(false);
-    m_radiusSpin->setFixedWidth(74);
-    m_radiusSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
-    m_radiusSpin->setToolTip(T("Radius of the disc"));
-    auto radiusRow = new QHBoxLayout;
-    radiusRow->addWidget(label(T("Radius")));
-    radiusRow->addWidget(m_radiusSlider, 1);
-    radiusRow->addWidget(m_radiusSpin);
+    // Where the plane is along its axis: inside the bounds of the field (its icon moves with it)
+    m_positionSlider->setObjectName("fieldPosition");
+    m_positionSlider->setRange(0, 1000);
+    m_positionSpin->setDecimals(3);
+    m_positionSpin->setRange(-1e6, 1e6);
+    m_positionSpin->setKeyboardTracking(false);
+    m_positionSpin->setFixedWidth(74);
+    m_positionSpin->setButtonSymbols(QDoubleSpinBox::NoButtons);
+    m_positionSpin->setToolTip(T("Where the plane is, inside the bounds of the field"));
+    auto positionRow = new QHBoxLayout;
+    positionRow->addWidget(label(T("Position")));
+    positionRow->addWidget(m_positionSlider, 1);
+    positionRow->addWidget(m_positionSpin);
 
     m_opacity->setRange(10, 100);
     m_opacity->setValue(90);
@@ -1233,7 +1231,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     m_info->setMinimumHeight(16);
     m_show2d->setCheckable(true);
     m_show2d->setText(T("2D view"));
-    m_show2d->setToolTip(T("Flat 2D plot of the disc"));
+    m_show2d->setToolTip(T("Flat 2D plot of the plane"));
     m_show2d->setObjectName("fieldShow2d");
     m_view->hide();
     auto viewRow = new QHBoxLayout;
@@ -1245,7 +1243,7 @@ FieldPanel::FieldPanel(QWidget* parent)
     body->setSpacing(6);
     body->addWidget(m_comboRow);
     body->addLayout(axisRow);
-    body->addLayout(radiusRow);
+    body->addLayout(positionRow);
     body->addLayout(opacityRow);
     body->addWidget(m_legend);
     body->addLayout(viewRow);
@@ -1282,15 +1280,16 @@ FieldPanel::FieldPanel(QWidget* parent)
         m_settings.opacity = v / 100.f;
         emitChange();
     });
-    connect(m_radiusSlider, &QSlider::valueChanged, this, [this](int v) {
+    connect(m_positionSlider, &QSlider::valueChanged, this, [this](int v) {
         if (m_updating) return;
-        m_settings.radius = 0.02f * radiusMax() / 1.5f + (radiusMax() - 0.02f * radiusMax() / 1.5f) * v / 1000.f;
+        const int a = m_settings.axis;
+        m_settings.centre[a] = m_min[a] + (m_max[a] - m_min[a]) * v / 1000.f;
         syncWidgets();
         emitChange();
     });
-    connect(m_radiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+    connect(m_positionSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
         if (m_updating) return;
-        m_settings.radius = float(v);
+        m_settings.centre[m_settings.axis] = float(v);
         syncWidgets();
         emitChange();
     });
@@ -1333,26 +1332,22 @@ void FieldPanel::stackBelow(QWidget* sectionCard)
     place();
 }
 
-float FieldPanel::radiusMax() const
-{
-    const QVector3D size = m_max - m_min;
-    return 1.5f * std::max({size.x(), size.y(), size.z(), 1e-3f});
-}
-
 void FieldPanel::syncWidgets()
 {
     m_updating = true;
-    for (int i = 0; i < 3; ++i) m_axes[i]->setChecked(i == m_settings.axis);
-    const float lo = 0.02f * radiusMax() / 1.5f, hi = radiusMax();
-    m_radiusSlider->setValue(int(std::max(0.f, std::min(1.f, (m_settings.radius - lo) / std::max(hi - lo, 1e-6f))) * 1000));
-    m_radiusSpin->setValue(m_settings.radius);
+    const int a = std::max(0, std::min(2, m_settings.axis));
+    for (int i = 0; i < 3; ++i) m_axes[i]->setChecked(i == a);
+    const float lo = m_min[a], hi = m_max[a], at = m_settings.centre[a];
+    m_positionSpin->setRange(lo, hi);
+    m_positionSlider->setValue(int(std::max(0.f, std::min(1.f, (at - lo) / std::max(hi - lo, 1e-9f))) * 1000));
+    m_positionSpin->setValue(at);
     m_opacity->setValue(int(m_settings.opacity * 100));
     m_updating = false;
 }
 
 void FieldPanel::emitChange()
 {
-    emit(settingsChanged(m_settings));
+    emit(settingsChanged(m_key, m_settings));
 }
 
 void FieldPanel::setFields(const QStringList& keys, const QStringList& names, int current)
@@ -1369,24 +1364,21 @@ void FieldPanel::setFields(const QStringList& keys, const QStringList& names, in
     updateInfo();
 }
 
-void FieldPanel::setContext(QVector3D centre, bool known, QVector3D regionMin, QVector3D regionMax)
+void FieldPanel::setViewer(QString key, FieldViewSettings s, QVector3D boundsMin, QVector3D boundsMax)
 {
-    Q_UNUSED(known);
-    m_min = regionMin;
-    m_max = regionMax;
-    m_home = centre;
-    m_settings.centre = centre;
-    const QVector3D size = m_max - m_min;
-    m_settings.radius = 0.5f * std::max({size.x(), size.y(), size.z(), 1e-3f});
+    m_key = key;
+    m_settings = s;
+    m_min = boundsMin;
+    m_max = boundsMax;
     syncWidgets();
-    emitChange();
+    updateInfo();
 }
 
-void FieldPanel::setCentre(QVector3D centre)
+void FieldPanel::setCentre(QString key, FieldViewSettings s)
 {
-    m_settings.centre = centre;
+    if (key != m_key) return;
+    m_settings = s;
     syncWidgets();
-    emitChange();
 }
 
 void FieldPanel::setSlice(FieldSlice s)
@@ -1406,7 +1398,7 @@ void FieldPanel::setReadout(const QString& text)
 void FieldPanel::updateInfo()
 {
     if (!m_readout.isEmpty()) m_info->setText(m_readout);
-    else m_info->setText(m_name.isEmpty() ? T("Drag the arrows to move the disc") : T("%1: drag the arrows to move the disc").arg(m_name));
+    else m_info->setText(m_name.isEmpty() ? T("Drag the field's icon to move the plane") : T("%1: drag its icon to move the plane").arg(m_name));
 }
 
 }   // namespace FielDes

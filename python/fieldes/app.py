@@ -34,7 +34,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 import os
 import re
 
-__all__ = ['number', 'text', 'flag', 'choice', 'file', 'save_as', 'folder', 'title', 'asset', 'output', 'in_app']
+__all__ = ['number', 'text', 'flag', 'choice', 'file', 'save_as', 'folder', 'title', 'asset', 'output', 'in_app', 'running', 'viewport']
 
 
 class InputError(ValueError):
@@ -67,7 +67,7 @@ DEFAULTS = {
 
 # What the host (the runner, `FielDes run`) tells a run: the values of the inputs by key, the folder of the unpacked app, the folder a
 # relative output path means.  None while the script is run in the editor, where every input is its default
-_state = {'values': None, 'root': None, 'outputs': None, 'assets': {}}
+_state = {'values': None, 'root': None, 'outputs': None, 'assets': {}, 'running': False, 'fields': []}
 _seen = {}          # key -> input as this run declared it (the host compares it with what the text of the script says)
 _outputs = []       # [{'label', 'path'}]: the files this run says it makes (save_as inputs and output() calls), in order
 
@@ -77,12 +77,15 @@ def key_of(label):
     return re.sub(r'[\W_]+', '', str(label).casefold())
 
 
-def begin(values, root=None, outputs=None, assets=None):
-    ''' (the host) A run as an app starts: `values` are the inputs by key, already checked (see app_package.check) '''
+def begin(values, root=None, outputs=None, assets=None, running=True):
+    ''' (the host) A run as an app starts: `values` are the inputs by key, already checked (see app_package.check).  `running` is False
+        for a run that only makes the picture of the app's viewport (see app.viewport): the person has not pressed Run '''
     _state['values'] = dict(values)
     _state['root'] = root
     _state['outputs'] = outputs
     _state['assets'] = dict(assets or {})
+    _state['running'] = bool(running)
+    _state['fields'] = []
     _seen.clear()
     del _outputs[:]
 
@@ -93,6 +96,7 @@ def end():
     _state['root'] = None
     _state['outputs'] = None
     _state['assets'] = {}
+    _state['running'] = False
 
 
 def in_app():
@@ -102,6 +106,17 @@ def in_app():
             if app.in_app():
                 export_mesh(part, target) '''
     return _state['values'] is not None
+
+
+def running():
+    ''' True when the person pressed Run (or the app runs from the command line): the work is to be done.  False while the script only makes the
+        picture of the app's viewport -- when the app is opened, an input changes, a model was dragged -- and in the editor.  Put what takes
+        long, and what writes files, under it:
+
+            if app.running():
+                result = static_analysis(part, ...)
+                export_results(result, target) '''
+    return bool(_state['running'])
 
 
 def _is_whole(v):
@@ -326,3 +341,72 @@ def output(path, label=''):
                 pass
     _outputs.append({'label': label or os.path.basename(full), 'path': os.path.abspath(full)})
     return full
+
+
+def _is_field(model):
+    try:
+        from fieldes.kinds import kind_of
+        return kind_of(model) == 'field'
+    except Exception:
+        return False
+
+
+def _viewport_fields():
+    ''' (the host) The fields the last app.viewport(...) was given, as [(name, field)] '''
+    return list(_state['fields'])
+
+
+class _Viewport:
+    ''' What app.viewport(...) returns: a statement that shows its models (the viewport of an app window, and the editor's viewport) '''
+
+    def __init__(self, models, labels):
+        self.models, self.labels = models, labels
+
+    def _display(self):
+        shown = []
+        fields = []
+        for name, model in self.models:
+            if _is_field(model):
+                # (a field is not drawn: the viewport shows its icon, with this name over it, and the viewer of the field when the icon is clicked)
+                fields.append((name or 'field %d' % (len(fields) + 1), model))
+                continue
+            d = model._display() if hasattr(model, '_display') else model
+            items = list(d) if isinstance(d, (list, tuple)) and not hasattr(d, 'xyz') else [d]
+            for item in items:
+                try:
+                    item._app_shown = True
+                    item._app_name = name if self.labels else ''
+                except Exception:
+                    pass
+                shown.append(item)
+        _state['fields'] = fields
+        return shown
+
+    def __repr__(self):
+        return '<shape@0x0>'        # (read by the editor's result line as "a shape": nothing is printed for it)
+
+
+def viewport(models=None, *more, labels=True):
+    ''' The app window shows a viewport: a picture of what you give it, that the person can look around in and -- the models that are not
+        locked -- drag by their gizmo and their handles.  Write it as a statement of its own:
+
+            app.viewport({'Bracket': part, 'Load point': pull}, support, load)
+
+        `models` is a dict of name -> model (the name is drawn over the model, in the style of the labels of boundary conditions), or a list of
+        models (no names); the models after it (`more`) are shown without a name.  A condition (`force(...)`, `fixed(...)`) is a model: it is
+        drawn on the body as in the editor.  Whatever a model has numbers to drag -- `gizmo()`, `handles()`, `var()` -- the person can drag,
+        unless it is `lock()`ed: click a model to select it and its gizmo shows; there is no model tree and no menu.  A model that is dragged
+        writes its new numbers into the script the app runs, which runs again for the picture (with app.running() False), and the numbers are
+        there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it
+        was made from; click the icon and the field is shown on a plane inside the field's bounds, with a slider for its position.
+
+        In the editor it shows the same models.  `labels=False` leaves the names out. '''
+    if models is None:
+        pairs = []
+    elif isinstance(models, dict):
+        pairs = [(str(k), v) for k, v in models.items()]
+    else:
+        pairs = [('', v) for v in (models if isinstance(models, (list, tuple)) else [models])]
+    pairs += [('', v) for v in more]
+    _state['fields'] = []
+    return _Viewport(pairs, bool(labels))

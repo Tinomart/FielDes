@@ -67,7 +67,7 @@ def inputs_of(source):
     ''' What the script declares, read from its text (nothing is run):
         {'inputs': [spec ...], 'title', 'description', 'version', 'assets': [path ...], 'problems': [{'line', 'message'}]}
         Each spec is {'kind', 'label', 'key', 'default', ...} (see fieldes.app.spec_of) with 'line' added. '''
-    out = {'inputs': [], 'title': '', 'description': '', 'version': '', 'assets': [], 'problems': []}
+    out = {'inputs': [], 'title': '', 'description': '', 'version': '', 'assets': [], 'problems': [], 'viewport': None}
     try:
         tree = ast.parse(source)
     except SyntaxError as e:
@@ -126,6 +126,15 @@ def inputs_of(source):
             out['title'] = str(given.get('text', '')).strip()
             out['description'] = str(given.get('description', '')).strip()
             out['version'] = str(given.get('version', '')).strip()
+        elif kind == 'viewport':
+            labels = True
+            for kw in node.keywords:
+                if kw.arg == 'labels':
+                    try:
+                        labels = bool(_plain(kw.value))
+                    except _NotPlain:
+                        pass
+            out['viewport'] = {'labels': labels}
         elif kind == 'asset':
             try:
                 out['assets'].append(_plain(node.args[0]) if node.args else None)
@@ -298,6 +307,7 @@ def build(source, script_dir, out_path, title=None):
         'created': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'fieldes': _fieldes_version(),
         'inputs': found['inputs'],
+        'viewport': found['viewport'],
         'assets': assets,
         'blocks': sorted(os.path.splitext(os.path.basename(f))[0] for f in blocks),
         'files': sorted(n[len('files/'):] for n in files),
@@ -463,7 +473,8 @@ def open_app(path):
         cwd = root
         found = inputs_of(script)
         manifest = {'title': found['title'] or os.path.splitext(os.path.basename(path))[0], 'description': found['description'],
-                    'version': found['version'], 'id': _slug(found['title'] or os.path.splitext(os.path.basename(path))[0])}
+                    'version': found['version'], 'id': _slug(found['title'] or os.path.splitext(os.path.basename(path))[0]),
+                    'viewport': found['viewport']}
         assets = {}
         inputs = found['inputs']
         problems = found['problems']
@@ -481,7 +492,7 @@ def open_app(path):
 # ---------------------------------------------------------------------------------------------------------------------
 # Values
 
-def check(opened, raw, outputs=None):
+def check(opened, raw, outputs=None, running=True):
     ''' The values of an opened app's inputs from what was chosen (`raw`: key -> value; inputs not in it have their defaults).
         Returns (values, errors): the values by key, already checked and made full paths, and {key: why} for the ones that do not
         fit.  When all fit the run is set up (fieldes.app.begin) -- the script's inputs have these values. '''
@@ -500,7 +511,7 @@ def check(opened, raw, outputs=None):
         if opened['kind'] == 'app':
             blocks_dir = os.path.join(opened['root'], 'blocks')
             os.environ['FIELDES_BLOCKS'] = blocks_dir
-        _app.begin(values, opened['root'] if opened['kind'] == 'app' else None, outputs, opened.get('assets'))
+        _app.begin(values, opened['root'] if opened['kind'] == 'app' else None, outputs, opened.get('assets'), running=running)
         _app._started = time.time()
     else:
         _app.end()

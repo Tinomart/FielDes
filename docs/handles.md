@@ -57,6 +57,11 @@ rows): they are all unlocked, and still selected.
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
 
+**A point is that dot.** A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
+(its eye in the model tree: a point whose eye is off draws nothing). **Click the dot to select the point**; then its full gizmo shows (the arrows; `mode='never'`
+keeps the dot only) and the dot, or an arrow, drags it. A locked point is a dot that cannot be moved. In an [app](apps.md) the same: `app.viewport({'Load point': p})`
+shows the dot, with its name over it.
+
 - [`var()`: a number you can drag](#var-a-number-you-can-drag)
 - [The gizmo](#the-gizmo)
 - [Handles: drag a surface](#handles-drag-a-surface)

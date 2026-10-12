@@ -164,8 +164,8 @@ always make a **field**, also from bodies: `add_fields(a, b, ...)`, `subtract_fi
 **A body keeps its true scale.** The values of a body are a distance to its surface, which a factor would stretch: `2 * sphere(5)`
 is not a sphere of any size. To compute with the values of a body, make a field of it: **`field_from_body(part)`** has the same
 number at every point as the body, but it is a *field* -- it is not drawn, it is not a part, and it can be multiplied, divided or
-powered and still be a valid field to give to a lattice, an offset or an analysis. (Select it in the model tree and the
-[field viewer](interface.md#the-field-viewer) shows its values.)
+powered and still be a valid field to give to a lattice, an offset or an analysis. (Display it, and its icon in the viewport opens
+the [field viewer](interface.md#the-field-viewer), which shows its values.)
 
 **A field goes wherever a number goes** — that is the rule of the library, not a feature of a few functions:
 `offset(part, 1.0)` and `offset(part, ramp(z_field(), (0, 40), (0.2, 2.0)))` are written alike. See
@@ -187,7 +187,7 @@ def ripple(x, y, z):
     distance = (x.square() + y.square()).sqrt()          # the distance from the z axis
     return (distance * 0.6).sin() * 3                    # a ring pattern, up to 3
 
-waves = low_level_field(ripple)                          # a field (not drawn: select it to see it in the field viewer)
+waves = low_level_field(ripple)                          # a field (not drawn: display it, and its icon opens the field viewer)
 
 def ball(x, y, z):
     return (x.square() + y.square() + z.square()).sqrt() - 20       # negative inside, zero on the surface

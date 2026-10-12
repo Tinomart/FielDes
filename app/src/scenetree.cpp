@@ -1859,7 +1859,7 @@ void ScenePanel::fitRegion()
     // Auto scale off: the region is what the script says
     if (setBounds.contains("auto_scale") && !setBounds["auto_scale"].toBool(true)) return;
     auto sane = [](double v) { return std::isfinite(v) && std::abs(v) < 1e6; };
-    // The box of the models that are shown and drawn (a point is not drawn: it does not say how far the region reaches)
+    // The box of the models that are shown and drawn (a point is not drawn, and neither is a field: they do not say how far the region reaches)
     double nlo[3], nhi[3];
     bool any = false;
     for (const auto v : m_scene["items"].toArray())
@@ -1868,7 +1868,7 @@ void ScenePanel::fitRegion()
         if (!it["visible"].toBool() || it["failed"].toBool() || it["kind"].toString() == "failed") continue;
         if (it.contains("displayable") && !it["displayable"].toBool()) continue;
         const QString type = it["type"].toString();
-        if (type == "point" || type == "points") continue;
+        if (type == "point" || type == "points" || type == "field") continue;
         const auto b = it["bounds"].toArray();
         if (b.size() != 2) continue;
         double l[3], h[3];
@@ -5771,6 +5771,21 @@ void ScenePanel::selectByLine(int line0)
         m_tree->scrollToItem(r);
         select(r, false);
     }
+}
+
+void ScenePanel::selectFieldKey(const QString& key, bool toggle)
+{
+    int line0 = -1;
+    if (key.startsWith("line:")) line0 = key.mid(5).toInt() - 1;
+    else
+    {
+        // (a field that is in the scene is shown: the line that displays it is the one that selects its row)
+        const QJsonObject it = itemForVar(key);
+        if (it.contains("display_line")) line0 = it["display_line"].toInt() - 1;
+    }
+    if (line0 < 0) return;
+    if (toggle) toggleByLine(line0);
+    else selectByLine(line0);
 }
 
 void ScenePanel::toggleByLine(int line0)

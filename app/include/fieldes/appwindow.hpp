@@ -22,10 +22,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <functional>
 
 #include <QFileSystemWatcher>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMainWindow>
+#include <QSet>
+#include <QTextCursor>
 #include <QThread>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -35,6 +38,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 class QCheckBox;
 class QLabel;
+class QSplitter;
+class QTextDocument;
 class QPlainTextEdit;
 class QProgressBar;
 class QScrollArea;
@@ -44,6 +49,9 @@ class QWidget;
 
 namespace FielDes {
 namespace Python { class Interpreter; }
+class Shape;
+class View;
+class FieldPanel;
 
 /*
  *  The window of a FielDes app: a script that people who never open the editor can run.  The script declares its inputs (fieldes.app); this
@@ -85,6 +93,8 @@ private slots:
     void onWatchedChanged(const QString& path);
     void onWatchTriggered();
     void onOpen();
+    void onLiveTimer();
+    void onResetPicture();
 
 private:
     struct Field
@@ -96,6 +106,21 @@ private:
         std::function<QJsonValue()> get;
         std::function<void(const QJsonValue&)> set;
     };
+
+    /*  The viewport (app.viewport): made when the app asks for one, with the models the script gives it.  A run that is only for the picture
+     *  (the app was opened, an input changed, a model was dragged) has app.running() False; Run makes the work, and the picture too  */
+    void ensureViewport();
+    void scheduleLive(int ms);
+    void startPicture();
+    void setPicture(bool on);
+    void finishPicture(Result& r, bool terminated);
+    void showInViewport(Result& r, bool terminated);
+    void applySelection();
+    void onInputEdited();
+    /*  What a drag in the viewport changes is written into the text of the script the app runs, as the editor does: the places of the numbers
+     *  (the run says where they are in the text it ran) are cursors of a document, which every edit moves along  */
+    void setVarSpans(const QMap<libfive::Tree::Id, QRect>& rects);
+    void applyVarValues(const QMap<libfive::Tree::Id, float>& vs);
 
     bool openApp(const QString& path, bool again);
     void buildForm(bool again);
@@ -126,6 +151,34 @@ private:
     bool m_autoRun = false;
     bool m_stopped = false;
     bool m_closing = false;         // the window is to close once the run has been stopped
+
+    // The viewport
+    bool m_hasViewport = false;
+    bool m_picture = false;         // the run that is going only makes the picture
+    bool m_liveAgain = false;       // another picture is wanted when this one is done
+    bool m_runAfter = false;        // Run was pressed while a picture was being made
+    bool m_dragging = false;
+    bool m_building = false;        // the form is being made: what it sets is not an edit
+    bool m_firstPicture = true;
+    bool m_pictureError = false;
+    QString m_lastPictureError;
+    QTimer m_liveTimer;
+    QSet<int> m_selected;
+    QSplitter* m_split = nullptr;
+    QWidget* m_viewHost = nullptr;
+    View* m_view = nullptr;
+    QLabel* m_viewHint = nullptr;
+    QPushButton* m_resetButton = nullptr;
+    FieldPanel* m_fieldPanel = nullptr;
+    QStringList m_openFields;           // (the fields whose icons were clicked: their viewers are open)
+    QString m_originalScript;
+    QTextDocument* m_doc = nullptr;
+    struct VarSpan
+    {
+        QTextCursor start, end;
+        QString text;
+    };
+    QMap<libfive::Tree::Id, VarSpan> m_varSpans;
     QElapsedTimer m_clock;
     QTimer m_poll;
     QTimer m_watchDebounce;

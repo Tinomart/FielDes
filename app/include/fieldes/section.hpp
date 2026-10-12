@@ -260,22 +260,21 @@ protected:
     bool m_collapsed = false;
 };
 
-/*  How the field viewer is configured: a disc, facing along an axis, with its middle at a place (it starts where the field is about;
- *  the arrows in the viewport move it)  */
+/*  How the viewer of a field is configured: a plane facing along an axis, at the place of the field's icon (the plane is where the icon
+ *  is along that axis) and inside the bounds of the field  */
 struct FieldViewSettings
 {
-    int axis = 2;            // the disc faces along: 0 = X, 1 = Y, 2 = Z
-    QVector3D centre;        // its middle: the place along the axis is centre[axis]
-    float radius = 0;        // of the disc (0: not chosen yet)
+    int axis = 2;            // the plane faces along: 0 = X, 1 = Y, 2 = Z
+    QVector3D centre;        // where the icon is: the place along the axis is centre[axis]
     float opacity = 0.9f;
     float offset() const { return centre[axis]; }
 };
 
 /*
- *  The field viewer, as a card floating in the viewport's top-right corner like the section card: it shows the field that is
- *  selected in the model tree on a DISC (a plane of a radius), centred where the field is about -- the point or the body it
- *  was made from, else the origin.  It cuts no models, and has none of the buttons that are only about models.  It is not closed:
- *  it is there while a field is selected.  With several fields selected, a menu chooses which one it shows.
+ *  The field viewer, as a card floating in the viewport's top-right corner like the section card: it edits the viewer of the field that is
+ *  selected -- a plane through the field, kept inside the bounds of the field (the box of the object it was made from, else the render
+ *  region), with an axis, a position slider and an opacity.  Every field has its own viewer and its own settings.  With several fields
+ *  selected, a menu in the card chooses which one it is about.
  */
 class FieldPanel : public QFrame
 {
@@ -289,20 +288,19 @@ public:
     void stackBelow(QWidget* sectionCard);
 
 public slots:
-    /*  The selected fields (their keys and the names shown) and the one that is shown; the menu is there for two or more  */
+    /*  The open viewers (their keys and the names shown) and the one the card is about; the menu is there for two or more  */
     void setFields(const QStringList& keys, const QStringList& names, int current);
-    /*  Where the shown field is about (the disc is centred there, at its place along the axis) and the render region (the range
-     *  of the sliders); the disc goes back to its place and its default size  */
-    void setContext(QVector3D centre, bool known, QVector3D regionMin, QVector3D regionMax);
+    /*  The viewer the card is about: its settings, and the bounds of its field (the range of the position slider)  */
+    void setViewer(QString key, FieldViewSettings s, QVector3D boundsMin, QVector3D boundsMax);
     void setSlice(FieldSlice s);
-    /*  The disc was dragged in the viewport: along its normal or in its plane, by an arrow, or by the dot in the middle  */
-    void setCentre(QVector3D centre);
+    /*  The icon was dragged in the viewport: the place of the viewer  */
+    void setCentre(QString key, FieldViewSettings s);
     /*  The field's value under the mouse in the viewport (empty: none)  */
     void setReadout(const QString& text);
 
 signals:
-    void settingsChanged(FieldViewSettings s);
-    /*  The menu chose another of the selected fields  */
+    void settingsChanged(QString key, FieldViewSettings s);
+    /*  The menu chose another of the open fields  */
     void fieldChosen(QString key);
 
 protected:
@@ -311,10 +309,10 @@ protected:
     void emitChange();
     void syncWidgets();
     void updateInfo();
-    float radiusMax() const;
 
     FieldViewSettings m_settings;
-    QVector3D m_home, m_min = QVector3D(-10, -10, -10), m_max = QVector3D(10, 10, 10);
+    QString m_key;
+    QVector3D m_min = QVector3D(-10, -10, -10), m_max = QVector3D(10, 10, 10);
     bool m_updating = false;
     bool m_collapsed = false;
     FieldSlice m_slice;
@@ -327,8 +325,8 @@ protected:
     QWidget* m_comboRow;
     QWidget* m_body;
     QToolButton* m_axes[3];
-    QSlider* m_radiusSlider;
-    QDoubleSpinBox* m_radiusSpin;
+    QSlider* m_positionSlider;
+    QDoubleSpinBox* m_positionSpin;
     QSlider* m_opacity;
     FieldLegend* m_legend;
     QLabel* m_info;

@@ -50,6 +50,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/colormap.hpp"
 #include "fieldes/scenetree.hpp"
 #include "fieldes/shader.hpp"
+#include "fieldes/typeicons.hpp"
 
 #include "libfive/solve/solver.hpp"
 
@@ -228,8 +229,8 @@ View::View(QWidget* parent)
     connect(&m_liveTimer, &QTimer::timeout, this, &View::pollLive);
     m_liveTimer.start();
 
-    // Section field sampling, and the field viewer's disc: each debounced, in a worker thread of its own
-    for (Plane* plane : {&m_sec, &m_fld})
+    // Section field sampling: debounced, in a worker thread of its own (every field viewer has such a plane too: see initViewer)
+    for (Plane* plane : {&m_sec})
     {
         plane->timer.setSingleShot(true);
         plane->timer.setInterval(16);          // (about a frame: a drag that moves the plane faster is still one pass)
@@ -240,13 +241,25 @@ View::View(QWidget* parent)
 
 View::~View()
 {
-    for (Plane* plane : {&m_sec, &m_fld})
+    for (auto& kv : m_viewers)
+    {
+        kv.second->plane.generation++;
+        kv.second->plane.watcher.waitForFinished();
+    }
+    for (Plane* plane : {&m_sec})
     {
         plane->generation++;              // abandon any sampling in flight
         plane->watcher.waitForFinished();
     }
     makeCurrent();
-    for (Plane* plane : {&m_sec, &m_fld})
+    for (auto& kv : m_viewers)
+    {
+        kv.second->plane.tex.reset();
+        kv.second->plane.colorTex.reset();
+        if (kv.second->plane.vao.isCreated()) kv.second->plane.vao.destroy();
+        if (kv.second->plane.vbo.isCreated()) kv.second->plane.vbo.destroy();
+    }
+    for (Plane* plane : {&m_sec})
     {
         plane->tex.reset();
         plane->colorTex.reset();
@@ -328,6 +341,7 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
                 hover_target->setHover(false);
                 hover_target = nullptr;
             }
+            if (*itr == m_dotHover) m_dotHover = nullptr;
             disconnect(*itr, &Shape::redraw, this, &View::update);
             (*itr)->deleteLater();
             itr = shapes.erase(itr);
@@ -596,6 +610,14 @@ void View::onSettingsFromScript(Settings s, bool first)
     }
 }
 
+void View::setAppMode(bool on)
+{
+    m_appMode = on;
+    // (the model tree is not part of an app window: nothing of it is shown, and nothing writes the script)
+    if (m_scene) m_scene->setVisible(!on);
+    update();
+}
+
 void View::initializeGL()
 {
     initializeOpenGLFunctions();
@@ -764,9 +786,10 @@ void View::paintGL()
     {
         drawSlicePlane(m, m_sec, section);
     }
-    if (fieldShown())
+    for (auto& kv : m_viewers)
     {
-        drawSlicePlane(m, m_fld, fieldPlane());
+        FieldViewer* v = kv.second.get();
+        if (v->open && v->shown) drawSlicePlane(m, v->plane, fieldPlane(*v));
     }
 
     // The streamlines of a flow and the particles on them, over everything (seen through the fluid)
@@ -863,11 +886,9 @@ void View::paintOverlay(QPainter& painter)
     {
         drawSectionHandle(painter);
     }
-    if (fieldShown())
-    {
-        drawFieldGizmo(painter);
-    }
+    drawFieldIcons(painter);
     drawMarkers(painter);
+    drawPointDots(painter);
     drawGizmo(painter);
     if (!section_readout.isEmpty() && !section_drag)
     {
@@ -885,6 +906,7 @@ void View::paintOverlay(QPainter& painter)
     }
 
     drawBoundaryLabels(painter);
+    if (m_appMode) drawNameLabels(painter);
     legend_close.clear();
     bottom_items.clear();
     drawLegends(painter);
@@ -1548,9 +1570,11 @@ void View::mouseMoveEvent(QMouseEvent* event)
     QOpenGLWidget::mouseMoveEvent(event);
     event->accept();
 
-    if (field_drag)
+    if (m_iconPress)
     {
-        dragFieldGizmo(event->pos());
+        // (an icon that is held: a click that moves is a drag of it)
+        if (!m_iconDrag && (event->pos() - m_iconPressPos).manhattanLength() >= 4) { m_iconDrag = true; setCursor(Qt::SizeAllCursor); }
+        if (m_iconDrag) dragFieldIcon(event->pos());
         mouse.pos = event->pos();
         return;
     }
@@ -1597,13 +1621,21 @@ void View::mouseMoveEvent(QMouseEvent* event)
             gizmo_hover = grip;
             m_overlay->update();
         }
-        const int part = fieldGizmoHit(event->pos());
+        // (the dot of a point lights up under the mouse: it can be clicked)
+        Shape* dot = grip.kind < 0 ? pointDotAt(event->pos()) : nullptr;
+        if (dot != m_dotHover)
+        {
+            m_dotHover = dot;
+            setCursor(dot ? Qt::PointingHandCursor : Qt::ArrowCursor);
+            m_overlay->update();
+        }
+        FieldViewer* icon = (grip.kind < 0 && !dot) ? fieldIconAt(event->pos()) : nullptr;
         const bool hover = sectionHandleHit(event->pos());
-        if (hover != section_hover || part != field_hover)
+        if (hover != section_hover || icon != m_iconHover)
         {
             section_hover = hover;
-            field_hover = part;
-            setCursor(hover || part ? Qt::SizeAllCursor : Qt::ArrowCursor);
+            m_iconHover = icon;
+            setCursor(hover ? Qt::SizeAllCursor : icon ? Qt::PointingHandCursor : Qt::ArrowCursor);
             m_overlay->update();
         }
         updateSectionReadout(event->pos());
@@ -1759,33 +1791,20 @@ void View::mousePressEvent(QMouseEvent* event)
                 }
             }
         }
-        if (event->button() == Qt::LeftButton && fieldGizmoHit(event->pos()))
+        if (event->button() == Qt::LeftButton)
         {
-            // The field viewer's disc: an arrow in its plane moves it along that axis, the dot moves it freely in the plane
-            field_drag = fieldGizmoHit(event->pos());
-            field_press = event->pos();
-            field_press_centre = m_fieldView.centre;
-            QPointF m, u, v, n;
-            float len;
-            fieldGizmo(m, u, v, n, len);
-            field_len = len;
-            field_dir = field_drag == 1 ? u - m : field_drag == 2 ? v - m : n - m;
-            if (field_drag == 3)
+            // The icon of a field: a click on it selects the field (its viewer opens); a drag takes it, and the viewer with it, elsewhere
+            if (FieldViewer* icon = fieldIconAt(event->pos()))
             {
-                const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
-                const QVector3D a = toModelPos(event->pos(), 0), b = toModelPos(event->pos(), 0.25);
-                field_press_grab = QVector3D();
-                if (b[ax] != a[ax])
-                {
-                    const QVector3D hit = a + (m_fieldView.offset() - a[ax]) / (b[ax] - a[ax]) * (b - a);
-                    field_press_grab[ua] = m_fieldView.centre[ua] - hit[ua];
-                    field_press_grab[va] = m_fieldView.centre[va] - hit[va];
-                }
+                m_iconPress = icon;
+                m_iconPressPos = event->pos();
+                m_iconDrag = false;
+                m_iconCtrl = bool(event->modifiers() & Qt::ControlModifier);
+                m_iconGrab = fieldPlace(*icon) - rayHitFacing(event->pos(), fieldPlace(*icon));
+                press_pos = QPoint(-100000, -100000);   // not a selection click
+                press_target = nullptr;
+                return;
             }
-            press_pos = QPoint(-100000, -100000);   // not a selection click
-            press_target = nullptr;
-            m_overlay->update();
-            return;
         }
         if (event->button() == Qt::LeftButton && sectionHandleHit(event->pos()))
         {
@@ -1820,6 +1839,18 @@ void View::mousePressEvent(QMouseEvent* event)
         }
         if (event->button() == Qt::LeftButton)
         {
+            // The dot of a point: it is not in the pick buffer (nothing of it is painted), and it wins over what is behind it
+            if (Shape* dot = pointDotAt(event->pos()))
+            {
+                drag_target = nullptr;
+                press_pos = event->pos();
+                press_target = dot;
+                press_ctrl = bool(event->modifiers() & Qt::ControlModifier);
+                rect_start = rect_now = event->pos();
+                rect_add = press_ctrl;
+                mouse.state = mouse.DRAG_RECT;
+                return;
+            }
             syncPicker();
             auto picked = pick_img.valid(event->pos())
                 ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
@@ -1880,9 +1911,14 @@ void View::mouseReleaseEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
-    if (field_drag)
+    if (m_iconPress)
     {
-        field_drag = 0;
+        FieldViewer* held = m_iconPress;
+        const bool dragged = m_iconDrag, ctrl = m_iconCtrl;
+        m_iconPress = nullptr;
+        m_iconDrag = false;
+        setCursor(Qt::PointingHandCursor);
+        if (!dragged) emit(fieldIconClicked(held->key, ctrl));
         m_overlay->update();
         return;
     }
@@ -1957,8 +1993,8 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         right_press_empty = false;
         mouse.state = mouse.RELEASED;
         const int line = target->sourceLine();
-        if (line >= 0) showSurfaceMenu(event->globalPos(), line, right_press_point,
-                                       scaleAt(event->pos(), right_press_point));
+        if (line >= 0 && !m_appMode) showSurfaceMenu(event->globalPos(), line, right_press_point,
+                                                     scaleAt(event->pos(), right_press_point));
         return;
     }
     if (event->button() == Qt::RightButton && right_press_empty &&
@@ -1966,7 +2002,7 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     {
         right_press_empty = false;
         mouse.state = mouse.RELEASED;
-        showEmptyMenu(event->globalPos(), event->pos());
+        if (!m_appMode) showEmptyMenu(event->globalPos(), event->pos());
         return;
     }
     right_press_empty = false;
@@ -2310,7 +2346,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setToolTipsVisible(true);
     // The field the field viewer shows (the disc is not a model that can be right-clicked: this is its menu): a body from it at once
-    if (fieldShown() && m_scene)
+    if (activeFieldOpen() && m_scene)
     {
         addBodyFromField(menu, -1, point, scale);
         menu->addSeparator();
@@ -2812,95 +2848,247 @@ void View::drawErrorBanner(QPainter& painter)
     painter.restore();
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// The viewers of the fields: every field has an icon in the scene -- a card with its name over it, at the place of the object it was made
+// from -- while it is shown (its eye), and a viewer while it is open: a plane of the field kept inside the bounds of the field, whose
+// place along its axis is the place of the icon
+
+namespace {
+
+QString fieldLabel(const QString& key)
+{
+    return key.startsWith("line:") ? T("field at line %1").arg(key.mid(5)) : key;
+}
+
+const libfive::Tree::Id idOf(const libfive::Tree& t)
+{
+    return t.is_valid() ? t.id() : nullptr;
+}
+
+}   // anonymous namespace
+
+View::FieldViewer* View::viewer(const QString& key) const
+{
+    const auto it = m_viewers.find(key);
+    return it == m_viewers.end() ? nullptr : it->second.get();
+}
+
+void View::initViewer(FieldViewer* v)
+{
+    Plane* plane = &v->plane;
+    plane->timer.setSingleShot(true);
+    plane->timer.setInterval(16);
+    connect(&plane->timer, &QTimer::timeout, this, [this, plane, v]{ startSliceAt(*plane, false, v); });
+    connect(&plane->watcher, &QFutureWatcher<FieldSlice>::finished, this, [this, plane, v]{ onSliceFinished(*plane, v); });
+}
+
+void View::retireViewer(FieldViewer* v)
+{
+    if (m_iconPress == v) { m_iconPress = nullptr; m_iconDrag = false; }
+    if (m_iconHover == v) m_iconHover = nullptr;
+    v->plane.generation++;
+    v->plane.timer.stop();
+    v->plane.watcher.waitForFinished();
+    if (v->plane.tex || v->plane.colorTex || v->plane.vao.isCreated() || v->plane.vbo.isCreated())
+    {
+        makeCurrent();
+        v->plane.tex.reset();
+        v->plane.colorTex.reset();
+        if (v->plane.vao.isCreated()) v->plane.vao.destroy();
+        if (v->plane.vbo.isCreated()) v->plane.vbo.destroy();
+        doneCurrent();
+    }
+}
+
+// An open viewer that is shown is the card's: the one it was about if that is still so, else the first
+void View::settleActive()
+{
+    auto ok = [&](const QString& k) { const FieldViewer* v = viewer(k); return v && v->open && v->shown; };
+    if (ok(m_activeField)) return;
+    m_activeField.clear();
+    for (const auto& kv : m_viewers)
+        if (kv.second->open && kv.second->shown) { m_activeField = kv.first; break; }
+}
+
+bool View::activeFieldOpen() const
+{
+    const FieldViewer* v = viewer(m_activeField);
+    return v && v->open && v->shown;
+}
+
 void View::setFieldSources(QList<FieldEntry> fields)
 {
-    const bool was = fieldShown();
-    m_fieldSources.clear();
-    m_fieldCentres.clear();
+    QSet<QString> keep;
     for (const auto& f : fields)
     {
-        m_fieldSources.insert(f.key, f.source);
-        m_fieldCentres.insert(f.key, qMakePair(f.centre, f.hasCentre));
+        keep.insert(f.key);
+        auto& slot = m_viewers[f.key];
+        if (!slot)
+        {
+            slot.reset(new FieldViewer);
+            slot->key = f.key;
+            slot->open = m_wantedOpen.contains(f.key);
+            initViewer(slot.get());
+        }
+        FieldViewer* v = slot.get();
+        // (the same field as the last run: what was sampled is still right)
+        const bool same = v->source.tree.is_valid() && f.source.tree.is_valid() && idOf(v->source.tree) == idOf(f.source.tree) &&
+                          idOf(v->source.color) == idOf(f.source.color) && v->source.vars == f.source.vars;
+        v->source = f.source;
+        v->shown = f.shown;
+        v->hasAnchor = f.hasCentre;
+        v->anchor = f.centre;
+        v->hasBounds = f.hasBounds;
+        v->lo = f.lo;
+        v->hi = f.hi;
+        if (!same)
+        {
+            v->plane.slice = FieldSlice();      // (the script ran again: the field may be another one)
+            v->plane.dirty = true;
+            v->plane.quickMs = 0;
+            v->rangeKnown = false;
+            if (v->open && v->shown) requestFieldSlice(v);
+        }
     }
-    m_fieldRanges.clear();                 // (the script ran again: the fields may be other ones)
-    if (!m_fieldKey.isEmpty() && !m_fieldSources.contains(m_fieldKey)) m_fieldKey.clear();
-    if (was && !fieldShown())
+    for (auto it = m_viewers.begin(); it != m_viewers.end();)
     {
-        m_fld.slice = FieldSlice();        // (the field is gone: the disc goes with it; the section view is not touched)
-        m_fld.dirty = true;
-        update();
+        if (keep.contains(it->first)) { ++it; continue; }
+        retireViewer(it->second.get());
+        it = m_viewers.erase(it);
     }
-    else if (fieldShown())
-    {
-        m_fld.slice = FieldSlice();        // (the script ran again: the field may be another one)
-        requestFieldSlice();
-        update();
-    }
+    settleActive();
     if (section.enabled && section.field)
     {
-        m_sec.slice = FieldSlice();
+        m_sec.slice = FieldSlice();         // (the section view is not touched, but the field it shows may be another one)
         requestSlice();
-        update();
     }
+    emit(fieldViewersChanged());
+    update();
 }
 
-QVector3D View::fieldCentre(bool* known) const
+void View::setOpenFields(QStringList keys)
 {
-    const auto c = m_fieldCentres.value(m_fieldKey, qMakePair(QVector3D(), false));
-    if (known) *known = c.second;
-    return c.second ? c.first : QVector3D();
-}
-
-float View::fieldRadius() const
-{
-    if (m_fieldView.radius > 0) return m_fieldView.radius;
-    const QVector3D size = settings.max - settings.min;
-    return 0.5f * std::max({size.x(), size.y(), size.z(), 1e-3f});
-}
-
-void View::showField(QString key)
-{
-    if (!m_fieldSources.contains(key)) key.clear();
-    if (key == m_fieldKey) return;
-    m_fieldKey = key;
-    m_fld.quickMs = 0;                     // (how slow this field is to evaluate is not known yet)
-    m_fld.slice = FieldSlice();            // (the plane of what was shown before is not the plane of this)
-    m_fld.dirty = true;
-    if (key.isEmpty())
+    m_wantedOpen = keys;
+    for (auto& kv : m_viewers)
     {
-        update();
-        return;
+        FieldViewer* v = kv.second.get();
+        const bool want = keys.contains(kv.first);
+        if (want == v->open) continue;
+        v->open = want;
+        if (want && v->shown) requestFieldSlice(v);
+        if (!want) v->plane.generation++;       // (what is being sampled for a viewer that is closed is not wanted)
     }
-    // (a field: its disc is where the field is about, facing as it did, at the size it was)
-    m_fieldView.centre = fieldCentre();
-    m_fieldView.radius = 0;
-    applyFieldView();
+    settleActive();
+    emit(fieldViewersChanged());
+    update();
 }
 
-void View::setFieldView(FieldViewSettings s)
+void View::setActiveField(QString key)
 {
-    m_fieldView = s;
-    if (fieldShown()) applyFieldView();
+    const FieldViewer* v = viewer(key);
+    if (!v || !v->open || !v->shown || key == m_activeField) return;
+    m_activeField = key;
+    emitActiveSlice();
+    emit(fieldViewersChanged());
 }
 
-SectionSettings View::fieldPlane() const
+void View::emitActiveSlice()
 {
-    // The disc is a plane like the section's, without the cut: it clips nothing and keeps or cuts no element
+    if (const FieldViewer* v = viewer(m_activeField)) emit(fieldSliceReady(v->plane.slice));
+}
+
+QStringList View::openFieldKeys() const
+{
+    QStringList out;
+    for (const auto& kv : m_viewers)
+        if (kv.second->open && kv.second->shown) out << kv.first;
+    return out;
+}
+
+void View::fieldBounds(const FieldViewer& v, QVector3D& lo, QVector3D& hi) const
+{
+    if (v.hasBounds) { lo = v.lo; hi = v.hi; }
+    else { lo = settings.min; hi = settings.max; }
+    const QVector3D size = hi - lo;
+    const float extent = std::max({size.x(), size.y(), size.z(), 1e-3f});
+    for (int a = 0; a < 3; ++a)
+    {
+        if (!(hi[a] >= lo[a])) std::swap(lo[a], hi[a]);
+        lo[a] -= 0.02f * extent;                // (a little room round the object)
+        hi[a] += 0.02f * extent;
+        if (hi[a] - lo[a] < 1e-3f * extent) { lo[a] -= 5e-4f * extent; hi[a] += 5e-4f * extent; }
+    }
+}
+
+// Where the icon is: where it was taken to, else where the field is about -- the place of the object it was made from, the origin when it
+// was not made from one -- and always inside the bounds of the field
+QVector3D View::fieldPlace(const FieldViewer& v) const
+{
+    QVector3D lo, hi;
+    fieldBounds(v, lo, hi);
+    QVector3D p = v.moved ? v.centre : (v.hasAnchor ? v.anchor : QVector3D());
+    for (int a = 0; a < 3; ++a) p[a] = std::max(lo[a], std::min(hi[a], p[a]));
+    return p;
+}
+
+SectionSettings View::fieldPlane(const FieldViewer& v) const
+{
+    // The viewer's plane is a plane like the section's, without the cut: it clips nothing and keeps or cuts no element
     SectionSettings s;
     s.enabled = true;
-    s.axis = m_fieldView.axis;
-    s.offset = m_fieldView.offset();
+    s.axis = v.axis;
+    s.offset = fieldPlace(v)[v.axis];
     s.flip = false;
     s.clip = false;
     s.field = true;
-    s.opacity = m_fieldView.opacity;
+    s.opacity = v.opacity;
     return s;
 }
 
-void View::applyFieldView()
+FieldViewSettings View::fieldSettings(const FieldViewer& v) const
 {
-    requestFieldSlice();
+    FieldViewSettings s;
+    s.axis = v.axis;
+    s.centre = fieldPlace(v);
+    s.opacity = v.opacity;
+    return s;
+}
+
+bool View::fieldViewer(const QString& key, FieldViewSettings& s, QVector3D& boundsMin, QVector3D& boundsMax) const
+{
+    const FieldViewer* v = viewer(key);
+    if (!v) return false;
+    s = fieldSettings(*v);
+    fieldBounds(*v, boundsMin, boundsMax);
+    return true;
+}
+
+void View::setFieldView(QString key, FieldViewSettings s)
+{
+    FieldViewer* v = viewer(key);
+    if (!v) return;
+    QVector3D lo, hi;
+    fieldBounds(*v, lo, hi);
+    v->axis = std::max(0, std::min(2, s.axis));
+    v->opacity = s.opacity;
+    for (int a = 0; a < 3; ++a) s.centre[a] = std::max(lo[a], std::min(hi[a], s.centre[a]));
+    if (v->moved || !(s.centre == fieldPlace(*v)))
+    {
+        v->moved = true;
+        v->centre = s.centre;
+    }
+    if (v->open && v->shown) requestFieldSlice(v);
     update();
+}
+
+bool View::fieldIconPoint(const QString& key, QPoint& out) const
+{
+    const FieldViewer* v = viewer(key);
+    if (!v || !v->shown) return false;
+    const QPointF p = toScreen(fieldPlace(*v));
+    if (!std::isfinite(p.x()) || !std::isfinite(p.y())) return false;
+    out = QPoint(int(std::lround(p.x())), int(std::lround(p.y())));
+    return true;
 }
 
 void View::requestSlice()
@@ -2912,14 +3100,14 @@ void View::requestSlice()
     }
 }
 
-void View::requestFieldSlice()
+void View::requestFieldSlice(FieldViewer* v)
 {
-    if (fieldShown())
+    if (v && v->open && v->shown)
     {
         // The first request arms the timer, and the ones that come before it fires add nothing: the pass samples the state it finds
         // when it starts.  Starting the timer again at every request waited for the hand to rest, so a drag that moves faster than
         // the timer's interval showed nothing until it stopped -- the plane lagged behind the mouse
-        if (!m_fld.timer.isActive()) m_fld.timer.start();
+        if (!v->plane.timer.isActive()) v->plane.timer.start();
     }
 }
 
@@ -2971,10 +3159,10 @@ FieldSource View::sourceOf(Shape* s) const
     return src;
 }
 
-void View::startSliceAt(Plane& plane, bool fine)
+void View::startSliceAt(Plane& plane, bool fine, FieldViewer* viewer)
 {
-    const bool fieldMode = &plane == &m_fld;
-    if (fieldMode ? !fieldShown() : !(section.enabled && section.field)) return;      // (switched off while this waited)
+    const bool fieldMode = viewer != nullptr;
+    if (fieldMode ? !(viewer->open && viewer->shown) : !(section.enabled && section.field)) return;      // (switched off while this waited)
     if (plane.watcher.isRunning())
     {
         // A quick pass that is on its way is let finish -- its picture is shown, and the next pass follows at its end.  Abandoning it
@@ -2988,26 +3176,31 @@ void View::startSliceAt(Plane& plane, bool fine)
     bool rangeKnown = true;
     if (fieldMode)
     {
-        // (the field model that is selected is the only thing the plane shows)
-        FieldSource src = m_fieldSources.value(m_fieldKey);
+        // (the field of this viewer is the only thing its plane shows)
+        FieldSource src = viewer->source;
         src.map = "section";            // (a field is shown in the section's colours and dark lines: one look for what the planes show)
-        if (m_fieldRanges.contains(m_fieldKey))
+        if (viewer->rangeKnown)
         {
-            src.lo = m_fieldRanges[m_fieldKey].first;
-            src.hi = m_fieldRanges[m_fieldKey].second;
+            src.lo = viewer->range.first;
+            src.hi = viewer->range.second;
         }
         else rangeKnown = false;
-        if (!m_fieldKey.startsWith("line:")) src.label = m_fieldKey;
+        if (!viewer->key.startsWith("line:")) src.label = viewer->key;
         {
-            // (the plane is a DISC: the "model" it shows the field in is the disc, its distance field -- negative inside it)
-            const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
-            const libfive::Tree axes[3] = {libfive::Tree::X(), libfive::Tree::Y(), libfive::Tree::Z()};
+            // (the "model" the plane shows the field in is the box of the bounds of the field: its distance field -- negative inside it)
+            QVector3D blo, bhi;
+            fieldBounds(*viewer, blo, bhi);
             using libfive::Tree;
-            using libfive::Opcode::OP_ADD; using libfive::Opcode::OP_MUL; using libfive::Opcode::OP_SQRT; using libfive::Opcode::OP_SUB;
-            const Tree du = Tree::binary(OP_SUB, axes[ua], Tree(double(m_fieldView.centre[ua])));
-            const Tree dv = Tree::binary(OP_SUB, axes[va], Tree(double(m_fieldView.centre[va])));
-            const Tree r2 = Tree::binary(OP_ADD, Tree::binary(OP_MUL, du, du), Tree::binary(OP_MUL, dv, dv));
-            src.tree = Tree::binary(OP_SUB, Tree::unary(OP_SQRT, r2), Tree(double(fieldRadius())));
+            using libfive::Opcode::OP_ABS; using libfive::Opcode::OP_MAX; using libfive::Opcode::OP_SUB;
+            const Tree axes[3] = {Tree::X(), Tree::Y(), Tree::Z()};
+            Tree box = Tree::invalid();
+            for (int a = 0; a < 3; ++a)
+            {
+                const double c = 0.5 * (double(blo[a]) + double(bhi[a])), h = 0.5 * (double(bhi[a]) - double(blo[a]));
+                const Tree side = Tree::binary(OP_SUB, Tree::unary(OP_ABS, Tree::binary(OP_SUB, axes[a], Tree(c))), Tree(h));
+                box = a == 0 ? side : Tree::binary(OP_MAX, box, side);
+            }
+            src.tree = box;
         }
         sources.push_back(src);
     }
@@ -3019,19 +3212,16 @@ void View::startSliceAt(Plane& plane, bool fine)
         }
     }
     const int gen = ++plane.generation;
-    const SectionSettings sec = fieldMode ? fieldPlane() : section;
+    const SectionSettings sec = fieldMode ? fieldPlane(*viewer) : section;
     QVector3D lo, hi;
     float fade;
     if (fieldMode)
     {
-        // The field viewer's disc: the square round its middle (the disc is cut out of it by its own distance field)
-        const float R = fieldRadius();
-        lo = m_fieldView.centre - QVector3D(R, R, R);
-        hi = m_fieldView.centre + QVector3D(R, R, R);
-        fade = 0.15f * R;
+        // The viewer's plane: the box of the bounds of its field
+        fieldBounds(*viewer, lo, hi);
+        fade = 0.05f * std::max({hi.x() - lo.x(), hi.y() - lo.y(), hi.z() - lo.z(), 1e-3f});
     }
     else sliceRegion(lo, hi, fade);
-    const QVector3D rangeLo = settings.min, rangeHi = settings.max;      // (a field's colours are found over the whole render region)
     // A quick preview first (for dragging), then the full resolution -- less of it when the field is slow to evaluate (the fine pass
     // has sixteen times the samples of the quick one: it should not take much more than a third of a second)
     int fineSamples = 720;
@@ -3070,7 +3260,7 @@ void View::startSliceAt(Plane& plane, bool fine)
             }
             if (t.is_valid()) u.tree = t;
         }
-        if (!rangeKnown && !used.isEmpty()) autoColorRange(used[0], fieldMode ? rangeLo : lo, fieldMode ? rangeHi : hi);
+        if (!rangeKnown && !used.isEmpty()) autoColorRange(used[0], lo, hi);       // (a field's colours are found over its own bounds)
         FieldSlice s = sampleField(used, sec, lo, hi, samples, fade, g, gen);
         s.fine = fine;
         if (std::getenv("FIELDES_TIMING") && s.valid())
@@ -3084,26 +3274,32 @@ void View::startSliceAt(Plane& plane, bool fine)
     }));
 }
 
-void View::onSliceFinished(Plane& plane)
+void View::onSliceFinished(Plane& plane, FieldViewer* viewer)
 {
-    const bool fieldMode = &plane == &m_fld;
+    const bool fieldMode = viewer != nullptr;
     const FieldSlice s = plane.watcher.result();
     if (s.generation == plane.generation.load() && s.valid())
     {
         if (!s.fine && plane.clock.isValid()) plane.quickMs = double(plane.clock.elapsed());
-        if (fieldMode && fieldShown() && s.hasColor && !m_fieldRanges.contains(m_fieldKey))
-            m_fieldRanges.insert(m_fieldKey, qMakePair(s.colorLo, s.colorHi));       // (found once for the field, kept)
+        if (fieldMode && s.hasColor && !viewer->rangeKnown)
+        {
+            viewer->rangeKnown = true;
+            viewer->range = qMakePair(s.colorLo, s.colorHi);       // (found once for the field, kept)
+        }
         plane.slice = s;
         plane.dirty = true;
-        if (fieldMode) emit(fieldSliceReady(plane.slice));
+        if (fieldMode)
+        {
+            if (viewer->key == m_activeField) emit(fieldSliceReady(plane.slice));
+        }
         else emit(sliceReady(plane.slice));
         update();
         if (!s.fine && !plane.timer.isActive())
         {
-            startSliceAt(plane, true);
+            startSliceAt(plane, true, viewer);
         }
     }
-    else if ((fieldMode ? fieldShown() : (section.enabled && section.field)) && s.generation != plane.generation.load())
+    else if ((fieldMode ? (viewer->open && viewer->shown) : (section.enabled && section.field)) && s.generation != plane.generation.load())
     {
         plane.timer.start();   // settings moved on while this one ran
     }
@@ -3349,117 +3545,99 @@ bool View::sectionHandleHit(QPoint pos) const
     return onArrow(pos, p, q);
 }
 
-bool View::fieldGizmo(QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& tipN, float& length) const
+// The plane through the place of a point that faces the eye, and where the cursor's line of sight meets it
+QVector3D View::rayHitFacing(QPoint pos, const QVector3D& through) const
 {
-    const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
-    length = 0.6f * fieldRadius();
-    const QVector3D c = m_fieldView.centre;
-    QVector3D eu, ev, en;
-    eu[ua] = 1;
-    ev[va] = 1;
-    en[ax] = 1;
-    middle = toScreen(c);
-    tipU = toScreen(c + eu * length);
-    tipV = toScreen(c + ev * length);
-    tipN = toScreen(c + en * length);
-    return std::isfinite(middle.x()) && std::isfinite(tipU.x()) && std::isfinite(tipV.x()) && std::isfinite(tipN.x());
+    const QVector3D a = toModelPos(pos, 0), b = toModelPos(pos, 0.25);
+    const QVector3D n = camera.towardViewer();
+    const float denom = QVector3D::dotProduct(b - a, n);
+    if (!std::isfinite(denom) || std::abs(denom) < 1e-9f) return through;
+    return a + (QVector3D::dotProduct(through - a, n) / denom) * (b - a);
 }
 
-bool View::fieldGizmoPoint(int part, QPoint& out) const
+View::FieldViewer* View::fieldIconAt(QPoint pos) const
 {
-    // (for the automation: a point that grips part 1, 2 (the arrows in the plane), 3 (the dot) or 4 (the arrow along the normal))
-    if (!fieldShown()) return false;
-    QPointF m, u, v, n;
-    float len;
-    if (!fieldGizmo(m, u, v, n, len)) return false;
-    const QPointF p = part == 1 ? m + 0.6 * (u - m) : part == 2 ? m + 0.6 * (v - m) : part == 4 ? m + 0.7 * (n - m) : m;
-    out = QPoint(int(std::lround(p.x())), int(std::lround(p.y())));
-    return fieldGizmoHit(out) == part;
+    FieldViewer* best = nullptr;
+    double bestD = 15.0 * 15.0;
+    const QMatrix4x4 M = camera.M();
+    for (const auto& kv : m_viewers)
+    {
+        FieldViewer* v = kv.second.get();
+        if (!v->shown) continue;
+        const QVector3D p = fieldPlace(*v);
+        if (!(M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f)) continue;
+        const QPointF q = toScreen(p);
+        const double dx = q.x() - pos.x(), dy = q.y() - pos.y();
+        const double d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
 }
 
-int View::fieldGizmoHit(QPoint pos) const
+// The icon is taken where the cursor goes, in the plane through it that faces the eye, and kept inside the bounds of its field; the plane of an
+// open viewer is where the icon is along its axis
+void View::dragFieldIcon(QPoint pos)
 {
-    if (!fieldShown()) return 0;
-    QPointF m, u, v, n;
-    float len;
-    if (!fieldGizmo(m, u, v, n, len)) return 0;
-    const QPointF p(pos);
-    if (std::hypot(p.x() - m.x(), p.y() - m.y()) < 9) return 3;                // (the dot in the middle)
-    auto closeTo = [&](QPointF a, QPointF b) {
-        const QPointF ab = b - a, ap = p - a;
-        const double l2 = QPointF::dotProduct(ab, ab);
-        const double t = l2 > 0 ? std::max(0.0, std::min(1.0, QPointF::dotProduct(ap, ab) / l2)) : 0.0;
-        const QPointF d = p - (a + t * ab);
-        return std::hypot(d.x(), d.y()) < 9;
-    };
-    if (closeTo(m, u)) return 1;
-    if (closeTo(m, v)) return 2;
-    if (onArrow(pos, m, n)) return 4;                                          // (the double arrow along the normal)
-    return 0;
+    if (!m_iconPress) return;
+    FieldViewer* v = m_iconPress;
+    QVector3D lo, hi;
+    fieldBounds(*v, lo, hi);
+    QVector3D c = rayHitFacing(pos, fieldPlace(*v)) + m_iconGrab;
+    for (int a = 0; a < 3; ++a) c[a] = std::max(lo[a], std::min(hi[a], c[a]));
+    v->moved = true;
+    v->centre = c;
+    if (v->open) requestFieldSlice(v);
+    emit(fieldMoved(v->key, fieldSettings(*v)));
+    update();
 }
 
-void View::drawFieldGizmo(QPainter& painter)
+// The icons of the fields, each with its name over it as a card in the style of the labels of boundary conditions (in the green of fields):
+// so that where there are several they are told apart at a glance.  An open viewer's icon is lit up
+void View::drawFieldIcons(QPainter& painter)
 {
-    QPointF m, u, v, n;
-    float len;
-    if (!fieldGizmo(m, u, v, n, len)) return;
-    const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
-    const int part = field_drag ? field_drag : field_hover;                    // (the one that is held, else the one under the cursor)
-    static const QColor axisColour[3] = {QColor(225, 80, 70), QColor(110, 185, 70), QColor(60, 130, 230)};
-    paintNormalArrow(painter, m, n, part == 4);
+    if (m_viewers.empty()) return;
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
-    auto arrow = [&](QPointF from, QPointF to, QColor col, bool hot) {
-        if (hot) col = col.lighter(130);
-        painter.setPen(QPen(QColor(0, 0, 0, 90), 5, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(from, to);
-        painter.setPen(QPen(col, 2.5, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(from, to);
-        const QPointF dir = to - from;
-        const double l = std::hypot(dir.x(), dir.y());
-        if (l < 1) return;
-        const QPointF d = dir / l, n(-d.y(), d.x());
-        QPolygonF head;
-        head << to + d * 4 << to - d * 9 + n * 6 << to - d * 9 - n * 6;
-        painter.setPen(QPen(QColor(0, 0, 0, 90), 1));
-        painter.setBrush(col);
-        painter.drawPolygon(head);
-    };
-    arrow(m, u, axisColour[ua], part == 1);
-    arrow(m, v, axisColour[va], part == 2);
-    painter.setPen(QPen(part == 3 ? Qt::white : QColor(0xee, 0xe8, 0xd5), 1.5));
-    painter.setBrush(part == 3 || part == 4 ? QColor(80, 170, 240) : QColor(38, 139, 210));
-    painter.drawEllipse(m, 6.5, 6.5);
+    QFont font = painter.font();
+    font.setPointSizeF(9);
+    font.setBold(true);
+    painter.setFont(font);
+    const QFontMetrics fm(font);
+    const QColor green = TypeIcons::color("field");
+    const QIcon icon = TypeIcons::icon("field");
+    const QMatrix4x4 M = camera.M();
+    for (const auto& kv : m_viewers)
+    {
+        const FieldViewer* v = kv.second.get();
+        if (!v->shown) continue;
+        const QVector3D p = fieldPlace(*v);
+        if (!(M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f)) continue;     // (behind the eye)
+        const QPointF q = toScreen(p);
+        if (!(q.x() > -40 && q.y() > -40 && q.x() < width() + 40 && q.y() < height() + 40)) continue;
+        const bool hot = v->open || v == m_iconHover || (m_iconDrag && v == m_iconPress);
+        if (v->open)
+        {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(green.red(), green.green(), green.blue(), 70));
+            painter.drawEllipse(q, 19, 19);
+        }
+        painter.setPen(QPen(hot ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.5));
+        painter.setBrush(QColor(22, 76, 94, 235));
+        painter.drawEllipse(q, 13, 13);
+        icon.paint(&painter, QRect(int(std::lround(q.x())) - 9, int(std::lround(q.y())) - 9, 18, 18));
+        // the name, over the icon
+        const QString text = fieldLabel(v->key);
+        const QSizeF sz(fm.horizontalAdvance(text) + 14, fm.height() + 6);
+        QRectF box(q.x() - sz.width() / 2, q.y() - 17 - sz.height(), sz.width(), sz.height());
+        box.moveLeft(std::max(2.0, std::min(double(width()) - sz.width() - 2, box.left())));
+        box.moveTop(std::max(2.0, box.top()));
+        painter.setPen(QPen(green, 1.5));
+        painter.setBrush(QColor(22, 76, 94, 225));
+        painter.drawRoundedRect(box, 4, 4);
+        painter.setPen(QColor(0xee, 0xe8, 0xd5));
+        painter.drawText(box, Qt::AlignCenter, text);
+    }
     painter.restore();
-}
-
-void View::dragFieldGizmo(QPoint pos)
-{
-    const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
-    QVector3D c = field_press_centre;
-    // (nothing keeps the disc inside the render region or anywhere else: a field is about all of space, and the way to see it is to
-    // take the disc to where it is interesting)
-    auto clamp = [&](int, float v) { return v; };
-    if (field_drag == 1 || field_drag == 2 || field_drag == 4)
-    {
-        // An arrow: the mouse movement along its screen direction, in mm (the one along the normal moves the disc through the field)
-        const double l2 = QPointF::dotProduct(field_dir, field_dir);
-        if (l2 < 1) return;
-        const double t = QPointF::dotProduct(QPointF(pos - field_press), field_dir) / l2;
-        const int a = field_drag == 1 ? ua : field_drag == 2 ? va : ax;
-        c[a] = clamp(a, float(field_press_centre[a] + t * field_len));
-    }
-    else
-    {
-        // The dot: the disc follows the cursor in its plane (the point where the cursor's line of sight meets the plane)
-        const QVector3D a = toModelPos(pos, 0), b = toModelPos(pos, 0.25);
-        if (b[ax] == a[ax] || !std::isfinite(a[ax]) || !std::isfinite(b[ax])) return;
-        const float t = (m_fieldView.offset() - a[ax]) / (b[ax] - a[ax]);
-        const QVector3D hit = a + t * (b - a);
-        c[ua] = clamp(ua, hit[ua] + field_press_grab[ua]);
-        c[va] = clamp(va, hit[va] + field_press_grab[va]);
-    }
-    emit(fieldCentreDragged(c));
 }
 
 void View::drawSectionHandle(QPainter& painter)
@@ -3938,6 +4116,93 @@ void View::drawMarkers(QPainter& painter)
     painter.restore();
 }
 
+// A point is a dot: the middle point of a gizmo (the same blue, lit up while it is hovered or selected), drawn whatever the mode of its gizmo
+void View::drawPointDots(QPainter& painter)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QMatrix4x4 M = camera.M();
+    for (Shape* s : shapes)
+    {
+        QVector3D p;
+        if (!s->isPoint() || !s->dotPosition(p)) continue;
+        if (!(M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f)) continue;     // (behind the eye)
+        const QPointF q = toScreen(p);
+        if (q.x() < -8 || q.y() < -8 || q.x() > width() + 8 || q.y() > height() + 8) continue;
+        const bool on = s->isSelected() || s == m_dotHover;
+        painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.5));
+        painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
+        const double r = on ? 6.0 : 5.0;
+        painter.drawEllipse(q, r, r);
+    }
+    painter.restore();
+}
+
+// The point whose dot is under a widget position (within a few pixels), the nearest one
+Shape* View::pointDotAt(QPoint pos) const
+{
+    Shape* best = nullptr;
+    double bestD = 10.0 * 10.0;
+    const QMatrix4x4 M = camera.M();
+    for (Shape* s : shapes)
+    {
+        QVector3D p;
+        if (!s->isPoint() || !s->dotPosition(p)) continue;
+        if (!(M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f)) continue;
+        const QPointF q = toScreen(p);
+        const double dx = q.x() - pos.x(), dy = q.y() - pos.y();
+        const double d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+}
+
+// The names an app gives its models: a card above the model, in the style of the labels of boundary conditions (the same colours and the
+// same corners), white round it while the model is selected
+void View::drawNameLabels(QPainter& painter)
+{
+    QFont font = painter.font();
+    font.setPointSizeF(9);
+    font.setBold(true);
+    painter.setFont(font);
+    const QFontMetrics fm(font);
+    const QMatrix4x4 M = camera.M();
+    const int up = y_up ? 1 : 2;
+    for (Shape* s : shapes)
+    {
+        if (s->appLabel().isEmpty()) continue;
+        QVector3D anchor;
+        double lift = 14;
+        QVector3D p;
+        if (s->isPoint() && s->dotPosition(p))
+        {
+            anchor = p;
+            lift = 16;
+        }
+        else if (s->hasMesh() && !s->noPaint())
+        {
+            const auto& b = s->getMeshBounds();
+            anchor = QVector3D(0.5f * (b.lower.x() + b.upper.x()), 0.5f * (b.lower.y() + b.upper.y()), 0.5f * (b.lower.z() + b.upper.z()));
+            anchor[up] = b.upper[up];
+        }
+        else continue;
+        if (!(M.row(3).x() * anchor.x() + M.row(3).y() * anchor.y() + M.row(3).z() * anchor.z() + M.row(3).w() > 1e-6f)) continue;
+        QPointF at = toScreen(anchor);
+        at.setY(at.y() - lift);
+        const QSizeF sz(fm.horizontalAdvance(s->appLabel()) + 14, fm.height() + 6);
+        QRectF box(at.x() - sz.width() / 2, at.y() - sz.height(), sz.width(), sz.height());
+        // (kept on the picture)
+        box.moveLeft(std::max(2.0, std::min(double(width()) - sz.width() - 2, box.left())));
+        box.moveTop(std::max(2.0, box.top()));
+        if (box.bottom() < 0 || box.top() > height()) continue;
+        painter.setPen(QPen(s->isSelected() ? QColor(Qt::white) : QColor(0x93, 0xa1, 0xa1), 1.5));
+        painter.setBrush(QColor(22, 76, 94, 225));
+        painter.drawRoundedRect(box, 4, 4);
+        painter.setPen(QColor(0xee, 0xe8, 0xd5));
+        painter.drawText(box, Qt::AlignCenter, s->appLabel());
+    }
+}
+
 void View::drawGizmo(QPainter& painter)
 {
     painter.save();
@@ -4103,18 +4368,19 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
     // The field the field viewer shows is not a shape that is drawn, so nothing above reached its numbers: when the numbers that are
     // dragged are its own (the gizmo of the field, or a surface of it), the disc shows it from the new ones as they come, not
     // from the numbers of the last run of the script
-    bool fieldChanged = false;
-    for (auto source = m_fieldSources.begin(); source != m_fieldSources.end(); ++source)
+    for (auto& kv : m_viewers)
     {
+        FieldViewer* viewer = kv.second.get();
+        bool fieldChanged = false;
         for (const auto& v : m)
         {
-            const auto found = source->vars.find(v.first);
-            if (found == source->vars.end() || found->second == v.second) continue;
+            const auto found = viewer->source.vars.find(v.first);
+            if (found == viewer->source.vars.end() || found->second == v.second) continue;
             found->second = v.second;
-            if (source.key() == m_fieldKey) fieldChanged = true;
+            fieldChanged = true;
         }
+        if (fieldChanged) requestFieldSlice(viewer);
     }
-    if (fieldChanged && fieldShown()) requestFieldSlice();
     m_overlay->update();
 }
 
@@ -4283,24 +4549,25 @@ void View::updateSectionReadout(QPoint pos)
             }
         }
     }
-    if (fieldShown() && m_fld.slice.valid() && m_fld.slice.axis == m_fieldView.axis)
+    for (const auto& kv : m_viewers)
     {
-        // The shown field's value under the cursor, on the disc (the sample nearest to it)
-        const FieldSlice& slice = m_fld.slice;
-        const int ax = m_fieldView.axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
+        const FieldViewer* v = kv.second.get();
+        if (!v->open || !v->shown || !v->plane.slice.valid() || v->plane.slice.axis != v->axis) continue;
+        // The field's value under the cursor, on its plane (the sample nearest to it)
+        const FieldSlice& slice = v->plane.slice;
+        const int ax = v->axis, ua = FieldSlice::uAxis(ax), va = FieldSlice::vAxis(ax);
         QVector3D x;
-        if (meet(ax, m_fieldView.offset(), fieldT, x))
+        float t = 0;
+        if (!meet(ax, fieldPlace(*v)[ax], t, x)) continue;
+        const float d = slice.sample(x[ua], x[va]);
+        const float du = slice.max[ua] - slice.min[ua], dv = slice.max[va] - slice.min[va];
+        const int i = int((x[ua] - slice.min[ua]) / du * slice.w), j = int((x[va] - slice.min[va]) / dv * slice.h);
+        if (std::isfinite(d) && d < 0 && slice.hasColor && slice.color.size() == slice.w * slice.h &&
+            du > 0 && dv > 0 && i >= 0 && j >= 0 && i < slice.w && j < slice.h &&
+            std::isfinite(slice.color[j * slice.w + i]) && (fieldText.isEmpty() || t < fieldT))
         {
-            const float d = slice.sample(x[ua], x[va]);
-            const float du = slice.max[ua] - slice.min[ua], dv = slice.max[va] - slice.min[va];
-            const int i = int((x[ua] - slice.min[ua]) / du * slice.w), j = int((x[va] - slice.min[va]) / dv * slice.h);
-            if (std::isfinite(d) && d < 0 && slice.hasColor && slice.color.size() == slice.w * slice.h &&
-                du > 0 && dv > 0 && i >= 0 && j >= 0 && i < slice.w && j < slice.h &&
-                std::isfinite(slice.color[j * slice.w + i]))
-            {
-                fieldText = QString("%1 = %2").arg(m_fieldKey.startsWith("line:") ? T("field") : m_fieldKey)
-                                .arg(slice.color[j * slice.w + i], 0, 'g', 5);
-            }
+            fieldT = t;
+            fieldText = QString("%1 = %2").arg(fieldLabel(v->key)).arg(slice.color[j * slice.w + i], 0, 'g', 5);
         }
     }
     // (the box at the cursor tells about the plane that is nearer the viewer where both are under it)

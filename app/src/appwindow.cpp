@@ -52,7 +52,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QTextBlock>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextStream>
 #include <QTime>
 #include <QUrl>
@@ -63,7 +65,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/automation.hpp"
 #include "fieldes/i18n.hpp"
 #include "fieldes/python/interpreter.hpp"
+#include "fieldes/section.hpp"
+#include "fieldes/shape.hpp"
 #include "fieldes/theme.hpp"
+#include "fieldes/view.hpp"
 #include "libfive/run_progress.hpp"
 
 namespace FielDes {
@@ -122,9 +127,84 @@ QString sizeText(qint64 n)
     return QString("%1 MB").arg(n / 1024.0 / 1024.0, 0, 'f', 1);
 }
 
-const char* kMuted = "#6b7280";
-const char* kError = "#c0392b";
-const char* kGood = "#2e7d32";
+// The colours of FielDes: the dark teal of the viewport's cards and the model tree (#164c5e) and a deeper one for what is typed in (#0f3a49), cream
+// text (#eee8d5), Solarized's greys for what is said quietly, the blue of the selection (#268bd2) for what is pressed
+const char* kMuted = "#93a1a1";
+const char* kError = "#ff8f7f";
+const char* kGood = "#a8cc5f";
+const char* kPanel = "#164c5e";
+const char* kDeep = "#0f3a49";
+const char* kAccent = "#268bd2";
+
+QPalette appPalette()
+{
+    QPalette p;
+    p.setColor(QPalette::Window, QColor(kPanel));
+    p.setColor(QPalette::WindowText, QColor("#eee8d5"));
+    p.setColor(QPalette::Base, QColor(kDeep));
+    p.setColor(QPalette::AlternateBase, QColor(kPanel));
+    p.setColor(QPalette::Text, QColor("#eee8d5"));
+    p.setColor(QPalette::Button, QColor("#1d5b70"));
+    p.setColor(QPalette::ButtonText, QColor("#eee8d5"));
+    p.setColor(QPalette::BrightText, QColor("#ffffff"));
+    p.setColor(QPalette::Highlight, QColor(kAccent));
+    p.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    p.setColor(QPalette::PlaceholderText, QColor("#6d8f99"));
+    p.setColor(QPalette::ToolTipBase, QColor(kPanel));
+    p.setColor(QPalette::ToolTipText, QColor("#eee8d5"));
+    p.setColor(QPalette::Link, QColor("#5fb0ee"));
+    p.setColor(QPalette::Mid, QColor("#586e75"));
+    p.setColor(QPalette::Disabled, QPalette::Text, QColor("#586e75"));
+    p.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#586e75"));
+    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#586e75"));
+    return p;
+}
+
+QString appStyleSheet()
+{
+    return QString(
+        "QMainWindow, QWidget#appRoot { background: %1; }"
+        "QWidget { color: #eee8d5; }"
+        "QLabel { background: transparent; }"
+        "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }"
+        "QWidget#appHeader { background: %2; border-bottom: 1px solid rgba(147, 161, 161, 70); }"
+        "QWidget#appBelow { border-top: 1px solid rgba(147, 161, 161, 70); }"
+        "QWidget#appViewBar { background: %2; border-top: 1px solid rgba(147, 161, 161, 70); }"
+        "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: %2; color: #eee8d5; border: 1px solid rgba(147, 161, 161, 90);"
+        "  border-radius: 5px; padding: 4px 7px; selection-background-color: %3; selection-color: white; }"
+        "QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: %3; }"
+        "QComboBox QAbstractItemView { background: %2; color: #eee8d5; border: 1px solid rgba(147, 161, 161, 100);"
+        "  selection-background-color: %3; selection-color: white; outline: none; }"
+        "QPushButton { background: rgba(147, 161, 161, 40); color: #eee8d5; border: 1px solid rgba(147, 161, 161, 90); border-radius: 5px;"
+        "  padding: 5px 14px; }"
+        "QPushButton:hover { border-color: %3; background: rgba(147, 161, 161, 70); }"
+        "QPushButton:pressed { background: rgba(38, 139, 210, 150); }"
+        "QPushButton:disabled { color: #586e75; border-color: rgba(147, 161, 161, 45); background: rgba(147, 161, 161, 20); }"
+        "QPushButton#appRun { background: %3; color: white; border: none; border-radius: 6px; padding: 7px 24px; font-weight: 600; }"
+        "QPushButton#appRun:hover { background: #3a9be0; }"
+        "QPushButton#appRun:pressed { background: #1f77b4; }"
+        "QPushButton#appRun[running=\"true\"] { background: #cb4b16; }"
+        "QPushButton#appRun[running=\"true\"]:hover { background: #e0582a; }"
+        "QPushButton#appRun:disabled { background: rgba(147, 161, 161, 50); color: #93a1a1; }"
+        "QCheckBox { spacing: 8px; }"
+        "QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid rgba(147, 161, 161, 130); border-radius: 4px; background: %2; }"
+        "QCheckBox::indicator:hover { border-color: %3; }"
+        "QCheckBox::indicator:checked { background: %3; border-color: #5fb0ee; }"
+        "QPlainTextEdit { background: %2; color: #eee8d5; border: 1px solid rgba(147, 161, 161, 70); border-radius: 6px; padding: 4px;"
+        "  selection-background-color: %3; selection-color: white; }"
+        "QProgressBar { background: rgba(147, 161, 161, 50); border: none; border-radius: 3px; }"
+        "QProgressBar::chunk { background: %3; border-radius: 3px; }"
+        "QScrollBar:vertical { background: transparent; width: 11px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: rgba(147, 161, 161, 110); border-radius: 4px; min-height: 28px; margin: 2px; }"
+        "QScrollBar::handle:vertical:hover { background: rgba(147, 161, 161, 170); }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar:horizontal { background: transparent; height: 11px; margin: 0; }"
+        "QScrollBar::handle:horizontal { background: rgba(147, 161, 161, 110); border-radius: 4px; min-width: 28px; margin: 2px; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+        "QDialog, QMessageBox { background: %1; }"
+        "QSplitter::handle { background: rgba(147, 161, 161, 70); }"
+    ).arg(kPanel, kDeep, kAccent);
+}
 
 }   // anonymous namespace
 
@@ -138,15 +218,17 @@ AppWindow::AppWindow(const QString& path, const QStringList& presets, bool run)
     m_documents = QDir::toNativeSeparators(m_documents);
 
     // ---- the window: the form above, what the run made below
+    // (the FielDes colours: the palette and the style sheet of this window; its dialogs take them from it)
+    setPalette(appPalette());
+    setStyleSheet(appStyleSheet());
     auto central = new QWidget(this);
+    central->setObjectName("appRoot");
     auto outer = new QVBoxLayout(central);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
     m_header = new QWidget(central);
     m_header->setObjectName("appHeader");
-    m_header->setStyleSheet(QString("#appHeader { background: %1; border-bottom: 1px solid %2; }")
-                                .arg(Theme::surface.name(), Theme::border.name()));
     auto hl = new QVBoxLayout(m_header);
     hl->setContentsMargins(20, 16, 20, 14);
     hl->setSpacing(4);
@@ -177,9 +259,10 @@ AppWindow::AppWindow(const QString& path, const QStringList& presets, bool run)
 
     auto controls = new QHBoxLayout();
     m_runButton = new QPushButton(T("Run"), below);
+    m_runButton->setObjectName("appRun");
     m_runButton->setDefault(true);
     m_runButton->setMinimumWidth(110);
-    m_runButton->setMinimumHeight(32);
+    m_runButton->setMinimumHeight(34);
     m_runButton->setEnabled(false);
     m_runButton->setToolTip(T("Run the app with the values above (Ctrl+Return)"));
     controls->addWidget(m_runButton);
@@ -216,10 +299,17 @@ AppWindow::AppWindow(const QString& path, const QStringList& presets, bool run)
     m_log->setFont(mono);
     m_log->setMinimumHeight(90);
     bl->addWidget(m_log, 1);
-    below->setStyleSheet(QString("QWidget#appBelow { border-top: 1px solid %1; }").arg(Theme::border.name()));
     below->setObjectName("appBelow");
     outer->addWidget(below, 1);
-    setCentralWidget(central);
+    // (an app that has a viewport -- app.viewport -- gets it on the right: the form and the log stay in a column on the left)
+    central->setMinimumWidth(460);
+    m_split = new QSplitter(Qt::Horizontal, this);
+    m_split->setChildrenCollapsible(false);
+    m_split->setHandleWidth(1);
+    m_split->addWidget(central);
+    m_split->setStretchFactor(0, 0);
+    setCentralWidget(m_split);
+    m_doc = new QTextDocument(this);
 
     // ---- the menu: little is needed
     auto file = menuBar()->addMenu(T("&File"));
@@ -241,6 +331,8 @@ AppWindow::AppWindow(const QString& path, const QStringList& presets, bool run)
     connect(m_runButton, &QPushButton::clicked, this, [this] { if (m_running) onStop(); else onRun(); });
     m_poll.setInterval(150);
     connect(&m_poll, &QTimer::timeout, this, &AppWindow::onPoll);
+    m_liveTimer.setSingleShot(true);
+    connect(&m_liveTimer, &QTimer::timeout, this, &AppWindow::onLiveTimer);
     m_watchDebounce.setSingleShot(true);
     m_watchDebounce.setInterval(800);
     connect(&m_watchDebounce, &QTimer::timeout, this, &AppWindow::onWatchTriggered);
@@ -305,7 +397,11 @@ bool AppWindow::openApp(const QString& path, bool again)
     m_path = doc["path"].toString();
     m_kind = doc["kind"].toString();
     m_script = doc["script"].toString();
+    m_originalScript = m_script;
+    m_doc->setPlainText(m_script);
+    m_varSpans.clear();
     m_manifest = doc["manifest"].toObject();
+    m_hasViewport = m_manifest["viewport"].isObject();
     if (!doc["documents"].toString().isEmpty() && m_documents.isEmpty()) m_documents = doc["documents"].toString();
     m_id = m_manifest["id"].toString();
     m_title = m_manifest["title"].toString();
@@ -322,6 +418,9 @@ bool AppWindow::openApp(const QString& path, bool again)
         log(T("Line %1: %2").arg(o["line"].toInt()).arg(o["message"].toString()), kError);
     }
     buildForm(again);
+    ensureViewport();
+    if (m_view && m_resetButton) m_resetButton->hide();
+    if (again && m_hasViewport) scheduleLive(100);
     if (!m_path.isEmpty() && !m_watcher.files().contains(m_path)) m_watcher.addPath(m_path);
     if (again) setStatus(T("The app was read again."), kMuted);
     return true;
@@ -337,6 +436,7 @@ AppWindow::Field* AppWindow::field(const QString& key)
 void AppWindow::buildForm(bool again)
 {
     const QJsonObject keep = again ? values() : QJsonObject();
+    m_building = true;
     m_fields.clear();
     if (m_form)
     {
@@ -501,6 +601,12 @@ void AppWindow::buildForm(bool again)
         rl->addWidget(f.error);
         layout->addWidget(row);
         m_fields.append(f);
+        // (with a viewport, a change of an input makes the picture again, a moment after the last one)
+        if (qobject_cast<QSpinBox*>(f.editor)) connect(static_cast<QSpinBox*>(f.editor), QOverload<int>::of(&QSpinBox::valueChanged), this, [this] { onInputEdited(); });
+        else if (qobject_cast<QDoubleSpinBox*>(f.editor)) connect(static_cast<QDoubleSpinBox*>(f.editor), QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this] { onInputEdited(); });
+        else if (qobject_cast<QCheckBox*>(f.editor)) connect(static_cast<QCheckBox*>(f.editor), &QCheckBox::toggled, this, [this] { onInputEdited(); });
+        else if (qobject_cast<QComboBox*>(f.editor)) connect(static_cast<QComboBox*>(f.editor), QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] { onInputEdited(); });
+        else if (qobject_cast<QLineEdit*>(f.editor)) connect(static_cast<QLineEdit*>(f.editor), &QLineEdit::textChanged, this, [this] { onInputEdited(); });
     }
     if (m_fields.isEmpty())
     {
@@ -519,6 +625,7 @@ void AppWindow::buildForm(bool again)
     for (auto it = keep.begin(); it != keep.end(); ++it)
         if (auto f = field(it.key())) f->set(it.value());
     applyPresets();
+    m_building = false;
 }
 
 QJsonObject AppWindow::values() const
@@ -627,6 +734,9 @@ void AppWindow::setRunning(bool running)
 {
     m_running = running;
     m_runButton->setText(running ? T("Stop") : T("Run"));
+    m_runButton->setProperty("running", running);
+    m_runButton->style()->unpolish(m_runButton);
+    m_runButton->style()->polish(m_runButton);
     m_runButton->setEnabled(running || m_ready);
     if (m_form) m_form->setEnabled(!running);
     m_bar->setVisible(running);
@@ -640,11 +750,22 @@ void AppWindow::onReady(QStringList, Documentation)
     if (!m_open) return;
     setStatus(QString(), kMuted);
     if (m_autoRun) { m_autoRun = false; QTimer::singleShot(0, this, &AppWindow::onRun); }
+    else if (m_hasViewport) scheduleLive(0);
 }
 
 void AppWindow::onRun()
 {
     if (!m_ready || m_running || !m_open) return;
+    if (m_picture)
+    {
+        // (the picture that is being made is stopped, and the run follows: the person has asked for the work)
+        m_runAfter = true;
+        m_stopped = true;
+        m_interp->terminate();
+        return;
+    }
+    m_liveTimer.stop();
+    m_liveAgain = false;
     clearErrors();
     QString error;
     const QString text = callSupport("app_check", QJsonObject{{"values", values()}, {"outputs", m_documents}}, &error);
@@ -696,6 +817,14 @@ void AppWindow::onStop()
 void AppWindow::onPoll()
 {
     const auto r = libfive::run_progress::current();
+    if (m_picture)
+    {
+        // (a picture shows how far it is on the bar only: the status line keeps what the last run said)
+        if (r.step < 0 || r.steps <= 0) { m_bar->setRange(0, 0); return; }
+        m_bar->setRange(0, 1000 * r.steps);
+        m_bar->setValue(int(1000 * (r.step + (r.fraction >= 0 ? std::min(1.0, r.fraction) : 0.0))));
+        return;
+    }
     if (r.step < 0 || r.steps <= 0)
     {
         m_bar->setRange(0, 0);
@@ -710,9 +839,15 @@ void AppWindow::onPoll()
 
 void AppWindow::onDone(Result r)
 {
-    for (auto s : r.shapes) s->deleteLater();
     const double seconds = m_clock.elapsed() / 1000.0;
     const bool terminated = m_stopped && !r.okay;
+    if (m_picture)
+    {
+        m_interp->callSupport("app_end", "", nullptr);
+        finishPicture(r, terminated);
+        return;
+    }
+    showInViewport(r, terminated);
     setRunning(false);
     m_interp->callSupport("app_end", "", nullptr);
     if (m_closing)
@@ -904,6 +1039,14 @@ void AppWindow::dropEvent(QDropEvent* event)
 
 void AppWindow::closeEvent(QCloseEvent* event)
 {
+    if (m_picture)
+    {
+        m_closing = true;
+        m_stopped = true;
+        m_interp->terminate();
+        event->ignore();
+        return;
+    }
     if (m_running)
     {
         if (QMessageBox::question(this, windowTitle(), T("The app is still running. Stop it and close the window?")) != QMessageBox::Yes)
@@ -918,6 +1061,315 @@ void AppWindow::closeEvent(QCloseEvent* event)
         return;
     }
     event->accept();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// The viewport (app.viewport)
+
+void AppWindow::ensureViewport()
+{
+    if (!m_hasViewport)
+    {
+        if (m_viewHost) m_viewHost->hide();
+        return;
+    }
+    if (!m_viewHost)
+    {
+        m_viewHost = new QWidget(m_split);
+        auto vl = new QVBoxLayout(m_viewHost);
+        vl->setContentsMargins(0, 0, 0, 0);
+        vl->setSpacing(0);
+        m_view = new View(m_viewHost);
+        m_view->setAppMode(true);
+        m_view->setUpAxis(QSettings().value("up-axis", "y").toString() != "z");
+        vl->addWidget(m_view, 1);
+        auto bar = new QWidget(m_viewHost);
+        bar->setObjectName("appViewBar");
+        auto bl = new QHBoxLayout(bar);
+        bl->setContentsMargins(14, 7, 14, 7);
+        m_viewHint = new QLabel(T("Click a model to select it. A model that is not locked can be dragged by its gizmo and by its surfaces: the numbers are used when you press Run."), bar);
+        m_viewHint->setWordWrap(true);
+        m_viewHint->setStyleSheet(QString("color: %1; font-size: 12px;").arg(kMuted));
+        bl->addWidget(m_viewHint, 1);
+        m_resetButton = new QPushButton(T("Reset the picture"), bar);
+        m_resetButton->setToolTip(T("Take back what was dragged in the viewport: the numbers of the app's script are what it says again"));
+        m_resetButton->hide();
+        connect(m_resetButton, &QPushButton::clicked, this, &AppWindow::onResetPicture);
+        bl->addWidget(m_resetButton);
+        vl->addWidget(bar);
+        m_split->addWidget(m_viewHost);
+        m_split->setStretchFactor(1, 1);
+        resize(1320, 840);
+        m_split->setSizes({560, 760});
+
+        // The fields: an icon for each (with its name over it); a click on it opens the viewer of the field -- a plane of it, inside its bounds --
+        // and the card edits that viewer
+        m_fieldPanel = new FieldPanel(m_view);
+        m_fieldPanel->hide();
+        connect(m_fieldPanel, &FieldPanel::settingsChanged, m_view, &View::setFieldView);
+        connect(m_view, &View::fieldMoved, m_fieldPanel, &FieldPanel::setCentre);
+        connect(m_view, &View::fieldSliceReady, m_fieldPanel, &FieldPanel::setSlice);
+        connect(m_view, &View::fieldReadout, m_fieldPanel, &FieldPanel::setReadout);
+        connect(m_fieldPanel, &FieldPanel::fieldChosen, m_view, &View::setActiveField);
+        connect(m_view, &View::fieldViewersChanged, this, [this] {
+            const QStringList keys = m_view->openFieldKeys();
+            if (keys.isEmpty()) { m_fieldPanel->hide(); return; }
+            QStringList names;
+            for (const QString& k : keys) names << (k.startsWith("line:") ? T("field at line %1").arg(k.mid(5)) : k);
+            const QString active = keys.contains(m_view->activeField()) ? m_view->activeField() : keys.first();
+            m_fieldPanel->setFields(keys, names, std::max(0, int(keys.indexOf(active))));
+            FieldViewSettings s;
+            QVector3D lo, hi;
+            if (m_view->fieldViewer(active, s, lo, hi)) m_fieldPanel->setViewer(active, s, lo, hi);
+            m_fieldPanel->show();
+            m_fieldPanel->raise();
+        });
+        connect(m_view, &View::fieldIconClicked, this, [this](QString key, bool ctrl) {
+            if (ctrl) { if (m_openFields.contains(key)) m_openFields.removeAll(key); else m_openFields << key; }
+            else if (m_openFields == QStringList{key}) m_openFields.clear();
+            else m_openFields = QStringList{key};
+            m_view->setOpenFields(m_openFields);
+        });
+        connect(m_view, &View::shapeClicked, this, [this](int line) {
+            m_selected.clear();
+            if (line >= 0) m_selected.insert(line);
+            applySelection();
+        });
+        connect(m_view, &View::fieldViewersChanged, this, [this] { m_openFields = m_view->openFieldKeys(); });
+        connect(m_view, &View::shapeToggled, this, [this](int line) {
+            if (m_selected.contains(line)) m_selected.remove(line); else m_selected.insert(line);
+            applySelection();
+        });
+        connect(m_view, &View::shapesRectSelected, this, [this](QList<int> lines, bool add) {
+            if (!add) m_selected.clear();
+            for (int l : lines) m_selected.insert(l);
+            applySelection();
+        });
+        connect(m_view, &View::dragStart, this, [this] { m_dragging = true; });
+        connect(m_view, &View::varsDragged, this, [this](QMap<libfive::Tree::Id, float> vs) { applyVarValues(vs); });
+        connect(m_view, &View::dragEnd, this, [this] {
+            m_dragging = false;
+            // (what was dragged is in the text: it is what the app runs now, and the picture is made again from it)
+            m_script = m_doc->toPlainText();
+            if (m_resetButton) m_resetButton->setVisible(m_script != m_originalScript);
+            scheduleLive(250);
+        });
+    }
+    m_viewHost->show();
+}
+
+void AppWindow::applySelection()
+{
+    if (m_view) m_view->highlightLines(m_selected.values());
+}
+
+void AppWindow::onInputEdited()
+{
+    if (m_building || !m_hasViewport || !m_open) return;
+    scheduleLive(700);
+}
+
+void AppWindow::scheduleLive(int ms)
+{
+    if (!m_hasViewport || !m_open) return;
+    m_liveTimer.start(ms);
+}
+
+void AppWindow::onLiveTimer()
+{
+    if (!m_ready || !m_hasViewport || !m_open) return;
+    // (while a model is dragged the text is not whole yet; while the app runs or a picture is made, the next picture waits for it)
+    if (m_dragging) { m_liveTimer.start(300); return; }
+    if (m_running || m_picture) { m_liveAgain = true; return; }
+    startPicture();
+}
+
+void AppWindow::setPicture(bool on)
+{
+    m_picture = on;
+    m_bar->setVisible(on);
+    if (on) { m_bar->setRange(0, 0); m_poll.start(); } else if (!m_running) m_poll.stop();
+}
+
+void AppWindow::startPicture()
+{
+    clearErrors();
+    QString error;
+    const QString text = callSupport("app_check", QJsonObject{{"values", values()}, {"outputs", m_documents}, {"live", true}}, &error);
+    const auto res = QJsonDocument::fromJson(text.toUtf8()).object();
+    if (!res["ok"].toBool())
+    {
+        // (an input that is not filled in yet is no reason to scold: the picture waits for it)
+        const auto errors = res["errors"].toObject();
+        QStringList labels;
+        for (auto it = errors.begin(); it != errors.end(); ++it)
+            if (auto f = field(it.key())) labels << f->label;
+        if (errors.isEmpty()) log(res["error"].toString().isEmpty() ? error : res["error"].toString(), kError);
+        setStatus(T("The picture is made when these inputs are right: %1").arg(labels.join(", ")), kMuted);
+        return;
+    }
+    m_stopped = false;
+    m_clock.start();
+    setPicture(true);
+    m_interp->noteRequest();
+    emit evalRequested(m_script);
+}
+
+void AppWindow::finishPicture(Result& r, bool terminated)
+{
+    setPicture(false);
+    showInViewport(r, terminated);
+    if (!(r.replaced || terminated))
+    {
+        if (r.okay)
+        {
+            m_lastPictureError.clear();
+            if (m_pictureError) { m_pictureError = false; setStatus(QString(), kMuted); }
+        }
+        else
+        {
+            const QString tb = r.error.error.trimmed();
+            QString last;
+            for (const auto& line : tb.split('\n', Qt::SkipEmptyParts)) last = line.trimmed();
+            // (the same error again and again, as an input is typed, is said once)
+            if (last != m_lastPictureError) { log(tb, kError); m_lastPictureError = last; }
+            setStatus(T("The picture could not be made: %1").arg(last), kError);
+            m_pictureError = true;
+        }
+    }
+    if (m_closing) { close(); return; }
+    if (m_runAfter)
+    {
+        m_runAfter = false;
+        m_stopped = false;
+        QTimer::singleShot(0, this, &AppWindow::onRun);
+        return;
+    }
+    if (m_reloadAfter)
+    {
+        m_reloadAfter = false;
+        openApp(m_path, true);
+        if (m_watchBox->isChecked()) m_runAgain = true;
+    }
+    if (m_runAgain) { m_runAgain = false; QTimer::singleShot(300, this, &AppWindow::onRun); return; }
+    if (m_liveAgain) { m_liveAgain = false; scheduleLive(100); }
+}
+
+// What a run made goes to the viewport: the models the script gave app.viewport, each as a shape with the line it is selected by; the others
+// the script displays (the editor shows them) are not there
+void AppWindow::showInViewport(Result& r, bool terminated)
+{
+    if (!m_hasViewport || !m_view || r.replaced || terminated)
+    {
+        for (auto s : r.shapes) s->deleteLater();
+        return;
+    }
+    QList<Shape*> mine;
+    for (auto s : r.shapes)
+    {
+        if (s->appShown()) mine << s;
+        else s->deleteLater();
+    }
+    if (!r.okay)
+    {
+        // (a run that failed before it got to app.viewport has no picture: the one that is there stays, with the error over it)
+        QString last;
+        for (const auto& line : r.error.error.trimmed().split('\n', Qt::SkipEmptyParts)) last = line.trimmed();
+        m_view->setError(last, -1);
+        if (mine.isEmpty()) return;
+    }
+    else
+    {
+        m_view->setError(QString(), -1);
+    }
+    if (r.script == m_doc->toPlainText()) setVarSpans(r.vars);
+    for (int i = 0; i < mine.size(); ++i) mine[i]->setSourceLine(100000 + i);
+    m_view->onSettingsFromScript(r.settings, false);
+    m_view->setShapes(mine);
+    m_view->setFieldSources(r.fields);
+    if (m_firstPicture && !mine.isEmpty())
+    {
+        m_view->zoomTo();
+        m_firstPicture = false;
+    }
+    QSet<int> still;
+    for (int l : m_selected) if (l >= 100000 && l < 100000 + mine.size()) still.insert(l);
+    m_selected = still;
+    applySelection();
+}
+
+void AppWindow::onResetPicture()
+{
+    if (!m_hasViewport) return;
+    m_script = m_originalScript;
+    m_doc->setPlainText(m_script);
+    m_varSpans.clear();
+    if (m_resetButton) m_resetButton->hide();
+    scheduleLive(0);
+}
+
+void AppWindow::setVarSpans(const QMap<libfive::Tree::Id, QRect>& rects)
+{
+    m_varSpans.clear();
+    // (Python's columns are bytes of UTF-8, the document's are characters: a line with an accent before a number is told apart)
+    QHash<int, QPair<bool, QByteArray>> lines;
+    auto charColumn = [&](int line, const QString& text, int byteColumn) {
+        auto found = lines.find(line);
+        if (found == lines.end())
+        {
+            bool ascii = true;
+            for (const QChar c : text) ascii = ascii && c.unicode() < 128;
+            found = lines.insert(line, qMakePair(ascii, ascii ? QByteArray() : text.toUtf8()));
+        }
+        return found->first ? byteColumn : QString::fromUtf8(found->second.left(byteColumn)).size();
+    };
+    for (auto it = rects.begin(); it != rects.end(); ++it)
+    {
+        const QRect& r = it.value();
+        if (r.height() != 0) continue;                      // (a call over several lines: its number is not written to)
+        const QTextBlock block = m_doc->findBlockByNumber(r.top());
+        if (!block.isValid()) continue;
+        const QString text = block.text();
+        // (the rectangle goes from the first character of the number to the `)` that ends the call, which is not part of the number)
+        const int first = charColumn(r.top(), text, r.left());
+        const int last = charColumn(r.top(), text, r.left() + r.width() - 1);
+        if (first < 0 || last <= first || last >= text.size() || text[last] != QLatin1Char(')')) continue;
+        VarSpan span{QTextCursor(m_doc), QTextCursor(m_doc), text.mid(first, last - first)};
+        span.start.setPosition(block.position() + first);
+        span.end.setPosition(block.position() + last);
+        m_varSpans.insert(it.key(), span);
+    }
+}
+
+void AppWindow::applyVarValues(const QMap<libfive::Tree::Id, float>& vs)
+{
+    QTextCursor cursor(m_doc);
+    cursor.beginEditBlock();
+    for (auto v = vs.begin(); v != vs.end(); ++v)
+    {
+        auto it = m_varSpans.find(v.key());
+        if (it == m_varSpans.end()) continue;
+        VarSpan& span = it.value();
+        const int a = span.start.position(), b = span.end.position();
+        QTextCursor look(m_doc);
+        look.setPosition(a);
+        look.setPosition(b, QTextCursor::KeepAnchor);
+        if (b <= a || look.selectedText() != span.text || m_doc->characterAt(b) != QLatin1Char(')'))
+        {
+            m_varSpans.erase(it);
+            continue;
+        }
+        cursor.setPosition(a);
+        cursor.setPosition(b, QTextCursor::KeepAnchor);
+        cursor.removeSelectedText();
+        QString str;
+        str.setNum(v.value());
+        cursor.insertText(str);
+        span.start.setPosition(a);
+        span.end.setPosition(a + str.size());
+        span.text = str;
+    }
+    cursor.endEditBlock();
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -943,7 +1395,7 @@ void AppWindow::registerAutomation()
         total.start();
         QEventLoop loop;
         QTimer poll;
-        QObject::connect(&poll, &QTimer::timeout, [&] { if ((m_ready && !m_running && !m_runAgain && !m_watchDebounce.isActive()) || total.elapsed() > limit) loop.quit(); });
+        QObject::connect(&poll, &QTimer::timeout, [&] { if ((m_ready && !m_running && !m_picture && !m_runAgain && !m_runAfter && !m_liveAgain && !m_liveTimer.isActive() && !m_watchDebounce.isActive()) || total.elapsed() > limit) loop.quit(); });
         poll.start(100);
         loop.exec();
         std::cerr << "automation: app idle after " << total.elapsed() / 1000.0 << " s (ready=" << m_ready << ")\n";
@@ -970,6 +1422,121 @@ void AppWindow::registerAutomation()
             if (auto row = m_outputsLayout->itemAt(i)->widget())
                 for (auto l : row->findChildren<QLabel*>()) out << "output: " << l->text() << "\n";
         out << "log:\n" << m_log->toPlainText() << "\n";
+    });
+    // The viewport: appview <file> says what it holds (each model: its name, whether it is a point, selected, locked, has a gizmo, and where it is
+    // on the screen); appclick <name> [dot], appdrag <name> <dx> <dy> [dot], appgizmodrag <kind> <axis> <dx> <dy>, appclickat <x> <y> work in the
+    // viewport's own coordinates; appreset presses the reset button
+    auto find = [this](const QString& name) -> Shape* {
+        if (!m_view) return nullptr;
+        for (Shape* s : m_view->allShapes()) if (s->appLabel() == name || QString(s->appLabel()).replace(' ', '_') == name) return s;   // (a name with a space is written with an underscore)
+        return nullptr;
+    };
+    auto anchor = [this](Shape* s, bool dot, QPoint& at) {
+        QVector3D p;
+        if ((dot || !s->hasMesh()) && s->dotPosition(p)) { at = m_view->screenPoint(p); return true; }
+        if (s->hasMesh() && !s->noPaint())
+        {
+            const auto& b = s->getMeshBounds();
+            at = m_view->screenPoint(QVector3D(0.5f * (b.lower.x() + b.upper.x()), 0.5f * (b.lower.y() + b.upper.y()), 0.5f * (b.lower.z() + b.upper.z())));
+            return true;
+        }
+        return false;
+    };
+    auto send = [this](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+        QMouseEvent e(t, pos, m_view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+        QApplication::sendEvent(m_view, &e);
+    };
+    a->add("appview", [this, anchor](const QString& path) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+        QTextStream out(&f);
+        out.setCodec("UTF-8");
+        out << "viewport: " << (m_view ? 1 : 0) << "  shapes: " << (m_view ? m_view->shapeCount() : 0) << "  edited: " << (m_script != m_originalScript) << "\n";
+        if (m_view)
+            for (Shape* s : m_view->allShapes())
+            {
+                QPoint at;
+                const bool has = anchor(s, true, at);
+                out << "shape '" << s->appLabel() << "' line " << s->sourceLine() << " point " << s->isPoint() << " selected " << s->isSelected() << " locked "
+                    << s->isLocked() << " gizmo " << s->hasGizmo() << " mesh " << s->hasMesh() << " at " << (has ? at.x() : -1) << "," << (has ? at.y() : -1) << "\n";
+            }
+        if (m_view)
+            for (const QString& k : m_view->openFieldKeys()) out << "open field " << k << "\n";
+        out << "script:\n" << m_script << "\n";
+    });
+    a->add("appfieldclick", [this](const QString& key) {
+        QPoint at;
+        if (!m_view || !m_view->fieldIconPoint(key.trimmed(), at)) { std::cerr << "automation: no field icon " << key.toStdString() << "\n"; return; }
+        auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+            QMouseEvent e(t, at, m_view->mapToGlobal(at), b, bs, Qt::NoModifier);
+            QApplication::sendEvent(m_view, &e);
+        };
+        send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appfielddrag", [this](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        QPoint from;
+        if (p.size() < 3 || !m_view || !m_view->fieldIconPoint(p[0], from)) { std::cerr << "automation: no field icon " << args.toStdString() << "\n"; return; }
+        const QPoint d(p[1].toInt(), p[2].toInt());
+        auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+            QMouseEvent e(t, pos, m_view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+            QApplication::sendEvent(m_view, &e);
+        };
+        send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appclick", [this, find, anchor, send](const QString& args) {
+        const QString name = args.section(' ', 0, 0);
+        Shape* s = find(name);
+        QPoint at;
+        if (!s || !anchor(s, args.contains("dot"), at)) { std::cerr << "automation: no model " << name.toStdString() << "\n"; return; }
+        send(QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appclickat", [this, send](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        if (p.size() < 2 || !m_view) return;
+        const QPoint at(p[0].toInt(), p[1].toInt());
+        send(QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appdrag", [this, find, anchor, send](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        Shape* s = p.size() >= 3 ? find(p[0]) : nullptr;
+        QPoint from;
+        if (!s || !anchor(s, args.contains("dot"), from)) { std::cerr << "automation: no model " << args.toStdString() << "\n"; return; }
+        const QPoint d(p[1].toInt(), p[2].toInt());
+        send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appgizmodrag", [this, send](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        QPoint from;
+        if (p.size() < 4 || !m_view || !m_view->gizmoGripPoint(p[0].toInt(), p[1].toInt(), from)) { std::cerr << "automation: no handle " << args.toStdString() << "\n"; return; }
+        const QPoint d(p[2].toInt(), p[3].toInt());
+        send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+    });
+    a->add("appreset", [this](const QString&) { onResetPicture(); });
+    a->add("apprightclick", [this, send](const QString& args) {
+        const auto p = args.split(' ', Qt::SkipEmptyParts);
+        if (p.size() < 2 || !m_view) return;
+        const QPoint at(p[0].toInt(), p[1].toInt());
+        QMouseEvent press(QEvent::MouseButtonPress, at, m_view->mapToGlobal(at), Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+        QApplication::sendEvent(m_view, &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, at, m_view->mapToGlobal(at), Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(m_view, &release);
+        std::cerr << "automation: right click done, popup open: " << (QApplication::activePopupWidget() != nullptr) << "\n";
     });
     if (a->load(file)) QTimer::singleShot(1500, a, &Automation::start);
     else std::cerr << "AppWindow: could not read the automation file " << file.toStdString() << "\n";

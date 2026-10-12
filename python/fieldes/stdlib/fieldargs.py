@@ -110,7 +110,7 @@ def _set_origin(v, origin):
 
 def returns_field(fn):
     ''' A function that makes a field (not a body): what it returns is of the kind 'field', which the model tree shows
-        with a field's icon and the field viewer shows (a disc coloured by it) when it is selected '''
+        with a field's icon, and displayed it has an icon in the viewport that opens the field viewer (a plane coloured by it) '''
     @functools.wraps(fn)
     def g(*args, **kwargs):
         out = fn(*args, **kwargs)

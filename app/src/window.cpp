@@ -873,7 +873,7 @@ Window::Window(Arguments args)
         fieldPanel->hide();
         fieldPanel->stackBelow(panel);
         connect(fieldPanel, &FieldPanel::settingsChanged, view, &View::setFieldView);
-        connect(view, &View::fieldCentreDragged, fieldPanel, &FieldPanel::setCentre);
+        connect(view, &View::fieldMoved, fieldPanel, &FieldPanel::setCentre);
         connect(view, &View::sliceReady, panel, &SectionPanel::setSlice);
         connect(view, &View::fieldSliceReady, fieldPanel, &FieldPanel::setSlice);
         connect(view, &View::boundsChanged, panel, &SectionPanel::setBounds);
@@ -895,35 +895,35 @@ Window::Window(Arguments args)
         section_action->setCheckable(true);
         sectionToggle = section_action;
         Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_X)});
-        // Selecting field models (they are not drawn) opens the field viewer on them, which shows the field on a disc; with several
-        // fields selected a menu in it chooses the one shown.  It closes when no field is selected.  The section card is not touched
-        auto shownKey = std::make_shared<QString>();
-        auto showKey = [=](const QString& key, const QStringList& keys) {
-            *shownKey = key;
-            QStringList names;
-            for (const QString& k : keys) names << (k.startsWith("line:") ? T("field at line %1").arg(k.mid(5)) : k);
-            view->showField(key);
-            fieldPanel->setFields(keys, names, std::max(0, int(keys.indexOf(key))));
-            bool known = false;
-            const QVector3D centre = view->fieldCentre(&known);
-            const auto& s = view->renderSettings();
-            fieldPanel->setContext(centre, known, s.min, s.max);
-            fieldPanel->show();
-            fieldPanel->raise();
-        };
-        auto fieldKeys = std::make_shared<QStringList>();
-        connect(view->scenePanel(), &ScenePanel::fieldsSelected, this, [=](QStringList keys) {
-            *fieldKeys = keys;
+        // Every field has an icon in the scene (with its name over it) while it is shown, and a viewer -- a plane of the field inside the
+        // bounds of the field -- while it is selected: in the model tree or by clicking its icon.  The card edits the viewer of the field it is
+        // about; with several fields open a menu in it chooses.  It closes when no field is open.  The section card is not touched
+        auto syncCard = [=] {
+            const QStringList keys = view->openFieldKeys();
             if (keys.isEmpty())
             {
-                *shownKey = QString();
-                view->showField(QString());
                 fieldPanel->hide();
                 return;
             }
-            showKey(keys.contains(*shownKey) ? *shownKey : keys.first(), keys);
+            QStringList names;
+            for (const QString& k : keys) names << (k.startsWith("line:") ? T("field at line %1").arg(k.mid(5)) : k);
+            const QString active = keys.contains(view->activeField()) ? view->activeField() : keys.first();
+            fieldPanel->setFields(keys, names, std::max(0, int(keys.indexOf(active))));
+            FieldViewSettings s;
+            QVector3D lo, hi;
+            if (view->fieldViewer(active, s, lo, hi)) fieldPanel->setViewer(active, s, lo, hi);
+            fieldPanel->show();
+            fieldPanel->raise();
+        };
+        connect(view, &View::fieldViewersChanged, this, syncCard);
+        connect(view->scenePanel(), &ScenePanel::fieldsSelected, view, &View::setOpenFields);
+        connect(view, &View::fieldIconClicked, this, [=](QString key, bool ctrl) {
+            // (the icon selects the field in the tree, which opens its viewer: the tree and the scene say the same)
+            view->scenePanel()->selectFieldKey(key, ctrl);
+            view->setFocus(Qt::MouseFocusReason);
         });
-        connect(fieldPanel, &FieldPanel::fieldChosen, this, [=](QString key) { showKey(key, *fieldKeys); });        connect(editor, &Editor::fieldSources, view, &View::setFieldSources);
+        connect(fieldPanel, &FieldPanel::fieldChosen, view, &View::setActiveField);
+        connect(editor, &Editor::fieldSources, view, &View::setFieldSources);
         connect(section_action, &QAction::toggled, this, [=](bool on) {
             if (on)
             {
@@ -2063,35 +2063,91 @@ Window::Window(Arguments args)
         a->add("varsteps", [=](const QString& args){
             std::cerr << "automation: varsteps found " << editor->testVarSteps(args.trimmed().toInt()) << " numbers" << std::endl;
         });
-        // fielddrag <part> <dx> <dy> [steps]: the field viewer's disc is gripped by its arrow 1 or 2 (in its plane), the dot 3 or the
-        // arrow along its normal 4, and dragged by (dx, dy) pixels in `steps` mouse moves (the way a hand drags it)
+        // fielddrag <key> <dx> <dy> [steps]: the icon of a field (a variable's name, or line:N) is taken by the mouse, dragged by (dx, dy) pixels in
+        // steps, and let go (the viewer of the field goes with it, if it is open); fieldclick <key>: a click on the icon
         a->add("fielddrag", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             QPoint from;
-            if (p.size() < 3 || !view->fieldGizmoPoint(p[0].toInt(), from))
+            if (p.size() < 3 || !view->fieldIconPoint(p[0], from))
             {
-                std::cerr << "automation: no field gizmo part " << args.toStdString() << std::endl;
+                std::cerr << "automation: no field icon " << args.toStdString() << std::endl;
                 return;
             }
             const QPoint d(p[1].toInt(), p[2].toInt());
-            const int steps = std::max(1, p.value(3, "20").toInt());
+            const int steps = p.size() > 3 ? std::max(1, p[3].toInt()) : 8;
             auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
                 QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
                 QApplication::sendEvent(view, &e);
             };
             send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
             send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
-            QElapsedTimer clock;
-            clock.start();
-            for (int i = 1; i <= steps; ++i)
-            {
-                send(QEvent::MouseMove, from + d * i / steps, Qt::NoButton, Qt::LeftButton);
-                QApplication::processEvents();           // (a hand does not move faster than the program answers: events are served)
-            }
+            for (int i = 1; i <= steps; ++i) send(QEvent::MouseMove, from + d * i / steps, Qt::NoButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
-            const QVector3D c = view->fieldViewCentre();
-            std::cerr << "automation: fielddrag " << p[0].toStdString() << " took " << clock.elapsed() << " ms for " << steps
-                      << " moves; the disc is at (" << c.x() << ", " << c.y() << ", " << c.z() << ")" << std::endl;
+        });
+        // dotclick <n> [dx dy]: a click on the dot of the n-th point (0-based, in the order the viewport holds them); dotdrag <n> <dx> <dy>: the dot is taken
+        // and dragged by (dx, dy) pixels in steps (the point must be selected for its gizmo to take the drag); dotstate: says where the dots are
+        auto dotPoint = [=](int n, QPoint& at) {
+            int i = 0;
+            for (Shape* s : view->allShapes())
+            {
+                QVector3D p;
+                if (!s->isPoint() || !s->dotPosition(p)) continue;
+                if (i++ == n) { at = view->screenPoint(p); return true; }
+            }
+            return false;
+        };
+        a->add("dotclick", [=](const QString& args){
+            QPoint at;
+            if (!dotPoint(args.section(' ', 0, 0).toInt(), at)) { std::cerr << "automation: no dot " << args.toStdString() << std::endl; return; }
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, view->mapToGlobal(at), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+        });
+        a->add("dotdrag", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            QPoint from;
+            if (p.size() < 3 || !dotPoint(p[0].toInt(), from)) { std::cerr << "automation: no dot " << args.toStdString() << std::endl; return; }
+            const QPoint d(p[1].toInt(), p[2].toInt());
+            auto send = [&](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+            for (int i = 1; i <= 8; ++i) send(QEvent::MouseMove, from + d * i / 8, Qt::NoButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
+        });
+        // createprimitive <name>: the menu's "New <name>", made at the origin (the way the right-click menu of the viewport makes it)
+        a->add("createprimitive", [=](const QString& name){
+            view->scenePanel()->createFromMenu("primitive", name.trimmed(), QVector3D(0, 0, 0), 5.0, -1, -1);
+        });
+        a->add("dotstate", [=](const QString&){
+            int i = 0;
+            for (Shape* s : view->allShapes())
+            {
+                QVector3D p;
+                if (!s->isPoint()) continue;
+                const bool has = s->dotPosition(p);
+                const QPoint at = has ? view->screenPoint(p) : QPoint(-1, -1);
+                std::cerr << "automation: dot " << i++ << " line " << s->sourceLine() << " selected " << s->isSelected() << " locked " << s->isLocked()
+                          << " gizmo " << s->hasGizmo() << " at " << at.x() << "," << at.y() << " (" << (has ? p.x() : 0) << ", " << (has ? p.y() : 0) << ", "
+                          << (has ? p.z() : 0) << ")" << std::endl;
+            }
+        });
+        a->add("fieldclick", [=](const QString& args){
+            QPoint at;
+            if (!view->fieldIconPoint(args.trimmed(), at)) { std::cerr << "automation: no field icon " << args.toStdString() << std::endl; return; }
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, at, view->mapToGlobal(at), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(view, &e);
+            };
+            send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+            send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+            send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
         });
         // menu <title>: open a menu of the menu bar (grabpopups then shows it); closemenus closes it
         a->add("menu", [=](const QString& title){

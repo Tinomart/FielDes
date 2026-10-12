@@ -1043,7 +1043,7 @@ void Interpreter::evaluate(QString script, bool resuming)
                 for (Py_ssize_t k = 0; k < PyList_Size(list); ++k)
                 {
                     PyObject* pair = PyList_GetItem(list, k);
-                    if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 3) continue;
+                    if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 5) continue;
                     PyObject* key = PyTuple_GetItem(pair, 0);
                     PyObject* ptr = PyObject_GetAttrString(PyTuple_GetItem(pair, 1), "ptr");
                     if (key && PyUnicode_Check(key) && ptr && PyLong_Check(ptr))
@@ -1056,6 +1056,25 @@ void Interpreter::evaluate(QString script, bool resuming)
                         entry.source.lo = std::numeric_limits<float>::quiet_NaN();     // (the range: found when it is first shown)
                         entry.source.hi = entry.source.lo;
                         entry.source.label = "field";
+                        {
+                            PyObject* shown = PyTuple_GetItem(pair, 3);                 // (its eye)
+                            entry.shown = !shown || PyObject_IsTrue(shown) == 1;
+                            PyObject* box = PyTuple_GetItem(pair, 4);                   // (the box of what it was made from, or None)
+                            if (box && PyTuple_Check(box) && PyTuple_Size(box) == 2)
+                            {
+                                PyObject* a = PyTuple_GetItem(box, 0);
+                                PyObject* b = PyTuple_GetItem(box, 1);
+                                if (a && b && PyList_Check(a) && PyList_Check(b) && PyList_Size(a) == 3 && PyList_Size(b) == 3)
+                                {
+                                    entry.lo = QVector3D(float(PyFloat_AsDouble(PyList_GetItem(a, 0))), float(PyFloat_AsDouble(PyList_GetItem(a, 1))),
+                                                         float(PyFloat_AsDouble(PyList_GetItem(a, 2))));
+                                    entry.hi = QVector3D(float(PyFloat_AsDouble(PyList_GetItem(b, 0))), float(PyFloat_AsDouble(PyList_GetItem(b, 1))),
+                                                         float(PyFloat_AsDouble(PyList_GetItem(b, 2))));
+                                    entry.hasBounds = !PyErr_Occurred();
+                                    PyErr_Clear();
+                                }
+                            }
+                        }
                         PyObject* origin = PyTuple_GetItem(pair, 2);                    // (where the field is about, or None)
                         if (origin && PyList_Check(origin) && PyList_Size(origin) == 3)
                         {
@@ -1376,7 +1395,23 @@ void Interpreter::recordShape(
         {
             // (a point is not painted: its gizmo shows where it is)
             PyObject* kind = PyObject_GetAttrString(obj, "_kind");
-            if (kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point") shape->setNoPaint(true);
+            if (kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point")
+            {
+                shape->setNoPaint(true);
+                // (the viewport draws it as a dot where the library says it is)
+                QVector3D pos;
+                bool hasPos = false;
+                PyObject* pp = PyObject_GetAttrString(obj, "_point_pos");
+                if (pp && PyTuple_Check(pp) && PyTuple_Size(pp) == 3)
+                {
+                    pos = QVector3D(float(PyFloat_AsDouble(PyTuple_GetItem(pp, 0))), float(PyFloat_AsDouble(PyTuple_GetItem(pp, 1))),
+                                    float(PyFloat_AsDouble(PyTuple_GetItem(pp, 2))));
+                    hasPos = !PyErr_Occurred();
+                }
+                Py_XDECREF(pp);
+                PyErr_Clear();
+                shape->setPoint(pos, hasPos);
+            }
             Py_XDECREF(kind);
             PyErr_Clear();
         }
@@ -1532,6 +1567,20 @@ void Interpreter::recordShape(
                 shape->setGizmo(hd);
             }
             Py_XDECREF(h);
+            PyErr_Clear();
+        }
+
+        // A model the app's viewport shows, and the name it was given there (fieldes.app.viewport)
+        if (PyObject_HasAttrString(obj, "_app_shown"))
+        {
+            PyObject* v = PyObject_GetAttrString(obj, "_app_shown");
+            const bool shown = v && PyObject_IsTrue(v) == 1;
+            Py_XDECREF(v);
+            QString name;
+            PyObject* n = PyObject_GetAttrString(obj, "_app_name");
+            if (n && PyUnicode_Check(n)) name = QString::fromUtf8(PyUnicode_AsUTF8(n));
+            Py_XDECREF(n);
+            shape->setAppLabel(name, shown);
             PyErr_Clear();
         }
 

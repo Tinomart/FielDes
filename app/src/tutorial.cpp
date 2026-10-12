@@ -1340,7 +1340,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Move the point");
         s.text = T("swell is the distance from the point anchor. Drag the arrows of anchor and watch where the growth is.");
-        s.hint = T("A point is not drawn: its gizmo is all there is of it. The gizmo is a line of the script too (gizmo). Or press Show me.");
+        s.hint = T("A point is a dot, the middle point of a gizmo: click it, and its gizmo shows. The gizmo is a line of the script too (gizmo). Or press Show me.");
         s.code = linesWith("^anchor\\b|^swell =");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;

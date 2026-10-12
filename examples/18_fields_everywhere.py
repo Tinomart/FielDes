@@ -10,6 +10,9 @@
 #
 # No STEP file is needed.  Change a number, or swap a field for another one (noise_field(...), distance_to_plane(...),
 # depth_below(...), a result of an analysis ...), and the body follows.
+#
+# To look at a field itself, turn on its eye in the model tree (swell, blend, cells): it becomes an icon in the viewport with
+# its name over it, and a click on the icon opens the field viewer -- a plane through the field with a position slider.
 from fieldes import *
 
 view.set_bounds([-10, -10, -10], [225, 55, 45])

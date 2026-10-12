@@ -898,7 +898,7 @@ Write it under a shape's definition, with its gizmo() and handles() calls:
 
 Points and surfaces: models of their own kind, and how every kind is drawn.
 
-    p = point(10, 0, 5)                    a point: not drawn, its gizmo shows where it is and moves it
+    p = point(10, 0, 5)                    a point: drawn as a dot (the middle point of a gizmo); click it and its gizmo shows, and moves it
     s = plane((0, 0, 8), (0, 0, 1))        a surface: an open sheet, the zero set of a field, with no body behind it
     wavy = wave_surface(2, 10)             z = 2 sin(2 pi x / 10)
 
@@ -910,7 +910,7 @@ What is drawn for each kind of model (Shape._display calls displayed() below):
     a 3D shape and a simulation   as they are
     a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
     a surface                     a thin sheet
-    a point                       nothing: a point is not drawn, its gizmo is all there is of it
+    a point                       a dot, the middle point of a gizmo (click it to select the point: its gizmo shows)
     a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
                                   which colours a plane through the render region by the field (move the plane to see
                                   the field in 3D)
@@ -921,8 +921,9 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `Point`
 
-A point: p.xyz is its coordinates (numbers or fields).  It is **not drawn**: select it and its gizmo shows where it is.  (As a field
-it is a tiny ball, which gives it a place for its gizmo and for the bounds of what is made of it: nothing of it is painted.)
+A point: p.xyz is its coordinates (numbers or fields).  The viewport draws it as **a dot** -- the middle point of a gizmo -- wherever it is;
+click the dot to select it, and its full gizmo shows.  (As a field it is a tiny ball, which gives it a place for its gizmo and for the
+bounds of what is made of it: nothing of the ball is painted.)
 
 ### `Surface`
 
@@ -942,7 +943,7 @@ A plane through `point`, positive on the side `normal` points to: a surface
 
 ### `point(x=0.0, y=0.0, z=0.0)`
 
-A point at (x, y, z).  Its coordinates are numbers or fields.  It is not drawn: select it, and its gizmo shows where it is
+A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows
 
 ### `sphere_surface(radius=10.0, center=(0, 0, 0))`
 
@@ -1228,7 +1229,7 @@ x, y and z as fields (a function of x and y alone is a 2D field) -- and returns 
 
 Write the math with + - * / **, the methods .sqrt() .square() .abs() .sin() .cos() .tan() .exp() .log(), a.max(b) and
 a.min(b) (or maximum(a, b, c) and minimum(a, b, c)); a number is a constant field.  What you get is a field like any
-other: it is not drawn (select it and the field viewer shows it), it goes wherever a number goes (`offset(part,
+other: it is not drawn (display it: its icon opens the field viewer), it goes wherever a number goes (`offset(part,
 waves)`), a lattice's cell size, a load's profile.  low_level_body() is the same for a body; body_from_field() makes a
 body of a field.  In FielDes: right-click, New field, low_level_field, writes the function and the call for you.
 
@@ -3447,6 +3448,16 @@ A file the script makes that the runner lists under *Outputs* when it is there a
 
 A relative path means the Documents folder (or the folder the command was started in).  Returns the full path.
 
+### `app.running()`
+
+True when the person pressed Run (or the app runs from the command line): the work is to be done.  False while the script only makes the
+picture of the app's viewport -- when the app is opened, an input changes, a model was dragged -- and in the editor.  Put what takes
+long, and what writes files, under it:
+
+    if app.running():
+        result = static_analysis(part, ...)
+        export_results(result, target)
+
 ### `app.save_as(name, default='result', filter='', help='')`
 
 Where the result is saved: a path the person can change, returned as a full path (a relative one means the Documents folder, or
@@ -3462,3 +3473,20 @@ A text the person types (a name, a label to engrave).  Returns it as it is.
 
 The name of the app, what it does, and its version: shown at the top of its window and in the list of recent apps.
 Written once, with plain texts, at the top of the script.
+
+### `app.viewport(models=None, *more, labels=True)`
+
+The app window shows a viewport: a picture of what you give it, that the person can look around in and -- the models that are not
+locked -- drag by their gizmo and their handles.  Write it as a statement of its own:
+
+    app.viewport({'Bracket': part, 'Load point': pull}, support, load)
+
+`models` is a dict of name -> model (the name is drawn over the model, in the style of the labels of boundary conditions), or a list of
+models (no names); the models after it (`more`) are shown without a name.  A condition (`force(...)`, `fixed(...)`) is a model: it is
+drawn on the body as in the editor.  Whatever a model has numbers to drag -- `gizmo()`, `handles()`, `var()` -- the person can drag,
+unless it is `lock()`ed: click a model to select it and its gizmo shows; there is no model tree and no menu.  A model that is dragged
+writes its new numbers into the script the app runs, which runs again for the picture (with app.running() False), and the numbers are
+there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it
+was made from; click the icon and the field is shown on a plane inside the field's bounds, with a slider for its position.
+
+In the editor it shows the same models.  `labels=False` leaves the names out.

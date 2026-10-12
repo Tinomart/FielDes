@@ -210,9 +210,9 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 |---|---|---|
 | cube, blue | **3D shape** | a body: its field is negative inside |
 | square, teal | **2D shape** | a profile (a field that does not depend on z), drawn flat in the z = 0 plane |
-| soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: select it and the [field viewer](#the-field-viewer) opens on it |
+| soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: it has an icon in the viewport (with its name over it) and an eye in the tree, and selecting it opens its [field viewer](#the-field-viewer) |
 | sheet, purple | **surface** | the zero of a field with no body behind it; drawn as a thin sheet |
-| cross, amber | **point** | a point: not drawn, its gizmo shows where it is |
+| cross, amber | **point** | a point: a dot in the viewport (the middle point of a gizmo), always there while the point is shown (its eye); click the dot to select it, and its full gizmo shows |
 | bars, red | **simulation** | a solved analysis or optimisation |
 | hatched block, tan | **material** | what a part (or a fluid) is made of: `Material(...)`, steel, aluminium, water ...; an analysis is given one (`material=steel`). A model like the others: it is in the tree, and dragged onto an analysis it becomes its `material=` (or `fluid=`) |
 | arrow on a base, orange | **conditions** | what an analysis is given: supports, loads, thermal and flow boundary conditions. Dragged onto an analysis, its **boundary conditions** row or the placeholder of its kind, one or several of them go into the input of their kind, as a list |
@@ -376,7 +376,7 @@ button changes its icon at once, and the lines it writes are known when the run 
 ## The section card
 
 `Ctrl+Shift+X` (or **View → Section view**) opens a card at the top right of the viewport. The section view is a viewer **you switch
-on** when you want it; it cuts models. It is separate from the [field viewer](#the-field-viewer), which shows fields on a disc: they
+on** when you want it; it cuts models. It is separate from the [field viewer](#the-field-viewer), which shows fields on planes inside their bounds: they
 work on different things, and **both can be open at the same time** (the field viewer's card then sits below the section card).
 
 - **X / Y / Z** picks the plane's normal; the slider, the position box, or the blue arrow on the plane in
@@ -393,32 +393,37 @@ work on different things, and **both can be open at the same time** (the field v
 
 Every pixel of the plane is the field itself evaluated at that point — nothing is resampled onto a grid.
 
-**Fields have their own card, the field viewer** (next section): select a field model and it opens by itself, whether or not the
+**Fields have their own card, the field viewer** (next section): select a field -- by its icon in the viewport or its row -- and its viewer opens, whether or not the
 section view is on.
 
 ## The field viewer
 
-A *field* model (a distance, a ramp, noise, `field_from_body(...)`, anything made from them with arithmetic) is not a body, so
-nothing of it is drawn in the viewport. **Select it in the model tree and the field viewer opens**, a card like the section card.
-It is independent of the section view: the two can be open together, each with its own plane in the viewport and its own card:
+A *field* model (a distance, a ramp, noise, `field_from_body(...)`, anything made from them with arithmetic) is not a body, so no surface of it is drawn.
+**Every field has an icon in the viewport and a viewer of its own**:
 
-- It shows the field on a **disc**: the value at every point of a plane, **in the section view's own colours and dark lines**: blue
-  to cream to orange, with a dark line at every round step of the value, and a heavier one where the field is zero. A field that
-  has both signs is cream at its zero (as the section view is at the surface), blue below it and orange above; any other field runs
-  from blue at its lowest value to orange at its highest. (The scale is found from the field once, on a coarse grid in 3D, and kept
-  while you move the disc.) Hover the disc to read the value. It **cuts no model**, and has none of
-  the buttons that are only about models (cut, flip, whole elements).
-- The disc starts **where the field is about**: the point or the middle of the body it was made from
-  (`distance_to_point(anchor)` starts at `anchor`, `depth_below(part)` at the middle of `part`, a field made of those, such as
-  `ramp(distance_to_point(anchor), ...)` or `a * b`, at the first of them); a field made of nothing, such as `x_field()`, starts at the origin.
-- **X / Y / Z** chooses which way the disc faces, **Radius** (a slider and a box) sizes it, **Opacity**,
-  the colour legend and a flat **2D view** work as on the section card. There is no position slider: nothing keeps the disc
-  inside the render region or anywhere else, and the arrows take it wherever the field is worth looking at.
-- In the viewport the disc has the section card's **arrow along the way it faces** (drag it to move the disc through the
-  field), **two arrows in its plane** (drag one to slide the disc along that axis) and the **dot in the middle**, which moves it
-  freely in its plane, as the dot of a model's gizmo does.
-- It has **no close button**: it is there while a field is selected, and goes when none is. With **several fields selected**, a
-  menu in the card chooses the one it shows.
+- **The icon.** A shown field is a small green field icon in the scene, with **its name over it in a card** (the style of the labels of boundary
+  conditions), so that where there are several fields you tell at a glance which is which. It sits **where the field is about**: the place of the
+  object it was made from (`distance_to_point(anchor)` at `anchor`, `depth_below(part)` at the middle of `part`; a field made of those, such as
+  `ramp(distance_to_point(anchor), ...)` or `a * b`, at the first of them) -- a field made of nothing, such as `x_field()`, at the origin.
+  **Drag the icon** to put it somewhere else: it is positionable, in the plane facing you, and stays inside the field's bounds. (A field has no gizmo:
+  the icon is what you drag.)
+- **Show and hide.** A field has an **eye** in the model tree, like every model: when it is off, the icon and the viewer of the field are not in the scene
+  at all. (A field is shown when the script displays it -- the eye writes that line, and a field made from the menu is displayed at once. A field
+  that only feeds other models, such as the cell size of a lattice, stays hidden until you turn its eye on.)
+- **Select it** by clicking its icon, or its row in the model tree (the two are one selection; Ctrl adds). The icon lights up and **its viewer opens
+  where the icon is**. Click the icon again, or select something else, to close it. Several fields can be open at once, each with its own plane.
+- **The viewer is a plane through the field, kept inside the bounds of the field**: the box of the object it was made from (the render region for a
+  field that was made from none). It shows the value at every point of the plane **in the section view's own colours and dark lines**: blue to cream to orange,
+  with a dark line at every round step of the value, and a heavier one where the field is zero. (The scale is found from the field once, over its
+  bounds, and kept while you move the plane.) Hover the plane to read the value. It **cuts no model**.
+- **The card** (like the section card) edits the viewer of the field that is selected: **X / Y / Z** chooses which way the plane faces, the **Position**
+  slider and box move it along that axis **within the bounds of the field** (the icon moves with it), **Opacity**, the colour legend and a flat
+  **2D view** work as on the section card. With several fields open, a menu in the card chooses the one it is about. It has no close button: it is
+  there while a viewer is open.
+- It is independent of the section view: the two can be open together, each with its own plane and its own card.
+
+The same icons are in an [app's viewport](apps.md#a-viewport-look-at-it-drag-it): a field given to `app.viewport({'Stress': field})` is an icon with its name
+over it, and a click on it opens its viewer.
 
 ## The cards
 

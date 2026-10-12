@@ -63,12 +63,13 @@ A **constant field through every numeric slot of the library gives exactly what 
 
 The kind of thing a value is — a 3D shape, a 2D shape, a field, a surface, a point — is shown by its colour and icon in
 the [model tree](interface.md#the-model-tree). A field is not a body, so **nothing of it is drawn in the viewport**: select it in
-the model tree and the [field viewer](interface.md#the-field-viewer) opens on it by itself, painting a disc through the render
-region with the field's value at every point -- move the disc to see the field in 3D.
+the model tree, or click its **icon** in the viewport (a green icon, with the field's name over it, at the place of the object it was made from), and the
+[field viewer](interface.md#the-field-viewer) opens: a plane through the field, inside its bounds, with the field's value at every point -- move it with the
+position slider to see the field in 3D. The eye of the field in the tree shows or hides its icon and its viewer.
 
 ## Points and surfaces
 
-A **point** is a model: `anchor = point(52, 8, 6)` is not drawn (select it and its gizmo shows where it is), and goes wherever a coordinate
+A **point** is a model: `anchor = point(52, 8, 6)` is drawn as a dot (the middle point of a gizmo: click it and its full gizmo shows), and goes wherever a coordinate
 goes — `distance_to_point(anchor)`, `attractor(anchor, 30)`, `radial_field(anchor, 'z')` — so a design can be driven from
 a point you drag. `anchor.xyz` is its coordinates (they follow the gizmo). A point reads as its three coordinates **wherever a
 position goes** -- `sphere(5, anchor)`, `move(part, anchor)`, `distance_to_line(anchor, (0, 0, 1))` -- and in the model tree you

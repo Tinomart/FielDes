@@ -345,7 +345,7 @@ class Shape:
 
 def field_shape(ptr):
     ''' A field a solver calculated (a stress, a temperature, a speed, a density ...), made from the tree `ptr`: a FIELD, not a body -- a value at
-        every point of space, which is not drawn, is not a part, and shows in the field viewer when it is selected '''
+        every point of space, which is not drawn, is not a part, and has an icon (that opens the field viewer) when it is displayed '''
     out = Shape(ptr)
     out._kind = 'field'
     return out

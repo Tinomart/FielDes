@@ -120,6 +120,23 @@ public:
     bool noPaint() const { return no_paint; }
 
     /*
+     *  A point (fieldes.stdlib.points.Point) is drawn as a dot: the middle point of a gizmo, wherever it is and whatever its gizmo's mode.
+     *  Click the dot and the point is selected (its full gizmo shows, as that of any model).  `pos` is where it is when the library could tell
+     *  (`hasPos`); once it has a gizmo, the gizmo's pivot is where it is, and follows a drag
+     */
+    void setPoint(QVector3D pos, bool hasPos) { m_isPoint = true; m_pointPos = pos; m_hasPointPos = hasPos; }
+    bool isPoint() const { return m_isPoint; }
+    bool dotPosition(QVector3D& p) const;
+
+    /*
+     *  A name given by the app (fieldes.app.viewport): the viewport of the app window draws it over the model, as a card in the style of the
+     *  labels of boundary conditions.  `shown`: the model is one the app's viewport shows (the others the script displays are not shown there)
+     */
+    void setAppLabel(const QString& name, bool shown) { m_appLabel = name; m_appShown = shown; }
+    const QString& appLabel() const { return m_appLabel; }
+    bool appShown() const { return m_appShown; }
+
+    /*
      *  Points that are drawn as the dot in the middle of a gizmo, with none of its handles (fieldes.stdlib.lattices.PointSet): a set of
      *  points is data, not something to drag.  The shape that carries them is not painted (setNoPaint) and nothing of it is picked; two
      *  sets are two shapes (the points are part of colorKey)
@@ -715,6 +732,11 @@ protected:
 
     Gizmo m_gizmo;
     bool m_locked = false;
+    bool m_isPoint = false;
+    bool m_hasPointPos = false;
+    QVector3D m_pointPos;
+    QString m_appLabel;
+    bool m_appShown = false;
 
     // The render cache (see setRenderCache)
     enum CacheState { CACHE_OFF = 0, CACHE_KEPT, CACHE_READ, CACHE_NO_KEY, CACHE_RESULT, CACHE_FAILED };

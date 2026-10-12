@@ -39,7 +39,10 @@ struct FieldEntry {
     QString key;
     FieldSource source;
     QVector3D centre;               // where the field is about (the point or the middle of the body it was made from) ...
-    bool hasCentre = false;         // ... when it is known; else the field viewer starts at the origin
+    bool hasCentre = false;         // ... when it is known: its icon is there; else at the origin
+    bool shown = true;              // its eye: the icon and the viewer of the field are in the scene (a field is shown when the script displays it)
+    bool hasBounds = false;         // the box of the object it was made from: the viewer of the field is kept inside it (else the render region)
+    QVector3D lo, hi;
 };
 
 /*  A number of the script that a run put right: replace this span of the text (0-based) by `text` -- the editor does, once the run is over  */

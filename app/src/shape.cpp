@@ -268,6 +268,21 @@ bool Shape::hasGizmo() const
     return false;
 }
 
+bool Shape::dotPosition(QVector3D& p) const
+{
+    if (m_gizmo.present)
+    {
+        p = gizmoPivot();
+        return true;
+    }
+    if (m_hasPointPos)
+    {
+        p = m_pointPos;
+        return true;
+    }
+    return false;
+}
+
 bool Shape::hasMoveVars() const
 {
     if (m_locked || !m_gizmo.present) return false;
@@ -1679,6 +1694,11 @@ bool Shape::updateFrom(const Shape* other)
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
     m_locked = other->m_locked;
+    m_isPoint = other->m_isPoint;
+    m_hasPointPos = other->m_hasPointPos;
+    m_pointPos = other->m_pointPos;
+    m_appLabel = other->m_appLabel;
+    m_appShown = other->m_appShown;
     bool started = false;
     // The part's own render (its cube and resolution) is what the script says NOW: roi_resolution gives other ones when the models
     // of the scene change.  If that changes what is meshed, this render goes again with it -- and only then

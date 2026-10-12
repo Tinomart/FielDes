@@ -60,7 +60,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', 'size')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size')
 
 
 def _is_number(v):
@@ -70,6 +70,9 @@ def _is_number(v):
 def _centre_of(shape):
     ''' The middle of a shape's bounding box: known for an imported part, else
         estimated by sampling it (briefly); (0, 0, 0) when neither works '''
+    pos = getattr(shape, '_point_pos', None)        # (a point: where it is, exactly -- its gizmo and its dot are there)
+    if pos:
+        return tuple(float(c) for c in pos)
     b = getattr(shape, '_bounds', None)
     if not b:
         try:
@@ -160,6 +163,11 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         # (a point that is moved is where it is moved to: its coordinates follow the move)
         out.xyz = tuple((c + m) if not (_is_number(c) and _is_number(m)) else float(c) + float(m)
                         for c, m in zip(shape.xyz, move))
+        try:
+            from fieldes.stdlib.points import _position_of
+            out._point_pos = _position_of(out.xyz)       # (where its dot is drawn when the gizmo is not there)
+        except Exception:
+            pass
     # (the box of a part follows the numbers it is placed by: plain numbers, or the numbers the var()s have in the script being
     # run.  A placed part that lost its box would have to be searched for its extent by whatever is made from it -- a surface
     # selected on it, a lattice on that -- and that search fails on a mesh)

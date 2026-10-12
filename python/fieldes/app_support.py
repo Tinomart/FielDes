@@ -492,10 +492,12 @@ def _estimate_bounds(shapes, deadline):
             return None
         known = _var_values() if hasattr(lib, 'libfive_tree_bounds_vars') else None
         box = None
+        coarse = False
         # A search that is cut short (80 ms) returns the coarser box it had got to -- a 500 mm box round a part of 30 mm, when the
         # machine is busy.  It is searched again inside the box that was found (the shape is in it), as long as that makes the box
         # smaller and there is time, so that the extent -- and what is sized by it: the element size of a simulation, the framing -- is
-        # right whatever the load
+        # right whatever the load.  When there is no time for that look the coarse box is not an extent: nothing is returned (it is
+        # measured when the script has run again), for the render region would grow round it
         for attempt in range(2):
             search = libfive_region_t()
             for k, axis in enumerate((search.X, search.Y, search.Z)):
@@ -521,14 +523,17 @@ def _estimate_bounds(shapes, deadline):
             found_box = ((out.X.lower, out.Y.lower, out.Z.lower), (out.X.upper, out.Y.upper, out.Z.upper))
             size_before = sum(box[1][i] - box[0][i] for i in range(3)) if box else None
             box = found_box
+            coarse = False
             if size_before is None:
                 # (the first answer may be a coarse one -- the search ran out of its 80 ms: look again inside it; one that came quickly is final)
-                if time.time() - started >= 0.06 and time.time() < deadline:
-                    continue
+                if time.time() - started >= 0.06:
+                    coarse = True
+                    if time.time() < deadline:
+                        continue
                 break
             if sum(box[1][i] - box[0][i] for i in range(3)) > 0.98 * size_before or time.time() > deadline:
                 break
-        if box is None:
+        if box is None or coarse:
             return None
         if key is not None:
             memory.put(key, box)
@@ -991,6 +996,9 @@ def _origin_numbers(origin):
     try:
         if origin is None:
             return None
+        pos = getattr(origin, '_point_pos', None)       # (a point: where it is now, even when its coordinates are var()s)
+        if pos:
+            return [float(c) for c in pos]
         if hasattr(origin, 'xyz'):
             origin = origin.xyz
         if isinstance(origin, (tuple, list)):
@@ -1005,10 +1013,40 @@ def _origin_numbers(origin):
     return None
 
 
+def _origin_box(origin):
+    ''' The box of the object a field was made from, as ([lo], [hi]), or None (a position, a point, or nothing that has an extent) '''
+    import time
+    try:
+        if origin is None or hasattr(origin, 'xyz') or getattr(origin, '_point_pos', None) or isinstance(origin, (tuple, list)):
+            return None
+        box = _estimate_bounds([origin], time.time() + 0.4)
+        if box:
+            return ([float(c) for c in box[0]], [float(c) for c in box[1]])
+    except Exception:
+        pass
+    return None
+
+
 def field_sources():
-    ''' The fields of the last scene, for the field viewer: [(key, Shape, origin)] -- origin is where the field is about, as three
-        numbers (the point or the middle of the body it was made from), or None (the viewer starts at the origin) '''
-    return [(key, shape, _origin_numbers(getattr(shape, '_field_origin', None))) for key, shape in _FIELD_SOURCES]
+    ''' The fields of the last scene, for the field viewers: [(key, Shape, origin, shown, bounds)] -- origin is where the field is about, as three
+        numbers (the point or the middle of the body it was made from), or None (its icon is at the origin); shown is its eye (the script
+        displays it); bounds is the box of the object it was made from, or None (the render region).  An app's viewport adds the fields it is given '''
+    out = []
+    seen = set()
+    for key, shape, shown in _FIELD_SOURCES:
+        origin = getattr(shape, '_field_origin', None)
+        out.append((key, shape, _origin_numbers(origin), bool(shown), _origin_box(origin)))
+        seen.add(key)
+    try:
+        from fieldes import app as _app
+        for key, shape in _app._viewport_fields():
+            if key in seen:
+                continue
+            origin = getattr(shape, '_field_origin', None)
+            out.append((key, shape, _origin_numbers(origin), True, _origin_box(origin)))
+    except Exception:
+        pass
+    return out
 
 
 # Parameters that are whole numbers (a count, a seed ...): a field cannot be one, so a dropped field never takes their place
@@ -1543,7 +1581,8 @@ def app_check(arg):
     if _opened_app is None:
         return json.dumps({'ok': False, 'errors': {}, 'error': 'no app is open'})
     req = json.loads(arg)
-    values, errors = app_package.check(_opened_app, req.get('values') or {}, req.get('outputs') or None)
+    # ("live": only the picture of the app's viewport is made, the person has not pressed Run: app.running() is False)
+    values, errors = app_package.check(_opened_app, req.get('values') or {}, req.get('outputs') or None, running=not req.get('live'))
     if not errors:
         try:
             os.chdir(_opened_app['cwd'])

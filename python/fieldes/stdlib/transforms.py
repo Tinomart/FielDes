@@ -507,6 +507,7 @@ rotate = rotate_z
 # Hand-written override to let move work in 2D
 _move_prev = move
 def move(shape, v):
+    v = getattr(v, 'xyz', v)        # (a point is its position -- one that a gizmo moved is a shape with its coordinates in .xyz)
     if len(v) == 2:
         v = [v[0], v[1], 0]
     return _move_prev(shape, v)

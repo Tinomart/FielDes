@@ -230,6 +230,10 @@ public slots:
      *  when it is in it  */
     void toggleByLine(int line0);
 
+    /*  A click on the icon of a field in the viewport (a field is not a shape: it has no line that displays it): the field -- by its key, a
+     *  variable's name or "line:N" -- is the selection, which opens its viewer; with `toggle` (Ctrl) it joins the selection or leaves it  */
+    void selectFieldKey(const QString& key, bool toggle);
+
     /*  A selection rectangle drawn in the viewport: the models displayed by these lines are the selection
      *  (with `add`, they join the selection that there is)  */
     void selectLines(QList<int> lines0, bool add);

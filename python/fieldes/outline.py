@@ -159,7 +159,7 @@ def facts_of(v):
     mkind = None if failed else kind_of(v)
     shown = shape or result
     f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'type': mkind,
-         'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown,
+         'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown or mkind == 'field',   # (a field: its icon is what is dragged)
          'is_list': isinstance(v, list), 'is_pair': isinstance(v, tuple) and len(v) == 2}
     if failed:
         f['error'] = v.error
@@ -336,7 +336,7 @@ def finish(source, gs, out):
                     if facts is None:
                         continue
                     if facts.get('type') == 'field':
-                        A._FIELD_SOURCES.append((t.id, v))
+                        A._FIELD_SOURCES.append((t.id, v, t.id in shown_names))
                     if facts.get('result') and not facts.get('failed'):
                         try:
                             facts['properties'] = properties_of(v)
@@ -354,14 +354,15 @@ def finish(source, gs, out):
                 v = out[k]
                 text = _text_of(src, stmt)
                 facts = _DISPLAYS.get(text)
-                if facts and facts.get('type') == 'field' and isinstance(v, Shape):
-                    A._FIELD_SOURCES.append(('line:%d' % stmt.lineno, v))
+                # (a field that is displayed by its name -- `swell` -- is the field of that name, shown: it has no entry of its own)
+                if facts and facts.get('type') == 'field' and isinstance(v, Shape) and not isinstance(stmt.value, ast.Name):
+                    A._FIELD_SOURCES.append(('line:%d' % stmt.lineno, v, True))
                 shapes = _display_shapes(v) if facts is not None else []
                 if shapes:
                     measure.append((0, None, text, shapes, dict(facts, _has_var=False, _own=isinstance(v, Shape)), facts))
         deadline = _time.time() + A._BOUNDS_SECONDS
         for _, name, text, shapes, view, facts in sorted(measure, key=lambda m: m[0]):
-            if 'bounds' not in facts and _time.time() < deadline:
+            if 'bounds' not in facts and facts.get('type') != 'field' and _time.time() < deadline:      # (a field has no extent: its viewer's bounds are the box of its origin)
                 b = A._estimate_bounds(shapes, deadline)
                 if b:
                     facts['bounds'] = b
@@ -733,13 +734,11 @@ def outline_json(arg):
                     shown = facts.get('shown', mkind not in ('field', 'material', 'cell'))      # (a condition shows itself: it has an eye)
                     item = {'kind': 'failed' if failed else 'shape', 'line': line, 'end_line': end, 'var': t.id, 'label': t.id,
                             'result': bool(facts.get('result', mkind == 'simulation')),     # (what an analysis makes is a result, before it has run too)
-                            'no_gizmo': facts.get('no_gizmo', not shown or mkind in ('simulation', 'conditions')
+                            'no_gizmo': facts.get('no_gizmo', not shown or mkind in ('simulation', 'conditions', 'field')
                                                   or bool(getattr(ns.get(callee), '_makes_no_gizmo', False))),
                             'text': A._short(src.segment(stmt.value), 70), 'deps': deps}
                     if mkind:
                         item['type'] = mkind
-                    if mkind == 'field':
-                        item['displayable'] = False
                     if not shown:
                         item['displayable'] = False
                     item['inputs'], item['variadic'], item['numbers'] = inputs, variadic, numbers
@@ -835,8 +834,6 @@ def outline_json(arg):
             mkind = facts.get('type') or _guess_type(A._callee_name(stmt.value), [], by_name, ns)
             if mkind:
                 item['type'] = mkind
-                if mkind == 'field':
-                    item['displayable'] = False
             item['inputs'], item['variadic'], item['numbers'] = A._inputs_of(stmt.value, ns, by_name)
             if item['variadic']:
                 item['min_inputs'] = A._min_inputs(ns.get(A._callee_name(stmt.value)))

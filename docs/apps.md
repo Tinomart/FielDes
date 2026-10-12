@@ -23,6 +23,7 @@ model tree, no code -- and presses Run.
 
 - [The three roles](#the-three-roles)
 - [Write the script: declare the inputs](#write-the-script-declare-the-inputs)
+- [A viewport: look at it, drag it](#a-viewport-look-at-it-drag-it)
 - [Try it: Preview as app](#try-it-preview-as-app)
 - [Export it: one file](#export-it-one-file)
 - [Open it: a double click](#open-it-a-double-click)
@@ -72,6 +73,8 @@ export_mesh(part, target)
 | `app.asset('step/part.step')` | a file that comes along inside the app | nothing | the full path of that file |
 | `app.output('report.txt', label)` | a file the script makes | nothing; listed under **Outputs** | the full path |
 | `app.in_app()` | whether this is an app run | nothing | `True` as an app, `False` in the editor |
+| `app.running()` | whether the person pressed Run | nothing | `True` for Run and the command line; `False` for a picture of the viewport and in the editor |
+| `app.viewport(models, ...)` | a picture the app shows | a viewport beside the form | a statement of its own: [see below](#a-viewport-look-at-it-drag-it) |
 
 **Rules that keep it simple:**
 
@@ -90,6 +93,38 @@ export_mesh(part, target)
 - **Write files only when it is an app run:** in the editor every change of the script runs it again, and it should only *show*
   the result there. `if app.in_app(): export_mesh(part, target)` does both: the editor shows the part, the app window writes the file.
 - What the script **prints** goes to the log. A mistake in the script shows the error and its line in the log, in red.
+
+## A viewport: look at it, drag it
+
+An app can show a picture. **It is the app creator's choice** -- an app that only exports a file has none -- and what is in it is whatever the creator gives
+`app.viewport(...)`, as a statement of its own:
+
+```python
+body = beam
+if app.running():
+    result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=3)
+    body = result
+
+app.viewport({'Beam': body, 'Load point': pull}, support, load)
+```
+
+- **The models.** A dict `{'name': model}` (a list, or one model, shows them without names), then, if you like, more models without a name: a body, a point, an
+  analysis result, a condition (`force(...)`, `fixed(...)`: drawn on the body with its arrows and pads, as in the editor). The viewport is on the right of the form; the
+  mouse works as in the editor (rotate, pan, zoom, the standard views of the triad).
+- **The names** are drawn over the models, in the style of the labels of boundary conditions (a small card, over the top of the model; over a point, over its dot).
+  `labels=False` leaves them out.
+- **Dragging.** Click a model to select it: its gizmo shows, and its surfaces can be pulled as in the editor, **if the model has numbers to drag** -- `gizmo(...)`,
+  `handles(...)` or `var()`s -- **and is not locked**. `part = lock(part)` is the creator's switch: a locked model can be looked at and selected, never moved. There is
+  no model tree and no context menu, and nothing else can be changed in the picture. What is dragged is written into the numbers of the app's script (the person never
+  sees them), and the script runs again for the picture, so everything that depends on them follows -- the arrows of a load, a region, a lattice. **Reset the picture** (under
+  the viewport, when something was dragged) takes it all back. The edits are not saved in the app file.
+- **A point is its dot** -- the middle point of a gizmo, always drawn while the point is shown. Click it to select the point, then drag the dot (freely, in the plane
+  facing you) or an arrow. That makes a point the simplest thing to give a person to place: a load, a start, a centre.
+- **The picture is made on its own:** when the app is opened, a moment after an input changes, and after something was dragged. Those runs have `app.running()`
+  `False`: put what takes long and what writes files under `if app.running():`, which only the Run button (and the command line) makes `True`. The result of Run is shown
+  in the viewport too (as the `body` above), until the next picture. In the editor the script runs as always and `app.running()` is `False`.
+- **The region** of the picture is the script's: `view.set_bounds(...)` (and `view.set_resolution(...)`) as in any script; a model dragged out of it is not drawn.
+- `examples/25_app_beam_load_case.py` is a complete app of this kind: drag the load point along the beam, choose the force, press Run.
 
 ## Try it: Preview as app
 
@@ -182,8 +217,9 @@ are there (not the blocks of the computer), so an app does the same everywhere.
 ## Limits
 
 - The form is read from the text of the script: inputs are plain values at the top level (see the rules above).
-- The window shows the log and the files that were made, **not a 3D picture**: an app is for producing results (export, analysis,
-  report). To look at a result, open the file it wrote -- **Open** next to it does.
+- Without `app.viewport(...)` the window shows the log and the files that were made, **not a 3D picture**: an app is for producing results
+  (export, analysis, report), and a viewport is something the creator chooses to add. To look at a result of an app that has none, open the file it wrote --
+  **Open** next to it does.
 - An app does not reach outside the computer it runs on: a path on the engineer's computer (`C:\cad\...`) is not there on another;
   bring files along with `app.asset`, or ask for them with `app.file`.
 - Scripts that need an editor's hand (a dragged `var()`, a placeholder `...`, a breakpoint) are not apps: in an app `var(x)` is

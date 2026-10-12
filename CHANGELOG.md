@@ -14,6 +14,28 @@
 - **FielDes takes over the file type.** The Windows installer registers `.fieldesapp` for the user (and removes it with the program); the Linux installer and the `.deb` bring the MIME type. The first time an app is exported FielDes asks whether a double click should open it, and **Settings → Open .fieldesapp files with FielDes** does it for a copy that was not installed.
 - **`examples/24_app_bracket_maker.py`** is a complete app: a model file (the bracket comes along inside it), a mode, a wall thickness and where to save the result, with the comments that say how an app is made.
 
+### An app can have a viewport
+- **`app.viewport(models, ...)`** gives the app window a picture of what the creator names -- *opt-in*, an app without it is the form it was. `app.viewport({'Beam': body, 'Load point': pull}, support, load)`: each name is drawn over its model in a card
+  in the style of the labels of boundary conditions (`labels=False` turns them off), the loose arguments are drawn without a name (the supports and loads show their symbols). The person looks around with the mouse as in the editor, **clicks a model to select it and
+  drags it by its gizmo and by its surfaces** -- the models the creator did not `lock()`. There is no model tree and no context menu in it. What is dragged is written into the numbers (`var()`s) of the app's script, in memory (not into the app file), and the picture
+  is made again; **Reset the picture** takes it back.
+- **The picture is made on its own -- when the app opens, when an input changes, after a drag -- and the work waits for Run.** `app.running()` is False while the picture is made and True when the person presses Run (and in the command line); the analysis and the
+  files go under `if app.running():`. See `examples/25_app_beam_load_case.py` (a locked beam, a load point to drag, the stresses on Run) and [Apps](docs/apps.md).
+- **The app window has the FielDes look**: the dark teal of the viewport, cream text, the same fields, buttons and check boxes, the form on the left and the viewport on the right.
+
+### Points are always there, as the middle point of their gizmo
+- **A point is a dot in the viewport, always** -- the middle point of the gizmo it can have. Click the dot to select the point (its full gizmo shows then; drag it to move the point). A point has an **eye** in the
+  model tree again: hidden, its dot is gone; `lock()` keeps the dot and takes the gizmo away, and `mode='never'` leaves only the dot. Points made at positions given by `var()`s or moved by `gizmo(point, move=...)` stay where they are made (`move()` takes such a point too).
+  This is what makes points useful in an app's viewport: the person drags a load point, a support, a cut.
+
+### The field viewer: one viewer for every field, with an icon you place
+- **Every field has an icon in the viewport, with its name over it** (the style of the labels of boundary conditions), so with several fields you see at a glance which is which. The icon is where the object the field was made from is -- a point, the middle of a body
+  -- and a field that is made from nothing starts at the origin. **Click the icon** (or the field's row in the model tree) and the field's viewer opens; **drag the icon** and the plane of the viewer goes with it.
+- **Each field has its own viewer, inside the bounds of the field** (the box of the object it was made from, else the render region): a plane (X, Y or Z) coloured by the field, with a **Position slider** like the section view's, the opacity, the legend, the
+  value under the mouse and the flat 2D view. Several fields can be open at once, a drop-down on the card chooses the one it is about. The old disc that followed the mouse is gone.
+- **The eye of a field shows or hides its icon and its viewer** (it writes the same `# hidden:` line as for a body; a field the script displays is shown). A field made from the menu is displayed at once. A field has no gizmo: its icon is what is dragged. In an app's
+  viewport a field of `app.viewport(...)` is an icon too, so the person can slice a distance, a stress or a temperature where they look.
+
 ### Handles and the gizmo have their own names: `handles()` and `gizmo()`
 - **`expose()` is now `handles()`, and the old `handles()` is now `gizmo()`.** The names were the wrong way round: the *handles* you drag on a shape's surfaces were made by `expose()`, and the arrows, rings and squares of the *gizmo* by `handles()`. Now the word means the same thing in the interface, the documentation and the script:
   `x = gizmo(x, move=(var(0), ...), rotate=(...), scale=(...), mode='click')` writes the gizmo; `x = handles(x, [var(...), ...])` makes the surfaces of a shape draggable. `lock()` is unchanged.
