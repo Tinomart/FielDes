@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### FielDes apps: a script that anyone can run
+- **An engineer's script becomes a program for other people.** The script declares what the person who runs it may choose -- `app.number('Radius', 5, min=1, max=20, unit='mm')`, `app.text`, `app.flag`, `app.choice`, `app.file`, `app.save_as`, `app.folder`, with `app.title` for the
+  heading, `app.asset('step/part.step')` for a file that comes along and `app.output` for a file it makes -- and **File → Export as app...** bundles it into **one `.fieldesapp` file**, together with the custom blocks it uses (only those), the files it needs and the Python modules next to it.
+  In the editor an input is just its default, so the script is written and tried as any script is. See [Apps](docs/apps.md).
+- **A double click opens the form.** The app window has the inputs (a number box, a drop-down, a check box, a path with Browse / Save as, a file can be dropped on it), a **Run** button that becomes **Stop**, a progress bar, the log, and the **Outputs** -- the files the script made -- with **Open** and **Show in folder**.
+  Every value is checked before the script runs (a number outside min..max, a file that is not there) and the message stands under the input in red. The form remembers what was chosen last time. It is a program of its own, so apps and the editor sit side by side. **File → Preview as app** shows the engineer the same window on the script as it is,
+  and reads it again by itself when the script is saved.
+- **Watch: it runs again by itself.** With *Run again when a file changes* (or `--watch`) the app runs when a file chosen for an input changes -- save a model from the CAD program and the output is written again -- and when the app file itself is replaced by a new export (the form is read again, what was typed stays).
+- **It runs without a window too:** `FielDes run bracket.fieldesapp --Radius 7 --Material aluminium` (inputs are `--name value`, `--help` lists them, `--watch`, `--log FILE`, `--quiet`, exit code 0 / 1 / 2), `FielDes export script.py -o bracket.fieldesapp` and `FielDes info bracket.fieldesapp`; the same through Python as `python -m fieldes run ...`.
+- **FielDes takes over the file type.** The Windows installer registers `.fieldesapp` for the user (and removes it with the program); the Linux installer and the `.deb` bring the MIME type. The first time an app is exported FielDes asks whether a double click should open it, and **Settings → Open .fieldesapp files with FielDes** does it for a copy that was not installed.
+- **`examples/24_app_bracket_maker.py`** is a complete app: a model file (the bracket comes along inside it), a mode, a wall thickness and where to save the result, with the comments that say how an app is made.
+
 ### Handles and the gizmo have their own names: `handles()` and `gizmo()`
 - **`expose()` is now `handles()`, and the old `handles()` is now `gizmo()`.** The names were the wrong way round: the *handles* you drag on a shape's surfaces were made by `expose()`, and the arrows, rings and squares of the *gizmo* by `handles()`. Now the word means the same thing in the interface, the documentation and the script:
   `x = gizmo(x, move=(var(0), ...), rotate=(...), scale=(...), mode='click')` writes the gizmo; `x = handles(x, [var(...), ...])` makes the surfaces of a shape draggable. `lock()` is unchanged.

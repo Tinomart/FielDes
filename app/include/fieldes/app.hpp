@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 #include <QApplication>
 
+#include "fieldes/appwindow.hpp"
 #include "fieldes/window.hpp"
 
 namespace FielDes {
@@ -32,5 +33,6 @@ protected:
     bool event(QEvent* event) override;
 
     QScopedPointer<Window> window;
+    QScopedPointer<AppWindow> appWindow;
 };
 }   // namespace FielDes

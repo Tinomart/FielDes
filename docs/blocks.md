@@ -83,6 +83,11 @@ A block file that cannot be read — a syntax error, an exception while it runs,
 **output** with the reason (`custom block file my_blocks.py: SyntaxError: ... (line 7)`), and the other files still work. An
 error inside a block when it is *called* is a normal traceback of the script, with the block's file and line in it.
 
+## Blocks in apps
+
+When a script is [exported as an app](apps.md) the blocks it calls (and the blocks those call) are bundled into the app file, so the person who
+opens the app does not need your blocks folder; while the app runs, only its own blocks are there.
+
 ## Blocks and the library
 
 Blocks are functions of the same kind as the library's: `blocks.py` in `python/fieldes` loads them (`fieldes.blocks`), the

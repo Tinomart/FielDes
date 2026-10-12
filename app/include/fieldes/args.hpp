@@ -30,6 +30,13 @@ struct Arguments
     QString filename;
     bool vertical=false;
     Language::Type language=Language::LANGUAGE_NONE;
+
+    /*  The program is asked to open a FielDes app, not the editor: `FielDes tool.fieldesapp [--Radius 7 ...] [--run]` (or `FielDes app script.py`
+     *  to try a script as an app).  `appPresets` is the rest of the command line, values for the form  */
+    bool app=false;
+    QString appPath;
+    QStringList appPresets;
+    bool appRun=false;
 };
 
 }   // namespace FielDes

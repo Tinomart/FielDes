@@ -126,6 +126,8 @@ def _eligible(p):
     for n in ast.walk(p.value):
         if isinstance(n, ast.Call):
             f = n.func
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == 'app':
+                return False                         # (app.number(...) is what the person who runs the app chose: not the same at every run)
             name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else '')
             low = name.lower()
             if any(low.startswith(r) for r in _FILE_READERS):

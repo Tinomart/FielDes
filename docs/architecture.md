@@ -64,6 +64,7 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
 | `stdlib/handles.py` | `gizmo()`, `handles()`, `lock()` |
+| `app.py`, `app_package.py`, `__main__.py` | FielDes apps: the `app.` inputs a script declares; reading the form out of the text of a script, bundling a `.fieldesapp`, opening one, checking the values, the command line (`run`, `export`, `info`, `--watch`); see [Apps](apps.md) |
 | `stdlib/content_cache.py` | Content-keyed caches |
 | `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement (with the blocks injected into its namespace), evaluating displays, the model tree's description (`scene_json`: items with their `type`, `inputs`, `owner`, ...), reporting progress |
 | `menu_catalog.py` | The one list of what the right-click menus offer (primitives by kind, operations, custom blocks) and the call each entry writes |
@@ -74,7 +75,8 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 
 | File | Holds |
 |---|---|
-| `main.cpp`, `app.cpp`, `args.cpp` | Start-up, command line |
+| `main.cpp`, `app.cpp`, `args.cpp` | Start-up, command line (`FielDes run|export|info ...` runs the apps' command line with no window: Python starts and `app_support.app_cli` does the work; a `.fieldesapp` as the first argument opens the app window) |
+| `appwindow.cpp`, `fileassoc.cpp` | The app window (a form built from the manifest's inputs, Run / Stop, progress, log, outputs, watch; its own `Python::Interpreter` thread) and the `.fieldesapp` file type (HKCU registry keys on Windows, a MIME type and a desktop entry on Linux) |
 | `window.cpp` | The main window: the top dock and its menus, import code generation, guide and dialogs, autosave, file watching |
 | `editor.cpp`, `script.cpp`, `syntax.cpp`, `findbar.cpp`, `documentation.cpp` | The code editor and its helpers |
 | `python/interpreter.cpp` | The embedded Python interpreter (host module `_fieldes_host`: `var()`, `view.set_*`, display callbacks) |
@@ -590,6 +592,27 @@ Verified against OpenCascade (gmsh) face by face and by volume, and against the 
 sampling (see the changelog for the numbers); two recognisers of rational arcs (cylinder, cone) now check that an
 arc is circular at two more points, as the quarter of an ellipse has a circle's weights.
 
+## FielDes apps
+
+An app is a script whose inputs are declared with `app.number(...)`, `app.file(...)`, ... (`python/fieldes/app.py`). The form is read from the
+**text** of the script (`app_package.inputs_of`: every call `app.<kind>(...)` found in the syntax tree, its arguments plain values), so it exists before
+the script has run; at run time the same functions return the value the person chose (`app.begin(values)` is what the host calls first) or, in the editor,
+their defaults.
+
+- **Bundling** (`app_package.build`): a zip with `manifest.json` (title, inputs, assets, blocks, files), `app.py`, `blocks/` (the custom blocks the script *calls*, and the ones those call:
+  `blocks.info()` and the names of the calls in the syntax tree), and `files/` (the files named in `app.asset(...)`, the relative string literals that name a file next to the script,
+  and the modules next to the script that it imports). It is unpacked once per version of the file (the folder name is a hash of its content) into the user's cache,
+  `FIELDES_APPS_DIR` overrides it; the app runs with `files/` as its working folder and `blocks/` as its blocks folder.
+- **The window** (`AppWindow`) is a process of its own: `Interpreter` is a singleton of the process (`g_interpreter`), so a preview from the editor is `FielDes <temp>.fieldesapp`, which watches
+  its file and is read again when it is replaced. It asks Python through `Interpreter::callSupport` (`app_support.app_open / app_check / app_outputs / app_end`) and runs the script with
+  `Interpreter::eval` like the editor does (`noteRequest()` first); Stop is `Interpreter::terminate()`. The progress bar reads `libfive::run_progress::current()`.
+  `field_cache.py` never caches a statement that calls `app.` (its value is what a person chose).
+- **The command line** (`app_package.main`): `execute()` runs the statements one after another with `var(x)` = `x`, as `scripts/run_example.py` does. `--watch` polls the modification times of the files.
+- **File type**: `FileAssociation::registerForUser` (Windows: `HKCU\Software\Classes\.fieldesapp`, `FielDes.App`, the open command; Linux: `~/.local/share/mime/packages/application-x-fieldesapp.xml` and a desktop
+  entry, `xdg-mime default`); the Windows installer (`installer/Setup.cs`), the Linux installer and the `.deb` do the same for their copy.
+- **Testing**: `FIELDES_AUTOMATION` works in the app window too, with `appset <key> <value>`, `apprun`, `appstop`, `appwatch on|off`, `appwait <seconds>` and `appdump <file>`; the editor has
+  `exportappto <file>` and `previewapp`.
+
 ## Files FielDes writes
 
 | File | Where | Holds |
@@ -598,7 +621,8 @@ arc is circular at two more points, as the quarter of an ellipse has a circle's 
 | `field-cache/<key>.fdtree`, `.fdfield` | FielDes's cache folder (beside the render cache) | the field cache; safe to delete (Settings → Clear the caches) |
 | `<name>.step.fieldes-tessellation/` | next to a STEP file imported with `tessellate` (or tessellated parts of `import_model`) | its tessellation (`meta.json`, one `.mesh` per solid); safe to delete |
 | autosave | the script's own file, every 5 s once it has a name | your script |
-| settings | the usual per-user location (`QSettings`: `FielDes`) | window, splitter, recent files, shortcuts |
+| settings | the usual per-user location (`QSettings`: `FielDes`) | window, splitter, recent files, shortcuts, and per app (`apps/<id>/...`) the values last chosen |
+| `apps/<name>-<hash>/` | the user's cache folder (`%LOCALAPPDATA%\FielDes\FielDes\apps`, `~/.cache/FielDes/apps`) | an unpacked `.fieldesapp`; safe to delete |
 
 Nothing else is written outside the folders you choose (meshes exported by the script, STLs).
 
@@ -609,6 +633,7 @@ Nothing else is written outside the folders you choose (meshes exported by the s
 | `FIELDES_DIR` | folder holding `fieldes.dll` (for the Python library without the application) |
 | `FIELDES_AUTOMATION` | path of a command file: run a scripted GUI session (developer facility, `automation.hpp`) |
 | `FIELDES_TIMING` | print timing lines to stderr |
+| `FIELDES_APPS_DIR` | folder the apps are unpacked into (default: the user's cache) |
 | `FIELDES_FIELD_CACHE_DIR` | folder of the field cache (default: `field-cache` beside the render cache) |
 | `FIELDES_SCENE_CACHE_DIR` | folder of the kept model trees (default: `scene-cache` beside the render cache) |
 | `FIELDES_SHAPE_LOG`, `FIELDES_TREE_LOG` | files the tests read: per run, how many viewport shapes were kept / new (`View::setShapes`); and the model tree's rebuild phases, the edits it followed and their times (developer) |

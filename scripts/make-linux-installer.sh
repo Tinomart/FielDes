@@ -137,8 +137,24 @@ Exec="$PREFIX/FielDes" %f
 Terminal=false
 Categories=Graphics;Engineering;Science;
 StartupWMClass=FielDes
+MimeType=application/x-fieldesapp;
 EOF
     [ -z "$ICON" ] || echo "Icon=$ICON" >> "$APPS/fieldes.desktop"
+    # (the file type of FielDes apps: a double click on a .fieldesapp opens it in its form)
+    MIME="$(dirname "$APPS")/mime"
+    mkdir -p "$MIME/packages"
+    cat > "$MIME/packages/application-x-fieldesapp.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-fieldesapp">
+    <comment>FielDes app</comment>
+    <glob pattern="*.fieldesapp"/>
+    <icon name="fieldes"/>
+  </mime-type>
+</mime-info>
+XML
+    command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$MIME" >/dev/null 2>&1 || true
+    command -v xdg-mime >/dev/null 2>&1 && xdg-mime default fieldes.desktop application/x-fieldesapp >/dev/null 2>&1 || true
     ln -sf "$PREFIX/FielDes" "$BIN/fieldes"
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" >/dev/null 2>&1 || true
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$(dirname "$(dirname "$ICONS")")" >/dev/null 2>&1 || true
@@ -149,7 +165,7 @@ cat > "$PREFIX/uninstall.sh" <<EOF
 #!/bin/sh
 # Removes the FielDes installation in $PREFIX and the menu entry and command that came with it.
 [ -f "$PREFIX/.fieldes-install" ] || { echo "$PREFIX is not a FielDes installation"; exit 1; }
-rm -f "$APPS/fieldes.desktop" "$ICONS/fieldes.png"
+rm -f "$APPS/fieldes.desktop" "$ICONS/fieldes.png" "$(dirname "$APPS")/mime/packages/application-x-fieldesapp.xml"
 [ "\$(readlink "$BIN/fieldes" 2>/dev/null)" = "$PREFIX/FielDes" ] && rm -f "$BIN/fieldes"
 rm -rf "$PREFIX"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" >/dev/null 2>&1 || true

@@ -17,6 +17,7 @@ find_package(Qt5Concurrent REQUIRED)
 set(SRCS
     src/main.cpp
     src/app.cpp
+    src/appwindow.cpp
     src/args.cpp
     src/arrow.cpp
     src/automation.cpp
@@ -29,6 +30,7 @@ set(SRCS
     src/color.cpp
     src/documentation.cpp
     src/editor.cpp
+    src/fileassoc.cpp
     src/findbar.cpp
     src/i18n.cpp
     src/icons.cpp
@@ -59,6 +61,7 @@ set(SRCS
 
 set(QOBJECTS
     include/fieldes/app.hpp
+    include/fieldes/appwindow.hpp
     include/fieldes/automation.hpp
     include/fieldes/busy.hpp
     include/fieldes/camera.hpp

@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QFileSystemWatcher>
+#include <QJsonObject>
 #include <QSettings>
 #include <QTimer>
 
@@ -62,6 +63,12 @@ protected slots:
     bool onSaveAs(bool=false);
     bool onNew(bool=false);
     void onExport(bool=false);
+    /*  File > Export as app...: the script, the custom blocks it uses and the files it needs, bundled into one .fieldesapp file that opens in
+     *  the form of its inputs (fieldes.app); File > Preview as app: the same, in a window of its own, to see the form as the person who runs the
+     *  app will -- it reads the app again by itself when the script is saved or previewed again  */
+    void onExportApp(bool=false);
+    void exportAppTo(QString out);
+    void onPreviewApp(bool=false);
     /*  An Export entry of a menu: the model `var` as `kind` in the format `ext`.  The file is asked for, then written by the library in the
      *  background (the same functions a script calls: export_mesh, export_fea, export_results, export_field)  */
     void exportModel(const QString& var, const QString& kind, const QString& ext);
@@ -178,6 +185,13 @@ protected:
 
     /*  Fires onAutosave() periodically; see its declaration above */
     QTimer autosaveTimer;
+
+    /*  Bundles the script into the app file `path`: the report of fieldes.app_package.build (empty, with `error` set, when it could not be)  */
+    QJsonObject packApp(const QString& path, QString* error);
+    class QProcess* m_previewProcess=nullptr;
+    QString m_previewPath;
+    /*  Asks, the first time an app is exported, whether a double click on a .fieldesapp file should open FielDes  */
+    void offerFileAssociation();
 
     /*  Model-tree description of the last evaluation, and the parts-list
      *  variable of an import whose part display lines are still to come  */

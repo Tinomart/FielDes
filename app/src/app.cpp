@@ -18,6 +18,7 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <QFileOpenEvent>
+#include <QTimer>
 #include <QSettings>
 
 #include "fieldes/app.hpp"
@@ -54,12 +55,21 @@ App::App(int& argc, char** argv)
     Theme::apply(*this);
     setWindowIcon(Icons::logo(64));
 
-    window.reset(new Window(Arguments(this)));
+    const Arguments args(this);
+    if (args.app)
+    {
+        // A FielDes app: the form of its inputs, not the editor
+        appWindow.reset(new AppWindow(args.appPath, args.appPresets, args.appRun));
+        if (appWindow->isOpen()) appWindow->show();
+        else QTimer::singleShot(0, this, &QCoreApplication::quit);
+        return;
+    }
+    window.reset(new Window(args));
 }
 
 bool App::event(QEvent *event)
 {
-    if (event->type() == QEvent::FileOpen) {
+    if (event->type() == QEvent::FileOpen && window) {
         QFileOpenEvent *openEvent = static_cast<QFileOpenEvent*>(event);
         window->openFile(openEvent->file());
     }

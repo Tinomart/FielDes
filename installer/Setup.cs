@@ -15,7 +15,8 @@
 //                      silent: right away)
 //   /uninstall         (Setup) remove FielDes
 //
-// It installs for the current user only: it needs no administrator rights.
+// It installs for the current user only: it needs no administrator rights.  That includes the file type of FielDes apps (.fieldesapp, a script
+// bundled with its inputs: a double click opens it in its form), registered under HKEY_CURRENT_USER\Software\Classes.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -316,8 +317,46 @@ namespace FielDesSetup
             using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\FielDes\FielDes"))
                 k.SetValue("language", language == Texts.SystemCode() ? "system" : language);
 
+            RegisterApps(exe);
+
             progress(100);
         }
+
+        // The file type of FielDes apps: a double click on a .fieldesapp opens it in FielDes (the program does the same for a copy that is not installed)
+        static void RegisterApps(string exe)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\.fieldesapp")) k.SetValue("", "FielDes.App");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\FielDes.App")) k.SetValue("", "FielDes app");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\FielDes.App\DefaultIcon")) k.SetValue("", "\"" + exe + "\",0");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\FielDes.App\shell\open")) k.SetValue("", "Open");
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Classes\FielDes.App\shell\open\command")) k.SetValue("", "\"" + exe + "\" \"%1\"");
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);        // SHCNE_ASSOCCHANGED
+            }
+            catch { }
+        }
+
+        // Taken away again with the program, but only if it is this program's (a later copy may have taken the type over)
+        static void UnregisterApps(string dir)
+        {
+            try
+            {
+                string exe = Path.Combine(dir, "FielDes.exe");
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(@"Software\Classes\FielDes.App\shell\open\command"))
+                {
+                    string command = k == null ? null : k.GetValue("") as string;
+                    if (command == null || command.IndexOf(exe, StringComparison.OrdinalIgnoreCase) < 0) return;
+                }
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\FielDes.App", false);
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\.fieldesapp", false);
+                SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch { }
+        }
+
+        [System.Runtime.InteropServices.DllImport("shell32.dll")]
+        static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 
         static long DirSize(string dir)
         {
@@ -364,6 +403,7 @@ namespace FielDesSetup
             try { File.Delete(StartMenuLink()); } catch { }
             try { File.Delete(DesktopLink()); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(Key); } catch { }
+            UnregisterApps(dir);
             progress(100);
         }
     }

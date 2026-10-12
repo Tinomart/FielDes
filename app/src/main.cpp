@@ -17,7 +17,16 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 #include <QApplication>
+#include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSettings>
 #include <QSurfaceFormat>
 
 #ifdef _WIN32
@@ -29,6 +38,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "fieldes/app.hpp"
 #include "fieldes/documentation.hpp"
+#include "fieldes/python/interpreter.hpp"
 #include "fieldes/result.hpp"
 
 using namespace FielDes;
@@ -123,11 +133,71 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS* info)
 }   // anonymous namespace
 #endif
 
+namespace {
+
+// `FielDes run|export|info ...`: the command line of the apps (fieldes.app_package), which needs no window: Python starts here and the
+// library does the work.  The answer is the exit code (0 done, 1 the app failed, 2 said wrongly on the command line)
+bool isCommandLine(int argc, char** argv)
+{
+    return argc > 1 && (std::strcmp(argv[1], "run") == 0 || std::strcmp(argv[1], "export") == 0 || std::strcmp(argv[1], "info") == 0);
+}
+
+int runCommandLine(int argc, char** argv)
+{
+#ifdef _WIN32
+    // The program is a window program: started from a console it has no output of its own, so what it prints goes to that console (unless
+    // the output was redirected to a file or a pipe, which is then where it goes)
+    {
+        const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (out == nullptr || out == INVALID_HANDLE_VALUE)
+        {
+            if (AttachConsole(ATTACH_PARENT_PROCESS))
+            {
+                FILE* f = nullptr;
+                freopen_s(&f, "CONOUT$", "w", stdout);
+                freopen_s(&f, "CONOUT$", "w", stderr);
+                freopen_s(&f, "CONIN$", "r", stdin);
+            }
+        }
+    }
+#endif
+    QCoreApplication core(argc, argv);
+    QCoreApplication::setOrganizationName("FielDes");
+    QCoreApplication::setApplicationName("FielDes");
+    QCoreApplication::setApplicationVersion(FIELDES_VERSION);
+    if (!qEnvironmentVariableIsSet("FIELDES_DIR"))
+        qputenv("FIELDES_DIR", QCoreApplication::applicationDirPath().toLocal8Bit());
+    if (!qEnvironmentVariableIsSet("FIELDES_BLOCKS"))
+    {
+        const QString blocks = QSettings().value("blocks-folder").toString();
+        if (!blocks.isEmpty()) qputenv("FIELDES_BLOCKS", blocks.toLocal8Bit());
+    }
+    auto interpreter = new Python::Interpreter();
+    interpreter->preinit();
+    QJsonArray arguments;
+    const QStringList all = core.arguments();
+    for (int i = 1; i < all.size(); ++i) arguments.append(all[i]);
+    QString error;
+    const QString answer = interpreter->callSupport("app_cli", QString::fromUtf8(QJsonDocument(QJsonObject{{"argv", arguments}}).toJson(QJsonDocument::Compact)), &error);
+    std::fflush(nullptr);
+    if (answer.isEmpty())
+    {
+        std::fprintf(stderr, "FielDes: %s\n", error.toLocal8Bit().constData());
+        std::fflush(nullptr);
+        std::_Exit(2);
+    }
+    // (the process ends here, as it is: the kernel's worker threads and the interpreter need no orderly goodbye)
+    std::_Exit(answer.toInt());
+}
+
+}   // anonymous namespace
+
 int main(int argc, char** argv)
 {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashFilter);
 #endif
+    if (isCommandLine(argc, argv)) return runCommandLine(argc, argv);
     {   // Configure default OpenGL as 3.2 Core
         QSurfaceFormat format;
         format.setVersion(3, 2);

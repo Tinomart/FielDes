@@ -241,6 +241,7 @@ The `examples/` folder has a script for each of these. The ones that need no STE
 | [Scripting](scripting.md) | shapes, arithmetic on fields, view settings, what gets displayed |
 | [Fields](fields.md) | the fields of the library, regressions, data as fields |
 | [Custom blocks](blocks.md) | your own functions in every script |
+| [Apps](apps.md) | a script as a program for other people: a form, a Run button, one `.fieldesapp` file |
 | [Handles](handles.md) | the gizmo, the handles on the surfaces, `gizmo()` and `handles()` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Lattices](lattices.md) | cells, graded and conformal lattices |

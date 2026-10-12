@@ -36,6 +36,7 @@ MODULES = [
     ('content_cache', 'Caching', 'fieldes.stdlib.content_cache'),
     ('render_cache', 'Keeping rendered meshes (render cache)', 'fieldes.stdlib.render_cache'),
     ('custom_resolution', 'A resolution of its own for one body', 'fieldes.stdlib.custom_resolution'),
+    ('app', 'FielDes apps: the inputs of a script', 'fieldes.app'),
 ]
 
 
@@ -89,7 +90,7 @@ def main():
         if intro:
             lines.append(intro)
             lines.append('')
-        names = [n for n in dir(mod) if not n.startswith('_')]
+        names = list(mod.__all__) if modname == 'fieldes.app' else [n for n in dir(mod) if not n.startswith('_')]
         for n in sorted(names):
             obj = getattr(mod, n)
             if not (inspect.isfunction(obj) or inspect.isclass(obj)):
@@ -97,7 +98,7 @@ def main():
             if getattr(obj, '__module__', None) != modname or (modname, n) in seen:
                 continue
             seen.add((modname, n))
-            lines.extend(describe(n, obj))
+            lines.extend(describe(('app.' + n) if modname == 'fieldes.app' else n, obj))
     with open(os.path.join(ROOT, 'docs', 'reference.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines).rstrip() + '\n')
     print('wrote docs/reference.md:', len(seen), 'entries')

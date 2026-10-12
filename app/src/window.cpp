@@ -77,6 +77,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "libfive/step/step_progress.hpp"
 
+#include "fieldes/fileassoc.hpp"
 #include "fieldes/i18n.hpp"
 #include "fieldes/window.hpp"
 #include "fieldes/automation.hpp"
@@ -497,6 +498,13 @@ Window::Window(Arguments args)
                    {QKeySequence(Qt::CTRL | Qt::Key_E), QKeySequence(Qt::Key_F7)});
     connect(export_action, &QAction::triggered, this, &Window::onExport);
 
+    auto export_app_action = file_menu->addAction(T("Export as app..."));
+    export_app_action->setToolTip(T("Bundle this script, its custom blocks and the files it needs into one .fieldesapp file: whoever opens it sees a form of the inputs the script declares (app.number, app.file, ...), a Run button and the files that were made"));
+    connect(export_app_action, &QAction::triggered, this, &Window::onExportApp);
+    auto preview_app_action = file_menu->addAction(T("Preview as app"));
+    preview_app_action->setToolTip(T("Open this script in the window a person who runs it as an app sees: the form of its inputs"));
+    connect(preview_app_action, &QAction::triggered, this, &Window::onPreviewApp);
+
     auto shot_action = file_menu->addAction(T("Export screenshot..."));
     Shortcuts::add(shot_action, "file.export-screenshot", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E)});
     connect(shot_action, &QAction::triggered, this, [this]{
@@ -547,6 +555,20 @@ Window::Window(Arguments args)
             if (m_blocksFolder.isEmpty()) watchBlocks();
             QDir().mkpath(m_blocksFolder);
             QDesktopServices::openUrl(QUrl::fromLocalFile(m_blocksFolder));
+        });
+        settings_menu->addSeparator();
+        // A double click on a .fieldesapp file opens FielDes's app window (the installers do this too; a downloaded folder does not)
+        auto assoc_action = settings_menu->addAction(T("Open .fieldesapp files with FielDes"));
+        assoc_action->setToolTip(T("Make a double click on an app file (.fieldesapp) open it in FielDes"));
+        assoc_action->setCheckable(true);
+        assoc_action->setChecked(FileAssociation::isRegistered());
+        connect(assoc_action, &QAction::triggered, this, [this, assoc_action]{
+            QString why;
+            if (FileAssociation::registerForUser(&why))
+                statusBar()->showMessage(T("A double click on a .fieldesapp file opens it in FielDes now."), 6000);
+            else
+                QMessageBox::warning(this, "FielDes", T("The file type could not be registered: %1").arg(why));
+            assoc_action->setChecked(FileAssociation::isRegistered());
         });
         settings_menu->addSeparator();
     }
@@ -1391,6 +1413,19 @@ Window::Window(Arguments args)
     {
         auto a = new Automation(this, this);
         auto script = editor->scriptWidget();
+        // exportappto <file>: File > Export as app with the file chosen; previewapp: File > Preview as app
+        a->add("exportappto", [=](const QString& path){ exportAppTo(path.trimmed()); });
+        // assoc <register|status>: the .fieldesapp file type (this changes the registry of the user: a test undoes it)
+        a->add("assoc", [=](const QString& what){
+            if (what.trimmed() == "register")
+            {
+                QString why;
+                const bool ok = FileAssociation::registerForUser(&why);
+                std::cerr << "automation: assoc register -> " << ok << " " << why.toStdString() << "\n";
+            }
+            std::cerr << "automation: assoc registered=" << FileAssociation::isRegistered() << "\n";
+        });
+        a->add("previewapp", [=](const QString&){ onPreviewApp(); });
         // tour <offer|start|goto N|next|back|showme|skip|state>: the guided tour, step by step; prints where it is
         a->add("tour", [=](const QString& args){
             const QString cmd = args.section(' ', 0, 0);
@@ -2465,6 +2500,12 @@ Window::Window(Arguments args)
 
 bool Window::openFile(const QString& name)
 {
+    // An app is not opened for editing: its form opens in a window of its own (a program of its own, so that it sits beside this one)
+    if (name.endsWith(".fieldesapp", Qt::CaseInsensitive))
+    {
+        QProcess::startDetached(QCoreApplication::applicationFilePath(), {name});
+        return true;
+    }
     CHECK_UNSAVED();
 
     if (loadFile(name))
@@ -2623,8 +2664,11 @@ bool Window::saveFile(QString f)
     {
         QTextStream out(&file);
         out << editor->getScript();
+        out.flush();
 
         editor->setModified(false);
+        // (a preview that is open reads the saved script: the app is bundled again, and its window reads it again by itself)
+        if (m_previewProcess && m_previewProcess->state() != QProcess::NotRunning) packApp(m_previewPath, nullptr);
         return true;
     }
 }
@@ -2755,6 +2799,11 @@ bool Window::dropEvent_(QDropEvent* event)
     {
         importModel(local);   // models are added to the current script
         return true;
+    }
+    if (ext == "fieldesapp")
+    {
+        // An app is not a script to edit: it opens in its own window
+        return openFile(local);
     }
 
     CHECK_UNSAVED();
@@ -2949,6 +2998,139 @@ QString Window::workingDirectory() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+QJsonObject Window::packApp(const QString& path, QString* error)
+{
+    const bool untitled = filename.isEmpty() || filename.startsWith(":/");
+    QJsonObject request;
+    request["source"] = editor->getScript();
+    request["dir"] = untitled ? QDir::currentPath() : QFileInfo(filename).dir().absolutePath();
+    request["out"] = path;
+    QString why;
+    const QString text = editor->callSupport("app_export", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &why);
+    const auto report = QJsonDocument::fromJson(text.toUtf8()).object();
+    if (report.isEmpty() || report.contains("error"))
+    {
+        if (error) *error = report["error"].toString().isEmpty() ? why : report["error"].toString();
+        return QJsonObject();
+    }
+    return report;
+}
+
+void Window::offerFileAssociation()
+{
+    QSettings s;
+    if (FileAssociation::isRegistered() || s.value("apps/association-asked", false).toBool()) return;
+    s.setValue("apps/association-asked", true);
+    const auto answer = QMessageBox::question(
+        this, T("Open apps with a double click?"),
+        T("Open .fieldesapp files with FielDes?\n\nThen a double click on an app opens it in its form. You can change this at any time in Settings."),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (answer != QMessageBox::Yes) return;
+    QString why;
+    if (!FileAssociation::registerForUser(&why))
+        QMessageBox::warning(this, "FielDes", T("The file type could not be registered: %1").arg(why));
+}
+
+void Window::onExportApp(bool)
+{
+    const bool untitled = filename.isEmpty() || filename.startsWith(":/");
+    const QString base = untitled ? QString("app") : QFileInfo(filename).completeBaseName();
+    const QString dir = untitled ? QDir::homePath() : QFileInfo(filename).dir().absolutePath();
+    QString out = QFileDialog::getSaveFileName(this, T("Export as app"), QDir(dir).filePath(base + ".fieldesapp"), T("FielDes apps (*.fieldesapp)"));
+    if (out.isEmpty()) return;
+    exportAppTo(out);
+}
+
+void Window::exportAppTo(QString out)
+{
+    if (!out.endsWith(".fieldesapp", Qt::CaseInsensitive)) out += ".fieldesapp";
+    QString error;
+    const auto report = packApp(out, &error);
+    if (report.isEmpty())
+    {
+        QMessageBox::critical(this, T("Export as app"), T("The app could not be made: %1").arg(error));
+        return;
+    }
+    QStringList details;
+    for (const auto p : report["problems"].toArray())
+    {
+        const auto o = p.toObject();
+        details << (o["line"].toInt() > 0 ? T("Problem (line %1): %2").arg(o["line"].toInt()).arg(o["message"].toString()) : T("Problem: %1").arg(o["message"].toString()));
+    }
+    for (const auto w : report["warnings"].toArray()) details << T("Note: %1").arg(w.toString());
+    QStringList names;
+    for (const auto i : report["inputs"].toArray()) names << i.toObject()["label"].toString();
+    QStringList blockNames;
+    for (const auto b : report["blocks"].toArray()) blockNames << b.toString();
+    const qint64 size = qint64(report["size"].toDouble());
+    const QString sizeText = size < 1024 * 1024 ? QString("%1 KB").arg(qMax<qint64>(1, size / 1024)) : QString("%1 MB").arg(size / 1048576.0, 0, 'f', 1);
+    QMessageBox box(this);
+    box.setIcon(details.isEmpty() ? QMessageBox::Information : QMessageBox::Warning);
+    box.setWindowTitle(T("Export as app"));
+    box.setText(T("<b>%1</b> is made.").arg(QFileInfo(out).fileName().toHtmlEscaped()));
+    box.setInformativeText(T("Inputs: %1\nCustom blocks: %2\nFiles that come along: %3\nSize: %4")
+                               .arg(names.isEmpty() ? T("none") : names.join(", "))
+                               .arg(blockNames.isEmpty() ? T("none") : blockNames.join(", "))
+                               .arg(report["files"].toArray().size())
+                               .arg(sizeText));
+    if (!details.isEmpty()) box.setDetailedText(details.join("\n"));
+    auto openButton = box.addButton(T("Open the app"), QMessageBox::AcceptRole);
+    auto folderButton = box.addButton(T("Show in folder"), QMessageBox::ActionRole);
+    box.addButton(T("Close"), QMessageBox::RejectRole);
+    // (what is wrong is shown at once: the details are not hidden behind a button)
+    if (!details.isEmpty())
+        for (auto b : box.findChildren<QPushButton*>())
+            if (b->text().contains("Show Details") || b->text().contains("Details")) { b->click(); break; }
+    if (automated)
+    {
+        // (a test run: the window is photographed where a person would read it, and closed)
+        const QString shot = qEnvironmentVariable("FIELDES_APP_DIALOG_SHOT");
+        QTimer::singleShot(1500, &box, [&box, shot] { if (!shot.isEmpty()) box.grab().save(shot); box.reject(); });
+    }
+    box.exec();
+    if (box.clickedButton() == openButton)
+        QProcess::startDetached(QCoreApplication::applicationFilePath(), {out});
+    else if (box.clickedButton() == folderButton)
+    {
+#ifdef Q_OS_WIN
+        QProcess::startDetached("explorer.exe", {"/select,", QDir::toNativeSeparators(out)});
+#else
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(out).absolutePath()));
+#endif
+    }
+    if (!automated) offerFileAssociation();
+}
+
+void Window::onPreviewApp(bool)
+{
+    const QString folder = QDir(QDir::tempPath()).filePath("FielDes-preview");
+    QDir().mkpath(folder);
+    const bool untitled = filename.isEmpty() || filename.startsWith(":/");
+    QString base = untitled ? QString("untitled") : QFileInfo(filename).completeBaseName();
+    base.replace(QRegularExpression("[^\\w.-]+"), "_");
+    m_previewPath = QDir(folder).filePath(base + ".fieldesapp");
+    QString error;
+    const auto report = packApp(m_previewPath, &error);
+    if (report.isEmpty())
+    {
+        QMessageBox::critical(this, T("Preview as app"), T("The app could not be made: %1").arg(error));
+        return;
+    }
+    const auto problems = report["problems"].toArray();
+    if (!problems.isEmpty())
+    {
+        const auto o = problems.first().toObject();
+        statusBar()->showMessage(T("The app has a problem (line %1): %2").arg(o["line"].toInt()).arg(o["message"].toString()), 12000);
+    }
+    if (m_previewProcess && m_previewProcess->state() != QProcess::NotRunning)
+    {
+        if (problems.isEmpty()) statusBar()->showMessage(T("The app window reads the new version by itself."), 5000);
+        return;
+    }
+    if (!m_previewProcess) m_previewProcess = new QProcess(this);
+    m_previewProcess->start(QCoreApplication::applicationFilePath(), {m_previewPath});
+}
 
 void Window::onExportReady(QList<const libfive::Mesh*> shapes)
 {

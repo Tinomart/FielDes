@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -3362,3 +3362,103 @@ resolution  samples per mm (a number above 0); 2 draws features of half a millim
 bounds      ((x0, y0, z0), (x1, y1, z1)) of the body, if its extent cannot be found
 
 Returns the body itself in every other way; only the way it is meshed for the viewport is changed.
+
+## FielDes apps: the inputs of a script
+
+FielDes apps: a script that people who never open the editor can run.
+
+An engineer writes the script once and declares what the person who runs it may choose -- a radius, a model file, where to save the
+result.  FielDes shows those inputs as a form (a window of its own, with a Run button, a log and the files that were made), so an
+artist or a designer opens the app, fills in the form and presses Run.  The script is an ordinary FielDes script:
+
+    from fieldes import *
+
+    app.title('Bracket maker', 'Makes the bracket for a pipe and saves it as a mesh')
+    radius = app.number('Radius', 5, min=1, max=20, unit='mm')
+    material = app.choice('Material', ['steel', 'aluminium'])
+    model = app.file('Model', filter='STEP files (*.step *.stp)')
+    target = app.save_as('Export path', 'bracket.stl')
+
+    part = import_model(model)
+    ...
+    export_mesh(part, target)
+
+In the editor the inputs are just their defaults: `app.number('Radius', 5)` is 5, so the script runs as it always did, and the script is
+tried and changed there.  File > Export as app... bundles it with the custom blocks it uses and the files it needs into one
+`.fieldesapp` file; opening that file (a double click) shows the form.  The same file runs without a window:
+
+    FielDes run bracket.fieldesapp --Radius 7 --Material aluminium
+
+Every input is written with a plain value -- a number, a text, a list -- at the top of the script, because the form is read from the
+text of the script (it is there before the script has run).  The name of an input is what the form shows; `--Radius`, `--radius` and
+`--RADIUS` are the same option, and so are `Model path`, `ModelPath` and `model_path`.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `app.asset(path)`
+
+A file that is bundled into the app: `model = import_model(app.asset('step/bracket.step'))`.  A relative path is read from
+the folder of the script (and is the same inside the app); File > Export as app... copies the file in.  Returns the full path.
+
+### `app.choice(name, options, default=None, help='')`
+
+One of a few texts: `material = app.choice('Material', ['steel', 'aluminium'])`.  `default` is the first one when it is left out.
+
+### `app.file(name, default='', filter='', help='')`
+
+A file the person picks (it must exist when the app runs), returned as its full path:
+
+    model = app.file('Model', filter='STEP files (*.step *.stp);;All files (*)')
+
+`default` can be a file that comes with the app, `app.asset('step/bracket.step')`.  The runner can run the app again by itself
+when this file changes (Watch).
+
+### `app.flag(name, default=False, help='')`
+
+A yes / no choice (a check box).  On the command line: `--Hollow`, `--no-Hollow` or `--Hollow yes`.
+
+### `app.folder(name, default='', help='')`
+
+A folder the person picks (a relative path is made under the Documents folder), returned as its full path
+
+### `app.in_app()`
+
+True when the script is run as an app (by the app window or `FielDes run`), False in the editor.  Write files only when it is: an
+edit of the script runs it again and again in the editor, and it should only show the result there:
+
+    if app.in_app():
+        export_mesh(part, target)
+
+### `app.number(name, default=0, min=None, max=None, step=None, unit='', help='')`
+
+A number the person chooses: a whole number when `default` is one (and min, max, step are), else a decimal.
+
+    radius = app.number('Radius', 5, min=1, max=20, unit='mm')
+
+`unit` is shown after the field, `help` under it.  A value outside min..max is refused before the script runs.
+
+### `app.output(path, label='')`
+
+A file the script makes that the runner lists under *Outputs* when it is there afterwards (a report, a drawing):
+
+    report = app.output('report.txt')
+
+A relative path means the Documents folder (or the folder the command was started in).  Returns the full path.
+
+### `app.save_as(name, default='result', filter='', help='')`
+
+Where the result is saved: a path the person can change, returned as a full path (a relative one means the Documents folder, or
+the folder the command was started in).  The runner lists it under *Outputs* once the script has written it:
+
+    export_mesh(part, app.save_as('Export path', 'bracket.stl'))
+
+### `app.text(name, default='', help='')`
+
+A text the person types (a name, a label to engrave).  Returns it as it is.
+
+### `app.title(text, description='', version='')`
+
+The name of the app, what it does, and its version: shown at the top of its window and in the list of recent apps.
+Written once, with plain texts, at the top of the script.

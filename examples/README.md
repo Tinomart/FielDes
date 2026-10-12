@@ -33,6 +33,7 @@ The first import of a file takes a few seconds and is cached next to the STEP fi
 | `20_custom_blocks.py` | none | custom blocks (`blocks/sample_blocks.py`): `perforate` with a field radius, `bracket` |
 | `21_low_level.py` | none | low-level fields, as in libfive's Scheme `define-shape` / `remap-shape`: a cube from six plane distances (`.max`), a twist by `.remap`, a ball and a torus from their formulas joined by a smooth minimum of your own, a gyroid cut to a cube; evaluating and printing a tree |
 | `22_export_files.py` | none (a beam with a hole) | exporting: `export_mesh` in every format (STL, OBJ, PLY, 3MF, glTF, FBX, OFF, DXF), `export_fea` (Abaqus / CalculiX, Nastran, Gmsh), `export_results` (VTK, CSV, key numbers as text); sections in the model tree |
+| `24_app_bracket_maker.py` | the bracket (it comes along inside the app) | a FielDes app: `app.title`, `app.file`, `app.choice`, `app.number`, `app.save_as`, `app.asset` -- a form for someone who never opens the editor; File > Preview as app shows it, File > Export as app makes the `.fieldesapp` |
 | `23_lattice_gallery.py` | none (a simple body for each tile) | one lattice of every kind: strut cells and a custom cell, a TPMS sheet and network, a honeycomb, foams around `random_points` (`voronoi_lattice`, `delaunay_lattice`, by density), a wall graded by a field, a cell map and a conformal layer |
 
 (Open each script: the comment at its top says what to look at.)

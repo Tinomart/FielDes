@@ -31,7 +31,7 @@ fi
 
 # --- what goes where
 ROOT="$WORK/root"
-mkdir -p "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "$ROOT/opt" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/usr/share/icons/hicolor/256x256/apps" "$ROOT/usr/share/mime/packages"
 cp -a "$FOLDER" "$ROOT/opt/fieldes"
 rm -f "$ROOT/opt/fieldes/run.sh"
 ln -s /opt/fieldes/FielDes "$ROOT/usr/bin/fieldes"
@@ -47,6 +47,18 @@ Icon=fieldes
 Terminal=false
 Categories=Graphics;Engineering;Science;
 StartupWMClass=FielDes
+MimeType=application/x-fieldesapp;
+EOF
+# (the file type of FielDes apps: a double click on a .fieldesapp opens it in its form)
+cat > "$ROOT/usr/share/mime/packages/application-x-fieldesapp.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-fieldesapp">
+    <comment>FielDes app</comment>
+    <glob pattern="*.fieldesapp"/>
+    <icon name="fieldes"/>
+  </mime-type>
+</mime-info>
 EOF
 
 # --- the control files
@@ -70,6 +82,7 @@ cat > "$CONTROL/postinst" <<'EOF'
 #!/bin/sh
 set -e
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database /usr/share/mime || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
 exit 0
 EOF
@@ -77,6 +90,7 @@ cat > "$CONTROL/postrm" <<'EOF'
 #!/bin/sh
 set -e
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+command -v update-mime-database >/dev/null 2>&1 && update-mime-database /usr/share/mime || true
 exit 0
 EOF
 chmod 755 "$CONTROL/postinst" "$CONTROL/postrm"

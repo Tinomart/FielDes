@@ -75,6 +75,19 @@ def completion_info():
                '  --  render region; it follows the models (grows, shrinks) in the script, unless auto_scale=False')
     out.append('tip\tset_resolution\tview.set_resolution(res)  --  voxels per unit')
     out.append('tip\tset_quality\tview.set_quality(q)  --  mesh accuracy (1-10)')
+
+    # `app`: the inputs of a script that is run as an app (a tip only where no function of the library has the name: `text` is both)
+    try:
+        from fieldes import app as _app_module
+        tipped = {r.split('\t')[1] for r in out if r.startswith('tip\t')}
+        for name in _app_module.__all__:
+            out.append('member\tapp\t' + name)
+            fn = getattr(_app_module, name)
+            if name not in tipped:
+                first = (inspect.getdoc(fn) or '').split('\n')[0].strip()
+                out.append('tip\t{}\tapp.{}{}{}'.format(name, name, inspect.signature(fn), '  --  ' + first if first else ''))
+    except Exception:
+        pass
     return out
 
 
@@ -1491,3 +1504,108 @@ def live_settings(arg):
             out[key] = float(v)
     import json
     return json.dumps(out)
+
+
+# ---------------------------------------------------------------------------
+# FielDes apps (fieldes.app, fieldes.app_package): what the runner window asks
+# ---------------------------------------------------------------------------
+
+_opened_app = None      # the app the runner has open (app_open), which app_check sets the values of
+
+
+def _json_default(o):
+    return str(o)
+
+
+def app_open(arg):
+    ''' The runner opens an app (a `.fieldesapp`, or a script to try): {"path"} -> JSON {"ok": true, "kind", "path", "root", "cwd",
+        "script", "manifest", "problems", "documents"} or {"ok": false, "error"} '''
+    global _opened_app
+    import json
+    from fieldes import app_package
+    try:
+        opened = app_package.open_app(json.loads(arg)['path'])
+    except Exception as e:
+        return json.dumps({'ok': False, 'error': str(e)})
+    _opened_app = opened
+    out = dict(opened)
+    out['ok'] = True
+    out['documents'] = app_package.documents_folder()
+    return json.dumps(out, default=_json_default)
+
+
+def app_check(arg):
+    ''' The values the person chose ({"values": {key: value}, "outputs": folder}) are checked and, when all fit, the run is set up with
+        them (the script's app.number(...) are these values) and the working folder is the app's: JSON {"ok", "errors": {key: why}} '''
+    import json
+    import os
+    from fieldes import app_package
+    if _opened_app is None:
+        return json.dumps({'ok': False, 'errors': {}, 'error': 'no app is open'})
+    req = json.loads(arg)
+    values, errors = app_package.check(_opened_app, req.get('values') or {}, req.get('outputs') or None)
+    if not errors:
+        try:
+            os.chdir(_opened_app['cwd'])
+        except OSError:
+            pass
+    return json.dumps({'ok': not errors, 'errors': errors, 'watch': app_package.watched_files(_opened_app, values) if not errors else []},
+                      default=_json_default)
+
+
+def app_end(arg):
+    ''' The run is over: the inputs are their defaults again '''
+    from fieldes import app
+    app.end()
+    return '1'
+
+
+def app_outputs(arg):
+    ''' The files the last run said it makes, as JSON [{"label", "path", "exists", "size", "fresh"}] '''
+    import json
+    from fieldes import app_package
+    return json.dumps(app_package.outputs_made())
+
+
+def app_undeclared(arg):
+    ''' The inputs the last run declared that the form (read from the text of the script) did not have, as JSON [label]: an input written in a
+        loop or a function '''
+    import json
+    from fieldes import app
+    if _opened_app is None:
+        return '[]'
+    known = {s['key'] for s in _opened_app['manifest']['inputs']}
+    return json.dumps([s['label'] for k, s in app._seen.items() if k not in known])
+
+
+def app_inputs(arg):
+    ''' What the script text declares ({"source"}), for the editor: JSON of fieldes.app_package.inputs_of '''
+    import json
+    from fieldes import app_package
+    return json.dumps(app_package.inputs_of(json.loads(arg)['source']), default=_json_default)
+
+
+def app_export(arg):
+    ''' File > Export as app: {"source", "dir", "out", "title"} -> JSON report of fieldes.app_package.build, or {"error"} '''
+    import json
+    from fieldes import app_package
+    req = json.loads(arg)
+    try:
+        return json.dumps(app_package.build(req['source'], req.get('dir') or None, req['out'], req.get('title') or None), default=_json_default)
+    except Exception as e:
+        return json.dumps({'error': '%s: %s' % (type(e).__name__, e)})
+
+
+def app_cli(arg):
+    ''' `FielDes run|export|info ...` ({"argv": [...]}): runs it, printing to the console; the answer is the exit code '''
+    import json
+    import sys
+    from fieldes import app_package
+    try:
+        return str(app_package.main(json.loads(arg)['argv']))
+    finally:
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass

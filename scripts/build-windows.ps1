@@ -91,6 +91,8 @@ if ($Package) {
     #    bracket that is distributed at the maintainer's decision, copied in below)
     Mirror (Join-Path $Source 'examples') (Join-Path $PackageDir 'examples') @('/XD', '__pycache__', '*.fieldes-cache.trees', '*.fieldes-bspline', '*.fieldes-tessellation', 'meshes', '/XF', '*.fieldes-cache.py', '*.step', '*.stp')
     Copy-Item (Join-Path $Source 'examples\step\PivotBearingSupportBracket.STEP') (Join-Path $PackageDir 'examples\step') -Force
+    # The command line of the apps (`fieldes run tool.fieldesapp --Radius 7`): FielDes.exe is a window program, this waits for it
+    Copy-Item (Join-Path $Source 'scriptsieldes.cmd') $PackageDir -Force
     foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md') {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }

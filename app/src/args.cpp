@@ -25,8 +25,27 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 namespace FielDes {
 
-Arguments::Arguments(QCoreApplication* app)
+Arguments::Arguments(QCoreApplication* application)
 {
+    // An app: its file first (or `app` and the file); what follows are values of its form, which the parser below does not know
+    {
+        const QStringList all = application->arguments();
+        int at = 1;
+        if (all.size() > at && all[at] == "app") ++at;
+        if (all.size() > at && (at > 1 || all[at].endsWith(".fieldesapp", Qt::CaseInsensitive)))
+        {
+            app = true;
+            appPath = all[at];
+            for (int i = at + 1; i < all.size(); ++i)
+            {
+                if (all[i] == "--run") appRun = true;
+                else appPresets << all[i];
+            }
+            language = Language::LANGUAGE_PYTHON;
+            return;
+        }
+    }
+
     QCommandLineParser parser;
     parser.setApplicationDescription("FielDes: field-driven design");
     parser.addHelpOption();
@@ -35,7 +54,7 @@ Arguments::Arguments(QCoreApplication* app)
     QCommandLineOption vertical_layout("vertical", "Use vertical layout for editor / 3D view.");
     parser.addOption(vertical_layout);
 
-    parser.process(*app);
+    parser.process(*application);
 
     const QStringList ps = parser.positionalArguments();
     filename = ps.isEmpty() ? "" : ps[0];
