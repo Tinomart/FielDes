@@ -131,9 +131,41 @@ def _guess_type(callee, inputs, by_name, ns=None):
     return 'solid'
 
 
+def _call_takes(callee):
+    ''' The kinds of model the call `callee` works on, all its places together (what the menus offer an entry by: see menu_catalog._selection_fits), or [] when the library does
+        not say -- a model of another kind dropped on the call is refused: it is no argument of it '''
+    try:
+        from fieldes import menu_catalog as M
+        signatures = M._takes(callee)
+        if signatures:
+            return sorted(signatures[0][0])
+        if callee and any(n == callee for n, g, _, _ in M.OPERATIONS):
+            return sorted(M._SHAPES)
+    except Exception:
+        pass
+    return []
+
+
+def _slot_kinds(callee, k):
+    ''' The kinds of model the k-th argument of `callee` takes (the kinds the menus offer an entry by: see menu_catalog._takes), or None when the library does not say --
+        a number, an option, a place that takes anything: whatever is put there is let through, and the run says if it does not fit '''
+    try:
+        from fieldes import menu_catalog as M
+        signatures = M._takes(callee)
+        if signatures:
+            needs = signatures[0][1]
+            return sorted(needs[k]) if k < len(needs) else None
+        # (a geometric operation works on the first model it is given: what a model is -- a solid, a 2D shape, a curve, a field ... -- but not a condition or a material)
+        if k == 0 and any(n == callee for n, g, _, _ in M.OPERATIONS):
+            return sorted(M._SHAPES)
+    except Exception:
+        pass
+    return None
+
+
 def _hole_info(value, span):
     ''' Which argument of which call a placeholder at `span` stands for: {callee, param} (what a call is written with is not known to the
-        tree: the library says) '''
+        tree: the library says), and `accepts`, the kinds of model the place takes when the library says (a model of another kind is not put there) '''
     from fieldes import completion
     from fieldes.stdlib.fea import _SLOTS
     for call in ast.walk(value):
@@ -142,7 +174,11 @@ def _hole_info(value, span):
         for k, a in enumerate(call.args):
             if isinstance(a, ast.Constant) and a.value is Ellipsis and A._span(a) == span:
                 param = completion.parameter_at(call.func.id, k)
-                return {'callee': call.func.id, 'param': param, 'list': param in _SLOTS}
+                info = {'callee': call.func.id, 'param': param, 'list': param in _SLOTS}
+                accepts = None if param in _SLOTS else _slot_kinds(call.func.id, k)
+                if accepts:
+                    info['accepts'] = accepts
+                return info
         for kw in call.keywords:
             if kw.arg and isinstance(kw.value, ast.Constant) and kw.value.value is Ellipsis and A._span(kw.value) == span:
                 return {'callee': call.func.id, 'param': kw.arg, 'list': kw.arg in _SLOTS}
@@ -785,6 +821,8 @@ def outline_json(arg):
                         item['cls'] = facts['cls']
                     item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
                     item['callee'] = callee
+                    if _call_takes(callee):
+                        item['takes'] = _call_takes(callee)
                     item['role'] = 'operation' if deps else 'primitive'
                     if is_blocked(stmt.value):
                         item['block'] = A._call_name(stmt.value)
@@ -863,6 +901,8 @@ def outline_json(arg):
             item['args'] = A._args_of(stmt.value, ns, by_name, src)
             item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
             item['callee'] = A._callee_name(stmt.value)
+            if _call_takes(item['callee']):
+                item['takes'] = _call_takes(item['callee'])
             item['role'] = 'operation' if deps else 'primitive'
             if is_blocked(stmt.value):
                 item['block'] = A._call_name(stmt.value)

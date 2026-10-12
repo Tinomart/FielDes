@@ -7246,10 +7246,50 @@ bool ScenePanel::dependsOn(const QJsonObject& model, const QJsonObject& on) cons
     return walk(model);
 }
 
+// What a model is for the kinds a call takes (the library's: see menu_catalog._tag): its kind, for a condition the input it goes in, for a material whether it is a fluid
+static QString modelKindTag(const QJsonObject& m)
+{
+    const QString kind = m["type"].toString();
+    if (kind == "conditions")
+    {
+        const QString role = m["condition_role"].toString();
+        return role.isEmpty() ? QString("conditions") : role;
+    }
+    if (kind == "material") return m["cls"].toString() == "Fluid" ? QString("fluid") : QString("material");
+    return kind;
+}
+
+// Kinds of model in words, for the reason a drop is refused (many kinds at once -- everything geometric -- is said once)
+static QString kindWords(const QStringList& kinds)
+{
+    if (kinds.size() > 4) return T("a solid, a 2D shape, a curve, a point, a field or the like");
+    QStringList words;
+    for (const QString& k : kinds)
+    {
+        QString w;
+        if (k == "solid") w = T("a solid");
+        else if (k == "profile") w = T("a 2D shape");
+        else if (k == "curve") w = T("a curve");
+        else if (k == "point") w = T("a point");
+        else if (k == "field") w = T("a field");
+        else if (k == "surface") w = T("a surface");
+        else if (k == "lattice") w = T("a lattice");
+        else if (k == "import") w = T("an imported part");
+        else if (k == "simulation") w = T("an analysis");
+        else if (k == "material") w = T("a material");
+        else if (k == "fluid") w = T("a fluid");
+        else if (k == "points") w = T("points");
+        else if (k == "cell") w = T("a lattice cell");
+        else w = T("a condition");
+        if (!words.contains(w)) words << w;
+    }
+    return words.join(T(" or "));
+}
+
 ScenePanel::OnPlan ScenePanel::planFill(const QList<QJsonObject>& models, const QJsonObject& stmt, int which) const
 {
-    // The statement has a placeholder (`...`) where an argument goes: the model dropped takes its place, whatever it is (a body, a
-    // surface, a field, a point ...: the run says if it does not fit).  Nothing is asked
+    // The statement has a placeholder (`...`) where an argument goes: the model dropped takes its place when it is of a kind the place takes -- what the library says of the call
+    // (`path_extrude` takes a 2D shape there and a curve or points here); where it says nothing the run says if the model does not fit.  Nothing is asked
     OnPlan p;
     QStringList names;
     for (const auto& m : models) names << m["var"].toString();
@@ -7285,6 +7325,21 @@ ScenePanel::OnPlan ScenePanel::planFill(const QList<QJsonObject>& models, const 
     {
         p.why = T("A placeholder takes one model: drop one of %1 on it.").arg("'" + names.join("', '") + "'");
         return p;
+    }
+    // (a place that takes certain kinds of model only: another kind is not put there, whatever the run would say of it)
+    const QJsonArray accepts = hole["accepts"].toArray();
+    if (!listed && !accepts.isEmpty())
+    {
+        QStringList kinds;
+        for (const auto a : accepts) kinds << a.toString();
+        for (const auto& m : models)
+        {
+            const QString tag = modelKindTag(m);
+            if (tag.isEmpty() || kinds.contains(tag)) continue;
+            p.why = T("The %1 of %2() takes %3: '%4' is %5, so it does not go there.")
+                        .arg(slot, hole["callee"].toString(), kindWords(kinds), m["var"].toString(), kindWords(QStringList{tag}));
+            return p;
+        }
     }
     for (const auto& m : models)
     {
@@ -7583,6 +7638,24 @@ ScenePanel::OnPlan ScenePanel::planDropOn(const QList<QJsonObject>& models, cons
         p.text = names[0];
         p.what = T("Use %1 instead of %2 (%3) in %4").arg(names[0], slot["text"].toString(), slot["label"].toString(), tname);
         return p;
+    }
+    // A model that is not of a kind the call works on is no argument of it (`path_extrude` works on a 2D shape and a curve, an offset on geometry -- not on a material or a
+    // condition): what the library says of the call.  Where it says nothing, the run says if the model does not fit
+    {
+        const QJsonArray takes = target["takes"].toArray();
+        if (!takes.isEmpty())
+        {
+            QStringList kinds;
+            for (const auto k : takes) kinds << k.toString();
+            for (const auto& m : models)
+            {
+                const QString tag = modelKindTag(m);
+                if (tag.isEmpty() || kinds.contains(tag)) continue;
+                p.why = T("%1 works on %2: '%3' is %4, so it is not an argument of it.")
+                            .arg(fnText, kindWords(kinds), m["var"].toString(), kindWords(QStringList{tag}));
+                return p;
+            }
+        }
     }
     QJsonObject last;
     QStringList have;
