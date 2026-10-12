@@ -29,6 +29,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/tree/content_key.hpp"
 #include "libfive/tree/expose.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
+#include "libfive/fields/point_shapes.hpp"
 
 #include "libfive/eval/eval_deriv_array.hpp"
 #include "libfive/eval/eval_interval.hpp"
@@ -2720,6 +2721,46 @@ libfive_tree libfive_beam_lattice(const float* nodes, int node_count, const int*
     return libfive::lattice::beamLattice(g, r, blend).release();
 }
 
+int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale,
+                                const double* normal, int n, int smooth_default, int closed, int pieces,
+                                double* out_vertices, int* out_owner, double* out_t, int capacity)
+{
+    std::vector<libfive::pointshapes::Control> controls(size_t(std::max(0, n)));
+    for (int i = 0; i < n; ++i)
+    {
+        auto& c = controls[size_t(i)];
+        c.pos = Eigen::Vector3d(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
+        c.smooth = smooth ? smooth[i] : -1;
+        c.turned = turned && turned[i];
+        if (rotate) c.rotate = Eigen::Vector3d(rotate[3 * i], rotate[3 * i + 1], rotate[3 * i + 2]);
+        if (scale) c.scale = scale[i];
+        if (normal)
+        {
+            c.planar = true;
+            c.normal = Eigen::Vector3d(normal[0], normal[1], normal[2]);
+        }
+    }
+    std::vector<std::pair<int, double>> owners;
+    const auto v = libfive::pointshapes::polyline(controls, smooth_default != 0, closed != 0, pieces, &owners);
+    if (int(v.size()) > capacity) return int(v.size());
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        out_vertices[3 * i] = v[i].x();
+        out_vertices[3 * i + 1] = v[i].y();
+        out_vertices[3 * i + 2] = v[i].z();
+        if (out_owner) out_owner[i] = owners[i].first;
+        if (out_t) out_t[i] = owners[i].second;
+    }
+    return int(v.size());
+}
+
+bool libfive_pointshape_plane(const double* pos, int n, double* frame)
+{
+    std::vector<Eigen::Vector3d> p;
+    for (int i = 0; i < n; ++i) p.emplace_back(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
+    return libfive::pointshapes::planeOf(p, frame);
+}
+
 libfive_tree libfive_field_gradient(libfive_tree t, int mode)
 {
     return libfive::fields::gradientField(Tree(t), mode).release();
@@ -3183,6 +3224,30 @@ static LONG WINAPI libfiveCrashHandler(EXCEPTION_POINTERS* info)
         const bool haveLine = SymGetLineFromAddr64(proc, frame.AddrPC.Offset, &ldisp, &line);
         fprintf(stderr, "[crash]   #%d %s  %s:%lu\n", k, haveSym ? sym->Name : "?",
                 haveLine ? line.FileName : "?", haveLine ? line.LineNumber : 0ul);
+    }
+    // The code addresses found on the stack as they are, each as module + offset (what a map file of the library names): a jump to a bad address
+    // (a call through a freed object) leaves nothing that the walk above can follow
+    const DWORD64 sp = info->ContextRecord->Rsp;
+    HMODULE ripModule = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(info->ContextRecord->Rip), &ripModule);
+    fprintf(stderr, "[crash] rip %p (%s)\n", reinterpret_cast<void*>(info->ContextRecord->Rip), ripModule ? "in a module" : "in no module");
+    int shown = 0;
+    for (int k = 0; k < 400 && shown < 40; k++) {
+        DWORD64 value = 0;
+        if (!ReadProcessMemory(proc, reinterpret_cast<const void*>(sp + 8 * DWORD64(k)), &value, sizeof(value), nullptr)) break;
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<const void*>(value), &mbi, sizeof(mbi))) continue;
+        if (!(mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))) continue;
+        HMODULE module = nullptr;
+        if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                reinterpret_cast<LPCSTR>(value), &module)) continue;
+        char name[MAX_PATH] = {};
+        GetModuleFileNameA(module, name, MAX_PATH);
+        const char* base = strrchr(name, '\\');
+        fprintf(stderr, "[crash]   stack+%d: %s+0x%llx\n", 8 * k, base ? base + 1 : name,
+                static_cast<unsigned long long>(value - reinterpret_cast<DWORD64>(module)));
+        ++shown;
     }
     fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;

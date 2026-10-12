@@ -121,32 +121,32 @@ HINTS = {
 
 # A sketch or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
 # rotates it), in the horizontal plane at the place of the click
-_SKETCH = '''{var}_p1 = point({xm}, {ym}, {z})
-{var}_p1
-{var}_p2 = point({xp}, {ym}, {z})
-{var}_p2
-{var}_p3 = point({xp}, {yp}, {z})
-{var}_p3
-{var}_p4 = point({xm}, {yp}, {z})
-{var}_p4
-#@@#
-sketch([{var}_p1, {var}_p2, {var}_p3, {var}_p4])'''
+def _points(*places):
+    ''' The points a sketch or a line made from the menu is made of: each a model of its own, with its gizmo (so that it can be dragged, and the face or the line
+        with all of them), written above the call.  `places` are the (x, y, z) texts of the template '''
+    out = []
+    for k, (x, y, z) in enumerate(places, 1):
+        name = '{var}_p%d' % k
+        out.append('%s = point(%s, %s, %s)\n%s = gizmo(\n    %s,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n'
+                   '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name, name, name))
+    return ''.join(out), ', '.join('{var}_p%d' % k for k in range(1, len(places) + 1))
 
-_CURVE = '''{var}_p1 = point({xm}, {y}, {z})
-{var}_p1
-{var}_p2 = point({x}, {yp}, {z})
-{var}_p2
-{var}_p3 = point({xp}, {y}, {z})
-{var}_p3
-#@@#
-curve([{var}_p1, {var}_p2, {var}_p3])'''
+
+_SKETCH_POINTS, _SKETCH_LIST = _points(('{xm}', '{ym}', '{z}'), ('{xp}', '{ym}', '{z}'), ('{xp}', '{yp}', '{z}'), ('{xm}', '{yp}', '{z}'))
+_SKETCH = _SKETCH_POINTS + '#@@#\nsketch([' + _SKETCH_LIST + '])'
+
+_LINE_POINTS, _LINE_LIST = _points(('{xm}', '{y}', '{z}'), ('{x}', '{yp}', '{z}'), ('{xp}', '{y}', '{z}'))
+_POLYLINE = _LINE_POINTS + '#@@#\npolyline([' + _LINE_LIST + '])'
+_SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
 
 # What the entries that are made of the models selected say when the mouse rests on them (the shape the model tree has: points, a curve, a 2D shape)
 FROM_SELECTION = {
     'sketch': tr('A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  '
-                 'Click its edge to put a point there; double-click a point to make it a corner or a spline point'),
-    'curve': tr('A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  '
-                'Click the line and drag to put a point there; double-click a point to make it a corner or a spline point'),
+                 'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+    'polyline': tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
+                   'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+    'spline': tr('A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
+                 'drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
 }
 
 # (function, group, template)
@@ -167,7 +167,8 @@ PRIMITIVES = [
     ('polygon', '2D', 'polygon({h}, {n}, ({x}, {y}))'),
     ('triangle', '2D', 'triangle(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}))'),
     ('sketch', '2D', _SKETCH),
-    ('curve', '1D', _CURVE),
+    ('polyline', '1D', _POLYLINE),
+    ('spline', '1D', _SPLINE),
     ('point', 'Points', 'point({x}, {y}, {z})'),
     ('plane', 'Surfaces', 'plane(({x}, {y}, {z}), (0, 0, 1))'),
     ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
@@ -546,9 +547,9 @@ def _from_selection(name, models, values):
             return 'sketch([%s])' % ', '.join(points)
         if curves and not points:
             return 'sketch(%s)' % curves[0]
-    elif name == 'curve':
+    elif name in ('polyline', 'spline'):
         if len(points) >= 2:
-            return 'curve([%s])' % ', '.join(points)
+            return '%s([%s])' % (name, ', '.join(points))
     return None
 
 
@@ -591,7 +592,7 @@ def _build_operation(name, v, others):
             return 'path_extrude(%s, %s)' % (profile, path)
         if profile and len(points) >= 2:
             var = v.get('var') or 'path_extrude_1'
-            return '%s_path = curve([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profile, var)
+            return '%s_path = spline([%s])\n%s_path%spath_extrude(%s, %s_path)' % (var, ', '.join(points), var, PRELUDE, profile, var)
     slot = FIELD_SLOTS.get(name)
     if slot:
         fields = [o['name'] for o in others if o.get('type') == 'field']

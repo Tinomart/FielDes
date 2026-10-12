@@ -677,8 +677,6 @@
  "Error in the script": "脚本出错",
  "The picture shows what ran before the error, or the last one that worked.  Click to go to the error.": "显示的是出错前已运行的内容，或最后一次成功的画面。点击可跳转到出错位置。",
  "Double-click: corner or spline point": "双击:切换为拐角或样条点",
- "Drag to put a point here": "拖动以在此放置一个点",
- "Click to put a point here": "单击以在此放置一个点",
  "unbound": "未绑定",
  "FielDes guide": "FielDes 指南",
  "The script is the model. Whatever you do in the viewport is written into the script, so %1 undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.": "脚本就是模型。您在视口中的所有操作都会写入脚本，因此可用 %1 撤销。<b>docs</b> 文件夹中有完整文档。<b>帮助 &gt; 导览</b> 会在程序中带您了解基础操作。",
@@ -919,8 +917,6 @@
  "Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice": "在模型内生成并绘制为圆点的点：平均间距、随机程度、两点最近和最远可以相距多少。泡沫围绕它们生成：选中它们，然后选择 voronoi_lattice 或 delaunay_lattice",
  "A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  Select points first (random_points)": "泡沫：围绕所选点的 Voronoi 单元的边，作为杆件，填充这些点所在的模型。请先选中点（random_points）",
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "随机桁架：沿所选点之间的 Delaunay 边布置杆件，填充这些点所在的模型。请先选中点（random_points）",
- "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "由点生成的 2D 形状。选中了点时:按选择顺序用这些点生成。没有选中时:生成四个可拖动的新点。单击它的边可在该处放置一个点;双击某个点可将其切换为拐角或样条点",
- "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "穿过点的线。选中了点时:按选择顺序用这些点生成。没有选中时:生成三个可拖动的新点。在线上单击并拖动可在该处放置一个点;双击某个点可将其切换为拐角或样条点",
  "the menu has no %s called %s": "菜单中没有 %s “%s”",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s 作用于曲面、场或实体所指明的位置：请选中其中一个或多个",
  "static analysis": "静力分析",
@@ -1106,5 +1102,10 @@
  "qt:QDialogButtonBox|OK": "确定",
  "qt:QDialogButtonBox|Cancel": "取消",
  "qt:QDialogButtonBox|Close": "关闭",
- "Extruding": "拉伸"
+ "Extruding": "拉伸",
+ "Drag to pull a point out of the line": "拖动以从线上拉出一个点",
+ "Drag to pull a point out of the edge": "拖动以从边上拉出一个点",
+ "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "由点生成的 2D 形状。选中了点时:按选择顺序用这些点生成。没有选中时:生成四个可拖动的新点。按住它的边并拖动可从中拉出一个点;双击某个点可将其切换为拐角或样条点",
+ "A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "穿过点的一组线段。选中了点时:按选择顺序用这些点生成。没有选中时:生成三个可拖动的新点。按住线并拖动可从中拉出一个点;双击某个点可将其切换为拐角或样条点",
+ "A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "穿过点的平滑曲线。选中了点时:按选择顺序用这些点生成。没有选中时:生成三个可拖动的新点。按住曲线并拖动可从中拉出一个点;双击某个点可将其切换为拐角或样条点"
 }

@@ -211,7 +211,7 @@ NO_BODY = {
                    'exact_field'],
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],
     'points': ['point', 'surface', 'plane', 'sphere_surface', 'cylinder_surface', 'wave_surface'],
-    'curves': ['curve'],
+    'curves': ['polyline', 'spline'],
     'sketch': ['sketch'],
     'fea': ['fixed', 'force', 'gravity', 'thermal_expansion'],
     'thermal': ['fixed_temperature', 'heat_input', 'heat_generation', 'convection'],

@@ -114,6 +114,7 @@ def _patch(shape, seed, angle, mode, radius, spacing, lo, hi, script_vars):
         p = patch.contents
         count = int(p.count)
         xyz = [p.points[i] for i in range(3 * count)]
+        normals = [p.normals[i] for i in range(3 * count)]
         box = (tuple(min(xyz[3 * i + k] for i in range(count)) for k in range(3)),
                tuple(max(xyz[3 * i + k] for i in range(count)) for k in range(3)))
         field = lib.libfive_points_distance(p.points, count)
@@ -124,7 +125,7 @@ def _patch(shape, seed, angle, mode, radius, spacing, lo, hi, script_vars):
         lib.libfive_surface_patch_delete(patch)
     if not field or not surface:
         raise ValueError('select_surface: ' + lib.libfive_lattice_last_error().decode('utf-8', 'replace'))
-    return Shape(field), Shape(surface), count, distance, box, used, stopped
+    return Shape(field), Shape(surface), count, distance, box, used, stopped, xyz, normals
 
 
 def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution=None, bounds=None):
@@ -156,7 +157,7 @@ def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution
     size = max(hi[i] - lo[i] for i in range(3)) or 1.0
     res = float(resolution) if resolution else max(0.1, 150.0 / size)
     spacing = 1.0 / res
-    field, surface, count, distance, box, used, stopped = _patch(
+    field, surface, count, distance, box, used, stopped, sample_xyz, sample_normals = _patch(
         shape, seed, float(angle), mode, float(radius or 0.0), spacing, tuple(lo), tuple(hi), _vars_key())
     cover = COVER * used
     # (the field is negative in a layer across the patch, the thinnest one the samples cover: what makes it a region at all, as the
@@ -171,6 +172,9 @@ def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution
     out = SurfaceSelection(lib.libfive_tree_copy(band.ptr))
     out.shape, out.seed, out.angle, out.mode = shape, seed, float(angle), mode
     out.samples, out.spacing, out.cover = count, used, cover
+    # (the points of the surface the walk took, and the way the surface faces at each: x, y, z of each, one after the other -- what a sketch of the
+    # patch is made from, see `sketch`)
+    out.sample_points, out.sample_normals = sample_xyz, sample_normals
     out.patch = field - cover
     # the surface itself, as a field: the height above the patch along its normal (zero on it, positive on the side it faces) -- what a
     # lattice laid on the selection is laid out on.  Nothing of the shape it was picked on is in it

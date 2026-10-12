@@ -87,6 +87,7 @@ View::View(QWidget* parent)
       settings(Settings::defaultSettings())
 {
     setMouseTracking(true);
+    qApp->installEventFilter(this);             // (Shift swaps the gizmo's arrows for planes: the keys are seen wherever the focus is)
 
     connect(&busy, &Busy::redraw, this, &View::update);
     connect(this, &View::startRender, &busy,
@@ -102,6 +103,14 @@ View::View(QWidget* parent)
 
     connect(&camera, &Camera::animDone, this, &View::redrawPicker);
 
+    m_wheelTimer.setSingleShot(true);
+    m_wheelTimer.setInterval(450);
+    connect(&m_wheelTimer, &QTimer::timeout, this, [this] {
+        if (!m_wheelScaling) return;
+        m_wheelScaling = false;
+        emit(dragEnd());
+        m_overlay->update();
+    });
     m_waitTimer.setInterval(40);
     connect(&m_waitTimer, &QTimer::timeout, this, &View::startWaitingGrip);
     pick_timer.setSingleShot(true);
@@ -1620,21 +1629,47 @@ void View::mouseMoveEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mouseMoveEvent(event);
     event->accept();
+    m_lastPos = event->pos();
 
-    if (m_curvePress)
+    if (m_pullShape)
     {
-        // (a press on the line of a curve that moves: the point is put there, and dragged)
-        if ((event->pos() - m_curvePressPos).manhattanLength() >= 4)
+        if (!m_pullActive)
         {
-            const int line = m_curvePress->sourceLine();
-            const QVector3D hit = m_curveHit;
-            m_curvePress = nullptr;
-            if (QApplication::mouseButtons() & Qt::LeftButton)
+            // (a press on a curve that moves: a point is pulled out of it from here)
+            if ((event->pos() - m_pullPressPos).manhattanLength() >= 4 && m_leftDown) beginPull(event->pos());
+        }
+        if (m_pullActive)
+        {
+            QVector3D at;
+            if (ringPoint(event->pos(), m_pullHit, m_pullNormal, at))
             {
-                m_wait = WaitGrip{true, 3, 0, 0, QList<int>()};
-                m_waitTimer.start();
-                setCursor(Qt::BusyCursor);
-                emit(outlineInsertRequested(line, hit));
+                m_pullLast = at;
+                m_pullShape->setVirtualPoint(true, m_pullAfter, at);
+                m_pullShape->refresh();
+                m_overlay->update();
+            }
+        }
+        mouse.pos = event->pos();
+        return;
+    }
+    if (m_faceShape)
+    {
+        if (!m_faceActive && (event->pos() - m_facePressPos).manhattanLength() >= 4 && m_leftDown)
+        {
+            // (a press on a face that moves: all its points are dragged, in its plane)
+            m_faceActive = true;
+            setCursor(Qt::SizeAllCursor);
+            emit(dragStart());
+        }
+        if (m_faceActive)
+        {
+            QVector3D at;
+            if (ringPoint(event->pos(), m_faceStart, m_faceNormal, at))
+            {
+                const QVector3D d = at - m_faceStart;
+                std::map<libfive::Tree::Id, float> numbers;
+                for (const FaceVar& v : m_faceVars) numbers[v.id] = v.value0 + d[v.axis];
+                if (!numbers.empty()) applyGizmoNumbers(numbers);
             }
         }
         mouse.pos = event->pos();
@@ -1792,7 +1827,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
         checkHoverTarget(event->pos());
         if (gizmo_hover.kind >= 0)
         {
-            setCursor(gizmo_hover.kind == 3 ? Qt::SizeAllCursor : Qt::PointingHandCursor);
+            setCursor(gizmo_hover.kind == 3 || gizmo_hover.kind == 4 ? Qt::SizeAllCursor : Qt::PointingHandCursor);
         }
     }
     mouse.pos = event->pos();
@@ -1820,6 +1855,8 @@ void View::mousePressEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mousePressEvent(event);
     event->accept();
+    m_lastPos = event->pos();
+    if (event->button() == Qt::LeftButton) m_leftDown = true;
     // A click in the viewport puts the keyboard in the viewport (from the editor too): the keys that work on the
     // selection (E, R, G, H, I) are not typed into the script
     if (!hasFocus()) setFocus(Qt::MouseFocusReason);
@@ -1942,6 +1979,20 @@ void View::mousePressEvent(QMouseEvent* event)
             // The dot of a point: it is not in the pick buffer (nothing of it is painted), and it wins over what is behind it
             if (Shape* dot = pointDotAt(event->pos()))
             {
+                // A point of a sketch is moved by pressing its dot and dragging, in the plane of the sketch: the press selects it (which gives it the numbers
+                // it is moved by) and the drag begins as soon as they are there, if the button is still down
+                QVector3D facePlane;
+                if (!(event->modifiers() & Qt::ControlModifier) && dot->sourceLine() >= 0 && !dot->isLocked() && !dot->hasGizmo() &&
+                    planarRingNormal(dot, facePlane))
+                {
+                    m_wait = WaitGrip{true, 3, 0, 0, QList<int>{}, true};
+                    m_waitTimer.start();
+                    setCursor(Qt::BusyCursor);
+                    press_pos = QPoint(-100000, -100000);   // (the select is made here, not by the release)
+                    press_target = nullptr;
+                    emit(shapeClicked(dot->sourceLine()));
+                    return;
+                }
                 drag_target = nullptr;
                 press_pos = event->pos();
                 press_target = dot;
@@ -1954,32 +2005,61 @@ void View::mousePressEvent(QMouseEvent* event)
             syncPicker();
             auto picked = pick_img.valid(event->pos())
                 ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
-            // The outline of a sketch, the line of a curve: a press on it puts a point there, which follows the mouse while the button is down
+            // The outline of a sketch, the line of a curve: a press on it pulls a point out of it (drawn at once from numbers, written into the script when
+            // it is let go)
             if (!(event->modifiers() & Qt::ControlModifier))
             {
                 Shape* lineShape = nullptr;
                 QVector3D lineHit;
                 int linePiece = 0;
-                const bool onLine = outlineAt(event->pos(), lineShape, lineHit, linePiece);
-                if (std::getenv("FIELDES_OUTLINE_LOG")) std::fprintf(stderr, "[outline] press at %d,%d: %s\n", event->pos().x(), event->pos().y(), onLine ? "on a line" : "no line");
-                if (onLine && lineShape->sourceLine() >= 0 && !lineShape->isLocked())
+                if (outlineAt(event->pos(), lineShape, lineHit, linePiece) && lineShape->sourceLine() >= 0 && !lineShape->isLocked())
                 {
                     press_pos = QPoint(-100000, -100000);   // not a selection click
                     press_target = nullptr;
                     drag_target = nullptr;
-                    if (lineShape->isCurve())
-                    {
-                        // (a click on a curve selects it; a drag puts a point on it, see mouseMoveEvent)
-                        m_curvePress = lineShape;
-                        m_curveHit = lineHit;
-                        m_curvePressPos = event->pos();
-                        return;
-                    }
-                    m_wait = WaitGrip{true, 3, 0, 0, QList<int>()};
-                    m_waitTimer.start();
-                    setCursor(Qt::BusyCursor);
-                    emit(outlineInsertRequested(lineShape->sourceLine(), lineHit));
+                    m_pullShape = lineShape;
+                    m_pullHit = lineHit;
+                    m_pullPiece = linePiece;
+                    m_pullPressPos = event->pos();
+                    m_pullActive = false;
+                    // (an edge of a sketch is pulled at once, so that a click puts a point there; the line of a curve waits for the mouse to move, so that
+                    // a click selects the curve)
+                    if (!lineShape->isCurve()) beginPull(event->pos());
                     return;
+                }
+                // The face of a sketch: dragged, it takes all its points along in its plane; a click selects it
+                if (picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->isFace() && !shapes.at(picked - 1)->isLocked() &&
+                    shapes.at(picked - 1)->sourceLine() >= 0)
+                {
+                    Shape* face = shapes.at(picked - 1);
+                    double frame[9];
+                    if (face->planeNow(frame))
+                    {
+                        const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
+                        m_faceNormal = QVector3D::crossProduct(u, w).normalized();
+                        m_faceStart = toModelPos(event->pos());
+                        m_faceVars.clear();
+                        const auto& vs = face->getVars();
+                        for (const auto& c : face->controlPoints())
+                        {
+                            for (int a = 0; a < 3; ++a)
+                            {
+                                const auto it = c.var[a] ? vs.find(c.var[a]) : vs.end();
+                                if (it != vs.end()) m_faceVars.append({c.var[a], a, it->second});
+                            }
+                        }
+                        // (the points that have no numbers to move them -- no gizmo yet -- stay: the face is only selected then)
+                        if (!m_faceVars.isEmpty())
+                        {
+                            press_pos = QPoint(-100000, -100000);
+                            press_target = nullptr;
+                            drag_target = nullptr;
+                            m_faceShape = face;
+                            m_faceActive = false;
+                            m_facePressPos = event->pos();
+                            return;
+                        }
+                    }
                 }
             }
             drag_target = (picked && int(picked) <= shapes.size())
@@ -2041,12 +2121,40 @@ void View::mouseReleaseEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
-    if (m_curvePress)
+    if (event->button() == Qt::LeftButton) m_leftDown = false;
+    if (m_pullShape)
     {
-        // (a click on the line of a curve: the curve is selected)
-        const int line = m_curvePress->sourceLine();
-        m_curvePress = nullptr;
-        if (event->button() == Qt::LeftButton) emit(shapeClicked(line));
+        Shape* shape = m_pullShape;
+        const bool active = m_pullActive;
+        m_pullShape = nullptr;
+        m_pullActive = false;
+        unsetCursor();
+        if (event->button() == Qt::LeftButton)
+        {
+            if (active)
+            {
+                // (the point stays drawn where it was let go until the script has it)
+                emit(outlineInsertRequested(shape->sourceLine(), m_pullHit, m_pullLast));
+            }
+            else
+            {
+                emit(shapeClicked(shape->sourceLine()));        // (a click on the line of a curve: the curve is selected)
+            }
+        }
+        return;
+    }
+    if (m_faceShape)
+    {
+        Shape* face = m_faceShape;
+        const bool active = m_faceActive;
+        m_faceShape = nullptr;
+        m_faceActive = false;
+        unsetCursor();
+        if (event->button() == Qt::LeftButton)
+        {
+            if (active) emit(dragEnd());
+            else emit(shapeClicked(face->sourceLine()));
+        }
         return;
     }
     if (m_iconPress)
@@ -2718,6 +2826,57 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
     menu.popup(globalPos);
 }
 
+Shape* View::controlOwner(const Shape* point, int& index) const
+{
+    for (Shape* s : shapes)
+    {
+        if (!s->hasControls()) continue;
+        index = s->controlOf(point);
+        if (index >= 0) return s;
+    }
+    // A point that has no gizmo yet has no numbers to be found by: it is the control that is where its dot is
+    QVector3D at;
+    if (point && point->isPoint() && point->dotPosition(at))
+    {
+        for (Shape* s : shapes)
+        {
+            if (!s->hasControls()) continue;
+            index = s->controlAt(at);
+            if (index >= 0) return s;
+        }
+    }
+    index = -1;
+    return nullptr;
+}
+
+void View::beginPull(QPoint pos)
+{
+    Q_UNUSED(pos);
+    if (!m_pullShape) return;
+    const int after = m_pullShape->controlAfterPiece(m_pullPiece);
+    if (after < 0)
+    {
+        m_pullShape = nullptr;
+        return;
+    }
+    m_pullAfter = after;
+    m_pullNormal = camera.towardViewer().normalized();
+    double frame[9];
+    if (m_pullShape->planeNow(frame))
+    {
+        // (a point of a sketch is pulled in the plane of the sketch: that is where its outline is -- unless that plane is edge on to the eye)
+        const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
+        const QVector3D n = QVector3D::crossProduct(u, w).normalized();
+        if (std::fabs(QVector3D::dotProduct(n, m_pullNormal)) > 0.2f) m_pullNormal = n;
+    }
+    m_pullLast = m_pullHit;
+    m_pullActive = true;
+    setCursor(Qt::ClosedHandCursor);
+    m_pullShape->setVirtualPoint(true, after, m_pullHit);
+    m_pullShape->refresh();
+    m_overlay->update();
+}
+
 void View::expectNewPoint(int line0)
 {
     if (!m_wait.on) return;
@@ -2738,7 +2897,7 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
     // A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, and the other way
     if (Shape* dot = pointDotAt(event->pos()))
     {
-        if (dot->pointStyle() != 0 && dot->sourceLine() >= 0)
+        if (pointStyleOf(dot) != 0 && dot->sourceLine() >= 0)
         {
             emit(pointToggleRequested(dot->sourceLine()));
             return;
@@ -2751,6 +2910,15 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
     if (picked && int(picked) <= shapes.size())
     {
+        // (a sketch: the camera turns to look at its face, from the side it is on)
+        double frame[9];
+        if (shapes.at(picked - 1)->isFace() && shapes.at(picked - 1)->planeNow(frame))
+        {
+            const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
+            QVector3D n = QVector3D::crossProduct(u, w).normalized();
+            if (QVector3D::dotProduct(n, camera.towardViewer()) < 0) n = -n;
+            camera.lookFrom(n);
+        }
         focusOn(QVector3D(), QVector3D(), {shapes.at(picked - 1)->sourceLine()});
     }
     else
@@ -2868,10 +3036,65 @@ void View::drawTriad(QPainter& p)
     triad_hits = hits;
 }
 
+int View::pointStyleOf(const Shape* s) const
+{
+    int index = -1;
+    const Shape* owner = s && s->isPoint() ? controlOwner(s, index) : nullptr;
+    if (owner && index >= 0 && index < int(owner->controlPoints().size()))
+    {
+        const auto& c = owner->controlPoints()[size_t(index)];
+        const bool smooth = c.flag < 0 ? owner->smoothDefault() : c.flag != 0;
+        return smooth ? 2 : 1;
+    }
+    return s ? s->pointStyle() : 0;
+}
+
+bool View::planarRingNormal(const Shape* s, QVector3D& normal) const
+{
+    if (!s || !s->isPoint()) return false;
+    int index = -1;
+    const Shape* owner = controlOwner(s, index);
+    double frame[9];
+    if (!owner || !owner->isFace() || !owner->planeNow(frame)) return false;
+    const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
+    normal = QVector3D::crossProduct(u, w).normalized();
+    return true;
+}
+
+bool View::scaleSelectionByWheel(int delta)
+{
+    if (gizmo_drag || m_pullActive || m_faceActive) return false;
+    // (every shape that is selected and has numbers to scale it by -- a point's are what a spline leaves it by and how thick a sweep is at it)
+    const float factor = std::pow(1.1f, float(delta) / 120.0f);
+    std::map<libfive::Tree::Id, float> numbers;
+    for (Shape* s : shapes)
+    {
+        if (!s->isSelected() || !s->hasGizmo() || s->isLocked()) continue;
+        const auto& h = s->gizmo();
+        const auto& vars = s->getVars();
+        for (int a = 0; a < 3; ++a)
+        {
+            const auto it = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
+            if (it != vars.end()) numbers[h.scale[a]] = std::max(0.01f, it->second * factor);
+        }
+    }
+    if (numbers.empty()) return false;
+    if (!m_wheelScaling)
+    {
+        m_wheelScaling = true;
+        emit(dragStart());
+    }
+    applyGizmoNumbers(numbers);
+    m_wheelTimer.start();
+    return true;
+}
+
 void View::wheelEvent(QWheelEvent *event)
 {
     QOpenGLWidget::wheelEvent(event);
     event->accept();
+    // Shift + wheel scales the selection (when something that can be scaled is selected: else the wheel zooms, as it does)
+    if ((event->modifiers() & Qt::ShiftModifier) && scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x())) return;
     const QPoint& center = zoom_cursor_centric ? mouse.pos : rect().center();
     camera.zoomIncremental(event->angleDelta().y(), center);
     update();
@@ -3817,6 +4040,8 @@ const int kRingSegments = 64;
 
 // Where along its axis a scale knob sits, as a share of the arrows' length
 const float kKnobAt = 0.82f;
+const float kPlaneFrom = 0.20f, kPlaneTo = 0.52f;     // (a plane square of the Shift gizmo: from and to, as shares of the arrow's length, along both its axes)
+const QColor kUniformColor(0xe0, 0xa8, 0x20);          // (the scale knobs while Shift is held: all of them scale)
 
 QVector3D unitAxis(int a)
 {
@@ -4146,6 +4371,47 @@ bool View::pullableAt(const Shape* s, QPoint pos, QVector3D* edge) const
     return true;
 }
 
+void View::holdShift(bool on)
+{
+    m_shiftForced = on;
+    m_shiftSeen = shiftHeld();
+    if (!gizmo_drag) gizmo_hover = gizmoAt(mapFromGlobal(QCursor::pos()));
+    m_overlay->update();
+}
+
+bool View::shiftHeld() const
+{
+    return m_shiftForced || (QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier);
+}
+
+QPolygonF View::planeSquare(const QVector3D& pivot, float length, int normal) const
+{
+    const int b = (normal + 1) % 3, c = (normal + 2) % 3;
+    const QVector3D eb = unitAxis(b), ec = unitAxis(c);
+    const float s0 = kPlaneFrom * length, s1 = kPlaneTo * length;
+    QPolygonF out;
+    out << toScreen(pivot + eb * s0 + ec * s0) << toScreen(pivot + eb * s1 + ec * s0)
+        << toScreen(pivot + eb * s1 + ec * s1) << toScreen(pivot + eb * s0 + ec * s1);
+    return out;
+}
+
+bool View::eventFilter(QObject* watched, QEvent* event)
+{
+    const QEvent::Type type = event->type();
+    if (type == QEvent::KeyPress || type == QEvent::KeyRelease || type == QEvent::WindowDeactivate || type == QEvent::ApplicationStateChange)
+    {
+        const bool now = shiftHeld();
+        if (now != m_shiftSeen)
+        {
+            m_shiftSeen = now;
+            // (what is under the cursor is not the same grip any more: arrows and squares are in the same places)
+            if (!gizmo_drag && underMouse()) gizmo_hover = gizmoAt(mapFromGlobal(QCursor::pos()));
+            m_overlay->update();
+        }
+    }
+    return QOpenGLWidget::eventFilter(watched, event);
+}
+
 View::GizmoGrip View::gizmoAt(QPoint pos) const
 {
     GizmoGrip best;
@@ -4166,8 +4432,19 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             {
                 return GizmoGrip{members[0], 3, 0, true};
             }
+            const bool shift = shiftHeld();
             for (int a = 0; a < 3; ++a)
             {
+                if (shift)
+                {
+                    // (Shift: the squares of the planes instead of the arrows)
+                    if (anyMoveVar(members, (a + 1) % 3) && anyMoveVar(members, (a + 2) % 3) &&
+                        planeSquare(groupCenter, L, a).containsPoint(at, Qt::OddEvenFill))
+                    {
+                        return GizmoGrip{members[0], 4, a, true};
+                    }
+                    continue;
+                }
                 if (!anyMoveVar(members, a)) continue;
                 QVector3D e;
                 e[a] = L;
@@ -4193,8 +4470,24 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             bestDist = -1.0;
             continue;
         }
-        for (int a = 0; a < 3; ++a)
+        const bool shift = shiftHeld();
+        // (a point of a sketch has no arrows and no squares: it is moved by its dot, in the plane of the sketch -- and has its one ring and its scale knobs)
+        QVector3D facePlane;
+        const bool inPlane = planarRingNormal(s, facePlane);
+        for (int a = 0; a < 3 && !inPlane; ++a)
         {
+            if (shift)
+            {
+                // (Shift: the squares of the planes instead of the arrows -- on a square, the grip is the square's, whatever is behind it)
+                const int b = (a + 1) % 3, c = (a + 2) % 3;
+                if (h.move[b] && vars.count(h.move[b]) && h.move[c] && vars.count(h.move[c]) &&
+                    planeSquare(P, L, a).containsPoint(at, Qt::OddEvenFill))
+                {
+                    best = {s, 4, a};
+                    bestDist = -0.5;
+                }
+                continue;
+            }
             if (!h.move[a] || !vars.count(h.move[a])) continue;
             QVector3D e;
             e[a] = L;
@@ -4212,9 +4505,11 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         }
         QVector3D ring[3];
         gizmoAxes(s->gizmoRotate(), ring);
+        if (inPlane) ring[2] = facePlane;
         for (int a = 0; a < 3; ++a)
         {
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
+            if (inPlane && a != 2) continue;
             QVector3D u, v;
             planeBasis(ring[a], u, v);
             QPointF prev;
@@ -4242,7 +4537,13 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
     {
         // (the shared gizmo of several selected shapes has the arrows and the dot only)
         const float L = gizmoLength(groupCenter);
-        if (!(L > 0) || (kind != 0 && kind != 3)) return false;
+        if (!(L > 0) || (kind != 0 && kind != 3 && kind != 4)) return false;
+        if (kind == 4)
+        {
+            const QPolygonF q = planeSquare(groupCenter, L, axis);
+            pos = ((q[0] + q[2]) / 2).toPoint();
+            return true;
+        }
         QVector3D e;
         if (kind == 0) e[axis] = 0.6f * L;
         pos = toScreen(groupCenter + e).toPoint();
@@ -4264,6 +4565,11 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
             e[axis] = 0.6f * L;
             pos = toScreen(P + e).toPoint();
         }
+        else if (kind == 4)
+        {
+            const QPolygonF q = planeSquare(P, L, axis);
+            pos = ((q[0] + q[2]) / 2).toPoint();
+        }
         else if (kind == 2)
         {
             pos = toScreen(P + Shape::gizmoRotation(s->gizmoRotate()).mapVector(unitAxis(axis)) *
@@ -4271,8 +4577,9 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
         }
         else
         {
-            QVector3D ring[3], u, v;
+            QVector3D ring[3], u, v, facePlane;
             gizmoAxes(s->gizmoRotate(), ring);
+            if (planarRingNormal(s, facePlane)) ring[2] = facePlane;
             planeBasis(ring[axis], u, v);
             const float t = float(M_PI / 4);
             pos = toScreen(P + (0.62f * L) * (std::cos(t) * u + std::sin(t) * v)).toPoint();
@@ -4420,16 +4727,17 @@ void View::startWaitingGrip()
     // A press on the provisional gizmo that is waiting for the real one: the drag begins when it is there, if the button is
     // still down (the numbers of the model are in the script by then)
     if (!m_wait.on) { m_waitTimer.stop(); return; }
-    if (!(QApplication::mouseButtons() & Qt::LeftButton) || ++m_wait.ticks > 600)
+    if (!m_leftDown || ++m_wait.ticks > 600)
     {
         cancelWaitingGrip();
         return;
     }
     for (Shape* s : shapes)
     {
-        if (!m_wait.lines.contains(s->sourceLine()) || !s->hasGizmo()) continue;
+        if (!s->hasGizmo()) continue;
+        if (m_wait.selected ? !(s->isSelected() && s->isPoint()) : !m_wait.lines.contains(s->sourceLine())) continue;
         const GizmoGrip g{s, m_wait.kind, m_wait.axis};
-        const QPoint pos = mapFromGlobal(QCursor::pos());
+        const QPoint pos = m_lastPos;
         m_wait.on = false;
         m_waitTimer.stop();
         unsetCursor();
@@ -4479,12 +4787,13 @@ void View::drawPointDots(QPainter& painter)
         painter.setPen(QPen(on ? QColor(Qt::white) : QColor(0xee, 0xe8, 0xd5), 1.5));
         painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
         const double r = on ? 6.0 : 5.0;
-        if (s->pointStyle() == 1)
+        const int style = pointStyleOf(s);
+        if (style == 1)
         {
             // a corner of a sketch or a curve: a square, a hard edge
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
-        else if (s->pointStyle() == 2)
+        else if (style == 2)
         {
             // a spline point: a circle with a ring round it, the curve goes smoothly through it
             painter.drawEllipse(q, r, r);
@@ -4493,7 +4802,9 @@ void View::drawPointDots(QPainter& painter)
             painter.drawEllipse(q, r + 3.0, r + 3.0);
             // the direction the curve leaves it in, while it is selected (or the mouse is on it): a line through the dot, its rotation turns it
             QVector3D tg;
-            if (on && s->hasTangent() && s->tangentNow(tg))
+            int controlIndex = -1;
+            Shape* owner = on ? controlOwner(s, controlIndex) : nullptr;
+            if (owner && owner->tangentAt(controlIndex, tg))
             {
                 const QPointF d = toScreen(p + tg.normalized() * gizmoLength(p)) - q;
                 const double len = std::hypot(d.x(), d.y());
@@ -4559,8 +4870,8 @@ void View::drawHints(QPainter& painter)
 {
     if (mouse.state != mouse.RELEASED || m_wait.on) return;
     QString text;
-    if (m_dotHover && m_dotHover->pointStyle() != 0) text = T("Double-click: corner or spline point");
-    else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to put a point here") : T("Click to put a point here");
+    if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner or spline point");
+    else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to pull a point out of the line") : T("Drag to pull a point out of the edge");
     if (text.isEmpty()) return;
     painter.save();
     QFont font = painter.font();
@@ -4710,6 +5021,19 @@ void View::drawGizmo(QPainter& painter)
         painter.setBrush(on ? QColor(80, 170, 235) : QColor(38, 139, 210));
         painter.drawEllipse(p0, on ? 6.5 : 5.5, on ? 6.5 : 5.5);
     };
+    // A plane square of the Shift gizmo: the colour of the axis that is the plane's normal, lit up while it is under the cursor or dragged
+    auto square = [&](const QVector3D& pivot, float length, int normal, bool on) {
+        const QPolygonF poly = planeSquare(pivot, length, normal);
+        QColor c = kGizmoColor[normal];
+        painter.setPen(QPen(QColor(0, 0, 0, 120), 1.5));
+        c.setAlpha(on ? 210 : 130);
+        painter.setBrush(c);
+        painter.drawPolygon(poly);
+        painter.setPen(QPen(on ? c.lighter(150) : kGizmoColor[normal], on ? 2.5 : 1.8));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPolygon(poly);
+    };
+    const bool shift = shiftHeld();
     // The gizmo shared by several selected shapes, all in the gizmo mode: the move arrows and the dot, at the middle
     // of their pivots; they move them all
     QList<Shape*> members;
@@ -4727,6 +5051,11 @@ void View::drawGizmo(QPainter& painter)
             };
             for (int a = 0; a < 3; ++a)
             {
+                if (shift)
+                {
+                    if (anyMoveVar(members, (a + 1) % 3) && anyMoveVar(members, (a + 2) % 3)) square(groupCenter, L, a, hotG(4, a));
+                    continue;
+                }
                 if (!anyMoveVar(members, a)) continue;
                 QVector3D e;
                 e[a] = L;
@@ -4760,6 +5089,7 @@ void View::drawGizmo(QPainter& painter)
         const float L = gizmoLength(P);
         if (!(L > 0)) continue;
         const QPointF p0 = toScreen(P);
+        const bool uniform = shift || s->isPoint();         // (every knob scales all three: a point has one scale)
         auto hot = [&](int kind, int a) {
             const GizmoGrip g{s, kind, a};
             return g == gizmo_hover || (gizmo_drag && g == gizmo_active);
@@ -4767,9 +5097,13 @@ void View::drawGizmo(QPainter& painter)
 
         QVector3D ring[3];
         gizmoAxes(s->gizmoRotate(), ring);
+        QVector3D facePlane;
+        const bool inPlane = planarRingNormal(s, facePlane);        // (a point of a sketch: one ring, in the plane of the sketch)
+        if (inPlane) ring[2] = facePlane;
         for (int a = 0; a < 3; ++a)
         {
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
+            if (inPlane && a != 2) continue;
             QVector3D u, v;
             planeBasis(ring[a], u, v);
             QPolygonF poly;
@@ -4787,8 +5121,14 @@ void View::drawGizmo(QPainter& painter)
             painter.setPen(QPen(c, on ? 3.5 : 2.2));
             painter.drawPolyline(poly);
         }
-        for (int a = 0; a < 3; ++a)
+        for (int a = 0; a < 3 && !inPlane; ++a)             // (a point of a sketch has no arrows and no squares: its dot moves it, in the plane of the sketch)
         {
+            if (shift)
+            {
+                const int b = (a + 1) % 3, c = (a + 2) % 3;
+                if (h.move[b] && vars.count(h.move[b]) && h.move[c] && vars.count(h.move[c])) square(P, L, a, hot(4, a));
+                continue;
+            }
             if (!h.move[a] || !vars.count(h.move[a])) continue;
             QVector3D e;
             e[a] = L;
@@ -4816,8 +5156,9 @@ void View::drawGizmo(QPainter& painter)
         {
             if (!h.scale[a] || !vars.count(h.scale[a])) continue;
             const QPointF q = toScreen(P + R.mapVector(unitAxis(a)) * (kKnobAt * L));
-            const bool on = hot(2, a);
-            QColor c = kGizmoColor[a];
+            // (Shift: all three scale together, so all three are one colour, and lit up together)
+            const bool on = uniform ? ((gizmo_drag ? gizmo_active : gizmo_hover).kind == 2 && (gizmo_drag ? gizmo_active : gizmo_hover).shape == s) : hot(2, a);
+            QColor c = uniform ? kUniformColor : kGizmoColor[a];
             if (on) c = c.lighter(140);
             const double r = on ? 6.5 : 5.5;
             painter.setPen(QPen(QColor(0, 0, 0, 140), 1.5));
@@ -4883,9 +5224,9 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
 
 void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
 {
-    if (g.kind == 0 || g.kind == 3)
+    if (g.kind == 0 || g.kind == 3 || g.kind == 4)
     {
-        // The move arrow (one axis) and the dot (all three): the numbers that move the shape -- of every selected
+        // The move arrow (one axis), the plane square (two axes) and the dot (all three): the numbers that move the shape -- of every selected
         // shape, for the gizmo they share -- are noted with the values they have now
         QList<Shape*> members;
         QVector3D groupCenter;
@@ -4899,6 +5240,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             for (int a = 0; a < 3; ++a)
             {
                 if (g.kind == 0 && a != g.axis) continue;
+                if (g.kind == 4 && a == g.axis) continue;       // (a plane square moves along the plane: not along its normal)
                 const auto it = h.move[a] ? vars.find(h.move[a]) : vars.end();
                 if (it != vars.end()) gizmo_vars.append({h.move[a], a, it->second});
             }
@@ -4914,21 +5256,30 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             gizmo_dir = toScreen(gizmo_pivot + unitAxis(g.axis) * gizmo_len) - toScreen(gizmo_pivot);
             if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
         }
+        else if (g.kind == 4)
+        {
+            // The plane square: the shapes follow the cursor in that plane of the model's axes, unless it is edge on to the eye
+            free_normal = unitAxis(g.axis);
+            if (!ringPoint(pos, gizmo_pivot, free_normal, free_hit0)) return;
+        }
         else
         {
             // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera -- a point of a sketch in the plane of the sketch
             // (that is where its outline is, and a point dragged out of it is put back onto it), unless that plane is edge on to the eye
             free_normal = camera.towardViewer().normalized();
-            QVector3D planeNormal;
-            if (!g.group && g.shape->dragNormalNow(planeNormal))
+            int controlIndex = -1;
+            Shape* owner = g.group ? nullptr : controlOwner(g.shape, controlIndex);
+            double frame[9];
+            if (owner && owner->planeNow(frame))
             {
-                planeNormal.normalize();
+                const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
+                const QVector3D planeNormal = QVector3D::crossProduct(u, w).normalized();
                 if (std::fabs(QVector3D::dotProduct(planeNormal, free_normal)) > 0.2f) free_normal = planeNormal;
             }
             if (!ringPoint(pos, gizmo_pivot, free_normal, free_hit0)) return;
         }
         gizmo_drag = true;
-        this->setCursor(g.kind == 3 ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
+        this->setCursor(g.kind == 3 || g.kind == 4 ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
         emit(dragStart());
         m_overlay->update();
         return;
@@ -4958,8 +5309,9 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     }
     else
     {
-        QVector3D ring[3];
+        QVector3D ring[3], facePlane;
         gizmoAxes(g.shape->gizmoRotate(), ring);
+        if (planarRingNormal(g.shape, facePlane)) ring[2] = facePlane;
         gizmo_axis = ring[g.axis];
         QVector3D at;
         if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
@@ -4983,9 +5335,9 @@ void View::dragGizmo(QPoint pos)
         for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + float(t * gizmo_len);
         applyGizmoNumbers(numbers);
     }
-    else if (gizmo_active.kind == 3)
+    else if (gizmo_active.kind == 3 || gizmo_active.kind == 4)
     {
-        // The dot: where the cursor's ray meets the plane facing the camera, against where it met it at the start
+        // The dot (the plane facing the camera) and a plane square (that plane of the axes): where the cursor's ray meets the plane, against where it met it at the start
         QVector3D at;
         if (!ringPoint(pos, gizmo_pivot, free_normal, at)) return;
         const QVector3D d = at - free_hit0;
@@ -5001,7 +5353,7 @@ void View::dragGizmo(QPoint pos)
         const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
         const float factor = float(1.0 + t / kKnobAt);
         std::map<libfive::Tree::Id, float> numbers;
-        const bool together = QGuiApplication::keyboardModifiers() & Qt::ShiftModifier;
+        const bool together = shiftHeld() || (gizmo_active.shape && gizmo_active.shape->isPoint());   // (a point has one scale)
         for (int a = 0; a < 3; ++a)
         {
             if (!gizmo_scale_id[a]) continue;

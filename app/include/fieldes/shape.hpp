@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "libfive/tree/tree.hpp"
 
 #include "libfive/render/brep/mesh.hpp"
+#include "libfive/fields/point_shapes.hpp"
 #include "libfive/render/brep/progress.hpp"
 #include "libfive/render/brep/region.hpp"
 #include "libfive/render/brep/settings.hpp"
@@ -143,28 +144,53 @@ public:
     const std::vector<std::vector<Eigen::Vector3f>>& outlines() const { return m_outlines; }
 
     /*
-     *  A curve (a 1D shape: fieldes.stdlib.curves) is not painted: it is a line through points, each three expressions of the script's numbers
+     *  The points of a sketch or a curve (fieldes.stdlib.sketch, curves): each three expressions of the script's numbers for where it is, three for its
+     *  rotation, and what it says of itself.  The line or the face is made from their numbers natively, at every render -- and so while a point is dragged --
+     *  by libfive::pointshapes: no script is run, and no field is needed.  A face is painted; a line is not
      */
-    void setCurve(std::vector<libfive::Tree> trees, bool closed);
-    bool isCurve() const { return m_curve; }
+    struct ControlPoint
+    {
+        libfive::Tree pos[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+        libfive::Tree rot[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
+        bool hasRot = false;
+        libfive::Tree scale = libfive::Tree::invalid();                 // how strongly a spline leaves it, and how thick a sweep is there (one number: see curves.Control)
+        bool hasScale = false;
+        int flag = -1;                                                  // -1: what the shape says, 0: a corner, 1: a spline point
+        libfive::Tree::Id var[3] = {nullptr, nullptr, nullptr};         // the number that moves it along each axis (its gizmo's), when it has one
+    };
+    void setControls(std::vector<ControlPoint> points, bool smoothDefault, bool closed, bool face);
+    /*  The one number (var) an expression of the script's numbers is made of, or null when it has none or several: what moves a point along an axis  */
+    static libfive::Tree::Id soleVarOf(const libfive::Tree& expression);
+    bool hasControls() const { return !m_controls.empty(); }
+    bool isCurve() const { return hasControls() && !m_controls_face; }
+    bool isFace() const { return hasControls() && m_controls_face; }
+    const std::vector<ControlPoint>& controlPoints() const { return m_controls; }
+    bool smoothDefault() const { return m_controls_default; }
+    bool closedLine() const { return m_controls_closed; }
+    /*  Their numbers now (all of them, or false when one cannot be read)  */
+    bool controlsNow(std::vector<libfive::pointshapes::Control>& out) const;
+    /*  The plane of a face now (origin, u, v), and the direction the line leaves control i in  */
+    bool planeNow(double frame[9]) const;
+    bool tangentAt(int i, QVector3D& out) const;
+    /*  Which control of this shape a point is (by the numbers that move it), or -1  */
+    int controlOf(const Shape* point) const;
+    /*  The control whose three coordinates are plain numbers and are where `p` is, or -1: how a point that has no gizmo (no numbers of its own) is found  */
+    int controlAt(const QVector3D& p) const;
+    /*  The control the piece of the line numbered `piece` (as outlines() lists them) is after  */
+    int controlAfterPiece(int piece) const;
+    /*  A point being pulled out of the line, not in the script yet: drawn as a control after `after`, at `pos`, until the script has it  */
+    void setVirtualPoint(bool on, int after = 0, QVector3D pos = QVector3D());
+    bool hasVirtualPoint() const { return m_virtual_on; }
+    /*  Render again with the numbers it has now  */
+    void refresh();
 
-    /*  A shape whose outline is a place to press (a sketch, a curve): a click on it puts a point there, one that is drawn blue  */
+    /*  A shape whose outline is a place to press (a sketch, a curve): a press on it pulls a point out of it, one that is drawn blue  */
     void setEditable(bool on) { m_editable = on; }
     bool isEditable() const { return m_editable; }
 
     /*  How the dot of a point is drawn: 0 as any point, 1 a corner of a sketch or a curve (a square), 2 a spline point (a circle with a ring)  */
     void setPointStyle(int s) { m_point_style = s; }
     int pointStyle() const { return m_point_style; }
-
-    /*  The direction a spline point of a sketch or a curve leaves in (three expressions of the script's numbers): drawn as a line through its dot while it
-        is selected.  tangentNow gives it with the numbers the script has now  */
-    void setTangent(std::vector<libfive::Tree> trees) { m_tangent_trees = std::move(trees); }
-    bool hasTangent() const { return m_tangent_trees.size() == 3; }
-    bool tangentNow(QVector3D& out) const;
-
-    /*  The normal of the plane a point of a sketch is dragged in (three expressions): the plane of the sketch, where its outline is.  dragNormalNow gives it  */
-    void setDragNormal(std::vector<libfive::Tree> trees) { m_normal_trees = std::move(trees); }
-    bool dragNormalNow(QVector3D& out) const;
     bool isHovered() const { return hover; }
 
     /*
@@ -630,11 +656,14 @@ protected:
     bool m_frame_now_valid = false;
     double run_frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};    // (what the render in the thread uses)
     bool run_has_frame = false;
-    bool m_curve = false, m_curve_closed = false, m_editable = false;
+    bool m_editable = false;
     int m_point_style = 0;
-    std::vector<libfive::Tree> m_curve_trees;
-    std::vector<libfive::Tree> m_tangent_trees;
-    std::vector<libfive::Tree> m_normal_trees;
+    std::vector<ControlPoint> m_controls;
+    bool m_controls_default = false, m_controls_closed = false, m_controls_face = false;
+    bool m_virtual_on = false, m_run_virtual_on = false;
+    int m_virtual_after = 0, m_run_virtual_after = 0;
+    QVector3D m_virtual_pos, m_run_virtual_pos;
+    bool controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out) const;
     std::vector<std::vector<Eigen::Vector3f>> m_outlines;
     double evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const;
     void updateFrameNumbers();

@@ -1323,8 +1323,8 @@ Window::Window(Arguments args)
             scene->selectLines(lines, add);
             view->setFocus(Qt::MouseFocusReason);
         });
-        connect(view, &View::outlineInsertRequested, scene, [=](int line, QVector3D at) { scene->editPoints("insert", line, at); });
-        connect(view, &View::pointToggleRequested, scene, [=](int line) { scene->editPoints("toggle", line, QVector3D()); });
+        connect(view, &View::outlineInsertRequested, scene, [=](int line, QVector3D press, QVector3D at) { scene->editPoints("insert", line, press, at); });
+        connect(view, &View::pointToggleRequested, scene, [=](int line) { scene->editPoints("toggle", line, QVector3D(), QVector3D()); });
         connect(scene, &ScenePanel::pointEditDone, view, &View::expectNewPoint);
         connect(view, &View::fieldsRectSelected, this, [=](QStringList keys, bool add) {
             scene->selectFieldKeys(keys, add);
@@ -1700,6 +1700,15 @@ Window::Window(Arguments args)
             send(p[0] == "dbl" ? QEvent::MouseButtonDblClick : QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
         });
+        // viewwheel <x> <y> <delta> [shift]: a turn of the mouse wheel over the viewport (120 is one notch), with Shift held when asked
+        a->add("viewwheel", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            const QPoint pos(p[0].toInt(), p[1].toInt());
+            const Qt::KeyboardModifiers mods = (p.size() > 3 && p[3].toLower().contains("shift")) ? Qt::ShiftModifier : Qt::NoModifier;
+            QWheelEvent e(QPointF(pos), QPointF(view->mapToGlobal(pos)), QPoint(), QPoint(0, p[2].toInt()), Qt::NoButton, mods, Qt::NoScrollPhase, false);
+            QApplication::sendEvent(view, &e);
+        });
         // treeclick <none|ctrl|shift> <text prefix>: a real click (mouse events, with the modifier held) on the name of a
         // model-tree row, so that Ctrl and Shift select several rows as they do for a user
         a->add("treeclick", [=](const QString& args){
@@ -2050,8 +2059,8 @@ Window::Window(Arguments args)
                 std::cerr << "automation: no shape at " << args.toStdString() << std::endl;
             }
         });
-        // gizmodrag <kind 0|1|2> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
-        // rotation ring or a scale square), drag by (dx, dy) pixels in steps, release
+        // gizmodrag <kind 0|1|2|4> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
+        // rotation ring, a scale square or -- with viewshift on -- a plane square, axis = its normal), drag by (dx, dy) pixels in steps, release
         a->add("gizmodrag", [=](const QString& args){
             const auto p = args.split(' ');
             if (p.size() < 4) return;
@@ -2074,6 +2083,8 @@ Window::Window(Arguments args)
             }
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
         });
+        // viewshift <on|off>: Shift is held for the gizmo (the squares of the planes instead of the arrows, the scale knobs all one colour and together)
+        a->add("viewshift", [=](const QString& args){ view->holdShift(args.trimmed() == "on"); });
         // varsteps <line>: the numbers of the var()s on a (0-based) line of the script are set in steps that each move another set
         // of them (Editor::testVarSteps) -- what a drag that moves different numbers of a line at each step writes
         a->add("varsteps", [=](const QString& args){
@@ -2170,7 +2181,7 @@ Window::Window(Arguments args)
                 const bool has = s->dotPosition(p);
                 const QPoint at = has ? view->screenPoint(p) : QPoint(-1, -1);
                 std::cerr << "automation: dot " << i++ << " line " << s->sourceLine() << " selected " << s->isSelected() << " locked " << s->isLocked()
-                          << " gizmo " << s->hasGizmo() << " at " << at.x() << "," << at.y() << " (" << (has ? p.x() : 0) << ", " << (has ? p.y() : 0) << ", "
+                          << " gizmo " << s->hasGizmo() << " style " << s->pointStyle() << " at " << at.x() << "," << at.y() << " (" << (has ? p.x() : 0) << ", " << (has ? p.y() : 0) << ", "
                           << (has ? p.z() : 0) << ")" << std::endl;
             }
         });

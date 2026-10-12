@@ -1,6 +1,6 @@
 '''
 Editing a sketch or a curve from the viewport (fieldes.stdlib.sketch, fieldes.stdlib.curves): a point put on its outline, a point toggled between a corner
-and a spline point.  Both are edits of the script text, answered as JSON
+and a spline point, and the points of a new sketch put onto its plane.  All are edits of the script text, answered as JSON
 
     {edits: [[line0, col0, line1, col1, text], ...], label, line (the 0-based line that displays the new point, or -1), name (the new point's variable)}
 
@@ -47,7 +47,7 @@ def _owner_list(tree, name, before):
     ''' (the assignment, the list of points) of the sketch or curve `name`: its call's first argument is the list; a sketch made of a curve is the curve's '''
     for _ in range(4):
         found = _assignments_of(tree, name, before)
-        call = next((a for a in reversed(found) if _call_name(a.value) in ('sketch', 'curve')), None)
+        call = next((a for a in reversed(found) if _call_name(a.value) in ('sketch', 'polyline', 'spline')), None)
         if call is None or not call.value.args:
             return None, None
         first = call.value.args[0]
@@ -82,11 +82,76 @@ def _num_text(v):
     return '0' if s in ('', '-0') else s
 
 
+def _number_of(node):
+    ''' The number a literal is (`3`, `-2.5`), or None '''
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = _number_of(node.operand)
+        return None if inner is None else (-inner if isinstance(node.op, ast.USub) else inner)
+    return None
+
+
+def _snap(req):
+    ''' The points of a sketch about to be made -- `req['call']`, `sketch([a, b, c, d])` -- put onto its plane: the plane through the first three of them
+        that are not on a line (they stay where they are), and every other point moved along the plane's normal onto it, by the numbers written in its
+        `point(x, y, z)`.  A point whose numbers are not written as numbers is left (the sketch projects it anyway).  The edits are in the coordinates of
+        the script as it was '''
+    from fieldes import runner
+    from fieldes.stdlib import curves as C
+    source = req['source']
+    nothing = json.dumps({'edits': [], 'label': 'Put the points on the plane', 'line': -1, 'name': ''})
+    try:
+        call = ast.parse(req['call'].strip()).body[0].value
+        names = [e.id for e in call.args[0].elts]
+    except (SyntaxError, AttributeError, IndexError, TypeError):
+        return nothing
+    objs = [runner.last_globals.get(n) for n in names]
+    if len(names) < 4 or any(o is None for o in objs):
+        return nothing
+    ctrls = C.controls(objs)
+    plane = C.plane_of(ctrls)
+    if plane is None:
+        return nothing
+    o, u, v = plane
+    normal = C.cross(u, v)
+    tree = ast.parse(source)
+    lines = source.split('\n')
+    edits = []
+    for name, c in zip(names, ctrls):
+        off = C.dot(C.sub(c.pos, o), normal)
+        if abs(off) < 1e-7:
+            continue
+        delta = C.mul(normal, -off)
+        assign = next((a for a in reversed(_assignments_of(tree, name)) if _call_name(a.value) == 'point'), None)
+        if assign is None or len(assign.value.args) < 2:
+            continue
+        args = assign.value.args[:3]
+        written = [_number_of(a) for a in args]
+        if any(w is None for w in written):
+            continue
+        for a, w, d in zip(args, written, delta):
+            if abs(d) < 1e-12 or a.lineno != a.end_lineno:
+                continue
+            text = ('%.6f' % (w + d)).rstrip('0').rstrip('.')
+            edits.append([a.lineno - 1, _char_col(lines[a.lineno - 1], a.col_offset),
+                          a.end_lineno - 1, _char_col(lines[a.end_lineno - 1], a.end_col_offset), '0' if text in ('', '-0') else text])
+        if len(assign.value.args) == 2 and abs(delta[2]) > 1e-12:
+            # (point(x, y): the third number is not written: it is added)
+            last = assign.value.args[1]
+            edits.append([last.end_lineno - 1, _char_col(lines[last.end_lineno - 1], last.end_col_offset),
+                          last.end_lineno - 1, _char_col(lines[last.end_lineno - 1], last.end_col_offset),
+                          ', ' + ('%.6f' % delta[2]).rstrip('0').rstrip('.')])
+    return json.dumps({'edits': edits, 'label': 'Put the points on the plane', 'line': -1, 'name': ''})
+
+
 def edit(arg):
-    ''' `arg` is JSON {op: 'insert' | 'toggle', source, line (1-based, the line that displays the model), x, y, z (for insert: where)} '''
+    ''' `arg` is JSON {op: 'insert' | 'toggle' | 'snap', source, line (1-based, the line that displays the model), x, y, z (for insert: where), call (for snap)} '''
     from fieldes import runner
     from fieldes.stdlib import curves as C
     req = json.loads(arg)
+    if req['op'] == 'snap':
+        return _snap(req)
     source, line, op = req['source'], int(req['line']), req['op']
     tree = ast.parse(source)
     lines = source.split('\n')
@@ -96,7 +161,7 @@ def edit(arg):
     obj = runner.last_globals.get(name)
     if op == 'toggle':
         return _toggle(tree, lines, name, line, obj)
-    if obj is None or not hasattr(obj, '_vertices3d'):
+    if obj is None or not hasattr(obj, 'vertices') or not hasattr(obj, '_owners'):
         raise ValueError('%s is not a sketch or a curve of the last run' % name)
     owner, plist = _owner_list(tree, name, line)
     if owner is None:
@@ -104,8 +169,11 @@ def edit(arg):
     points = list(getattr(obj, 'points', []))
     if len(points) != len(plist.elts):
         raise ValueError('the list of points of %s is not one point to an element' % name)
-    V = [tuple(C.value_of(c) for c in v) for v in obj._vertices3d]
-    piece, at = _nearest_piece(V, bool(getattr(obj, 'closed', False)), (float(req['x']), float(req['y']), float(req['z'])))
+    V = [tuple(v) for v in obj.vertices]
+    # (the piece that was pressed, from where the press was; the point goes where it was let go)
+    press = (float(req.get('px', req['x'])), float(req.get('py', req['y'])), float(req.get('pz', req['z'])))
+    piece, _on_the_line = _nearest_piece(V, bool(getattr(obj, 'closed', False)), press)
+    at = (float(req['x']), float(req['y']), float(req['z']))
     i = obj._owners[piece][0]
     elt = plist.elts[i]
     # the new point: a model of its own, with its gizmo, when the others are names; else an element of the list

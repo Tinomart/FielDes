@@ -5788,7 +5788,7 @@ void ScenePanel::selectFieldKey(const QString& key, bool toggle)
     else selectByLine(line0);
 }
 
-void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& at)
+void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at)
 {
     if (!m_support || !m_source)
     {
@@ -5802,6 +5802,9 @@ void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& at)
     request["x"] = double(at.x());
     request["y"] = double(at.y());
     request["z"] = double(at.z());
+    request["px"] = double(press.x());
+    request["py"] = double(press.y());
+    request["pz"] = double(press.z());
     QString error;
     const QString answer = m_support("sketch_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
     if (answer.isEmpty())
@@ -6823,6 +6826,25 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
                 edits << TextEdit{last, int(lines[last].size()), last, int(lines[last].size()),
                                   "\n\n" + statement + "\n" + var};
                 if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+            }
+        }
+        // A sketch made of selected points lies in the plane of the first three that are not on a line: the others are put onto it, by the numbers
+        // written in their point(...) -- in the same edit, so that one undo takes both back
+        if (kind == "primitive" && name == "sketch" && withBodies)
+        {
+            QJsonObject snap;
+            snap["op"] = "snap";
+            snap["source"] = src;
+            snap["call"] = call;
+            QString snapError;
+            const QString moved = m_support("sketch_edit", QString::fromUtf8(QJsonDocument(snap).toJson(QJsonDocument::Compact)), &snapError);
+            if (!moved.isEmpty())
+            {
+                for (const auto v : QJsonDocument::fromJson(moved.toUtf8()).object()["edits"].toArray())
+                {
+                    const auto a = v.toArray();
+                    if (a.size() == 5) edits << TextEdit{a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), a[4].toString()};
+                }
             }
         }
         m_selectNew = var;

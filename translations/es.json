@@ -677,8 +677,6 @@
  "Error in the script": "Error en el script",
  "The picture shows what ran before the error, or the last one that worked.  Click to go to the error.": "La imagen muestra lo que se ejecutó antes del error, o la última que funcionó.  Haga clic para ir al error.",
  "Double-click: corner or spline point": "Doble clic: esquina o punto de spline",
- "Drag to put a point here": "Arrastra para poner un punto aquí",
- "Click to put a point here": "Clic para poner un punto aquí",
  "unbound": "sin asignar",
  "FielDes guide": "Guía de FielDes",
  "The script is the model. Whatever you do in the viewport is written into the script, so %1 undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.": "El script es el modelo. Todo lo que hace en la vista 3D se escribe en el script, así que %1 lo deshace. La carpeta <b>docs</b> contiene la documentación completa. <b>Ayuda &gt; Recorrido guiado</b> repasa lo básico en el propio programa.",
@@ -919,8 +917,6 @@
  "Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice": "Puntos hechos en el modelo y dibujados como puntos: a qué distancia están de media, cuánto azar, lo cerca y lo lejos que pueden estar dos. Una espuma se hace a su alrededor: selecciónelos y elija voronoi_lattice o delaunay_lattice",
  "A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  Select points first (random_points)": "Una espuma: las aristas de las celdas de Voronoi alrededor de los puntos seleccionados, como barras, que llena el modelo en el que se hicieron los puntos. Seleccione antes los puntos (random_points)",
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "Una celosía estocástica: barras a lo largo de las aristas de Delaunay entre los puntos seleccionados, que llena el modelo en el que se hicieron los puntos. Seleccione antes los puntos (random_points)",
- "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "Una forma 2D a partir de puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: cuatro puntos nuevos para arrastrar. Haz clic en su borde para poner un punto allí; haz doble clic en un punto para hacerlo esquina o punto de spline",
- "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "Una línea que pasa por puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: tres puntos nuevos para arrastrar. Haz clic en la línea y arrastra para poner un punto allí; haz doble clic en un punto para hacerlo esquina o punto de spline",
  "the menu has no %s called %s": "el menú no tiene ningún %s llamado «%s»",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s actúa donde lo indica una superficie, un campo o un cuerpo: selecciona uno o varios de ellos",
  "static analysis": "análisis estático",
@@ -1106,5 +1102,10 @@
  "qt:QDialogButtonBox|OK": "Aceptar",
  "qt:QDialogButtonBox|Cancel": "Cancelar",
  "qt:QDialogButtonBox|Close": "Cerrar",
- "Extruding": "Extrusión"
+ "Extruding": "Extrusión",
+ "Drag to pull a point out of the line": "Arrastra para sacar un punto de la línea",
+ "Drag to pull a point out of the edge": "Arrastra para sacar un punto del borde",
+ "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "Una forma 2D a partir de puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: cuatro puntos nuevos para arrastrar. Pulsa su borde y arrastra para sacar un punto de él; haz doble clic en un punto para hacerlo esquina o punto de spline",
+ "A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "Un conjunto de líneas que pasan por puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: tres puntos nuevos para arrastrar. Pulsa la línea y arrastra para sacar un punto de ella; haz doble clic en un punto para hacerlo esquina o punto de spline",
+ "A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "Una curva suave que pasa por puntos. Con puntos seleccionados: se hace con ellos, en el orden en que los seleccionaste. Sin selección: tres puntos nuevos para arrastrar. Pulsa la curva y arrastra para sacar un punto de ella; haz doble clic en un punto para hacerlo esquina o punto de spline"
 }

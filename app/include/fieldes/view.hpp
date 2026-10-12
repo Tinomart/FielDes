@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #pragma once
 
+#include <QPolygonF>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QMutex>
@@ -147,6 +148,8 @@ public:
     /*  The widget position of a grip of the gizmo of the first part (for
      *  scripted tests): kind 0 = move arrow, 1 = rotation ring; the axis 0-2  */
     bool gizmoGripPoint(int kind, int axis, QPoint& pos) const;
+    /*  Holds Shift down for the gizmo (for scripted tests: the events sent from a script do not change the keyboard)  */
+    void holdShift(bool on);
 
     /*  Where a point of the model is in the widget (for the guided tour)  */
     QPoint screenPoint(const QVector3D& p) const { return toScreen(p).toPoint(); }
@@ -332,10 +335,10 @@ signals:
     void fieldsRectSelected(QStringList keys, bool add);
 
     /*
-     *  The outline of a sketch or the line of a curve was pressed: a point is to be put there (the 0-based line that displays the model, where in
-     *  space).  The view waits for the new point (expectNewPoint) and drags it with the mouse while the button is down
+     *  A point was pulled out of the outline of a sketch or the line of a curve and let go: it is to be put in the script (the 0-based line that displays
+     *  the model, where the outline was pressed, where the point was let go).  While it was pulled it was drawn by the view, from numbers, without the script
      */
-    void outlineInsertRequested(int line0, QVector3D at);
+    void outlineInsertRequested(int line0, QVector3D press, QVector3D at);
 
     /*  A double click on the dot of a point of a sketch or a curve: it is to change between a corner and a spline point (the 0-based line that displays it)  */
     void pointToggleRequested(int line0);
@@ -395,10 +398,21 @@ protected:
         there, and the number of the piece of the line (counted over all its polylines)  */
     bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const;
     Shape* m_outlineHover = nullptr;
-    /*  A press on the line of a curve: a click selects the curve, a drag puts a point there (a curve has no face to click: its line is all there is)  */
-    Shape* m_curvePress = nullptr;
-    QVector3D m_curveHit;
-    QPoint m_curvePressPos;
+    /*  A press on the outline of a sketch or the line of a curve: the point that is pulled out of it (a click on a curve selects the curve: its line is all there is
+        of it, so a drag is what pulls a point out), and a press on the face of a sketch that drags all its points in its plane  */
+    Shape* m_pullShape = nullptr;
+    bool m_pullActive = false;
+    int m_pullAfter = 0, m_pullPiece = 0;
+    QVector3D m_pullHit, m_pullNormal, m_pullLast;
+    QPoint m_pullPressPos;
+    Shape* m_faceShape = nullptr;
+    bool m_faceActive = false;
+    QVector3D m_faceNormal, m_faceStart;
+    QPoint m_facePressPos;
+    struct FaceVar { libfive::Tree::Id id; int axis; float value0; };
+    QList<FaceVar> m_faceVars;
+    void beginPull(QPoint pos);
+    Shape* controlOwner(const Shape* point, int& index) const;
     void drawNameLabels(QPainter& painter);
     bool m_appMode = false;
     Shape* m_dotHover = nullptr;
@@ -745,9 +759,9 @@ protected:
     struct GizmoGrip
     {
         Shape* shape = nullptr;
-        int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move)
+        int kind = -1;              // 0 move arrow, 1 rotation ring, 2 scale knob, 3 the dot in the middle (free move), 4 a plane square (Shift: move along a plane)
         int axis = 0;
-        bool group = false;         // the gizmo shared by all the selected shapes (kinds 0 and 3 only)
+        bool group = false;         // the gizmo shared by all the selected shapes (kinds 0, 3 and 4 only)
         bool operator==(const GizmoGrip& o) const
         { return shape == o.shape && kind == o.kind && axis == o.axis && group == o.group; }
     };
@@ -767,7 +781,7 @@ protected:
     bool m_prov = false;
     QVector3D m_provPivot;
     QList<int> m_provLines;
-    struct WaitGrip { bool on = false; int kind = -1, axis = 0, ticks = 0; QList<int> lines; };
+    struct WaitGrip { bool on = false; int kind = -1, axis = 0, ticks = 0; QList<int> lines; bool selected = false; };   // (selected: the one point that is selected, wherever its line is by then)
     WaitGrip m_wait;
     QTimer m_waitTimer;
     bool provisionalVisible() const;
@@ -788,6 +802,26 @@ protected:
     libfive::Tree::Id gizmo_scale_id[3] = {nullptr, nullptr, nullptr};
     float gizmoLength(const QVector3D& pivot) const;
     GizmoGrip gizmoAt(QPoint pos) const;
+    /*  Shift held: the move arrows are replaced by flat squares (a drag moves along the plane of the square) and the scale knobs all scale together  */
+    bool shiftHeld() const;
+    QPoint m_lastPos;                    // (where the last mouse event of the viewport was)
+    bool m_leftDown = false;             // (the left button, as the mouse events of the viewport say: a script that sends events sets it as a real mouse does)
+    /*  A point of a sketch has ONE rotation ring, in the plane of the sketch (about its normal): whether `s` is one, and that normal  */
+    bool planarRingNormal(const Shape* s, QVector3D& normal) const;
+    /*  What a point's dot says: 1 a corner (a square), 2 a spline point (a round dot with a ring), 0 neither (a plain round dot: it belongs to no sketch or curve).
+        Taken from the sketch or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
+        the library made on it  */
+    int pointStyleOf(const Shape* s) const;
+    /*  Shift + the mouse wheel scales what is selected (every selected shape or point that has scale numbers): one gesture, written to the script when the
+        wheel has rested a moment  */
+    bool scaleSelectionByWheel(int delta);
+    bool m_wheelScaling = false;
+    QTimer m_wheelTimer;
+    bool m_shiftSeen = false;            // (what the last key event said, to redraw the gizmo when it changes)
+    bool m_shiftForced = false;          // (the automation holds Shift: synthetic events do not change the keyboard)
+    /*  The square, on the screen, of the plane whose normal is the axis `normal`, at the gizmo's pivot (axes `normal`+1 and `normal`+2 span it)  */
+    QPolygonF planeSquare(const QVector3D& pivot, float length, int normal) const;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     /*  Whether the cursor is over a surface that a drag takes (a shape that is not locked and has numbers to pull by), and nothing but one shape is
      *  selected: the gizmo's arrows, rings and knobs are then only hit where they are drawn, so that a drag of a face is not taken for one of them  */
     bool overDraggableSurface(QPoint pos) const;

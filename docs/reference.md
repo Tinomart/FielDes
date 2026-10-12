@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Curves: 1D shapes made of points](#curves-1d-shapes-made-of-points) | [Sketches and extrusions](#sketches-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Sketches and extrusions](#sketches-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -884,29 +884,33 @@ An open surface from any field: where the field is 0.  (A body's field as a surf
 
 A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it
 
-## Curves: 1D shapes made of points
+## Lines and curves: 1D shapes made of points
 
-1D shapes: curves through points.
+1D shapes: a line or a spline through points.
 
     a = point(0, 0, 0)
     b = point(20, 10, 0)
-    c = point(40, 0, 5, smooth=True)
-    path = curve([a, b, c])                    # a line through the points: hard corners (straight pieces) unless a point says smooth=True
-    wavy = curve([a, b, c], smooth=True)       # every point a spline point (a smooth curve through it), except where a point says smooth=False
-    loop = curve([a, b, c], closed=True)       # joined from the last point back to the first
+    c = point(40, 0, 5)
+    lines = polyline([a, b, c])                 # straight pieces between the points: a hard corner at each
+    smooth = spline([a, b, c])                  # a smooth curve through the points
+    loop = spline([a, b, c], closed=True)       # joined from the last point back to the first
 
-A curve is a model of its own kind (a 1D shape), made of points and drawn as a line.  Anything that takes a curve takes it as it is:
+A curve is a model of its own kind (a 1D shape), made of points and drawn as a line.  It stands on its own, and anything that takes a curve takes it as it is:
 
-    face = sketch(loop)                        # the 2D shape a closed curve encloses (see sketch)
-    tube = offset(path, 1.5)                   # a 3D shape: the points at most 1.5 from the curve (a tube round it)
-    beam = path_extrude(face, path)            # a 2D shape swept along it
+    face = sketch(loop)                         # the 2D shape a closed curve encloses (see sketch)
+    tube = offset(smooth, 1.5)                  # a 3D shape: the points at most 1.5 from the curve (a tube round it)
+    beam = path_extrude(face, smooth)           # a 2D shape swept along it
 
 As a field a curve is the distance to it (zero on it, positive everywhere else), so `offset`, `thicken` and the field functions work on it.
 
-Points are what edit it: each point is a corner (a hard edge) or a spline point, `smooth=` of the curve says which a point is that does not say itself, and the
-ROTATION of a spline point -- the rotate numbers of its gizmo, which a point has no other use for -- turns the direction in which the curve leaves it.  With no
-rotation the direction comes from the neighbouring points (a Catmull-Rom spline); the rotation turns it about x, then y, then z (degrees), the way a gizmo turns
-a shape.  The same numbers twist what `path_extrude` sweeps along the curve.
+A polyline is made of corners and a spline of spline points -- but each POINT can say otherwise (`point(..., smooth=True)` or `smooth=False`; FielDes toggles
+it when you double-click the point), so a spline can have a corner and a polyline a smooth stretch.  The ROTATION of a spline point -- the rotate numbers of
+its gizmo, which a point has no other use for -- turns the direction in which the curve leaves it.  With no rotation the direction comes from the
+neighbouring points (a Catmull-Rom spline); the rotation turns it about x, then y, then z (degrees), the way a gizmo turns a shape.  The same
+numbers twist what `path_extrude` sweeps along the curve.
+
+The line is made by the kernel from the numbers the points have when the script runs (and drawn from the numbers they have while you drag them).  Its field
+is plain math: the least of the distances to its straight pieces, so the renderer drops the pieces that are far from where it looks.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -914,23 +918,23 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `Control`
 
-One point of a curve: where it is (three fields), whether the curve is smooth through it, and its rotation (three numbers or fields, or None:
-none) -- with the object the script gave, so that what it is can be told to the viewport
+One point of a curve or sketch: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
+while the point is dragged), what it says of itself (-1: what the shape says, 0: a corner, 1: a spline point) and its rotation
 
-#### `Control.mark(self, kind)`
+#### `Control.smooth(self, default)`
 
-Tell the object the script gave what the curve made of it: a corner or a spline point (the viewport draws the two differently)
+*(no description yet)*
 
 ### `Curve`
 
-A 1D shape (see `curve`).  .points are the points it was made from, .smooth the default of its points, .closed whether it is joined at its ends,
-.vertices the polyline it is drawn as (three fields each)
+A 1D shape (see `polyline`, `spline`).  .points are the points it was made from, .smooth the default of its points, .closed whether it is joined at its
+ends, .vertices the line it is drawn as (x, y, z)
 
 ### `add(a, b)`
 
 *(no description yet)*
 
-### `controls(points, smooth_default)`
+### `controls(points)`
 
 *(no description yet)*
 
@@ -938,36 +942,69 @@ A 1D shape (see `curve`).  .points are the points it was made from, .smooth the 
 
 *(no description yet)*
 
-### `curve(points, smooth=False, closed=False)`
-
-A curve through the points, in the order given: straight between corners, smooth through spline points (`smooth` is what a point is that does not
-say: point(..., smooth=True) or smooth=False -- False, a corner, by default), joined from the last back to the first when `closed`.  A spline point
-leaves in the direction the rotation of its gizmo says (no rotation: from its neighbours).  As a field it is the distance to the curve
-
 ### `dot(a, b)`
 
 *(no description yet)*
 
-### `mark_tangents(ctrls, tans)`
+### `mark(ctrls, default, kind)`
 
-Tell each spline point the direction (three fields) its curve leaves it in: the viewport draws it as a line through the point while it is selected
+Tell each point what the curve or sketch made of it: a corner or a spline point (the viewport draws the two differently, and the double click
+changes it), and the default it follows
 
 ### `mul(a, k)`
 
 *(no description yet)*
 
+### `owned(shape, cls=<class 'fieldes.shape.Shape'>)`
+
+A new `cls` that owns a copy of the tree of `shape`.  (`shape` is held for the whole call: a copy of `X(...).ptr` made inline would be made from a tree that
+is already freed, the temporary having died as soon as its pointer was read)
+
+### `plane_of(ctrls)`
+
+(origin, u, v) of the plane through the first three points that are not on a line (numbers), or None
+
+### `polygon_field(loop, frame)`
+
+The signed distance to the polygon whose corners are `loop` (s, t) -- negative inside, in the plane of `frame` (origin, u, v: s and t are the
+coordinates along u and v), or in x and y when there is none.  An exact distance, concave outlines too.
+
+Made the way a vector renderer measures a polygon, of two parts, both a plain `min` over small pieces so that the renderer drops the pieces that are far
+from where it looks (a polygon of a hundred edges costs what the few pieces near the point cost):
+- how far: the least of the distances to the edges;
+- which side: the polygon is cut into triangles when the script runs, and a point is inside when it is inside one of them (a `min` over triangles of
+  the `max` of three straight lines).  Across a cut a triangle goes a hair over, so that the cut itself is inside; the edges of the polygon are exact.
+An outline that crosses itself cannot be cut: its side is then the winding of the outline round the point (the sum of the angles each edge is seen
+under: a full turn inside, none outside)
+
+### `polyline(points, closed=False)`
+
+A set of lines: straight pieces through the points, in the order given, a corner at each (a point can say it is a spline point: `point(..., smooth=True)`),
+joined from the last point back to the first when `closed`.  As a field it is the distance to the lines
+
+### `polyline_field(vertices, closed)`
+
+The distance to the straight pieces between the vertices (x, y, z): the least of the distances to the pieces, then one square root
+
 ### `rotated(t, rotation)`
 
-The vector t (three fields) turned the way the gizmo turns a shape: about x, then y, then z (degrees)
+The vector t turned the way the gizmo turns a shape: about x, then y, then z (degrees)
+
+### `spline(points, closed=False)`
+
+A smooth curve through the points, in the order given (a point can say it is a corner: `point(..., smooth=False)`), joined from the last point back to the first
+when `closed`.  It leaves each point in the direction the rotation of its gizmo says (no rotation: from the neighbouring points).  As a field it is the
+distance to the curve
 
 ### `sub(a, b)`
 
 *(no description yet)*
 
-### `tangents(ctrls, closed)`
+### `trace(ctrls, default, closed, pieces=14, normal=None)`
 
-The tangent (three fields) at every spline point of a curve: from its neighbours (Catmull-Rom: half the way from the one before to the one after;
-an end of an open curve looks along its one edge), turned by the point's rotation.  None at a corner
+(the vertices of the line through the controls, as (x, y, z); for each the number of the control it is after and how far along towards the next it is)
+-- made by the kernel.  `normal`: the normal of the plane of a face the points belong to -- the rotation of a point is then one angle about it, in
+the plane (the z number of its rotation) -- or None for a line in space
 
 ### `unit(a)`
 
@@ -981,11 +1018,10 @@ The number a coordinate has now: a number, or a field that is the same everywher
 
 *(no description yet)*
 
-### `vertices(ctrls, tans, closed, owners=None)`
+### `viewport_data(out, ctrls, default, closed)`
 
-The vertices of the curve as a polyline (each three fields): the points themselves, and between two points that are not both corners the pieces of
-a cubic curve that leaves one in its tangent and arrives at the other in its.  An open curve ends at its last point.  When `owners` is a list
-it is filled with (the number of the point the vertex is after, how far along towards the next: 0 to 1) for every vertex
+What the viewport draws the line or the face from while a point is dragged: the expressions of each point's place and rotation (their numbers move with
+the script's var()s), and what each says of itself.  The line is made again from them at every frame, natively: no script is run
 
 ## Sketches and extrusions
 
@@ -997,7 +1033,7 @@ A 2D shape from points or from a closed curve: `sketch`.
     d = point(0, 20, 0, smooth=True)
     plate = sketch([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
     round = sketch([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
-    outline = curve([a, b, c, d], closed=True)
+    outline = spline([a, b, c, d], closed=True)
     plate = sketch(outline)                     # the same, from a curve
     body = extrude(plate, 0, 5)                 # a solid: the face pulled 5 along its normal
 
@@ -1005,10 +1041,14 @@ The points are ordinary points (`point(x, y, z)`, dragged with their gizmo): any
 the first).  The shape lies in the PLANE through the first three points (the first that is not on a line with the first two); every other point is
 projected onto that plane, so a sketch is made whatever the points are.  A tuple of three numbers stands for a point too.
 
-Each point is a corner (a hard edge: straight to its neighbours) or a spline point (the outline is a smooth curve through it) -- see `curve`, which makes the
+Each point is a corner (a hard edge: straight to its neighbours) or a spline point (the outline is a smooth curve through it) -- see `spline`, which makes the
 outline.  `smooth=` of the sketch says which a point is that does not say itself (False, a hard edge, by default); `point(..., smooth=True)` says it for
 that point -- FielDes toggles it when you double-click the point.  The ROTATION of a spline point -- its gizmo's rotate numbers, which a point has no other use
 for -- turns the direction in which the outline leaves it.
+
+A sketch is drawn from the numbers its points have, natively, while you drag them.  Its field (for `extrude`, `offset`, analyses ...) is plain math, made
+when the script runs: the signed distance to the outline -- the distance to the nearest edge, with the side taken from that nearest edge or corner alone, so
+the renderer drops the edges that are far from where it looks.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -1016,8 +1056,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `Sketch`
 
-A 2D shape made of points (see `sketch`).  .points are the points it was made from, .frame the plane it lies in -- (origin, u, v), three fields each --
-and .smooth the default of its points
+A 2D shape made of points (see `sketch`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
+.smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v)
 
 ### `extrude(shape, a, b)`
 
@@ -1031,7 +1071,8 @@ A 2D shape swept along a curve: the `profile` -- its origin on the curve, its ow
 two axes of the plane of a sketch) -- carried along `path`, turning with it, without twisting about it unless the points of the curve say so:
 the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
 smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
-with mitered joints.  `path_extrude(circle(2), curve([a, b, c]))` is a tube; `extrude` is the straight case
+with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
+the spline through them
 
 ### `sketch(source, smooth=False)`
 

@@ -8,7 +8,8 @@ code, and the same code however it was asked for.  This module is that one way. 
       stops there until it is written, and the name says what goes there);
     * every other argument it was not given is written with its default, as a keyword -- so that what exists is in front of you,
       and what is not needed can be read, kept or deleted;
-    * the arguments are laid out one to a line when the call does not fit on one (88 columns), as every nested call and list is.
+    * the arguments are laid out ONE TO A LINE, always, whenever the call has two or more (the one exception is `handles`, whose numbers nobody edits by hand:
+      one long line); a call inside it, a list or a position stays on one line when it fits (88 columns) and is laid out the same way when it does not.
 
     complete_call('select_surface(part, seed=(0, 0, 0))')
         select_surface(
@@ -31,7 +32,7 @@ import ast
 import inspect
 import json
 
-WIDTH = 88                  # a call that does not fit within this many columns is laid out one argument to a line
+WIDTH = 88                  # a call inside another, or a list, that does not fit within this many columns is laid out one argument to a line
 INDENT = 4
 
 # (calls that are numbers or notation more than functions: written as they are, with nothing added)
@@ -197,7 +198,19 @@ def complete_call(text, column=0, indent=0):
         node = ast.parse(text.strip(), mode='eval').body
     except SyntaxError:
         return text
-    return _render(_complete(node), column, indent)
+    done = _complete(node)
+    return _render(done, column, indent, force=_always_split(done))
+
+
+def _always_split(node):
+    ''' Whether the call written for the user -- the outermost one -- is laid out one argument to a line whatever its length: it is a call of the library
+        (not notation: a `point`, a `var`) with two arguments or more.  What is written is read and edited by people, and one argument to a line is how a
+        call with several is read -- `handles` is the one exception, and is written by its own function, not here '''
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    if node.func.id in _PLAIN or node.func.id == 'handles':
+        return False
+    return len(node.args) + len(node.keywords) >= 2
 
 
 def split_call(text, column=0, indent=0):

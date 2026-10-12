@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/shape.hpp"
 
 #include "libfive.h"
+#include "libfive/tree/data.hpp"
 #include "libfive/eval/default_vars.hpp"
 #include "libfive/run_progress.hpp"
 #include "libfive/fea/tetfea.hpp"
@@ -1431,33 +1432,65 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
-            // (a curve -- a 1D shape: the line through its vertices, each three expressions; it is not painted -- see fieldes.stdlib.curves)
-            PyObject* kindAttr = PyObject_GetAttrString(obj, "_kind");
-            const bool curve = kindAttr && PyUnicode_Check(kindAttr) && std::string(PyUnicode_AsUTF8(kindAttr)) == "curve";
-            Py_XDECREF(kindAttr);
-            PyErr_Clear();
-            if (curve)
+            // (the points of a sketch or a curve: where each is and what it says of itself, as expressions of the script's numbers -- the line or the face is
+            // made from them natively at every render, see Shape::setControls and fieldes.stdlib.curves)
+            PyObject* cp = PyObject_GetAttrString(obj, "_ctrl_pos");
+            if (cp && PyList_Check(cp) && PyList_Size(cp) > 0)
             {
-                PyObject* verts = PyObject_GetAttrString(obj, "vertices");
-                PyObject* closed = PyObject_GetAttrString(obj, "closed");
-                std::vector<libfive::Tree> trees;
-                if (verts && PyList_Check(verts))
+                PyObject* cr = PyObject_GetAttrString(obj, "_ctrl_rot");
+                PyObject* cs = PyObject_GetAttrString(obj, "_ctrl_scale");
+                PyObject* cf = PyObject_GetAttrString(obj, "_ctrl_flag");
+                PyObject* cd = PyObject_GetAttrString(obj, "_ctrl_default");
+                PyObject* cl = PyObject_GetAttrString(obj, "closed");
+                PyObject* cface = PyObject_GetAttrString(obj, "_sketch_face");
+                const bool face = cface && PyObject_IsTrue(cface) == 1;
+                std::vector<Shape::ControlPoint> points;
+                bool good = true;
+                for (Py_ssize_t i = 0; i < PyList_Size(cp) && good; ++i)
                 {
-                    for (Py_ssize_t i = 0; i < PyList_Size(verts); ++i)
+                    PyObject* at = PyList_GetItem(cp, i);
+                    if (!PyTuple_Check(at) || PyTuple_Size(at) != 3) { good = false; break; }
+                    Shape::ControlPoint c;
+                    for (int a = 0; a < 3; ++a)
                     {
-                        PyObject* vec = PyList_GetItem(verts, i);
-                        if (!PyTuple_Check(vec) || PyTuple_Size(vec) != 3) continue;
-                        for (Py_ssize_t c = 0; c < 3; ++c) trees.push_back(treeOfShape(PyTuple_GetItem(vec, c)));
+                        c.pos[a] = treeOfShape(PyTuple_GetItem(at, a));
+                        if (!c.pos[a].is_valid()) { good = false; break; }
+                        c.var[a] = Shape::soleVarOf(c.pos[a]);
                     }
+                    PyObject* rot = (cr && PyList_Check(cr) && i < PyList_Size(cr)) ? PyList_GetItem(cr, i) : nullptr;
+                    if (good && rot && PyTuple_Check(rot) && PyTuple_Size(rot) == 3)
+                    {
+                        c.hasRot = true;
+                        for (int a = 0; a < 3; ++a)
+                        {
+                            c.rot[a] = treeOfShape(PyTuple_GetItem(rot, a));
+                            if (!c.rot[a].is_valid()) { good = false; break; }
+                        }
+                    }
+                    PyObject* sc = (cs && PyList_Check(cs) && i < PyList_Size(cs)) ? PyList_GetItem(cs, i) : nullptr;
+                    if (sc && sc != Py_None)
+                    {
+                        c.scale = treeOfShape(sc);
+                        c.hasScale = c.scale.is_valid();
+                    }
+                    PyObject* flag = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
+                    if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
+                    points.push_back(std::move(c));
                 }
-                bool good = !trees.empty();
-                for (const auto& t : trees) good = good && t.is_valid();
-                shape->setNoPaint(true);
-                if (good) shape->setCurve(std::move(trees), closed && PyObject_IsTrue(closed) == 1);
-                Py_XDECREF(verts);
-                Py_XDECREF(closed);
-                PyErr_Clear();
+                if (good)
+                {
+                    shape->setNoPaint(!face);
+                    shape->setControls(std::move(points), cd && PyObject_IsTrue(cd) == 1, cl && PyObject_IsTrue(cl) == 1, face);
+                }
+                Py_XDECREF(cr);
+                Py_XDECREF(cs);
+                Py_XDECREF(cf);
+                Py_XDECREF(cd);
+                Py_XDECREF(cl);
+                Py_XDECREF(cface);
             }
+            Py_XDECREF(cp);
+            PyErr_Clear();
         }
         {
             // (a sketch, a curve: its outline is a place to press that puts a point there)
@@ -1471,28 +1504,6 @@ void Interpreter::recordShape(
             PyObject* sm = PyObject_GetAttrString(obj, "_curve_smooth");
             if (sm && PyBool_Check(sm)) shape->setPointStyle(PyObject_IsTrue(sm) == 1 ? 2 : 1);
             Py_XDECREF(sm);
-            PyErr_Clear();
-            PyObject* tg = PyObject_GetAttrString(obj, "_curve_tangent");
-            if (tg && PyTuple_Check(tg) && PyTuple_Size(tg) == 3)
-            {
-                std::vector<libfive::Tree> trees;
-                for (Py_ssize_t a = 0; a < 3; ++a) trees.push_back(treeOfShape(PyTuple_GetItem(tg, a)));
-                bool good = true;
-                for (const auto& t : trees) good = good && t.is_valid();
-                if (good) shape->setTangent(std::move(trees));
-            }
-            Py_XDECREF(tg);
-            PyErr_Clear();
-            PyObject* pl = PyObject_GetAttrString(obj, "_curve_plane");
-            if (pl && PyTuple_Check(pl) && PyTuple_Size(pl) == 3)
-            {
-                std::vector<libfive::Tree> trees;
-                for (Py_ssize_t a = 0; a < 3; ++a) trees.push_back(treeOfShape(PyTuple_GetItem(pl, a)));
-                bool good = true;
-                for (const auto& t : trees) good = good && t.is_valid();
-                if (good) shape->setDragNormal(std::move(trees));
-            }
-            Py_XDECREF(pl);
             PyErr_Clear();
         }
         {

@@ -335,37 +335,156 @@ void Shape::updateFrameNumbers()
     m_frame_now_valid = true;
 }
 
-bool Shape::tangentNow(QVector3D& out) const
+bool Shape::controlNumbers(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& out) const
 {
-    if (m_tangent_trees.size() != 3) return false;
-    double t[3];
-    for (int a = 0; a < 3; ++a)
+    out.clear();
+    for (const ControlPoint& c : m_controls)
     {
-        t[a] = evalConstant(m_tangent_trees[size_t(a)], vars);
-        if (!std::isfinite(t[a])) return false;
+        libfive::pointshapes::Control k;
+        double n[3];
+        for (int a = 0; a < 3; ++a)
+        {
+            n[a] = evalConstant(c.pos[a], v);
+            if (!std::isfinite(n[a])) return false;
+        }
+        k.pos = Eigen::Vector3d(n[0], n[1], n[2]);
+        k.smooth = c.flag;
+        if (c.hasRot)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                n[a] = evalConstant(c.rot[a], v);
+                if (!std::isfinite(n[a])) return false;
+            }
+            k.rotate = Eigen::Vector3d(n[0], n[1], n[2]);
+            k.turned = k.rotate.cwiseAbs().maxCoeff() > 1e-12;
+        }
+        if (c.hasScale)
+        {
+            const double s = evalConstant(c.scale, v);
+            if (!std::isfinite(s)) return false;
+            k.scale = std::max(0.0, s);
+        }
+        out.push_back(k);
     }
-    out = QVector3D(float(t[0]), float(t[1]), float(t[2]));
+    // The points of a face turn about the normal of its plane, by one angle
+    if (m_controls_face)
+    {
+        std::vector<Eigen::Vector3d> p;
+        for (const auto& k : out) p.push_back(k.pos);
+        double frame[9];
+        if (libfive::pointshapes::planeOf(p, frame))
+        {
+            const Eigen::Vector3d u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
+            const Eigen::Vector3d normal = u.cross(w).normalized();
+            for (auto& k : out)
+            {
+                k.planar = true;
+                k.normal = normal;
+            }
+        }
+    }
+    return true;
+}
+
+libfive::Tree::Id Shape::soleVarOf(const libfive::Tree& expression)
+{
+    libfive::Tree::Id found = nullptr;
+    int count = 0;
+    const libfive::Tree flat = expression.flatten();
+    for (const auto* node : flat.walk())
+    {
+        if (node->op() == libfive::Opcode::VAR_FREE)
+        {
+            found = node;
+            ++count;
+        }
+    }
+    return count == 1 ? found : nullptr;
+}
+
+void Shape::setControls(std::vector<ControlPoint> points, bool smoothDefault, bool closed, bool face)
+{
+    m_controls = std::move(points);
+    m_controls_default = smoothDefault;
+    m_controls_closed = closed;
+    m_controls_face = face;
+}
+
+bool Shape::controlsNow(std::vector<libfive::pointshapes::Control>& out) const
+{
+    return controlNumbers(vars, out);
+}
+
+bool Shape::planeNow(double frame[9]) const
+{
+    std::vector<libfive::pointshapes::Control> cs;
+    if (!isFace() || !controlsNow(cs)) return false;
+    std::vector<Eigen::Vector3d> p;
+    for (const auto& c : cs) p.push_back(c.pos);
+    return libfive::pointshapes::planeOf(p, frame);
+}
+
+bool Shape::tangentAt(int i, QVector3D& out) const
+{
+    std::vector<libfive::pointshapes::Control> cs;
+    if (i < 0 || !controlsNow(cs) || i >= int(cs.size())) return false;
+    const auto t = libfive::pointshapes::tangents(cs, m_controls_default, m_controls_closed);
+    const Eigen::Vector3d& v = t[size_t(i)];
+    out = QVector3D(float(v.x()), float(v.y()), float(v.z()));
     return out.length() > 1e-9f;
 }
 
-bool Shape::dragNormalNow(QVector3D& out) const
+int Shape::controlAt(const QVector3D& p) const
 {
-    if (m_normal_trees.size() != 3) return false;
-    double t[3];
-    for (int a = 0; a < 3; ++a)
+    for (size_t i = 0; i < m_controls.size(); ++i)
     {
-        t[a] = evalConstant(m_normal_trees[size_t(a)], vars);
-        if (!std::isfinite(t[a])) return false;
+        bool match = true;
+        for (int a = 0; a < 3 && match; ++a)
+        {
+            const auto* number = m_controls[i].pos[a].is_valid() ? std::get_if<libfive::TreeConstant>(m_controls[i].pos[a].get()) : nullptr;
+            match = number && std::fabs(double(number->value) - double(p[a])) <= 1e-4 * (1.0 + std::fabs(double(p[a])));
+        }
+        if (match) return int(i);
     }
-    out = QVector3D(float(t[0]), float(t[1]), float(t[2]));
-    return out.length() > 1e-9f;
+    return -1;
 }
 
-void Shape::setCurve(std::vector<libfive::Tree> trees, bool closed)
+int Shape::controlOf(const Shape* point) const
 {
-    m_curve = true;
-    m_curve_closed = closed;
-    m_curve_trees = std::move(trees);
+    if (!point) return -1;
+    const auto& g = point->gizmo();
+    for (int i = 0; i < int(m_controls.size()); ++i)
+    {
+        for (int a = 0; a < 3; ++a)
+        {
+            if (g.move[a] && m_controls[size_t(i)].var[a] == g.move[a]) return i;
+        }
+    }
+    return -1;
+}
+
+int Shape::controlAfterPiece(int piece) const
+{
+    std::vector<libfive::pointshapes::Control> cs;
+    if (!controlsNow(cs)) return -1;
+    std::vector<std::pair<int, double>> owners;
+    libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14, &owners);
+    return piece >= 0 && piece < int(owners.size()) ? owners[size_t(piece)].first : -1;
+}
+
+void Shape::setVirtualPoint(bool on, int after, QVector3D pos)
+{
+    m_virtual_on = on;
+    m_virtual_after = after;
+    m_virtual_pos = pos;
+}
+
+void Shape::refresh()
+{
+    // (the same as when a number it uses changed: the next render takes the numbers as they are)
+    if (target_div != default_div) mesh_settings.cancel.store(true);
+    startRender({next.settings, MESH_DIV_NEW_VARS, next.alg});
 }
 
 bool Shape::flatEdgeFrom(QVector3D& p) const
@@ -515,7 +634,7 @@ void Shape::measureExtent(const Settings& s)
 {
     m_ext_valid = false;
     if (!s.autoScale || has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return;
-    if (m_curve || (m_flat && hasFlatFrame())) return;          // (a line, or a face in a plane of its own: no extent is measured)
+    if (hasControls() || (m_flat && hasFlatFrame())) return;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
     std::vector<libfive_tree> var_trees;
     std::vector<float> values;
     for (const auto& kv : vars)
@@ -1857,6 +1976,15 @@ void Shape::buildDeps() const
         };
         add(tree);
         add(color_field);
+        for (const ControlPoint& c : m_controls)
+        {
+            for (int a = 0; a < 3; ++a)
+            {
+                add(c.pos[a]);
+                if (c.hasRot) add(c.rot[a]);
+            }
+            if (c.hasScale) add(c.scale);
+        }
         for (int a = 0; a < 3; ++a) add(deform_tree[a]);
         for (const auto& c : m_channels) add(c.tree);
         for (int a = 0; a < 3; ++a)
@@ -2209,7 +2337,10 @@ void Shape::startRender(RenderSettings s)
             const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
             run_heavy = force_low || expected > 150000.0;
         }
-        if (m_flat || m_curve) run_flat_vars = vars;
+        if (m_flat || hasControls()) run_flat_vars = vars;
+        m_run_virtual_on = m_virtual_on;
+        m_run_virtual_after = m_virtual_after;
+        m_run_virtual_pos = m_virtual_pos;
         updateFrameNumbers();
         run_has_frame = m_flat && m_frame_now_valid;
         for (int i = 0; i < 9; ++i) run_frame[i] = m_frame_now[i];
@@ -2616,19 +2747,46 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
     std::unique_ptr<libfive::Mesh> m;
-    if (m_curve)
+    if (hasControls())
     {
-        // A curve is not painted: the line through its points, as the script's numbers have them (the mesh is empty)
+        // A line or a face of points: made from the numbers the points have now (no script is run, no field is read), the way a point being dragged needs it
         m = std::make_unique<libfive::Mesh>();
-        std::vector<Eigen::Vector3f> line;
-        for (size_t i = 0; i + 2 < m_curve_trees.size(); i += 3)
+        std::vector<libfive::pointshapes::Control> cs;
+        if (controlNumbers(run_flat_vars, cs) && !cs.empty())
         {
-            Eigen::Vector3f q;
-            for (int a = 0; a < 3; ++a) q[a] = float(evalConstant(m_curve_trees[i + size_t(a)], run_flat_vars));
-            if (q.allFinite()) line.push_back(q);
+            double frame[9];
+            std::vector<Eigen::Vector3d> where;
+            for (const auto& c : cs) where.push_back(c.pos);
+            // (the plane is the plane of the points that are in the script: a point being pulled out of the outline is put onto it)
+            const bool planar = m_controls_face && libfive::pointshapes::planeOf(where, frame);
+            if (m_run_virtual_on)
+            {
+                libfive::pointshapes::Control v;
+                v.pos = Eigen::Vector3d(m_run_virtual_pos.x(), m_run_virtual_pos.y(), m_run_virtual_pos.z());
+                cs.insert(cs.begin() + std::min<size_t>(cs.size(), size_t(std::max(0, m_run_virtual_after)) + 1), v);
+            }
+            const auto verts = libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14);
+            std::vector<Eigen::Vector3f> line;
+            bool faced = false;
+            if (planar && verts.size() >= 3)
+            {
+                const Eigen::Vector3d o(frame[0], frame[1], frame[2]), u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
+                std::vector<Eigen::Vector3d> loop;
+                for (const auto& p : verts) loop.push_back(o + u * (p - o).dot(u) + w * (p - o).dot(w));
+                if (auto f = libfive::pointshapes::face(loop, frame, &flat_outlines))
+                {
+                    m = std::move(f);
+                    faced = true;
+                }
+            }
+            if (!faced)
+            {
+                for (const auto& p : verts) line.push_back(Eigen::Vector3f(float(p.x()), float(p.y()), float(p.z())));
+                if (m_controls_closed && !line.empty()) line.push_back(line.front());
+                flat_outlines.clear();
+                if (line.size() >= 2) flat_outlines.push_back(std::move(line));
+            }
         }
-        if (m_curve_closed && !line.empty()) line.push_back(line.front());
-        if (line.size() >= 2) flat_outlines.push_back(std::move(line));
     }
     else
     {
@@ -3005,7 +3163,7 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
         cache_tree_key = renderCacheTreeKey();
         cache_tree_gen = cache_vars_gen;
     }
-    if (cache_tree_key.empty() || m_flat || m_curve) return std::string();         // (a face and a line are quick to make, and have outlines)
+    if (cache_tree_key.empty() || m_flat || hasControls()) return std::string();         // (a face and a line are quick to make, and have outlines)
     char buf[400];
     std::snprintf(buf, sizeof(buf), "|%a %a %a %a %a %a|%a|%a|%d",
                   region.lower.x(), region.lower.y(), region.lower.z(),

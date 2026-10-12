@@ -103,6 +103,7 @@ add_library(libfive SHARED
     lattice/lattice_graph.cpp
     lattice/surface_cells.cpp
     fields/field_oracles.cpp
+    fields/point_shapes.cpp
     fields/data_fields.cpp
 
     fea/fea.cpp

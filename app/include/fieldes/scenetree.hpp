@@ -242,7 +242,7 @@ public slots:
      *  "toggle" (the point displayed by the line: a corner becomes a spline point and the other way).  `line0` is the 0-based line that displays
      *  the model.  Both are edits of the script; pointEditDone says which line displays the new point (-1 when none)
      */
-    void editPoints(const QString& op, int line0, const QVector3D& at);
+    void editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at);
 
     /*  A selection rectangle drawn in the viewport: the models displayed by these lines are the selection
      *  (with `add`, they join the selection that there is)  */

@@ -774,6 +774,22 @@ libfive_tree libfive_beam_lattice(const float* nodes, int node_count, const int*
  *  gradient's length, 4..6 = raw gradient; the local wall thickness (capped
  *  at max_thickness); the mean curvature (central differences of step h).
  */
+/*
+ *  Shapes made of points (see libfive/fields/point_shapes.hpp).  pos: 3n numbers, smooth: n of -1 (what the shape says), 0 (a corner) or 1 (a spline
+ *  point), turned: n of 0/1, rotate: 3n degrees, scale: n numbers (how strongly a spline leaves each point: 1 is Catmull-Rom; may be null), normal: 3 numbers
+ *  (the normal of the plane of a face: the points' rotation is then one angle, the z number of rotate, about it; null for a line in space).
+ *  The line through them is written to out_vertices (3 numbers each), out_owner (the control each
+ *  vertex is after) and out_t (how far along towards the next, 0 to 1), up to `capacity` vertices; the number of vertices is returned (more than
+ *  capacity: nothing is written, and that many are needed)
+ */
+int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale,
+                                const double* normal, int n, int smooth_default, int closed, int pieces,
+                                double* out_vertices, int* out_owner, double* out_t, int capacity);
+/*  The plane through the first three points that are not on a line: frame = origin, u, v (9 numbers); false when there is none  */
+bool libfive_pointshape_plane(const double* pos, int n, double* frame);
+/*  The distance to the closed polygon `loop` (2n numbers: their position along u and along v of `frame`, or x and y when frame is null), negative
+ *  inside; the distance to the line through the vertices (3n numbers)  */
+
 libfive_tree libfive_field_gradient(libfive_tree t, int mode);
 libfive_tree libfive_field_thickness(libfive_tree t, float max_thickness);
 libfive_tree libfive_field_curvature(libfive_tree t, float h);

@@ -57,7 +57,10 @@ rows): they are all unlocked, and still selected.
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
 
-**A point is that dot.** A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
+**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, all three
+scale squares move it -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a sketch has no arrows**: its dot, pressed and dragged, moves it in the plane of the sketch, and it has one rotation ring (in the plane) and the scale squares. See [Sketches](sketches.md).
+
+A `point(...)` has no surface, so it is drawn as the dot alone, **always** -- whatever the gizmo's mode, selected or not -- while it is shown
 (its eye in the model tree: a point whose eye is off draws nothing). **Click the dot to select the point**; then its full gizmo shows (the arrows; `mode='never'`
 keeps the dot only) and the dot, or an arrow, drags it. A locked point is a dot that cannot be moved. In an [app](apps.md) the same: `app.viewport({'Load point': p})`
 shows the dot, with its name over it.
@@ -86,9 +89,11 @@ The numbers are ordinary Python values in an ordinary script: copy them, rename 
 
 ## The gizmo
 
-The part's own **move arrows, rotation rings and scale squares** (Shift: all three axes at once), at the
-centre of the part's bounding box. Works on every shape and every imported part. It writes, under the
-shape's definition:
+The part's own **move arrows, rotation rings and scale squares**, at the centre of the part's bounding box. Works on every shape and every imported part.
+**Hold Shift** and the gizmo changes: the three move arrows become three **flat squares** -- each one moves the part **along a plane** (the colour of a square is the axis that is the plane's normal: the blue
+square moves it in x and y) -- and the three scale squares turn **gold**: whichever you drag, **all three axes scale together**. **Shift + the mouse wheel** scales what is selected without a gizmo
+to aim at: every selected model by the scale numbers of its gizmo, all three together (a notch is 10 %), and the numbers are written when the wheel has rested a moment; a model that cannot be scaled leaves the wheel
+to zoom. It writes, under the shape's definition:
 
 ```python
 stand = gizmo(

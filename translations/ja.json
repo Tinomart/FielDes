@@ -677,8 +677,6 @@
  "Error in the script": "スクリプトのエラー",
  "The picture shows what ran before the error, or the last one that worked.  Click to go to the error.": "表示されている図は、エラーの前に実行された内容、または最後に成功したものです。クリックするとエラー箇所へ移動します。",
  "Double-click: corner or spline point": "ダブルクリック: 角またはスプライン点",
- "Drag to put a point here": "ドラッグしてここに点を置く",
- "Click to put a point here": "クリックしてここに点を置く",
  "unbound": "未割り当て",
  "FielDes guide": "FielDes ガイド",
  "The script is the model. Whatever you do in the viewport is written into the script, so %1 undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.": "スクリプトがモデルです。ビューポートで行った操作はすべてスクリプトに書き込まれるため、%1 で元に戻せます。<b>docs</b> フォルダーに完全なドキュメントがあります。<b>ヘルプ &gt; ガイドツアー</b> では、プログラム上で基本操作を順に確認できます。",
@@ -919,8 +917,6 @@
  "Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice": "モデル内に作られ、点として描かれる点群です。平均の間隔、ランダムさ、2点が最も近づける距離と最も離れてよい距離を指定できます。これらを囲んでフォームを作ります。点群を選択して voronoi_lattice または delaunay_lattice を選んでください",
  "A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  Select points first (random_points)": "フォーム：選択した点群を囲むボロノイセルの辺を梁にして、点群が作られたモデルを満たします。先に点群（random_points）を選択してください",
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "確率的トラス：選択した点群の間のドロネー辺に沿った梁で、点群が作られたモデルを満たします。先に点群（random_points）を選択してください",
- "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "点から作る 2D 形状。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 4 つ作ります。縁をクリックするとそこに点が置かれ、点をダブルクリックすると角とスプライン点が切り替わります",
- "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "点を通る線。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 3 つ作ります。線をクリックしてドラッグするとそこに点が置かれ、点をダブルクリックすると角とスプライン点が切り替わります",
  "the menu has no %s called %s": "メニューには %s「%s」がありません",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s は、サーフェス・フィールド・形状が示す場所に作用します。それらを 1 つまたは複数選択してください",
  "static analysis": "静解析",
@@ -1106,5 +1102,10 @@
  "qt:QDialogButtonBox|OK": "OK",
  "qt:QDialogButtonBox|Cancel": "キャンセル",
  "qt:QDialogButtonBox|Close": "閉じる",
- "Extruding": "押し出し"
+ "Extruding": "押し出し",
+ "Drag to pull a point out of the line": "ドラッグして線から点を引き出す",
+ "Drag to pull a point out of the edge": "ドラッグして縁から点を引き出す",
+ "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "点から作る 2D 形状。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 4 つ作ります。縁を押してドラッグするとそこから点を引き出せ、点をダブルクリックすると角とスプライン点が切り替わります",
+ "A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "点を通る線分の集まり。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 3 つ作ります。線を押してドラッグするとそこから点を引き出せ、点をダブルクリックすると角とスプライン点が切り替わります",
+ "A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "点を通る滑らかな曲線。点を選択している場合: 選択した順にその点から作ります。選択がない場合: ドラッグできる新しい点を 3 つ作ります。曲線を押してドラッグするとそこから点を引き出せ、点をダブルクリックすると角とスプライン点が切り替わります"
 }

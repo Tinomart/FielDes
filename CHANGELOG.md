@@ -21,21 +21,44 @@
   (a gyroid is `cell_periodic('gyroid')`). The 3D shapes stand along z, the 2D shapes lie in z = 0; one that stands another way is turned (`rotate_x`, `rotate_y`, `rotate_z`), one that sits elsewhere is moved (`move`).
   **The old names are gone, not aliased** (a beta change): the examples, the docs, the tour, the menus (*New 3D shape*, *New 2D shape*) and the library say the new ones. A script from before needs the names changed.
 
-### Shapes made of points: sketches, curves and extrusions
+### Every call FielDes writes is laid out one argument to a line
+- **A call with two arguments or more is written one argument to a line, whatever its length** -- from the right-click menus and from the completion alike: `sphere(5, (0, 0, 0))` is three lines, `polyline([a, b, c], closed=False)`
+  is three. A call or a list inside it stays on one line when it fits (88 columns). The exception is `handles(...)`, whose numbers nobody edits by hand: it is one long line. (`point(...)` and `var(...)` are notation, and stay as they are.)
+
+### Shapes made of points: sketches, lines and extrusions
 - **A 2D shape from any number of points: `sketch([a, b, c, d])`.** The face a closed outline through the points encloses, in **the plane through the first three points** -- every other point is projected onto that plane, so it works
   whatever the points are. Each point is a **corner** (a hard edge) or a **spline point** (the outline goes smoothly through it): `sketch(points, smooth=False)` says which a point is that does not say itself (a hard edge by default),
   `point(x, y, z, smooth=True)` says it for one point. A sketch is an exact distance field, concave outlines too, so it offsets, shells and extrudes like any 2D shape.
-- **A 1D shape: `curve([a, b, c])`.** A new kind of model -- a line or a spline through points, open or `closed=True`, drawn as a line, with its own icon. It stands on its own: it is the path of `path_extrude`, the outline `sketch(curve)` fills,
-  and, as the distance to the line, `offset(curve, 1.5)` is a tube round it.
-- **The rotation of a point turns the direction a spline leaves it.** A point has had a gizmo with rotation rings and no use for them; now the rotate numbers of a spline point turn its tangent (no rotation: Catmull-Rom, from the neighbours). A line through the
-  selected point shows the direction.
-- **`path_extrude(profile, curve)` sweeps a 2D shape along a curve**, turning with it, with mitered joints; the same rotation of a point **twists** the profile about the path there. **`extrude(shape, a, b)`** is the straight one,
+- **Two 1D shapes, a set of lines and a smooth curve: `polyline([a, b, c])` and `spline([a, b, c])`.** A new kind of model, open or `closed=True`, drawn as a line, with its own icon, and **two entries under New 1D shape** (not one
+  entry with a switch inside): the point of each can still say otherwise (`point(..., smooth=...)`). A line stands on its own: it is the path of `path_extrude`, the outline `sketch(line)` fills,
+  and, as the distance to the line, `offset(line, 1.5)` is a tube round it.
+- **A point of a sketch is moved by its dot, in the plane of the sketch.** Press the dot (selected or not) and drag; it has no move arrows and no plane squares -- only the dot, **one rotation ring** in the plane, and the scale squares.
+- **The rotation of a point turns the direction a spline leaves it -- one angle, in the plane of the sketch, for a point of a sketch.** A point has had a gizmo with rotation rings and no use for them; now the rotate numbers of a spline point turn its tangent
+  (no rotation: Catmull-Rom, from the neighbours). **A point of a sketch has one rotation ring, in the plane of the sketch**; a point of a line in space has the three. A line through the selected point shows the direction.
+- **The scale of a point is how strongly a spline leaves it and how thick a sweep is there.** A point has one scale (the three scale squares of its gizmo move it together; so does Shift + wheel): `1` is the Catmull-Rom curve, more is a rounder bulge, less
+  is tighter. In `path_extrude` it is the thickness of the profile at that point, tapering smoothly between points: a path with a point of scale 2 makes a tube twice as thick there.
+- **`path_extrude(profile, line)` sweeps a 2D shape along a line**, turning with it, with mitered joints; the same rotation of a point **twists** the profile about the path there. **`extrude(shape, a, b)`** is the straight one,
   and follows the plane of a sketch (it replaces `extrude_z`, which is gone: for a shape in z = 0 it is the same call).
-- **Edit them in the viewport.** The edges of every 2D shape are drawn **blue** (and the lines of curves); **click an edge** and a point is put there, **keep the button down** and it follows the mouse; on a curve **press the line and drag**.
-  **Double-click a point** to change it between a corner (a square dot) and a spline point (a round dot with a ring) -- written as `smooth=True` / `smooth=False` on the point. A hint beside the mouse says what a click does.
-- **The menus follow the library's own naming: shapes are nouns, operations are verbs.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for *New 1D shape → curve*.
-  `extrude` and `path_extrude` are operations: *Operation → Extruding*, offered for a selected 2D shape (and a curve, or the points of a path). See [Sketches](docs/sketches.md).
-- **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are curves.
+- **Edit them in the viewport, as if the shape were a rubber band.** The edges of every 2D shape are drawn **blue** (and the lines of curves). **Press an edge and drag: a point is pulled out of it**, drawn at once as it follows the mouse,
+  and written into the script when you let go; on a line **press the line and drag**. **Drag the face of a sketch** and all its points move together, in its plane. **Double-click a point** to change it between a corner (a square dot) and a spline point
+  (a round dot with a ring) -- written as `smooth=True` / `smooth=False` on the point; **a dot always says what the point is in its sketch or line**, however the sketch was made. **Double-click a sketch** and the view turns to face its plane. A hint beside the mouse says what a click does.
+- **A sketch made of points that are not in one plane puts them there.** The plane through the first three points that are not on a line stays, and every other point is **moved onto it**: its numbers in the script change, in the same undo step that makes the sketch.
+- **The menus follow the library's own naming: shapes are nouns, operations are verbs.** *New 2D shape → sketch* with three or more points selected is made from them, in the order selected; with none selected it makes four points and a sketch. The same for
+  *New 1D shape → polyline* and *spline* (two or more points). `extrude` and `path_extrude` are operations: *Operation → Extruding*, offered for a selected 2D shape (and a line, or the points of a path). See [Sketches](docs/sketches.md).
+- **The selection rectangle selects every kind of model.** Points, sets of points and fields could not be selected by dragging a rectangle (it only took shapes with a mesh); now they are, and so are lines.
+
+### Sketches, lines and sweeps are plain math, and fast
+- **No black box: the field of a sketch, a line and a sweep is an expression of x, y and z.** A sketch is the distance to its outline (the least of the distances to its edges) with its side taken from triangles the outline is cut into
+  when the script runs -- a point is inside when it is inside one of them -- so the renderer drops the edges and triangles that are far from where it looks, and **a sketch of a hundred edges costs about what the few edges near the point cost**.
+  An outline that crosses itself uses the winding of the outline round the point instead. A line is the least of the distances to its pieces. Measured on the same 140 x 120 x 80 mm region: a six-point plate extruded in **0.06 s**, the
+  same plate swept along a 43-piece path in **1.4 s** (1 sample per mm) and **3.3 s** (2 per mm); a sixteen-point *smooth* outline of 224 edges extruded in **1.9 s** and **8.6 s**.
+- **Dragging a point is live.** The face of a sketch and the line of a curve are drawn from the numbers of the points straight away, with no run of the script and no field: a six-point shape no longer lags, and the render bar moves while a sweep is made.
+- **Adding a point to an edge feels like pulling it out of the edge**: the new point is drawn at once and follows the mouse; the script is written when the mouse is let go.
+
+### Hold Shift: a gizmo of planes, and the wheel scales
+- **Holding Shift changes the gizmo.** The three move arrows become three **flat squares**, each moving the model along a plane; the three scale squares turn gold, and any of them scales all three axes together. It works for one model and for the shared
+  gizmo of several.
+- **Shift + the mouse wheel scales what is selected** -- every selected model by its gizmo's scale numbers, a point by its scale -- a notch is 10 %, written to the script when the wheel rests (one undo step).
 
 ### A 2D shape is a face, not a thin body
 - **A 2D shape is drawn as what it is: a flat face in the plane z = 0, with no thickness.** It used to be cut out of a thin slab (a tenth of a millimetre or so), which showed edges and a back when you looked at it from the side. The face is made from the shape's own field (its outline is found where the field is

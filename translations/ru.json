@@ -677,8 +677,6 @@
  "Error in the script": "Ошибка в скрипте",
  "The picture shows what ran before the error, or the last one that worked.  Click to go to the error.": "На картинке — то, что выполнилось до ошибки, или последняя удачная.  Щёлкните, чтобы перейти к ошибке.",
  "Double-click: corner or spline point": "Двойной щелчок: угол или точка сплайна",
- "Drag to put a point here": "Перетащите, чтобы поставить здесь точку",
- "Click to put a point here": "Щёлкните, чтобы поставить здесь точку",
  "unbound": "не назначено",
  "FielDes guide": "Справочник FielDes",
  "The script is the model. Whatever you do in the viewport is written into the script, so %1 undoes it. The <b>docs</b> folder has the full documentation. <b>Help &gt; Guided tour</b> walks through the basics on the program itself.": "Скрипт — это модель. Всё, что вы делаете в окне просмотра, записывается в скрипт, поэтому %1 отменяет это. В папке <b>docs</b> лежит полная документация. <b>Справка &gt; Обзорный тур</b> проведёт по основам прямо в программе.",
@@ -919,8 +917,6 @@
  "Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice": "Точки, созданные в модели и нарисованные точками: среднее расстояние между ними, степень случайности, насколько близко и насколько далеко могут быть две точки. Пена строится вокруг них: выделите их и выберите voronoi_lattice или delaunay_lattice",
  "A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  Select points first (random_points)": "Пена: рёбра ячеек Вороного вокруг выбранных точек в виде стержней, заполняющая модель, в которой созданы точки. Сначала выделите точки (random_points)",
  "A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were made in.  Select points first (random_points)": "Стохастическая ферма: стержни вдоль рёбер Делоне между выбранными точками, заполняющая модель, в которой созданы точки. Сначала выделите точки (random_points)",
- "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Click its edge to put a point there; double-click a point to make it a corner or a spline point": "2D-форма по точкам. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: четыре новые точки, которые можно перетаскивать. Щелчок по её краю ставит там точку; двойной щелчок по точке делает её углом или точкой сплайна",
- "A line through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Click the line and drag to put a point there; double-click a point to make it a corner or a spline point": "Линия через точки. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: три новые точки, которые можно перетаскивать. Щелчок и перетаскивание по линии ставят там точку; двойной щелчок по точке делает её углом или точкой сплайна",
  "the menu has no %s called %s": "в меню нет %s «%s»",
  "%s acts where a surface, a field or a body says: select one or several of those": "%s действует там, где указывает поверхность, поле или тело: выберите одно или несколько из них",
  "static analysis": "статический анализ",
@@ -1106,5 +1102,10 @@
  "qt:QDialogButtonBox|OK": "ОК",
  "qt:QDialogButtonBox|Cancel": "Отмена",
  "qt:QDialogButtonBox|Close": "Закрыть",
- "Extruding": "Выдавливание"
+ "Extruding": "Выдавливание",
+ "Drag to pull a point out of the line": "Перетащите, чтобы вытянуть точку из линии",
+ "Drag to pull a point out of the edge": "Перетащите, чтобы вытянуть точку из ребра",
+ "A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "2D-форма по точкам. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: четыре новые точки, которые можно перетаскивать. Нажмите на её край и потяните, чтобы вытянуть из него точку; двойной щелчок по точке делает её углом или точкой сплайна",
+ "A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "Набор отрезков через точки. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: три новые точки, которые можно перетаскивать. Нажмите на линию и потяните, чтобы вытянуть из неё точку; двойной щелчок по точке делает её углом или точкой сплайна",
+ "A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point": "Гладкая кривая через точки. Если выбраны точки: строится по ним в порядке выбора. Если ничего не выбрано: три новые точки, которые можно перетаскивать. Нажмите на кривую и потяните, чтобы вытянуть из неё точку; двойной щелчок по точке делает её углом или точкой сплайна"
 }

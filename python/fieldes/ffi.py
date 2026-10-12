@@ -840,6 +840,17 @@ try:
 except AttributeError:
     pass
 
+# Shapes made of points: the line through them and their plane (newer libraries; optional)
+try:
+    _dp = ctypes.POINTER(ctypes.c_double)
+    _ip = ctypes.POINTER(ctypes.c_int)
+    lib.libfive_pointshape_polyline.argtypes = [_dp, _ip, _ip, _dp, _dp, _dp, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, _dp, _ip, _dp, ctypes.c_int]
+    lib.libfive_pointshape_polyline.restype = ctypes.c_int
+    lib.libfive_pointshape_plane.argtypes = [_dp, ctypes.c_int, _dp]
+    lib.libfive_pointshape_plane.restype = ctypes.c_bool
+except AttributeError:
+    pass
+
 # Analysis fields (newer libraries; optional)
 try:
     lib.libfive_field_gradient.argtypes = [libfive_tree, ctypes.c_int]
