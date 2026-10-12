@@ -101,8 +101,9 @@ endif()
 
 target_include_directories(FielDes PUBLIC include)
 if(MSVC)
-    # a map of where the functions are: a crash report names places as module + offset, read with it
-    target_link_options(FielDes PRIVATE /MAP)
+    # a map of where the functions are: a crash report names places as module + offset, read with it (kept in the build folder: with FIELDES_OUTPUT_DIR the
+    # program is built into the folder it is run from, and the map is not a part of it)
+    target_link_options(FielDes PRIVATE "/MAP:${CMAKE_CURRENT_BINARY_DIR}/FielDes.map")
 endif()
 target_include_directories(FielDes PRIVATE ${Python3_INCLUDE_DIRS})
 target_link_libraries(FielDes
