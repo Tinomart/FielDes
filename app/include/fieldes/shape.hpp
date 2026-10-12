@@ -682,6 +682,19 @@ protected:
         { return lo == o.lo && hi == o.hi && res == o.res && quality == o.quality && exact == o.exact; }
     };
     bool exactCurrent() const;
+
+    /*  Auto scale (Settings::autoScale, the default).  A shape that has no resolution of its own is meshed at the scene's resolution scaled by how
+     *  small it is next to the render region -- times the square root of (region / shape), never less than the scene's, and no finer than 2000
+     *  samples across it -- so that a small part next to a big one has samples enough across it and the big one is not asked for the fineness
+     *  of the small one.  Every shape scales with the scene's number: a higher resolution is a finer picture of every part.  The first picture
+     *  (the coarse level) is sized by the shape too: about 64 samples across it, however large the region round it is.  The shape's box is
+     *  found by a quick search (a few milliseconds at the most) when its render starts  */
+    void measureExtent(const Settings& s);
+    double autoResolution(const Settings& s) const;
+    int defaultDivFor(const Settings& s);
+    bool m_ext_valid = false;
+    QVector3D m_ext_lo, m_ext_hi;
+
     // The shown step's own triangles (a step of an optimisation), else none; and the ones the render in progress draws from
     std::shared_ptr<const ExactMesh> m_step_exact;
     std::shared_ptr<const ExactMesh> run_step_exact;

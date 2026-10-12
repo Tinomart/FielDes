@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "fieldes/i18n.hpp"
 #include "fieldes/shape.hpp"
+#include "libfive.h"
 #include "fieldes/shader.hpp"
 #include "fieldes/colormap.hpp"
 
@@ -395,7 +396,59 @@ Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
         g.hi = own_hi;
         g.res = own_res;
     }
+    else
+    {
+        g.res = autoResolution(s);
+    }
     return g;
+}
+
+void Shape::measureExtent(const Settings& s)
+{
+    m_ext_valid = false;
+    if (!s.autoScale || has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return;
+    std::vector<libfive_tree> var_trees;
+    std::vector<float> values;
+    for (const auto& kv : vars)
+    {
+        var_trees.push_back(reinterpret_cast<libfive_tree>(kv.first));
+        values.push_back(kv.second);
+    }
+    libfive_region3 search;
+    search.X = {s.min.x(), s.max.x()};
+    search.Y = {s.min.y(), s.max.y()};
+    search.Z = {s.min.z(), s.max.z()};
+    libfive_region3 out;
+    int open = 0;
+    // (a search of a few milliseconds: a shape it cannot bound in that time is rendered as it was before)
+    if (!libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, 0.004f, &out, &open,
+                                  var_trees.data(), values.data(), int(var_trees.size())))
+        return;
+    m_ext_lo = QVector3D(out.X.lower, out.Y.lower, out.Z.lower);
+    m_ext_hi = QVector3D(out.X.upper, out.Y.upper, out.Z.upper);
+    m_ext_valid = m_ext_hi.x() >= m_ext_lo.x() && m_ext_hi.y() >= m_ext_lo.y() && m_ext_hi.z() >= m_ext_lo.z();
+}
+
+double Shape::autoResolution(const Settings& s) const
+{
+    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return s.res;
+    const QVector3D region = s.max - s.min, size = m_ext_hi - m_ext_lo;
+    const double R = std::max(region.x(), std::max(region.y(), region.z()));
+    const double L = std::max(size.x(), std::max(size.y(), size.z()));
+    if (!(R > 0) || !(L > 1e-6)) return s.res;
+    double res = s.res * std::sqrt(std::max(1.0, R / L));
+    res = std::min(res, 2000.0 / L);
+    return std::max(res, double(s.res));
+}
+
+int Shape::defaultDivFor(const Settings& s)
+{
+    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return s.defaultDiv();
+    const QVector3D size = m_ext_hi - m_ext_lo;
+    const double L = std::max(size.x(), std::max(size.y(), size.z()));
+    if (!(L > 1e-6)) return s.defaultDiv();
+    const double across = autoResolution(s) * L;            // (samples across the shape at the finest level)
+    return std::max(0, int(std::lround(std::log2(std::max(1.0, across / 64.0)))));
 }
 
 bool Shape::ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
@@ -1637,7 +1690,7 @@ bool Shape::updateFrom(const Shape* other)
         setRenderHint(other->hint_lo, other->hint_hi, other->hint_res, other->hint_side, other->hint_scene_res);
         if (m_geometry_known && wouldRenderDifferently(m_last_settings))
         {
-            startRender(RenderSettings { m_last_settings, m_last_settings.defaultDiv(), m_last_alg });
+            startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
             started = true;
         }
     }
@@ -1662,7 +1715,7 @@ bool Shape::updateFrom(const Shape* other)
     const bool varsChanged = updateVars(other->vars);
     if (exactChanged && !varsChanged && !started && m_geometry_known && wouldRenderDifferently(m_last_settings))
     {
-        startRender(RenderSettings { m_last_settings, m_last_settings.defaultDiv(), m_last_alg });
+        startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
         started = true;
     }
     return varsChanged || started;
@@ -1946,7 +1999,8 @@ void Shape::drawMonochrome(const QMatrix4x4& M, QColor color)
 
 void Shape::startRender(Settings s, libfive::BRepAlgorithm alg)
 {
-    startRender(RenderSettings { s, s.defaultDiv(), alg });
+    measureExtent(s);
+    startRender(RenderSettings { s, defaultDivFor(s), alg });
 }
 
 void Shape::startRender(RenderSettings s)
@@ -1970,7 +2024,11 @@ void Shape::startRender(RenderSettings s)
         if (s.div == MESH_DIV_NEW_TREE || es_stale)
         {   // the shown step's geometry
             rebuildEvaluators();
-            if (s.div == MESH_DIV_NEW_TREE) s.div = default_div;
+            if (s.div == MESH_DIV_NEW_TREE)
+            {
+                measureExtent(s.settings);
+                s.div = default_div;
+            }
         }
         {   // what this render evaluates at the vertices (the shown step's fields: the GUI may change them meanwhile)
             QString key;
@@ -2001,6 +2059,7 @@ void Shape::startRender(RenderSettings s)
             // (what the render cache's keys are of: the numbers the evaluators hold now)
             cache_vars = vars;
             ++cache_vars_gen;
+            if (s.div == MESH_DIV_NEW_VARS) measureExtent(s.settings);          // (the numbers changed: the shape is not where it was)
             s.div = (s.div == MESH_DIV_NEW_VARS) ? default_div : 0;
         }
 
@@ -2375,7 +2434,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     mesh_settings.low_priority = run_heavy;
     // A part with its own resolution is meshed on its own (setRenderHint):
     // over a cube around it, at the resolution it needs
-    double res = s.settings.res;
+    double res = autoResolution(s.settings);
     libfive::Region<3> mesh_region = r;
     bool own_render = false;
     {

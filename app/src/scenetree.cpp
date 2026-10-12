@@ -557,7 +557,8 @@ bool lineMatches(const QString& text, const QString& var, const QString& kind)
     }
     else
     {
-        pattern = "^\\s*" + name + "\\s*=\\s*(?:[A-Za-z_][\\w.]*\\.)?" + kind + "\\(\\s*" + name + "\\b";
+        // (the call may be laid out over lines: the name of the model is on its first line, or the line ends with the parenthesis)
+        pattern = "^\\s*" + name + "\\s*=\\s*(?:[A-Za-z_][\\w.]*\\.)?" + kind + "\\(\\s*(?:" + name + "\\b|(?:#.*)?$)";
     }
     return QRegularExpression(pattern).match(text).hasMatch();
 }
@@ -1744,12 +1745,6 @@ void ScenePanel::setScene(const QString& json)
         const QString md5 = doc.object()["source_md5"].toString();
         if (!md5.isEmpty() && md5 != md5Hex(m_source())) return;
     }
-    // (the models of the scene that was shown: the ones this scene has that those did not are new -- the render region grows to hold them)
-    // (the rows come from the text, before any run: a model is new to the render region when it has an extent now that it had not)
-    QSet<QString> modelsBefore;
-    for (const auto v : m_scene["items"].toArray())
-        if (v.toObject()["bounds"].toArray().size() == 2) modelsBefore << keyOf(v.toObject());
-    modelsBefore.subtract(m_unfitted);          // (a model that waited for the region to be known is new to it still)
     m_scene = doc.object();
     m_sceneClock.start();
     m_predicted = false;
@@ -1846,26 +1841,34 @@ void ScenePanel::setScene(const QString& json)
     // shown by the isolate key, a script that was edited by hand): it writes nothing for a model that is ready
     if (!m_prepareAgain && !m_editPending && !selectedModels().isEmpty() && !m_treeHeld) m_prepareTimer.start();
 
-    // A model that came and reaches out of the render region: the region grows (not for the first scene of a file, nor for a scene of
-    // a run that is not of the text that is in the editor)
-    if (!modelsBefore.isEmpty()) QTimer::singleShot(0, this, [this, modelsBefore] { growRegion(modelsBefore); });
+    // A model that reaches out of the render region: the region grows, in the script (only for the scene of a run that is of the text that is
+    // in the editor, and that has run to its end)
+    QTimer::singleShot(0, this, [this] { fitRegion(); });
 
     // A click made while the script was running again waits for this scene (one at a time: see runDeferred)
     runDeferred();
 }
 
-void ScenePanel::growRegion(const QSet<QString>& before)
+void ScenePanel::fitRegion()
 {
-    if (m_predicted || !m_source || m_scene["errored"].toBool() || m_scene["source_md5"].toString() != md5Hex(m_source())) return;
+    if (m_predicted || !m_source || m_scene["errored"].toBool() || !m_scene["run_done"].toBool() ||
+        m_scene["source_md5"].toString() != md5Hex(m_source()))
+        return;
+    const auto settings = m_scene["settings"].toObject();
+    const auto setBounds = settings["set_bounds"].toObject();
+    // Auto scale off: the region is what the script says
+    if (setBounds.contains("auto_scale") && !setBounds["auto_scale"].toBool(true)) return;
     auto sane = [](double v) { return std::isfinite(v) && std::abs(v) < 1e6; };
-    // The box of the models that are new (shown, drawn, with an extent)
+    // The box of the models that are shown and drawn (a point is not drawn: it does not say how far the region reaches)
     double nlo[3], nhi[3];
     bool any = false;
     for (const auto v : m_scene["items"].toArray())
     {
         const auto it = v.toObject();
-        if (before.contains(keyOf(it)) || !it["visible"].toBool() || it["failed"].toBool() || it["kind"].toString() == "failed") continue;
+        if (!it["visible"].toBool() || it["failed"].toBool() || it["kind"].toString() == "failed") continue;
         if (it.contains("displayable") && !it["displayable"].toBool()) continue;
+        const QString type = it["type"].toString();
+        if (type == "point" || type == "points") continue;
         const auto b = it["bounds"].toArray();
         if (b.size() != 2) continue;
         double l[3], h[3];
@@ -1886,7 +1889,6 @@ void ScenePanel::growRegion(const QSet<QString>& before)
     }
     if (!any) return;
     // The region now: the script's, else the default one
-    const auto settings = m_scene["settings"].toObject();
     double lo[3] = {-10, -10, -10}, hi[3] = {10, 10, 10};
     const auto set = settings["bounds"].toObject()["value"].toArray();
     if (set.size() == 2)
@@ -1899,56 +1901,105 @@ void ScenePanel::growRegion(const QSet<QString>& before)
     }
     else if (settings.contains("set_bounds"))
     {
-        // The script sets a region, but the run has not got to that line yet (the scene of a run that is still on its way): what the region
-        // is is not known, and the default one is not what is in the script -- nothing is written on a guess.  The models try again
-        // when the run is done
-        for (const auto v : m_scene["items"].toArray())
-            if (v.toObject()["bounds"].toArray().size() == 2 && !before.contains(keyOf(v.toObject()))) m_unfitted << keyOf(v.toObject());
+        // The script sets a region, but the run has not got to that line (it stopped before it): what the region is is not known, and the
+        // default one is not what is in the script -- nothing is written on a guess
         return;
     }
-    m_unfitted.clear();
+    // (the first scene of a file only grows the region: what the file says is not rewritten just for being larger than its models)
+    const bool allowShrink = m_regionFitted;
+    m_regionFitted = true;
     bool outside = false;
     for (int k = 0; k < 3; ++k) outside = outside || nlo[k] < lo[k] - 1e-6 || nhi[k] > hi[k] + 1e-6;
-    if (!outside) return;
-    // The region grown on the sides that are reached: whole numbers, and room beyond the model (a twentieth of the whole, at least 1 mm)
+    // Room round the models: a tenth of their size, at least 1 mm
+    const double boxLongest = std::max(nhi[0] - nlo[0], std::max(nhi[1] - nlo[1], nhi[2] - nlo[2]));
+    const double room = std::max(1.0, 0.1 * boxLongest);
+    // The region shrinks to them when it has become much larger than they need (models that got smaller or went away: with none left it is
+    // not touched -- there is nothing to fit it to)
+    const double regionLongest = std::max(hi[0] - lo[0], std::max(hi[1] - lo[1], hi[2] - lo[2]));
+    const bool shrink = allowShrink && !outside && regionLongest > 2.5 * (boxLongest + 2 * room);
+    if (!outside && !shrink) return;
+    // The region grown on the sides that are reached (or, shrinking, fitted to the models): whole numbers, with that room
     QStringList text;
     for (int pass = 0; pass < 2; ++pass)
     {
         for (int k = 0; k < 3; ++k)
         {
-            const double room = std::max(1.0, 0.05 * (std::max(nhi[k], hi[k]) - std::min(nlo[k], lo[k])));
-            text << (pass == 0 ? regionNumber(nlo[k] < lo[k] ? nlo[k] - room : lo[k], -1)
-                               : regionNumber(nhi[k] > hi[k] ? nhi[k] + room : hi[k], 1));
+            if (shrink) text << regionNumber(pass == 0 ? nlo[k] - room : nhi[k] + room, pass == 0 ? -1 : 1);
+            else text << (pass == 0 ? regionNumber(nlo[k] < lo[k] ? nlo[k] - room : lo[k], -1)
+                                    : regionNumber(nhi[k] > hi[k] ? nhi[k] + room : hi[k], 1));
         }
     }
     const QString call = QString("view.set_bounds([%1, %2, %3], [%4, %5, %6])").arg(text[0], text[1], text[2], text[3], text[4], text[5]);
-    if (!settings.contains("set_bounds") || !settings["set_bounds"].toObject().contains("span"))
+    if (!settings.contains("set_bounds") || !setBounds.contains("span"))
     {
-        insertSettingLine(call, "set_bounds", false);
+        insertSettingLine(call, "set_bounds", true);
         return;
     }
-    const auto span = settings["set_bounds"].toObject()["span"].toArray();
+    const auto span = setBounds["span"].toArray();
     const QString current = spanText(span);
-    // (the region the script gets from the models, view.set_bounds(*roi(parts)), stays that: the new models are given to roi as a box)
-    static const QRegularExpression fromRoi(R"(^view\.set_bounds\(\s*\*\s*roi\((.*)\)\s*\)$)", QRegularExpression::DotMatchesEverythingOption);
+    // (the other arguments of the call stay: auto_scale=..., and the region the script gets from the models, view.set_bounds(*roi(parts)), stays
+    // that: the new models are given to roi as a box)
+    static const QRegularExpression fromRoi(R"(^view\.set_bounds\(\s*\*\s*roi\((.*)\)(\s*,\s*auto_scale\s*=\s*\w+)?\s*\)$)",
+                                            QRegularExpression::DotMatchesEverythingOption);
+    static const QRegularExpression autoArg(R"((\s*,\s*auto_scale\s*=\s*\w+)\s*\)$)");
     const auto m = fromRoi.match(current);
+    const auto a = autoArg.match(current);
+    const QString extra = a.hasMatch() ? a.captured(1) : QString();
     QString replacement = call;
     if (m.hasMatch())
     {
-        QStringList a, b;
+        QStringList lowText, highText;
         for (int k = 0; k < 3; ++k)
         {
-            a << regionNumber(nlo[k], -1);
-            b << regionNumber(nhi[k], 1);
+            lowText << regionNumber(nlo[k], -1);
+            highText << regionNumber(nhi[k], 1);
         }
-        replacement = "view.set_bounds(*roi(" + m.captured(1) + ", ((" + a.join(", ") + "), (" + b.join(", ") + "))))";
+        replacement = "view.set_bounds(*roi(" + m.captured(1) + ", ((" + lowText.join(", ") + "), (" + highText.join(", ") + ")))" + extra + ")";
     }
+    else if (!extra.isEmpty())
+    {
+        replacement = call.left(call.size() - 1) + extra + ")";
+    }
+    if (replacement == current) return;
+    // (the same text written again within a moment would be a region that cannot hold the model: not a loop)
+    if (replacement == m_lastRegionEdit && m_regionEditClock.isValid() && m_regionEditClock.elapsed() < 2000) return;
+    m_lastRegionEdit = replacement;
+    m_regionEditClock.start();
     const QList<TextEdit> edits{TextEdit{span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt(), replacement}};
-    emit(editScript(edits, "Grow the region"));
+    emit(editScriptLive(edits, "Grow the region"));
+}
+
+void ScenePanel::toggleAutoScale()
+{
+    const auto settings = m_scene["settings"].toObject();
+    const auto setBounds = settings["set_bounds"].toObject();
+    const bool on = !setBounds.contains("auto_scale") || setBounds["auto_scale"].toBool(true);
+    if (!setBounds.contains("span"))
+    {
+        // (no call yet: auto scale is on by itself; to turn it off the call is written, with the region there is)
+        if (on) insertSettingLine("view.set_bounds([-10, -10, -10], [10, 10, 10], auto_scale=False)", "set_bounds", false);
+        return;
+    }
+    const auto span = setBounds["span"].toArray();
+    QString call = spanText(span);
+    static const QRegularExpression autoArg(R"(\s*,\s*auto_scale\s*=\s*\w+)");
+    if (on)
+    {
+        const int close = call.lastIndexOf(')');
+        if (close < 0) return;
+        call.insert(close, ", auto_scale=False");
+    }
+    else
+    {
+        call.remove(autoArg);
+    }
+    const QList<TextEdit> edits{TextEdit{span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt(), call}};
+    emit(editScript(edits, on ? "Auto scale off" : "Auto scale on"));
 }
 
 void ScenePanel::clearScene()
 {
+    m_regionFitted = false;
     emit(provisionalGizmo(false, QVector3D(), QList<int>()));
     m_scene = QJsonObject();
     m_predicted = false;
@@ -2171,6 +2222,16 @@ void ScenePanel::rebuild()
         }
         settingRow("set_bounds", T("Region"), "(" + lo.join(", ") + ") " + QString(QChar(0x2192)) + " (" + hi.join(", ") + ")",
                    T("The region the viewport meshes (mm): nothing outside it is drawn"));
+        {
+            // Auto scale: on (the default), the numbers of the region grow in the script when a model reaches out of it; off, they are as written
+            const auto sb = settings["set_bounds"].toObject();
+            const bool autoOn = !sb.contains("auto_scale") || sb["auto_scale"].toBool(true);
+            auto c = makeRow(row, T("Auto scale") + "   " + (autoOn ? T("on") : T("off")), QIcon(), "setting", QJsonObject(), "setting:auto_scale");
+            c->setData(COL_NAME, ROLE_LINE, -1);
+            c->setForeground(COL_NAME, autoOn ? QColor(0xee, 0xe8, 0xd5) : kDim);
+            c->setToolTip(COL_NAME, T("On (the default): the region grows in the script when a model reaches out of it, as you move it or type it out.\n"
+                                    "Off: the region is exactly what the script says, and what is outside it is not drawn.  Click to switch."));
+        }
         const auto res = settings["resolution"].toObject(), qual = settings["quality"].toObject();
         settingRow("set_resolution", T("Resolution"), res.contains("value") ? number(res["value"]) : QString("10"),
                    T("Samples per mm: more is a finer picture and a slower one"));
@@ -3614,12 +3675,19 @@ QJsonObject ScenePanel::handlesTarget(const QJsonObject& imp, int part) const
 
 namespace {
 
-// The gizmo's line under a shape's definition (the numbers its arrows, rings and knobs drag; `mode` is when the gizmo is
-// shown: 'click' (the default, not written), 'never' or 'always')
-QString gizmoLine(const QString& var, const QString& mode = "click")
+// The gizmo's statement under a shape's definition (the numbers its arrows, rings and knobs drag; `mode` is when the gizmo is
+// shown: 'click' (the default, not written), 'never' or 'always').  Laid out as the arguments of an operation are: one named argument to a
+// line, so that each is read and changed where it stands.  The first line is not indented here (the caller puts `indent` before it)
+QString gizmoLine(const QString& var, const QString& mode = "click", const QString& indent = QString())
 {
-    return var + " = handles(" + var + ", move=(var(0), var(0), var(0)), rotate=(var(0), var(0), var(0)), "
-                 "scale=(var(1), var(1), var(1))" + (mode == "click" ? QString() : ", mode='" + mode + "'") + ")";
+    const QString in = indent + "    ";
+    return var + " = handles(\n" +
+           in + var + ",\n" +
+           in + "move=(var(0), var(0), var(0)),\n" +
+           in + "rotate=(var(0), var(0), var(0)),\n" +
+           in + "scale=(var(1), var(1), var(1)),\n" +
+           (mode == "click" ? QString() : in + "mode='" + mode + "',\n") +
+           indent + ")";
 }
 
 }   // anonymous namespace
@@ -4030,7 +4098,28 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
         const auto c = h["call"].toArray();     // [line, col, end line, end col]
         if (c.size() != 4) return;
         const int L = c[2].toInt() - 1, col = c[3].toInt() - 1;     // (before the ")")
-        edits << TextEdit{L, col, L, col, ", mode=" + quoted};
+        if (c[0].toInt() == c[2].toInt())
+        {
+            edits << TextEdit{L, col, L, col, ", mode=" + quoted};
+            return;
+        }
+        // (a call laid out over lines, as FielDes writes it: the argument is a line of its own, before the ")" -- after the comma of the one
+        // before it, or with that comma put in when the call was written without one)
+        const QString closing = lineText(L).left(col);
+        int ll = L, cc = col;
+        QChar last;
+        while (ll >= 0)
+        {
+            const QString line = lineText(ll).left(cc);
+            int k = int(line.size()) - 1;
+            while (k >= 0 && line[k].isSpace()) --k;
+            if (k >= 0) { last = line[k]; cc = k + 1; break; }
+            if (--ll >= 0) cc = int(lineText(ll).size());
+        }
+        if (last == ',' || ll < 0)
+            edits << TextEdit{L, col, L, col, "    mode=" + quoted + ",\n" + closing};
+        else
+            edits << TextEdit{ll, cc, ll, cc, ",\n" + closing + "    mode=" + quoted};
     };
 
     if (hasHandles && h["has_numbers"].toBool())
@@ -4041,12 +4130,12 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     {
         // (a handles() line without numbers to drag: its line becomes the gizmo's)
         const int e = h["end_line"].toInt() - 1;
-        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next)};
+        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent)};
     }
     else
     {
         const QString t = lineText(after);
-        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next)};
+        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent)};
     }
     imports.handles = true;
     return true;
@@ -5364,6 +5453,11 @@ void ScenePanel::onItemClicked(QTreeWidgetItem* row, int column)
         if (it["kind"].toString() == "import") reimport(it);
         return;
     }
+    if (type == "setting" && row->data(COL_NAME, ROLE_KEY).toString() == "setting:auto_scale")
+    {
+        toggleAutoScale();
+        return;
+    }
     // Ctrl or Shift: the selection grew or shrank (the tree did that itself, onSelectionChanged lit the shapes up);
     // the editor and the camera stay where they are
     if (mods & (Qt::ControlModifier | Qt::ShiftModifier)) return;
@@ -6037,7 +6131,7 @@ void ScenePanel::prepareSelection()
             // (a handles() line without numbers: its line becomes the gizmo's)
             const auto h = t["handles"].toObject();
             const int e = h["end_line"].toInt() - 1;
-            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode)};
+            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent)};
             if (!block.isEmpty())
                 edits << TextEdit{b, int(lineText(b).size()), b, int(lineText(b).size()), "\n" + block};
         }
@@ -6047,7 +6141,7 @@ void ScenePanel::prepareSelection()
             const int after = hasExposed ? t["exposed"].toObject()["end_line"].toInt() - 1 : b;
             QString text;
             if (!block.isEmpty()) text += "\n" + block;
-            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode);
+            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent);
             const QString last = lineText(after);
             edits << TextEdit{after, int(last.size()), after, int(last.size()), text};
         }

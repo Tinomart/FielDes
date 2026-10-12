@@ -55,7 +55,7 @@ Settings Settings::defaultSettings()
 bool Settings::operator==(const Settings& other) const
 {
     return min == other.min && max == other.max &&
-           res == other.res && quality == other.quality;
+           res == other.res && quality == other.quality && autoScale == other.autoScale;
 }
 
 bool Settings::operator!=(const Settings& other) const

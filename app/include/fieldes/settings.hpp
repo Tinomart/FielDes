@@ -55,6 +55,10 @@ struct Settings
     float res;
     float quality;
 
+    /*  view.set_bounds(..., auto_scale=True), the default: the region follows the models (the script's numbers are rewritten as they reach out of
+     *  it), and every shape that has no resolution of its own is meshed at the scene's resolution scaled by its size next to the region  */
+    bool autoScale = true;
+
     bool operator==(const Settings& other) const;
     bool operator!=(const Settings& other) const;
 };

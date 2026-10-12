@@ -71,8 +71,8 @@ def completion_info():
 
     for name in ('set_bounds', 'set_resolution', 'set_quality'):
         out.append('member\tview\t' + name)
-    out.append('tip\tset_bounds\tview.set_bounds([xmin, ymin, zmin], [xmax, ymax, zmax])'
-               '  --  render region')
+    out.append('tip\tset_bounds\tview.set_bounds([xmin, ymin, zmin], [xmax, ymax, zmax], auto_scale=True)'
+               '  --  render region; it grows in the script when a model reaches out of it, unless auto_scale=False')
     out.append('tip\tset_resolution\tview.set_resolution(res)  --  voxels per unit')
     out.append('tip\tset_quality\tview.set_quality(q)  --  mesh accuracy (1-10)')
     return out

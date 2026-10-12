@@ -561,7 +561,12 @@ def outline_json(arg):
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             fn = A._call_name(stmt.value)
             if fn.startswith('view.') and A._short_name(fn) in A.SETTINGS_FUNCS:
-                settings[A._short_name(fn)] = {'line': line, 'end_line': end, 'span': A._span(stmt), 'text': src.segment(stmt)}
+                entry = {'line': line, 'end_line': end, 'span': A._span(stmt), 'text': src.segment(stmt)}
+                if A._short_name(fn) == 'set_bounds':
+                    # (auto_scale, on unless the call says False: the region grows in the script when a model reaches out of it)
+                    entry['auto_scale'] = not any(kw.arg == 'auto_scale' and isinstance(kw.value, ast.Constant) and kw.value.value is False
+                                                  for kw in stmt.value.keywords)
+                settings[A._short_name(fn)] = entry
                 continue
 
         # --- imports

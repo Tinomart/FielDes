@@ -570,10 +570,15 @@ protected:
     /*  The edits making `it` the region of interest; false if it has no
      *  known extent  */
     bool roiEdits(const QJsonObject& it, QList<TextEdit>& edits) const;
-    /*  The render region grows to hold the models that are new in the scene (those whose keys `before` does not have), when any of
-     *  them reaches out of it: view.set_bounds is rewritten (or added) with whole numbers and a little room  */
-    void growRegion(const QSet<QString>& before);
-    QSet<QString> m_unfitted;       // (models that reach out of the region but could not be fitted yet: the region of the script is not known until its run has set it)
+    /*  Auto scale (view.set_bounds(..., auto_scale=True), the default): after every run, when a model reaches out of the render region,
+     *  the numbers of view.set_bounds are rewritten in the script -- live, as the model is dragged or typed out -- with whole numbers and
+     *  a little room (the line is added when the script has none).  The region only grows.  Off (auto_scale=False): it is what is written  */
+    void fitRegion();
+    QString m_lastRegionEdit;
+    bool m_regionFitted = false;       // (the first scene of a file has been seen: from then on the region may also shrink)
+    QElapsedTimer m_regionEditClock;
+    /*  The Auto scale row of the render settings: writes (or takes out) `auto_scale=False` in the view.set_bounds line  */
+    void toggleAutoScale();
     bool visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit>& edits) const;
     QJsonObject itemForVar(const QString& var) const;
     void focusOn(const QJsonObject& it);

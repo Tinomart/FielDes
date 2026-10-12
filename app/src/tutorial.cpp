@@ -906,7 +906,7 @@ void Tutorial::buildSteps()
         s.title = T("The gizmo");
         s.text = T("A selected model has a gizmo. Drag an arrow to move the model.");
         s.hint = T("The gizmo is a line of the script too (handles): its numbers change as you drag. Or press Show me.");
-        s.code = linesWith("handles\\(");
+        s.code = linesWith("handles\\(|^\\s+(move|rotate|scale)=\\(");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.closeRows = true;
@@ -1354,7 +1354,7 @@ void Tutorial::buildSteps()
         };
         s.point = [this] { QPoint p; return m_view->handleGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
         s.done = [this] {
-            static const QRegularExpression re(R"(^anchor = handles\(anchor, move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
+            static const QRegularExpression re(R"(^anchor = handles\(\s*anchor,\s*move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
                                                QRegularExpression::MultilineOption);
             const auto m = re.match(m_editor->getScript());
             return m.hasMatch() && (std::abs(m.captured(1).toDouble()) + std::abs(m.captured(2).toDouble()) + std::abs(m.captured(3).toDouble())) > 1e-6;

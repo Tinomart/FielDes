@@ -57,15 +57,20 @@ static PyObject* set_quality(PyObject* self, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-static PyObject* set_bounds(PyObject* self, PyObject* args) {
+static PyObject* set_bounds(PyObject* self, PyObject* args, PyObject* kwargs) {
     double xmin, ymin, zmin, xmax, ymax, zmax;
-    if (!PyArg_ParseTuple(args, "(ddd)(ddd)", &xmin, &ymin, &zmin,
-                          &xmax, &ymax, &zmax))
+    int auto_scale = 1;         // (the region grows in the script when a model reaches out of it: FielDes does that; the number is the script's)
+    static const char* kwlist[] = {"lo", "hi", "auto_scale", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "(ddd)(ddd)|p", const_cast<char**>(kwlist), &xmin, &ymin, &zmin,
+                                     &xmax, &ymax, &zmax, &auto_scale))
     {
-        // The error flag is set by PyArg_ParseTuple
+        // The error flag is set by PyArg_ParseTupleAndKeywords
         return NULL;
     }
-    PyObject_SetAttrString(self, "__bounds", args);
+    PyObject* bounds = Py_BuildValue("((ddd)(ddd))", xmin, ymin, zmin, xmax, ymax, zmax);
+    PyObject_SetAttrString(self, "__bounds", bounds);
+    Py_XDECREF(bounds);
+    PyObject_SetAttrString(self, "__auto_scale", auto_scale ? Py_True : Py_False);
     Py_RETURN_NONE;
 }
 
@@ -229,7 +234,7 @@ static PyMethodDef host_methods[] = {
     {"__retune", retune_func, METH_VARARGS, "Gives a variable of the run another number"},
     {"set_resolution", set_resolution, METH_VARARGS, "Sets render resolution"},
     {"set_quality", set_quality, METH_VARARGS, "Sets render quality"},
-    {"set_bounds", set_bounds, METH_VARARGS, "Sets render bounds"},
+    {"set_bounds", reinterpret_cast<PyCFunction>(reinterpret_cast<void(*)(void)>(set_bounds)), METH_VARARGS | METH_KEYWORDS, "Sets render bounds"},
     {"__var", var_func, METH_VARARGS, "Constructs a free variable"},
     {"partial_scene", partial_scene, METH_VARARGS, "Gives the model tree what a running script has made so far"},
     {"partial_shapes", partial_shapes, METH_VARARGS, "Gives the viewport what a running script has shown so far"},
@@ -759,6 +764,7 @@ void Interpreter::evaluate(QString script, bool resuming)
         PyObject_SetAttrString(host_mod, "__resolution", Py_None);
         PyObject_SetAttrString(host_mod, "__quality", Py_None);
         PyObject_SetAttrString(host_mod, "__bounds", Py_None);
+        PyObject_SetAttrString(host_mod, "__auto_scale", Py_True);
 
         // (no variable has been asked for by a key yet in this run, and the kernel knows the number of none)
         libfive::DefaultVars::clear();
@@ -1095,6 +1101,13 @@ void Interpreter::evaluate(QString script, bool resuming)
         }
         Py_XDECREF(qua);
 
+        {
+            // (auto scale: on unless view.set_bounds(..., auto_scale=False) said otherwise)
+            PyObject* scale = PyObject_GetAttrString(host_mod, "__auto_scale");
+            out.settings.autoScale = !(scale && scale == Py_False);
+            Py_XDECREF(scale);
+            PyErr_Clear();
+        }
         auto bounds = PyObject_GetAttrString(host_mod, "__bounds");
         if (bounds != Py_None) {
             double xmin, ymin, zmin, xmax, ymax, zmax;
@@ -1226,6 +1239,10 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
         auto qua = PyObject_GetAttrString(host_mod, "__quality");
         if (qua && qua != Py_None) { const double q = PyFloat_AsDouble(qua); if (!PyErr_Occurred()) out.settings.quality = q; }
         Py_XDECREF(qua);
+        PyErr_Clear();
+        PyObject* scale = PyObject_GetAttrString(host_mod, "__auto_scale");
+        out.settings.autoScale = !(scale && scale == Py_False);
+        Py_XDECREF(scale);
         PyErr_Clear();
         auto bounds = PyObject_GetAttrString(host_mod, "__bounds");
         if (bounds && bounds != Py_None)
