@@ -77,7 +77,7 @@ can **drag a point onto an operation** to put it in the place of a position writ
 (`distance_to_point((5, 5, 5))` → `distance_to_point(anchor)`).
 
 A **surface** is the zero set of a field with no body behind it: `plane(point, normal)`, `sphere_surface(radius, center)`,
-`cylinder_surface(radius, axis, center)`, `wave_surface(amplitude, period, axis, height)`. It is drawn as a thin sheet,
+`cylinder_surface(radius, axis, center)`, `wave_surface(amplitude, period, axis, height)`. It is drawn as the sheet itself (one layer of triangles, no thickness),
 and the right-click menu makes them (*New surface*). A surface is a field like any other: `distance_to_surface(sheet)`,
 or `lattice_surface_conform(sheet, ...)` for a lattice that follows it.
 

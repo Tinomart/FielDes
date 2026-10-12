@@ -34,11 +34,18 @@ std::unique_ptr<Contours> Contours::render(
         es.emplace_back(Evaluator(t));
     }
 
+    return render(es.data(), r, settings);
+}
+
+std::unique_ptr<Contours> Contours::render(
+        Evaluator* es, const Region<2>& r,
+        const BRepSettings& settings)
+{
     // Create the quadtree on the scaffold
-    auto xtree = DCWorkerPool<2>::build(es.data(), r, settings);
+    auto xtree = DCWorkerPool<2>::build(es, r, settings);
 
     // Abort early if the cancellation flag is set
-    if (settings.cancel == true) {
+    if (settings.cancel == true || xtree.get() == nullptr) {
         return nullptr;
     }
 

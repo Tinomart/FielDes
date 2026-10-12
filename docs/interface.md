@@ -209,9 +209,9 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 | Icon | Kind | Is |
 |---|---|---|
 | cube, blue | **3D shape** | a body: its field is negative inside |
-| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn flat in the z = 0 plane |
+| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn as a flat face in the z = 0 plane, with no thickness; pulled by its edges |
 | soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: it has an icon in the viewport (with its name over it) and an eye in the tree, and selecting it opens its [field viewer](#the-field-viewer) |
-| sheet, purple | **surface** | the zero of a field with no body behind it; drawn as a thin sheet |
+| sheet, purple | **surface** | the zero of a field with no body behind it; drawn as the sheet itself, with no thickness |
 | cross, amber | **point** | a point: a dot in the viewport (the middle point of a gizmo), always there while the point is shown (its eye); click the dot to select it, and its full gizmo shows |
 | bars, red | **simulation** | a solved analysis or optimisation |
 | hatched block, tan | **material** | what a part (or a fluid) is made of: `Material(...)`, steel, aluminium, water ...; an analysis is given one (`material=steel`). A model like the others: it is in the tree, and dragged onto an analysis it becomes its `material=` (or `fluid=`) |

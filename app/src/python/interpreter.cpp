@@ -1396,6 +1396,13 @@ void Interpreter::recordShape(
             }
         }
         {
+            // (a 2D shape is drawn as its face in the plane z = 0, flat: see fieldes.stdlib.points.displayed)
+            PyObject* flat = PyObject_GetAttrString(obj, "_flat2d");
+            shape->setFlat(flat && PyObject_IsTrue(flat) == 1);
+            Py_XDECREF(flat);
+            PyErr_Clear();
+        }
+        {
             // (a point is not painted: its gizmo shows where it is)
             PyObject* kind = PyObject_GetAttrString(obj, "_kind");
             if (kind && PyUnicode_Check(kind) && std::string(PyUnicode_AsUTF8(kind)) == "point")

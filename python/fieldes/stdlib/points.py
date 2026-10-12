@@ -11,8 +11,8 @@ wherever a field does: thicken(s, 1) makes it a wall, lattice_surface_conform(s,
 
 What is drawn for each kind of model (Shape._display calls displayed() below):
     a 3D shape and a simulation   as they are
-    a 2D shape (no z)             flat, in the z = 0 plane (a thin slab: it has no height)
-    a surface                     a thin sheet
+    a 2D shape (no z)             its face in the z = 0 plane: flat, a sheet with no thickness (it has no height)
+    a surface                     the sheet itself, with no thickness (the zero set of its field, meshed as it is)
     a point                       a dot, the middle point of a gizmo (click it to select the point: its gizmo shows)
     a field                       nothing in the viewport: selected in the model tree it is shown by the section viewer,
                                   which colours a plane through the render region by the field (move the plane to see
@@ -47,12 +47,6 @@ def _view():
     else:
         lo, hi = (-10.0, -10.0, -10.0), (10.0, 10.0, 10.0)
     return res, lo, hi
-
-
-def _eps():
-    ''' Half the thickness of what is drawn for something that has none: about a voxel of the render '''
-    res, _, _ = _view()
-    return 1.0 / res
 
 
 def _as(source, tree):
@@ -148,7 +142,8 @@ class Surface(Shape):
         self._kind = 'surface'                  # (an instance attribute: it goes with the surface through gizmo() and the like)
 
     def _display(self):
-        return _as(self, abs(self) - _eps())
+        # The field itself: the mesher finds where it is zero, and that is the sheet -- one layer of triangles, no thickness
+        return _as(self, self)
 
 
 def point(x=0.0, y=0.0, z=0.0):
@@ -191,7 +186,10 @@ def displayed(shape):
     ''' What FielDes draws for a shape (see the top of this file) '''
     kind = kind_of(shape)
     if kind == 'profile':
-        return _as(shape, shape.max(abs(Shape.Z()) - _eps()))
+        # The same field: the app meshes it as the face where it is negative, in the plane z = 0 (libfive Mesh::renderFlat), not as a body
+        out = _as(shape, shape)
+        out._flat2d = True
+        return out
     if kind == 'field':
         # A field is not a body: nothing of it is drawn in the viewport.  A displayed field has an icon, which opens the field viewer: it shows
         # the field at every point of a plane inside the field's bounds

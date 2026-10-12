@@ -1882,14 +1882,15 @@ void View::mousePressEvent(QMouseEvent* event)
             // (a part in the gizmo mode is moved by the gizmo and a locked one not at all: only its
             // own surfaces, made of numbers that can change, are pulled)
             // (and with several shapes selected nothing is pulled by its surface: they only have the gizmo)
-            if (picked && !press_ctrl && selectedShapeCount() < 2 && drag_target->nativeDragOk())
+            QVector3D flat_edge;
+            if (picked && !press_ctrl && selectedShapeCount() < 2 && pullableAt(drag_target, event->pos(), &flat_edge))
             {
                 this->setCursor(Qt::ClosedHandCursor);
                 emit(dragStart());
                 drag_target->setGrabbed(true);
                 drag_valid = true;
 
-                drag_start = toModelPos(event->pos());
+                drag_start = drag_target->isFlat() ? flat_edge : toModelPos(event->pos());
                 auto df = drag_target->dragFrom(drag_start);
                 drag_eval.first.reset(df.first);
                 drag_eval.second = df.second;
@@ -2750,7 +2751,7 @@ void View::checkHoverTarget(QPoint pos)
     // one's colour -- is nothing: every other place that reads the picture says so, and this one read past the list and wrote to what
     // it found there, which corrupted the heap while the mouse moved over a model that was still being made)
     auto target = (picked && int(picked) <= shapes.size()) ? shapes.at(picked - 1) : nullptr;
-    if (target && selectedShapeCount() < 2 && target->nativeDragOk())
+    if (target && selectedShapeCount() < 2 && pullableAt(target, pos))
     {
         if (hover_target)
         {
@@ -3993,7 +3994,20 @@ bool View::overDraggableSurface(QPoint pos) const
 {
     if (selectedShapeCount() >= 2 || !pick_img.valid(pos)) return false;
     const auto picked = pick_img.pixel(pos) & 0xFFFFFF;
-    return picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->nativeDragOk();
+    return picked && int(picked) <= shapes.size() && pullableAt(shapes.at(picked - 1), pos);
+}
+
+bool View::pullableAt(const Shape* s, QPoint pos, QVector3D* edge) const
+{
+    if (!s || !s->nativeDragOk()) return false;
+    if (!s->isFlat()) return true;
+    // A flat face has no surface inside it: what is pulled is its nearest edge, when that is close to the cursor
+    QVector3D p = toModelPos(pos);
+    if (!s->flatEdgeFrom(p)) return false;
+    const QPoint at = screenPoint(p);
+    if ((at - pos).manhattanLength() > 14) return false;
+    if (edge) *edge = p;
+    return true;
 }
 
 View::GizmoGrip View::gizmoAt(QPoint pos) const

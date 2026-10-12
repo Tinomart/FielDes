@@ -120,6 +120,17 @@ public:
     bool noPaint() const { return no_paint; }
 
     /*
+     *  A 2D shape (fieldes.stdlib.points.displayed) is FLAT: its field does not depend on z, and what is drawn is its face in the plane
+     *  z = 0 -- a sheet with no thickness (libfive::Mesh::renderFlat), the same as a surface with no curvature.  There is no surface to
+     *  pull inside the face: a drag that starts on it pulls its nearest edge (flatEdgeFrom)
+     */
+    void setFlat(bool on) { m_flat = on; }
+    bool isFlat() const { return m_flat; }
+
+    /*  The point of the outline of a flat shape that is nearest to `p` (in the plane z = 0): `p` is moved onto it.  False when there is none  */
+    bool flatEdgeFrom(QVector3D& p) const;
+
+    /*
      *  A point (fieldes.stdlib.points.Point) is drawn as a dot: the middle point of a gizmo, wherever it is and whatever its gizmo's mode.
      *  Click the dot and the point is selected (its full gizmo shows, as that of any model).  `pos` is where it is when the library could tell
      *  (`hasPos`); once it has a gizmo, the gizmo's pivot is where it is, and follows a drag
@@ -574,6 +585,8 @@ protected:
     bool hover=false;
     bool selected=false;
     bool no_paint=false;
+    bool m_flat=false;
+    std::map<libfive::Tree::Id, float> run_flat_vars;     // (the numbers a flat face is meshed with: those of the moment the render started)
     float opacity=1.0f;
     int source_line=-1;
 

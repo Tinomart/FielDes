@@ -307,6 +307,26 @@ std::set<libfive::Tree::Id> Shape::gizmoVars() const
     return out;
 }
 
+bool Shape::flatEdgeFrom(QVector3D& p) const
+{
+    libfive::JacobianEvaluator e(tree, vars);
+    for (int i = 0; i < 12; ++i)
+    {
+        const Eigen::Vector3f at(p.x(), p.y(), 0.0f);
+        const auto vt = e.valueAndPush(at);
+        const auto g = e.deriv(at, *vt.second);
+        const double g2 = double(g.x()) * g.x() + double(g.y()) * g.y();
+        if (!(g2 > 1e-12)) return false;
+        if (std::fabs(vt.first) < 1e-5f) break;
+        const double step = double(vt.first) / g2;
+        p.setX(float(p.x() - step * g.x()));
+        p.setY(float(p.y() - step * g.y()));
+        p.setZ(0.0f);
+    }
+    p.setZ(0.0f);
+    return true;
+}
+
 bool Shape::nativeDragOk() const
 {
     // (locked: the shape is not pulled by its surface; the gizmo's mode does not matter, and the gizmo has priority
@@ -434,6 +454,7 @@ void Shape::measureExtent(const Settings& s)
     search.X = {s.min.x(), s.max.x()};
     search.Y = {s.min.y(), s.max.y()};
     search.Z = {s.min.z(), s.max.z()};
+    if (m_flat) search.Z = {-1e-3f, 1e-3f};         // (a flat shape is in the plane z = 0: its extent is that of its face)
     libfive_region3 out;
     int open = 0;
     // (a search of a few milliseconds: a shape it cannot bound in that time is rendered as it was before)
@@ -2115,6 +2136,7 @@ void Shape::startRender(RenderSettings s)
             const double expected = mesh_verts > 0 ? double(mesh_verts) * (s.div < mesh_div ? 4.0 : 1.0) : 0.0;
             run_heavy = force_low || expected > 150000.0;
         }
+        if (m_flat) run_flat_vars = vars;
         timer.start();
         running = true;
 #if QT_VERSION >= 0x060000
@@ -2516,7 +2538,52 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
 
     static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     auto m = run_step_exact ? exactMeshOf(*run_step_exact, identity, r)
-           : exactCurrent() ? exactMeshIn(r) : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+           : exactCurrent() ? exactMeshIn(r)
+           : m_flat ? libfive::Mesh::renderFlat(tree, run_flat_vars, mesh_region, 0.0, mesh_settings)
+           : libfive::Mesh::render(es.data(), mesh_region, mesh_settings);
+    // A flat face is a few big triangles: a colour read at the vertices only would run across them.  Where it is coloured by a field, the
+    // triangles are cut (at the middles of their edges) until they are about as small as the cells of the render
+    if (m_flat && has_color && m && !m->branes.empty())
+    {
+        const float longest = float(8 * mesh_settings.min_feature);
+        const float longest2 = longest * longest;
+        using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+        auto& verts = m->verts;
+        for (int level = 0; level < 12 && m->branes.size() < 2000000; level++)
+        {
+            std::map<std::pair<uint32_t, uint32_t>, uint32_t> middles;
+            auto middle = [&](uint32_t a, uint32_t b) {
+                const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+                const auto it = middles.find(key);
+                if (it != middles.end()) return it->second;
+                const uint32_t id = uint32_t(verts.size());
+                verts.push_back(0.5f * (verts[a] + verts[b]));
+                middles.emplace(key, id);
+                return id;
+            };
+            std::vector<Tri, Eigen::aligned_allocator<Tri>> cut;
+            cut.reserve(m->branes.size() * 2);
+            bool any = false;
+            for (const Tri t : m->branes)
+            {
+                const float l = std::max({(verts[t[0]] - verts[t[1]]).squaredNorm(), (verts[t[1]] - verts[t[2]]).squaredNorm(),
+                                          (verts[t[2]] - verts[t[0]]).squaredNorm()});
+                if (l <= longest2)
+                {
+                    cut.push_back(t);
+                    continue;
+                }
+                any = true;
+                const uint32_t m01 = middle(t[0], t[1]), m12 = middle(t[1], t[2]), m20 = middle(t[2], t[0]);
+                cut.push_back(Tri(t[0], m01, m20));
+                cut.push_back(Tri(m01, t[1], m12));
+                cut.push_back(Tri(m20, m12, t[2]));
+                cut.push_back(Tri(m01, m12, m20));
+            }
+            if (!any) break;
+            m->branes = std::move(cut);
+        }
+    }
     if (std::getenv("FIELDES_TIMING") && s.div == 0 && m && (own_render || m->verts.empty()))
     {   // (a shape meshed on its own, or one that came out empty)
         fprintf(stderr, "[fieldes] shape of line %d: %s, %zu vertices\n", source_line + 1,
@@ -2846,7 +2913,7 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
                   region.lower.x(), region.lower.y(), region.lower.z(),
                   region.upper.x(), region.upper.y(), region.upper.z(),
                   res, double(s.settings.quality), int(s.alg));
-    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + buf;
+    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + buf + (m_flat ? "|flat" : "");
 }
 
 bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const

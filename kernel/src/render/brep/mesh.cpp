@@ -7,13 +7,18 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
+#include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <fstream>
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <manifold/polygon.h>
+
 #include "libfive/eval/evaluator.hpp"
 
 #include "libfive/render/brep/mesh.hpp"
+#include "libfive/render/brep/contours.hpp"
 #include "libfive/render/brep/dual.hpp"
 #include "libfive/render/brep/region.hpp"
 #include "libfive/render/brep/settings.hpp"
@@ -120,6 +125,113 @@ std::unique_ptr<Mesh> Mesh::render(
 
     if (settings.progress_handler) {
         settings.progress_handler->finish();
+    }
+    return out;
+}
+
+std::unique_ptr<Mesh> Mesh::renderFlat(
+        const Tree& t, const std::map<Tree::Id, float>& vars,
+        const Region<3>& r, double z, BRepSettings& settings)
+{
+    auto out = std::make_unique<Mesh>();
+    if (!(z >= r.lower.z() && z <= r.upper.z())) {
+        return out;
+    }
+
+    // The face is cut by a box a cell and a half inside the region, so that a
+    // shape that reaches the region's edge still has a closed outline
+    const double inset = 1.5 * settings.min_feature;
+    const double lo[2] = {r.lower.x() + inset, r.lower.y() + inset};
+    const double hi[2] = {r.upper.x() - inset, r.upper.y() - inset};
+    if (!(hi[0] > lo[0] && hi[1] > lo[1])) {
+        return out;
+    }
+    auto slab = [&](const Tree& axis, int a) {
+        return Tree::binary(Opcode::OP_SUB,
+            Tree::unary(Opcode::OP_ABS,
+                Tree::binary(Opcode::OP_SUB, axis, Tree(0.5 * (lo[a] + hi[a])))),
+            Tree(0.5 * (hi[a] - lo[a])));
+    };
+    const Tree clipped = Tree::binary(Opcode::OP_MAX, t,
+        Tree::binary(Opcode::OP_MAX, slab(Tree::X(), 0), slab(Tree::Y(), 1)));
+
+    std::vector<Evaluator, Eigen::aligned_allocator<Evaluator>> es;
+    es.reserve(settings.workers);
+    for (unsigned i=0; i < settings.workers; ++i) {
+        es.emplace_back(Evaluator(clipped, vars));
+    }
+
+    if (settings.progress_handler) {
+        // Pool::build, Dual::walk
+        settings.progress_handler->start({1, 1, 1});
+    }
+    const Region<2> plane({r.lower.x(), r.lower.y()}, {r.upper.x(), r.upper.y()},
+                          Region<2>::Perp(z));
+    auto cs = Contours::render(es.data(), plane, settings);
+    if (settings.progress_handler) {
+        settings.progress_handler->finish();
+    }
+    if (cs.get() == nullptr || settings.cancel.load()) {
+        return nullptr;
+    }
+
+    // The outlines (closed: the first point is the last), their points numbered
+    // from the mesh's own vertices
+    std::vector<std::vector<Eigen::Vector2d>> loops;
+    for (const auto& c : cs->contours) {
+        if (c.size() < 4 || c.front() != c.back()) {
+            continue;
+        }
+        std::vector<Eigen::Vector2d> loop;
+        for (size_t i=0; i + 1 < c.size(); ++i) {
+            loop.push_back(c[i].cast<double>());
+        }
+        loops.push_back(std::move(loop));
+    }
+
+    // The outer outline has the most area: if it runs clockwise, every outline
+    // does (the inside is on one side of all of them), and they are turned round
+    auto area = [](const std::vector<Eigen::Vector2d>& p) {
+        double a = 0;
+        for (size_t i=0; i < p.size(); ++i) {
+            const auto& u = p[i];
+            const auto& v = p[(i + 1) % p.size()];
+            a += u.x() * v.y() - v.x() * u.y();
+        }
+        return 0.5 * a;
+    };
+    double biggest = 0;
+    for (const auto& p : loops) {
+        const double a = area(p);
+        if (std::abs(a) > std::abs(biggest)) {
+            biggest = a;
+        }
+    }
+    if (biggest < 0) {
+        for (auto& p : loops) {
+            std::reverse(p.begin(), p.end());
+        }
+    }
+
+    manifold::PolygonsIdx polygons;
+    for (const auto& p : loops) {
+        manifold::SimplePolygonIdx poly;
+        for (const auto& q : p) {
+            poly.push_back({manifold::vec2(q.x(), q.y()), int(out->verts.size())});
+            out->verts.push_back(Eigen::Vector3f(float(q.x()), float(q.y()), float(z)));
+        }
+        polygons.push_back(std::move(poly));
+    }
+    if (!polygons.empty()) {
+        try {
+            for (const auto& tri : manifold::TriangulateIdx(polygons)) {
+                out->branes.push_back(Eigen::Matrix<uint32_t, 3, 1>(
+                    uint32_t(tri.x), uint32_t(tri.y), uint32_t(tri.z)));
+            }
+        } catch (const std::exception&) {
+            // (an outline the triangulation cannot take is not drawn)
+            out->branes.clear();
+        }
     }
     return out;
 }

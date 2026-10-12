@@ -758,6 +758,9 @@ protected:
     /*  Whether the cursor is over a surface that a drag takes (a shape that is not locked and has numbers to pull by), and nothing but one shape is
      *  selected: the gizmo's arrows, rings and knobs are then only hit where they are drawn, so that a drag of a face is not taken for one of them  */
     bool overDraggableSurface(QPoint pos) const;
+    /*  Whether a press at `pos` on `s` pulls one of its surfaces: it has numbers to pull, and where it is a flat 2D shape, `pos` is at its
+        outline (`edge` is the point of the outline that is pulled) -- there is no surface inside a face  */
+    bool pullableAt(const Shape* s, QPoint pos, QVector3D* edge = nullptr) const;
     void drawGizmo(QPainter& painter);
     /*  The points of a set of points (Shape::markers), each as the dot in the middle of a gizmo -- and no handles: they are data  */
     void drawMarkers(QPainter& painter);

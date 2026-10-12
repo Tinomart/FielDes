@@ -30,6 +30,15 @@ public:
         const BRepSettings& settings);
 
     /*
+     *  Render function that re-uses evaluators (which hold the values of the
+     *  tree's variables): es must be a pointer to at least [settings.workers]
+     *  Evaluators.  Returns nullptr if cancel is set partway through
+     */
+    static std::unique_ptr<Contours> render(
+        Evaluator* es, const Region<2>& r,
+        const BRepSettings& settings);
+
+    /*
      *  Saves the contours to an SVG file
      */
     bool saveSVG(const std::string& filename);

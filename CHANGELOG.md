@@ -21,6 +21,13 @@
   (a gyroid is `cell_periodic('gyroid')`). The 3D shapes stand along z, the 2D shapes lie in z = 0; one that stands another way is turned (`rotate_x`, `rotate_y`, `rotate_z`), one that sits elsewhere is moved (`move`).
   **The old names are gone, not aliased** (a beta change): the examples, the docs, the tour, the menus (*New 3D shape*, *New 2D shape*) and the library say the new ones. A script from before needs the names changed.
 
+### A 2D shape is a face, not a thin body
+- **A 2D shape is drawn as what it is: a flat face in the plane z = 0, with no thickness.** It used to be cut out of a thin slab (a tenth of a millimetre or so), which showed edges and a back when you looked at it from the side. The face is made from the shape's own field (its outline is found where the field is
+  zero, the inside is filled with flat triangles), so a hole is a hole and an offset is an offset; a shape that is coloured by a field has the face cut small enough for the colour. It is a sheet in the same sense as a surface, with no curvature.
+- **A surface is drawn as the sheet itself, too.** It was a layer a voxel thick (the field's absolute value less a little); it is now the zero set of the field, meshed as it is: one layer of triangles.
+- **Pulling a 2D shape pulls its edge.** There is no surface inside a face to take hold of, so a press on a flat shape grabs the part of its outline that is nearest to the cursor (when that is within a few pixels of it), and the numbers behind that edge change -- a rectangle's side, a circle's radius, a hole's wall.
+  Away from the outline a press selects the shape, as it does on any shape that has nothing to pull there.
+
 ### Dragging a surface moves that surface and nothing else
 - **A face you drag is the only thing that changes.** Dragging a cylinder's wall (or a hole's, or a sphere's) changes its **radius** and leaves its **centre** where it is; dragging one face of a box moves that face and the opposite one stays; dragging the top of a cylinder leaves its bottom. The same
   for the faces of an imported part: its hole walls keep their axes. (The centre of a round feature has a heavy weight in the drag's solver; it only moves when nothing else can take the drag.)
