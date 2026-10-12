@@ -24,7 +24,7 @@ Right-click empty space:
 
 | Menu | Entry | What it makes |
 |---|---|---|
-| **New 2D shape** | `sketch` | a sketch. With **three or more points selected** it is made from them, in the order you selected them; with none selected it makes four new points and a sketch of them |
+| **New 2D shape** | `sketch` | a sketch. With **three or more points selected** it is made from them, in the order you selected them; with **a surface selected** it is the outline of that surface (see below); with none selected it makes four new points and a sketch of them |
 | **New 1D shape** | `polyline` | a set of lines. With **two or more points selected**, from them; with none, three new points |
 | **New 1D shape** | `spline` | a smooth curve, the same way |
 
@@ -43,6 +43,19 @@ like any other, and as a field it is the distance to it.
 numbers in the script are changed, in the same step that makes the sketch, so one undo takes both back.
 
 The **selection rectangle** (drag on empty space) selects every kind of model: shapes, points, point sets and fields.
+
+## A sketch from a surface
+
+Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **New 2D shape → sketch**: the line written is `sketch(top)`, and what you get is a
+**2D shape of that surface's outline**.
+
+- **A flat face is exact.** The sketch lies in the plane of the face and has the outline of the face -- its corners where its edges meet, a hole in it as a hole in the sketch. Its edges are found against the part's own field
+  (where it stops being zero on the face), so they are right to about a ten-thousandth of the size of the face, not to a step of the selection.
+- **A surface that is not flat is projected.** The plane is the one through the middle of the surface, facing the way the surface faces on average, and the sketch is the outline of the surface seen from there -- along that
+  direction. A note in the output says so, and how far from the plane the surface reaches. The outline then follows the selection to within a step of its walk.
+- It is made from the surface and **moves with it** (drag the part, or change a number it is made from, and it is made again); it has no points of its own to drag. Like any 2D shape it goes into `extrude`, `path_extrude`, `offset` and the field
+  functions: `extrude(sketch(top), 0, 5)` is a plate on the face. `sketch(surface)` also works on a surface a script made with `select_surface`; the whole-surface selections of `surface_from_bodies` have no points to take an
+  outline from.
 
 ## Editing them
 

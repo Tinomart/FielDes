@@ -141,7 +141,8 @@ _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
 
 # What the entries that are made of the models selected say when the mouse rests on them (the shape the model tree has: points, a curve, a 2D shape)
 FROM_SELECTION = {
-    'sketch': tr('A 2D shape from points.  With points selected: made from them, in the order you selected them.  With none: four new points to drag.  '
+    'sketch': tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
+                 'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
                  'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
     'polyline': tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                    'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
@@ -536,17 +537,20 @@ def _body_first(body, info, others):
 
 
 def _from_selection(name, models, values):
-    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), or
-        a curve a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own template then, with new
-        points) '''
+    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), a
+        curve or a surface a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own template then,
+        with new points) '''
     points = [m['name'] for m in models if m.get('type') == 'point']
     curves = [m['name'] for m in models if m.get('type') == 'curve']
+    surfaces = [m['name'] for m in models if m.get('type') == 'surface']
     profiles = [m['name'] for m in models if m.get('type') == 'profile']
     if name == 'sketch':
         if len(points) >= 3:
             return 'sketch([%s])' % ', '.join(points)
         if curves and not points:
             return 'sketch(%s)' % curves[0]
+        if surfaces and not points and not curves:
+            return 'sketch(%s)' % surfaces[0]
     elif name in ('polyline', 'spline'):
         if len(points) >= 2:
             return '%s([%s])' % (name, ', '.join(points))

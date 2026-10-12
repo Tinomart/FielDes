@@ -55,15 +55,69 @@ class Sketch(Shape):
         return out
 
 
+class SurfaceSketch(Shape):
+    ''' A 2D shape made from a surface (see `sketch`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
+        numbers each, u x v the way the surface faces --, .profile2d the same field in the coordinates of that plane, .flat whether the surface is flat (it is projected
+        onto the plane when it is not), .away how far the surface is from the plane at most, .loops the outline as [(polygon, hole)] with the points as (s, t) '''
+    _kind = 'profile'
+    _no_gizmo = True                # (it follows the part it was picked on)
+
+    def _display(self):
+        # Drawn from its field, as any 2D shape is, in its plane
+        out = C.owned(self)
+        for name, v in self.__dict__.items():
+            if name != 'ptr':
+                out.__dict__[name] = v
+        out._kind = 'profile'
+        out._flat2d = True
+        o, u, v = self.plane
+        out._flat_frame = tuple(tuple(Shape.wrap(float(c)) for c in axis) for axis in (o, u, v))
+        return out
+
+
 def _polygon_field(loop, frame):
     return C.owned(C.polygon_field(loop, frame))
+
+
+def _from_surface(selection):
+    ''' The 2D shape a surface picked on a part makes (see `sketch`) '''
+    from fieldes.stdlib import surface_sketch
+    plane, loops, flat, away = surface_sketch.outline_of(selection)
+
+    def field(frame):
+        out = None
+        for polygon, hole in loops:
+            if hole:
+                continue
+            part = C.polygon_field(polygon, frame)
+            out = part if out is None else out.min(part)
+        for polygon, hole in loops:
+            if hole:
+                out = out.max(C.polygon_field(polygon, frame) * -1.0)          # (what is inside a hole is outside)
+        return out
+
+    made = C.owned(field(plane), SurfaceSketch)          # (the field is held for the whole call: see curves.owned)
+    made.plane, made.profile2d, made.flat, made.away, made.loops = plane, C.owned(field(None)), flat, away, loops
+    made.surface = selection
+    made._no_handles = True                  # (no faces of its own to pull: it is made from the surface)
+    if not flat:
+        print('sketch: the surface is not flat (it is up to %.3g mm from the plane through its middle): its outline is projected onto that plane, along the way it '
+              'faces on average' % away)
+    return made
 
 
 def sketch(source, smooth=False):
     ''' The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
         through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
         smooth=False): False, a corner (a hard edge: the default), or True, a spline point.  A spline point leaves in the direction the rotation of its gizmo
-        says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty '''
+        says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty.
+
+        `source` can also be a SURFACE picked on a part (`select_surface`): the 2D shape of its outline -- the outline of the face, holes included, in the plane
+        of the face (exact for a flat face), or, for a surface that is not flat, of its projection onto the plane through its middle, along the way it faces on
+        average.  It is made from the surface and moves with it: it has no points of its own to drag '''
+    from fieldes.stdlib.selection import SurfaceSelection
+    if isinstance(source, SurfaceSelection):
+        return _from_surface(source)
     if isinstance(source, C.Curve):
         items = list(source.points)
         smooth = bool(smooth) or source.smooth          # (a curve that is a spline is a spline as the outline too)

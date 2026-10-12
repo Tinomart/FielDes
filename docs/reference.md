@@ -1059,6 +1059,12 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 A 2D shape made of points (see `sketch`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
 .smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v)
 
+### `SurfaceSketch`
+
+A 2D shape made from a surface (see `sketch`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
+numbers each, u x v the way the surface faces --, .profile2d the same field in the coordinates of that plane, .flat whether the surface is flat (it is projected
+onto the plane when it is not), .away how far the surface is from the plane at most, .loops the outline as [(polygon, hole)] with the points as (s, t)
+
 ### `extrude(shape, a, b)`
 
 A 2D shape pulled into a solid: the part of space between the distances `a` and `b` from its plane, along the plane's normal (the plane is
@@ -1079,7 +1085,11 @@ the spline through them
 The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
 through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
 smooth=False): False, a corner (a hard edge: the default), or True, a spline point.  A spline point leaves in the direction the rotation of its gizmo
-says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty
+says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty.
+
+`source` can also be a SURFACE picked on a part (`select_surface`): the 2D shape of its outline -- the outline of the face, holes included, in the plane
+of the face (exact for a flat face), or, for a surface that is not flat, of its projection onto the plane through its middle, along the way it faces on
+average.  It is made from the surface and moves with it: it has no points of its own to drag
 
 ## Measuring a body
 
