@@ -223,12 +223,6 @@ takes a few seconds and is cached next to it.
 | [`23_lattice_gallery.py`](examples/23_lattice_gallery.py) | One lattice of every kind in a simple body of its own: struts, TPMS, a honeycomb, foams around random points, a graded wall, a cell map, a conformal layer |
 | [`24_app_bracket_maker.py`](examples/24_app_bracket_maker.py) | A FielDes app: a form for someone who never opens the editor (a model file, a mode, a wall thickness, where to save), exported as one `.fieldesapp` |
 
-<p align="center">
-  <img src="docs/images/analysis.png" width="900" alt="A cantilever whose load is spread along its top face in proportion to x: the von Mises stress on the beam, with the result card">
-</p>
-
-`python scripts/run_example.py examples/05_static_analysis.py` runs any script without the application.
-
 ## Documentation
 
 | | |
