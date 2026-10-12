@@ -6025,7 +6025,8 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
             if (std::getenv("FIELDES_OUTLINE_LOG"))
                 std::fprintf(stderr, "[outline] at %d,%d: piece %d, depth of the line %.5f, of what is drawn there %.5f, picked %u\n", pos.x(), pos.y(), piece,
                              double(n.z()), double(pickZ), unsigned(picked));
-            if (picked && pickZ < n.z() - 0.003f) found = false;
+            // (the line of a curve is pressed through the body it runs in: the path of a sweep is drawn through the middle of it, so the sweep is always nearer than the line)
+            if (picked && pickZ < n.z() - 0.003f && !shape->isCurve()) found = false;
         }
     }
     return found;

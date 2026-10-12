@@ -1195,6 +1195,8 @@ double Shape::autoResolution(const Settings& s) const
 
 int Shape::defaultDivFor(const Settings& s)
 {
+    // (a shape that is drawn from the numbers of its points is meshed in a moment: there is no coarse picture to show first, one pass at the finest level is all it needs)
+    if (drawnFromNumbers()) return 0;
     if (!s.autoScale || !m_ext_valid || has_hint || has_result) return s.defaultDiv();
     const QVector3D size = m_ext_hi - m_ext_lo;
     const double L = std::max(size.x(), std::max(size.y(), size.z()));

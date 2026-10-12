@@ -1177,7 +1177,8 @@ void Editor::onDragEnd()
     if (m_textChangedDuringDrag)
     {
         m_textChangedDuringDrag = false;
-        m_textChangedDebounce.start();                  // (the one run of what the drag wrote)
+        // (the one run of what the drag wrote: at once -- the 250 ms that wait for typing to pause are not for a gesture that has ended)
+        QTimer::singleShot(0, this, [this] { if (!m_dragActive) onTextChangedDebounce(); });
     }
 }
 

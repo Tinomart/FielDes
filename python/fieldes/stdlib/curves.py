@@ -225,7 +225,6 @@ class Curve(Shape):
             # say (the sweep starts at the sketch: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen
             out._ctrl_pos = [tuple(c + s for c, s in zip(expr, shift)) for expr in self._ctrl_pos]
             out.vertices = [tuple(a + s for a, s in zip(v, shift)) for v in self.vertices]
-            out._editable = False               # (a point put on its line would be written where it is seen, not where the numbers are)
         return out
 
 
