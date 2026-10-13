@@ -828,8 +828,9 @@ Linked copies: `instance(shape)`.
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
 (its numbers, its definition, anything it is made of, and the scale of its gizmo) and the copy changes with it.  Where the original is and how it is turned (its gizmo's
 `move` and `rotate`) is NOT followed: the copy starts where the original is, and from then on the two are moved and turned independently.  What a copy has of its own is only WHERE it is: it can be moved and rotated
-(with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs, and its surfaces cannot be dragged, since its shape is the
-original's.  (A copy that is scaled, or whose surfaces are pulled, is another shape: copy the model's statements instead -- Shift+D in FielDes.)
+(with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs.  Its **surfaces can be dragged**, as the original's can, and they are
+**linked**: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the other way
+round.  (A copy that is scaled is another shape: copy the model's statements instead -- Shift+D in FielDes.)
 
 FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
 
@@ -850,8 +851,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 ### `instance(shape)`
 
 A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
-moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  Its surfaces cannot be dragged and it cannot be scaled: its shape is the
-original's.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
+moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  It cannot be scaled: its shape is the original's -- and so are the numbers its
+surfaces are pulled by, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
 locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D)
 
 ## Points and surfaces

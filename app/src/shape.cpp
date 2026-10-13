@@ -930,8 +930,9 @@ bool Shape::nativeDragOk() const
 {
     // (locked: the shape is not pulled by its surface; the gizmo's mode does not matter, and the gizmo has priority
     // where it is shown)
-    // (a linked copy: the numbers in its tree are its original's -- dragging a surface of the copy would change the original too)
-    if (m_locked || m_linked) return false;
+    // (a linked copy has the numbers of its original in its tree: its surfaces are pulled by them, and so the original's are -- the two are one shape, and dragging
+    // either moves both)
+    if (m_locked) return false;
     // (a sweep has no surfaces to pull -- its numbers are the points', which have their own gizmos -- and pulling one meant making and compiling its whole field, in the GUI's
     // thread, when a click that missed a point of the path landed on the tube beside it: seconds to minutes of a window that did not answer)
     if (hasSweep()) return false;
@@ -2825,6 +2826,13 @@ void Shape::draw(const QMatrix4x4& M)
                         1.0 * s, 0.82 * s, 0.42 * s, 1.0f);
             glUniform4f(Shader::basic->uniformLocation("color_add"),
                         0.10 * s, 0.10 * s, 0.05 * s, 0.0f);
+        }
+        else if (is2D())
+        {   // A 2D shape: a very subtle light blue, so that it is told from a body at a glance
+            glUniform4f(Shader::basic->uniformLocation("color_mul"),
+                        0.94 * s, 0.84 * s, 0.85 * s, 1.0f);
+            glUniform4f(Shader::basic->uniformLocation("color_add"),
+                        0.03 * s, 0.21 * s, 0.28 * s, 0.0f);
         }
         else
         {

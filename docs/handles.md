@@ -46,11 +46,11 @@ joins the selection, in the mode it is in. `E` changes each model's own mode, wh
 is selected alone: the viewport shows the shared gizmo until the selection is one model, and then every model has its
 own mode again.
 
-**Several points selected can be scaled and turned evenly.** Select two or more points (Ctrl+click, a Shift range, a rectangle) and their shared gizmo has two rings round the middle of
-them all besides the arrows or the dot: the **gold ring scales** them -- pull it out to spread the points about the middle (every point goes along the line from the middle through
-itself, so the shape keeps its proportions), push it in to bring them together; the factor is shown beside it -- and the **ring in the plane turns** them about the middle (the plane of their
-sketch, or the work plane's while its view is open, else the plane facing the camera); the angle is shown. What changes is the move numbers of each point (its `gizmo(...)`): the points stay
-models of their own, and every sketch or line made of them follows. Points of a sketch stay in its plane.
+**Several points selected are scaled and turned one by one.** Select two or more points (Ctrl+click, a Shift range, a rectangle) and their shared gizmo has two rings round the middle of
+them all besides the arrows or the dot: the **gold ring scales** every point by its own scale -- pull it out to make each one bigger, push it in to make each smaller; the factor is
+shown beside it -- and the **ring in the plane turns** every point by its own rotation (the plane of their sketch, or the work plane's while its view is open, else the plane facing the camera);
+the angle is shown. **The points stay where they are**: the rings change the scale and the rotation numbers of each point's `gizmo(...)`, not the arrangement of the points -- a sketch made of
+them keeps its shape, and a sweep along a line gets thicker or twists at every selected point. Points of a sketch stay in its plane.
 
 **A locked model can be in a selection of several, but then the whole selection cannot be moved or edited.** Select
 them as any models (Ctrl+click, a Shift range, a rectangle): a warning says that *when a locked object is part of a multi

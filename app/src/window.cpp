@@ -965,7 +965,12 @@ Window::Window(Arguments args)
         selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual (a right click in the viewport does it too)"));
         selectAction->setEnabled(false);
         Shortcuts::add(selectAction, "view.workplane-select", {});
-        for (QAction* a : {openAction, newAction, faceAction, selectAction})
+        // S: the symmetry of the drawing on and off (it brings back the number of axes there was); there while the view is open
+        auto symAction = view_menu->addAction(T("Work plane: symmetry on or off"));
+        symAction->setToolTip(T("Turn the symmetry of the drawing on or off: what is drawn is mirrored over a line, and a point can be put on the line"));
+        symAction->setEnabled(false);
+        Shortcuts::add(symAction, "view.workplane-symmetry", {QKeySequence(Qt::Key_S)});
+        for (QAction* a : {openAction, newAction, faceAction, selectAction, symAction})
         {
             a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
             view->addAction(a);
@@ -974,6 +979,7 @@ Window::Window(Arguments args)
         connect(newAction, &QAction::triggered, this, [=] { view->newWorkPlane(); });
         connect(faceAction, &QAction::triggered, this, [=] { view->faceWorkPlane(); });
         connect(selectAction, &QAction::triggered, this, [=] { view->setWorkPlaneMode(0); });
+        connect(symAction, &QAction::triggered, this, [=] { view->toggleWorkPlaneSymmetry(); });
         // (the view says what the plane is: the menu entry, the card and the scene follow it, whoever changed it)
         connect(view, &View::workPlaneStateChanged, this, [=](WorkPlane plane, float step) {
             {
@@ -981,6 +987,7 @@ Window::Window(Arguments args)
                 openAction->setChecked(plane.open);
             }
             selectAction->setEnabled(plane.open);
+            symAction->setEnabled(plane.open);
             panel->setPlane(plane, step);
             panel->setVisible(plane.open);
             if (plane.open) panel->raise();
@@ -1868,6 +1875,26 @@ Window::Window(Arguments args)
         // treegap <hover|click> <text prefix>: the mouse on the gap above a row of the model tree (a hover lights it up; a click starts a section there)
         a->add("treegap", [=](const QString& args){
             const QString what = args.section(' ', 0, 0);
+            // (`moveend` / `clickend`: the circle of the gap after the last row of the tree)
+            if (what.endsWith("end"))
+            {
+                const QPoint at = view->scenePanel()->endGapPoint(this);
+                if (at.isNull()) { std::cerr << "automation: no rows\n"; return; }
+                QWidget* vp = view->scenePanel()->treeViewport();
+                const QPoint pos = vp->mapFrom(this, at);
+                auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                    QMouseEvent e(t, pos, vp->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                    QApplication::sendEvent(vp, &e);
+                    QApplication::processEvents();
+                };
+                send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
+                if (what.startsWith("click"))
+                {
+                    send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+                    send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+                }
+                return;
+            }
             auto row = findRow(args.section(' ', 1));
             if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
             auto tree = row->treeWidget();
@@ -2454,6 +2481,18 @@ Window::Window(Arguments args)
         a->add("viewsize", [=](const QString&){
             std::cerr << "automation: view " << view->width() << "x" << view->height() << "\n";
         });
+        // screenpoint <x> <y> <z>: where a place of the model is in the viewport (its own pixels), for a test that presses it
+        a->add("screenpoint", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            const QPoint at = view->screenPoint(QVector3D(p[0].toFloat(), p[1].toFloat(), p[2].toFloat()));
+            std::cerr << "automation: screenpoint " << at.x() << " " << at.y() << std::endl;
+        });
+        // undo / redo: the script's own undo, as Ctrl+Z and Ctrl+Y do in the editor
+        a->add("undo", [=](const QString&){ editor->scriptWidget()->undo(); });
+        a->add("redo", [=](const QString&){ editor->scriptWidget()->redo(); });
+        // delete: the D key of the viewport (the selected models are deleted)
+        a->add("delete", [=](const QString&){ view->scenePanel()->deleteSelected(); });
         a->add("new", [=](const QString&){
             editor->setScript(QString());
             editor->setModified(false);

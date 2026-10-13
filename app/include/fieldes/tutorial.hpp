@@ -123,7 +123,7 @@ private:
     State capture() const;
     void restore(const State& state);
     /*  Puts a whole script in the editor (a step that works on a model of its own), without it counting as a change of the user's  */
-    void useScript(const QString& text);
+    void useScript(const QString& text, bool frame = true);       // (`frame`: the camera goes to the region the script sets, at once)
     void selectAgain(QStringList names, int tries);
     QAction* sectionAction() const;
     /*  Puts everything back as it was before a "Show me" (at once: the step is changing, or the tour ends)  */

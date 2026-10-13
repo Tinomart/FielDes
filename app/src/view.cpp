@@ -746,8 +746,23 @@ void View::redrawPicker()
     Shader::basic->release();
     for (auto& s : shapes)
     {
-        if (!s->noPaint()) s->drawMonochrome(m, color);
+        if (!s->noPaint() && !s->is2D()) s->drawMonochrome(m, color);
         ++color;                // (a point is not painted, nor picked: the numbers of the others stay what they were)
+    }
+    {
+        // (the 2D shapes are picked before the 3D ones, as they are drawn over them: the depth they leave is their own)
+        bool any = false;
+        for (auto& s : shapes) any = any || (s->is2D() && !s->noPaint());
+        if (any)
+        {
+            glClear(GL_DEPTH_BUFFER_BIT);
+            color = 1;
+            for (auto& s : shapes)
+            {
+                if (!s->noPaint() && s->is2D()) s->drawMonochrome(m, color);
+                ++color;
+            }
+        }
     }
     if (clipping)
     {
@@ -841,6 +856,7 @@ void View::paintGL()
         }
         for (auto& s : shapes)
         {
+            if (s->is2D()) continue;                // (the 2D shapes are drawn last, over everything)
             if ((s->opacityValue() < 0.999f) != (pass >= 1)) continue;
             // The boundary conditions are drawn on the part's own surface: pulled a hair towards the eye, they win over the part when both are shown
             // (a patch of a surface is on the part's surface too)
@@ -946,6 +962,25 @@ void View::paintGL()
         arrow.draw(m, cursor_pos, 0.1 / camera.getScale(),
                    drag_dir.normalized(),
                    drag_valid ? Color::green : Color::red);
+    }
+
+    // The 2D shapes, over everything the 3D shapes drew: a shape that is drawn on geometry (or in it) is always seen whole -- it never hides behind a body, nor hides
+    // what it was drawn for under a body's surface -- and they are in front of each other as their places say.  The picking buffer is made the same way
+    {
+        bool any = false;
+        for (auto& s : shapes) any = any || (s->is2D() && !s->noPaint());
+        if (any)
+        {
+            glClear(GL_DEPTH_BUFFER_BIT);
+            setClipUniform(clipping);
+            for (auto& s : shapes)
+                if (s->is2D() && !s->noPaint()) s->draw(m);
+            if (clipping)
+            {
+                setClipUniform(false);
+                glDisable(GL_CLIP_DISTANCE0);
+            }
+        }
     }
 
     // (the spinner's place shows the render's progress bar: paintOverlay)
@@ -2687,6 +2722,39 @@ QVector3D View::snapToWorkPlane(const QVector3D& p, const Shape* exclude, bool* 
             return where;
         }
     }
+    if (toPoints && m_wp.snapPoints && symmetric())
+    {
+        // The lines of the symmetry (and the place they cross): a point near one goes onto it -- along the line, to the grid's steps from the centre when the plane snaps --
+        // so that what is drawn on both sides of a line meets on it
+        const QVector3D c = symmetryCentre(), n = m_wp.normal();
+        const QPointF at = toScreen(p);
+        double best = 10.0;
+        bool found = false;
+        QVector3D where;
+        for (int j = 0; j < m_wp.symmetry; ++j)
+        {
+            const QVector3D d = symmetryAxis(j);
+            const float h = QVector3D::dotProduct(p - c, n);                       // (a point that is off the plane stays as far off it)
+            const float along = QVector3D::dotProduct(p - c, d);
+            const QPointF there = toScreen(c + d * along + n * h);
+            const double distance = std::hypot(there.x() - at.x(), there.y() - at.y());
+            if (distance >= best) continue;
+            best = distance;
+            found = true;
+            float snappedAlong = along;
+            if (m_wp.snap)
+            {
+                const float step = workPlaneStep();
+                snappedAlong = std::round(along / step) * step;
+            }
+            where = c + d * snappedAlong + n * h;
+        }
+        if (found)
+        {
+            if (snapped) *snapped = true;
+            return where;
+        }
+    }
     if (m_wp.snap)
     {
         const QVector3D o = m_wp.origin(), n = m_wp.normal();
@@ -2797,6 +2865,65 @@ void View::placeAt(QPoint pos)
     m_overlay->update();
 }
 
+// Strokes that meet at their ends -- half a shape drawn on one side of the symmetry line and its image on the other, which meet on the line -- are one outline: they are joined
+// end to end, and one that comes round to where it began is a closed shape (`closed`).  What is left is open
+static void joinMeeting(QList<QList<QVector3D>>& strokes, QList<QList<QVector3D>>& closed, float tol)
+{
+    auto same = [tol](const QVector3D& a, const QVector3D& b) { return (a - b).length() < tol; };
+    bool again = true;
+    while (again)
+    {
+        again = false;
+        for (int i = 0; i < strokes.size() && !again; ++i)
+        {
+            if (strokes[i].size() >= 4 && same(strokes[i].first(), strokes[i].last()))
+            {
+                QList<QVector3D> loop = strokes.takeAt(i);
+                loop.removeLast();                                  // (the point it began at is the last one too)
+                closed << loop;
+                again = true;
+                break;
+            }
+            for (int j = i + 1; j < strokes.size() && !again; ++j)
+            {
+                const QList<QVector3D> a = strokes[i];
+                QList<QVector3D> b = strokes[j];
+                QList<QVector3D> merged;
+                if (same(a.last(), b.first())) merged = a + b.mid(1);
+                else if (same(a.last(), b.last())) { std::reverse(b.begin(), b.end()); merged = a + b.mid(1); }
+                else if (same(a.first(), b.last())) merged = b + a.mid(1);
+                else if (same(a.first(), b.first())) { std::reverse(b.begin(), b.end()); merged = b + a.mid(1); }
+                else continue;
+                strokes[i] = merged;
+                strokes.removeAt(j);
+                again = true;
+            }
+        }
+    }
+    // (the same outline found twice -- a symmetry of several axes makes it from every side -- is one)
+    auto sameSet = [&](const QList<QVector3D>& a, const QList<QVector3D>& b) {
+        if (a.size() != b.size()) return false;
+        for (const QVector3D& p : a)
+        {
+            bool found = false;
+            for (const QVector3D& q : b) found = found || same(p, q);
+            if (!found) return false;
+        }
+        return true;
+    };
+    for (QList<QList<QVector3D>>* list : {&closed, &strokes})
+    {
+        QList<QList<QVector3D>> unique;
+        for (const auto& one : *list)
+        {
+            bool seen = false;
+            for (const auto& other : unique) seen = seen || sameSet(one, other);
+            if (!seen) unique << one;
+        }
+        *list = unique;
+    }
+}
+
 void View::finishPlacement(bool close)
 {
     const int n = m_wpPlaced.size();
@@ -2809,8 +2936,19 @@ void View::finishPlacement(bool close)
     m_wpPlaced.clear();
     m_overlay->update();
     const QString name = close ? QString("sketch") : (m_wp.mode == 2 ? QString("spline") : QString("polyline"));
-    // (with a symmetry on, the shape and its images, each a shape of its own)
+    // (with a symmetry on, the shape and its images, each a shape of its own -- except where they meet: the two halves of a circle that close on the line are one circle)
     QList<QList<QVector3D>> strokes = symmetryStrokes(points);
+    if (!close && symmetric() && strokes.size() > 1)
+    {
+        QList<QList<QVector3D>> loops;
+        joinMeeting(strokes, loops, std::max(1e-4f, 1e-3f * workPlaneStep()));
+        if (!loops.isEmpty())
+        {
+            const QList<QVector3D> firstLoop = loops.takeFirst();
+            emit(placementFinished(QStringLiteral("sketch"), firstLoop, m_wp.mode == 2, loops));
+            if (strokes.isEmpty()) return;
+        }
+    }
     const QList<QVector3D> first = strokes.takeFirst();
     emit(placementFinished(name, first, m_wp.mode == 2, strokes));
 }
@@ -2972,6 +3110,21 @@ void View::resetSymmetryAxes()
     m_wp.symAngle = 0;
 }
 
+void View::toggleWorkPlaneSymmetry()
+{
+    // On and off (S): on brings back the number of axes that was on last (one, at first)
+    if (!m_wp.open || !m_wp.exists) return;
+    if (m_wp.symmetry > 0)
+    {
+        m_symLast = m_wp.symmetry;
+        setWorkPlaneSymmetry(0);
+    }
+    else
+    {
+        setWorkPlaneSymmetry(m_symLast > 0 ? m_symLast : 1);
+    }
+}
+
 void View::setWorkPlaneSymmetry(int count)
 {
     m_wp.symmetry = std::max(0, std::min(4, count));
@@ -3001,7 +3154,8 @@ QPointF View::symmetryKnob() const
 
 int View::symmetryHit(QPoint pos) const
 {
-    if (!symmetric()) return 0;
+    // (the line is a thing to move only in the nothing mode: while a kind of drawing is on, its centre and its knob are places like any other -- a point can be put there)
+    if (!symmetric() || m_wp.mode != 0) return 0;
     const QPointF c = toScreen(symmetryCentre());
     if (std::hypot(pos.x() - c.x(), pos.y() - c.y()) <= 10.0) return 1;
     const QPointF k = symmetryKnob();
@@ -3110,8 +3264,11 @@ void View::drawSymmetry(QPainter& painter, float cap)
         painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), j == 0 ? 230 : 180), 1.6, Qt::DashLine));
         painter.drawLine(toScreen(c - d * cap), toScreen(c + d * cap));
     }
-    // The dot where the axes cross: dragged, it moves them
+    // The dot where the axes cross: dragged, it moves them (in the nothing mode; while a kind of drawing is on it is only drawn, faintly)
     const QPointF c0 = toScreen(c);
+    const bool live = m_wp.mode == 0;
+    painter.save();
+    if (!live) painter.setOpacity(0.45);
     const bool hotC = m_symHover == 1 || m_symDrag == 1;
     painter.setPen(QPen(ink, hotC ? 2.8 : 1.8));
     painter.setBrush(QColor(255, 255, 255, hotC ? 110 : 45));
@@ -3131,6 +3288,7 @@ void View::drawSymmetry(QPainter& painter, float cap)
     if (shown < 0) shown += 180.0f;
     painter.setPen(QColor(238, 232, 213));
     painter.drawText(k + QPointF(11.0, 4.0), QString::number(double(shown), 'f', 0) + QString(QChar(0x00b0)));
+    painter.restore();
 }
 
 void View::drawWorkPlane(QPainter& painter)
@@ -6141,8 +6299,8 @@ void View::drawHints(QPainter& painter)
 {
     if (mouse.state != mouse.RELEASED || m_wait.on) return;
     QString text;
-    if (gizmo_hover.group && gizmo_hover.kind == 5) text = T("Drag the ring to scale the points evenly about their middle");
-    else if (gizmo_hover.group && gizmo_hover.kind == 6) text = T("Drag the ring to turn the points about their middle");
+    if (gizmo_hover.group && gizmo_hover.kind == 5) text = T("Drag the ring to scale each point evenly: they stay where they are");
+    else if (gizmo_hover.group && gizmo_hover.kind == 6) text = T("Drag the ring to turn each point: they stay where they are");
     else if (gizmo_hover.kind == 2 && gizmo_hover.shape && (gizmo_hover.shape->isPoint() || shiftHeld())) text = T("Drag the ring to scale evenly");
     else if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner or spline point");
     else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to pull a point out of the line") : T("Drag to pull a point out of the edge");
@@ -6215,7 +6373,7 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
                 std::fprintf(stderr, "[outline] at %d,%d: piece %d, depth of the line %.5f, of what is drawn there %.5f, picked %u\n", pos.x(), pos.y(), piece,
                              double(n.z()), double(pickZ), unsigned(picked));
             // (the line of a curve is pressed through the body it runs in: the path of a sweep is drawn through the middle of it, so the sweep is always nearer than the line)
-            if (picked && pickZ < n.z() - 0.003f && !shape->isCurve()) found = false;
+            if (picked && pickZ < n.z() - 0.003f && !shape->isCurve() && !shape->is2D()) found = false;     // (a 2D shape is drawn over what it is in)
         }
     }
     return found;
@@ -6721,6 +6879,12 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
                 const auto it = h.move[a] ? vars.find(h.move[a]) : vars.end();
                 gp.id[a] = it != vars.end() ? h.move[a] : nullptr;
                 gp.value0[a] = it != vars.end() ? it->second : 0.0f;
+                const auto sc = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
+                gp.scaleId[a] = sc != vars.end() ? h.scale[a] : nullptr;
+                gp.scale0[a] = sc != vars.end() ? sc->second : 1.0f;
+                const auto ro = h.rotate[a] ? vars.find(h.rotate[a]) : vars.end();
+                gp.rotId[a] = ro != vars.end() ? h.rotate[a] : nullptr;
+                gp.rot0[a] = ro != vars.end() ? ro->second : 0.0f;
             }
             gizmo_group.append(gp);
         }
@@ -6918,13 +7082,35 @@ void View::dragGizmo(QPoint pos)
             gizmo_vec = now;
             turn.rotate(gizmo_turn, gizmo_axis);
         }
+        // The points stay where they are: the ring scales every point by its own scale, or turns every point by its own rotation, each one alone -- it does not make the
+        // arrangement of the points bigger or turn it about its middle
+        const QVector3D axisN = gizmo_axis.normalized();
         for (const GroupPoint& gp : gizmo_group)
         {
-            const QVector3D offset = gp.pos0 - gizmo_pivot;
-            const QVector3D moved = gizmo_pivot + (gizmo_active.kind == 5 ? offset * gizmo_factor : turn.mapVector(offset));
+            if (gizmo_active.kind == 5)
+            {
+                for (int a = 0; a < 3; ++a)
+                    if (gp.scaleId[a]) numbers[gp.scaleId[a]] = gp.scale0[a] * gizmo_factor;
+                continue;
+            }
+            // (the turn about an axis of the world that the point turns about by one of its own numbers: that number changes by the angle; else the three angles are made again)
+            int main = -1;
+            float sign = 1.0f;
             for (int a = 0; a < 3; ++a)
             {
-                if (gp.id[a]) numbers[gp.id[a]] = gp.value0[a] + (moved[a] - gp.pos0[a]);
+                const float d = QVector3D::dotProduct(axisN, unitAxis(a));
+                if (std::fabs(d) > 0.9999f) { main = a; sign = d > 0 ? 1.0f : -1.0f; }
+            }
+            if (main >= 0 && gp.rotId[main])
+            {
+                numbers[gp.rotId[main]] = gp.rot0[main] + sign * gizmo_turn;
+            }
+            else if (gp.rotId[0] && gp.rotId[1] && gp.rotId[2])
+            {
+                QMatrix4x4 t;
+                t.rotate(gizmo_turn, axisN);
+                const QVector3D angles = gizmoEuler(t * Shape::gizmoRotation(QVector3D(gp.rot0[0], gp.rot0[1], gp.rot0[2])));
+                for (int a = 0; a < 3; ++a) numbers[gp.rotId[a]] = angles[a];
             }
         }
         if (!numbers.empty()) applyGizmoNumbers(numbers);

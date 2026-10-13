@@ -186,6 +186,8 @@ public:
     bool hasControls() const { return !m_controls.empty(); }
     bool isCurve() const { return hasControls() && !m_controls_face; }
     bool isFace() const { return hasControls() && m_controls_face; }
+    /*  A 2D shape (a flat one, or a sketch): drawn over the 3D ones, whatever is in front of it, in a shade of its own, and picked before them  */
+    bool is2D() const { return m_flat || isFace(); }
     const std::vector<ControlPoint>& controlPoints() const { return m_controls; }
     bool smoothDefault() const { return m_controls_default; }
     bool closedLine() const { return m_controls_closed; }

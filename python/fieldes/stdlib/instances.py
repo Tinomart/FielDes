@@ -4,8 +4,9 @@ Linked copies: `instance(shape)`.
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
 (its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
 its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, `gizmo(copy, move=..., rotate=...)`.
-Nothing else is its own: no scale knobs, and its surfaces cannot be dragged, since its shape is the original's (a scale the original has is part of that shape, and
-the copy has it too).  (A copy whose surfaces are pulled is another shape: copy the model's statements instead -- Shift+D in FielDes.)
+Nothing else is its own: no scale knobs (a scale the original has is part of that shape, and the copy has it too).  Its surfaces CAN be dragged, as the original's can,
+and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
+other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
 FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
 
@@ -35,8 +36,8 @@ _NOT_TAKEN = ('ptr', '_gizmo', '_locked', '_placed_from', '_placed_parts', '_piv
 
 def instance(shape):
     ''' A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
-        moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  Its surfaces cannot be dragged and it cannot be scaled: its shape is the
-        original's.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
+        moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  It cannot be scaled: its shape is the original's -- and so are the numbers its
+        surfaces are pulled by, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
         locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D) '''
     if not isinstance(shape, Shape):
         raise TypeError('instance(): only a shape can be linked (a body, a 2D shape, a surface, a point ...), not %s -- a number, a material or the result of an '
@@ -67,6 +68,6 @@ def instance(shape):
         if name not in _NOT_TAKEN:
             out.__dict__[name] = value
     out._linked = True              # (FielDes: it is dragged by its gizmo only, which has no scale)
-    out._no_handles = True          # (its surfaces are the original's: nothing of it is exposed to be dragged)
+    out._no_handles = True          # (it has no handles() line of its own: it is pulled by the numbers of the original's)
     out._instance_of = shape
     return out

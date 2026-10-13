@@ -1,7 +1,8 @@
 # Sketches, lines and extrusions: shapes made of points
 
 A **point** is a model (a dot with a gizmo). A **polyline** (a set of lines) and a **spline** (a smooth curve) go through points: they are **1D shapes**. A **sketch** is the face a closed outline of points
-encloses: a **2D shape**. An **extrusion** pulls a 2D shape into a solid -- straight (`extrude`) or along a line (`path_extrude`).
+encloses: a **2D shape**. 2D shapes are drawn **over** the 3D ones, in a very light blue, and are picked before them: a shape drawn on a body or inside it is always seen whole, and
+a click on it selects it, not the body beneath. An **extrusion** pulls a 2D shape into a solid -- straight (`extrude`) or along a line (`path_extrude`).
 All of them are made of the same points, and all of them are edited in the viewport: the script is the truth, and what you drag, pull and double-click is written into it.
 
 ```python

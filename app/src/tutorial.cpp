@@ -669,8 +669,17 @@ static QString tourHeader(const QString& bounds, int resolution = 4)
         .arg(resolution);
 }
 
-void Tutorial::useScript(const QString& text)
+void Tutorial::useScript(const QString& text, bool frame)
 {
+    // The camera is on the model's region at once (the region the script sets is known from its text): a step that puts its own model there starts zoomed out, not
+    // zoomed in on what the step before had, and only later (below, once the script has run) framed more closely
+    static const QRegularExpression bounds(R"(set_bounds\(\s*\[([^\]]*)\]\s*,\s*\[([^\]]*)\])");
+    if (const auto m = bounds.match(text); frame && m.hasMatch())
+    {
+        const QStringList lo = m.captured(1).split(','), hi = m.captured(2).split(',');
+        if (lo.size() == 3 && hi.size() == 3)
+            m_view->zoomToBox(QVector3D(lo[0].toFloat(), lo[1].toFloat(), lo[2].toFloat()), QVector3D(hi[0].toFloat(), hi[1].toFloat(), hi[2].toFloat()));
+    }
     const QString now = m_editor->getScript();
     if (now == text) return;
     const QStringList lines = now.split('\n');
@@ -795,6 +804,15 @@ void Tutorial::buildSteps()
     };
 
     // (the tree and the viewport together: a menu is opened from either)
+    auto bothAndScript = [this, scene, scriptWidget]() -> QVector<QRect> {
+        QVector<QRect> out;
+        for (QWidget* w : {static_cast<QWidget*>(scene()), static_cast<QWidget*>(m_view), scriptWidget()})
+        {
+            const QRect r = widgetRect(w);
+            if (!r.isEmpty()) out << r;
+        }
+        return out;
+    };
     auto both = [this, scene]() -> QVector<QRect> {
         QVector<QRect> out;
         for (QWidget* w : {static_cast<QWidget*>(scene()), static_cast<QWidget*>(m_view)})
@@ -1530,6 +1548,9 @@ void Tutorial::buildSteps()
         return m.hasMatch() ? int(m.captured(1).count(',')) + 1 : 0;
     };
 
+    // (the model of the steps on the work plane: a flat pad to draw on -- every one of them puts it back when it is opened, whatever was drawn or deleted before)
+    auto padModel = [] { return QString("pad = box((-30, -22, -4), (30, 22, 0))\npad"); };
+
     // 20: the work plane: a grid to draw a shape on (Shift+W; a click puts a point down, the first one closes it)
     {
         Step s;
@@ -1543,10 +1564,10 @@ void Tutorial::buildSteps()
         s.keys = true;
         s.group = "workplane";
         s.closeRows = true;
-        s.enter = [this, scene] {
+        s.enter = [this, scene, padModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             if (QAction* a = sectionAction()) a->setChecked(false);
-            useScript(tourHeader(QString()) + "pad = box((-30, -22, -4), (30, 22, 0))\npad");
+            useScript(tourHeader(QString()) + padModel());
             scene()->clearSelection();
             m_view->setWorkPlaneOpen(false);
             m_view->standardView(View::VIEW_TOP);              // (the plane that opens is parallel to the view: the one the points go on)
@@ -1585,8 +1606,9 @@ void Tutorial::buildSteps()
         s.place = InsideBottom;
         s.group = "workplane";
         s.closeRows = true;
-        s.enter = [this, scene] {
+        s.enter = [this, scene, padModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + padModel());
             scene()->clearSelection();
             m_view->setWorkPlaneOpen(false);
             m_view->setWorkPlaneOpen(true);                     // (it opens in Line: drawing is on)
@@ -1615,8 +1637,9 @@ void Tutorial::buildSteps()
         s.keys = true;
         s.group = "workplane";
         s.closeRows = true;
-        s.enter = [this, scene] {
+        s.enter = [this, scene, padModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + padModel());
             scene()->clearSelection();
             m_view->setWorkPlaneOpen(false);
             m_view->setWorkPlaneOpen(true);
@@ -1832,8 +1855,8 @@ void Tutorial::buildSteps()
         s.closeRows = true;
         s.enter = [this, scene, lineModel, pointsSignature] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            // (the sweep the step before made; when that was skipped it is made here)
-            if (!m_editor->getScript().contains("path_extrude(")) useScript(tourHeader(QString()) + lineModel(true));
+            // (the line and the sweep along it, as they are in the step's own model -- whatever was done to them or deleted in the step before)
+            useScript(tourHeader(QString()) + lineModel(true));
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
             m_baselineText = pointsSignature();
@@ -1931,10 +1954,37 @@ void Tutorial::buildSteps()
                  T("Ctrl+Shift+W  new work plane") + "\n" +
                  T("W  look at the work plane") + "\n" +
                  T("E  next kind of drawing, or the last one") + "\n" +
+                 T("S  symmetry on or off") + "\n" +
                  T("Right click  stop drawing");
         s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show sketches, linked copies and the work plane.");
         s.place = Right;
         s.enter = [this] { m_view->holdShift(false); m_view->setWorkPlaneOpen(false); };
+        add(s);
+    }
+    // 26b: simulations and optimisations: what they are, shown running (a model of its own: a beam, held at one end and pulled at the other, being optimised)
+    {
+        Step s;
+        s.title = T("Simulations and optimization");
+        s.text = T("FielDes runs simulations -- static, modal, thermal, fluid -- and optimizations as lines of the script. Watch one: this beam is held at its left end and pulled down at the "
+                   "right, and the optimization takes away the material that carries nothing, one step after the other.")
+                 + "\n\n" + T("To learn how to set one up from scratch, open one of the examples: File ▸ Open example file.");
+        s.hint = T("The bar under the code shows the step it is at, and the picture follows. 05_static_analysis, 06_modal_analysis, 07_thermal_analysis, 08_topology_optimization and 16_fluid_flow show how.");
+        s.holes = bothAndScript;
+        s.cardNear = [this]() { return widgetRect(m_view); };
+        s.place = InsideBottomLeft;
+        s.group = "optimization";
+        s.closeRows = true;
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 2) +
+                      "beam = box((0, 0, 0), (60, 20, 10))\n"
+                      "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
+                      "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
+                      "opt = topology_optimization(beam, supports=[support], loads=[load], material=steel, volume_fraction=0.4, element_size=2.5)\n"
+                      "opt");
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+        };
         add(s);
     }
     // 27: the property tab of a result (a model of its own: one beam, held at one end and pulled at the other)
@@ -1945,7 +1995,12 @@ void Tutorial::buildSteps()
         s.hint = T("The drawer lists the fields and the numbers of the result; the one you click is written under it as a model of its own: "
                    "von_mises_1 = result.von_mises -- a field, which can be shown, sliced and used in other models. The tab is there once the analysis has run. Or press Show me.");
         s.code = linesWith("^result\\b|^\\w+ = result\\.");
-        s.holes = treeWithTab;
+        s.holes = [this, treeWithTab]() {
+            QVector<QRect> out = treeWithTab();
+            const QRect view = widgetRect(m_view);
+            if (!view.isEmpty()) out << view;           // (the simulation is drawn in the viewport: it is not dimmed)
+            return out;
+        };
         s.cardNear = [this]() { return widgetRect(m_view); };
         s.aim = aimRow({"result"});
         s.place = InsideBottomLeft;
@@ -2034,6 +2089,11 @@ void Tutorial::buildSteps()
         s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
         add(s);
     }
+    // What a step is left with is not what the next one starts from: a step that works on the model of the tour (the steps of a group make a model of their own, and
+    // the group puts the user's back) puts it back as it was when it was opened -- the number that was changed, the rows that were deleted or renamed, the
+    // section that was made -- so that every step starts from its own state, whatever was done before it
+    for (int i = 1; i < steps.size(); ++i)
+        if (steps[i].group.isEmpty() && !steps[i].last) steps[i].undone = true;
     m_entry.resize(steps.size());
     m_hasEntry = QVector<char>(steps.size(), 0);
 }
@@ -2091,7 +2151,7 @@ void Tutorial::stop(bool completed)
     if (wasActive && m_index >= 0 && m_index < m_steps->size() && (*m_steps)[m_index].undone && m_editor->getScript() != m_stepScript)
     {
         m_view->scenePanel()->clearSelection();
-        useScript(m_stepScript);
+        useScript(m_stepScript, false);
     }
     if (wasActive && m_hasGroup)
     {
@@ -2131,7 +2191,7 @@ void Tutorial::goTo(int index, bool viaBack)
         if (old.undone && m_editor->getScript() != m_stepScript)
         {
             m_view->scenePanel()->clearSelection();         // (a model that stays selected would write its gizmo line again)
-            useScript(m_stepScript);
+            useScript(m_stepScript, false);
         }
         // The steps of a group work on models of their own: when the group is left the user's model is back
         if (!old.group.isEmpty() && old.group != (*m_steps)[index].group && m_hasGroup)

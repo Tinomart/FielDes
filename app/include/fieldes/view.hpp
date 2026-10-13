@@ -228,6 +228,7 @@ public slots:
     /*  Symmetry in the work plane view: 0 none, 1 to 4 axes through one centre, 180 / n degrees apart.  Whatever is put down is put down at its images too -- turned
         about the centre and mirrored across each axis.  The centre (a dot) is dragged to move the axes, the knob on the first axis to turn them  */
     void setWorkPlaneSymmetry(int count);
+    void toggleWorkPlaneSymmetry();                   // (S: off, and on again with the number of axes there was)
     void setSymmetryAxes(float s, float t, float angleDegrees);      // (where they cross, in the plane's axes; the angle of the first axis)
     /*  Where a handle of the symmetry is on the screen (1 the centre, 2 the knob that turns the axes), for scripted tests  */
     bool symmetryHandlePoint(int which, QPoint& pos) const;
@@ -268,6 +269,7 @@ public slots:
     void setZoomCursorCentric() { zoom_cursor_centric = true; }
     void setZoomSceneCentric() { zoom_cursor_centric = false; }
     void zoomTo() { camera.zoomTo(settings.min, settings.max); }
+    void zoomToBox(QVector3D min, QVector3D max) { camera.zoomTo(min, max); }       // (the camera on a box, before the script that sets it has run)
 
     void toDCMeshing();
     void toIsoMeshing();
@@ -546,6 +548,7 @@ protected:
     QList<QList<QVector3D>> symmetryStrokes(const QList<QVector3D>& stroke) const;
     void drawSymmetry(QPainter& painter, float cap);
     int m_symHover = 0, m_symDrag = 0;
+    int m_symLast = 0;                                          // (the number of axes that was on before S turned the symmetry off)
     QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
     bool m_faceHasRef = false;
     bool m_wpCursorValid = false;
@@ -897,7 +900,8 @@ protected:
         numbers that move each that change).  Each point's place and its move numbers when a drag of a ring began  */
     bool groupOfPoints(const QList<Shape*>& members) const;
     QVector3D groupRingNormal(const QList<Shape*>& members) const;     // (the axis they turn about: the plane of their sketch, else the work plane's, else the way the camera looks)
-    struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; };
+    // (the place of a point of a group and the numbers that move it; and the numbers of its own scale and rotation: the group's rings change those, point by point)
+    struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; libfive::Tree::Id scaleId[3]; float scale0[3]; libfive::Tree::Id rotId[3]; float rot0[3]; };
     QVector<GroupPoint> gizmo_group;
     QVector3D free_hit0, free_normal;   // a free move: where the cursor's ray met the plane at the start, and the plane's normal
     GizmoGrip gizmo_hover;

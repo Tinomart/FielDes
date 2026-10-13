@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### 2D shapes on top, a symmetry that snaps and closes, linked handles, a tour with a state per step
+- **2D shapes are drawn over the 3D ones, in a very light blue, and picked first.** A sketch or a flat shape drawn on a body (or inside it) used to hide behind the body's surface or hide what was drawn there; now it is
+  always seen whole, in front of everything 3D (they are in front of each other as their places say), and a click on it selects it, not the body under it. Its blue outline can always be pressed.
+- **The lines of the work plane's symmetry are a thing to snap to.** With *Snap to points* on, a point put down (or dragged) near a symmetry line lands **on** it -- along the line, on the grid's steps from the centre while the plane
+  snaps -- so what is drawn on both sides of a line meets on it. **`S` turns the symmetry off and on** (it brings back the number of axes there was). **A shape that is closed through the symmetry is made into one**: half a circle drawn
+  from one point of the line to another and its mirror image on the other side are joined where they meet and written as **one closed sketch** (a line that meets its image at one end is one line). The dot and the knob of the symmetry
+  are there to be dragged **only in the nothing mode**; while a kind of drawing is on they are drawn faintly and do not take the click, so a point can be put at the centre.
+- **A linked copy has handles, and they are linked to its original's.** Dragging a surface of an `instance(...)` copy pulls the numbers of the original's `handles(...)`: the original and every copy move together, whichever is pulled. The original is
+  made ready (given its `handles(...)` line) when a copy is selected.
+- **Several points selected are scaled and turned one by one.** The gold ring scales every point by its own scale and the ring in the plane turns every point by its own rotation; the points **stay where they are** (the rings used to scale and
+  turn their whole arrangement about its middle).
+- **A section can be started at the end of the model tree too**: hover under the last row and the + in a circle shows there.
+- **Ctrl+drag of a row is always that row**, as a shadow reference: it is dragged at once and becomes the selection, whether it was selected or not (before, a row that was not selected joined the selection, the models were made ready to be
+  dragged and the tree rebuilt under the hand, so nothing was dragged).
+- **Tour: every step has a state of its own.** What was changed or deleted in a step (a number, rows, a name, a section) is put back when the step is left, so the next step starts whole (deleting rows in *Close what you do not need* left *Cut a
+  section* without them); the steps of the work plane and of the sweep put their own model back on every entry. **Step 20 starts zoomed out** (the camera goes to the model's region at once, not after the script has run). **New step before
+  *Properties*: *Simulations and optimization*** shows an optimization running step by step and points to the examples; **in *Properties* the simulation in the viewport is no longer dimmed.** The *Keys worth knowing* list has `S`.
+
 ### A welcome card, a clearer tour, and four workflow fixes
 - **A welcome card instead of a tour that opens by itself.** The first time FielDes starts it says in a few lines what FielDes is (field driven design) and offers the tour: **Start the guided tour** (orange) or the quieter **Skip the guided tour**. *Help → Guided tour* starts the tour at its first step.
 - **The render region follows a drag at once.** Pull a gizmo arrow, ring or scale handle -- or a **surface** of a model (the tour's *Drag a surface*) -- past the edge of the region: the model is drawn whole while you drag, and the grown region is written **together with the numbers of the drag, in one run, when you let go** -- there is no second run a few seconds later that clips and then un-clips the model. A pulled surface is meshed again at every move, so the region grows *before* the model is given the new numbers: it is made to hold where the model will be (searched for in its field, so a sphere pulled out on one side holds on the other too) and the point the mouse has the surface at.

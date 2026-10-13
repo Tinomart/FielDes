@@ -143,6 +143,7 @@ public:
     /*  For the guided tour: where the circle with a plus shows that starts a section in the gap above the first row whose text starts with `prefix` (in `in`'s coordinates; null when
      *  that row is not shown)  */
     QPoint sectionGapPoint(const QString& prefix, QWidget* in);
+    QPoint endGapPoint(QWidget* in);            // (the same, for the gap after the last row)
     bool isNaming() const;
     bool dragging() const { return m_dragging; }
     /*  For the tests: whether a row is a shadow (the reference of a statement to a model another statement owns), and the row of a
@@ -791,6 +792,7 @@ protected:
     /*  Sections: `# SECTION name` comments, rows of their own.  A new one is written in the gap between two rows, and its name typed
      *  in the row; a double click renames one (the comment is rewritten as it is typed)  */
     void createSectionBefore(QTreeWidgetItem* below);
+    void createSectionAtEnd();                  // (the gap after the last row: a section at the end of the script)
 
     /*  The property arrow (the end of a row that is hovered, when the model has properties: the fields and numbers of a result) opens a
      *  drawer that lists them; one that is clicked is written as a new model of its own, under the statement: `stress_1 = result.von_mises`  */

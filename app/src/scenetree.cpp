@@ -931,16 +931,20 @@ public:
     // the gap above a row is where a section can be started: may it be here (the row is a statement of the script or a section, not one of its arguments)
     std::function<bool(QTreeWidgetItem*)> gapAbove;
     std::function<void(QTreeWidgetItem*)> gapClicked;        // a click on the lit gap above this row
+    // the gap after the last row (the end of the tree) is a place for a section too
+    std::function<bool()> gapAtEnd;
+    std::function<void()> gapEndClicked;
     // the hovered row whose model has properties (a result: its fields and numbers): the panel shows its tab for it; the row that is hovered
     // changes (null: none)
     std::function<bool(QTreeWidgetItem*)> hasProperties;
     std::function<void(QTreeWidgetItem*)> propertyRowChanged;
 
     bool dragging() const { return m_dragging; }
+    int endGapY() const { return lastRowBottom(); }         // (where the gap after the last row is: the bottom of the last row that is shown)
     bool isEditing() const { return state() == EditingState; }
     QTreeWidgetItem* rowOf(const QModelIndex& index) const { return itemFromIndex(index); }
     // (the rows are made again when the scene changes: a row that was pressed or is hovered is gone with them)
-    void resetDrop() { m_ok = false; m_over = nullptr; m_gap = nullptr; m_gapHot = false; m_propRow = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
+    void resetDrop() { m_ok = false; m_over = nullptr; m_gap = nullptr; m_gapEnd = false; m_gapHot = false; m_propRow = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
 
     // Where in the tree a point is: above a row (its top third), on it (the middle), below it, or in the empty space
     int where(const QPoint& pos, QTreeWidgetItem** over) const
@@ -959,9 +963,10 @@ public:
 protected:
     bool viewportEvent(QEvent* e) override
     {
-        if (e->type() == QEvent::Leave && (m_gap || m_propRow))
+        if (e->type() == QEvent::Leave && (m_gap || m_gapEnd || m_propRow))
         {
             m_gap = nullptr;
+            m_gapEnd = false;
             m_gapHot = false;
             const bool hadProperties = m_propRow != nullptr;
             m_propRow = nullptr;
@@ -978,6 +983,16 @@ protected:
         if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) && gapClicked && !m_dragging)
         {
             updateGap(e->pos());
+            if (m_gapEnd && m_gapHot)
+            {
+                m_gapEnd = false;
+                m_gapHot = false;
+                viewport()->unsetCursor();
+                viewport()->update();
+                e->accept();
+                if (gapEndClicked) gapEndClicked();
+                return;
+            }
             if (m_gap && m_gapHot)
             {
                 QTreeWidgetItem* below = m_gap;
@@ -994,19 +1009,21 @@ protected:
         m_replay.reset();
         QTreeWidgetItem* hit = itemAt(e->pos());
         const bool wasSelected = hit && hit->isSelected();
-        // Ctrl on a row that is selected: the press would take it out of the selection (as a Ctrl+click does) before a drag
-        // could begin, and there would be nothing to carry.  The selection stays as it is until the button comes up: a drag
-        // carries what is selected, a click takes the row out of the selection
+        // Ctrl on a row: the press would change the selection (a Ctrl+click toggles the row) before a drag could begin -- a row that was selected would leave
+        // it, and there would be nothing to carry; a row that was not would join the others, the models of the selection would be made ready to be dragged and
+        // the tree made again under the hand, so that nothing was dragged at all.  The selection stays as it is until the button comes up: a drag carries THAT row
+        // alone, as a reference (it becomes the selection then), and a click that was not a drag does what a Ctrl+click did
         if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier) && !(e->modifiers() & Qt::ShiftModifier) &&
-            hit && wasSelected && columnAt(e->pos().x()) == COL_NAME && (hit->flags() & Qt::ItemIsDragEnabled))
+            hit && columnAt(e->pos().x()) == COL_NAME && (hit->flags() & Qt::ItemIsDragEnabled))
         {
             m_held = true;
             if (held) held(true);
             m_pressRow = hit;
-            m_toggleRow = hit;
+            if (wasSelected) m_toggleRow = hit;                 // (a click takes it out of the selection)
+            else m_replay.reset(new QMouseEvent(*e));           // (a click is given to Qt as it was: it joins the selection)
             m_pressPos = e->pos();
             m_pressCtrl = true;
-            m_pressWasSelected = true;
+            m_pressWasSelected = wasSelected;
             e->accept();
             return;
         }
@@ -1183,7 +1200,7 @@ protected:
     void paintEvent(QPaintEvent* e) override
     {
         QTreeWidget::paintEvent(e);
-        if (m_gap && !m_dragging) paintGap();
+        if ((m_gap || m_gapEnd) && !m_dragging) paintGap();
         if (!m_dragging) return;
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
@@ -1266,21 +1283,44 @@ private:
     QRect gapCircleFor(QTreeWidgetItem* gap) const
     {
         const int radius = 9;
-        const int y = visualItemRect(gap).top();
+        const int y = gap ? visualItemRect(gap).top() : lastRowBottom();        // (no row: the gap at the end of the tree, below the last row that is shown)
         return QRect(viewport()->width() / 2 - radius, y - radius, 2 * radius, 2 * radius);
+    }
+    // The last row that is shown (an empty rectangle when there are none)
+    QRect lastRowRect() const
+    {
+        QRect out;
+        for (QTreeWidgetItemIterator i(const_cast<SceneTree*>(this)); *i; ++i)
+        {
+            const QRect r = visualItemRect(*i);
+            if (r.height() > 0 && (out.isNull() || r.bottom() > out.bottom())) out = r;
+        }
+        return out;
+    }
+    // The bottom of it (0 when there are no rows)
+    int lastRowBottom() const
+    {
+        const QRect r = lastRowRect();
+        return r.isNull() ? 0 : r.bottom() + 1;
     }
     void updateGap(const QPoint& pos)
     {
         QTreeWidgetItem* gap = nullptr;
-        bool hot = false;
+        bool end = false, hot = false;
         // (the mouse on the circle of a gap that is showing keeps it showing: the circle reaches over the rows on both sides of the gap)
         if (m_gap && gapCircleFor(m_gap).contains(pos))
         {
             gap = m_gap;
             hot = true;
         }
+        else if (m_gapEnd && gapCircleFor(nullptr).contains(pos))
+        {
+            end = true;
+            hot = true;
+        }
         else if (gapAbove && !isEditing() && columnAt(pos.x()) == COL_NAME)
         {
+            const QRect last = lastRowRect();
             if (QTreeWidgetItem* row = itemAt(pos))
             {
                 const QRect r = visualItemRect(row);
@@ -1289,10 +1329,15 @@ private:
                 else if (r.bottom() - pos.y() <= edge) gap = itemBelow(row);     // (the gap below it, above the next row that is shown)
             }
             if (gap && !gapAbove(gap)) gap = nullptr;
+            // (after the last row: the bottom edge of it, and the empty space under it -- the gap at the end of the tree)
+            if (!gap && gapAtEnd && !last.isNull() && pos.y() <= last.bottom() + 22 && pos.y() >= last.bottom() - std::max(6, last.height() / 3))
+                end = gapAtEnd();
             if (gap && gapCircleFor(gap).contains(pos)) hot = true;
+            if (end && gapCircleFor(nullptr).contains(pos)) hot = true;
         }
-        if (gap == m_gap && hot == m_gapHot) return;
+        if (gap == m_gap && end == m_gapEnd && hot == m_gapHot) return;
         m_gap = gap;
+        m_gapEnd = end;
         m_gapHot = hot;
         if (hot) viewport()->setCursor(Qt::PointingHandCursor);
         else viewport()->unsetCursor();
@@ -1303,7 +1348,7 @@ private:
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
         const QColor blue(0x26, 0x8b, 0xd2);
-        const QRect c = gapCircleFor(m_gap);
+        const QRect c = gapCircleFor(m_gapEnd ? nullptr : m_gap);
         // (a faint line along the gap, so that it is clear which gap the circle is for)
         const int y = c.center().y();
         p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 90), 1.2, Qt::SolidLine, Qt::RoundCap));
@@ -1317,6 +1362,7 @@ private:
         p.drawLine(QPointF(m.x(), m.y() - 4), QPointF(m.x(), m.y() + 4));
     }
     bool m_gapHot = false;                  // (the mouse is on the circle of the gap that shows)
+    bool m_gapEnd = false;                  // (the gap that shows is the one at the end of the tree: after the last row)
     QTreeWidgetItem* m_gap = nullptr;       // (the row the lit gap is above)
     QTreeWidgetItem* m_propRow = nullptr;   // (the hovered row that has properties: its arrow is drawn)
     void updateProp(const QPoint& pos)
@@ -1533,6 +1579,8 @@ ScenePanel::ScenePanel(QWidget* parent)
             return !parent || parent->data(COL_NAME, ROLE_TYPE).toString() == "section";
         };
         tree->gapClicked = [this](QTreeWidgetItem* row) { createSectionBefore(row); };
+        tree->gapAtEnd = [this] { return !m_dragging && !m_textUnreadable && m_source; };
+        tree->gapEndClicked = [this] { createSectionAtEnd(); };
         tree->hasProperties = [this](QTreeWidgetItem* row) {
             return row->data(COL_NAME, ROLE_TYPE).toString() == "item" &&
                    !row->data(COL_NAME, ROLE_ITEM).toJsonObject()["properties"].toArray().isEmpty() && !m_dragging;
@@ -6330,10 +6378,27 @@ void ScenePanel::prepareSelection()
         names << d["var"].toString();
     }
 
+    // A linked copy (`copy = instance(model)`) is pulled by the numbers of its original: the original is made ready to be pulled too -- handles, nothing else -- so that the
+    // surfaces of either can be dragged, and dragging one moves both
+    QList<QPair<QJsonObject, bool>> todo;               // (the model, and whether only its handles are written: the original of a linked copy)
+    for (const Model& m : models) todo << qMakePair(m.item, false);
     for (const Model& m : models)
     {
-        const auto& t = m.item;
-        if (t["kind"].toString() == "display" && !t["failed"].toBool())
+        if (!linkedModel(m.item)) continue;
+        for (const QString& input : directInputs(m.item))
+        {
+            const QJsonObject original = itemForVar(input);
+            if (original.isEmpty()) continue;
+            bool listed = false;
+            for (const auto& e : todo) listed = listed || keyOf(e.first) == keyOf(original);
+            if (!listed) todo << qMakePair(original, true);
+        }
+    }
+    for (const auto& entry : todo)
+    {
+        const QJsonObject& t = entry.first;
+        const bool handlesOnly = entry.second;
+        if (!handlesOnly && t["kind"].toString() == "display" && !t["failed"].toBool())
         {
             // An expression displayed on its own (`sphere(3)`) has no name, so nothing to hang a gizmo line under:
             // it is given one first, as the gizmo button does, and gets its lines after the run
@@ -6357,9 +6422,10 @@ void ScenePanel::prepareSelection()
             if (!named) reselect << keyOf(t);
             continue;
         }
-        reselect << keyOf(t);
+        if (!handlesOnly) reselect << keyOf(t);
         bool needGizmo = false, needHandles = false;
         if (!prepares(t, &needGizmo, &needHandles)) continue;
+        if (handlesOnly) needGizmo = false;
         if (madeOfPrepared.contains(keyOf(t))) needHandles = false;
         if (!needGizmo && !needHandles) continue;
         const QString var = t["var"].toString();
@@ -8493,11 +8559,11 @@ bool ScenePanel::beginDrag(QTreeWidgetItem* row, QString* text, QIcon* icon, boo
     }
     else
     {
-        // The models that are dragged: the selected ones (the row pressed is one of them: pressing selected it).  With Ctrl,
-        // a row that was not selected is dragged on its own
-        if (ctrl && !row->isSelected()) m_tree->setCurrentItem(row, 0, QItemSelectionModel::Select | QItemSelectionModel::Rows);
-        if (ctrl && !wasSelected)
+        // The models that are dragged: the selected ones (the row pressed is one of them: pressing selected it).  With Ctrl -- a reference -- the row that was
+        // pressed is dragged on its own, whatever else was selected: it becomes the selection
+        if (ctrl)
         {
+            m_tree->setCurrentItem(row, 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             const QJsonObject m = modelOfRow(row);
             if (!m.isEmpty()) models << m;
         }
@@ -8505,6 +8571,7 @@ bool ScenePanel::beginDrag(QTreeWidgetItem* row, QString* text, QIcon* icon, boo
         {
             models = draggedModels();
         }
+        Q_UNUSED(wasSelected)
         // (the row of a part of an import stands for the model of that part: its key is the model's, not the row's)
         const QJsonObject own = modelOfRow(row);
         const QString key = !own.isEmpty() ? keyOf(own) : row->data(COL_NAME, ROLE_KEY).toString();
@@ -9964,6 +10031,47 @@ void ScenePanel::createSectionBefore(QTreeWidgetItem* below)
     editFollowed(QList<TextEdit>{TextEdit{at, 0, at, 0, text}}, "Add section " + name, [](QJsonObject&, const QVector<int>&) {});
 }
 
+void ScenePanel::createSectionAtEnd()
+{
+    if (!m_source) return;
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh)
+    {
+        refuseOutOfDate();
+        return;
+    }
+    const QStringList lines = m_source().split('\n');
+    QSet<QString> names;
+    for (const auto v : m_scene["sections"].toArray()) names << v.toObject()["name"].toString();
+    int n = int(names.size()) + 1;
+    QString name;
+    do { name = T("Section %1").arg(n++); } while (names.contains(name));
+    // After the last line that has something on it: a blank line, and the heading (what is typed under it is in the section)
+    int last = int(lines.size()) - 1;
+    while (last >= 0 && lines[last].trimmed().isEmpty()) --last;
+    TextEdit edit;
+    int header;
+    if (last < 0)
+    {
+        edit = TextEdit{0, 0, 0, 0, "# SECTION " + name + "\n"};
+        header = 0;
+    }
+    else if (last + 1 < lines.size())
+    {
+        edit = TextEdit{last + 1, 0, last + 1, 0, "\n# SECTION " + name + "\n"};
+        header = last + 2;
+    }
+    else
+    {
+        edit = TextEdit{last, int(lines[last].size()), last, int(lines[last].size()), "\n\n# SECTION " + name + "\n"};
+        header = last + 2;
+    }
+    m_startSectionRename = header;          // (typed in as soon as the row of the new section is there)
+    m_startSectionTries = 0;
+    editFollowed(QList<TextEdit>{edit}, "Add section " + name, [](QJsonObject&, const QVector<int>&) {});
+}
+
 void ScenePanel::openProperties(QTreeWidgetItem* row, const QPoint& global)
 {
     const QJsonObject it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
@@ -10263,6 +10371,14 @@ QPoint ScenePanel::sectionGapPoint(const QString& prefix, QWidget* in)
         return m_tree->viewport()->mapTo(in, QPoint(m_tree->viewport()->width() / 2, rect.top()));
     }
     return QPoint();
+}
+
+QPoint ScenePanel::endGapPoint(QWidget* in)
+{
+    // (the circle of the gap after the last row that is shown: in the middle of the tree, on the bottom edge of that row)
+    const int y = static_cast<SceneTree*>(m_tree)->endGapY();
+    if (y <= 0) return QPoint();
+    return m_tree->viewport()->mapTo(in, QPoint(m_tree->viewport()->width() / 2, y));
 }
 
 QRect ScenePanel::visibleRowRect(const QString& prefix, QWidget* in)
