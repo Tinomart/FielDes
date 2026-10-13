@@ -108,8 +108,6 @@ View::View(QWidget* parent)
 
     connect(&camera, &Camera::animDone, this, &View::redrawPicker);
 
-    m_symFollowTimer.setSingleShot(true);
-    connect(&m_symFollowTimer, &QTimer::timeout, this, [this] { followSelectionSymmetry(); });
     m_wheelTimer.setSingleShot(true);
     m_wheelTimer.setInterval(450);
     connect(&m_wheelTimer, &QTimer::timeout, this, [this] {
@@ -438,8 +436,6 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     update();
     requestSlice();
     refreshSymmetry();              // (the symmetry model is another shape now)
-    m_symFollowTries = 0;
-    followSelectionSymmetry();
 }
 
 bool View::isRendering() const
@@ -480,8 +476,6 @@ void View::highlightLines(QList<int> lines0)
         s->setSelected(lines0.contains(s->sourceLine()));
     }
     update();
-    m_symFollowTries = 0;
-    followSelectionSymmetry();
 }
 
 void View::moveSourceLines(QVector<int> moved)
@@ -3128,42 +3122,8 @@ void View::refreshSymmetry()
     m_sym.on = exists && m_symInUse;
     m_symElements = m_sym.on ? m_sym.elements() : QList<SymmetryElement>();
     emit(symmetryChanged(m_sym, int(m_symElements.size())));
-    emit(symmetryCard(exists ? now : Symmetry(), images, exists, m_symInUse, m_symHintOn));
+    emit(symmetryCard(exists ? now : Symmetry(), images, exists, m_symInUse));
     m_overlay->update();
-}
-
-void View::followSelectionSymmetry()
-{
-    // While a symmetry is there, a model that is selected and has a symmetry of its own shows its planes, to be taken as a symmetry of the script (the card says so)
-    Shape* only = nullptr;
-    int selected = 0;
-    for (Shape* s : shapes)
-    {
-        if (s->isSelected()) { ++selected; only = s; }
-    }
-    const bool single = m_symExists && selected == 1 && only && !only->isPoint() && !only->isSymmetry();
-    bool on = false;
-    if (single && !only->done() && m_symFollowTries < 25)
-    {
-        // (it is still being meshed: its field is read when it is)
-        ++m_symFollowTries;
-        m_symFollowTimer.start(300);
-        return;
-    }
-    if (single) on = detectSymmetry(*only, m_symHint);
-    if (on != m_symHintOn || on)
-    {
-        m_symHintOn = on;
-        refreshSymmetry();
-    }
-}
-
-void View::useSymmetryHint()
-{
-    if (!m_symHintOn) return;
-    Symmetry s = m_symHint;
-    s.on = true;
-    emit(symmetryCreateRequested(s));
 }
 
 void View::setSymmetryKind(int kind)
@@ -3356,9 +3316,8 @@ static void drawPlanes(QPainter& painter, const std::function<QPointF(const QVec
 
 void View::drawSymmetry(QPainter& painter)
 {
-    if (!m_symExists && !m_symHintOn) return;
+    if (!m_symExists) return;
     const QColor ink(211, 54, 130);            // (magenta: not the red and green of the plane's own axes, nor the blue of the grid)
-    const QColor hintInk(42, 161, 152);         // (teal: the planes a selected model has of its own, to be taken)
     auto to = [this](const QVector3D& p) { return toScreen(p); };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
@@ -3374,11 +3333,6 @@ void View::drawSymmetry(QPainter& painter)
         painter.setPen(QPen(ink, 1.6));
         painter.drawLine(c0 + QPointF(-5, 0), c0 + QPointF(5, 0));
         painter.drawLine(c0 + QPointF(0, -5), c0 + QPointF(0, 5));
-    }
-    if (m_symHintOn)
-    {
-        const float reach = std::max(1e-3f, float(scaleAt(toScreen(m_symHint.centre).toPoint(), m_symHint.centre)) * 3.0f);
-        drawPlanes(painter, to, m_symHint, reach, hintInk, 1.0, true);
     }
     painter.restore();
 }

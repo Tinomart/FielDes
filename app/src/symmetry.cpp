@@ -240,7 +240,7 @@ bool Symmetry::operator==(const Symmetry& o) const
 // ---- The card
 
 SymmetryPanel::SymmetryPanel(QWidget* parent)
-    : QFrame(parent), m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget), m_angle(new QDoubleSpinBox), m_info(new QLabel), m_use(new QToolButton), m_hint(new QToolButton)
+    : QFrame(parent), m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget), m_angle(new QDoubleSpinBox), m_info(new QLabel), m_use(new QToolButton)
 {
     setObjectName("SymmetryPanel");
     setAttribute(Qt::WA_StyledBackground, true);
@@ -397,15 +397,9 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     connect(m_use, &QToolButton::toggled, this, [this](bool on) {
         if (!m_updating) emit(useChanged(on));
     });
-    m_hint->setObjectName("symmetryHint");
-    m_hint->setText(T("Take its planes"));
-    m_hint->setToolTip(T("The selected model is mirror symmetric: the planes it is symmetric across are drawn in teal.  This makes a symmetry of them, centred on the model"));
-    m_hint->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    connect(m_hint, &QToolButton::clicked, this, &SymmetryPanel::hintRequested);
     auto followRow = new QHBoxLayout;
     followRow->addSpacing(55);
     followRow->addWidget(m_use, 1);
-    followRow->addWidget(m_hint, 3);
 
     m_info->setObjectName("SymmetryInfo");
     m_info->setWordWrap(true);
@@ -450,13 +444,12 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     if (parent) parent->installEventFilter(this);
 }
 
-void SymmetryPanel::setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, bool hint, const QString& name)
+void SymmetryPanel::setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, const QString& name)
 {
     setVisible(exists);
     if (!exists) return;
     raise();
     m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Symmetry") + (name.isEmpty() ? QString() : ": " + name));
-    m_hint->setVisible(hint);
     m_updating = true;
     {
         QSignalBlocker a(m_angle), b(m_centre[0]), c(m_centre[1]), d(m_centre[2]), e(m_use);

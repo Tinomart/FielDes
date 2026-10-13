@@ -1015,8 +1015,8 @@ Window::Window(Arguments args)
         auto scene = view->scenePanel();
         connect(scene, &ScenePanel::activeSymmetryChanged, view, [=](QList<int> lines, bool chosen, QString) { view->setActiveSymmetry(lines, chosen); });
         connect(view, &View::symmetryChanged, scene, &ScenePanel::setSymmetry);
-        connect(view, &View::symmetryCard, panel, [=](Symmetry s, int images, bool exists, bool inUse, bool hint) {
-            panel->setSymmetry(s, images, exists, inUse, hint, scene->activeSymmetryName());
+        connect(view, &View::symmetryCard, panel, [=](Symmetry s, int images, bool exists, bool inUse) {
+            panel->setSymmetry(s, images, exists, inUse, scene->activeSymmetryName());
         });
         connect(view, &View::symmetryCreateRequested, scene, &ScenePanel::createSymmetry);
         connect(view, &View::symmetryArguments, scene, &ScenePanel::setSymmetryArguments);
@@ -1024,7 +1024,6 @@ Window::Window(Arguments args)
         // (the work plane's card is above it: when that one comes or goes, this one is put under it again)
         connect(view, &View::workPlaneStateChanged, panel, [=] { panel->reposition(); });
         connect(panel, &SymmetryPanel::useChanged, view, &View::setSymmetryInUse);
-        connect(panel, &SymmetryPanel::hintRequested, view, &View::useSymmetryHint);
         connect(panel, &SymmetryPanel::kindChanged, view, &View::setSymmetryKind);
         connect(panel, &SymmetryPanel::countChanged, view, &View::setSymmetryCount);
         connect(panel, &SymmetryPanel::axisRequested, view, &View::setSymmetryAxis);
@@ -2473,7 +2472,7 @@ Window::Window(Arguments args)
                       << " mode " << w.mode << " placed " << view->placedCount() << " grid " << w.grid << " snap " << w.snap << " snapPoints " << w.snapPoints << " step " << view->workPlaneStep()
                       << std::endl;
         });
-        // symmetry <use|stop|toggle|kind N|count N|axis N|angle D|centre X Y Z|centrefrom N|hint|images X Y Z|state>: the symmetry that is selected, as its card and its key drive
+        // symmetry <use|stop|toggle|kind N|count N|axis N|angle D|centre X Y Z|centrefrom N|images X Y Z|state>: the symmetry that is selected, as its card and its key drive
         // it; it says what it is now
         a->add("symmetry", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
@@ -2488,12 +2487,11 @@ Window::Window(Arguments args)
             else if (what == "angle") view->setSymmetryAngle(p.value(1).toFloat());
             else if (what == "centre" && p.size() >= 4) view->setSymmetryCentre(vec(1));
             else if (what == "centrefrom") view->setSymmetryCentreFrom(p.value(1).toInt());
-            else if (what == "hint") view->useSymmetryHint();
             const Symmetry& s = view->symmetry();
             std::cerr << "automation: symmetry exists " << view->symmetryExists() << " inuse " << view->symmetryInUse() << " name " << view->scenePanel()->activeSymmetryName().toStdString()
                       << " kind " << s.kind << " count " << s.count << " centre " << s.centre.x() << "," << s.centre.y() << "," << s.centre.z()
                       << " axis " << s.c.x() << "," << s.c.y() << "," << s.c.z() << " first " << s.a.x() << "," << s.a.y() << "," << s.a.z() << " angle " << s.angleOfFirst()
-                      << " planes " << s.planeNormals().size() << " images " << view->symmetryImageCount() << " hint " << view->symmetryHint() << std::endl;
+                      << " planes " << s.planeNormals().size() << " images " << view->symmetryImageCount() << std::endl;
             if (what == "images")
             {
                 for (const QVector3D& q : view->imagesOf(vec(1)))

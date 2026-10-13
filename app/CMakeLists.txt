@@ -45,7 +45,6 @@ set(SRCS
     src/shortcuts.cpp
     src/shape.cpp
     src/symmetry.cpp
-    src/symmetry_detect.cpp
     src/syntax.cpp
     src/theme.cpp
     src/tutorial.cpp

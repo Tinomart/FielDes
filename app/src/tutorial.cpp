@@ -497,6 +497,7 @@ Tutorial::State Tutorial::capture() const
     for (const QString& key : m_view->scenePanel()->selectionKeys())
         if (key.startsWith("shape:")) state.selected << key.mid(6);
     if (QAction* a = sectionAction()) state.section = a->isChecked();
+    state.symmetry = m_view->scenePanel()->activeSymmetryName();
     return state;
 }
 
@@ -515,6 +516,16 @@ void Tutorial::restore(const State& state)
     auto scene = m_view->scenePanel();
     scene->clearSelection();
     if (!state.selected.isEmpty()) selectAgain(state.selected, 12);
+    symmetryAgain(state.symmetry, 12);
+}
+
+void Tutorial::symmetryAgain(const QString& var, int tries)
+{
+    // (a symmetry that is selected is the one in use, and it stays in use when nothing is selected: what a step showed is undone by putting the one that was back)
+    auto scene = m_view->scenePanel();
+    if (scene->activeSymmetryName() == var) return;
+    scene->setActiveSymmetry(var);
+    if (scene->activeSymmetryName() != var && tries > 0) after(200, [this, var, tries] { symmetryAgain(var, tries - 1); });      // (its model is not in the tree yet)
 }
 
 void Tutorial::selectAgain(QStringList names, int tries)
@@ -1903,6 +1914,208 @@ void Tutorial::buildSteps()
                 after(900, [this, over] { m_busy = false; hideCursor(); over(); });
             });
         };
+        add(s);
+    }
+    // 25b-25h: a symmetry (a model of its own: a table top, one leg, a mirror of two planes through the axis of the table, and the images of the leg written under it)
+    auto symmetryModel = []() {
+        return QString("mirror = symmetry_planes(planes=2, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=(0, 1, 0))\n"
+                       "mirror = gizmo(\n    mirror,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n)\n"
+                       "mirror\n\n"
+                       "top = box((-40, -26, 30), (40, 26, 36))\n"
+                       "top\n\n"
+                       "leg = cylinder(4, 30, (32, 18, 0))\n"
+                       "leg = handles(leg, [var(32), var(18), var(4), var(30), var(0)])\n"
+                       "leg = gizmo(\n    leg,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
+                       "leg\n"
+                       "leg_images = symmetry_images(leg, mirror)  # shadow: leg, mirror\n"
+                       "leg_images");
+    };
+    // (what a step that edits the leg compares: its numbers -- the handles that pull its surfaces and the gizmo that moves it)
+    auto legSignature = [statementAt]() { return statementAt("leg = handles(").text + "\n" + statementAt("leg = gizmo(").text; };
+    auto symmetryEnter = [this, scene, symmetryModel](const QStringList& select) {
+        while (auto m = QApplication::activePopupWidget()) m->close();
+        useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) + symmetryModel());
+        scene()->clearSelection();
+        m_view->standardView(View::VIEW_ISO);
+        if (!select.isEmpty()) selectAgain(select, 12);       // (once it is in the tree)
+    };
+    // (a click on a row of the tree, as the hand does it)
+    auto clickRow = [this, scene](const QString& prefix, std::function<void()> over) {
+        const QRect r = scene()->rowRect(prefix, m_window);
+        if (r.isEmpty()) { over(); return; }
+        QWidget* vp = scene()->treeViewport();
+        fakeClick(vp, vp->mapFrom(m_window, QPoint(r.left() + 70, r.center().y())), Qt::LeftButton, over);
+    };
+    // 25b: a symmetry is a model, and the one that is selected is the one in use
+    {
+        Step s;
+        s.title = T("A mirror");
+        s.text = T("A symmetry is a model: mirror planes through a centre. Click mirror in the tree. Its planes are drawn, and it is the symmetry in use: whatever you make now is made at its images too.");
+        s.hint = T("mirror = symmetry_planes(planes=2): two planes at right angles, so every model has three images. Its card is at the top right of the viewport. Or press Show me.");
+        s.code = linesWith("^mirror\\b");
+        s.holes = both;
+        s.aim = aimRow({"mirror"});
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.showView = true;
+        s.enter = [symmetryEnter] { symmetryEnter(QStringList()); };
+        s.done = [scene] { return scene()->selectionKeys().contains("shape:mirror"); };
+        s.doneNote = T("Nice. mirror is the symmetry in use: its planes are drawn.");
+        s.show = [clickRow](std::function<void()> over) { clickRow("mirror", over); };
+        add(s);
+    }
+    // 25c: what is made while it is in use is made at its images too
+    {
+        Step s;
+        s.title = T("Make something");
+        s.text = T("With mirror selected, right-click empty space in the viewport and choose Primitives ▸ New 3D shape ▸ box. The box is made once -- and one line under it holds all its images.");
+        s.hint = T("box_1_images = symmetry_images(box_1, mirror): the images are not models of their own, so nothing is written twice. Or press Show me.");
+        s.code = linesWith("^box_\\d+\\w* =|^box_\\d+_images");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.enter = [symmetryEnter] { symmetryEnter(QStringList{"mirror"}); };
+        s.done = [this] {
+            static const QRegularExpression re(R"(^box_\d+\w* = symmetry_images\()", QRegularExpression::MultilineOption);
+            return re.match(m_editor->getScript()).hasMatch();
+        };
+        s.doneNote = T("Nice. One box, and its images under it.");
+        s.show = [this](std::function<void()> over) {
+            // (the box is made at a free place of the viewport, as the menu of empty space makes it, and its images with it)
+            const QPoint at(m_view->width() / 4, m_view->height() * 3 / 4);
+            m_busy = true;
+            setCursor(m_view->mapTo(m_window, at));
+            after(900, [this, at, over] {
+                m_view->createAt("box", at);
+                after(1500, [this, over] { m_busy = false; hideCursor(); over(); });
+            });
+        };
+        add(s);
+    }
+    // 25d: only the original has numbers: edit it and every image follows
+    {
+        Step s;
+        s.title = T("Edit the original");
+        s.text = T("Only the original has numbers. Select leg and drag an arrow of its gizmo, or pull one of its surfaces: all its images follow, mirrored.");
+        s.hint = T("leg_images is one line: the images are what the mirror makes of leg. Or press Show me.");
+        s.code = linesWith("^leg\\b");
+        s.holes = holesOf(viewWidget);
+        s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        s.place = InsideBottom;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.enter = [this, symmetryEnter, legSignature] {
+            symmetryEnter(QStringList{"leg"});
+            m_baselineText = legSignature();
+        };
+        s.done = [this, legSignature] { return legSignature() != m_baselineText; };
+        s.doneNote = T("Nice. The images moved with the leg, mirrored.");
+        s.show = [this](std::function<void()> over) {
+            QPoint p;
+            if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
+            fakeDrag(m_view, p, p + QPoint(60, 0), 800, over);
+        };
+        add(s);
+    }
+    // 25e: and an image can be edited too: it has no numbers of its own, so the original moves
+    {
+        Step s;
+        s.title = T("Edit through an image");
+        s.text = T("Click leg_images, then drag its gizmo or pull a surface of any image: the original moves -- the other way, as a mirror shows it. The mirror itself stays where it is.");
+        s.hint = T("An image has no numbers of its own: what you drag changes leg, and every image follows. Or press Show me.");
+        s.code = linesWith("^leg\\b");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        s.place = Right;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.enter = [this, symmetryEnter, legSignature] {
+            symmetryEnter(QStringList{"leg_images"});
+            m_baselineText = legSignature();
+        };
+        s.done = [this, legSignature] { return legSignature() != m_baselineText; };
+        s.doneNote = T("Nice. You moved the leg through its image.");
+        s.show = [this](std::function<void()> over) {
+            QPoint p;
+            if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
+            fakeDrag(m_view, p, p + QPoint(60, 0), 800, over);
+        };
+        add(s);
+    }
+    // 25f: it can be left off
+    {
+        Step s;
+        s.title = T("On and off");
+        s.text = T("Shift+S stops using the symmetry, and starts it again. While it is off, what you make has no images, and its planes are drawn pale.");
+        s.hint = T("The mirror is still there: it is a model like any other. Click the viewport and press Shift+S, or press Show me.");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.keys = true;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.showView = true;
+        s.enter = [this, symmetryEnter] {
+            symmetryEnter(QStringList{"mirror"});
+            m_view->setSymmetryInUse(true);
+        };
+        s.leave = [this] { m_view->setSymmetryInUse(true); };
+        s.done = [this] { return !m_view->symmetryInUse(); };
+        s.doneNote = T("Nice. Shift+S again turns it back on.");
+        s.show = [this](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Shift+S";
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(900, [this, over] {
+                m_view->toggleSymmetry();
+                after(2000, [this, over] {
+                    m_view->toggleSymmetry();
+                    after(900, [this, over] { m_busy = false; hideCursor(); static_cast<TourLayer*>(m_layer)->cursorKey.clear(); over(); });
+                });
+            });
+        };
+        add(s);
+    }
+    // 25g: the images name the mirror they were made in: selecting them makes it the symmetry in use
+    {
+        Step s;
+        s.title = T("How an image was made");
+        s.text = T("Click leg_images. The mirror it was made in becomes the symmetry in use: its planes are drawn, and whatever you make next is made at its images too -- so you can add to it the same way.");
+        s.hint = T("The image names its mirror: leg_images = symmetry_images(leg, mirror). Or press Show me.");
+        s.code = linesWith("^leg_images\\b");
+        s.holes = both;
+        s.aim = aimRow({"leg_images"});
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.showView = true;
+        s.enter = [scene, symmetryEnter] {
+            symmetryEnter(QStringList());
+            scene()->setActiveSymmetry(QString());          // (none in use yet: clicking the images is what makes their mirror the one)
+        };
+        s.done = [scene] { return scene()->selectionKeys().contains("shape:leg_images") && scene()->activeSymmetryName() == "mirror"; };
+        s.doneNote = T("Nice. Its mirror is now the symmetry in use: its planes are drawn.");
+        s.show = [clickRow](std::function<void()> over) { clickRow("leg_images", over); };
+        add(s);
+    }
+    // 25h: lines and sweeps are mirrored too (said, not shown: the user does it on the work plane)
+    {
+        Step s;
+        s.title = T("Lines and sweeps");
+        s.text = T("Draw a line or a sketch on the work plane with mirror selected: every point gets its images, and the line goes through them. A path_extrude made of them gets its images too.");
+        s.hint = T("Move a point of the original: the tube and all its images bend with it. Example 29_symmetry shows a table; File ▸ Open example file.");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "symmetry";
+        s.closeRows = true;
+        s.enter = [symmetryEnter] { symmetryEnter(QStringList{"mirror"}); };
         add(s);
     }
     // 26: the keys worth knowing

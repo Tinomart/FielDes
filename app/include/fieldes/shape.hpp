@@ -438,9 +438,6 @@ public:
     /*  The direction the curve this shape is made of faces at its point number `index` (the line through its vertices there, from the numbers the points have now); false for
         what is not a curve of three or more... of two or more points  */
     bool curveTangentAt(int index, QVector3D& t) const;
-    /*  The field of the shape at several sets of places (as its numbers are now): its distance there, negative inside.  False when it cannot be read (not meshed yet, a result, an
-        imported part, or one with so many parts that reading it would be slow)  */
-    bool sampleSets(const std::vector<std::vector<QVector3D>>& sets, std::vector<std::vector<float>>& out) const;
     /*  The box of the vertices the triangles of the mesh use (false: not meshed)  */
     bool meshBox(QVector3D& lo, QVector3D& hi) const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */

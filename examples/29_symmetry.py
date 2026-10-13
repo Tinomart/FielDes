@@ -19,8 +19,8 @@
 #     (`kind='across'`), or the nine planes of a cube (`kind='cube'`); the axis along x, y or z, the work plane's normal or up in the view.
 #   * Shift+S stops using the symmetry, and starts again.  Make a box now, with the symmetry in use: it gets three images.  Make one with Shift+S
 #     pressed (not in use): it does not.  A box whose centre is on the axis has no images: it is its own image.
-#   * Select the table top: its own planes (it is mirror symmetric: two planes at right angles, and the plane across them) are drawn in teal,
-#     and `Take its planes` in the card makes a symmetry of them.
+#   * Select `leg_images` with no symmetry in use: the mirror it was made in becomes the symmetry in use -- its planes are drawn and the card shows --
+#     so whatever you make next gets its images too.  It is how the model was made, ready to be added to.
 #   * With the work plane open (Shift+W), draw a line or a sketch: it is drawn at its images too, through the images of its points -- and half
 #     a shape whose ends are on a plane is closed through its image into one sketch.
 from fieldes import *

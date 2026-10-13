@@ -1469,29 +1469,6 @@ bool Shape::meshBox(QVector3D& lo, QVector3D& hi) const
     return any;
 }
 
-bool Shape::sampleSets(const std::vector<std::vector<QVector3D>>& sets, std::vector<std::vector<float>>& out) const
-{
-    if (!mesh || has_result || m_exact) return false;
-    ensureField();
-    if (m_tree_nodes > 40000) return false;
-    libfive::ArrayEvaluator e(tree, vars);
-    out.assign(sets.size(), std::vector<float>());
-    const size_t N = LIBFIVE_EVAL_ARRAY_SIZE;
-    for (size_t k = 0; k < sets.size(); ++k)
-    {
-        const auto& pts = sets[k];
-        out[k].resize(pts.size());
-        for (size_t i = 0; i < pts.size(); i += N)
-        {
-            const size_t n = std::min(N, pts.size() - i);
-            for (size_t j = 0; j < n; ++j) e.set(Eigen::Vector3f(pts[i + j].x(), pts[i + j].y(), pts[i + j].z()), j);
-            const auto vals = e.values(n);
-            for (size_t j = 0; j < n; ++j) out[k][i + j] = vals[j];
-        }
-    }
-    return true;
-}
-
 namespace {
 
 // A result's colours are read at the render's vertices and interpolated across its triangles.  A flat face comes

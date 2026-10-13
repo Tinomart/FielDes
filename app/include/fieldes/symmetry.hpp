@@ -75,13 +75,6 @@ struct Symmetry
 };
 
 /*
- *  The symmetry a model has of its own: the planes it is mirror symmetric across, arranged as the symmetry has them (`out` is on, with its centre, axis and arrangement).
- *  Found from its field -- the field at a spread of places against the field at their mirror images across a plane through the middle of the model, for the planes along its
- *  own axes and the world's, then the planes round the axis they share -- never from its mesh.  False: it has none, or its field cannot be read
- */
-bool detectSymmetry(const Shape& shape, Symmetry& out);
-
-/*
  *  The card of the symmetry, in the viewport's top-right corner (as the work plane's): how many planes and how they are arranged, which way the axis goes (the world's axes,
  *  the work plane's normal, the view), the turn of the first plane and the centre
  */
@@ -92,8 +85,8 @@ public:
     explicit SymmetryPanel(QWidget* parent = nullptr);
 
 public slots:
-    /*  The symmetry that is selected: `exists` (the card is there while one is), whether it is in use, whether a selected model has planes of its own to be taken, and its name  */
-    void setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, bool hint, const QString& name);
+    /*  The symmetry that is selected: `exists` (the card is there while one is), whether it is in use, and its name  */
+    void setSymmetry(const Symmetry& s, int images, bool exists, bool inUse, const QString& name);
     /*  Where the card sits: top-right, under the other cards  */
     void reposition() { place(); }
 
@@ -105,7 +98,6 @@ signals:
     void centreChanged(QVector3D centre);
     void centreRequested(int which);        // (0 the origin, 1 the middle of what is selected, 2 the work plane's origin)
     void useChanged(bool on);               // (what is made is made at the images of the symmetry)
-    void hintRequested();                   // (the planes of the selected model are to be a symmetry of the script)
     void closeRequested();
 
 protected:
@@ -122,7 +114,6 @@ protected:
     QDoubleSpinBox* m_centre[3];
     QLabel* m_info;
     QToolButton* m_use;
-    QToolButton* m_hint;
     bool m_collapsed = false;
     bool m_updating = false;
 };

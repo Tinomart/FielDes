@@ -247,12 +247,8 @@ public slots:
     void setSymmetryCentreFrom(int which);
     /*  The symmetry put where `target` says: its centre and its axes are the numbers of the gizmo of the model  */
     void placeSymmetry(const Symmetry& target);
-    /*  A selected model that has a symmetry of its own shows its planes (they are not the symmetry: they are taken as one with a click)  */
-    void useSymmetryHint();
-    void followSelectionSymmetry();
     bool symmetryExists() const { return m_symExists; }
     bool symmetryInUse() const { return m_symInUse; }
-    bool symmetryHint() const { return m_symHintOn; }
     /*  How many images the symmetry makes of what is made (every element but the identity), while it is in use  */
     int symmetryImageCount() const { return int(m_symElements.size()); }
     /*  The images of a point: the point, then one for each element of the symmetry (for scripted tests)  */
@@ -323,9 +319,9 @@ signals:
     void workPlaneChanged(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
     /*  The symmetry that is in use changed (its planes, its centre, in use or not), and how many images it makes: for the scene, which makes the images of what is made  */
     void symmetryChanged(FielDes::Symmetry symmetry, int images);
-    /*  The symmetry that is selected, for its card: whether there is one, whether it is in use, and whether a selected model has a symmetry of its own to be taken  */
-    void symmetryCard(FielDes::Symmetry symmetry, int images, bool exists, bool inUse, bool hint);
-    /*  A symmetry is to be made (Shift+S with none in the script, or the planes of a model taken): the scene writes it  */
+    /*  The symmetry that is selected, for its card: whether there is one, and whether it is in use  */
+    void symmetryCard(FielDes::Symmetry symmetry, int images, bool exists, bool inUse);
+    /*  A symmetry is to be made (Shift+S with none in the script): the scene writes it  */
     void symmetryCreateRequested(FielDes::Symmetry symmetry);
     /*  The arrangement of the symmetry that is selected is changed: the arguments of its call (`planes`, `kind`) and the text each gets  */
     void symmetryArguments(QStringList names, QStringList values);
@@ -592,10 +588,6 @@ protected:
     QList<int> m_symLines;                                      // (the lines that show the symmetry model that is selected)
     bool m_symExists = false;
     bool m_symInUse = true;
-    Symmetry m_symHint;                                         // (the planes of the selected model, when it has some)
-    bool m_symHintOn = false;
-    int m_symFollowTries = 0;                                   // (the model that is selected is still being meshed: asked again)
-    QTimer m_symFollowTimer;
     QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
     bool m_faceHasRef = false;
     bool m_wpCursorValid = false;

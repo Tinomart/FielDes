@@ -200,6 +200,9 @@ public slots:
     /*  The name of the symmetry model that is selected, the one that is used (empty: none)  */
     QString activeSymmetryName() const { return m_activeSymVar; }
     void updateActiveSymmetry();
+    /*  Puts the symmetry in use back as it was (none when `var` is empty): the guided tour does, when it undoes what a step showed -- selecting a symmetry makes it the one in use, and it
+        stays when nothing is selected  */
+    void setActiveSymmetry(const QString& var);
     void showNotice(const QString& text) { notify(text); }
     /*  Which run of the script the model tree shows (it counts up with every run): a menu remembers it, so that an entry
      *  chosen after the script changed is known not to mean the line the menu was opened on  */

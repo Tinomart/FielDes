@@ -119,12 +119,14 @@ private:
         QString script;
         QStringList selected;               // (the variables of the selected models)
         bool section = false;               // (the section view is on)
+        QString symmetry;                   // (the symmetry in use: the variable of the model, or none)
     };
     State capture() const;
     void restore(const State& state);
     /*  Puts a whole script in the editor (a step that works on a model of its own), without it counting as a change of the user's  */
     void useScript(const QString& text, bool frame = true);       // (`frame`: the camera goes to the region the script sets, at once)
     void selectAgain(QStringList names, int tries);
+    void symmetryAgain(const QString& var, int tries);         // (the symmetry in use is put back once its model is in the tree)
     QAction* sectionAction() const;
     /*  Puts everything back as it was before a "Show me" (at once: the step is changing, or the tour ends)  */
     void endDemo();

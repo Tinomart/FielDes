@@ -7020,13 +7020,28 @@ void ScenePanel::setSymmetryArguments(QStringList names, QStringList values)
 
 void ScenePanel::updateActiveSymmetry()
 {
-    // The symmetry that is selected is the one that is used: the last one of the selection.  When none is, the one that was stays (it is used until the symmetry is turned off or
-    // it is deleted)
-    QString chosen;
+    // The symmetry that is selected is the one that is used: the last one of the selection.  A model that is the images of another (`leg_images = symmetry_images(leg, mirror)`)
+    // selected without a symmetry makes the one it was made in the one that is used: its planes are there, and what is made next is made at its images too -- it is how the
+    // model was made, ready to be added to.  When none is, the one that was stays (it is used until the symmetry is turned off or it is deleted)
+    QString chosen, madeIn;
     for (const Model& m : selectedModels())
     {
-        if (symmetryModel(m.item) && m.item.contains("var")) chosen = m.item["var"].toString();
+        if (symmetryModel(m.item) && m.item.contains("var"))
+        {
+            chosen = m.item["var"].toString();
+            continue;
+        }
+        if (!symmetryImageModel(m.item)) continue;
+        for (const auto iv : m.item["inputs"].toArray())
+        {
+            const auto in = iv.toObject();
+            const QString name = in["name"].toString();
+            if (in["deep"].toBool() || name.isEmpty()) continue;
+            const QJsonObject source = itemForVar(name);
+            if (!source.isEmpty() && symmetryModel(source)) madeIn = name;
+        }
     }
+    if (chosen.isEmpty()) chosen = madeIn;
     const bool another = !chosen.isEmpty() && chosen != m_activeSymVar;
     if (!chosen.isEmpty()) m_activeSymVar = chosen;
     QList<int> lines;
@@ -7037,6 +7052,19 @@ void ScenePanel::updateActiveSymmetry()
         else lines = linesOf(item);
     }
     emit(activeSymmetryChanged(lines, another, m_activeSymVar));
+}
+
+void ScenePanel::setActiveSymmetry(const QString& var)
+{
+    m_activeSymVar = var;
+    QList<int> lines;
+    if (!m_activeSymVar.isEmpty())
+    {
+        const QJsonObject item = itemForVar(m_activeSymVar);
+        if (item.isEmpty() || !symmetryModel(item)) m_activeSymVar.clear();
+        else lines = linesOf(item);
+    }
+    emit(activeSymmetryChanged(lines, false, m_activeSymVar));
 }
 
 void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth)
