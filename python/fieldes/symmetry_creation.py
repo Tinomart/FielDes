@@ -1,6 +1,7 @@
 '''
-What the viewport writes when something is made while a symmetry is selected (Shift+S): the images, each the model it is the image of, as `symmetry_image(model, symmetry_1, 3)`
-under it -- `symmetry_1` is the symmetry model, 3 the number of the image in it.
+What the viewport writes when something is made while a symmetry is selected (Shift+S): the images of what is made, as ONE model under it --
+`leg_images = symmetry_images(leg, symmetry_1)` (all the images of a body, a 2D shape or a point, or `only=(1, 3)` of them) -- `symmetry_1` is the symmetry model.  A sketch, a line,
+a surface or a field is written with a model for each image, `symmetry_image(model, symmetry_1, 3)`: 3 is the number of the image in the symmetry.
 
 The symmetry arrives in a request as {var: 'symmetry_1', centre: [x, y, z], elements: [{mirror: [nx, ny, nz] | null, turn: [[ax, ay, az], degrees] | null}, ...]}: its name, and
 every image but the identity as the places it takes a point to -- for what has to be known now (an image that is the model itself is not made; where the images of the points of
@@ -82,6 +83,18 @@ def _keeps_the_plane(e):
             and abs(e.apply((0.0, 0.0, 0.0))[2]) < 1e-6)
 
 
+def shape_of(call_text, prelude=''):
+    ''' What a call makes (the call is the library's, with numbers in it): None when it cannot be told here '''
+    try:
+        namespace = {}
+        exec('from fieldes import *', namespace)
+        if prelude:
+            exec(prelude, namespace)
+        return eval(call_text, namespace)
+    except Exception:
+        return None
+
+
 def kept_elements(call_text, elements, around, size, prelude=''):
     ''' Which of the images of the model that `call_text` makes are images of their own: those that are not the model itself and not another image -- a sphere on a plane of the
         symmetry has none, a box off every plane has all of them.  Told by the field: the image of a model is the model's field at the places the way back takes it from, so two
@@ -139,10 +152,23 @@ def post_for(var, call_text, request, prelude=''):
         return ''
     around = tuple(float(request.get(k, 0.0)) for k in ('x', 'y', 'z'))
     keep = kept_elements(call_text, elements, around, float(request.get('scale', 10.0)), prelude)
-    out = []
-    for k, i in enumerate(keep, 1):
-        out.append(image_statement(var, '%s_m%d' % (var, k), elements[i], symmetry['var']))
-    return ''.join(out)
+    if not keep:
+        return ''
+    kind = None
+    shape = shape_of(call_text, prelude)
+    if shape is not None:
+        try:
+            from fieldes.kinds import kind_of
+            kind = kind_of(shape)
+        except Exception:
+            kind = None
+    if kind in ('surface', 'field'):
+        # (a surface or a field has no union that means anything: a model for each image)
+        return ''.join(image_statement(var, '%s_m%d' % (var, k), elements[i], symmetry['var']) for k, i in enumerate(keep, 1))
+    # One model for all the images: the union of those of a body or a 2D shape, the set of the images of a point
+    only = '' if len(keep) == len(elements) else ', only=(%s)' % ', '.join(str(elements[i].index) for i in keep)
+    images = '%s_images' % var
+    return '%s  # shadow: %s, %s\n%s\n' % ('%s = symmetry_images(%s, %s%s)' % (images, var, symmetry['var'], only), var, symmetry['var'], images)
 
 
 def _join_meeting(strokes):

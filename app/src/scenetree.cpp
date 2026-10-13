@@ -3817,7 +3817,8 @@ bool linkedModel(const QJsonObject& it)
 // The image of another model (`image = symmetry_image(model, ...)`): it has no numbers of its own, it is the model's
 bool symmetryImageModel(const QJsonObject& it)
 {
-    return it["symmetry_image"].toBool() || it["callee"].toString() == "symmetry_image";
+    const QString callee = it["callee"].toString();
+    return it["symmetry_image"].toBool() || callee == "symmetry_image" || callee == "symmetry_images";
 }
 
 // A symmetry (`mirror = symmetry_planes(...)`): its gizmo moves and turns it; it has no scale
@@ -6453,7 +6454,7 @@ void ScenePanel::prepareSelection()
         for (const QString& input : directInputs(m.item))
         {
             const QJsonObject original = itemForVar(input);
-            if (original.isEmpty()) continue;
+            if (original.isEmpty() || symmetryModel(original)) continue;       // (the symmetry the image is made in has its gizmo already, and it is not what is pulled)
             bool listed = false;
             for (const auto& e : todo) listed = listed || keyOf(e.first) == keyOf(original);
             if (!listed) todo << qMakePair(original, false);

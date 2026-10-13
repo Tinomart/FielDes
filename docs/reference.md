@@ -857,12 +857,15 @@ locked or not).  A copy that has a shape of its own is a copy of the statements 
 
 ## Symmetry
 
-Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `symmetry_image(shape, symmetry, index)`, the image of a shape in it.
+Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `symmetry_images(shape, symmetry)`, ALL the images of a shape in it, as one model.
 
     mirror = symmetry_planes()                        # one plane, through the origin, the plane x = 0: a mirror
     mirror = gizmo(mirror, move=(var(0), var(0), var(0)), rotate=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
-    plate = box((5, 2, 0), (25, 12, 8))
-    plate_2 = symmetry_image(plate, mirror, 1)        # the image of plate in the mirror: left to right
+    leg = cylinder(5, 30, (40, 22, 0))                # the one you edit
+    leg_images = symmetry_images(leg, mirror)         # all its images, one model: the leg as it looks in the mirror, left to right
+
+The leg is the only model with numbers: the images are not models of their own, they are what the symmetry makes of the leg, so a symmetry of two planes at right angles makes three
+images (a turn of half a way round and two mirror images) in ONE model, and a cube's nine planes make forty-seven in one -- not forty-seven rows and forty-seven lines.
 
 A symmetry is made of planes through one centre.  `kind` says how they are arranged round the axis (the line through the centre that all of them contain, or that is across the
 plane of the last):
@@ -872,9 +875,11 @@ plane of the last):
     'cube'      the nine planes of a cube whose axes are the three lines of the symmetry: three across them, six through its edges
 
 Every plane makes an image of what is made while the symmetry is on, and so does every turn between them (two planes at right angles make a turn of half a way round): the
-images of a symmetry are numbered, `symmetry_image(x, mirror, 1)` .. `symmetry_image(x, mirror, symmetry_images(mirror))`.  An image FOLLOWS what it is the image of
-and the symmetry: move the original and the image moves the way a mirror shows; move the symmetry (its gizmo) and every image of it moves with it.  An image has no numbers of
-its own: pulling it pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off).
+images of a symmetry are numbered 1 .. symmetry_count(symmetry).  `symmetry_images(x, mirror)` is all of them (`only=(1, 3)` some of them), `symmetry_image(x, mirror, 2)` one.
+The images FOLLOW what they are the images of and the symmetry: move the original and they move the way a mirror shows; move the symmetry (its gizmo) and every image of it moves
+with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
+one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); a sketch, a line, a surface or a field gets
+one model for each image, `symmetry_image`.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -890,15 +895,24 @@ and the symmetry card; nothing is drawn of it but its planes
 The images of a symmetry as plain matrices (rows), in the order they are numbered: every turn and mirror image but the identity, in the symmetry's own place -- before its
 gizmo moved and turned it.  The same list, in the same order, that FielDes's viewport makes
 
+### `symmetry_count(symmetry)`
+
+How many images a symmetry makes of what is made with it: they are numbered 1 .. symmetry_count(symmetry) (see symmetry_image)
+
 ### `symmetry_image(shape, symmetry, index=1)`
 
-The image of `shape` in the symmetry `symmetry`: `index` is the number of the image (1 .. symmetry_images(symmetry)).  It follows both: change the shape, or move the
+The image of `shape` in the symmetry `symmetry`: `index` is the number of the image (1 .. symmetry_count(symmetry)).  It follows both: change the shape, or move the
 symmetry, and the image changes with it.  It has no gizmo and no numbers of its own: pulling it pulls the shape.  FielDes writes it for everything that is made while the
 symmetry is selected (Shift+S)
 
-### `symmetry_images(symmetry)`
+### `symmetry_images(shape, symmetry, only=None)`
 
-How many images a symmetry makes of what is made with it: `symmetry_image(x, symmetry, 1)` .. `symmetry_image(x, symmetry, symmetry_images(symmetry))`
+ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)` -- so that what a symmetry of several planes makes of a leg is
+one row of the model tree and one line of the script, not one for each image.  It is the union of the images for a body or a 2D shape (the shape itself is not in it: it is
+its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its own (so that dragging the
+shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.  It follows the shape and
+the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling a surface of any of
+them pulls the shape.  A sketch or a line has an image model for each image (symmetry_image): it is drawn from its points
 
 ### `symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None)`
 

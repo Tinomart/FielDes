@@ -467,19 +467,22 @@ apart; `kind='across'` adds the plane across the axis, and `kind='cube'` is the 
 the place of the work plane while its view is open (its axis the plane's normal), else it is the mirror x = 0.
 
 **Select a symmetry in the model tree and it is the one in use.** Its planes are drawn in magenta, its card opens in the corner of the viewport, and **everything you make from then on is made at its images too**: a body, a point, a
-surface, a field -- and a sketch, a line or a spline, which is made again through the images of its points. Each image is a model of its own, written under the model it is the image of:
+surface, a field -- and a sketch, a line or a spline, which is made again through the images of its points. **All the images of a model are one model**, written under it:
 
 ```python
 box_1 = box((8, 4, 0), (26, 14, 8))
 box_1
-box_1_m1 = symmetry_image(box_1, symmetry_1, 1)  # shadow: box_1, symmetry_1
-box_1_m1
+box_1_images = symmetry_images(box_1, symmetry_1)  # shadow: box_1, symmetry_1
+box_1_images
 ```
 
-`symmetry_1` is the symmetry and `1` the number of the image in it (a symmetry of two planes at right angles has three images: the turn between them and the two mirror images). **An image follows both**: change the original and the
-image changes the way a mirror shows it -- and **move the symmetry with its gizmo and every image of it moves with it**. **An image has no numbers of its own: select it and drag its gizmo, or its surfaces, and the original moves** -- the
-other way, as a mirror shows it (an arrow moves the original the opposite way across the plane, a ring turns it the opposite way). An image that would be the model itself, or another image (a ball whose centre is on a plane), is not made;
-the images of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things.
+`symmetry_1` is the symmetry. A symmetry of two planes at right angles has three images (the turn between them and the two mirror images), a cube's nine planes forty-seven -- and still it is **one row in the tree and one line in the script**:
+the original is the only model with numbers, the images are only what the symmetry makes of it, so nothing is stored twice. (`only=(1, 3)` lists the images that are there: an image that would be the model itself, or another image -- a ball
+whose centre is on a plane -- is not made.) Each image is still drawn, meshed and moved as a shape of its own, so **dragging the original moves every image with it as you drag, with nothing meshed again**; select the row and all
+the images are selected. **The images follow both**: change the original and they change the way a mirror shows it -- and **move the symmetry with its gizmo and every image of it moves with it**. **They have no numbers of their own: drag
+the gizmo shown at the first image, or the surfaces of any of them, and the original moves** -- the other way, as a mirror shows it (an arrow moves the original the opposite way across the plane, a ring turns it the opposite way). The images
+of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things. (A surface or a field, a sketch, a line or a spline has a model for each image,
+`symmetry_image(model, symmetry_1, 3)` -- 3 is the number of the image in the symmetry; the sketch through the images of its points.)
 
 Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
 

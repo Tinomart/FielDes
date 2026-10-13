@@ -393,6 +393,9 @@ public:
         // image's: the gizmo is drawn there, and what is dragged moves the original by what the image's move is when it is taken back
         bool mapped = false;
         QMatrix4x4 map;
+        // One of several images that are one model (symmetry_images): the first one shows the gizmo, the others do not -- they keep their numbers (they are previewed as the
+        // original is dragged) but draw no arrows, rings or knobs of their own
+        bool hidden = false;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
     /*  A symmetry model (fieldes.stdlib.symmetries.symmetry_planes): the arrangement of its planes and where it was made, in its own place -- before its gizmo moved and turned it.

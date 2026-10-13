@@ -1886,6 +1886,14 @@ void Interpreter::recordShape(
                     Py_XDECREF(sy);
                     PyErr_Clear();
                 }
+                // One of the images of a set that is one model (symmetry_images): the first image has the gizmo, the others only follow
+                if (PyObject_HasAttrString(obj, "_gizmo_hidden"))
+                {
+                    PyObject* hid = PyObject_GetAttrString(obj, "_gizmo_hidden");
+                    hd.hidden = hid && PyObject_IsTrue(hid) == 1;
+                    Py_XDECREF(hid);
+                    PyErr_Clear();
+                }
                 shape->setGizmo(hd);
             }
             Py_XDECREF(h);

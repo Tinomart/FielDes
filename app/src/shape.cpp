@@ -287,7 +287,7 @@ std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const doub
 
 bool Shape::hasGizmo() const
 {
-    if (m_locked || !m_gizmo.present || m_gizmo.mode == Gizmo::NEVER) return false;
+    if (m_locked || !m_gizmo.present || m_gizmo.hidden || m_gizmo.mode == Gizmo::NEVER) return false;
     if (m_gizmo.mode == Gizmo::CLICK && !isSelected()) return false;
     for (int a = 0; a < 3; ++a)
     {
@@ -318,7 +318,7 @@ bool Shape::dotPosition(QVector3D& p) const
 
 bool Shape::hasMoveVars() const
 {
-    if (m_locked || !m_gizmo.present) return false;
+    if (m_locked || !m_gizmo.present || m_gizmo.hidden) return false;
     for (int a = 0; a < 3; ++a)
     {
         if (m_gizmo.move[a] && vars.count(m_gizmo.move[a])) return true;
