@@ -990,6 +990,12 @@ An open surface from any field: where the field is 0.  (A body's field as a surf
 
 A wavy sheet z = height + amplitude sin(2 pi s / period) along an axis (s = x or y): a surface, positive above it
 
+### `weld_shift_of(shape)`
+
+The shift a point or a curve is DRAWN with: its own (path_extrude sets it on the path of a sweep and on its points), or -- for the image of such a point in a symmetry -- the
+original's, taken through the turn or mirror the image is made by.  The image of a path is drawn where the image of its sweep is, as the path is where its sweep is.
+None when it is drawn where it is
+
 ## Lines and curves: 1D shapes made of points
 
 1D shapes: a line or a spline through points.
