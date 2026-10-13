@@ -60,6 +60,12 @@ foreach ($need in 'include\eigen3\Eigen', 'tools\python3\python.exe', 'bin\Qt5Co
 }
 
 # --- Configure and build -------------------------------------------------------
+# A build tree that builds FielDes.exe straight into a folder (FIELDES_OUTPUT_DIR) keeps an older copy of the exe and the DLLs in app\Release, and the portable
+# folder is a mirror of that: it would put the old files over the new ones.  Package from a build tree of its own (-BuildDir).
+$cache = Join-Path $BuildDir 'CMakeCache.txt'
+if ($Package -and (Test-Path $cache) -and (Select-String -Path $cache -Pattern '^FIELDES_OUTPUT_DIR:PATH=.+' -Quiet)) {
+    throw "$BuildDir builds into FIELDES_OUTPUT_DIR; give -Package a build tree without it (e.g. -BuildDir C:\dev\fieldes-build-release)."
+}
 Run $cmake @('-S', $Source, '-B', $BuildDir, '-G', 'Visual Studio 17 2022', '-A', 'x64',
     "-DCMAKE_TOOLCHAIN_FILE=$Vcpkg\scripts\buildsystems\vcpkg.cmake",
     "-DVCPKG_TARGET_TRIPLET=$Triplet",
@@ -92,7 +98,7 @@ if ($Package) {
     Mirror (Join-Path $Source 'examples') (Join-Path $PackageDir 'examples') @('/XD', '__pycache__', '*.fieldes-cache.trees', '*.fieldes-bspline', '*.fieldes-tessellation', 'meshes', '/XF', '*.fieldes-cache.py', '*.step', '*.stp')
     Copy-Item (Join-Path $Source 'examples\step\PivotBearingSupportBracket.STEP') (Join-Path $PackageDir 'examples\step') -Force
     # The command line of the apps (`fieldes run tool.fieldesapp --Radius 7`): FielDes.exe is a window program, this waits for it
-    Copy-Item (Join-Path $Source 'scriptsieldes.cmd') $PackageDir -Force
+    Copy-Item (Join-Path $Source 'scripts\fieldes.cmd') $PackageDir -Force
     foreach ($doc in 'README.md', 'LICENSE-GPL-2.0', 'LICENSE-MPL-2.0', 'NOTICE.md', 'CHANGELOG.md') {
         if (Test-Path (Join-Path $Source $doc)) { Copy-Item (Join-Path $Source $doc) $PackageDir -Force }
     }
