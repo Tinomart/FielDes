@@ -2200,6 +2200,14 @@ Window::Window(Arguments args)
             QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
             QApplication::sendEvent(view, &e);
         };
+        // gizmogrip <kind> <axis>: where a part of the gizmo is, in the coordinates of the WINDOW (what winmouse takes)
+        a->add("gizmogrip", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            QPoint at;
+            if (p.size() < 2 || !view->gizmoGripPoint(p[0].toInt(), p[1].toInt(), at)) { std::cerr << "automation: no handle " << args.toStdString() << std::endl; return; }
+            const QPoint w = view->mapTo(this, at);
+            std::cerr << "automation: gizmogrip " << w.x() << " " << w.y() << std::endl;
+        });
         a->add("gizmopress", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             QPoint from;

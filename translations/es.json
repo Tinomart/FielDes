@@ -543,6 +543,7 @@
  "The gizmo": "El manipulador",
  "A selected model has a gizmo. Drag an arrow to move the model.": "Un modelo seleccionado tiene un manipulador. Arrastre una flecha para mover el modelo.",
  "The gizmo is a line of the script too (gizmo): its numbers change as you drag. Or press Show me.": "El manipulador también es una línea del script (gizmo): sus números cambian al arrastrar. O pulse Mostrar cómo.",
+ "Nice. The model moved, and the numbers of the gizmo line changed with it.": "Muy bien. El modelo se movió y los números de la línea del gizmo cambiaron con él.",
  "Models inside models": "Modelos dentro de modelos",
  "drilled is made of plate and hole: models are built from models, and the ones a call is made of are its children.": "drilled está hecho de plate y hole: los modelos se construyen con modelos, y aquellos de los que se compone una llamada son sus hijos.",
  "Drag one out of the operation, or onto another, and the call changes: the framed lines are the same models, as text.": "Arrastre uno fuera de la operación, o sobre otra, y la llamada cambia: las líneas enmarcadas son los mismos modelos, como texto.",

@@ -543,6 +543,7 @@
  "The gizmo": "操纵器",
  "A selected model has a gizmo. Drag an arrow to move the model.": "选中的模型带有一个操纵器。拖动箭头即可移动模型。",
  "The gizmo is a line of the script too (gizmo): its numbers change as you drag. Or press Show me.": "操纵器同样是脚本中的一行（gizmo）：拖动时其数字会变化。或点击“演示”。",
+ "Nice. The model moved, and the numbers of the gizmo line changed with it.": "很好。模型移动了，gizmo 那一行的数字也随之改变。",
  "Models inside models": "模型中的模型",
  "drilled is made of plate and hole: models are built from models, and the ones a call is made of are its children.": "drilled 由 plate 和 hole 构成：模型由模型搭建，构成某个调用的模型就是它的子项。",
  "Drag one out of the operation, or onto another, and the call changes: the framed lines are the same models, as text.": "把其中一个拖出该操作，或拖到另一个操作上，调用就会改变：框出的行就是同样的模型，以文本形式呈现。",

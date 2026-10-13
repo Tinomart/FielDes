@@ -543,6 +543,7 @@
  "The gizmo": "ギズモ",
  "A selected model has a gizmo. Drag an arrow to move the model.": "選択したモデルにはギズモが表示されます。矢印をドラッグするとモデルを移動できます。",
  "The gizmo is a line of the script too (gizmo): its numbers change as you drag. Or press Show me.": "ギズモもスクリプトの 1 行（gizmo）です。ドラッグするとその数値が変わります。または「実演」を押します。",
+ "Nice. The model moved, and the numbers of the gizmo line changed with it.": "いいですね。モデルが動き、ギズモの行の数値もそれに合わせて変わりました。",
  "Models inside models": "モデルの中のモデル",
  "drilled is made of plate and hole: models are built from models, and the ones a call is made of are its children.": "drilled は plate と hole でできています。モデルはモデルから作られ、呼び出しを構成するモデルがその子になります。",
  "Drag one out of the operation, or onto another, and the call changes: the framed lines are the same models, as text.": "操作の外へ、または別の操作の上へドラッグすると呼び出しが変わります。枠で囲まれた行は同じモデルをテキストで表したものです。",

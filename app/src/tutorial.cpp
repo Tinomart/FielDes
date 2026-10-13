@@ -981,10 +981,20 @@ void Tutorial::buildSteps()
         s.place = InsideBottom;
         s.closeRows = true;
         s.undone = true;
-        s.enter = [this, scene] {
-            if (!scene()->selectionKeys().contains("shape:drilled")) scene()->selectModel("drilled");
+        s.enter = [this] {
+            selectAgain({"drilled"}, 12);               // (once it is in the tree: a step reached by a jump or with Back may find the tree of another model)
         };
         s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
+        // (done when the numbers of the gizmo's move are not the ones it was written with: the model was moved by its arrow, or a plane square)
+        s.done = [this] {
+            static const QRegularExpression move(R"(move=\(\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\))");
+            const auto m = move.match(m_editor->getScript());
+            if (!m.hasMatch()) return false;
+            for (int i = 1; i <= 3; ++i)
+                if (std::abs(m.captured(i).trimmed().toDouble()) > 0.05) return true;
+            return false;
+        };
+        s.doneNote = T("Nice. The model moved, and the numbers of the gizmo line changed with it.");
         s.show = [this](std::function<void()> over) {
             QPoint p;
             if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
@@ -1446,10 +1456,12 @@ void Tutorial::buildSteps()
         s.group = "field";
         s.closeRows = true;
         s.openRows = QStringList{"grown", "swell"};
-        s.enter = [this, scene, fieldModel] {
+        s.enter = [this, fieldModel] {
             // (the growth by the field is what is moved: it is there when the step before was skipped too)
             useScript(tourHeader(QString()) + fieldModel(true));
-            scene()->selectModel("anchor");
+            // The point is selected once it is in the tree: when the step is reached with Back, or by a jump, the model of the step is not in the tree yet --
+            // a selection asked for at once found nothing, and the step had no gizmo to drag
+            selectAgain({"anchor"}, 12);
         };
         s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
         s.done = [this] {
