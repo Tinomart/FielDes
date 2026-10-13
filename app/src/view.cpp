@@ -4376,6 +4376,26 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
         for (int a = 0; a < 3; ++a) F[a] = gizmo_frame[a];
         return true;
     }
+    if (s && s->isSymmetry())
+    {
+        // A symmetry's gizmo is along its own axes -- the line in its first plane, the normal of that plane, and its axis (on a work plane: the plane's u, v and normal) -- when
+        // those are not the world's.  A symmetry made on a work plane that the camera has turned is turned with it: arrows and rings that stayed along the world's axes would
+        // move and turn it across its own.  (Along the world's axes already, it keeps the world's gizmo.)  It needs all six numbers, as the gizmo of a curve's point does
+        const auto& h = s->gizmo();
+        const auto& vars = s->getVars();
+        Symmetry now;
+        if (!h.present || !s->symmetryNow(now)) return false;
+        for (int a = 0; a < 3; ++a)
+        {
+            if (!h.move[a] || !vars.count(h.move[a]) || !h.rotate[a] || !vars.count(h.rotate[a])) return false;
+        }
+        const QVector3D own[3] = {now.a, now.b(), now.c};
+        bool world = true;
+        for (const QVector3D& v : own) world = world && std::max({std::fabs(v.x()), std::fabs(v.y()), std::fabs(v.z())}) > 0.99999f;
+        if (world) return false;
+        for (int a = 0; a < 3; ++a) F[a] = own[a].normalized();
+        return true;
+    }
     if (!s || !s->isPoint()) return false;
     int index = -1;
     const Shape* owner = controlOwner(s, index);

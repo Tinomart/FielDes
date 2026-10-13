@@ -22,6 +22,9 @@
   The old symmetry of the work plane's card (a row of numbers, images that were shapes of their own, handles in the viewport) is gone. New example `29_symmetry.py`.
 - **The Shift gizmo turns in steps of 5 degrees.** With Shift held, the rotation rings snap: the angle a part ends at is a multiple of 5 (from a part that stood at 3 degrees too), and a group of points keeps the differences
   between its points' angles, each turned by a multiple of 5. The angle shown beside the ring is the snapped one. (Checked in a real window: seven ring drags with Shift, each ended on a multiple of 5; without Shift the angle is free.)
+- **A symmetry's gizmo is along its own axes.** `Shift+S` on the work plane makes the symmetry perpendicular to the plane (its axis the plane's normal, its first plane across the plane, centred on its origin) -- and its gizmo is
+  now turned to fit: arrows, plane squares and rings along the plane's u, v and normal, however the camera was turned when the plane was made (it used to keep the world's axes, which left a symmetry on a tilted plane
+  impossible to move or turn along the plane). A symmetry along the world's axes keeps the world's gizmo, and the gizmo follows the symmetry when it is turned.
 - **The symmetry key is `Shift+S`**, as `Shift+W` opens the work plane (`Ctrl+Shift+S` stays *Save as*): it uses the selected symmetry, or stops using it.
 - **A new file is empty.** FielDes no longer starts with a sphere in the script (File → New, *Load the default script* and the first start): nothing is made for you to delete first.
 - **`Ctrl+Shift+W` works when FielDes has just opened.** It was the viewport's shortcut, and the keyboard is in the code editor at the start, so it did nothing until the viewport was clicked. It is the window's now (it types

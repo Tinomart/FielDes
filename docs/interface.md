@@ -493,6 +493,10 @@ x, y or z, the work plane's normal, up in the view (the first plane then splits 
 cross (the origin, the middle of what is selected, the work plane's origin). The count and the arrangement are written into the call; where it is and how it is turned are the numbers of its gizmo. **In use** switches the images off and on
 (`Shift+S` does the same; the planes are drawn pale while it is off, and the ✕ of the card stops using it).
 
+**Its gizmo is along its own axes.** A symmetry made with `Shift+S` while the work plane's view is open has its axis along the plane's normal and its first plane across the plane (perpendicular to it), centred on the
+plane's origin -- and **its gizmo is turned with it**: the arrows and the rings are along the plane's own axes (its u, its v, its normal), however the camera was turned when the plane was made, so it is moved and turned in the
+plane's terms. A symmetry that lies along the world's axes keeps the world's gizmo.
+
 **How an image was made.** Select the images of a model -- `leg_images`, `box_1_images`, or any one of their shapes in the viewport -- and **the symmetry they were made in becomes the symmetry in use**: its planes are drawn, its
 card shows, and what you make next is made at its images too, so you can add to the model the way it was made. (A symmetry that is selected itself is the one in use; the one in use stays when nothing is selected.)
 
