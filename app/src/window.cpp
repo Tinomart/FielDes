@@ -970,13 +970,16 @@ Window::Window(Arguments args)
         symAction->setToolTip(T("Turn the symmetry of the drawing on or off: what is drawn is mirrored over a line, and a point can be put on the line"));
         symAction->setEnabled(false);
         Shortcuts::add(symAction, "view.workplane-symmetry", {QKeySequence(Qt::Key_S)});
-        for (QAction* a : {openAction, newAction, faceAction, selectAction, symAction})
+        // (Ctrl+Shift+W is the window's: it types nothing, so it needs no focus in the viewport -- when FielDes opens the keyboard is in the script editor, and a shortcut that
+        // only acted in the viewport did nothing until the viewport had been clicked.  The single keys stay the viewport's: in the editor they are letters)
+        newAction->setShortcutContext(Qt::WindowShortcut);
+        for (QAction* a : {openAction, faceAction, selectAction, symAction})
         {
             a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
             view->addAction(a);
         }
         connect(openAction, &QAction::toggled, this, [=](bool on) { view->setWorkPlaneOpen(on); });
-        connect(newAction, &QAction::triggered, this, [=] { view->newWorkPlane(); });
+        connect(newAction, &QAction::triggered, this, [=] { view->newWorkPlane(); view->setFocus(Qt::OtherFocusReason); });      // (the keyboard goes to the viewport: the keys of the drawing work at once)
         connect(faceAction, &QAction::triggered, this, [=] { view->faceWorkPlane(); });
         connect(selectAction, &QAction::triggered, this, [=] { view->setWorkPlaneMode(0); });
         connect(symAction, &QAction::triggered, this, [=] { view->toggleWorkPlaneSymmetry(); });

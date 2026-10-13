@@ -183,7 +183,7 @@ Rules:
 
 ## Primitives and displayed expressions
 
-The sphere a new file starts with is what the right-click menu's *New 3D shape* makes: named, with its surface
+A new file is empty. The sphere that the right-click menu's *New 3D shape* makes is named, and gets its surface
 numbers in a `handles()` call once it is selected, so its handles work and it is a model of its own in a selection of several:
 
 ```python

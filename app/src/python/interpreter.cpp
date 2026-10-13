@@ -295,20 +295,7 @@ QString Interpreter::defaultScript() {
                       .arg(default_settings.max.y())
                       .arg(default_settings.max.z()) +
         SET_QUALITY_STR.arg(default_settings.quality) +
-        SET_RESOLUTION_STR.arg(default_settings.res) +
-        // (the starting sphere is what the viewport's "New 3D shape" makes: named, and with its numbers exposed, so
-        // that its surfaces can be dragged at once and it is a model of its own in a selection of several)
-        "\nsphere_1 = sphere(1)\n"
-        "sphere_1 = handles(\n"
-        "    sphere_1,\n"
-        "    [\n"
-        "        var(0.0),\n"
-        "        var(0.0),\n"
-        "        var(0.0),\n"
-        "        var(1.0),\n"
-        "    ],\n"
-        ")\n"
-        "sphere_1";
+        SET_RESOLUTION_STR.arg(default_settings.res);       // (a new file is empty: nothing is made for the user to delete first)
 }
 
 void Interpreter::halt() {

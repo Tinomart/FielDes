@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### 2D shapes on top, a symmetry that snaps and closes, linked handles, a tour with a state per step
+- **A new file is empty.** FielDes no longer starts with a sphere in the script (File → New, *Load the default script* and the first start): nothing is made for you to delete first.
+- **`Ctrl+Shift+W` works when FielDes has just opened.** It was the viewport's shortcut, and the keyboard is in the code editor at the start, so it did nothing until the viewport was clicked. It is the window's now (it types
+  nothing, so it needs no focus), and it gives the keyboard to the viewport: the keys of the drawing (`E`, `S`, a right click) work at once. The single keys (`Shift+W`, `W`, `S`) stay the viewport's, as in the editor they are letters.
 - **Undo and redo: the lines the program writes by itself are not steps of their own.** A new model gets its `gizmo(...)` / `handles(...)` lines, and the render region follows it, in edits of the program's own
   after the user's: *Ctrl+Z* only took those back, they were written again at once (the model was still selected) and the model never went -- a point placed with the work plane's Point tool, a new sphere, any new
   model. Now one undo takes the program's own edits together with the edit of the user's before them, and one redo brings them all back (checked: a new sphere goes with its lines and its region and comes back, a placed

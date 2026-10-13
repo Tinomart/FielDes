@@ -414,7 +414,7 @@ models with ordinary numbers. Three keys, all of which act while the viewport (o
 | Key | |
 |---|---|
 | `Shift+W` (or **View → Work plane**) | opens and closes the **work plane view**: the plane is drawn with a grid, and its card is shown. A plane is made when there is none |
-| `Ctrl+Shift+W` (or **View → New work plane**) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a sketch, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
+| `Ctrl+Shift+W` (or **View → New work plane**; **works wherever the keyboard is**, in the code editor too, and gives it to the viewport) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a sketch, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
 | `W` (or **View → Set view to work plane**) | turns the camera to **look straight at** the plane. It only moves the camera: it never changes the script |
 
 The card (top right, below the section card when that is open) has three buttons that say what a click draws -- **Line**, **Spline**, **Point**, each with a picture of what it makes -- a line that says whether you are drawing, and the plane's settings: **Grid** on and off, **Snap to grid** and **Snap to points**, the **grid step** (automatic, from how large the picture is, or a number), the plane's
@@ -622,7 +622,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | Model tree | `Ctrl+Shift+T` |
 | Section view | `Shift+X` (viewport focused) |
 | Copy / link the selected models (viewport or tree focused) | `Shift+D` / `Ctrl+D` |
-| Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `Ctrl+Shift+W`, `W` (viewport focused) |
+| Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `W` (viewport focused); `Ctrl+Shift+W` anywhere |
 | Work plane view: symmetry on / off | `S` (viewport focused, while the work plane view is open) |
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |
