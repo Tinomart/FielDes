@@ -2705,6 +2705,14 @@ void Shape::draw(const QMatrix4x4& M)
         // Unpack vertices into a flat array that will loaded into OpenGL
         const auto& dd = dispNow();
         const bool deform = has_deform && m_deform != 0 && dd.size() == mesh->verts.size();
+        // A patch of a surface is drawn at the top of its colour map -- except in the boundary-condition map, whose colours are the categories
+        // (its top is the last one, gold): there it is the category its label names ("bc:6", a selected surface), the colour its key shows
+        float patchT = 1.0f;
+        if (has_cutoff && color_map == "bc")
+        {
+            const int category = color_label.section(':', 1).split(',', Qt::SkipEmptyParts).value(0).toInt();
+            patchT = float(std::max(0, std::min(kBcCategories, category))) / float(kBcCategories);
+        }
         size_t vk = 0;
         for (auto& v0 : mesh->verts)
         {
@@ -2735,7 +2743,7 @@ void Shape::draw(const QMatrix4x4& M)
             if (has_color && color_values.size() == mesh->verts.size())
             {
                 const float span = color_hi - color_lo;
-                const float t = has_cutoff ? 1.0f : (span > 0 ? (color_values[vi] - color_lo) / span : 0.5f);
+                const float t = has_cutoff ? patchT : (span > 0 ? (color_values[vi] - color_lo) / span : 0.5f);
                 float r, g, b;
                 colormapRGB(color_map, t, r, g, b);
                 verts[i++] = r;

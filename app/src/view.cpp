@@ -1373,6 +1373,10 @@ void View::drawScaleBar(QPainter& painter)
     painter.setFont(font);
     const QFontMetrics fm(font);
     const float x0 = width() / 2.0f - px / 2, y = height() - 16.0f;
+    // (the ruler has no fill of its own for its second half: it took the brush the last thing drawn before it left on the painter -- the pink
+    // of a selected surface's key, a boundary condition's colour -- and was drawn in it)
+    painter.save();
+    painter.setBrush(Qt::NoBrush);
     painter.setRenderHint(QPainter::Antialiasing, false);
     const QColor ink(0xee, 0xe8, 0xd5, 220), shade(0, 0, 0, 90);
     // A two-tone bar with ticks at the ends and the middle, like a ruler
@@ -1393,6 +1397,7 @@ void View::drawScaleBar(QPainter& painter)
                             fm.horizontalAdvance("0") + 2, fm.height()), Qt::AlignRight | Qt::AlignVCenter, "0");
     bottom_items.push_back(QRectF(x0 - fm.horizontalAdvance("0") - 8, y - fm.height() / 2.0 - 4,
                                   px + fm.horizontalAdvance("0") + fm.horizontalAdvance(label) + 20, fm.height() + 6));
+    painter.restore();
     painter.setRenderHint(QPainter::Antialiasing, true);
 }
 

@@ -22,6 +22,9 @@
   turn their whole arrangement about its middle).
 - **Deleting a sketch deletes its points.** A sketch (or a `polyline` / `spline`) made from points takes the points it was made from with it, in the same undo step -- they would stay as dots with nothing to do. A point
   that anything else still uses (a second sketch, a move, ...) stays; deleting a single point still only takes it out of the sketch.
+- **A selected surface is drawn in the colour its key shows, and the ruler is no longer pink.** The patch of a `select_surface` was drawn in the *last* colour of the boundary-condition map (gold, since the map grew to 13 colours) while
+  its key said *Selected surface* in magenta; it is magenta on the model now, as the key and the docs say. And the scale ruler at the bottom took its second half's fill from whatever was drawn before it -- the key's pink swatch -- so the
+  ruler turned pink whenever a selection was shown; it now has its own (no) fill.
 - **A section can be started at the end of the model tree too**: hover under the last row and the + in a circle shows there.
 - **Ctrl+drag of a row is always that row**, as a shadow reference: it is dragged at once and becomes the selection, whether it was selected or not (before, a row that was not selected joined the selection, the models were made ready to be
   dragged and the tree rebuilt under the hand, so nothing was dragged).
