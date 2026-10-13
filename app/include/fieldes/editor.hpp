@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <vector>
 
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QVBoxLayout>
@@ -335,7 +336,18 @@ protected:
 
     // The document's revision just after the last live edit (applyEditsLive): the next one joins it only if it is still current
     int m_liveRevision = -1;
+    // The document and its revision just after the last edit that the program makes by itself to make selected models ready to be dragged (their gizmo and handles lines):
+    // an undo that finds it on top takes the edit before it too (see undo)
+    QPointer<QTextDocument> m_readyDoc;
+    int m_readyRevision = -1;
+    QString m_readyText;                        // (the script just after it: nothing was written since while it is the same)
+    int m_readyCount = 0;
+    // What the last undo took, for the redo that follows it: the document, its revision then, and how many steps it took (the program's own edits and the user's)
+    QPointer<QTextDocument> m_redoDoc;
+    int m_redoRevision = -1;
+    int m_redoSteps = 1;                       // (how many of those follow one another: a model can be made ready in two edits, its handles and its gizmo)
     void applyEditsAs(QList<TextEdit> edits, bool live);
+    void applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live);     // (applyEditsAs, and what the undo needs to know about the program's own edits)
 
     // The model tree is read from the text after every edit (a moment after the last key), and again when a run has found something
     // out about the statements (see outline.py)

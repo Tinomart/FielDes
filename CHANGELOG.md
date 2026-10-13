@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### 2D shapes on top, a symmetry that snaps and closes, linked handles, a tour with a state per step
+- **Undo and redo: the lines the program writes by itself are not steps of their own.** A new model gets its `gizmo(...)` / `handles(...)` lines, and the render region follows it, in edits of the program's own
+  after the user's: *Ctrl+Z* only took those back, they were written again at once (the model was still selected) and the model never went -- a point placed with the work plane's Point tool, a new sphere, any new
+  model. Now one undo takes the program's own edits together with the edit of the user's before them, and one redo brings them all back (checked: a new sphere goes with its lines and its region and comes back, a placed
+  point the same; deleting a model and undoing it is still one step).
 - **2D shapes are drawn over the 3D ones, in a very light blue, and picked first.** A sketch or a flat shape drawn on a body (or inside it) used to hide behind the body's surface or hide what was drawn there; now it is
   always seen whole, in front of everything 3D (they are in front of each other as their places say), and a click on it selects it, not the body under it. Its blue outline can always be pressed.
 - **The lines of the work plane's symmetry are a thing to snap to.** With *Snap to points* on, a point put down (or dragged) near a symmetry line lands **on** it -- along the line, on the grid's steps from the centre while the plane

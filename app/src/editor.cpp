@@ -854,12 +854,37 @@ void Editor::onInterpreterDone(Result r)
 
 void Editor::undo()
 {
-    scriptWidget()->document()->undo();
+    // The lines that make a selected model ready to be dragged (its gizmo, its handles) are written by the program when the model is selected -- a model that was just
+    // made, say.  They are not something the user did: undoing only them changes nothing that can be seen, and they are written again at once, because the model is still
+    // selected -- so an undo went round in a circle and the model never went.  An undo that finds them on top takes the edit before them too: the last thing the user did
+    QTextDocument* doc = scriptWidget()->document();
+    const bool bookkeeping = m_readyDoc == doc && m_readyRevision >= 0 && doc->toPlainText() == m_readyText;
+    const int steps = bookkeeping ? m_readyCount + 1 : 1;
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
+        std::cerr << "[undo] revision " << doc->revision() << " (the program's own edit was left at " << m_readyRevision << "), same text " << bookkeeping
+                  << ", steps " << steps << std::endl;
+    for (int i = 0; i < steps && doc->isUndoAvailable(); ++i) doc->undo();
+    // (the redo that follows takes them back together)
+    m_redoDoc = doc;
+    m_redoRevision = doc->revision();
+    m_redoSteps = steps;
 }
 
 void Editor::redo()
 {
-    scriptWidget()->document()->redo();
+    // An undo that took the program's own edits with the user's brings them back together: one redo, as one undo took them
+    QTextDocument* doc = scriptWidget()->document();
+    const int steps = (m_redoDoc == doc && m_redoRevision >= 0 && doc->revision() == m_redoRevision) ? m_redoSteps : 1;
+    for (int i = 0; i < steps && doc->isRedoAvailable(); ++i) doc->redo();
+    m_redoRevision = -1;
+    if (steps > 1)
+    {
+        // (and what is on top now is the program's own again: the next undo takes it with the user's edit below it)
+        m_readyDoc = doc;
+        m_readyRevision = doc->revision();
+        m_readyText = doc->toPlainText();
+        m_readyCount = steps - 1;
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1315,14 +1340,48 @@ int Editor::testVarSteps(int line0)
 
 void Editor::applyEdits(QList<TextEdit> edits, QString description)
 {
-    (void)description;
-    applyEditsAs(edits, false);
+    applyEditsNoted(edits, description, false);
 }
 
 void Editor::applyEditsLive(QList<TextEdit> edits, QString description)
 {
-    (void)description;
-    applyEditsAs(edits, true);
+    applyEditsNoted(edits, description, true);
+}
+
+// The edits that the program makes by itself, after what the user did, to go with it -- the lines that make a selected model ready to be dragged (its gizmo, its handles) and the
+// render region that follows a new model -- are not steps of their own for undo and redo: one undo takes them with the user's edit before them, one redo brings them back
+void Editor::applyEditsNoted(QList<TextEdit> edits, const QString& description, bool live)
+{
+    const bool own = (description.startsWith("Make ") && description.contains(" draggable")) || description == "Grow the region";
+    // (a live edit that joins the one before it is no step of its own at all)
+    const bool joined = live && m_liveRevision >= 0 && m_liveRevision == script_doc->revision();
+    const bool chain = m_readyDoc == script_doc && m_readyRevision >= 0 && script_doc->toPlainText() == m_readyText;
+    applyEditsAs(edits, live);
+    if (joined)
+    {
+        if (chain)
+        {
+            m_readyRevision = script_doc->revision();
+            m_readyText = script_doc->toPlainText();
+        }
+        return;
+    }
+    if (own)
+    {
+        m_readyCount = chain ? m_readyCount + 1 : 1;
+        m_readyDoc = script_doc;
+        m_readyRevision = script_doc->revision();
+        m_readyText = script_doc->toPlainText();
+    }
+    else
+    {
+        m_readyDoc.clear();
+        m_readyRevision = -1;
+        m_readyText.clear();
+        m_readyCount = 0;
+    }
+    if (qEnvironmentVariableIsSet("FIELDES_TIMING"))
+        std::cerr << "[edit] " << description.toStdString() << " (revision " << script_doc->revision() << ", " << m_readyCount << " of the program's own)" << std::endl;
 }
 
 void Editor::applyEditsAs(QList<TextEdit> edits, bool live)
