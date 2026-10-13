@@ -470,6 +470,10 @@ protected:
      *  -- with the room and the whole numbers the script's region has -- and what is shown is meshed again in it at once; the region it has grown to is what is written into the
      *  script when the drag ends (regionGrown)  */
     void growRegionForPreview();
+    /*  The same for a surface that is pulled (the picture of it is meshed again from its numbers at every move, over the region): the region holds the point it is pulled to  */
+    void growRegionForSurfaceDrag(const QVector3D& at, const std::map<libfive::Tree::Id, float>& vs);
+    /*  The region grown to hold a box of the models (with the room and the whole numbers of the script's region), and what is shown meshed again in it  */
+    void growRegionToHold(const double nlo[3], const double nhi[3]);
     bool m_regionGrown = false;
     QVector3D m_grownMin, m_grownMax;
     struct FaceVar { libfive::Tree::Id id; int axis; float value0; };

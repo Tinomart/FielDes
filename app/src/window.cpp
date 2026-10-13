@@ -2175,6 +2175,29 @@ Window::Window(Arguments args)
             }
             send(QEvent::MouseButtonRelease, from + d, Qt::LeftButton, Qt::NoButton);
         });
+        // gizmopress <kind> <axis>, gizmomove <dx> <dy>, gizmorelease <dx> <dy>: the same drag in pieces (the offsets are from where the handle was pressed), so that a picture
+        // can be taken in the middle of it
+        auto gizmoFrom = std::make_shared<QPoint>();
+        auto gizmoSend = [=](QEvent::Type t, QPoint pos, Qt::MouseButton b, Qt::MouseButtons bs) {
+            QMouseEvent e(t, pos, view->mapToGlobal(pos), b, bs, Qt::NoModifier);
+            QApplication::sendEvent(view, &e);
+        };
+        a->add("gizmopress", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            QPoint from;
+            if (p.size() < 2 || !view->gizmoGripPoint(p[0].toInt(), p[1].toInt(), from)) { std::cerr << "automation: no handle " << args.toStdString() << std::endl; return; }
+            *gizmoFrom = from;
+            gizmoSend(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+            gizmoSend(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+        });
+        a->add("gizmomove", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() >= 2) gizmoSend(QEvent::MouseMove, *gizmoFrom + QPoint(p[0].toInt(), p[1].toInt()), Qt::NoButton, Qt::LeftButton);
+        });
+        a->add("gizmorelease", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() >= 2) gizmoSend(QEvent::MouseButtonRelease, *gizmoFrom + QPoint(p[0].toInt(), p[1].toInt()), Qt::LeftButton, Qt::NoButton);
+        });
         // gizmodragpaced <kind> <axis> <dx> <dy> <steps> <frame ms>: the same drag, a move every <frame ms> with the event loop running between them (as a hand moves the mouse), and how
         // late each frame came back -- the time the viewport was busy with something else.  Printed: the whole drag, the worst and the mean lateness
         a->add("gizmodragpaced", [=](const QString& args){

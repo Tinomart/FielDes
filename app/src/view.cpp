@@ -1866,6 +1866,9 @@ void View::mouseMoveEvent(QMouseEvent* event)
         emit(varsDragged(QMap<libfive::Tree::Id, float>(sol.second)));
 
         drag_valid = fabs(sol.first) < 1e-6;
+        // The region holds what is pulled -- now: the surface is meshed again from its new numbers over the region, and out of it is cut off until the script has run.  The region
+        // it has grown to goes into the script with the numbers when the mouse is let go (regionGrown)
+        if (drag_valid) growRegionForSurfaceDrag(cursor_pos, sol.second);
         bool changed = false;
         for (auto& s : shapes)
         {
@@ -2219,6 +2222,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 emit(dragStart());
                 drag_target->setGrabbed(true);
                 drag_valid = true;
+                m_regionGrown = false;
 
                 drag_start = drag_target->isFlat() ? flat_edge : toModelPos(event->pos());
                 auto df = drag_target->dragFrom(drag_start);
@@ -2444,6 +2448,12 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         {
             drag_target->setGrabbed(false);
             drag_target = nullptr;
+            // (the region a pulled surface grew to goes into the script with the numbers of the drag, as a gizmo's does: the run that this drag's end starts has both)
+            if (m_regionGrown)
+            {
+                m_regionGrown = false;
+                emit(regionGrown(m_grownMin, m_grownMax));
+            }
             emit(dragEnd());
             checkHoverTarget(event->pos());
         }
@@ -6494,11 +6504,9 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         if (s->previewGizmoVars(m, allowed)) { moved = true; continue; }
         changed |= s->updateVars(m);
     }
-    if (moved)
-    {
-        update();
-        growRegionForPreview();
-    }
+    if (moved) update();
+    // (the region holds what is dragged, drawn moved or meshed again: the one that is meshed again must not be meshed in a region that cuts it off)
+    if (moved || changed) growRegionForPreview();
     if (changed)
     {
         busy.show();
@@ -6537,7 +6545,8 @@ void View::growRegionForPreview()
     for (auto& s : shapes)
     {
         QVector3D lo, hi;
-        if (!s->previewBox(lo, hi))
+        // (a shape drawn moved, or one that is meshed again as it is dragged -- both are where the numbers of its gizmo put them, not where the mesh it has is)
+        if (!s->previewBox(lo, hi) && !s->movedBox(lo, hi))
         {
             if (!s->hasMesh() || s->noPaint()) continue;
             const auto& b = s->getMeshBounds();
@@ -6552,6 +6561,49 @@ void View::growRegionForPreview()
         any = true;
     }
     if (!any) return;
+    growRegionToHold(nlo, nhi);
+}
+
+void View::growRegionForSurfaceDrag(const QVector3D& at, const std::map<libfive::Tree::Id, float>& vs)
+{
+    // A surface that is pulled is meshed again from its numbers at every move, over the region: out of it, it is cut off.  The region must hold the model as it will be at these
+    // numbers -- now, before the shapes are given them (they start meshing at once).  Where it will be is searched for in the field (a sphere pulled out on one side grows on the other
+    // too); at the least the surface passes through the point the mouse has it at
+    if (!settings.autoScale) return;
+    double nlo[3] = {at.x(), at.y(), at.z()}, nhi[3] = {at.x(), at.y(), at.z()};
+    auto hold = [&](const QVector3D& lo, const QVector3D& hi) {
+        for (int k = 0; k < 3; ++k)
+        {
+            nlo[k] = std::min(nlo[k], double(lo[k]));
+            nhi[k] = std::max(nhi[k], double(hi[k]));
+        }
+    };
+    // (the search is over the region and as far again on every side, and as far round the point the mouse is at)
+    const QVector3D size = settings.max - settings.min;
+    const float reach = std::max({size.x(), size.y(), size.z(), 1.0f});
+    QVector3D slo = settings.min - QVector3D(reach, reach, reach), shi = settings.max + QVector3D(reach, reach, reach);
+    for (int k = 0; k < 3; ++k)
+    {
+        slo[k] = std::min(slo[k], float(at[k]) - reach);
+        shi[k] = std::max(shi[k], float(at[k]) + reach);
+    }
+    for (auto& s : shapes)
+    {
+        if (s->hasMesh() && !s->noPaint())
+        {
+            const auto& b = s->getMeshBounds();
+            hold(QVector3D(b.lower.x(), b.lower.y(), b.lower.z()), QVector3D(b.upper.x(), b.upper.y(), b.upper.z()));
+        }
+        bool uses = false;
+        for (const auto& kv : vs) uses = uses || s->usesVar(kv.first);
+        QVector3D lo, hi;
+        if (uses && s->extentWith(vs, slo, shi, lo, hi)) hold(lo, hi);
+    }
+    growRegionToHold(nlo, nhi);
+}
+
+void View::growRegionToHold(const double nlo[3], const double nhi[3])
+{
     bool outside = false;
     for (int k = 0; k < 3; ++k) outside = outside || nlo[k] < settings.min[k] - 1e-6 || nhi[k] > settings.max[k] + 1e-6;
     if (!outside) return;

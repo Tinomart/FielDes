@@ -255,6 +255,12 @@ public:
     bool hasMesh() const { return mesh && gl_ready; }
     /*  The box of the mesh as a drag shows it -- moved, turned and scaled by the numbers of the gizmo that are being dragged -- false when no such picture is shown  */
     bool previewBox(QVector3D& lo, QVector3D& hi) const;
+    /*  The same box for a shape that is not drawn moved but meshed again as it is dragged (the section view cuts, a colour, a result): where its mesh would be at the numbers of the
+     *  gizmo it has now -- false when the mesh is of these numbers  */
+    bool movedBox(QVector3D& lo, QVector3D& hi) const;
+    /*  Where the shape would be with some of its numbers other (the ones of a drag that has not been given to it yet), searched for over the box -- a search of the field, a few
+     *  milliseconds at the most; false when the shape cannot be searched (a face or a line of points, a sweep, a very large tree, a result)  */
+    bool extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi);
 
     /*  Read-only access for evaluating the field (slice viewer)  */
     const libfive::Tree& getTree() const { ensureField(); return tree; }
@@ -890,6 +896,8 @@ protected:
      *  (the coarse level) is sized by the shape too: about 64 samples across it, however large the region round it is.  The shape's box is
      *  found by a quick search (a few milliseconds at the most) when its render starts  */
     void measureExtent(const Settings& s);
+    /*  The box of the shape at these numbers, searched for over a box (its own search, a few milliseconds at the most): false when it cannot be found  */
+    bool searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi);
     double autoResolution(const Settings& s) const;
     int defaultDivFor(const Settings& s);
     bool m_ext_valid = false;

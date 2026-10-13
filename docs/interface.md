@@ -343,7 +343,7 @@ covered), with two decimals only for what is under 1, a part a few millimetres a
 as you work. When a model reaches out of the region -- you drag it, pull one of its faces, type a bigger number, add a model -- the region grows to hold it, with a little room (a tenth
 of the models' size, at least 1 mm); while a model's extent cannot be found the region is not shrunk (it might be what holds that model); when the models have become much smaller than the region, or the big one is gone, it shrinks to them. With no model left it
 stays as it is (there is nothing to fit it to), and a file that is just opened is only ever grown, never shrunk, so a region you made large on purpose is kept.
-**A drag past the edge is not clipped:** while you pull a gizmo handle the model is drawn whole, and the grown region is written **together with the numbers of the drag, in one run, when you let go** -- there is no second run a few seconds later that fits the region.
+**A drag past the edge is not clipped:** while you pull a gizmo handle or a surface the model is drawn whole (the region grows live, to hold where the model will be), and the grown region is written **together with the numbers of the drag, in one run, when you let go** -- there is no second run a few seconds later that fits the region.
 A script that gets its region from `roi(...)` keeps it, the models' box given to `roi`. With Auto scale **off** the region is exactly what the script says, and what
 is outside it is not drawn.
 

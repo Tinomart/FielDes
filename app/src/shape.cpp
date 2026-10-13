@@ -1073,6 +1073,28 @@ bool Shape::previewBox(QVector3D& lo, QVector3D& hi) const
     return any;
 }
 
+bool Shape::movedBox(QVector3D& lo, QVector3D& hi) const
+{
+    if (!mesh || !m_gizmo.present || m_isPoint) return false;
+    const GizmoNumbers now = gizmoNumbersIn(vars);
+    if (now.move == m_meshGizmo.move && now.rotate == m_meshGizmo.rotate && now.scale == m_meshGizmo.scale) return false;
+    bool invertible = false;
+    const QMatrix4x4 back = gizmoMatrix(m_meshGizmo.move, m_meshGizmo.rotate, m_meshGizmo.scale).inverted(&invertible);
+    if (!invertible) return false;
+    const QMatrix4x4 xform = gizmoMatrix(now.move, now.rotate, now.scale) * back;
+    const auto& b = mesh_bounds;
+    bool any = false;
+    for (int i = 0; i < 8; ++i)
+    {
+        const QVector3D corner((i & 1) ? b.upper.x() : b.lower.x(), (i & 2) ? b.upper.y() : b.lower.y(), (i & 4) ? b.upper.z() : b.lower.z());
+        const QVector3D at = xform.map(corner);
+        if (!any) { lo = hi = at; any = true; continue; }
+        lo = QVector3D(std::min(lo.x(), at.x()), std::min(lo.y(), at.y()), std::min(lo.z(), at.z()));
+        hi = QVector3D(std::max(hi.x(), at.x()), std::max(hi.y(), at.y()), std::max(hi.z(), at.z()));
+    }
+    return any;
+}
+
 bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, bool allowed)
 {
     // Only a plain mesh of this shape can be moved as it is: with colours (they are values of a field at the places of the mesh), a result, a deformation, steps, a
@@ -1171,26 +1193,43 @@ Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
 void Shape::measureExtent(const Settings& s)
 {
     m_ext_valid = false;
-    if (!s.autoScale || has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return;
-    if (hasControls() || (m_flat && hasFlatFrame())) return;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
+    if (!s.autoScale) return;
+    m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi);
+}
+
+bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
+{
+    std::map<libfive::Tree::Id, float> numbers = vars;
+    for (const auto& kv : vs)
+    {
+        const auto it = numbers.find(kv.first);
+        if (it != numbers.end()) it->second = kv.second;
+    }
+    return searchExtent(numbers, search_lo, search_hi, lo, hi);
+}
+
+bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
+{
+    if (has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return false;
+    if (hasControls() || (m_flat && hasFlatFrame())) return false;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
     // (a sweep or a prism: it is drawn from the numbers of its points, and a search through the field of a sweep -- a piece for every piece of the path -- took seconds, in the
     // GUI's thread, for an extent only the field's own render could use; if it has to be meshed from its field it is at the scene's resolution)
-    if (hasSweep() || hasPrism()) return;
+    if (hasSweep() || hasPrism()) return false;
     ensureField();
     // (a tree of more than 100000 nodes -- anything made of a sweep's field -- costs more to be made ready for the search, in the GUI's thread, than the extent is worth: it is
     // not searched, and the shape is rendered at the scene's resolution)
-    if (m_tree_nodes > 100000) return;
+    if (m_tree_nodes > 100000) return false;
     std::vector<libfive_tree> var_trees;
     std::vector<float> values;
-    for (const auto& kv : vars)
+    for (const auto& kv : numbers)
     {
         var_trees.push_back(reinterpret_cast<libfive_tree>(kv.first));
         values.push_back(kv.second);
     }
     libfive_region3 search;
-    search.X = {s.min.x(), s.max.x()};
-    search.Y = {s.min.y(), s.max.y()};
-    search.Z = {s.min.z(), s.max.z()};
+    search.X = {search_lo.x(), search_hi.x()};
+    search.Y = {search_lo.y(), search_hi.y()};
+    search.Z = {search_lo.z(), search_hi.z()};
     if (m_flat) search.Z = {-1e-3f, 1e-3f};         // (a flat shape is in the plane z = 0: its extent is that of its face)
     libfive_region3 out;
     int open = 0;
@@ -1198,10 +1237,10 @@ void Shape::measureExtent(const Settings& s)
     // milliseconds that the shapes of the examples take are well inside it)
     if (!libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, 0.05f, &out, &open,
                                   var_trees.data(), values.data(), int(var_trees.size())))
-        return;
-    m_ext_lo = QVector3D(out.X.lower, out.Y.lower, out.Z.lower);
-    m_ext_hi = QVector3D(out.X.upper, out.Y.upper, out.Z.upper);
-    m_ext_valid = m_ext_hi.x() >= m_ext_lo.x() && m_ext_hi.y() >= m_ext_lo.y() && m_ext_hi.z() >= m_ext_lo.z();
+        return false;
+    lo = QVector3D(out.X.lower, out.Y.lower, out.Z.lower);
+    hi = QVector3D(out.X.upper, out.Y.upper, out.Z.upper);
+    return hi.x() >= lo.x() && hi.y() >= lo.y() && hi.z() >= lo.z();
 }
 
 double Shape::autoResolution(const Settings& s) const
