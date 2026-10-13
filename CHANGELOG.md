@@ -29,6 +29,11 @@
   model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
   the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
   their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
+- **Each library function says what it takes, and the menus read it.** Everything the menus offered for a surface was valid -- a surface fits "any shape", the default of every operation -- so `fillet`, `smooth`,
+  `shell_inside` and the rest sat next to `sketch`. Now a function declares the kinds it takes on itself (`fn._takes = takes(...)`, `fieldes.kinds.SHAPES` / `BODIES`), the menu reads that, and the old name-keyed table in
+  `menu_catalog.py` is gone: `smooth`, `round_edges`, `fillet`, `shell_inside`, `shell_outside`, `shell_exact`, `lattice`, `random_points`, `surface_from_bodies` and `field_from_body` take a body -- greyed out for a surface, a curve,
+  a point or a field, and a category with none valid left (*Rounding*, *Surfaces* ...) is not in the menu -- `extrude` a 2D shape, a foam its points. A function that says nothing takes any shape. (Compared on 135,660
+  selections of every kind: only those ten functions changed, only from valid to not valid.)
 - **A selected surface is drawn in the colour its key shows, and the ruler is no longer pink.** The patch of a `select_surface` was drawn in the *last* colour of the boundary-condition map (gold, since the map grew to 13 colours) while
   its key said *Selected surface* in magenta; it is magenta on the model now, as the key and the docs say. And the scale ruler at the bottom took its second half's fill from whatever was drawn before it -- the key's pink swatch -- so the
   ruler turned pink whenever a selection was shown; it now has its own (no) fill.

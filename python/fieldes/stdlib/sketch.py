@@ -510,3 +510,8 @@ def path_extrude(profile, path, twist=0):
         out._sweep_qclosed = bool(path.closed)
         out._sweep_twist = Shape.wrap(twist)
     return out
+
+# What these take (see fieldes.kinds.takes): a 2D shape pulled into a solid; a 2D shape, and the curve it is swept along or the points of one
+from fieldes.kinds import takes as _declare
+extrude._takes = _declare({'profile'}, [{'profile'}])
+path_extrude._takes = _declare({'profile', 'curve', 'point'}, [{'profile'}, {'curve', 'point'}])

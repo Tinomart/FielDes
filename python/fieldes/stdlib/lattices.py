@@ -1985,3 +1985,11 @@ def points_graph(points, style='delaunay'):
     cp = (ctypes.c_float * (3 * len(pts)))(*[c for p in pts for c in p])
     mode = {'voronoi': 1, 'delaunay': 0}[style]
     return _graph_from_c(lib.libfive_lattice_points_graph(cp, len(pts), mode), 'points_graph')
+
+# What these take, for the menus and the model tree (see fieldes.kinds.takes): a lattice is made in a body, of the cell selected with it, and a field is its thickness; points are made in a
+# body; a foam is made around points, and they are all it takes -- they know the body it fills
+from fieldes.kinds import takes as _declare, BODIES as _BODIES
+lattice._takes = _declare(_BODIES | {'cell', 'field'}, [_BODIES])
+random_points._takes = _declare(_BODIES, [_BODIES])
+voronoi_lattice._takes = _declare({'points'}, [{'points'}])
+delaunay_lattice._takes = _declare({'points'}, [{'points'}])

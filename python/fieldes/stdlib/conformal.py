@@ -412,3 +412,7 @@ def _finish(lat, body, surface, side, thickness, c, lo, hi, trim):
 
 from fieldes.stdlib.fieldargs import returns_lattice as _returns_lattice
 lattice_surface_conform = _returns_lattice(lattice_surface_conform)
+
+# What it takes (see fieldes.kinds.takes): a model, and the cell selected with it
+from fieldes.kinds import takes as _declare, SHAPES as _SHAPES
+lattice_surface_conform._takes = _declare(_SHAPES | {'cell'}, [_SHAPES])

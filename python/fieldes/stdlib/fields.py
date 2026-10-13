@@ -1269,3 +1269,11 @@ for _name in ('x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'p
     globals()[_name] = returns_field(globals()[_name])
 for _name in ('thicken', 'shell_centered'):
     globals()[_name] = returns_body(globals()[_name])
+
+# What these take, for the menus and the model tree (see fieldes.kinds.takes): the inside of a body and its edges, and a field selected with it is the number.  (Set here, after the
+# wrappers above: they are the functions the script calls.)
+from fieldes.kinds import takes as _declare, BODIES as _BODIES
+for _name in ('smooth', 'round_edges', 'fillet', 'shell_inside', 'shell_outside', 'shell_exact'):
+    globals()[_name]._takes = _declare(_BODIES | {'field'}, [_BODIES])
+globals()['field_from_body']._takes = _declare(_BODIES)
+globals()['distance_to_point']._takes = _declare({'point'})            # (the distance from a point: a point is what it is made of)

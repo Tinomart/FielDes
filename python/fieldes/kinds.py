@@ -101,3 +101,16 @@ def keep_kind(out, shape):
 def describe():
     ''' The kinds as {kind: {label, color}}, for the model tree '''
     return {k: {'label': label, 'color': color} for k, (label, color) in KINDS.items()}
+
+
+# What a function can be GIVEN, as the kinds of model it takes.  A function says it of itself, next to its definition -- `fn._takes = takes(...)` -- and everything that asks (the
+# right-click menus: what is valid for the models selected; the model tree: what can be dropped on a call) reads it from the function, so a new function is covered by one line
+# on it and no list anywhere has its name.  A function that says nothing takes any shape.
+SHAPES = frozenset(('solid', 'profile', 'curve', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))     # (what a geometric operation works on)
+BODIES = frozenset(('solid', 'profile', 'lattice', 'import', 'simulation'))     # (what has an inside, and edges: not a surface, a curve, a point or a field)
+
+
+def takes(accepts, needs=()):
+    ''' The declaration of what a function takes: `accepts`, the kinds of model it can be given together, and `needs`, a list of sets of kinds -- the selection must hold at least one
+        of each set.  `takes(BODIES | {'field'}, [BODIES])` is a body, and a field for the number if one is selected with it '''
+    return [(frozenset(accepts), [frozenset(n) for n in needs])]

@@ -293,3 +293,7 @@ def surface_from_bodies(body, *others, tolerance=None, bounds=None):
 # (what these make is not something to drag: the model tree knows it before they have run, from the function that makes it)
 select_surface._makes_no_gizmo = True
 surface_from_bodies._makes_no_gizmo = True
+
+# What it takes (see fieldes.kinds.takes): a body, and the bodies it is met by
+from fieldes.kinds import takes as _declare, BODIES as _BODIES
+surface_from_bodies._takes = _declare(_BODIES, [_BODIES])

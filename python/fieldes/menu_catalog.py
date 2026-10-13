@@ -461,7 +461,7 @@ def _fluids(others):
 # takes: a list of SIGNATURES -- the tags it accepts, and the tags it must be given at least one of.  A selection fits an entry when all of
 # its models are accepted by ONE signature and the signature's needs are met; an entry it does not fit is greyed out in the menu (nothing is
 # said: it is not offered).  A model of no known kind (not run yet) fits anything, and so does an entry that declares nothing (a custom block).
-_SHAPES = frozenset(('solid', 'profile', 'curve', 'import', 'simulation', 'field', 'surface', 'point', 'lattice'))      # (what a geometric operation works on)
+from fieldes.kinds import SHAPES as _SHAPES                                                       # (what a geometric operation works on)
 _PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
 
@@ -510,25 +510,16 @@ def _parts_of(name):
     return max(1, n)
 
 
-# What an operation takes, as DATA: its SIGNATURES (the kinds it accepts, and the kinds it must be given at least one of, one list for each).  An operation that is not here
-# takes any shape (see _SHAPES), and a simulation what its signature says (below)
-_TAKES = {
-    'distance_to_point': [({'point'}, [])],                                 # (the distance from a point: a point is what it is made of)
-    'extrude': [({'profile'}, [{'profile'}])],                              # (a 2D shape)
-    'path_extrude': [({'profile', 'curve', 'point'}, [{'profile'}, {'curve', 'point'}])],      # (a 2D shape, and the curve it is swept along or the points of one)
-    # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all it takes -- they know the
-    # model it fills)
-    'lattice': [(_SHAPES | {'cell'}, [_SHAPES])],
-    'lattice_surface_conform': [(_SHAPES | {'cell'}, [_SHAPES])],
-    'random_points': [(_SHAPES, [_SHAPES])],
-    'voronoi_lattice': [({'points'}, [{'points'}])],
-    'delaunay_lattice': [({'points'}, [{'points'}])],
-}
-
-
 def _takes(name):
-    if name in _TAKES:
-        return _TAKES[name]
+    ''' What the operation `name` takes, as SIGNATURES (the kinds it accepts together, and the kinds it must be given at least one of): what the library function says of itself
+        (`fn._takes`, see fieldes.kinds.takes -- no list of them is kept here), a simulation's from its signature, and None for a function that says nothing: it takes any shape '''
+    try:
+        import fieldes
+        declared = getattr(getattr(fieldes, name, None), '_takes', None)
+    except Exception:
+        declared = None
+    if declared:
+        return declared
     # (a simulation takes a part, the conditions of the kinds it has an input for and a material -- and needs none of them: what is not selected
     # is a placeholder in the call)
     if name in _SIMULATIONS:

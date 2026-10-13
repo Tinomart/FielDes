@@ -157,7 +157,10 @@ model had been right-clicked in the viewport:
   **when there is at least one valid entry in it, and is not in it when there is none** -- it is not greyed out, it is left out -- and that is worked out from the entries themselves, by asking whether
   what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *sketch* (the outline of that surface) whether you right-click it in the
   viewport, on its row in the tree or on its line in the script, and *Extruding* is not in the menu of a solid and is in the menu of a 2D shape (it holds something valid there). An entry that takes a second model
-  is valid when the pair it would be written with -- the selected model and the last other model of the script -- is what it takes.
+  is valid when the pair it would be written with -- the selected model and the last other model of the script -- is what it takes. **What an entry takes is declared by the library function itself**
+  (`fn._takes = takes(...)`, with the kinds of `fieldes.kinds`: `SHAPES`, `BODIES`), the menu reads it from there, and a function that declares nothing takes any shape: so `smooth`, `round_edges`, `fillet`, `shell_inside`,
+  `shell_outside`, `shell_exact`, `lattice` and `random_points` take a body (not a surface, a curve, a point or a field), `extrude` a 2D shape, a foam its points -- and a new function is covered by one line on it, with
+  no list of names in the menus.
 - On a line (or row) that defines a model: **Operation**, **Lattice**, **Simulation**, **Select Surface** (greyed outside the viewport: the
   selection spreads from the place you click on the surface) and **Delete**, written for that model. **Lattice** is a section of its own
   (not a group of the operations): the operations that fill a model with a lattice, the three steps of a foam (random points, then a Voronoi or Delaunay lattice made of them) and a menu for every family of
