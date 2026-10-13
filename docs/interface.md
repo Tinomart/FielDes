@@ -467,7 +467,7 @@ apart; `kind='across'` adds the plane across the axis, and `kind='cube'` is the 
 the place of the work plane while its view is open (its axis the plane's normal), else it is the mirror x = 0.
 
 **Select a symmetry in the model tree and it is the one in use.** Its planes are drawn in magenta, its card opens in the corner of the viewport, and **everything you make from then on is made at its images too**: a body, a point, a
-surface, a field -- and a sketch, a line or a spline, which is made again through the images of its points. **All the images of a model are one model**, written under it:
+surface, a field -- and a sketch, a line or a spline (through the images of its points), and what an operation makes of them: a `path_extrude`, a union, a shell. **All the images of a model are one model**, written under it:
 
 ```python
 box_1 = box((8, 4, 0), (26, 14, 8))
@@ -481,8 +481,10 @@ the original is the only model with numbers, the images are only what the symmet
 whose centre is on a plane -- is not made.) Each image is still drawn, meshed and moved as a shape of its own, so **dragging the original moves every image with it as you drag, with nothing meshed again**; select the row and all
 the images are selected. **The images follow both**: change the original and they change the way a mirror shows it -- and **move the symmetry with its gizmo and every image of it moves with it**. **They have no numbers of their own: drag
 the gizmo shown at the first image, or the surfaces of any of them, and the original moves** -- the other way, as a mirror shows it (an arrow moves the original the opposite way across the plane, a ring turns it the opposite way). The images
-of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things. (A surface or a field, a sketch, a line or a spline has a model for each image,
-`symmetry_image(model, symmetry_1, 3)` -- 3 is the number of the image in the symmetry; the sketch through the images of its points.)
+of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things. A sketch, a line or a spline is made of its points, which are models, so each point has its images (`symmetry_image(point, symmetry_1, 3)`) and the stroke goes through them. **What an operation makes is given its images too**, `path_extrude_1_images = symmetry_images(path_extrude_1, symmetry_1,
+distinct=True)`: `distinct` leaves out the images that would be the model itself or another image (a tube along a path in a plane of the symmetry has none in that plane); what is made of
+images already is not given more. Pulling the surface of an image changes the model it is the image of, never the symmetry. (A surface or a field has a model for each image,
+`symmetry_image(model, symmetry_1, 3)` -- 3 is the number of the image in the symmetry; a shape whose halves meet on a plane closes through their images into one sketch.)
 
 Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
 

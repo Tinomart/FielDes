@@ -878,8 +878,10 @@ Every plane makes an image of what is made while the symmetry is on, and so does
 images of a symmetry are numbered 1 .. symmetry_count(symmetry).  `symmetry_images(x, mirror)` is all of them (`only=(1, 3)` some of them), `symmetry_image(x, mirror, 2)` one.
 The images FOLLOW what they are the images of and the symmetry: move the original and they move the way a mirror shows; move the symmetry (its gizmo) and every image of it moves
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
-one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); a sketch, a line, a surface or a field gets
-one model for each image, `symmetry_image`.
+one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); what is
+made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
+gets one model for each image, `symmetry_image`; so does a sketch, a line or a spline: it is made of its points, which are the models, so each point has its images
+(`symmetry_image(point, mirror, 3)`) and the stroke goes through them.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -905,14 +907,15 @@ The image of `shape` in the symmetry `symmetry`: `index` is the number of the im
 symmetry, and the image changes with it.  It has no gizmo and no numbers of its own: pulling it pulls the shape.  FielDes writes it for everything that is made while the
 symmetry is selected (Shift+S)
 
-### `symmetry_images(shape, symmetry, only=None)`
+### `symmetry_images(shape, symmetry, only=None, distinct=False)`
 
-ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)` -- so that what a symmetry of several planes makes of a leg is
-one row of the model tree and one line of the script, not one for each image.  It is the union of the images for a body or a 2D shape (the shape itself is not in it: it is
-its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its own (so that dragging the
-shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.  It follows the shape and
-the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling a surface of any of
-them pulls the shape.  A sketch or a line has an image model for each image (symmetry_image): it is drawn from its points
+ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)`; with `distinct=True` those that are neither the shape
+itself nor another image (a tube along a path that lies in a plane of the symmetry has no image in that plane) -- so that what a symmetry of several planes makes of a leg
+is one row of the model tree and one line of the script, not one for each image.  It is the union of the images for a body or a 2D shape (the shape
+itself is not in it: it is its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its
+own (so that dragging the shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.
+It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
+a surface of any of them pulls the shape.
 
 ### `symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None)`
 

@@ -791,11 +791,11 @@ def _stroke_text(name, places, smooth, r):
     smooth_arg = ', smooth=True' if name == 'sketch' and smooth else ''
     if not elements:
         return points + '#@@#\n' + '%s([%s]%s)' % (name, listing, smooth_arg)
-    r['_symmetric'] = True
     positions = [tuple(float(c) for c in p) for p in places]
     step = float((r.get('plane') or {}).get('step') or 0.0)
     made, shapes = sym.stroke_structure(positions, elements, name, name == 'sketch', max(1e-4, 1e-3 * step))
     n = len(places)
+    r['_symmetric'] = True
     # (the image points, each held to the point it is the image of)
     images = ''
     symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'
@@ -909,7 +909,12 @@ def _values(r):
 def _images_after(r, head, expression):
     ''' The images a model made with the symmetry on has, written under it (see symmetry_creation): the models a menu entry places -- a shape, a point, a surface, a field -- and
         not what it is made of other models (an operation, a condition), a sketch or a line (their points have the images: see _stroke_text) '''
-    if r['kind'] != 'primitive' or r.get('_symmetric') or not (r.get('symmetry') or {}).get('elements'):
+    if r.get('_symmetric') or not (r.get('symmetry') or {}).get('elements') or not (r.get('symmetry') or {}).get('var'):
+        return ''
+    from fieldes import symmetry_creation as sym
+    if r['kind'] == 'operation':
+        return _operation_images(r)
+    if r['kind'] != 'primitive':
         return ''
     for n, group, _ in PRIMITIVES:
         if n == r['name']:
@@ -920,9 +925,32 @@ def _images_after(r, head, expression):
         return ''
     if r.get('body') or r.get('other') or r.get('points'):
         return ''
-    from fieldes import symmetry_creation as sym
     text = sym.post_for(r.get('var') or (r['name'] + '_1'), expression, r, head)
     return sym.POST + text if text else ''
+
+
+# The operations whose result is a body or a 2D shape of the model they are made for: with the symmetry on they are given their images too (`path_extrude(circle, curve)` is one
+# tube; its images are the others)
+_IMAGED_GROUPS = ('Offsets and walls', 'Texturing', 'Rounding', 'Moving', 'Repeating', 'Extruding', 'Combining')
+
+
+def _operation_images(r):
+    ''' The images of what an operation made with the symmetry on: `x_images = symmetry_images(x, symmetry, distinct=True)` -- the images that are not the model itself or another
+        image (they cannot be told here, where the models are only names: the run tells them).  Not for what is made of the images of a model (they are the images already), nor
+        for what is not a body or a 2D shape (a field, a surface, an analysis, a lattice) '''
+    from fieldes import symmetry_creation as sym
+    for n, group, _template, _other in OPERATIONS:
+        if n == r['name']:
+            if group not in _IMAGED_GROUPS or n == 'instance':
+                return ''
+            break
+    else:
+        return ''
+    # (what is selected: the first model and the others -- a path_extrude is made of a 2D shape and a curve, whichever was selected first)
+    models = [dict(r.get('body_info') or {}, name=r.get('body') or '')] + list(_others(r))
+    if not any(m.get('type') in ('solid', 'profile') for m in models) or any(m.get('symmetry_image') for m in models):
+        return ''
+    return sym.POST + sym.images_line(r.get('var') or (r['name'] + '_1'), r['symmetry']['var'], ', distinct=True')
 
 
 def call(request):
