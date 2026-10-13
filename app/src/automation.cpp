@@ -11,6 +11,7 @@ of the License, or (at your option) any later version.
 #include <iostream>
 
 #include <QApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QKeyEvent>
@@ -128,6 +129,7 @@ void Automation::step()
         const QString line = m_lines[m_next++];
         const QString cmd = line.section(' ', 0, 0);
         const QString args = line.section(' ', 1);
+        if (std::getenv("FIELDES_TIMING")) std::cerr << "[at " << QDateTime::currentMSecsSinceEpoch() % 100000000 << " ms] ";
         std::cerr << "automation> " << line.toStdString() << "\n";
         auto h = m_handlers.find(cmd);
         if (h == m_handlers.end())

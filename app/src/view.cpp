@@ -1881,7 +1881,8 @@ void View::mouseMoveEvent(QMouseEvent* event)
             changed |= s->updateVars(sol.second);
         }
         if (timing)
-            std::fprintf(stderr, "[drag] surface moved: %.1f ms in all (solving %.1f, writing the numbers %.1f, region %.1f, shapes given them %.1f)\n", double(clock.nsecsElapsed()) / 1e6,
+            std::fprintf(stderr, "[at %lld ms] [drag] surface moved: %.1f ms in all (solving %.1f, writing the numbers %.1f, region %.1f, shapes given them %.1f)\n",
+                         static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000), double(clock.nsecsElapsed()) / 1e6,
                          double(tSolved) / 1e6, double(tWritten - tSolved) / 1e6, double(tGrown - tWritten) / 1e6, double(clock.nsecsElapsed() - tGrown) / 1e6);
         if (changed)
         {
@@ -2252,7 +2253,8 @@ void View::mousePressEvent(QMouseEvent* event)
 
                 mouse.state = mouse.DRAG_EVAL;
                 if (timing)
-                    std::fprintf(stderr, "[drag] surface pressed: %.1f ms in all (dragStart %.1f, field and evaluator %.1f, weights %.1f, direction %.1f)\n", double(clock.nsecsElapsed()) / 1e6,
+                    std::fprintf(stderr, "[at %lld ms] [drag] surface pressed: %.1f ms in all (dragStart %.1f, field and evaluator %.1f, weights %.1f, direction %.1f)\n",
+                                 static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000), double(clock.nsecsElapsed()) / 1e6,
                                  double(tStart) / 1e6, double(tFrom - tStart) / 1e6, double(tWeights - tFrom) / 1e6, double(clock.nsecsElapsed() - tWeights) / 1e6);
             }
             else
@@ -4150,6 +4152,20 @@ void View::wheelEvent(QWheelEvent *event)
 
 void View::checkHoverTarget(QPoint pos)
 {
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+    QElapsedTimer clock;
+    if (timing) clock.start();
+    struct Report
+    {
+        bool on;
+        QElapsedTimer& c;
+        ~Report()
+        {
+            if (on && c.nsecsElapsed() > 3000000)
+                std::fprintf(stderr, "[at %lld ms] [hover] looking at what is under the mouse took %.1f ms\n", static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000),
+                             double(c.nsecsElapsed()) / 1e6);
+        }
+    } report{timing, clock};
     syncPicker();
 
     auto picked = pickedNear(pos);

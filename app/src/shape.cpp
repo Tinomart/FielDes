@@ -2898,7 +2898,12 @@ void Shape::startRender(RenderSettings s)
     {
         if (next.div != MESH_DIV_ABORT)
         {
-            mesh_settings.cancel.store(true);
+            // New numbers (a handle that is being pulled) do not cancel a render that is at the first level -- the quick one that a drag shows: they wait for it, the newest of them,
+            // and the picture follows at the pace of the mesher.  Cancelled at every move, a level that takes longer than the time between two moves of the mouse (8 ms of a real
+            // mouse; a level of tens) was never finished: the numbers in the script followed the hand and the shape stood still -- seconds -- until the hand rested.  A finer level that is
+            // in progress is cancelled as ever
+            const bool numbers = s.div == MESH_DIV_NEW_VARS || s.div == MESH_DIV_NEW_VARS_SMALL;
+            if (!(numbers && target_div == default_div)) mesh_settings.cancel.store(true);
             next = s;
             next_follows = false;
         }

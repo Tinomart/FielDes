@@ -1773,6 +1773,24 @@ Window::Window(Arguments args)
             send(p[0] == "dbl" ? QEvent::MouseButtonDblClick : QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
         });
+        // winmouse <move|press|drag|release> <x> <y>: a left-button mouse event at a place of the WINDOW (the coordinates of a picture of it), delivered the way a real one is: to the
+        // widget that is on top there -- the tour's blocker and layer, the card, whatever stands over the viewport -- and, once a button is down, to the widget that took the press
+        auto winGrab = std::make_shared<QPointer<QWidget>>();
+        a->add("winmouse", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            const QPoint at(p[1].toInt(), p[2].toInt());
+            QWidget* target = (p[0] == "drag" || p[0] == "release") && *winGrab ? winGrab->data() : childAt(at);
+            if (!target) target = this;
+            const QPoint local = target->mapFrom(this, at);
+            const QEvent::Type type = p[0] == "press" ? QEvent::MouseButtonPress : p[0] == "release" ? QEvent::MouseButtonRelease : QEvent::MouseMove;
+            const bool down = p[0] == "press" || p[0] == "drag";
+            if (p[0] == "press") *winGrab = target;
+            QMouseEvent e(type, local, at, target->mapToGlobal(local), p[0] == "move" || p[0] == "drag" ? Qt::NoButton : Qt::LeftButton, down ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(target, &e);
+            if (p[0] == "release") *winGrab = nullptr;
+            std::cerr << "automation: winmouse " << p[0].toStdString() << " reached " << target->metaObject()->className() << " " << target->objectName().toStdString() << std::endl;
+        });
         // viewwheel <x> <y> <delta> [shift]: a turn of the mouse wheel over the viewport (120 is one notch), with Shift held when asked
         a->add("viewwheel", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
