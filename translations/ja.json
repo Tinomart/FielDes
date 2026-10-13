@@ -709,7 +709,6 @@
  "(not loaded yet: run the script first)": "（まだ読み込まれていません。先にスクリプトを実行してください）",
  "With several models selected: the first is the one this is made for, the others are what it uses -- where it acts, its conditions, its material.  With one model: a first version to change in the script.": "複数のモデルを選択した場合: 最初のモデルが対象、残りが使用するもの（作用する場所、条件、材料）です。モデルが 1 つの場合: スクリプトで変更するための最初の版ができます。",
  "Needs a second model": "2 つ目のモデルが必要です",
- "This does not take the selected model": "選択中のモデルを受け取りません",
  "Export": "エクスポート",
  "Give the model a name first: only a variable of the script is exported.": "先にモデルに名前を付けてください。エクスポートできるのはスクリプトの変数だけです。",
  "Mesh": "メッシュ",

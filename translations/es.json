@@ -709,7 +709,6 @@
  "(not loaded yet: run the script first)": "(aún no cargado: ejecute primero el script)",
  "With several models selected: the first is the one this is made for, the others are what it uses -- where it acts, its conditions, its material.  With one model: a first version to change in the script.": "Con varios modelos seleccionados: el primero es para el que se hace, los demás son lo que usa: dónde actúa, sus condiciones, su material.  Con un modelo: una primera versión para cambiar en el script.",
  "Needs a second model": "Necesita un segundo modelo",
- "This does not take the selected model": "No toma el modelo seleccionado",
  "Export": "Exportar",
  "Give the model a name first: only a variable of the script is exported.": "Primero dé un nombre al modelo: solo se exporta una variable del script.",
  "Mesh": "Malla",
