@@ -2819,6 +2819,8 @@ void View::setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const 
     announceWorkPlane();
 }
 
+static void joinMeeting(QList<QList<QVector3D>>& strokes, QList<QList<QVector3D>>& closed, float tol);
+
 void View::placeAt(QPoint pos)
 {
     if (!m_wp.open || !m_wp.exists || m_wp.mode == 0) return;
@@ -2863,6 +2865,15 @@ void View::placeAt(QPoint pos)
     if (!m_wpPlaced.isEmpty() && (m_wpPlaced.last() - p).length() < 1e-5f) return;      // (the second click of a double click, or the same place again)
     m_wpPlaced << p;
     m_overlay->update();
+    // A stroke that comes back to a line of the symmetry, from a first point that was on one, is closed through it: with its images it is a closed outline, and it is made at
+    // once -- as it is when the first point is clicked again -- not when the stroke is ended by hand (half a circle from one point of the line to another)
+    if (m_wp.mode != 3 && symmetric() && m_wpPlaced.size() >= 3 && onSymmetryLine(m_wpPlaced.first()) && onSymmetryLine(m_wpPlaced.last()))
+    {
+        QList<QList<QVector3D>> strokes = symmetryStrokes(m_wpPlaced);
+        QList<QList<QVector3D>> loops;
+        joinMeeting(strokes, loops, std::max(1e-4f, 1e-3f * workPlaneStep()));
+        if (!loops.isEmpty()) finishPlacement(false);
+    }
 }
 
 // Strokes that meet at their ends -- half a shape drawn on one side of the symmetry line and its image on the other, which meet on the line -- are one outline: they are joined
@@ -3191,6 +3202,20 @@ void View::dragSymmetry(QPoint pos)
         m_wp.symAngle = degrees;
     }
     m_overlay->update();
+}
+
+bool View::onSymmetryLine(const QVector3D& p) const
+{
+    if (!symmetric()) return false;
+    const QVector3D c = symmetryCentre(), n = m_wp.normal();
+    const float tol = std::max(1e-4f, 1e-3f * workPlaneStep());
+    for (int j = 0; j < m_wp.symmetry; ++j)
+    {
+        const QVector3D d = symmetryAxis(j);
+        const QVector3D off = (p - c) - d * QVector3D::dotProduct(p - c, d);       // (what is not along the line)
+        if ((off - n * QVector3D::dotProduct(off, n)).length() < tol) return true;
+    }
+    return false;
 }
 
 QList<QVector3D> View::symmetryImages(const QVector3D& p) const

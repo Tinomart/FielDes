@@ -543,6 +543,7 @@ protected:
     void resetSymmetryAxes();
     /*  The images of a point of the plane: the point, then its turns about the centre (n - 1), then its mirror images across the n axes  */
     QList<QVector3D> symmetryImages(const QVector3D& p) const;
+    bool onSymmetryLine(const QVector3D& p) const;              // (the point is on one of the lines of the symmetry)
     /*  The strokes a stroke has in the symmetry: the stroke itself, then its images (the mirror ones in the reverse order, so that they face the same way); an image
         that is the stroke (or another image) over again is left out  */
     QList<QList<QVector3D>> symmetryStrokes(const QList<QVector3D>& stroke) const;

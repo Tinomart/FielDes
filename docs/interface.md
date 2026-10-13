@@ -429,7 +429,8 @@ or on a point that is there), the **knob** on the first axis is **dragged to tur
 The images are shapes of their own, made when the shape is: they do not follow the original afterwards.
 **The lines of the symmetry are a thing to snap to** (with *Snap to points* on): a point put down near one lands **on** it -- on the grid's steps along it when the plane snaps -- so what you draw on both
 sides of a line **meets on the line**. And **a shape that is closed through the symmetry is made into one**: draw half a circle from one point of the line to another, and its image on the other side closes it --
-the two are joined where they meet and written as **one closed sketch** (one that meets only at one end is one line). **`S` turns the symmetry off and on** (it brings back the number of axes there was). The dot and the knob
+the two are joined where they meet and written as **one closed sketch** (one that meets only at one end is one line). **It is made the moment the stroke comes back to a line of the symmetry**
+-- the click that puts the last point on the line closes it, as a click on the first point does -- you do not have to end it by hand. **`S` turns the symmetry off and on** (it brings back the number of axes there was). The dot and the knob
 are there to be dragged **only while you are not drawing** (right click: the nothing mode): while a kind of drawing is on they are drawn faintly and a click on them puts a point there like anywhere else.
 
 **What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a sketch made of new points is made in the plane's own axes, not horizontal), and the points you drag --
