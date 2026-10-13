@@ -1419,10 +1419,24 @@ def _args_of(value, gs, by_name, src):
 
     out = []
 
+    def number_of_var(node):
+        # The number inside `var(5)` (the draggable form of a number): what a click on the row selects, so that typing a number keeps the var -- `var(9)`, not `9`
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'var' and len(node.args) == 1 and not node.keywords):
+            return None
+        inner = node.args[0]                    # (`-5` is a sign and a number: the selection takes both)
+        core = inner.operand if isinstance(inner, ast.UnaryOp) and isinstance(inner.op, (ast.USub, ast.UAdd)) else inner
+        if isinstance(core, ast.Constant) and isinstance(core.value, (int, float)) and not isinstance(core.value, bool):
+            return inner
+        return None
+
     def add(name, node):
         if only_models(node) or (isinstance(node, ast.Constant) and node.value is Ellipsis):
             return
-        out.append({'param': name or '', 'text': _short(src.segment(node), 80), 'span': _span(node), 'kind': _arg_kind(node)})
+        entry = {'param': name or '', 'text': _short(src.segment(node), 80), 'span': _span(node), 'kind': _arg_kind(node)}
+        number = number_of_var(node)
+        if number is not None:
+            entry['select'] = _span(number)
+        out.append(entry)
 
     for i, a in enumerate(value.args):
         if not isinstance(a, ast.Starred):

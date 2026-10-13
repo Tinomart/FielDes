@@ -5417,7 +5417,9 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
         const int k = row->data(COL_NAME, ROLE_PART).toInt();
         if (k >= 0 && k < args.size())
         {
-            const auto span = args[k].toObject()["span"].toArray();
+            // (a number written as var(5), the draggable form, selects the number inside it: typing another keeps the var -- var(9) -- instead of replacing the whole call)
+            const auto chosen = args[k].toObject();
+            const auto span = chosen["select"].toArray().size() >= 4 ? chosen["select"].toArray() : chosen["span"].toArray();
             if (span.size() >= 4)
             {
                 emit(spanRequested(span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt()));
