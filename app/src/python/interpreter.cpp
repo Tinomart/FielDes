@@ -1681,6 +1681,33 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
+            // A symmetry model (fieldes.stdlib.symmetries): (kind, planes, centre, axis, first).  Nothing of it is painted: its planes are drawn by the viewport
+            PyObject* sd = PyObject_GetAttrString(obj, "_symmetry_def");
+            if (sd && PyTuple_Check(sd) && PyTuple_Size(sd) == 5)
+            {
+                Shape::SymmetryDef d;
+                d.present = true;
+                PyObject* k = PyTuple_GetItem(sd, 0);
+                const std::string kind = PyUnicode_Check(k) ? PyUnicode_AsUTF8(k) : "axis";
+                d.kind = kind == "cube" ? 2 : kind == "across" ? 1 : 0;
+                d.count = int(PyLong_AsLong(PyTuple_GetItem(sd, 1)));
+                auto vec = [](PyObject* t, QVector3D& out) {
+                    if (PyTuple_Check(t) && PyTuple_Size(t) == 3)
+                        out = QVector3D(float(PyFloat_AsDouble(PyTuple_GetItem(t, 0))), float(PyFloat_AsDouble(PyTuple_GetItem(t, 1))), float(PyFloat_AsDouble(PyTuple_GetItem(t, 2))));
+                };
+                vec(PyTuple_GetItem(sd, 2), d.centre);
+                vec(PyTuple_GetItem(sd, 3), d.axis);
+                vec(PyTuple_GetItem(sd, 4), d.first);
+                if (!PyErr_Occurred())
+                {
+                    shape->setNoPaint(true);
+                    shape->setSymmetryDef(d);
+                }
+            }
+            Py_XDECREF(sd);
+            PyErr_Clear();
+        }
+        {
             // (a set of points -- fieldes.stdlib.lattices.PointSet._display -- is carried by a shape with no extent: its points are drawn
             // by the viewport, each as the dot of a gizmo)
             PyObject* dots = PyObject_GetAttrString(obj, "_markers");
@@ -1828,6 +1855,36 @@ void Interpreter::recordShape(
                     if (PyTuple_Check(mv) && PyTuple_Size(mv) == 3) hd.move[a] = idOf(PyTuple_GetItem(mv, a));
                     if (PyTuple_Check(rt) && PyTuple_Size(rt) == 3) hd.rotate[a] = idOf(PyTuple_GetItem(rt, a));
                     if (sc && PyTuple_Check(sc) && PyTuple_Size(sc) == 3) hd.scale[a] = idOf(PyTuple_GetItem(sc, a));
+                }
+                // The gizmo of an image (`_symmetry`: the matrix of the image, then its centre): the original's numbers, placed where the image is.  A point has its moves only
+                // (its scale and its turn are the original's to give)
+                if (PyObject_HasAttrString(obj, "_symmetry"))
+                {
+                    PyObject* sy = PyObject_GetAttrString(obj, "_symmetry");
+                    if (sy && PyTuple_Check(sy) && PyTuple_Size(sy) == 2)
+                    {
+                        PyObject* m9 = PyTuple_GetItem(sy, 0);
+                        PyObject* c3 = PyTuple_GetItem(sy, 1);
+                        if (PyTuple_Check(m9) && PyTuple_Size(m9) == 9 && PyTuple_Check(c3) && PyTuple_Size(c3) == 3)
+                        {
+                            float l[9], c[3];
+                            for (int i = 0; i < 9; ++i) l[i] = float(PyFloat_AsDouble(PyTuple_GetItem(m9, i)));
+                            for (int i = 0; i < 3; ++i) c[i] = float(PyFloat_AsDouble(PyTuple_GetItem(c3, i)));
+                            const QMatrix4x4 linear(l[0], l[1], l[2], 0, l[3], l[4], l[5], 0, l[6], l[7], l[8], 0, 0, 0, 0, 1);
+                            QMatrix4x4 full;
+                            full.translate(c[0], c[1], c[2]);
+                            full *= linear;
+                            full.translate(-c[0], -c[1], -c[2]);
+                            hd.mapped = true;
+                            hd.map = full;
+                            if (PyObject_HasAttrString(obj, "xyz"))
+                            {
+                                for (int a = 0; a < 3; ++a) { hd.rotate[a] = nullptr; hd.scale[a] = nullptr; }
+                            }
+                        }
+                    }
+                    Py_XDECREF(sy);
+                    PyErr_Clear();
                 }
                 shape->setGizmo(hd);
             }

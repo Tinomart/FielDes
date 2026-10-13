@@ -39,6 +39,8 @@ The first import of a file takes a few seconds and is cached next to the STEP fi
 | `24_app_bracket_maker.py` | the bracket (it comes along inside the app) | a FielDes app: `app.title`, `app.file`, `app.choice`, `app.number`, `app.save_as`, `app.asset` -- a form for someone who never opens the editor; File > Preview as app shows it, File > Export as app makes the `.fieldesapp` |
 | `23_lattice_gallery.py` | none (a simple body for each tile) | one lattice of every kind: strut cells and a custom cell, a TPMS sheet and network, a honeycomb, foams around `random_points` (`voronoi_lattice`, `delaunay_lattice`, by density), a wall graded by a field, a cell map and a conformal layer |
 
+| `29_symmetry.py` | none (a table: a top and one leg) | a **symmetry** (`symmetry_planes`): select it and everything you make is made at its images too; `symmetry_image(leg, mirror, 1)`; moving the symmetry moves its images, dragging an image drags the original; the card, `Shift+S`, a model's own planes in teal |
+
 (Open each script: the comment at its top says what to look at.)
 
 ## About the sample part

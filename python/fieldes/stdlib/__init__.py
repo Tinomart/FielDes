@@ -8,6 +8,7 @@ from fieldes.stdlib.text import *
 from fieldes.stdlib.transforms import *
 from fieldes.stdlib.handles import gizmo, handles, lock
 from fieldes.stdlib.instances import instance
+from fieldes.stdlib.symmetries import symmetry_planes, symmetry_image, symmetry_images
 from fieldes.stdlib.render_cache import *
 from fieldes.stdlib.custom_resolution import *
 from fieldes.stdlib.cad_import import *

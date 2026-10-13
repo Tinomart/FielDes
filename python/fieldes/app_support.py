@@ -1664,6 +1664,52 @@ def app_cli(arg):
                 pass
 
 
+def call_edit(arg):
+    ''' Edits that give keyword arguments of a call new values -- the card of the symmetry changes the planes of its model that way.  `arg` is JSON {source, var, line, set: {name:
+        text}}: the statement `var = call(...)` on the 1-based `line`, and the text each argument is to have.  An argument that is there has its value replaced, one that is not is
+        added after the last.  The answer is JSON {"edits": [[line, column, end line, end column, text], ...]} (0-based, as sketch_edit gives them), the last place first '''
+    req = json.loads(arg)
+    source = req['source']
+    tree = ast.parse(source)
+    lines = source.split('\n')
+    starts = [0]
+    for text in lines[:-1]:
+        starts.append(starts[-1] + len(text) + 1)
+
+    def offset(line, byte_col):
+        return starts[line - 1] + len(lines[line - 1].encode('utf-8')[:byte_col].decode('utf-8', 'replace'))
+
+    def start_of(node):
+        return offset(node.lineno, node.col_offset)
+
+    def end_of(node):
+        return offset(node.end_lineno, node.end_col_offset)
+
+    def position(at):
+        line = max(i for i, s in enumerate(starts) if s <= at)
+        return [line, at - starts[line]]
+
+    var, line = req['var'], req['line']
+    call = None
+    for st in tree.body:
+        targets = getattr(st, 'targets', None) or ([st.target] if hasattr(st, 'target') else [])
+        if st.lineno == line and any(isinstance(t, ast.Name) and t.id == var for t in targets) and isinstance(getattr(st, 'value', None), ast.Call):
+            call = st.value
+            break
+    if call is None:
+        raise ValueError('%s is not written as a call: edit the script' % var)
+    edits = []
+    for name, text in req['set'].items():
+        kw = next((k for k in call.keywords if k.arg == name), None)
+        if kw is not None:
+            edits.append((start_of(kw.value), end_of(kw.value), text))
+        else:
+            last = max([end_of(n) for n in list(call.args) + [k.value for k in call.keywords]] or [end_of(call) - 1])
+            edits.append((last, last, ', %s=%s' % (name, text)))
+    edits.sort(key=lambda e: -e[0])
+    return json.dumps({'edits': [position(a) + position(b) + [text] for a, b, text in edits]})
+
+
 def sketch_edit(arg):
     ''' The edits that put a point on the outline of a sketch or a curve, or toggle one of its points between a corner and a spline point (see fieldes.sketch_edit) '''
     from fieldes import sketch_edit as _edit

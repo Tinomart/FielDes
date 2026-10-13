@@ -183,6 +183,7 @@ PRIMITIVES = [
     ('polyline', '1D', _POLYLINE),
     ('spline', '1D', _SPLINE),
     ('point', 'Points', 'point({x}, {y}, {z})'),
+    ('symmetry_planes', 'Symmetry', 'symmetry_planes(planes=1, kind=\'axis\', centre=({x}, {y}, {z}), axis=(0, 0, 1))'),
     ('plane', 'Surfaces', 'plane(({x}, {y}, {z}), (0, 0, 1))'),
     ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
     ('cylinder_surface', 'Surfaces', "cylinder_surface({h}, 'z', ({x}, {y}, 0))"),
@@ -217,6 +218,7 @@ BASIC = frozenset((
     'circle', 'rectangle', 'triangle', 'polygon', 'sketch',
     'polyline', 'spline',
     'point',
+    'symmetry_planes',
     'plane', 'sphere_surface', 'cylinder_surface',
     'distance_to_point', 'radial_field', 'z_field', 'noise_field',
 ))
@@ -309,7 +311,7 @@ BODY_CONDITIONS = {
 }
 
 # What a group of primitives makes (the kind: see fieldes.kinds), for the icon beside each entry
-GROUP_KINDS = {'1D': 'curve', '3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field',
+GROUP_KINDS = {'1D': 'curve', '3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field', 'Symmetry': 'symmetry',
                'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
                'Thermal conditions': 'conditions', 'Flow conditions': 'conditions',
                'Strut cells': 'cell', 'TPMS cells': 'cell', 'Planar cells': 'cell', 'Custom cells': 'cell'}
@@ -779,6 +781,43 @@ def _regions(r, scale):
             'cs': _num(_nice(longest / 10.0)), 'ct': _num(_nice(longest / 10.0) / 8.0)}
 
 
+def _stroke_text(name, places, smooth, r):
+    ''' A sketch, a polyline or a spline of the points `places` (3-tuples of numbers as texts): the points, each a model of its own with its gizmo, written above the call.  While
+        the symmetry is on (`r['symmetry']`) the images of the points are made too, each following the point it is the image of (`symmetry_image`), and the shapes through them:
+        the stroke itself and its images, those that meet where they cross a plane joined into one outline '''
+    from fieldes import symmetry_creation as sym
+    elements = sym.elements_of(r.get('symmetry'))
+    points, listing = _points(*places)
+    smooth_arg = ', smooth=True' if name == 'sketch' and smooth else ''
+    if not elements:
+        return points + '#@@#\n' + '%s([%s]%s)' % (name, listing, smooth_arg)
+    r['_symmetric'] = True
+    positions = [tuple(float(c) for c in p) for p in places]
+    step = float((r.get('plane') or {}).get('step') or 0.0)
+    made, shapes = sym.stroke_structure(positions, elements, name, name == 'sketch', max(1e-4, 1e-3 * step))
+    n = len(places)
+    # (the image points, each held to the point it is the image of)
+    images = ''
+    symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'
+    for i, e, k in made:
+        images += sym.image_statement('{var}_p%d' % (i + 1), '{var}_p%d_m%d' % (i + 1, e + 1), elements[e], symmetry_var)
+
+    def names(nodes):
+        return ', '.join(sym.point_name('{var}', k, n, made) for k in nodes)
+
+    def call(shape_name, nodes):
+        if shape_name == 'sketch' and smooth:
+            return 'sketch(\n    [%s],\n    smooth=True,\n)' % names(nodes)
+        return '%s([%s])' % (shape_name, names(nodes))
+
+    # (the first shape is the model itself; the others are each a shape of its own beside it, named `var_m1`, `var_m2` ...)
+    extra = ''
+    for k, (shape_name, nodes) in enumerate(shapes[1:], 1):
+        extra += '{var}_m%d = %s\n{var}_m%d\n' % (k, call(shape_name, nodes), k)
+    first_name, first_nodes = shapes[0]
+    return points + images + extra + '#@@#\n' + call(first_name, first_nodes)
+
+
 def _plane_template(name, r):
     ''' A sketch or a line made on the work plane (`r['plane']`: origin, u, v, and the step of its grid, 0 for none): its points are laid out in the plane's own axes
         round the place of the click -- the corners of a square for a sketch -- not in the horizontal plane, and on the grid when the plane snaps '''
@@ -795,37 +834,47 @@ def _plane_template(name, r):
         return tuple(_num(c + a * x + b * y) for c, x, y in zip(centre, u, v))
 
     places = [at(-h, -h), at(h, -h), at(h, h), at(-h, h)] if name == 'sketch' else [at(-h, 0.0), at(0.0, h), at(h, 0.0)]
-    points, listing = _points(*places)
-    return points + '#@@#\n' + name + '([' + listing + '])'
+    return _stroke_text(name, places, False, r)
 
 
 def _placed_template(name, r):
     ''' A sketch, a polyline or a spline put down on the work plane: the points the user clicked, each a model of its own with its gizmo, and the call through them.
         A sketch of a spline (`smooth`) has spline points '''
     places = [tuple(_num(float(c)) for c in p) for p in r['points']]
-    points, listing = _points(*places)
-    smooth = ', smooth=True' if name == 'sketch' and r.get('smooth') else ''
-    call = '%s([%s]%s)' % (name, listing, smooth)
-    # The images of the stroke in the work plane's symmetry (`also`: one stroke for each), each a shape of its own beside it: its points, the call through them, and its
-    # name shown (`sketch_1_m1`, `sketch_1_m2`)
-    images = ''
-    for k, stroke in enumerate(r.get('also') or [], 1):
-        base = '{var}_m%d' % k
-        pts, listing_k = _points(*[tuple(_num(float(c)) for c in p) for p in stroke], base=base)
-        # (laid out as every call FielDes writes is: one argument to a line)
-        image_call = ('sketch(\n    [%s],\n    smooth=%s,\n)' % (listing_k, 'True' if r.get('smooth') else 'False')) if name == 'sketch' else '%s([%s])' % (name, listing_k)
-        images += pts + '%s = %s\n%s\n' % (base, image_call, base)
-    return points + images + '#@@#\n' + call
+    return _stroke_text(name, places, r.get('smooth'), r)
 
 
-def _point_images_template(r):
-    ''' A point put down on the work plane while it has a symmetry: the point, and a point of its own for each of its images (`point_1_m1` ...) '''
-    p = r['points'][0]
-    images = ''
-    for k, stroke in enumerate(r.get('also') or [], 1):
-        x, y, z = (_num(float(c)) for c in stroke[0])
-        images += _gizmoed_point('{var}_m%d' % k, x, y, z)
-    return images + '#@@#\npoint(%s, %s, %s)' % tuple(_num(float(c)) for c in p)
+def _symmetry_template(r, values):
+    ''' A symmetry made from the menu: the mirror the viewport has -- `r['symdef']`: planes, kind, centre, axis, first (from the planes of a model, or the card) -- or a mirror
+        at the place of the click: on the work plane while its view is open (its axis the plane's normal, its first plane along the plane's u), else the plane x = 0 through it '''
+    d = r.get('symdef')
+    if d:
+        planes, kind, centre, axis, first = d['planes'], d['kind'], d['centre'], d['axis'], d['first']
+    elif r.get('plane'):
+        plane = r['plane']
+        u, v = [float(c) for c in plane['u']], [float(c) for c in plane['v']]
+        centre = [r.get('x', 0.0), r.get('y', 0.0), r.get('z', 0.0)]
+        planes, kind = 1, 'axis'
+        axis = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+        first = u
+    else:
+        planes, kind = 1, 'axis'
+        centre = [r.get('x', 0.0), r.get('y', 0.0), r.get('z', 0.0)]
+        axis, first = [0, 0, 1], [0, 1, 0]
+
+    def vec(v):
+        return '(%s)' % ', '.join(_num(float(c)) for c in v)
+    return 'symmetry_planes(planes=%d, kind=%r, centre=%s, axis=%s, first=%s)' % (int(planes), kind, vec(centre), vec(axis), vec(first))
+
+
+def _default_stroke_template(name, values, r):
+    ''' The sketch, polyline or spline of the menu with a symmetry on: the places of its points, from the template's own numbers '''
+    if name == 'sketch':
+        places = [(values['xm'], values['ym'], values['z']), (values['xp'], values['ym'], values['z']), (values['xp'], values['yp'], values['z']),
+                  (values['xm'], values['yp'], values['z'])]
+    else:
+        places = [(values['xm'], values['y'], values['z']), (values['x'], values['yp'], values['z']), (values['xp'], values['y'], values['z'])]
+    return _stroke_text(name, places, False, r)
 
 
 def _values(r):
@@ -857,6 +906,25 @@ def _values(r):
     return values
 
 
+def _images_after(r, head, expression):
+    ''' The images a model made with the symmetry on has, written under it (see symmetry_creation): the models a menu entry places -- a shape, a point, a surface, a field -- and
+        not what it is made of other models (an operation, a condition), a sketch or a line (their points have the images: see _stroke_text) '''
+    if r['kind'] != 'primitive' or r.get('_symmetric') or not (r.get('symmetry') or {}).get('elements'):
+        return ''
+    for n, group, _ in PRIMITIVES:
+        if n == r['name']:
+            if group not in _PLACED_GROUPS or n in ('material', 'sketch', 'polyline', 'spline', 'symmetry_planes'):
+                return ''
+            break
+    else:
+        return ''
+    if r.get('body') or r.get('other') or r.get('points'):
+        return ''
+    from fieldes import symmetry_creation as sym
+    text = sym.post_for(r.get('var') or (r['name'] + '_1'), expression, r, head)
+    return sym.POST + text if text else ''
+
+
 def call(request):
     ''' The text of the call a menu entry writes, complete and laid out (fieldes.completion: what the call needs and was not given is a
         placeholder, every other argument is written with its default, one argument to a line when it does not fit).  `request` is JSON:
@@ -873,14 +941,14 @@ def call(request):
         # -- `static_analysis(part, conditions=...)`, not conditions of its own)
         expression = completion.without_made_up_values(expression, structure=bool(r.get('_templated')))
     expression = completion.complete_call(expression, column, indent)
-    return head + marker + expression
+    return head + marker + expression + _images_after(r, head, expression)
 
 
 KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'extrude')
 
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)
-_PLACED_GROUPS = ('1D', '3D', '2D', 'Points', 'Surfaces', 'Fields', 'Materials', 'Fluids',
+_PLACED_GROUPS = ('1D', '3D', '2D', 'Points', 'Surfaces', 'Fields', 'Symmetry', 'Materials', 'Fluids',
                   'Strut cells', 'TPMS cells', 'Planar cells', 'Custom cells')
 
 
@@ -928,9 +996,9 @@ def _call(r):
     if kind == 'primitive' and r.get('points') and name in ('sketch', 'polyline', 'spline'):
         r['_templated'] = True
         return _placed_template(name, r).format(**values)
-    if kind == 'primitive' and name == 'point' and r.get('points') and r.get('also'):
+    if kind == 'primitive' and name == 'symmetry_planes':
         r['_templated'] = True
-        return _point_images_template(r).format(**values)
+        return _symmetry_template(r, values)
     if kind == 'primitive' and r.get('plane') and name in ('sketch', 'polyline', 'spline'):
         r['_templated'] = True
         return _plane_template(name, r).format(**values)
@@ -938,6 +1006,8 @@ def _call(r):
         for n, _, template in PRIMITIVES:
             if n == name:
                 r['_templated'] = True
+                if name in ('sketch', 'polyline', 'spline') and (r.get('symmetry') or {}).get('elements'):
+                    return _default_stroke_template(name, values, r).format(**values)
                 return template.format(**values)
     elif kind == 'operation':
         for n, _, template, _ in OPERATIONS:

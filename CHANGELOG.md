@@ -2,10 +2,21 @@
 
 ## Unreleased
 
-### 2D shapes on top, a symmetry that snaps and closes, linked handles, a tour with a state per step
+### 2D shapes on top, a symmetry that is a model, linked handles, a tour with a state per step
+- **The symmetry is a model, in 3D.** `mirror = symmetry_planes(planes=2)` is a model of the script like a point or a surface -- a row in the model tree with an icon of its own, a gizmo that moves and turns it, its planes drawn in the
+  viewport. **Select it and it is the symmetry in use: everything you make from then on is made at its images too** -- a body, a point, a surface, a field, and a sketch, a line or a spline (through the images of its points; half
+  a shape whose ends are on a plane is closed through its image into one sketch). Each image is a model of its own, written under the model it is the image of: `box_1_m1 = symmetry_image(box_1, mirror, 1)  # shadow: box_1, mirror`
+  -- `1` is its number in the symmetry, no numbers of a plane in the script any more. **An image follows both the model and the symmetry**: change the model and the image changes as a mirror shows it; move the symmetry with its
+  gizmo and every image of it moves. **An image has no numbers of its own: select it and drag its gizmo or its surfaces, and the original moves** -- mirrored (an arrow moves it the opposite way across a plane, a ring turns it the
+  opposite way). An image that would be the model itself or another image (a ball with its centre on a plane) is not made; the images of a model that is deleted are deleted with it. Several symmetries can be in the script; `Shift+S`
+  uses the selected one or stops (with none in the script it makes one: on the work plane while its view is open, else the mirror x = 0). Three arrangements: `kind='axis'` (1 to 8 planes through one axis), `'across'` (and the plane
+  across it), `'cube'` (the nine planes of a cube) -- up to 47 images. The card (top right) changes the selected symmetry: arrangement, count, axis (x, y, z, the work plane's normal, up in the view, across the selected 2D shape), turn,
+  centre; the count and arrangement are written into the call, the place into the numbers of the gizmo. **A model's own symmetry**: select a model that is mirror symmetric and the planes it is symmetric across are drawn in teal
+  (found from its field, never its mesh: its own axes and the world's, then the planes round the axis they share); *Take its planes* makes a symmetry of them (a cube gives nine planes, a plate with three different sides three, a
+  cylinder eight round its axis and the one across). The old symmetry of the work plane's card (a row of numbers, images that were shapes of their own, handles in the viewport) is gone. New example `29_symmetry.py`.
 - **The Shift gizmo turns in steps of 5 degrees.** With Shift held, the rotation rings snap: the angle a part ends at is a multiple of 5 (from a part that stood at 3 degrees too), and a group of points keeps the differences
   between its points' angles, each turned by a multiple of 5. The angle shown beside the ring is the snapped one. (Checked in a real window: seven ring drags with Shift, each ended on a multiple of 5; without Shift the angle is free.)
-- **The symmetry key is `Shift+S`**, as `Shift+W` opens the work plane (`Ctrl+Shift+S` stays *Save as*).
+- **The symmetry key is `Shift+S`**, as `Shift+W` opens the work plane (`Ctrl+Shift+S` stays *Save as*): it uses the selected symmetry, or stops using it.
 - **A new file is empty.** FielDes no longer starts with a sphere in the script (File → New, *Load the default script* and the first start): nothing is made for you to delete first.
 - **`Ctrl+Shift+W` works when FielDes has just opened.** It was the viewport's shortcut, and the keyboard is in the code editor at the start, so it did nothing until the viewport was clicked. It is the window's now (it types
   nothing, so it needs no focus), and it gives the keyboard to the viewport: the keys of the drawing (`E`, `Shift+S`, a right click) work at once. The single keys (`Shift+W`, `W`, `Shift+S`) stay the viewport's, as in the editor they are letters.

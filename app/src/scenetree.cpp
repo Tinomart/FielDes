@@ -1844,6 +1844,7 @@ void ScenePanel::setScene(const QString& json)
     // (the shapes of this run are in the viewport already, and a changed shape is a new one: the selected models are
     // lit up again, from the lines they are on now)
     emit(highlightLines(selectedLines()));
+    updateActiveSymmetry();
     updateMultiNote();
     updateProvisional();
     updateFieldView();
@@ -3810,7 +3811,19 @@ namespace {
 // of it: the copy is made ready to be dragged as soon as it is written, before a run has said anything
 bool linkedModel(const QJsonObject& it)
 {
-    return it["linked"].toBool() || it["callee"].toString() == "instance";
+    return (it["linked"].toBool() || it["callee"].toString() == "instance") && !it["symmetry_image"].toBool() && it["callee"].toString() != "symmetry_image";
+}
+
+// The image of another model (`image = symmetry_image(model, ...)`): it has no numbers of its own, it is the model's
+bool symmetryImageModel(const QJsonObject& it)
+{
+    return it["symmetry_image"].toBool() || it["callee"].toString() == "symmetry_image";
+}
+
+// A symmetry (`mirror = symmetry_planes(...)`): its gizmo moves and turns it; it has no scale
+bool symmetryModel(const QJsonObject& it)
+{
+    return it["type"].toString() == "symmetry";
 }
 
 // (`scale` false: a linked copy, which is only moved and turned -- its gizmo has no scale numbers, so no knobs)
@@ -4266,12 +4279,12 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     {
         // (a gizmo() line without numbers to drag: its line becomes the gizmo's)
         const int e = h["end_line"].toInt() - 1;
-        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent, !linkedModel(target))};
+        edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, next, indent, !linkedModel(target) && !symmetryModel(target))};
     }
     else
     {
         const QString t = lineText(after);
-        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent, !linkedModel(target))};
+        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + gizmoLine(var, next, indent, !linkedModel(target) && !symmetryModel(target))};
     }
     imports.gizmo = true;
     return true;
@@ -4950,6 +4963,24 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
             }
         }
         for (const auto& p : points) all << p;
+    }
+    // The images of a model (`image = symmetry_image(model, ...)`) are made for it and have no numbers of their own: they go with it -- an image that stayed would name a model
+    // that is not there.  (The images of the points of a sketch go with those points, when the points go)
+    {
+        QSet<QString> gone;
+        for (const auto& o : all) gone << keyOf(o);
+        for (int i = 0; i < all.size(); ++i)
+        {
+            const QString var = all[i]["var"].toString();
+            if (var.isEmpty()) continue;
+            for (const auto v : m_scene["items"].toArray())
+            {
+                const auto c = v.toObject();
+                if (gone.contains(keyOf(c)) || !symmetryImageModel(c) || !directInputs(c).contains(var)) continue;
+                all << c;
+                gone << keyOf(c);
+            }
+        }
     }
     if (all.isEmpty()) return;
     // Every line that goes is checked to be the line the rows say it is (see lineIs): rows of another text than the script's would
@@ -6411,7 +6442,23 @@ void ScenePanel::prepareSelection()
     // A linked copy (`copy = instance(model)`) is pulled by the numbers of its original: the original is made ready to be pulled too -- handles, nothing else -- so that the
     // surfaces of either can be dragged, and dragging one moves both
     QList<QPair<QJsonObject, bool>> todo;               // (the model, and whether only its handles are written: the original of a linked copy)
-    for (const Model& m : models) todo << qMakePair(m.item, false);
+    for (const Model& m : models)
+    {
+        if (!symmetryImageModel(m.item))
+        {
+            todo << qMakePair(m.item, false);
+            continue;
+        }
+        // The image of a model has no numbers of its own: its gizmo is the original's, so the original is what is made ready (and dragging the image drags it)
+        for (const QString& input : directInputs(m.item))
+        {
+            const QJsonObject original = itemForVar(input);
+            if (original.isEmpty()) continue;
+            bool listed = false;
+            for (const auto& e : todo) listed = listed || keyOf(e.first) == keyOf(original);
+            if (!listed) todo << qMakePair(original, false);
+        }
+    }
     for (const Model& m : models)
     {
         if (!linkedModel(m.item)) continue;
@@ -6477,7 +6524,7 @@ void ScenePanel::prepareSelection()
             // (a gizmo() line without numbers: its line becomes the gizmo's)
             const auto h = t["gizmo"].toObject();
             const int e = h["end_line"].toInt() - 1;
-            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent, !linkedModel(t))};
+            edits << TextEdit{h["line"].toInt() - 1, 0, e, int(lineText(e).size()), indent + gizmoLine(var, mode, indent, !linkedModel(t) && !symmetryModel(t))};
             if (!block.isEmpty())
                 edits << TextEdit{b, int(lineText(b).size()), b, int(lineText(b).size()), "\n" + block};
         }
@@ -6487,7 +6534,7 @@ void ScenePanel::prepareSelection()
             const int after = hasHandles ? t["handles"].toObject()["end_line"].toInt() - 1 : b;
             QString text;
             if (!block.isEmpty()) text += "\n" + block;
-            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent, !linkedModel(t));
+            if (needGizmo) text += "\n" + indent + gizmoLine(var, mode, indent, !linkedModel(t) && !symmetryModel(t));
             const QString last = lineText(after);
             edits << TextEdit{after, int(last.size()), after, int(last.size()), text};
         }
@@ -6538,6 +6585,7 @@ void ScenePanel::onSelectionChanged()
         if (now.contains(key) && !m_selectOrder.contains(key)) m_selectOrder << key;
     }
     emit(highlightLines(selectedLines()));
+    updateActiveSymmetry();
     updateMultiNote();
     updateProvisional();
     updateFieldView();
@@ -6907,15 +6955,87 @@ void ScenePanel::setWorkPlane(bool active, QVector3D origin, QVector3D u, QVecto
     m_workPlaneStep = step;
 }
 
-void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also)
+void ScenePanel::setSymmetry(FielDes::Symmetry symmetry, int)
 {
-    m_placedAlso = QJsonArray();
-    for (const auto& stroke : also)
+    m_symmetryRequest = QJsonObject();
+    if (!symmetry.on) return;
+    auto vec = [](const QVector3D& a) { return QJsonArray{double(a.x()), double(a.y()), double(a.z())}; };
+    QJsonArray elements;
+    for (const SymmetryElement& e : symmetry.elements())
     {
-        QJsonArray one;
-        for (const QVector3D& p : stroke) one.append(QJsonArray{double(p.x()), double(p.y()), double(p.z())});
-        m_placedAlso.append(one);
+        QJsonObject one;
+        one["mirror"] = e.improper ? QJsonValue(vec(e.mirror)) : QJsonValue();
+        one["turn"] = std::fabs(e.degrees) > 1e-4f ? QJsonValue(QJsonArray{vec(e.axis), double(e.degrees)}) : QJsonValue();
+        elements.append(one);
     }
+    m_symmetryRequest["centre"] = vec(symmetry.centre);
+    m_symmetryRequest["elements"] = elements;
+}
+
+void ScenePanel::createSymmetry(FielDes::Symmetry s)
+{
+    auto vec = [](const QVector3D& a) { return QJsonArray{double(a.x()), double(a.y()), double(a.z())}; };
+    m_symdefRequest = QJsonObject();
+    m_symdefRequest["planes"] = s.count;
+    m_symdefRequest["kind"] = s.kind == Symmetry::Cube ? "cube" : s.kind == Symmetry::AxisAndAcross ? "across" : "axis";
+    m_symdefRequest["centre"] = vec(s.centre);
+    m_symdefRequest["axis"] = vec(s.c);
+    m_symdefRequest["first"] = vec(s.a);
+    createFromMenu("primitive", "symmetry_planes", s.centre, 10.0, -1, -1);
+    m_symdefRequest = QJsonObject();
+}
+
+void ScenePanel::setSymmetryArguments(QStringList names, QStringList values)
+{
+    // The arguments of the call of the symmetry that is selected: `planes`, `kind`.  The call is edited where it stands (the library knows where its arguments are)
+    const QJsonObject item = itemForVar(m_activeSymVar);
+    if (item.isEmpty() || !m_support || !m_source || names.size() != values.size()) return;
+    QJsonObject set;
+    for (int i = 0; i < names.size(); ++i) set[names[i]] = values[i];
+    QJsonObject request;
+    request["source"] = m_source();
+    request["var"] = m_activeSymVar;
+    request["line"] = item["line"].toInt();
+    request["set"] = set;
+    QString error;
+    const QString answer = m_support("call_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    if (answer.isEmpty())
+    {
+        notify(error.isEmpty() ? T("The symmetry's call cannot be changed here: edit the script.") : error);
+        return;
+    }
+    QList<TextEdit> edits;
+    for (const auto v : QJsonDocument::fromJson(answer.toUtf8()).object()["edits"].toArray())
+    {
+        const auto a = v.toArray();
+        if (a.size() == 5) edits << TextEdit{a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), a[4].toString()};
+    }
+    if (!edits.isEmpty()) emit(editScript(edits, "Symmetry " + names.join(", ")));
+}
+
+void ScenePanel::updateActiveSymmetry()
+{
+    // The symmetry that is selected is the one that is used: the last one of the selection.  When none is, the one that was stays (it is used until the symmetry is turned off or
+    // it is deleted)
+    QString chosen;
+    for (const Model& m : selectedModels())
+    {
+        if (symmetryModel(m.item) && m.item.contains("var")) chosen = m.item["var"].toString();
+    }
+    const bool another = !chosen.isEmpty() && chosen != m_activeSymVar;
+    if (!chosen.isEmpty()) m_activeSymVar = chosen;
+    QList<int> lines;
+    if (!m_activeSymVar.isEmpty())
+    {
+        const QJsonObject item = itemForVar(m_activeSymVar);
+        if (item.isEmpty() || !symmetryModel(item)) m_activeSymVar.clear();
+        else lines = linesOf(item);
+    }
+    emit(activeSymmetryChanged(lines, another, m_activeSymVar));
+}
+
+void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth)
+{
     QJsonArray list;
     QVector3D centre;
     for (const QVector3D& p : points)
@@ -6928,7 +7048,6 @@ void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth
     m_placedSmooth = smooth;
     createFromMenu("primitive", name, centre, 10.0, -1, -1);
     m_placed = QJsonArray();
-    m_placedAlso = QJsonArray();
 }
 
 void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation)
@@ -6936,7 +7055,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     if (!m_support) return;
     // (what createPlaced is making: its own points, whatever is selected)
     const QJsonArray placed = m_placed;
-    const QJsonArray placedAlso = m_placedAlso;
+    const QJsonObject symdef = m_symdefRequest;
     const bool placedSmooth = m_placedSmooth;
     const bool operation = kind == "operation";
     // A support, a load or another condition of a simulation, when several models are selected: the first is the body, the others are
@@ -6964,7 +7083,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         // what a menu on one of them stands for (and what the click that opened it had just selected)
         m_afterRun = [=] {
             m_placed = placed;
-            m_placedAlso = placedAlso;
+            m_symdefRequest = symdef;
             m_placedSmooth = placedSmooth;
             createFromMenu(kind, name, point, scale,
                            (operation && !selectedModels().isEmpty()) || (withBodies && !regionOnly && selectedModels().size() >= 2) ? -1 : line0);
@@ -7088,8 +7207,15 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     {
         request["points"] = placed;
         request["smooth"] = placedSmooth;
-        if (!placedAlso.isEmpty()) request["also"] = placedAlso;
     }
+    // (while the symmetry is on, what is made is made with its images: the library writes them under the model, see symmetry_creation)
+    if (kind == "primitive" && !m_symmetryRequest.isEmpty() && !m_activeSymVar.isEmpty() && name != "symmetry_planes")
+    {
+        QJsonObject used = m_symmetryRequest;
+        used["var"] = m_activeSymVar;
+        request["symmetry"] = used;
+    }
+    if (kind == "primitive" && name == "symmetry_planes" && !symdef.isEmpty()) request["symdef"] = symdef;
     request["body"] = body;
     request["other"] = other;
     if (!othersInfo.isEmpty()) request["others"] = othersInfo;
@@ -7104,7 +7230,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         request["body_info"] = info;
     }
     // (the variable the model will get: a function written above the call is named after it)
-    const QString var = freeName(name);
+    const QString var = freeName(name == "symmetry_planes" ? QString("symmetry") : name);
     request["var"] = var;
     // (how far the statement is indented: the library lays the call out for that column)
     request["indent"] = ((kind == "operation" || withBodies) && !bare) ? int(indentOf(lineText(target["line"].toInt() - 1)).size()) : 0;
@@ -7124,6 +7250,17 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     }
     // The rest: the statement written under the model
     auto finish = [=](QString call) {
+        // (the images of the model, if the symmetry is on, are written under its display line: see symmetry_creation.POST)
+        static const QString postMark = "\n#@@@#\n";
+        QString post;
+        const int postAt = call.indexOf(postMark);
+        if (postAt >= 0)
+        {
+            post = call.mid(postAt + postMark.size());
+            while (post.endsWith('\n')) post.chop(1);
+            call = call.left(postAt);
+        }
+        const QString images = post.isEmpty() ? QString() : "\n" + post;
         // (a template may write a function above the call, for the user to put their own logic in: see menu_catalog.PRELUDE)
         static const QString preludeMark = "\n#@@#\n";
         const int cut = call.indexOf(preludeMark);
@@ -7156,7 +7293,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         {
             // (a menu of the text editor opened on a line that is no model: what it makes goes under that line)
             const QString at = src.split('\n')[line0];
-            edits << TextEdit{line0, int(at.size()), line0, int(at.size()), "\n" + statement + "\n" + var};
+            edits << TextEdit{line0, int(at.size()), line0, int(at.size()), "\n" + statement + "\n" + var + images};
             if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
         }
         else
@@ -7167,11 +7304,11 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
             while (last >= 0 && lines[last].trimmed().isEmpty()) --last;
             if (last < 0) edits << TextEdit{0, 0, lines.isEmpty() ? 0 : int(lines.size()) - 1,
                                             lines.isEmpty() ? 0 : int(lines.last().size()),
-                                            star + statement + "\n" + var + "\n"};
+                                            star + statement + "\n" + var + images + "\n"};
             else
             {
                 edits << TextEdit{last, int(lines[last].size()), last, int(lines[last].size()),
-                                  "\n\n" + statement + "\n" + var};
+                                  "\n\n" + statement + "\n" + var + images};
                 if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
             }
         }

@@ -25,6 +25,8 @@ of the License, or (at your option) any later version.
 #include <QTimer>
 #include <QVector3D>
 
+#include "fieldes/symmetry.hpp"
+
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolButton;
@@ -188,7 +190,17 @@ public slots:
     /*  A line, a spline or a sketch put down on the work plane (`name` is polyline, spline or sketch): written into the script with its points, each a model of its own
         with its gizmo, as one step; `smooth` makes the points of a sketch spline points  */
     /*  What was put down on the work plane: `points`, and -- `also` -- the strokes it has in the symmetry of the plane, each a shape of its own  */
-    void createPlaced(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also = QList<QList<QVector3D>>());
+    void createPlaced(QString name, QList<QVector3D> points, bool smooth);
+    /*  The symmetry of the viewport (see symmetry.hpp): while it is on, what a menu or the work plane makes is made with its images (the library writes them)  */
+    void setSymmetry(FielDes::Symmetry symmetry, int images);
+    /*  A symmetry model made of the planes of `symmetry` (see symmetry_planes), written into the script and selected: it is what is used from then on  */
+    void createSymmetry(FielDes::Symmetry symmetry);
+    /*  The arguments of the call of the symmetry that is selected given new values (`planes`, `kind`): the card's buttons  */
+    void setSymmetryArguments(QStringList names, QStringList values);
+    /*  The name of the symmetry model that is selected, the one that is used (empty: none)  */
+    QString activeSymmetryName() const { return m_activeSymVar; }
+    void updateActiveSymmetry();
+    void showNotice(const QString& text) { notify(text); }
     /*  Which run of the script the model tree shows (it counts up with every run): a menu remembers it, so that an entry
      *  chosen after the script changed is known not to mean the line the menu was opened on  */
     int generation() const { return m_generation; }
@@ -283,6 +295,8 @@ public slots:
     void setCacheStates(const QHash<int, QString>& states);
 
 signals:
+    /*  The symmetry model that is selected (its lines, 0-based; none: no symmetry), whether it is another one than before (which is to use it), and its name  */
+    void activeSymmetryChanged(QList<int> lines0, bool chosen, QString name);
     /*  Scroll the editor to a (0-based) line and flash it  */
     void goToLine(int line0);
     /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over: the note under the tree and the rows of
@@ -717,7 +731,9 @@ protected:
     QStringList m_selectNewMore;                 // (a duplicate of several models: the other copies, selected with the last one)
     bool m_workPlaneActive = false;
     QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
-    QJsonArray m_placedAlso;                   // (and the strokes it has in the symmetry: each an array of points)
+    QJsonObject m_symmetryRequest;             // (the symmetry as the library takes it: the centre, and every image as a mirror and a turn; empty while it is off)
+    QString m_activeSymVar;                    // (the symmetry model that is selected: what is made is made with its images while it is in use)
+    QJsonObject m_symdefRequest;               // (the planes of a symmetry that is being made: planes, kind, centre, axis, first)
     bool m_placedSmooth = false;
     QVector3D m_workPlaneOrigin, m_workPlaneU, m_workPlaneV;
     float m_workPlaneStep = 0;

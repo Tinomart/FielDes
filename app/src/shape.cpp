@@ -1011,6 +1011,49 @@ QMatrix4x4 Shape::gizmoRotation(const QVector3D& degrees)
     return Rz * Ry * Rx;
 }
 
+bool Shape::symmetryNow(Symmetry& out) const
+{
+    if (!m_symDef.present) return false;
+    // The planes where the numbers of the gizmo have put them: it turns the definition about its centre (x, then y, then z) and moves it
+    QVector3D axis = m_symDef.axis, first = m_symDef.first, centre = m_symDef.centre;
+    if (m_gizmo.present)
+    {
+        const QMatrix4x4 R = gizmoRotation(gizmoRotate());
+        axis = R.mapVector(axis);
+        first = R.mapVector(first);
+        centre = m_gizmo.about + gizmoMove();
+    }
+    out = Symmetry();
+    out.on = true;
+    out.kind = m_symDef.kind;
+    out.count = m_symDef.count;
+    out.centre = centre;
+    out.c = axis;
+    out.a = first;
+    out.normalise();
+    return true;
+}
+
+QMatrix4x4 Shape::gizmoMapLinear() const
+{
+    QMatrix4x4 L = m_gizmo.map;
+    L(0, 3) = L(1, 3) = L(2, 3) = 0;
+    return L;
+}
+
+float Shape::gizmoMapSign() const
+{
+    const QMatrix4x4 L = gizmoMapLinear();
+    const float d = L(0, 0) * (L(1, 1) * L(2, 2) - L(1, 2) * L(2, 1)) - L(0, 1) * (L(1, 0) * L(2, 2) - L(1, 2) * L(2, 0)) + L(0, 2) * (L(1, 0) * L(2, 1) - L(1, 1) * L(2, 0));
+    return d < 0 ? -1.0f : 1.0f;
+}
+
+QMatrix4x4 Shape::gizmoOrientation() const
+{
+    const QMatrix4x4 R = gizmoRotation(gizmoRotate());
+    return gizmoMapped() ? gizmoMapLinear() * R : R;
+}
+
 QMatrix4x4 Shape::gizmoMatrix(const QVector3D& move, const QVector3D& rotate, const QVector3D& scale) const
 {
     // What gizmo() does to a shape (fieldes.stdlib.handles): scaled about its centre, turned about it (x, then y, then z), moved
@@ -1021,6 +1064,13 @@ QMatrix4x4 Shape::gizmoMatrix(const QVector3D& move, const QVector3D& rotate, co
     S.scale(scale.x(), scale.y(), scale.z());
     A *= S;
     A.translate(-m_gizmo.about);
+    if (m_gizmo.mapped)
+    {
+        // (an image: what the numbers do to the original, done to the image -- taken to the original's places, done there, and brought back)
+        bool ok = false;
+        const QMatrix4x4 back = m_gizmo.map.inverted(&ok);
+        if (ok) A = m_gizmo.map * A * back;
+    }
     return A;
 }
 
@@ -1390,6 +1440,52 @@ void evalAll(libfive::ArrayEvaluator& e, const Points& pts, std::vector<float>& 
         for (size_t j = 0; j < n; j++) out[i + j] = vals[j];
     }
 }
+
+}   // namespace
+
+bool Shape::meshBox(QVector3D& lo, QVector3D& hi) const
+{
+    if (!mesh || mesh->branes.empty()) return false;
+    bool any = false;
+    for (const auto& t : mesh->branes)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            if (t[k] >= mesh->verts.size()) continue;
+            const Eigen::Vector3f v = mesh->verts[t[k]];
+            const QVector3D p(v.x(), v.y(), v.z());
+            if (!any) { lo = hi = p; any = true; continue; }
+            lo = QVector3D(std::min(lo.x(), p.x()), std::min(lo.y(), p.y()), std::min(lo.z(), p.z()));
+            hi = QVector3D(std::max(hi.x(), p.x()), std::max(hi.y(), p.y()), std::max(hi.z(), p.z()));
+        }
+    }
+    return any;
+}
+
+bool Shape::sampleSets(const std::vector<std::vector<QVector3D>>& sets, std::vector<std::vector<float>>& out) const
+{
+    if (!mesh || has_result || m_exact) return false;
+    ensureField();
+    if (m_tree_nodes > 40000) return false;
+    libfive::ArrayEvaluator e(tree, vars);
+    out.assign(sets.size(), std::vector<float>());
+    const size_t N = LIBFIVE_EVAL_ARRAY_SIZE;
+    for (size_t k = 0; k < sets.size(); ++k)
+    {
+        const auto& pts = sets[k];
+        out[k].resize(pts.size());
+        for (size_t i = 0; i < pts.size(); i += N)
+        {
+            const size_t n = std::min(N, pts.size() - i);
+            for (size_t j = 0; j < n; ++j) e.set(Eigen::Vector3f(pts[i + j].x(), pts[i + j].y(), pts[i + j].z()), j);
+            const auto vals = e.values(n);
+            for (size_t j = 0; j < n; ++j) out[k][i + j] = vals[j];
+        }
+    }
+    return true;
+}
+
+namespace {
 
 // A result's colours are read at the render's vertices and interpolated across its triangles.  A flat face comes
 // as a few big triangles, which would smear a field that varies across it: the triangles are split until no edge is
@@ -2505,6 +2601,7 @@ bool Shape::updateFrom(const Shape* other)
     // (the same tree: only whether its gizmo is shown, and its pivot,
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
+    m_symDef = other->m_symDef;
     m_locked = other->m_locked;
     m_linked = other->m_linked;
     m_isPoint = other->m_isPoint;

@@ -436,17 +436,11 @@ The card (top right, below the section card when that is open) has three buttons
 **offset** along its normal, and the buttons **Set view to work plane** (as `W`), **Set work plane to view** (the plane made parallel to the view through the origin) and **New work plane**. The cursor's place on the plane is
 read out under them. **Turning the camera with the middle mouse button leaves the work plane view**, and so does closing the card; the plane is kept for the next time you open it.
 
-**Symmetry.** The card has a **Symmetry** row: **Off**, **1**, **2**, **3** or **4**. With axes on, the view draws them as dashed magenta lines through one centre, **equally spaced** (one axis, two at right
-angles, three 60 degrees apart, four 45 degrees apart), and **everything you put down is put down at its images too**: a point gets a point of its own at every mirror image across each axis and every turn between
-them (2, 4, 6 or 8 points in all), and a line, a spline or a shape gets a shape of its own for each image, drawn in lighter lines while you draw and written as `sketch_1_m1`, `sketch_1_m2` ... beside it (an image that is the shape
-itself over again is left out; the mirror images are written in the reverse order, so that they face the same way and extrude the same way). The **dot** where the axes cross is **dragged to move them** (it lands on the grid
-or on a point that is there), the **knob** on the first axis is **dragged to turn them** (in steps of 5 degrees while the plane snaps; the angle is shown beside it). A new work plane starts with its axes at its origin.
-The images are shapes of their own, made when the shape is: they do not follow the original afterwards.
-**The lines of the symmetry are a thing to snap to** (with *Snap to points* on): a point put down near one lands **on** it -- on the grid's steps along it when the plane snaps -- so what you draw on both
-sides of a line **meets on the line**. And **a shape that is closed through the symmetry is made into one**: draw half a circle from one point of the line to another, and its image on the other side closes it --
-the two are joined where they meet and written as **one closed sketch** (one that meets only at one end is one line). **It is made the moment the stroke comes back to a line of the symmetry**
--- the click that puts the last point on the line closes it, as a click on the first point does -- you do not have to end it by hand. **`Shift+S` turns the symmetry off and on** (it brings back the number of axes there was). The dot and the knob
-are there to be dragged **only while you are not drawing** (right click: the nothing mode): while a kind of drawing is on they are drawn faintly and a click on them puts a point there like anywhere else.
+**Symmetry.** What you put down on the plane can be made at its mirror images too: that is [the symmetry](#the-symmetry), a model of its own. With the work plane's view open, `Shift+S` makes one on the plane
+-- its axis the plane's normal, its first plane along the plane's u axis -- and **a point, a line, a spline or a sketch you put down is put down at its images too**. The lines the symmetry's planes make in the plane are a thing to
+snap to (with *Snap to points* on): a point put down near one lands **on** it -- on the grid's steps along it when the plane snaps -- so what you draw on both sides of a plane **meets on it**. **A shape that is closed through the
+symmetry is made into one**: draw half a circle from one point of a plane to another, and its image on the other side closes it -- the two are joined where they meet and written as **one closed sketch** (one that meets only at
+one end is one line). It is made the moment the stroke comes back to a plane of the symmetry -- the click that puts the last point on it closes it, as a click on the first point does.
 
 **What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a sketch made of new points is made in the plane's own axes, not horizontal), and the points you drag --
 by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a sketch moves all its points together, any other
@@ -465,6 +459,38 @@ that is what not drawing is for. A **double click on a point** of a sketch or a 
 
 Nothing of a line or a spline is written until it ends, and then it is one step (one undo): the points, each a model of its own with its gizmo, and the `sketch(...)`, `polyline(...)` or `spline(...)` through them. (Shift and Ctrl keep their
 meaning in every mode: Shift turns the view, Ctrl adds to the selection.) See [Sketches](sketches.md).
+
+## The symmetry
+
+A **symmetry** is a model of the script, like a point or a surface: **mirror planes through a centre**. `mirror = symmetry_planes()` is one plane, the plane x = 0; with `planes=3` there are three planes through an axis, 60 degrees
+apart; `kind='across'` adds the plane across the axis, and `kind='cube'` is the nine planes of a cube. Make one from the right-click menu (**Primitives ▸ New symmetry**), or press **`Shift+S`** while there is none in the script: it is made at
+the place of the work plane while its view is open (its axis the plane's normal), else it is the mirror x = 0.
+
+**Select a symmetry in the model tree and it is the one in use.** Its planes are drawn in magenta, its card opens in the corner of the viewport, and **everything you make from then on is made at its images too**: a body, a point, a
+surface, a field -- and a sketch, a line or a spline, which is made again through the images of its points. Each image is a model of its own, written under the model it is the image of:
+
+```python
+box_1 = box((8, 4, 0), (26, 14, 8))
+box_1
+box_1_m1 = symmetry_image(box_1, symmetry_1, 1)  # shadow: box_1, symmetry_1
+box_1_m1
+```
+
+`symmetry_1` is the symmetry and `1` the number of the image in it (a symmetry of two planes at right angles has three images: the turn between them and the two mirror images). **An image follows both**: change the original and the
+image changes the way a mirror shows it -- and **move the symmetry with its gizmo and every image of it moves with it**. **An image has no numbers of its own: select it and drag its gizmo, or its surfaces, and the original moves** -- the
+other way, as a mirror shows it (an arrow moves the original the opposite way across the plane, a ring turns it the opposite way). An image that would be the model itself, or another image (a ball whose centre is on a plane), is not made;
+the images of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things.
+
+Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
+
+**The card** (top right) changes the symmetry that is selected: **Planes** -- *Axis* (planes through one line), *Axis + across* (and the plane across it) or *Cube*; **Count** -- how many planes round the axis (1, 2, 3, 4, 6, 8); **Axis** -- along
+x, y or z, the work plane's normal, up in the view (the first plane then splits the picture into left and right), or across the selected 2D shape; **Turn** -- how far the first plane is turned about the axis; **Centre** -- where the planes
+cross (the origin, the middle of what is selected, the work plane's origin). The count and the arrangement are written into the call; where it is and how it is turned are the numbers of its gizmo. **In use** switches the images off and on
+(`Shift+S` does the same; the planes are drawn pale while it is off, and the ✕ of the card stops using it).
+
+**A model's own symmetry.** While a symmetry is there, select a model that is mirror symmetric -- a box, a cylinder, a bracket -- and **the planes it is symmetric across are drawn in teal**, centred on it. They are found from its
+field (the field at a spread of places against its mirror images across planes through the middle of the model: along its own axes and the world's, then the planes round the axis they share), never from its mesh. **Take the planes of
+the selected model** makes a symmetry of them. A cube gives the nine planes of a cube, a plate with three different sides three planes at right angles, a cylinder eight planes round its axis and the plane across it.
 
 ## The field viewer
 
@@ -638,7 +664,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | Section view | `Shift+X` (viewport focused) |
 | Copy / link the selected models (viewport or tree focused) | `Shift+D` / `Ctrl+D` |
 | Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `W` (viewport focused); `Ctrl+Shift+W` anywhere |
-| Work plane view: symmetry on / off | `Shift+S` (viewport focused, while the work plane view is open) |
+| Use the symmetry that is selected, or stop (with none in the script: make one) | `Shift+S` (viewport focused) |
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |
 | Frame all | `Home` |

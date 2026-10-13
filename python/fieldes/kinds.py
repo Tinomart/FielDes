@@ -18,6 +18,7 @@ Everything a script makes is one of a few kinds, and FielDes shows the kind with
     lattice     a body that is a lattice: what lattice(), lattice_surface_conform() ... make (a body filled with cells)
     points      a set of points: what random_points() makes, the points a foam is made around (drawn as the dots of gizmos)
     import      a file read in
+    symmetry    mirror planes through a centre: what is made while it is selected is made with its images
     block       (a model made by one of your custom blocks carries a small block mark on its icon)
 
 kind_of(value) says which kind a value is, or None for a value that is not a model (a number, a string, a list).
@@ -42,6 +43,7 @@ KINDS = {
     'lattice':    ('Lattice',     '#e0709c'),
     'points':     ('Point set',   '#f0a24c'),
     'import':     ('Import',      '#2aa198'),
+    'symmetry':   ('Symmetry',    '#d33682'),
     'block':      ('Custom block', '#8da2c0'),
 }
 
@@ -75,7 +77,7 @@ def kind_of(value):
     from fieldes.shape import Shape
     if isinstance(value, Shape):
         k = getattr(value, '_kind', None)
-        if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice'):
+        if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice', 'symmetry'):
             return k
         if k == 'const':
             return 'field'

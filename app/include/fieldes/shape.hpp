@@ -51,6 +51,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "libfive/render/brep/settings.hpp"
 
 #include "fieldes/settings.hpp"
+#include "fieldes/symmetry.hpp"
 
 namespace libfive { class Tape; /*  forward declaration */ }
 namespace libfive { namespace fea { class TetProblem; } }
@@ -388,8 +389,25 @@ public:
         libfive::Tree::Id move[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id rotate[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id scale[3] = {nullptr, nullptr, nullptr};
+        // The gizmo of the image of a model (fieldes.stdlib.symmetry.symmetry_image): its numbers are the original's, and `map` takes a place of the original to the
+        // image's: the gizmo is drawn there, and what is dragged moves the original by what the image's move is when it is taken back
+        bool mapped = false;
+        QMatrix4x4 map;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
+    /*  A symmetry model (fieldes.stdlib.symmetries.symmetry_planes): the arrangement of its planes and where it was made, in its own place -- before its gizmo moved and turned it.
+        The planes as they are now are `symmetryNow`'s: the definition, moved and turned by the numbers of the gizmo  */
+    struct SymmetryDef
+    {
+        bool present = false;
+        int kind = 0;                       // Symmetry::Kind
+        int count = 1;
+        QVector3D centre{0, 0, 0}, axis{0, 0, 1}, first{0, 1, 0};
+    };
+    void setSymmetryDef(const SymmetryDef& d) { m_symDef = d; }
+    const SymmetryDef& symmetryDef() const { return m_symDef; }
+    bool isSymmetry() const { return m_symDef.present; }
+    bool symmetryNow(Symmetry& out) const;
     const Gizmo& gizmo() const { return m_gizmo; }
     /*  A locked shape (`x = lock(x)` in the script) cannot be dragged at all  */
     void setLocked(bool l) { m_locked = l; }
@@ -417,12 +435,23 @@ public:
     /*  The direction the curve this shape is made of faces at its point number `index` (the line through its vertices there, from the numbers the points have now); false for
         what is not a curve of three or more... of two or more points  */
     bool curveTangentAt(int index, QVector3D& t) const;
+    /*  The field of the shape at several sets of places (as its numbers are now): its distance there, negative inside.  False when it cannot be read (not meshed yet, a result, an
+        imported part, or one with so many parts that reading it would be slow)  */
+    bool sampleSets(const std::vector<std::vector<QVector3D>>& sets, std::vector<std::vector<float>>& out) const;
+    /*  The box of the vertices the triangles of the mesh use (false: not meshed)  */
+    bool meshBox(QVector3D& lo, QVector3D& hi) const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
     std::set<libfive::Tree::Id> gizmoVars() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
     std::map<libfive::Tree::Id, float> dragWeights() const;
     /*  Where the part turns after the move: the pivot the gizmo sits at  */
-    QVector3D gizmoPivot() const { return m_gizmo.about + gizmoMove(); }
+    QVector3D gizmoPivot() const { const QVector3D p = m_gizmo.about + gizmoMove(); return m_gizmo.present && m_gizmo.mapped ? m_gizmo.map.map(p) : p; }
+    /*  The gizmo is an image's (the numbers of the original); the turns and mirror images of the way it was made (without the shift), whether it turns the way round (+1, -1),
+        and the part's own axes as the image has them (the original's, taken through the symmetry)  */
+    bool gizmoMapped() const { return m_gizmo.present && m_gizmo.mapped; }
+    QMatrix4x4 gizmoMapLinear() const;
+    float gizmoMapSign() const;
+    QMatrix4x4 gizmoOrientation() const;
     /*  The rotation the angles make (the library's rotate_x/y/z, x first)  */
     static QMatrix4x4 gizmoRotation(const QVector3D& degrees);
 
@@ -928,6 +957,7 @@ protected:
     Gizmo m_gizmo;
     bool m_locked = false;
     bool m_linked = false;
+    SymmetryDef m_symDef;
     bool m_isPoint = false;
     bool m_hasPointPos = false;
     QVector3D m_pointPos;

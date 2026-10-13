@@ -46,6 +46,7 @@ QHash<QString, Kind>& kinds()
         {"lattice",    {"Lattice",      QColor("#e0709c")}},
         {"points",     {"Point set",    QColor("#f0a24c")}},
         {"import",     {"Import",       QColor("#2aa198")}},
+        {"symmetry",   {"Symmetry",     QColor("#d33682")}},
         {"block",      {"Custom block", QColor("#8da2c0")}},
         // (not kinds of model: the two parts of the right-click menus that are not primitives)
         {"operation",  {"Operation",    QColor("#b9c4d0")}},
@@ -221,6 +222,21 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.drawLine(QPointF(6, 2), QPointF(14, 2));
         p.drawLine(QPointF(14, 2), QPointF(14, 10));
         p.drawLine(QPointF(11, 13), QPointF(14, 10));
+    }
+    else if (type == "symmetry")
+    {
+        // mirror planes: a mirror (dashed line) with a shape and its image either side of it
+        p.setPen(QPen(c, 1.3, Qt::DashLine, Qt::RoundCap));
+        p.drawLine(QPointF(8, 1.2), QPointF(8, 14.8));
+        p.setPen(QPen(c, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(alpha(c, 110));
+        QPolygonF left;
+        left << QPointF(2.2, 4.0) << QPointF(6.4, 8.0) << QPointF(2.2, 12.0);
+        p.drawPolygon(left);
+        p.setBrush(Qt::NoBrush);
+        QPolygonF right;
+        right << QPointF(13.8, 4.0) << QPointF(9.6, 8.0) << QPointF(13.8, 12.0);
+        p.drawPolygon(right);
     }
     else if (type == "operation")
     {

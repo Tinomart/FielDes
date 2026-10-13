@@ -44,6 +44,8 @@ set(SRCS
     src/shader.cpp
     src/shortcuts.cpp
     src/shape.cpp
+    src/symmetry.cpp
+    src/symmetry_detect.cpp
     src/syntax.cpp
     src/theme.cpp
     src/tutorial.cpp
@@ -79,6 +81,7 @@ set(QOBJECTS
     include/fieldes/carddrag.hpp
     include/fieldes/shape.hpp
     include/fieldes/shortcuts.hpp
+    include/fieldes/symmetry.hpp
     include/fieldes/syntax.hpp
     include/fieldes/tutorial.hpp
     include/fieldes/view.hpp

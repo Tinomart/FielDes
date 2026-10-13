@@ -108,6 +108,8 @@ View::View(QWidget* parent)
 
     connect(&camera, &Camera::animDone, this, &View::redrawPicker);
 
+    m_symFollowTimer.setSingleShot(true);
+    connect(&m_symFollowTimer, &QTimer::timeout, this, [this] { followSelectionSymmetry(); });
     m_wheelTimer.setSingleShot(true);
     m_wheelTimer.setInterval(450);
     connect(&m_wheelTimer, &QTimer::timeout, this, [this] {
@@ -435,6 +437,9 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     updateResultPanel();            // (shapes that went take their legend with them; new ones bring theirs when they have meshes)
     update();
     requestSlice();
+    refreshSymmetry();              // (the symmetry model is another shape now)
+    m_symFollowTries = 0;
+    followSelectionSymmetry();
 }
 
 bool View::isRendering() const
@@ -475,6 +480,8 @@ void View::highlightLines(QList<int> lines0)
         s->setSelected(lines0.contains(s->sourceLine()));
     }
     update();
+    m_symFollowTries = 0;
+    followSelectionSymmetry();
 }
 
 void View::moveSourceLines(QVector<int> moved)
@@ -1017,6 +1024,7 @@ void View::paintOverlay(QPainter& painter)
         drawSectionHandle(painter);
     }
     drawWorkPlane(painter);
+    drawSymmetry(painter);
     drawFieldIcons(painter);
     drawOutlines(painter);
     drawMarkers(painter);
@@ -1710,11 +1718,6 @@ void View::mouseMoveEvent(QMouseEvent* event)
     event->accept();
     m_lastPos = event->pos();
 
-    if (m_symDrag)
-    {
-        dragSymmetry(event->pos());
-        return;
-    }
     if (m_pullShape)
     {
         if (!m_pullActive)
@@ -1829,10 +1832,6 @@ void View::mouseMoveEvent(QMouseEvent* event)
     if (m_wp.open) updateWorkPlaneCursor(event->pos());
     if (mouse.state == mouse.RELEASED)
     {
-        // (the handles of the symmetry of the work plane: the dot where its axes cross, and the knob that turns them)
-        const int symNow = symmetryHit(event->pos());
-        const bool symChanged = symNow != m_symHover;
-        m_symHover = symNow;
         // (the icon of a field and the move arrows of an open viewer are on top of everything: nothing behind them is hovered)
         const FieldGrip fgrip = fieldGripAt(event->pos());
         FieldViewer* icon = fgrip.v ? nullptr : fieldIconAt(event->pos());
@@ -1857,7 +1856,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             m_outlineHover = lineShape;
             m_overlay->update();
         }
-        if (symChanged || gripChanged || dot != m_dotHover || hover != section_hover || icon != m_iconHover || !(fgrip == m_fieldGrip))
+        if (gripChanged || dot != m_dotHover || hover != section_hover || icon != m_iconHover || !(fgrip == m_fieldGrip))
         {
             m_dotHover = dot;
             section_hover = hover;
@@ -1865,7 +1864,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             m_fieldGrip = fgrip;
             // (drawing -- the work plane's line, spline or point -- every click puts a point down, so the crosshair stays whatever is under it)
             const bool drawing = m_wp.open && m_wp.exists && m_wp.mode != 0;
-            setCursor(m_symHover == 1 ? Qt::SizeAllCursor : m_symHover == 2 ? Qt::PointingHandCursor : hover ? Qt::SizeAllCursor : drawing ? Qt::CrossCursor
+            setCursor(hover ? Qt::SizeAllCursor : drawing ? Qt::CrossCursor
                       : (dot || icon || fgrip.v || grip.kind >= 0 || m_outlineHover) ? Qt::PointingHandCursor : Qt::ArrowCursor);
             m_overlay->update();
         }
@@ -1981,20 +1980,6 @@ void View::mousePressEvent(QMouseEvent* event)
     // A click in the viewport puts the keyboard in the viewport (from the editor too): the keys that work on the
     // selection (E, R, G, H, I) are not typed into the script
     if (!hasFocus()) setFocus(Qt::MouseFocusReason);
-
-    // A handle of the symmetry of the work plane view: the dot where its axes cross is dragged to move them, the knob on the first axis to turn them
-    if (event->button() == Qt::LeftButton && symmetric())
-    {
-        if (const int handle = symmetryHit(event->pos()))
-        {
-            m_symDrag = handle;
-            press_pos = QPoint(-100000, -100000);       // (not a selection click)
-            press_target = nullptr;
-            setCursor(handle == 1 ? Qt::SizeAllCursor : Qt::ClosedHandCursor);
-            m_overlay->update();
-            return;
-        }
-    }
 
     // The work plane view, in one of the three kinds of drawing: every click puts down a point (of a line, of a spline, or a point) -- a click on a point that is
     // there attaches to it, it does not select it; the first point of a line closes it.  Mode 0 (a right click) leaves clicks to what they do everywhere: things are selected, moved,
@@ -2339,14 +2324,6 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
     if (event->button() == Qt::LeftButton) m_leftDown = false;
-    if (m_symDrag && event->button() == Qt::LeftButton)
-    {
-        m_symDrag = 0;
-        m_symHover = symmetryHit(event->pos());
-        unsetCursor();
-        announceWorkPlane();
-        return;
-    }
     if (m_pullShape)
     {
         Shape* shape = m_pullShape;
@@ -2640,7 +2617,6 @@ void View::makeWorkPlane()
     m_wp.offset = 0;
     m_wp.u = u;
     m_wp.v = v;
-    resetSymmetryAxes();
 }
 
 void View::announceWorkPlane()
@@ -2689,7 +2665,6 @@ void View::workPlaneFromView()
     m_wp.offset = 0;
     m_wp.u = u;
     m_wp.v = v;
-    resetSymmetryAxes();
     announceWorkPlane();
 }
 
@@ -2741,30 +2716,40 @@ QVector3D View::snapToWorkPlane(const QVector3D& p, const Shape* exclude, bool* 
     }
     if (toPoints && m_wp.snapPoints && symmetric())
     {
-        // The lines of the symmetry (and the place they cross): a point near one goes onto it -- along the line, to the grid's steps from the centre when the plane snaps --
-        // so that what is drawn on both sides of a line meets on it
-        const QVector3D c = symmetryCentre(), n = m_wp.normal();
+        // The planes of the symmetry, as they cut the plane the point is in (parallel to the work plane): a point near a line of them goes onto it -- along the line, to the
+        // grid's steps from the centre when the plane snaps -- so that what is drawn on both sides of a plane meets on it
+        const QVector3D wn = m_wp.normal();
+        const float h = QVector3D::dotProduct(p - m_sym.centre, wn);                       // (a point that is off the plane stays as far off it)
+        const QVector3D cHere = m_sym.centre + wn * h;                                    // (the centre's place in the plane the point is in)
         const QPointF at = toScreen(p);
         double best = 10.0;
         bool found = false;
         QVector3D where;
-        for (int j = 0; j < m_wp.symmetry; ++j)
+        for (const QVector3D& m : m_sym.planeNormals())
         {
-            const QVector3D d = symmetryAxis(j);
-            const float h = QVector3D::dotProduct(p - c, n);                       // (a point that is off the plane stays as far off it)
-            const float along = QVector3D::dotProduct(p - c, d);
-            const QPointF there = toScreen(c + d * along + n * h);
+            // (the line the plane makes in that plane: the points x with (x - centre) . m = 0 -- its normal in the plane is m without its part along the plane's normal)
+            QVector3D inPlane = m - wn * QVector3D::dotProduct(m, wn);
+            if (inPlane.length() < 1e-4f) continue;                                       // (parallel to the work plane: no line)
+            const float scale = inPlane.length();
+            inPlane /= scale;
+            const QVector3D d = QVector3D::crossProduct(wn, inPlane);                      // (the line's direction)
+            const float off = QVector3D::dotProduct(p - m_sym.centre, m) / scale;          // (how far the point is from the line, in the plane)
+            const QVector3D foot = p - inPlane * off;
+            const QPointF there = toScreen(foot);
             const double distance = std::hypot(there.x() - at.x(), there.y() - at.y());
             if (distance >= best) continue;
             best = distance;
             found = true;
-            float snappedAlong = along;
+            // (the point of the line nearest the centre is where the steps are counted from)
+            const float lineOff = QVector3D::dotProduct(cHere - m_sym.centre, m) / scale;
+            const QVector3D origin = cHere - inPlane * lineOff;
+            float along = QVector3D::dotProduct(foot - origin, d);
             if (m_wp.snap)
             {
                 const float step = workPlaneStep();
-                snappedAlong = std::round(along / step) * step;
+                along = std::round(along / step) * step;
             }
-            where = c + d * snappedAlong + n * h;
+            where = origin + d * along;
         }
         if (found)
         {
@@ -2828,7 +2813,6 @@ void View::setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const 
 {
     m_wpPlaced.clear();
     m_wp.exists = true;
-    resetSymmetryAxes();
     m_wp.base = origin;
     m_wp.offset = 0;
     m_wp.u = u.normalized();
@@ -2855,27 +2839,7 @@ void View::placeAt(QPoint pos)
     }
     if (m_wp.mode == 3)
     {
-        if (symmetric())
-        {
-            // (the point, and a point of its own at every image of it that is not on it or on another image)
-            const auto images = symmetryImages(p);
-            const float tol = std::max(1e-4f, 1e-3f * workPlaneStep());
-            QList<QList<QVector3D>> also;
-            QList<QVector3D> taken{p};
-            for (int e = 1; e < images.size(); ++e)
-            {
-                bool seen = false;
-                for (const QVector3D& q : taken) seen = seen || (q - images[e]).length() < tol;
-                if (seen) continue;
-                taken << images[e];
-                also << QList<QVector3D>{images[e]};
-            }
-            if (!also.isEmpty())
-            {
-                emit(placementFinished("point", QList<QVector3D>{p}, false, also));
-                return;
-            }
-        }
+        // (the point; with the symmetry on its images are made with it, by the scene)
         emit(createRequested("primitive", "point", p, scaleAt(pos, p), -1, -1));
         return;
     }
@@ -2884,7 +2848,7 @@ void View::placeAt(QPoint pos)
     m_overlay->update();
     // A stroke that comes back to a line of the symmetry, from a first point that was on one, is closed through it: with its images it is a closed outline, and it is made at
     // once -- as it is when the first point is clicked again -- not when the stroke is ended by hand (half a circle from one point of the line to another)
-    if (m_wp.mode != 3 && symmetric() && m_wpPlaced.size() >= 3 && onSymmetryLine(m_wpPlaced.first()) && onSymmetryLine(m_wpPlaced.last()))
+    if (m_wp.mode != 3 && symmetric() && m_wpPlaced.size() >= 3 && onSymmetryPlane(m_wpPlaced.first()) && onSymmetryPlane(m_wpPlaced.last()))
     {
         QList<QList<QVector3D>> strokes = symmetryStrokes(m_wpPlaced);
         QList<QList<QVector3D>> loops;
@@ -2964,21 +2928,8 @@ void View::finishPlacement(bool close)
     m_wpPlaced.clear();
     m_overlay->update();
     const QString name = close ? QString("sketch") : (m_wp.mode == 2 ? QString("spline") : QString("polyline"));
-    // (with a symmetry on, the shape and its images, each a shape of its own -- except where they meet: the two halves of a circle that close on the line are one circle)
-    QList<QList<QVector3D>> strokes = symmetryStrokes(points);
-    if (!close && symmetric() && strokes.size() > 1)
-    {
-        QList<QList<QVector3D>> loops;
-        joinMeeting(strokes, loops, std::max(1e-4f, 1e-3f * workPlaneStep()));
-        if (!loops.isEmpty())
-        {
-            const QList<QVector3D> firstLoop = loops.takeFirst();
-            emit(placementFinished(QStringLiteral("sketch"), firstLoop, m_wp.mode == 2, loops));
-            if (strokes.isEmpty()) return;
-        }
-    }
-    const QList<QVector3D> first = strokes.takeFirst();
-    emit(placementFinished(name, first, m_wp.mode == 2, strokes));
+    // (the stroke; with the symmetry on, its images are made with it -- through the images of its points, the halves that meet on a plane joined into one outline -- by the scene)
+    emit(placementFinished(name, points, m_wp.mode == 2));
 }
 
 void View::cancelPlacement()
@@ -3114,125 +3065,220 @@ void View::wpMarker(QPainter& painter, const QPointF& q, int mode, double alpha,
     }
 }
 
-// ---- Symmetry: axes through one centre in the work plane, equally spaced; what is put down is put down at its images too
+// ---- Symmetry: the symmetry model that is selected (`mirror = symmetry_planes(...)`); what is made while it is in use is made at its images too
 
-bool View::symmetric() const
+Shape* View::symmetryShape() const
 {
-    return m_wp.open && m_wp.exists && m_wp.symmetry > 0;
-}
-
-QVector3D View::symmetryCentre() const
-{
-    return m_wp.origin() + m_wp.u * m_wp.symS + m_wp.v * m_wp.symT;
-}
-
-QVector3D View::symmetryAxis(int j) const
-{
-    const float a = (m_wp.symAngle + 180.0f * float(j) / float(std::max(1, m_wp.symmetry))) * float(M_PI) / 180.0f;
-    return m_wp.u * std::cos(a) + m_wp.v * std::sin(a);
-}
-
-void View::resetSymmetryAxes()
-{
-    m_wp.symS = m_wp.symT = 0;
-    m_wp.symAngle = 0;
-}
-
-void View::toggleWorkPlaneSymmetry()
-{
-    // On and off (Shift+S): on brings back the number of axes that was on last (one, at first)
-    if (!m_wp.open || !m_wp.exists) return;
-    if (m_wp.symmetry > 0)
+    if (m_symLines.isEmpty()) return nullptr;
+    for (Shape* s : shapes)
     {
-        m_symLast = m_wp.symmetry;
-        setWorkPlaneSymmetry(0);
+        if (s->isSymmetry() && m_symLines.contains(s->sourceLine())) return s;
     }
-    else
+    return nullptr;
+}
+
+void View::setActiveSymmetry(QList<int> lines0, bool chosen)
+{
+    // (a symmetry that is chosen is in use: selecting it is how it is turned on)
+    if (chosen && !lines0.isEmpty()) m_symInUse = true;
+    m_symLines = lines0;
+    refreshSymmetry();
+}
+
+void View::setSymmetryInUse(bool on)
+{
+    m_symInUse = on;
+    refreshSymmetry();
+}
+
+Symmetry View::newSymmetryHere() const
+{
+    // The symmetry of a new model: on the work plane while its view is open -- its axis the plane's normal, its first plane along the plane's u axis -- else the mirror x = 0
+    Symmetry s;
+    s.on = true;
+    if (m_wp.open && m_wp.exists)
     {
-        setWorkPlaneSymmetry(m_symLast > 0 ? m_symLast : 1);
+        s.c = m_wp.normal();
+        s.a = m_wp.u;
+        s.centre = m_wp.origin();
     }
+    s.normalise();
+    return s;
 }
 
-void View::setWorkPlaneSymmetry(int count)
+void View::toggleSymmetry()
 {
-    m_wp.symmetry = std::max(0, std::min(4, count));
-    m_symDrag = m_symHover = 0;
-    announceWorkPlane();
-}
-
-void View::setSymmetryAxes(float s, float t, float angleDegrees)
-{
-    m_wp.symS = s;
-    m_wp.symT = t;
-    m_wp.symAngle = angleDegrees;
-    announceWorkPlane();
-}
-
-QPointF View::symmetryKnob() const
-{
-    // On the first axis, 96 pixels from the centre as the screen sees the axis (a knob that is nearer or farther with the zoom would be lost or in the way)
-    const QVector3D c = symmetryCentre(), d = symmetryAxis(0);
-    const QPointF c0 = toScreen(c);
-    const float probe = std::max(1e-3f, workPlaneStep());
-    const QPointF c1 = toScreen(c + d * probe);
-    const double length = std::hypot(c1.x() - c0.x(), c1.y() - c0.y());
-    if (length < 1e-6) return c0 + QPointF(96.0, 0.0);
-    return c0 + (c1 - c0) / length * 96.0;
-}
-
-int View::symmetryHit(QPoint pos) const
-{
-    // (the line is a thing to move only in the nothing mode: while a kind of drawing is on, its centre and its knob are places like any other -- a point can be put there)
-    if (!symmetric() || m_wp.mode != 0) return 0;
-    const QPointF c = toScreen(symmetryCentre());
-    if (std::hypot(pos.x() - c.x(), pos.y() - c.y()) <= 10.0) return 1;
-    const QPointF k = symmetryKnob();
-    if (std::hypot(pos.x() - k.x(), pos.y() - k.y()) <= 10.0) return 2;
-    return 0;
-}
-
-bool View::symmetryHandlePoint(int which, QPoint& pos) const
-{
-    if (!symmetric() || (which != 1 && which != 2)) return false;
-    pos = (which == 1 ? toScreen(symmetryCentre()) : symmetryKnob()).toPoint();
-    return true;
-}
-
-void View::dragSymmetry(QPoint pos)
-{
-    QVector3D hit;
-    if (!m_wp.open || !m_wp.exists || !ringPoint(pos, m_wp.origin(), m_wp.normal(), hit)) return;
-    if (m_symDrag == 1)
+    // Shift+S: the symmetry that is selected is used, or not.  With none in the script a mirror is made (and selected, which is to use it)
+    if (!m_symExists)
     {
-        // The centre goes where a point would be put down: on the grid, or on a point that is there
-        const QVector3D p = snapToWorkPlane(hit);
-        m_wp.symS = QVector3D::dotProduct(p - m_wp.origin(), m_wp.u);
-        m_wp.symT = QVector3D::dotProduct(p - m_wp.origin(), m_wp.v);
+        emit(symmetryCreateRequested(newSymmetryHere()));
+        return;
     }
-    else
-    {
-        // The knob is on the first axis: the axes turn to where the cursor is, from the centre (in steps of 5 degrees while the plane snaps)
-        const QVector3D d = hit - symmetryCentre();
-        if (d.length() < 1e-6f) return;
-        float degrees = std::atan2(QVector3D::dotProduct(d, m_wp.v), QVector3D::dotProduct(d, m_wp.u)) * 180.0f / float(M_PI);
-        if (m_wp.snap) degrees = std::round(degrees / 5.0f) * 5.0f;
-        m_wp.symAngle = degrees;
-    }
+    setSymmetryInUse(!m_symInUse);
+}
+
+void View::refreshSymmetry()
+{
+    Symmetry now;
+    const Shape* s = symmetryShape();
+    const bool exists = s && s->symmetryNow(now);
+    m_symExists = exists;
+    const int images = exists ? int(now.elements().size()) : 0;
+    m_sym = exists ? now : Symmetry();
+    m_sym.on = exists && m_symInUse;
+    m_symElements = m_sym.on ? m_sym.elements() : QList<SymmetryElement>();
+    emit(symmetryChanged(m_sym, int(m_symElements.size())));
+    emit(symmetryCard(exists ? now : Symmetry(), images, exists, m_symInUse, m_symHintOn));
     m_overlay->update();
 }
 
-bool View::onSymmetryLine(const QVector3D& p) const
+void View::followSelectionSymmetry()
 {
-    if (!symmetric()) return false;
-    const QVector3D c = symmetryCentre(), n = m_wp.normal();
-    const float tol = std::max(1e-4f, 1e-3f * workPlaneStep());
-    for (int j = 0; j < m_wp.symmetry; ++j)
+    // While a symmetry is there, a model that is selected and has a symmetry of its own shows its planes, to be taken as a symmetry of the script (the card says so)
+    Shape* only = nullptr;
+    int selected = 0;
+    for (Shape* s : shapes)
     {
-        const QVector3D d = symmetryAxis(j);
-        const QVector3D off = (p - c) - d * QVector3D::dotProduct(p - c, d);       // (what is not along the line)
-        if ((off - n * QVector3D::dotProduct(off, n)).length() < tol) return true;
+        if (s->isSelected()) { ++selected; only = s; }
     }
-    return false;
+    const bool single = m_symExists && selected == 1 && only && !only->isPoint() && !only->isSymmetry();
+    bool on = false;
+    if (single && !only->done() && m_symFollowTries < 25)
+    {
+        // (it is still being meshed: its field is read when it is)
+        ++m_symFollowTries;
+        m_symFollowTimer.start(300);
+        return;
+    }
+    if (single) on = detectSymmetry(*only, m_symHint);
+    if (on != m_symHintOn || on)
+    {
+        m_symHintOn = on;
+        refreshSymmetry();
+    }
+}
+
+void View::useSymmetryHint()
+{
+    if (!m_symHintOn) return;
+    Symmetry s = m_symHint;
+    s.on = true;
+    emit(symmetryCreateRequested(s));
+}
+
+void View::setSymmetryKind(int kind)
+{
+    kind = std::max(0, std::min(2, kind));
+    emit(symmetryArguments(QStringList{"kind"}, QStringList{QString("'%1'").arg(kind == 2 ? "cube" : kind == 1 ? "across" : "axis")}));
+}
+
+void View::setSymmetryCount(int count)
+{
+    count = std::max(1, std::min(8, count));
+    QStringList names{"planes"}, values{QString::number(count)};
+    if (m_sym.kind == Symmetry::Cube)
+    {
+        names << "kind";
+        values << "'axis'";
+    }
+    emit(symmetryArguments(names, values));
+}
+
+// The symmetry the model has now, whether it is in use or not
+static Symmetry symmetryOf(const Shape* s)
+{
+    Symmetry now;
+    if (s) s->symmetryNow(now);
+    return now;
+}
+
+void View::setSymmetryAxis(int which)
+{
+    Symmetry t = symmetryOf(symmetryShape());
+    QVector3D axis, hint = t.a;
+    switch (which)
+    {
+    case 0: axis = QVector3D(1, 0, 0); break;
+    case 1: axis = QVector3D(0, 1, 0); break;
+    case 2: axis = QVector3D(0, 0, 1); break;
+    case 3:
+        if (!m_wp.exists) return;
+        axis = m_wp.normal();
+        hint = m_wp.u;
+        break;
+    case 4:
+    {
+        // Up in the view; the first plane holds the way the eye looks, so that it is seen edge on: a line that splits the picture into left and right
+        QVector3D o, u, v;
+        planeOfView(o, u, v);
+        axis = v;
+        hint = towardViewer();
+        break;
+    }
+    case 5:
+    {
+        QVector3D o, u, v;
+        if (!planeOfSelection(o, u, v)) return;
+        axis = QVector3D::crossProduct(u, v).normalized();
+        hint = u;
+        break;
+    }
+    default: return;
+    }
+    Symmetry::frameFrom(axis, hint, t.a, t.c);
+    placeSymmetry(t);
+}
+
+void View::setSymmetryAngle(float degrees)
+{
+    Symmetry t = symmetryOf(symmetryShape());
+    t.setAngleOfFirst(degrees);
+    placeSymmetry(t);
+}
+
+void View::setSymmetryCentre(const QVector3D& centre)
+{
+    Symmetry t = symmetryOf(symmetryShape());
+    t.centre = centre;
+    placeSymmetry(t);
+}
+
+void View::setSymmetryCentreFrom(int which)
+{
+    Symmetry t = symmetryOf(symmetryShape());
+    if (which == 0)
+    {
+        t.centre = QVector3D(0, 0, 0);
+    }
+    else if (which == 2)
+    {
+        if (!m_wp.exists) return;
+        t.centre = m_wp.origin();
+    }
+    else
+    {
+        // The middle of what is selected: the middle of the boxes of the selected models (a point is its dot)
+        QVector3D lo, hi;
+        bool any = false;
+        for (const Shape* s : shapes)
+        {
+            if (!s->isSelected() || s->isSymmetry()) continue;
+            QVector3D a, b;
+            if (s->isPoint() && s->dotPosition(a)) b = a;
+            else if (!s->meshBox(a, b)) continue;
+            lo = any ? QVector3D(std::min(lo.x(), a.x()), std::min(lo.y(), a.y()), std::min(lo.z(), a.z())) : a;
+            hi = any ? QVector3D(std::max(hi.x(), b.x()), std::max(hi.y(), b.y()), std::max(hi.z(), b.z())) : b;
+            any = true;
+        }
+        if (!any) return;
+        t.centre = (lo + hi) * 0.5f;
+    }
+    placeSymmetry(t);
+}
+
+bool View::onSymmetryPlane(const QVector3D& p) const
+{
+    return symmetric() && m_sym.onPlane(p, std::max(1e-4f, 1e-3f * workPlaneStep()));
 }
 
 QList<QVector3D> View::symmetryImages(const QVector3D& p) const
@@ -3240,21 +3286,7 @@ QList<QVector3D> View::symmetryImages(const QVector3D& p) const
     QList<QVector3D> out;
     out << p;
     if (!symmetric()) return out;
-    const int n = m_wp.symmetry;
-    const QVector3D o = m_wp.origin(), normal = m_wp.normal();
-    const float s = QVector3D::dotProduct(p - o, m_wp.u) - m_wp.symS, t = QVector3D::dotProduct(p - o, m_wp.v) - m_wp.symT;
-    const float h = QVector3D::dotProduct(p - o, normal);            // (a point that is off the plane stays as far off it)
-    auto at = [&](float a, float b) { return o + m_wp.u * (m_wp.symS + a) + m_wp.v * (m_wp.symT + b) + normal * h; };
-    for (int k = 1; k < n; ++k)
-    {
-        const float angle = 2.0f * float(M_PI) * float(k) / float(n);
-        out << at(std::cos(angle) * s - std::sin(angle) * t, std::sin(angle) * s + std::cos(angle) * t);
-    }
-    for (int j = 0; j < n; ++j)
-    {
-        const float a = m_wp.symAngle * float(M_PI) / 180.0f + float(M_PI) * float(j) / float(n);
-        out << at(std::cos(2 * a) * s + std::sin(2 * a) * t, std::sin(2 * a) * s - std::cos(2 * a) * t);
-    }
+    for (const SymmetryElement& e : m_symElements) out << e.map.map(p);
     return out;
 }
 
@@ -3263,13 +3295,12 @@ QList<QList<QVector3D>> View::symmetryStrokes(const QList<QVector3D>& stroke) co
     QList<QList<QVector3D>> all;
     all << stroke;
     if (!symmetric() || stroke.isEmpty()) return all;
-    const int n = m_wp.symmetry;
     std::vector<QList<QVector3D>> images;
-    images.resize(size_t(2 * n));
+    images.resize(size_t(m_symElements.size()) + 1);
     for (const QVector3D& p : stroke)
     {
         const auto each = symmetryImages(p);
-        for (int e = 1; e < 2 * n && e < each.size(); ++e) images[e] << each[e];
+        for (int e = 1; e < each.size(); ++e) images[size_t(e)] << each[e];
     }
     const float tol = std::max(1e-4f, 1e-3f * workPlaneStep());
     // (the same points -- in any order -- are the same shape)
@@ -3283,10 +3314,10 @@ QList<QList<QVector3D>> View::symmetryStrokes(const QList<QVector3D>& stroke) co
         }
         return true;
     };
-    for (int e = 1; e < 2 * n; ++e)
+    for (int e = 1; e <= m_symElements.size(); ++e)
     {
-        QList<QVector3D> image = images[e];
-        if (e >= n) std::reverse(image.begin(), image.end());          // (a mirror image turns the way round: reversed, it faces as the stroke does)
+        QList<QVector3D> image = images[size_t(e)];
+        if (m_symElements[e - 1].improper) std::reverse(image.begin(), image.end());          // (a mirror image turns the way round: reversed, it faces as the stroke does)
         bool seen = false;
         for (const auto& other : all) seen = seen || same(other, image);
         if (!seen) all << image;
@@ -3294,42 +3325,61 @@ QList<QList<QVector3D>> View::symmetryStrokes(const QList<QVector3D>& stroke) co
     return all;
 }
 
-void View::drawSymmetry(QPainter& painter, float cap)
+// The planes of a symmetry, drawn as translucent quads; `ink`, `strong` how much it shows
+static void drawPlanes(QPainter& painter, const std::function<QPointF(const QVector3D&)>& toScreen, const Symmetry& s, float reach, const QColor& ink, double strength, bool dashed)
 {
-    if (!symmetric()) return;
-    const QVector3D c = symmetryCentre();
-    const QColor ink(211, 54, 130);            // (magenta: not the red and green of the plane's own axes, nor the blue of the grid)
-    for (int j = 0; j < m_wp.symmetry; ++j)
+    const QVector3D c = s.centre;
+    const QList<QVector3D> normals = s.planeNormals();
+    for (int j = 0; j < normals.size(); ++j)
     {
-        const QVector3D d = symmetryAxis(j);
+        const QVector3D n = normals[j];
+        // (two axes in the plane: one of the symmetry's own, so that the plane's quad is turned with it)
+        QVector3D p = std::fabs(QVector3D::dotProduct(n, s.c)) < 0.99f ? s.c - n * QVector3D::dotProduct(s.c, n) : s.a - n * QVector3D::dotProduct(s.a, n);
+        p.normalize();
+        const QVector3D q = QVector3D::crossProduct(n, p);
+        QPolygonF quad;
+        quad << toScreen(c - p * reach - q * reach) << toScreen(c + p * reach - q * reach) << toScreen(c + p * reach + q * reach) << toScreen(c - p * reach + q * reach);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(ink.red(), ink.green(), ink.blue(), int((j == 0 ? 30 : 20) * strength)));
+        painter.drawPolygon(quad);
         painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), j == 0 ? 230 : 180), 1.6, Qt::DashLine));
-        painter.drawLine(toScreen(c - d * cap), toScreen(c + d * cap));
+        painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), int((j == 0 ? 230 : 170) * strength)), 1.5, dashed ? Qt::DashLine : Qt::SolidLine));
+        painter.drawPolygon(quad);
     }
-    // The dot where the axes cross: dragged, it moves them (in the nothing mode; while a kind of drawing is on it is only drawn, faintly)
-    const QPointF c0 = toScreen(c);
-    const bool live = m_wp.mode == 0;
+    // The axis the planes are round
+    if (s.kind != Symmetry::Cube)
+    {
+        painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), int(150 * strength)), 1.2));
+        painter.drawLine(toScreen(c - s.c * reach), toScreen(c + s.c * reach));
+    }
+}
+
+void View::drawSymmetry(QPainter& painter)
+{
+    if (!m_symExists && !m_symHintOn) return;
+    const QColor ink(211, 54, 130);            // (magenta: not the red and green of the plane's own axes, nor the blue of the grid)
+    const QColor hintInk(42, 161, 152);         // (teal: the planes a selected model has of its own, to be taken)
+    auto to = [this](const QVector3D& p) { return toScreen(p); };
     painter.save();
-    if (!live) painter.setOpacity(0.45);
-    const bool hotC = m_symHover == 1 || m_symDrag == 1;
-    painter.setPen(QPen(ink, hotC ? 2.8 : 1.8));
-    painter.setBrush(QColor(255, 255, 255, hotC ? 110 : 45));
-    painter.drawEllipse(c0, 8.0, 8.0);
-    painter.drawLine(c0 + QPointF(-4, 0), c0 + QPointF(4, 0));
-    painter.drawLine(c0 + QPointF(0, -4), c0 + QPointF(0, 4));
-    // The knob on the first axis: dragged, it turns the axes about the centre; the angle of the first axis is shown beside it
-    const QPointF k = symmetryKnob();
-    const bool hotK = m_symHover == 2 || m_symDrag == 2;
-    painter.setPen(QPen(ink, hotK ? 2.8 : 1.8));
-    painter.setBrush(QColor(ink.red(), ink.green(), ink.blue(), hotK ? 200 : 120));
-    painter.drawEllipse(k, 7.0, 7.0);
-    painter.setPen(QPen(QColor(255, 255, 255, 230), 1.4));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawArc(QRectF(k.x() - 3.5, k.y() - 3.5, 7.0, 7.0), 40 * 16, 270 * 16);
-    float shown = std::fmod(m_wp.symAngle, 180.0f);
-    if (shown < 0) shown += 180.0f;
-    painter.setPen(QColor(238, 232, 213));
-    painter.drawText(k + QPointF(11.0, 4.0), QString::number(double(shown), 'f', 0) + QString(QChar(0x00b0)));
+    painter.setRenderHint(QPainter::Antialiasing);
+    if (m_symExists)
+    {
+        Symmetry now = symmetryOf(symmetryShape());
+        // How far the planes reach: about five hundred pixels' worth of the world at the centre, so that they are as large as the picture whatever the zoom (a plane seen edge
+        // on, in the work plane's view, is a line that spans the picture)
+        const float reach = std::max(1e-3f, float(scaleAt(toScreen(now.centre).toPoint(), now.centre)) * 5.0f);
+        drawPlanes(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
+        // (the middle: a cross, small -- the gizmo of the model is what moves it)
+        const QPointF c0 = toScreen(now.centre);
+        painter.setPen(QPen(ink, 1.6));
+        painter.drawLine(c0 + QPointF(-5, 0), c0 + QPointF(5, 0));
+        painter.drawLine(c0 + QPointF(0, -5), c0 + QPointF(0, 5));
+    }
+    if (m_symHintOn)
+    {
+        const float reach = std::max(1e-3f, float(scaleAt(toScreen(m_symHint.centre).toPoint(), m_symHint.centre)) * 3.0f);
+        drawPlanes(painter, to, m_symHint, reach, hintInk, 1.0, true);
+    }
     painter.restore();
 }
 
@@ -3401,7 +3451,6 @@ void View::drawWorkPlane(QPainter& painter)
     painter.drawLine(toScreen(o + u * smin), toScreen(o + u * smax));
     painter.setPen(QPen(QColor(116, 184, 31, 170), 1.6));
     painter.drawLine(toScreen(o + v * tmin), toScreen(o + v * tmax));
-    drawSymmetry(painter, cap);
     // The view is a mode: a frame round the viewport says so
     painter.setBrush(Qt::NoBrush);
     painter.setPen(QPen(QColor(38, 139, 210, 150), 2.0));
@@ -3447,7 +3496,7 @@ void View::drawWorkPlane(QPainter& painter)
     {
         QList<QVector3D> way = m_wpPlaced;
         if (m_wpCursorValid && m_wp.mode != 0) way << m_wpCursor;
-        const int count = 2 * m_wp.symmetry;
+        const int count = int(m_symElements.size()) + 1;
         std::vector<QList<QVector3D>> images;
         images.resize(size_t(count));
         for (const QVector3D& p : way)
@@ -3896,7 +3945,7 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
     {
         static const QHash<QString, QString> titles = {
             {"1D", T("New 1D shape")}, {"3D", T("New 3D shape")}, {"2D", T("New 2D shape")}, {"Points", T("New point")}, {"Surfaces", T("New surface")},
-            {"Fields", T("New field")}, {"Custom blocks", T("New custom block")}};
+            {"Fields", T("New field")}, {"Symmetry", T("New symmetry")}, {"Custom blocks", T("New custom block")}};
         QStringList order;
         QHash<QString, QList<QJsonObject>> groups;
         for (const auto v : list)
@@ -5358,6 +5407,15 @@ void gizmoAxes(const QVector3D& turn, QVector3D ring[3])
     ring[0] = rzy.mapVector(QVector3D(1, 0, 0));
 }
 
+// The axes of the three rings of a shape: those of its angles, and for the image of a model those taken through the symmetry
+void gizmoRingAxes(const Shape* s, QVector3D ring[3])
+{
+    gizmoAxes(s->gizmoRotate(), ring);
+    if (!s->gizmoMapped()) return;
+    const QMatrix4x4 L = s->gizmoMapLinear();
+    for (int a = 0; a < 3; ++a) ring[a] = L.mapVector(ring[a]);
+}
+
 // Two unit vectors spanning the plane normal to n
 void planeBasis(const QVector3D& n, QVector3D& u, QVector3D& v)
 {
@@ -5414,6 +5472,43 @@ QVector3D gizmoEuler(const QMatrix4x4& R)
 }
 
 }   // anonymous namespace
+
+void View::placeSymmetry(const Symmetry& target)
+{
+    // The symmetry put where `target` says: the numbers of the gizmo of its model -- the turn that takes its own axes to the target's, and how far its centre moves
+    Shape* s = symmetryShape();
+    if (!s) return;
+    const auto& d = s->symmetryDef();
+    const auto& h = s->gizmo();
+    if (!h.present)
+    {
+        emit(symmetryNotice(T("The symmetry has no gizmo yet: select it in the model tree, and try again.")));
+        return;
+    }
+    Symmetry own;
+    own.c = d.axis;
+    own.a = d.first;
+    own.normalise();
+    Symmetry want = target;
+    want.normalise();
+    auto columns = [](const Symmetry& q) {
+        const QVector3D b = q.b();
+        return QMatrix4x4(q.a.x(), b.x(), q.c.x(), 0, q.a.y(), b.y(), q.c.y(), 0, q.a.z(), b.z(), q.c.z(), 0, 0, 0, 0, 1);
+    };
+    const QMatrix4x4 R = columns(want) * columns(own).transposed();
+    const QVector3D angles = gizmoEuler(R);
+    const auto& vars = s->getVars();
+    std::map<libfive::Tree::Id, float> numbers;
+    for (int a = 0; a < 3; ++a)
+    {
+        if (h.rotate[a] && vars.count(h.rotate[a])) numbers[h.rotate[a]] = angles[a];
+        if (h.move[a] && vars.count(h.move[a])) numbers[h.move[a]] = want.centre[a] - d.centre[a];
+    }
+    if (numbers.empty()) return;
+    emit(dragStart());
+    applyGizmoNumbers(numbers);
+    emit(dragEnd());
+}
 
 View::FieldViewer* View::fieldIconAt(QPoint pos) const
 {
@@ -5769,7 +5864,7 @@ bool View::groupOfPoints(const QList<Shape*>& members) const
     if (members.size() < 2) return false;
     for (const Shape* s : members)
     {
-        if (!s->isPoint()) return false;
+        if (!s->isPoint() || s->gizmoMapped()) return false;          // (the rings turn and scale the points by numbers of their own: an image's are its original's)
     }
     return true;
 }
@@ -6012,7 +6107,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         }
         // (the scale knobs are on the part's own axes, turned with it: they win over the arrow behind them.  A point, and the Shift gizmo of any shape, have ONE
         // knob that scales all three together, on a line from the dot)
-        const QMatrix4x4 R = Shape::gizmoRotation(s->gizmoRotate());
+        const QMatrix4x4 R = s->gizmoOrientation();
         if (shift || s->isPoint())
         {
             bool any = false;
@@ -6034,7 +6129,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             if (d < bestDist) { bestDist = d; best = {s, 2, a}; }
         }
         QVector3D ring[3];
-        gizmoAxes(s->gizmoRotate(), ring);
+        gizmoRingAxes(s, ring);
         if (inPlane) ring[2] = facePlane;
         const bool rotatesAll = h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]);
         if (turned) for (int a = 0; a < 3; ++a) ring[a] = F[a];
@@ -6124,13 +6219,13 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
         else if (kind == 2)
         {
             if (shiftHeld() || s->isPoint()) pos = (toScreen(P) + QPointF(0.7071, -0.7071) * kUniformRingPx).toPoint();         // (the ring of a point and of the Shift gizmo, up and to the right)
-            else pos = toScreen(P + Shape::gizmoRotation(s->gizmoRotate()).mapVector(unitAxis(axis)) *
+            else pos = toScreen(P + s->gizmoOrientation().mapVector(unitAxis(axis)) *
                                         (kKnobAt * L)).toPoint();
         }
         else
         {
             QVector3D ring[3], u, v, facePlane, F[3];
-            gizmoAxes(s->gizmoRotate(), ring);
+            gizmoRingAxes(s, ring);
             if (planarRingNormal(s, facePlane)) ring[2] = facePlane;
             else if (gizmoFrame(s, F)) for (int a = 0; a < 3; ++a) ring[a] = F[a];
             planeBasis(ring[axis], u, v);
@@ -6705,7 +6800,7 @@ void View::drawGizmo(QPainter& painter)
         };
 
         QVector3D ring[3];
-        gizmoAxes(s->gizmoRotate(), ring);
+        gizmoRingAxes(s, ring);
         QVector3D facePlane;
         const bool inPlane = planarRingNormal(s, facePlane);        // (a point of a sketch: one ring, in the plane of the sketch)
         if (inPlane) ring[2] = facePlane;
@@ -6767,7 +6862,7 @@ void View::drawGizmo(QPainter& painter)
         // The scale knobs.  Normally a square on each of the part's own axes, each scaling along its axis.  A point and the Shift gizmo have ONE handle that scales all
         // three together: a ring round the middle (the way Blender's scale gizmo has it) -- pull it out to grow, push it in to shrink.  While it is dragged the ring
         // follows the cursor, a faint one stays where it was, and the factor is shown
-        const QMatrix4x4 R = Shape::gizmoRotation(s->gizmoRotate());
+        const QMatrix4x4 R = s->gizmoOrientation();
         if (uniform)
         {
             bool any = false;
@@ -6872,6 +6967,7 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         emit(renderBusy(true));
         requestSlice();
     }
+    if (m_symExists) refreshSymmetry();            // (the numbers that are dragged may be the gizmo of the symmetry: its planes follow)
     // The field the field viewer shows is not a shape that is drawn, so nothing above reached its numbers: when the numbers that are
     // dragged are its own (the gizmo of the field, or a surface of it), the disc shows it from the new ones as they come, not
     // from the numbers of the last run of the script
@@ -6986,6 +7082,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     m_regionGrown = false;
     gizmo_oriented = false;
     gizmo_frame_shape = nullptr;
+    gizmo_sign = 1.0f;
     if ((g.kind == 5 || g.kind == 6) && g.group)
     {
         // A ring of a group of points: it scales or turns them about the middle of them all.  The place of each and the numbers that move it are noted now
@@ -7057,6 +7154,18 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             const auto& vars = s->getVars();
             for (int a = 0; a < 3; ++a)
             {
+                if (s->gizmoMapped())
+                {
+                    // (an image: the numbers are the original's, and each changes by the part of the image's move that is along it once it is taken back through the symmetry)
+                    const QMatrix4x4 Lm = s->gizmoMapLinear();
+                    const auto im = h.move[a] ? vars.find(h.move[a]) : vars.end();
+                    if (im == vars.end()) continue;
+                    GizmoVar mapped{h.move[a], a, im->second};
+                    mapped.mapped = true;
+                    mapped.w = QVector3D(Lm(0, a), Lm(1, a), Lm(2, a));
+                    gizmo_vars.append(mapped);
+                    continue;
+                }
                 if (!turned && g.kind == 0 && a != g.axis) continue;
                 if (!turned && g.kind == 4 && a == g.axis) continue;       // (a plane square moves along the plane: not along its normal)
                 const auto it = h.move[a] ? vars.find(h.move[a]) : vars.end();
@@ -7074,6 +7183,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         {
             gizmo_len = gizmoLength(gizmo_pivot);
             // (a move arrow is along the world's axis -- along the way the curve faces, for a point of one)
+            gizmo_arrow = turned ? F[g.axis] : unitAxis(g.axis);
             gizmo_dir = toScreen(gizmo_pivot + (turned ? F[g.axis] : unitAxis(g.axis)) * gizmo_len) - toScreen(gizmo_pivot);
             if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
         }
@@ -7144,7 +7254,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         else
         {
             // (a scale knob is along the part's own axis)
-            const QVector3D e = Shape::gizmoRotation(g.shape->gizmoRotate()).mapVector(unitAxis(g.axis)) * gizmo_len;
+            const QVector3D e = g.shape->gizmoOrientation().mapVector(unitAxis(g.axis)) * gizmo_len;
             gizmo_dir = toScreen(gizmo_pivot + e) - toScreen(gizmo_pivot);
             if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
         }
@@ -7152,9 +7262,10 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     else
     {
         QVector3D ring[3], facePlane;
-        gizmoAxes(g.shape->gizmoRotate(), ring);
+        gizmoRingAxes(g.shape, ring);
         if (planarRingNormal(g.shape, facePlane)) ring[2] = facePlane;
         gizmo_axis = ring[g.axis];
+        gizmo_sign = g.shape->gizmoMapped() ? g.shape->gizmoMapSign() : 1.0f;      // (an image of a mirror image turns the other way: the original turns by the opposite)
         // (a point of a curve: the ring is about the way the curve faces, or across it -- the turn is written as the three angles of the gizmo)
         QVector3D F[3];
         const bool turned = !planarRingNormal(g.shape, facePlane) && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) &&
@@ -7258,7 +7369,8 @@ void View::dragGizmo(QPoint pos)
         if (l2 < 1) return;
         const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
         std::map<libfive::Tree::Id, float> numbers;          // (every shape that moves with the arrow)
-        for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + float(t * gizmo_len) * v.weight;
+        for (const auto& v : gizmo_vars)
+            numbers[v.id] = v.value0 + float(t * gizmo_len) * (v.mapped ? QVector3D::dotProduct(v.w, gizmo_arrow) : v.weight);
         applyGizmoNumbers(numbers);
     }
     else if (gizmo_active.kind == 3 || gizmo_active.kind == 4)
@@ -7274,7 +7386,7 @@ void View::dragGizmo(QPoint pos)
             d -= m_wp.normal() * QVector3D::dotProduct(d, m_wp.normal());                        // (in the plane: the noise of the ray is not a move out of it)
         }
         std::map<libfive::Tree::Id, float> numbers;
-        for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + d[v.axis];
+        for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + (v.mapped ? QVector3D::dotProduct(v.w, d) : d[v.axis]);
         applyGizmoNumbers(numbers);
     }
     else if (gizmo_active.kind == 2)
@@ -7327,7 +7439,7 @@ void View::dragGizmo(QPoint pos)
         }
         else
         {
-            applyGizmoNumber(gizmo_id, gizmo_value0 + snappedTurn(gizmo_turn, gizmo_value0, true));
+            applyGizmoNumber(gizmo_id, gizmo_value0 + snappedTurn(gizmo_sign * gizmo_turn, gizmo_value0, true));
         }
     }
 }

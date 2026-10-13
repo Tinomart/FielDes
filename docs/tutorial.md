@@ -224,7 +224,7 @@ the one you get with **Shift**, **`Shift+D` and `Ctrl+D`** (a copy and a linked 
 | `Esc` | cancel a slow render |
 | `Shift+X` (viewport focused), `Ctrl+Shift+T` | the section card, the model tree |
 | `Shift+W`, `Ctrl+Shift+W`, `W` (viewport focused) | the work plane view, a new work plane, the view set to the plane |
-| `Shift+S` (viewport focused, work plane view open) | the symmetry of the drawing on or off |
+| `Shift+S` (viewport focused) | the symmetry that is selected, used or not (with none in the script: one is made) |
 | `Shift+F1`, `F1` | the guide, the library reference |
 | `Ctrl+K Ctrl+S` | every shortcut, rebindable |
 

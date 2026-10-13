@@ -44,6 +44,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/camera.hpp"
 #include "fieldes/shape.hpp"
 #include "fieldes/section.hpp"
+#include "fieldes/symmetry.hpp"
 #include "fieldes/workplane.hpp"
 #include "fieldes/result.hpp"
 #include "fieldes/result_panel.hpp"
@@ -225,13 +226,35 @@ public slots:
     void cancelPlacement();
     void undoPlacedPoint();
     int placedCount() const { return m_wpPlaced.size(); }
-    /*  Symmetry in the work plane view: 0 none, 1 to 4 axes through one centre, 180 / n degrees apart.  Whatever is put down is put down at its images too -- turned
-        about the centre and mirrored across each axis.  The centre (a dot) is dragged to move the axes, the knob on the first axis to turn them  */
-    void setWorkPlaneSymmetry(int count);
-    void toggleWorkPlaneSymmetry();                   // (S: off, and on again with the number of axes there was)
-    void setSymmetryAxes(float s, float t, float angleDegrees);      // (where they cross, in the plane's axes; the angle of the first axis)
-    /*  Where a handle of the symmetry is on the screen (1 the centre, 2 the knob that turns the axes), for scripted tests  */
-    bool symmetryHandlePoint(int which, QPoint& pos) const;
+    /*  The symmetry: a model of the script -- `mirror = symmetry_planes(...)` -- that is selected in the model tree is the one the viewport works with.  Its planes are drawn, and
+        what is made while it is IN USE is made at its images too (Shift+S turns that on and off; with no symmetry in the script one is made).  The card (SymmetryPanel) shows it
+        and changes it: the arrangement of its planes is written into its call, where it is and how it is turned into the numbers of its gizmo  */
+    const Symmetry& symmetry() const { return m_sym; }
+    /*  The lines that show the symmetry model that is selected (0-based; none: no symmetry); `chosen`: it is another symmetry than before, which is to use it  */
+    void setActiveSymmetry(QList<int> lines0, bool chosen);
+    void setSymmetryInUse(bool on);
+    void toggleSymmetry();
+    Symmetry newSymmetryHere() const;                    // (what a new symmetry is: on the work plane while its view is open, else the mirror x = 0)
+    void setSymmetryKind(int kind);
+    void setSymmetryCount(int count);
+    /*  The axis along a world axis (0 x, 1 y, 2 z), the work plane's normal (3), up in the view (4), or the normal of the selected 2D shape or surface (5)  */
+    void setSymmetryAxis(int which);
+    void setSymmetryAngle(float degrees);
+    void setSymmetryCentre(const QVector3D& centre);
+    /*  The centre at the origin (0), the middle of what is selected (1), the work plane's origin (2)  */
+    void setSymmetryCentreFrom(int which);
+    /*  The symmetry put where `target` says: its centre and its axes are the numbers of the gizmo of the model  */
+    void placeSymmetry(const Symmetry& target);
+    /*  A selected model that has a symmetry of its own shows its planes (they are not the symmetry: they are taken as one with a click)  */
+    void useSymmetryHint();
+    void followSelectionSymmetry();
+    bool symmetryExists() const { return m_symExists; }
+    bool symmetryInUse() const { return m_symInUse; }
+    bool symmetryHint() const { return m_symHintOn; }
+    /*  How many images the symmetry makes of what is made (every element but the identity), while it is in use  */
+    int symmetryImageCount() const { return int(m_symElements.size()); }
+    /*  The images of a point: the point, then one for each element of the symmetry (for scripted tests)  */
+    QList<QVector3D> imagesOf(const QVector3D& p) const { return symmetryImages(p); }
     /*  Where a new model made at `pos` goes, and how large it is: on the work plane while its view is open, snapped; else the place on the ray under the cursor.
         `createAt` makes one as the menu of empty space does (for scripted tests)  */
     void placementAt(QPoint pos, QVector3D& point, double& scale) const;
@@ -296,10 +319,19 @@ signals:
     void workPlaneStateChanged(FielDes::WorkPlane plane, float step);
     /*  ... for the scene, which writes what is made on it in its axes: whether new models go on it, where it is, its axes, and the step the places snap to (0: none)  */
     void workPlaneChanged(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
+    /*  The symmetry that is in use changed (its planes, its centre, in use or not), and how many images it makes: for the scene, which makes the images of what is made  */
+    void symmetryChanged(FielDes::Symmetry symmetry, int images);
+    /*  The symmetry that is selected, for its card: whether there is one, whether it is in use, and whether a selected model has a symmetry of its own to be taken  */
+    void symmetryCard(FielDes::Symmetry symmetry, int images, bool exists, bool inUse, bool hint);
+    /*  A symmetry is to be made (Shift+S with none in the script, or the planes of a model taken): the scene writes it  */
+    void symmetryCreateRequested(FielDes::Symmetry symmetry);
+    /*  The arrangement of the symmetry that is selected is changed: the arguments of its call (`planes`, `kind`) and the text each gets  */
+    void symmetryArguments(QStringList names, QStringList values);
+    void symmetryNotice(QString text);
     /*  Where the cursor is on the plane, in its coordinates (empty: not on it)  */
     void workPlaneReadout(QString text);
     /*  A line or a spline was put down (or a sketch: closed): its name in the library (`sketch`, `polyline`, `spline`), its points, and whether the outline is smooth  */
-    void placementFinished(QString name, QList<QVector3D> points, bool smooth, QList<QList<QVector3D>> also);
+    void placementFinished(QString name, QList<QVector3D> points, bool smooth);
 
     /*
      *  Called to kick off a render and start the busy spinner running
@@ -542,23 +574,26 @@ protected:
     int m_wpLastMode = 1;                   // (the kind of drawing that was on last: E brings it back after a right click has stopped the drawing)
     QVector3D m_wpCursor;                    // (where the cursor is on the plane, snapped)
     QList<QVector3D> m_wpPlaced;             // (the points of the line or spline that is being put down: not in the script yet)
-    // The symmetry of the work plane view (see setWorkPlaneSymmetry)
-    bool symmetric() const;
-    QVector3D symmetryCentre() const;
-    QVector3D symmetryAxis(int j) const;                        // (the direction of axis j in the plane, a unit vector)
-    QPointF symmetryKnob() const;                               // (where the knob that turns the axes is on the screen: on the first axis, a fixed way out)
-    int symmetryHit(QPoint pos) const;                          // (1 the centre, 2 the knob, 0 neither)
-    void dragSymmetry(QPoint pos);
-    void resetSymmetryAxes();
-    /*  The images of a point of the plane: the point, then its turns about the centre (n - 1), then its mirror images across the n axes  */
+    // The symmetry (see setActiveSymmetry)
+    bool symmetric() const { return m_sym.on; }
+    Shape* symmetryShape() const;                               // (the model that is selected and is a symmetry)
+    void refreshSymmetry();                                     // (what the model says now: its planes, the card, the scene)
+    /*  The images of a point: the point, then one for each element of the symmetry  */
     QList<QVector3D> symmetryImages(const QVector3D& p) const;
-    bool onSymmetryLine(const QVector3D& p) const;              // (the point is on one of the lines of the symmetry)
+    bool onSymmetryPlane(const QVector3D& p) const;             // (the point is on one of the planes of the symmetry)
     /*  The strokes a stroke has in the symmetry: the stroke itself, then its images (the mirror ones in the reverse order, so that they face the same way); an image
         that is the stroke (or another image) over again is left out  */
     QList<QList<QVector3D>> symmetryStrokes(const QList<QVector3D>& stroke) const;
-    void drawSymmetry(QPainter& painter, float cap);
-    int m_symHover = 0, m_symDrag = 0;
-    int m_symLast = 0;                                          // (the number of axes that was on before S turned the symmetry off)
+    void drawSymmetry(QPainter& painter);
+    Symmetry m_sym;                                             // (the symmetry that is in use: `on` while it is)
+    QList<SymmetryElement> m_symElements;                       // (every image but the identity, of the symmetry in use)
+    QList<int> m_symLines;                                      // (the lines that show the symmetry model that is selected)
+    bool m_symExists = false;
+    bool m_symInUse = true;
+    Symmetry m_symHint;                                         // (the planes of the selected model, when it has some)
+    bool m_symHintOn = false;
+    int m_symFollowTries = 0;                                   // (the model that is selected is still being meshed: asked again)
+    QTimer m_symFollowTimer;
     QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
     bool m_faceHasRef = false;
     bool m_wpCursorValid = false;
@@ -904,7 +939,18 @@ protected:
     /*  How many shapes are selected (lit up as the model tree's selection)  */
     int selectedShapeCount() const;
     /*  The numbers a gizmo drag changes: each shape's move number for an axis, with its value when the drag began  */
-    struct GizmoVar { libfive::Tree::Id id; int axis; float value0; float weight = 1.0f; };       // (weight: how much of the move along the arrow this number takes)
+    struct GizmoVar
+    {
+        libfive::Tree::Id id;
+        int axis;
+        float value0;
+        float weight = 1.0f;            // (how much of the move along the arrow this number takes)
+        // (the number of the original of an image: it changes by `w` . what the image moved by -- the original moves as the image does, taken back through the symmetry)
+        QVector3D w;
+        bool mapped = false;
+    };
+    QVector3D gizmo_arrow;              // (the way a move arrow points, in the world)
+    float gizmo_sign = 1.0f;            // (a ring of an image turns the original the other way when the image is a mirror image)
     QVector<GizmoVar> gizmo_vars;
     /*  Several points are selected: they share one gizmo, and two rings of it scale and turn them -- evenly, about the middle of them all, which moves each of them (it is the
         numbers that move each that change).  Each point's place and its move numbers when a drag of a ring began  */

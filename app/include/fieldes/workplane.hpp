@@ -37,9 +37,6 @@ struct WorkPlane
     bool snapPoints = true;         // places snap to the points that are there
     float spacing = 0;              // the step of the grid in mm; 0: automatic, from how large the picture is
     int mode = 0;                   // what a click does: 0 nothing of its own (things are selected, moved, turned and scaled as usual: Q), 1 puts down the points of a line, 2 of a spline, 3 a point (E goes round 1-3)
-    int symmetry = 0;               // axes of symmetry the drawing has: 0 none, 1 to 4 -- equally spaced (180 / n degrees apart), all through one centre; what is put down is put down at its images too
-    float symS = 0, symT = 0;       // where the axes cross, in the plane's own axes (from its origin)
-    float symAngle = 0;             // the angle of the first axis from the plane's u axis, in degrees
 
     QVector3D normal() const { return QVector3D::crossProduct(u, v).normalized(); }
     QVector3D origin() const { return base + normal() * offset; }
@@ -64,7 +61,6 @@ public slots:
 signals:
     void optionsChanged(bool grid, bool snap, bool snapPoints, float spacing);
     void modeChanged(int mode);
-    void symmetryChanged(int count);        // (0: off; 1 to 4 axes)
     void offsetChanged(float offset);
     void faceRequested();
     void fromViewRequested();
@@ -85,7 +81,6 @@ protected:
     QToolButton* m_snapPoints;
     QToolButton* m_auto;
     QToolButton* m_modes[3];            // (line, spline, point: what a click puts down -- none on: not drawing)
-    QToolButton* m_sym[5];              // (symmetry: off, 1, 2, 3, 4 axes)
     QLabel* m_hint = nullptr;           // (what a click does now)
     QDoubleSpinBox* m_step;
     QDoubleSpinBox* m_offset;

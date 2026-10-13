@@ -966,15 +966,10 @@ Window::Window(Arguments args)
         selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual (a right click in the viewport does it too)"));
         selectAction->setEnabled(false);
         Shortcuts::add(selectAction, "view.workplane-select", {});
-        // Shift+S: the symmetry of the drawing on and off (it brings back the number of axes there was); there while the view is open
-        auto symAction = view_menu->addAction(T("Work plane: symmetry on or off"));
-        symAction->setToolTip(T("Turn the symmetry of the drawing on or off: what is drawn is mirrored over a line, and a point can be put on the line"));
-        symAction->setEnabled(false);
-        Shortcuts::add(symAction, "view.workplane-symmetry", {QKeySequence(Qt::SHIFT | Qt::Key_S)});
         // (Ctrl+Shift+W is the window's: it types nothing, so it needs no focus in the viewport -- when FielDes opens the keyboard is in the script editor, and a shortcut that
         // only acted in the viewport did nothing until the viewport had been clicked.  The single keys stay the viewport's: in the editor they are letters)
         newAction->setShortcutContext(Qt::WindowShortcut);
-        for (QAction* a : {openAction, faceAction, selectAction, symAction})
+        for (QAction* a : {openAction, faceAction, selectAction})
         {
             a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
             view->addAction(a);
@@ -983,7 +978,6 @@ Window::Window(Arguments args)
         connect(newAction, &QAction::triggered, this, [=] { view->newWorkPlane(); view->setFocus(Qt::OtherFocusReason); });      // (the keyboard goes to the viewport: the keys of the drawing work at once)
         connect(faceAction, &QAction::triggered, this, [=] { view->faceWorkPlane(); });
         connect(selectAction, &QAction::triggered, this, [=] { view->setWorkPlaneMode(0); });
-        connect(symAction, &QAction::triggered, this, [=] { view->toggleWorkPlaneSymmetry(); });
         // (the view says what the plane is: the menu entry, the card and the scene follow it, whoever changed it)
         connect(view, &View::workPlaneStateChanged, this, [=](WorkPlane plane, float step) {
             {
@@ -991,7 +985,6 @@ Window::Window(Arguments args)
                 openAction->setChecked(plane.open);
             }
             selectAction->setEnabled(plane.open);
-            symAction->setEnabled(plane.open);
             panel->setPlane(plane, step);
             panel->setVisible(plane.open);
             if (plane.open) panel->raise();
@@ -1000,13 +993,45 @@ Window::Window(Arguments args)
         connect(view, &View::workPlaneChanged, view->scenePanel(), &ScenePanel::setWorkPlane);
         connect(panel, &WorkPlanePanel::optionsChanged, view, &View::setWorkPlaneOptions);
         connect(panel, &WorkPlanePanel::modeChanged, view, &View::setWorkPlaneMode);
-        connect(panel, &WorkPlanePanel::symmetryChanged, view, &View::setWorkPlaneSymmetry);
         connect(view, &View::placementFinished, view->scenePanel(), &ScenePanel::createPlaced);
         connect(panel, &WorkPlanePanel::offsetChanged, view, &View::setWorkPlaneOffset);
         connect(panel, &WorkPlanePanel::faceRequested, view, &View::faceWorkPlane);
         connect(panel, &WorkPlanePanel::fromViewRequested, view, &View::workPlaneFromView);
         connect(panel, &WorkPlanePanel::newRequested, view, &View::newWorkPlane);
         connect(panel, &WorkPlanePanel::closeRequested, this, [=] { view->setWorkPlaneOpen(false); });
+    }
+
+    {   // The symmetry: a model of the script (`mirror = symmetry_planes(...)`) that is selected in the model tree; what is made while it is in use is made at its images too.
+        // Shift+S, a single key like the work plane's: it acts while the viewport has the keyboard (in the script editor it is a letter)
+        auto panel = new SymmetryPanel(view);
+        panel->hide();
+        auto symAction = view_menu->addAction(T("Symmetry in use or not"));
+        symAction->setToolTip(T("Use the symmetry that is selected, or stop: what you make is made at its images across the planes too, and the images follow it.  With no symmetry in the "
+                                "script one is made"));
+        Shortcuts::add(symAction, "view.symmetry", {QKeySequence(Qt::SHIFT | Qt::Key_S)});
+        symAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(symAction);
+        connect(symAction, &QAction::triggered, this, [=] { view->toggleSymmetry(); });
+        auto scene = view->scenePanel();
+        connect(scene, &ScenePanel::activeSymmetryChanged, view, [=](QList<int> lines, bool chosen, QString) { view->setActiveSymmetry(lines, chosen); });
+        connect(view, &View::symmetryChanged, scene, &ScenePanel::setSymmetry);
+        connect(view, &View::symmetryCard, panel, [=](Symmetry s, int images, bool exists, bool inUse, bool hint) {
+            panel->setSymmetry(s, images, exists, inUse, hint, scene->activeSymmetryName());
+        });
+        connect(view, &View::symmetryCreateRequested, scene, &ScenePanel::createSymmetry);
+        connect(view, &View::symmetryArguments, scene, &ScenePanel::setSymmetryArguments);
+        connect(view, &View::symmetryNotice, scene, &ScenePanel::showNotice);
+        // (the work plane's card is above it: when that one comes or goes, this one is put under it again)
+        connect(view, &View::workPlaneStateChanged, panel, [=] { panel->reposition(); });
+        connect(panel, &SymmetryPanel::useChanged, view, &View::setSymmetryInUse);
+        connect(panel, &SymmetryPanel::hintRequested, view, &View::useSymmetryHint);
+        connect(panel, &SymmetryPanel::kindChanged, view, &View::setSymmetryKind);
+        connect(panel, &SymmetryPanel::countChanged, view, &View::setSymmetryCount);
+        connect(panel, &SymmetryPanel::axisRequested, view, &View::setSymmetryAxis);
+        connect(panel, &SymmetryPanel::angleChanged, view, &View::setSymmetryAngle);
+        connect(panel, &SymmetryPanel::centreChanged, view, &View::setSymmetryCentre);
+        connect(panel, &SymmetryPanel::centreRequested, view, &View::setSymmetryCentreFrom);
+        connect(panel, &SymmetryPanel::closeRequested, this, [=] { view->setSymmetryInUse(false); });
     }
 
     {   // Standard views; single keys, so they only act while the viewport
@@ -2428,8 +2453,6 @@ Window::Window(Arguments args)
             else if (what == "fromview") view->workPlaneFromView();
             else if (what == "offset") view->setWorkPlaneOffset(p.value(1).toFloat());
             else if (what == "mode") view->setWorkPlaneMode(p.value(1).toInt());
-            else if (what == "symmetry") view->setWorkPlaneSymmetry(p.value(1).toInt());
-            else if (what == "symaxes" && p.size() >= 4) view->setSymmetryAxes(p[1].toFloat(), p[2].toFloat(), p[3].toFloat());
             else if (what == "set" && p.size() >= 10)
                 view->setWorkPlaneFrame(QVector3D(p[1].toFloat(), p[2].toFloat(), p[3].toFloat()), QVector3D(p[4].toFloat(), p[5].toFloat(), p[6].toFloat()),
                                         QVector3D(p[7].toFloat(), p[8].toFloat(), p[9].toFloat()));
@@ -2446,11 +2469,34 @@ Window::Window(Arguments args)
                       << " u " << w.u.x() << "," << w.u.y() << "," << w.u.z() << " v " << w.v.x() << "," << w.v.y() << "," << w.v.z()
                       << " normal " << n.x() << "," << n.y() << "," << n.z() << " facing " << QVector3D::dotProduct(n, toward)
                       << " mode " << w.mode << " placed " << view->placedCount() << " grid " << w.grid << " snap " << w.snap << " snapPoints " << w.snapPoints << " step " << view->workPlaneStep()
-                      << " symmetry " << w.symmetry << " centre " << w.symS << "," << w.symT << " angle " << w.symAngle;
-            QPoint handle;
-            if (view->symmetryHandlePoint(1, handle)) std::cerr << " centre_px " << handle.x() << "," << handle.y();
-            if (view->symmetryHandlePoint(2, handle)) std::cerr << " knob_px " << handle.x() << "," << handle.y();
-            std::cerr << std::endl;
+                      << std::endl;
+        });
+        // symmetry <use|stop|toggle|kind N|count N|axis N|angle D|centre X Y Z|centrefrom N|hint|images X Y Z|state>: the symmetry that is selected, as its card and its key drive
+        // it; it says what it is now
+        a->add("symmetry", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            const QString what = p.value(0);
+            auto vec = [&](int i) { return QVector3D(p.value(i).toFloat(), p.value(i + 1).toFloat(), p.value(i + 2).toFloat()); };
+            if (what == "use") view->setSymmetryInUse(true);
+            else if (what == "stop") view->setSymmetryInUse(false);
+            else if (what == "toggle") view->toggleSymmetry();
+            else if (what == "kind") view->setSymmetryKind(p.value(1).toInt());
+            else if (what == "count") view->setSymmetryCount(p.value(1).toInt());
+            else if (what == "axis") view->setSymmetryAxis(p.value(1).toInt());
+            else if (what == "angle") view->setSymmetryAngle(p.value(1).toFloat());
+            else if (what == "centre" && p.size() >= 4) view->setSymmetryCentre(vec(1));
+            else if (what == "centrefrom") view->setSymmetryCentreFrom(p.value(1).toInt());
+            else if (what == "hint") view->useSymmetryHint();
+            const Symmetry& s = view->symmetry();
+            std::cerr << "automation: symmetry exists " << view->symmetryExists() << " inuse " << view->symmetryInUse() << " name " << view->scenePanel()->activeSymmetryName().toStdString()
+                      << " kind " << s.kind << " count " << s.count << " centre " << s.centre.x() << "," << s.centre.y() << "," << s.centre.z()
+                      << " axis " << s.c.x() << "," << s.c.y() << "," << s.c.z() << " first " << s.a.x() << "," << s.a.y() << "," << s.a.z() << " angle " << s.angleOfFirst()
+                      << " planes " << s.planeNormals().size() << " images " << view->symmetryImageCount() << " hint " << view->symmetryHint() << std::endl;
+            if (what == "images")
+            {
+                for (const QVector3D& q : view->imagesOf(vec(1)))
+                    std::cerr << "automation: image " << q.x() << " " << q.y() << " " << q.z() << std::endl;
+            }
         });
         // createat <name> <x> <y>: a new model made at that place of the viewport, as the menu of empty space makes it (on the work plane while its view is open)
         a->add("createat", [=](const QString& args){
