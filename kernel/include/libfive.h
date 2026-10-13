@@ -301,6 +301,14 @@ bool libfive_tree_bounds_vars(libfive_tree t, libfive_region3 search, int max_ev
                               const libfive_tree* vars, const float* values, int count);
 
 /*
+ *  The same, coarser and much quicker: the box is found to within `rel_tol` of the longest side of the search region (0.02: two per cent) and not refined.  Still
+ *  conservative (the box holds the shape); for what only needs to know roughly where a shape is -- the region it must be meshed over while it is dragged.
+ */
+bool libfive_tree_bounds_vars_coarse(libfive_tree t, libfive_region3 search, int max_evals, float max_seconds, float rel_tol,
+                                     libfive_region3* out, int* open,
+                                     const libfive_tree* vars, const float* values, int count);
+
+/*
  *  The lowest value a tree can take anywhere in a box (interval arithmetic:
  *  a lower bound, never too high), with the numbers `values` for the
  *  variables `vars` (count of each).  A field with a positive lower bound

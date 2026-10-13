@@ -684,7 +684,7 @@ libfive_interval libfive_tree_eval_r(libfive_tree t, libfive_region3 r)
 
 // (`vars`: the values of the tree's variables -- a shape made with var()s is not where its numbers are 0)
 static bool bounds_impl(const Tree& root, const std::map<Tree::Id, float>& vars, libfive_region3 search,
-                        int max_evals, float max_seconds, libfive_region3* out, int* open)
+                        int max_evals, float max_seconds, libfive_region3* out, int* open, float rel_tol = 1e-3f, bool refine = true)
 {
     using V = Eigen::Vector3f;
     IntervalEvaluator e(root, vars);
@@ -791,13 +791,13 @@ static bool bounds_impl(const Tree& root, const std::map<Tree::Id, float>& vars,
     };
 
     float fine[6];
-    const float tol0 = 1e-3f * (hi0 - lo0).maxCoeff();
+    const float tol0 = rel_tol * (hi0 - lo0).maxCoeff();
     if (!pass(lo0, hi0, tol0, fine)) return false;
 
     // Refine inside the box found so far, relative to the shape's own size,
     // until that stops tightening it
     float tol = tol0;
-    for (int i=0; i < 8; ++i)
+    for (int i=0; refine && i < 8; ++i)
     {
         V lo1(fine[0], fine[2], fine[4]), hi1(fine[1], fine[3], fine[5]);
         lo1 = (lo1.array() - tol).matrix().cwiseMax(lo0);
@@ -847,6 +847,15 @@ bool libfive_tree_bounds_vars(libfive_tree t, libfive_region3 search, int max_ev
     std::map<Tree::Id, float> m;
     for (int i = 0; i < count; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
     return bounds_impl(Tree(t), m, search, max_evals, max_seconds, out, open);
+}
+
+bool libfive_tree_bounds_vars_coarse(libfive_tree t, libfive_region3 search, int max_evals, float max_seconds, float rel_tol,
+                                     libfive_region3* out, int* open,
+                                     const libfive_tree* vars, const float* values, int count)
+{
+    std::map<Tree::Id, float> m;
+    for (int i = 0; i < count; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
+    return bounds_impl(Tree(t), m, search, max_evals, max_seconds, out, open, rel_tol, false);
 }
 
 float libfive_tree_interval_lower(libfive_tree t, libfive_region3 box,

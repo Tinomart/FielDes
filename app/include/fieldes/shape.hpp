@@ -897,7 +897,9 @@ protected:
      *  found by a quick search (a few milliseconds at the most) when its render starts  */
     void measureExtent(const Settings& s);
     /*  The box of the shape at these numbers, searched for over a box (its own search, a few milliseconds at the most): false when it cannot be found  */
-    bool searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi);
+    bool searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi, float seconds = 0.05f,
+                      float coarse = 0.0f);
+    libfive::Tree::Id m_ext_failed = libfive::Tree::Id();      // (the tree whose box the last search could not find in its time)
     double autoResolution(const Settings& s) const;
     int defaultDivFor(const Settings& s);
     bool m_ext_valid = false;

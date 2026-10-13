@@ -1857,23 +1857,32 @@ void View::mouseMoveEvent(QMouseEvent* event)
             drag_dir * QVector3D::dotProduct(cursor_pos - drag_start, n2) /
             QVector3D::dotProduct(drag_dir, n2);
 
+        static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+        QElapsedTimer clock;
+        if (timing) clock.start();
         // (the numbers of a gizmo on the same part stay where they are)
         auto sol = libfive::Solver::findRoot(
                 *drag_eval.first, drag_eval.second,
                 drag_target->getVars(),
                 {cursor_pos.x(), cursor_pos.y(), cursor_pos.z()},
                 drag_target->gizmoVars(), 25000, drag_weights);
+        const qint64 tSolved = timing ? clock.nsecsElapsed() : 0;
         emit(varsDragged(QMap<libfive::Tree::Id, float>(sol.second)));
+        const qint64 tWritten = timing ? clock.nsecsElapsed() : 0;
 
         drag_valid = fabs(sol.first) < 1e-6;
         // The region holds what is pulled -- now: the surface is meshed again from its new numbers over the region, and out of it is cut off until the script has run.  The region
         // it has grown to goes into the script with the numbers when the mouse is let go (regionGrown)
         if (drag_valid) growRegionForSurfaceDrag(cursor_pos, sol.second);
+        const qint64 tGrown = timing ? clock.nsecsElapsed() : 0;
         bool changed = false;
         for (auto& s : shapes)
         {
             changed |= s->updateVars(sol.second);
         }
+        if (timing)
+            std::fprintf(stderr, "[drag] surface moved: %.1f ms in all (solving %.1f, writing the numbers %.1f, region %.1f, shapes given them %.1f)\n", double(clock.nsecsElapsed()) / 1e6,
+                         double(tSolved) / 1e6, double(tWritten - tSolved) / 1e6, double(tGrown - tWritten) / 1e6, double(clock.nsecsElapsed() - tGrown) / 1e6);
         if (changed)
         {
             busy.show();
@@ -2218,17 +2227,23 @@ void View::mousePressEvent(QMouseEvent* event)
             QVector3D flat_edge;
             if (picked && !press_ctrl && selectedShapeCount() < 2 && pullableAt(drag_target, event->pos(), &flat_edge))
             {
+                static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+                QElapsedTimer clock;
+                if (timing) clock.start();
                 this->setCursor(Qt::ClosedHandCursor);
                 emit(dragStart());
+                const qint64 tStart = timing ? clock.nsecsElapsed() : 0;
                 drag_target->setGrabbed(true);
                 drag_valid = true;
                 m_regionGrown = false;
 
                 drag_start = drag_target->isFlat() ? flat_edge : toModelPos(event->pos());
                 auto df = drag_target->dragFrom(drag_start);
+                const qint64 tFrom = timing ? clock.nsecsElapsed() : 0;
                 drag_eval.first.reset(df.first);
                 drag_eval.second = df.second;
                 drag_weights = drag_target->dragWeights();
+                const qint64 tWeights = timing ? clock.nsecsElapsed() : 0;
 
                 auto norm = drag_eval.first->deriv(
                         {drag_start.x(), drag_start.y(), drag_start.z()},
@@ -2236,6 +2251,9 @@ void View::mousePressEvent(QMouseEvent* event)
                 drag_dir = {norm.x(), norm.y(), norm.z()};
 
                 mouse.state = mouse.DRAG_EVAL;
+                if (timing)
+                    std::fprintf(stderr, "[drag] surface pressed: %.1f ms in all (dragStart %.1f, field and evaluator %.1f, weights %.1f, direction %.1f)\n", double(clock.nsecsElapsed()) / 1e6,
+                                 double(tStart) / 1e6, double(tFrom - tStart) / 1e6, double(tWeights - tFrom) / 1e6, double(clock.nsecsElapsed() - tWeights) / 1e6);
             }
             else
             {

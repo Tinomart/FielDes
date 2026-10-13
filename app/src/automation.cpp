@@ -7,9 +7,11 @@ modify it under the terms of the GNU General Public License
 as published by the Free Software Foundation; either version 2
 of the License, or (at your option) any later version.
 */
+#include <cstdlib>
 #include <iostream>
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -133,8 +135,15 @@ void Automation::step()
             std::cerr << "automation: unknown command " << cmd.toStdString() << "\n";
             continue;
         }
+        // (FIELDES_TIMING: how long a command held the window -- a press or a move of the mouse that is slow to be answered is slow here)
+        static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+        QElapsedTimer clock;
+        if (timing) clock.start();
         h.value()(args);
+        const qint64 handled = timing ? clock.nsecsElapsed() : 0;
         QApplication::processEvents();
+        if (timing && cmd != "wait")
+            std::cerr << "automation:   " << cmd.toStdString() << " held the window " << double(handled) / 1e6 << " ms, " << double(clock.nsecsElapsed()) / 1e6 << " ms with the events it left\n";
         if (cmd == "wait")
         {
             return;   // the timer resumes us

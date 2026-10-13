@@ -1194,7 +1194,12 @@ void Shape::measureExtent(const Settings& s)
 {
     m_ext_valid = false;
     if (!s.autoScale) return;
-    m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi);
+    // A tree that its search could not bound in its time (intervals are too loose for it) is not bounded in it the next time either: it is the tree that is hard, not the numbers
+    // -- every render of a drag started with another 50 ms of looking, in the GUI's thread.  It gets a few milliseconds (a number that makes it easy is found at once) until it is
+    // another tree
+    const float seconds = (tree.is_valid() && m_ext_failed == tree.id()) ? 0.004f : 0.05f;
+    m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi, seconds);
+    m_ext_failed = (tree.is_valid() && !m_ext_valid) ? tree.id() : libfive::Tree::Id();
 }
 
 bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
@@ -1205,10 +1210,12 @@ bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVect
         const auto it = numbers.find(kv.first);
         if (it != numbers.end()) it->second = kv.second;
     }
-    return searchExtent(numbers, search_lo, search_hi, lo, hi);
+    // (roughly, and in a few milliseconds: it is for the region a drag must be meshed over, which has room round the shape anyway; it is asked at every move)
+    return searchExtent(numbers, search_lo, search_hi, lo, hi, 0.006f, 0.02f);
 }
 
-bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
+bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi, float seconds,
+                         float coarse)
 {
     if (has_hint || has_result || m_step_exact || exactCurrent() || !tree.is_valid()) return false;
     if (hasControls() || (m_flat && hasFlatFrame())) return false;          // (a line or a face of points, or a face in a plane of its own: no extent is measured)
@@ -1235,9 +1242,10 @@ bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, cons
     int open = 0;
     // (a search of at most 50 ms, in the GUI's thread -- the clock is read at every evaluation: a shape it cannot bound in that time is rendered as it was before.  The few
     // milliseconds that the shapes of the examples take are well inside it)
-    if (!libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, 0.05f, &out, &open,
-                                  var_trees.data(), values.data(), int(var_trees.size())))
-        return false;
+    const bool found = coarse > 0
+        ? libfive_tree_bounds_vars_coarse(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, seconds, coarse, &out, &open, var_trees.data(), values.data(), int(var_trees.size()))
+        : libfive_tree_bounds_vars(reinterpret_cast<libfive_tree>(tree.id()), search, 20000, seconds, &out, &open, var_trees.data(), values.data(), int(var_trees.size()));
+    if (!found) return false;
     lo = QVector3D(out.X.lower, out.Y.lower, out.Z.lower);
     hi = QVector3D(out.X.upper, out.Y.upper, out.Z.upper);
     return hi.x() >= lo.x() && hi.y() >= lo.y() && hi.z() >= lo.z();
