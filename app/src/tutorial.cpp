@@ -2063,6 +2063,7 @@ void Tutorial::buildSteps()
         s.enter = [this, symmetryEnter] {
             symmetryEnter(QStringList{"mirror"});
             m_view->setSymmetryInUse(true);
+            m_view->setFocus(Qt::OtherFocusReason);            // (Shift+S acts while the viewport has the keyboard: in the script it is a letter)
         };
         s.leave = [this] { m_view->setSymmetryInUse(true); };
         s.done = [this] { return !m_view->symmetryInUse(); };
@@ -2079,29 +2080,6 @@ void Tutorial::buildSteps()
                 });
             });
         };
-        add(s);
-    }
-    // 25g: the images name the mirror they were made in: selecting them makes it the symmetry in use
-    {
-        Step s;
-        s.title = T("How an image was made");
-        s.text = T("Click leg_images. The mirror it was made in becomes the symmetry in use: its planes are drawn, and whatever you make next is made at its images too -- so you can add to it the same way.");
-        s.hint = T("The image names its mirror: leg_images = symmetry_images(leg, mirror). Or press Show me.");
-        s.code = linesWith("^leg_images\\b");
-        s.holes = both;
-        s.aim = aimRow({"leg_images"});
-        s.cardNear = treeNear;
-        s.place = Right;
-        s.group = "symmetry";
-        s.closeRows = true;
-        s.showView = true;
-        s.enter = [scene, symmetryEnter] {
-            symmetryEnter(QStringList());
-            scene()->setActiveSymmetry(QString());          // (none in use yet: clicking the images is what makes their mirror the one)
-        };
-        s.done = [scene] { return scene()->selectionKeys().contains("shape:leg_images") && scene()->activeSymmetryName() == "mirror"; };
-        s.doneNote = T("Nice. Its mirror is now the symmetry in use: its planes are drawn.");
-        s.show = [clickRow](std::function<void()> over) { clickRow("leg_images", over); };
         add(s);
     }
     // 25h: lines and sweeps are mirrored too (said, not shown: the user does it on the work plane)
