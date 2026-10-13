@@ -40,6 +40,8 @@ The first import of a file takes a few seconds and is cached next to the STEP fi
 | `23_lattice_gallery.py` | none (a simple body for each tile) | one lattice of every kind: strut cells and a custom cell, a TPMS sheet and network, a honeycomb, foams around `random_points` (`voronoi_lattice`, `delaunay_lattice`, by density), a wall graded by a field, a cell map and a conformal layer |
 
 | `29_symmetry.py` | none (a table: a top and one leg) | a **symmetry** (`symmetry_planes`): select it and everything you make is made at its images too; `symmetry_images(leg, mirror)` is all the legs' images as one model; moving the symmetry moves its images, dragging an image drags the original; the card, `Shift+S`, selecting the images brings back the mirror they were made in |
+| `30_noise_kinds.py` | none (ten balls) | `noise_field`: the five kinds (`perlin`, `billow`, `ridged`, `cellular`, `cracks`), a stretch per axis, a `warp`, one octave against six, and a scale that is a field -- each ball is `ball - depth * noise`, so the relief is the noise |
+| `31_texture.py` | none (twelve blocks) | `texture`: the six patterns (`grit`, `stipple`, `leather`, `ribs`, `dimples`, `knurl`), on the top face only (`select_surface`) or inside a body (`region`), `side='in'` / `'out'`, a pattern of your own, and a depth that is a field |
 
 (Open each script: the comment at its top says what to look at.)
 
