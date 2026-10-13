@@ -946,6 +946,8 @@ protected:
     GizmoGrip gizmoAt(QPoint pos) const;
     /*  Shift held: the move arrows are replaced by flat squares (a drag moves along the plane of the square) and the scale knobs all scale together  */
     bool shiftHeld() const;
+    /*  The turn of a ring (degrees) as it is applied: with Shift held, in steps of 5 degrees (`absolute`: the angle `start + turn` is a multiple of 5)  */
+    float snappedTurn(float turn, float start = 0.0f, bool absolute = false) const;
     QPoint m_lastPos;                    // (where the last mouse event of the viewport was)
     bool m_leftDown = false;             // (the left button, as the mouse events of the viewport say: a script that sends events sets it as a real mouse does)
     /*  A point of a sketch has ONE rotation ring, in the plane of the sketch (about its normal): whether `s` is one, and that normal  */

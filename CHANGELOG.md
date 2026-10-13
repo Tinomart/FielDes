@@ -3,9 +3,12 @@
 ## Unreleased
 
 ### 2D shapes on top, a symmetry that snaps and closes, linked handles, a tour with a state per step
+- **The Shift gizmo turns in steps of 5 degrees.** With Shift held, the rotation rings snap: the angle a part ends at is a multiple of 5 (from a part that stood at 3 degrees too), and a group of points keeps the differences
+  between its points' angles, each turned by a multiple of 5. The angle shown beside the ring is the snapped one. (Checked in a real window: seven ring drags with Shift, each ended on a multiple of 5; without Shift the angle is free.)
+- **The symmetry key is `Shift+S`**, as `Shift+W` opens the work plane (`Ctrl+Shift+S` stays *Save as*).
 - **A new file is empty.** FielDes no longer starts with a sphere in the script (File → New, *Load the default script* and the first start): nothing is made for you to delete first.
 - **`Ctrl+Shift+W` works when FielDes has just opened.** It was the viewport's shortcut, and the keyboard is in the code editor at the start, so it did nothing until the viewport was clicked. It is the window's now (it types
-  nothing, so it needs no focus), and it gives the keyboard to the viewport: the keys of the drawing (`E`, `S`, a right click) work at once. The single keys (`Shift+W`, `W`, `S`) stay the viewport's, as in the editor they are letters.
+  nothing, so it needs no focus), and it gives the keyboard to the viewport: the keys of the drawing (`E`, `Shift+S`, a right click) work at once. The single keys (`Shift+W`, `W`, `Shift+S`) stay the viewport's, as in the editor they are letters.
 - **Undo and redo: the lines the program writes by itself are not steps of their own.** A new model gets its `gizmo(...)` / `handles(...)` lines, and the render region follows it, in edits of the program's own
   after the user's: *Ctrl+Z* only took those back, they were written again at once (the model was still selected) and the model never went -- a point placed with the work plane's Point tool, a new sphere, any new
   model. Now one undo takes the program's own edits together with the edit of the user's before them, and one redo brings them all back (checked: a new sphere goes with its lines and its region and comes back, a placed
@@ -13,7 +16,7 @@
 - **2D shapes are drawn over the 3D ones, in a very light blue, and picked first.** A sketch or a flat shape drawn on a body (or inside it) used to hide behind the body's surface or hide what was drawn there; now it is
   always seen whole, in front of everything 3D (they are in front of each other as their places say), and a click on it selects it, not the body under it. Its blue outline can always be pressed.
 - **The lines of the work plane's symmetry are a thing to snap to.** With *Snap to points* on, a point put down (or dragged) near a symmetry line lands **on** it -- along the line, on the grid's steps from the centre while the plane
-  snaps -- so what is drawn on both sides of a line meets on it. **`S` turns the symmetry off and on** (it brings back the number of axes there was). **A shape that is closed through the symmetry is made into one**: half a circle drawn
+  snaps -- so what is drawn on both sides of a line meets on it. **`Shift+S` turns the symmetry off and on** (it brings back the number of axes there was). **A shape that is closed through the symmetry is made into one**: half a circle drawn
   from one point of the line to another and its mirror image on the other side are joined where they meet and written as **one closed sketch** -- **at once, with the click that puts the last point on the line** (as clicking the first point closes a shape), not when the stroke is ended by hand; a line that meets its image at one end, and is ended by hand, is one line. The dot and the knob of the symmetry
   are there to be dragged **only in the nothing mode**; while a kind of drawing is on they are drawn faintly and do not take the click, so a point can be put at the centre.
 - **A linked copy has handles, and they are linked to its original's.** Dragging a surface of an `instance(...)` copy pulls the numbers of the original's `handles(...)`: the original and every copy move together, whichever is pulled. The original is
@@ -29,6 +32,9 @@
   model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
   the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
   their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
+- **`texture(body, pattern, depth, size, region, ...)`: a texture on a surface.** Sandpaper (`'grit'`), orange peel (`'stipple'`), leather, ribs, an egg carton of dimples and a diamond knurl -- or a field of your own -- laid on
+  all of a body or only where a selected surface says (`region=top`), fading out over `fade` mm, cutting in or adding (`side`). It is the body's field moved by a height, so it needs no mapping, has no seam and works on any shape;
+  a 0.8 mm grain on a 40 mm face renders in about 3 seconds. In the menu: *Operations → Texturing*, with the surface that is selected as its region.
 - **Noise has five kinds, a stretch and a warp.** `noise_field(scale, octaves, seed, gain, lacunarity, amplitude, kind, warp)`: `kind` is `'perlin'` (as before, to the last digit), `'billow'` (puffy humps), `'ridged'`
   (sharp ridges), `'cellular'` (Worley noise: the distance to the nearest of random points -- bubbles, pits, scales) and `'cracks'` (the distance from the walls between those cells: a web, a foam's walls); the new kinds are
   laid over about -1 .. 1 (Perlin with four octaves stays mostly inside ±0.3, which is now said in its help). `scale` can be three sizes -- `(40, 4, 4)` is streaks along x -- and `warp` pushes the coordinates about by three other

@@ -3140,7 +3140,7 @@ void View::resetSymmetryAxes()
 
 void View::toggleWorkPlaneSymmetry()
 {
-    // On and off (S): on brings back the number of axes that was on last (one, at first)
+    // On and off (Shift+S): on brings back the number of axes that was on last (one, at first)
     if (!m_wp.open || !m_wp.exists) return;
     if (m_wp.symmetry > 0)
     {
@@ -6672,7 +6672,7 @@ void View::drawGizmo(QPainter& painter)
                 if (scaling || turning)
                 {
                     const QString text = scaling ? QString::fromUtf8("\xc3\x97") + QString::number(double(gizmo_factor), 'f', 2)
-                                                 : QString::number(double(gizmo_turn), 'f', 1) + QString(QChar(0x00b0));
+                                                 : QString::number(double(snappedTurn(gizmo_turn)), 'f', 1) + QString(QChar(0x00b0));
                     QFont font = painter.font();
                     font.setPointSizeF(8.5);
                     painter.setFont(font);
@@ -7182,6 +7182,15 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     m_overlay->update();
 }
 
+// The turn of a ring as it is applied: with Shift held -- the Shift gizmo -- in whole steps of 5 degrees.  `absolute`: the angle that results is a multiple of the step (`start` is
+// the number the ring turns from), else the turn itself is (a group of points, each with an angle of its own, keep their differences)
+float View::snappedTurn(float turn, float start, bool absolute) const
+{
+    if (!shiftHeld()) return turn;
+    const float step = 5.0f;
+    return absolute ? std::round((start + turn) / step) * step - start : std::round(turn / step) * step;
+}
+
 void View::dragGizmo(QPoint pos)
 {
     if ((gizmo_active.kind == 5 || gizmo_active.kind == 6) && gizmo_active.group)
@@ -7209,6 +7218,7 @@ void View::dragGizmo(QPoint pos)
         }
         // The points stay where they are: the ring scales every point by its own scale, or turns every point by its own rotation, each one alone -- it does not make the
         // arrangement of the points bigger or turn it about its middle
+        const float turned = snappedTurn(gizmo_turn);
         const QVector3D axisN = gizmo_axis.normalized();
         for (const GroupPoint& gp : gizmo_group)
         {
@@ -7228,12 +7238,12 @@ void View::dragGizmo(QPoint pos)
             }
             if (main >= 0 && gp.rotId[main])
             {
-                numbers[gp.rotId[main]] = gp.rot0[main] + sign * gizmo_turn;
+                numbers[gp.rotId[main]] = gp.rot0[main] + sign * turned;
             }
             else if (gp.rotId[0] && gp.rotId[1] && gp.rotId[2])
             {
                 QMatrix4x4 t;
-                t.rotate(gizmo_turn, axisN);
+                t.rotate(turned, axisN);
                 const QVector3D angles = gizmoEuler(t * Shape::gizmoRotation(QVector3D(gp.rot0[0], gp.rot0[1], gp.rot0[2])));
                 for (int a = 0; a < 3; ++a) numbers[gp.rotId[a]] = angles[a];
             }
@@ -7309,7 +7319,7 @@ void View::dragGizmo(QPoint pos)
         {
             // A turn about an axis of the curve's frame, on top of the turn the point had: the three angles of the sum
             QMatrix4x4 turn;
-            turn.rotate(gizmo_turn, gizmo_axis);
+            turn.rotate(snappedTurn(gizmo_turn), gizmo_axis);
             const QVector3D angles = gizmoEuler(turn * Shape::gizmoRotation(QVector3D(gizmo_rot0[0], gizmo_rot0[1], gizmo_rot0[2])));
             std::map<libfive::Tree::Id, float> numbers;
             for (int a = 0; a < 3; ++a) numbers[gizmo_rot_id[a]] = angles[a];
@@ -7317,7 +7327,7 @@ void View::dragGizmo(QPoint pos)
         }
         else
         {
-            applyGizmoNumber(gizmo_id, gizmo_value0 + gizmo_turn);
+            applyGizmoNumber(gizmo_id, gizmo_value0 + snappedTurn(gizmo_turn, gizmo_value0, true));
         }
     }
 }

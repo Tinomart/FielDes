@@ -1207,6 +1207,7 @@ Groups:
                        overhang_angle, overhang_mask, wall_thickness,
                        curvature_field
     data               field_from_points, field_from_csv, noise_field
+    surface texture    texture
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -1635,6 +1636,17 @@ The first field minus the others: a - b - ... at every point
 ### `sum_fields(*fields)`
 
 Sum of several fields
+
+### `texture(body, pattern='grit', depth=0.1, size=1.0, region=None, fade=None, seed=1, axis='z', radius=None, side='both')`
+
+A texture on the surface of `body`: a pattern of small bumps and pits laid over it (sandpaper, a grip, a leather grain ...), on all of it or only where `region` says.
+`pattern` is one of 'grit' (sandpaper, sandblast), 'stipple' (round pits), 'leather' (grooves between cells, with a fine grain), 'ribs' (grooves across `axis`),
+'dimples' (a 3D egg carton) and 'knurl' (diamonds round `axis`; give the `radius` it goes round), or a field of your own, about -1 .. 1.
+`size` is the grain or the pitch (mm) and `depth` the height from a pit to a bump (mm); `side` 'both' puts the bumps outside and the pits inside the surface,
+'in' only cuts into it (the part stays inside its size), 'out' only adds to it.  `region`: a surface picked on the body (select_surface), or a body that holds the
+places to texture; the texture fades out over `fade` mm (the size, by default) so that no step is left at its edge.  A texture is made of the field of the body: the
+render has to be fine enough to show it -- a resolution of about four samples to the size.  E.g. a rough grip on the top face:
+top = select_surface(part, seed=(0, 0, 10)); gripped = texture(part, 'grit', depth=0.2, size=0.6, region=top)
 
 ### `thicken(field, thickness)`
 

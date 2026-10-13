@@ -147,6 +147,31 @@ and the arithmetic of [Scripting](scripting.md#arithmetic-on-fields) (`+ - * / *
 | `mirror_x / _y / _z(shape, x)` | mirror-symmetric copy |
 | `twist_z(shape, degrees_per_mm, center)`, `bend_z(shape, radius, center)` | deformations (the rate may be a field) |
 
+## Surface texture: texture()
+
+`texture(body, pattern, depth, size, region, fade, seed, axis, radius, side)` lays a small-scale pattern of bumps and pits on the surface of a body -- sandpaper, a grip, a leather grain -- on all of it or only where
+`region` says. It is the body's field moved by a height, so it needs no mapping onto the face, has no seam and works on any shape; the texture can be as fine as the render is (about four samples to the grain: a 0.8 mm grain on a
+40 mm face renders in a few seconds at resolution 8).
+
+```python
+top = select_surface(part, seed=(20, 20, 10), angle=5)
+gripped = texture(part, 'grit', depth=0.3, size=0.8, region=top, fade=1.5)     # sandpaper on the top face, smooth at its edges
+```
+
+| `pattern` | what it is |
+|---|---|
+| `'grit'` | sandpaper, sandblasting: small sharp grains of every size round `size` |
+| `'stipple'` | the orange peel of a moulded part: round pits about `size` across |
+| `'leather'` | grooves between cells of about `size`, with a fine grain on them |
+| `'ribs'` | grooves of a pitch `size`, across `axis` (`axis='x'` on a face that faces up gives ribs that run along y) |
+| `'dimples'` | a three-dimensional egg carton of pitch `size`, the same on any face |
+| `'knurl'` | the diamonds of a knurled grip round `axis`; `radius=` is the radius it goes round, which sets a whole number of teeth |
+| a field | your own: a height of about -1 .. 1 (`noise_field(2, kind='ridged')`, a `wave` ...) |
+
+`depth` is the height from a pit to a bump (mm). `side='both'` puts the bumps outside and the pits inside the surface, `'in'` only cuts into it -- the part stays inside its size -- and `'out'` only adds. `region` is a
+selected surface (`select_surface`, `surface_from_bodies`), or a body or a field that holds the places to texture; the texture fades out over `fade` mm (the size, by default). In FielDes, select the body (and a surface)
+and choose *Operations → Texturing → texture*. The `size` is a number; the `depth` can be a field, so a part can be rougher where another field says.
+
 ## Excluded regions: exclude()
 
 `exclude(shape, region, ...)` locks the places of a shape that lie inside the regions (any shapes: where their field is

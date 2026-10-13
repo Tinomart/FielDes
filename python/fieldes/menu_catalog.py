@@ -326,6 +326,8 @@ OPERATIONS = [
     ('shell_centered', 'Offsets and walls', 'shell_centered({body}, {t})', 'optional'),
     ('offset_exact', 'Offsets and walls', 'offset_exact({body}, {t})', 'optional'),
     ('shell_exact', 'Offsets and walls', 'shell_exact({body}, {t})', 'optional'),
+    # A texture on the surface of a body: a surface that is selected with it (or a field, or a body) is where it goes
+    ('texture', 'Texturing', 'texture({body})', 'optional'),
     ('smooth', 'Rounding', 'smooth({body}, {t}, {n})', 'optional'),
     ('round_edges', 'Rounding', 'round_edges({body}, {t})', 'optional'),
     ('fillet', 'Rounding', 'fillet({body}, {t})', 'optional'),
@@ -671,6 +673,11 @@ def _build_operation(name, v, others):
         cells = [o['name'] for o in others if o.get('type') == 'cell']
         if cells:
             return 'lattice_surface_conform({body}, %s, cell_size={cs})'.format(**v) % cells[0]
+    if name == 'texture':
+        # (a surface, a field or a body that is selected with the body is where the texture goes)
+        regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]
+        if regions:
+            return 'texture(%s, region=%s)' % (body, regions[0])
     if name == 'path_extrude':
         # (the 2D shape and the path, whichever was selected first; points make a curve of their own, which is shown and edited like any other)
         models = [dict(v.get('body_info') or {}, name=body)] + list(others)

@@ -966,11 +966,11 @@ Window::Window(Arguments args)
         selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual (a right click in the viewport does it too)"));
         selectAction->setEnabled(false);
         Shortcuts::add(selectAction, "view.workplane-select", {});
-        // S: the symmetry of the drawing on and off (it brings back the number of axes there was); there while the view is open
+        // Shift+S: the symmetry of the drawing on and off (it brings back the number of axes there was); there while the view is open
         auto symAction = view_menu->addAction(T("Work plane: symmetry on or off"));
         symAction->setToolTip(T("Turn the symmetry of the drawing on or off: what is drawn is mirrored over a line, and a point can be put on the line"));
         symAction->setEnabled(false);
-        Shortcuts::add(symAction, "view.workplane-symmetry", {QKeySequence(Qt::Key_S)});
+        Shortcuts::add(symAction, "view.workplane-symmetry", {QKeySequence(Qt::SHIFT | Qt::Key_S)});
         // (Ctrl+Shift+W is the window's: it types nothing, so it needs no focus in the viewport -- when FielDes opens the keyboard is in the script editor, and a shortcut that
         // only acted in the viewport did nothing until the viewport had been clicked.  The single keys stay the viewport's: in the editor they are letters)
         newAction->setShortcutContext(Qt::WindowShortcut);

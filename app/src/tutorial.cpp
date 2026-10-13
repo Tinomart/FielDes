@@ -1927,7 +1927,7 @@ void Tutorial::buildSteps()
                  T("Ctrl+Shift+W  new work plane") + "\n" +
                  T("W  look at the work plane") + "\n" +
                  T("E  next kind of drawing, or the last one") + "\n" +
-                 T("S  symmetry on or off") + "\n" +
+                 T("Shift+S  symmetry on or off") + "\n" +
                  T("Right click  stop drawing");
         s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show sketches, linked copies and the work plane.");
         s.place = Right;

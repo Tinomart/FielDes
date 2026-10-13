@@ -35,6 +35,7 @@ Groups:
                        overhang_angle, overhang_mask, wall_thickness,
                        curvature_field
     data               field_from_points, field_from_csv, noise_field
+    surface texture    texture
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -71,7 +72,7 @@ __all__ = [
     'exact_distance', 'offset_exact', 'shell_exact', 'round_edges', 'fillet', 'smooth',
     'gradient_field', 'gradient_magnitude', 'normal_field', 'overhang_angle',
     'overhang_mask', 'wall_thickness', 'curvature_field',
-    'field_from_points', 'field_from_csv', 'noise_field',
+    'field_from_points', 'field_from_csv', 'noise_field', 'texture',
 ]
 
 X, Y, Z = Shape.X, Shape.Y, Shape.Z
@@ -1318,6 +1319,78 @@ def noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitu
     return n if amplitude == 1.0 else n * float(amplitude)
 
 
+TEXTURES = ('grit', 'stipple', 'leather', 'ribs', 'dimples', 'knurl')
+
+
+def _texture_height(pattern, size, seed, axis, radius):
+    ''' The height of a pattern, about -1 .. 1, over the surface it is laid on: patterns of noise (made of space itself, so they need no mapping on a face and have no seam), and
+        periodic ones made of coordinates '''
+    if is_field(pattern):
+        return pattern
+    if pattern not in TEXTURES:
+        raise ValueError("texture: pattern is one of %s, or a field of your own (about -1 .. 1), not %r" % (', '.join(repr(t) for t in TEXTURES), pattern))
+    tau = 2.0 * math.pi
+    if pattern == 'grit':
+        # sandpaper, sandblasting: small sharp grains of every size round the one asked for
+        return (noise_field(size, 3, seed, 0.65, 2.0) * 3.0).max(-1.0).min(1.0)
+    if pattern == 'stipple':
+        # the orange peel of a moulded part: round pits, each about `size` across
+        return noise_field(size, 1, seed, kind='cellular')
+    if pattern == 'leather':
+        # grooves between cells of about `size`, with a fine grain on them
+        return (noise_field(size, 1, seed, kind='cracks') * 0.8 + noise_field(size / 4.0, 2, seed + 1) * 1.2).max(-1.0).min(1.0)
+    if pattern == 'ribs':
+        # grooves of a pitch of `size` along the axis `axis` (they run across it)
+        coordinate = {'x': X(), 'y': Y(), 'z': Z()}[axis]
+        return (coordinate * (tau / size)).sin()
+    if pattern == 'dimples':
+        # a three-dimensional egg carton of a pitch of `size`: on any face, with no mapping
+        return ((X() * (tau / size)).cos() + (Y() * (tau / size)).cos() + (Z() * (tau / size)).cos()) * (1.0 / 3.0)
+    # 'knurl': the diamonds of a knurled grip round the axis `axis` -- two helical waves crossed, with a whole number of teeth round `radius`
+    if radius is None or not float(radius) > 0:
+        raise ValueError("texture: a knurl goes round something: give its radius=, which sets how many teeth there are round it")
+    teeth = max(3, int(round(tau * float(radius) / size)))
+    angle = angle_field((0, 0, 0), axis)
+    along = {'x': X(), 'y': Y(), 'z': Z()}[axis]
+    return (angle * teeth + along * (tau / size)).sin() * (angle * teeth - along * (tau / size)).sin()
+
+
+def texture(body, pattern='grit', depth=0.1, size=1.0, region=None, fade=None, seed=1, axis='z', radius=None, side='both'):
+    ''' A texture on the surface of `body`: a pattern of small bumps and pits laid over it (sandpaper, a grip, a leather grain ...), on all of it or only where `region` says.
+        `pattern` is one of 'grit' (sandpaper, sandblast), 'stipple' (round pits), 'leather' (grooves between cells, with a fine grain), 'ribs' (grooves across `axis`),
+        'dimples' (a 3D egg carton) and 'knurl' (diamonds round `axis`; give the `radius` it goes round), or a field of your own, about -1 .. 1.
+        `size` is the grain or the pitch (mm) and `depth` the height from a pit to a bump (mm); `side` 'both' puts the bumps outside and the pits inside the surface,
+        'in' only cuts into it (the part stays inside its size), 'out' only adds to it.  `region`: a surface picked on the body (select_surface), or a body that holds the
+        places to texture; the texture fades out over `fade` mm (the size, by default) so that no step is left at its edge.  A texture is made of the field of the body: the
+        render has to be fine enough to show it -- a resolution of about four samples to the size.  E.g. a rough grip on the top face:
+        top = select_surface(part, seed=(0, 0, 10)); gripped = texture(part, 'grit', depth=0.2, size=0.6, region=top)  '''
+    if side not in ('both', 'in', 'out'):
+        raise ValueError("texture: side is 'both', 'in' or 'out'")
+    if not is_field(depth) and not float(depth) >= 0:
+        raise ValueError('texture: depth is a height in mm, not negative')
+    if not is_field(size) and not float(size) > 0:
+        raise ValueError('texture: size is a length in mm, above zero')
+    height = _texture_height(pattern, float(size) if not is_field(size) else 1.0, seed, axis, radius)
+    # (what the pattern does to the surface: both ways, or in or out only)
+    if side == 'in':
+        height = (height - 1.0) * 0.5
+    elif side == 'out':
+        height = (height + 1.0) * 0.5
+    else:
+        height = height * 0.5
+    shift = height * depth
+    if region is not None:
+        reach = float(fade) if fade is not None else (float(size) if not is_field(size) else 1.0)
+        if hasattr(region, 'patch'):
+            near = (region.patch * (1.0 / reach)).min(1.0)                   # (a patch of a surface: how far from it, 0 at it and 1 at `reach`)
+        else:
+            near = (-region * (1.0 / reach)).max(0.0).min(1.0)               # (a body: how far inside it, 1 at `reach` deep)
+            near = 1.0 - near
+        weight = 1.0 - near * near * (3.0 - 2.0 * near)                       # (1 on the region, falling smoothly to 0)
+        shift = shift * weight
+    return body - shift
+
+
 # What makes a field (and not a body) is of the kind 'field' (see fieldes.kinds): the model tree gives it a field's icon, the
 # section viewer shows it (a plane coloured by it) when it is selected.  A wall made round one is a body again.
 for _name in ('x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'polar_field', 'distance_to_point',
@@ -1339,3 +1412,4 @@ for _name in ('smooth', 'round_edges', 'fillet', 'shell_inside', 'shell_outside'
     globals()[_name]._takes = _declare(_BODIES | {'field'}, [_BODIES])
 globals()['field_from_body']._takes = _declare(_BODIES)
 globals()['distance_to_point']._takes = _declare({'point'})            # (the distance from a point: a point is what it is made of)
+globals()['texture']._takes = _declare(_BODIES | {'surface', 'field'}, [_BODIES])      # (a body, and a surface or a field selected with it is where the texture goes)
