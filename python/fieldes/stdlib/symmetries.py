@@ -20,9 +20,8 @@ Every plane makes an image of what is made while the symmetry is on, and so does
 images of a symmetry are numbered 1 .. symmetry_count(symmetry).  `symmetry_images(x, mirror)` is all of them (`only=(1, 3)` some of them), `symmetry_image(x, mirror, 2)` one.
 The images FOLLOW what they are the images of and the symmetry: move the original and they move the way a mirror shows; move the symmetry (its gizmo) and every image of it moves
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
-one model, `leg_images`, for a body, a 2D shape, a sketch, a line or a point (a body, a 2D shape, a sketch or a line: the union of its images; a point: a set of points); what is
-made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
-gets one model for each image, `symmetry_image`.
+one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); a sketch, a line, a surface or a field gets
+one model for each image, `symmetry_image`.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -272,8 +271,8 @@ def symmetry_image(shape, symmetry, index=1):
         symmetry is selected (Shift+S) '''
     sym = symmetry
     _check(shape, sym, 'symmetry_image')
-    if _is_stroke(shape):
-        raise TypeError('symmetry_image(): a sketch or a line is made of its points -- symmetry_images(x, symmetry) makes all its images, each through the images of its points')
+    if getattr(shape, '_ctrl_pos', None):
+        raise TypeError('symmetry_image(): a sketch or a curve is made of its points -- make the images of the points, and the sketch through them')
     elements = base_elements(sym._symmetry_def)
     try:
         k = int(index)
@@ -336,88 +335,17 @@ def symmetry_image(shape, symmetry, index=1):
     return out
 
 
-def _is_stroke(shape):
-    ''' A sketch, a polyline or a spline: made of points that are models of their own '''
-    return getattr(shape, '_ctrl_pos', None) is not None and hasattr(shape, 'points') and hasattr(shape, 'smooth')
-
-
-def _determinant(m):
-    return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
-
-
-def _stroke_image(shape, sym, k):
-    ''' The image number k of a sketch, a polyline or a spline: the same shape through the images of its points (the images of points are points whose coordinates are
-        expressions of the original's numbers: nothing of them is a model).  A mirror image turns the way round: its points are taken in reverse, so that it faces as the
-        original does '''
-    from fieldes.stdlib import curves
-    from fieldes.stdlib.sketch import Sketch, sketch as make_sketch          # (`fieldes.stdlib.sketch` as an attribute is the function: the module is imported by its path)
-    from fieldes.stdlib.points import Point
-    items = []
-    for p in shape.points:
-        if not isinstance(p, Shape):
-            q = tuple(float(c) for c in p)
-            p = Point(*(q + (0.0,) * (3 - len(q))))
-        items.append(symmetry_image(p, sym, k))
-    if _determinant(base_elements(sym._symmetry_def)[k - 1]) < 0:
-        items.reverse()
-    if isinstance(shape, Sketch):
-        return make_sketch(items, smooth=bool(shape.smooth))
-    return (curves.spline if shape.smooth else curves.polyline)(items, closed=bool(getattr(shape, 'closed', False)))
-
-
-def _distinct(shape, images):
-    ''' Which of the images are neither the shape itself nor another image, told by the field of each at a spread of places round them (the image of a model is the model's
-        field at the places the way back takes it from, so two are the same shape where their fields are the same).  The numbers (0 ..) of those that are not '''
-    import random
-    if hasattr(shape, 'xyz'):
-        def place(s):
-            return getattr(s, '_point_pos', None)
-        seen, kept = [place(shape)], []
-        for i, im in enumerate(images):
-            p = place(im)
-            if p is not None and any(q is not None and math.dist(p, q) < 1e-6 * max(1.0, max(abs(c) for c in p)) for q in seen):
-                continue
-            seen.append(p)
-            kept.append(i)
-        return kept
-    from fieldes.stdlib.fields import evaluate
-    from fieldes.stdlib.points import _view
-    boxes = [getattr(s, '_bounds', None) for s in [shape] + list(images)]
-    if all(boxes):
-        lo = [min(b[0][i] for b in boxes) for i in range(3)]
-        hi = [max(b[1][i] for b in boxes) for i in range(3)]
-    else:
-        _res, lo, hi = _view()
-        lo, hi = [float(c) for c in lo], [float(c) for c in hi]
-    pad = [0.1 * max(hi[i] - lo[i], 1e-6) for i in range(3)]
-    rng = random.Random(7)
-    pts = [tuple(rng.uniform(lo[i] - pad[i], hi[i] + pad[i]) for i in range(3)) for _ in range(120)]
-    try:
-        base = evaluate(shape, pts)
-        scale = max(1.0, max(abs(v) for v in base))
-        kept, seen = [], [base]
-        for i, im in enumerate(images):
-            values = evaluate(im, pts)
-            if any(max(abs(a - b) for a, b in zip(values, other)) < 2e-4 * scale for other in seen):
-                continue
-            seen.append(values)
-            kept.append(i)
-        return kept
-    except Exception:
-        return list(range(len(images)))
-
-
-def symmetry_images(shape, symmetry, only=None, distinct=False):
-    ''' ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)`; with `distinct=True` those that are neither the shape
-        itself nor another image (a tube along a path that lies in a plane of the symmetry has no image in that plane) -- so that what a symmetry of several planes makes of a leg
-        is one row of the model tree and one line of the script, not one for each image.  It is the union of the images for a body, a 2D shape, a sketch or a line (the shape
-        itself is not in it: it is its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its
-        own (so that dragging the shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.
-        It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
-        a surface of any of them pulls the shape.  The images of a sketch or a line are made through the images of its points: the points of the images are not models '''
+def symmetry_images(shape, symmetry, only=None):
+    ''' ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)` -- so that what a symmetry of several planes makes of a leg is
+        one row of the model tree and one line of the script, not one for each image.  It is the union of the images for a body or a 2D shape (the shape itself is not in it: it is
+        its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its own (so that dragging the
+        shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.  It follows the shape and
+        the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling a surface of any of
+        them pulls the shape.  A sketch or a line has an image model for each image (symmetry_image): it is drawn from its points '''
     sym = symmetry
     _check(shape, sym, 'symmetry_images')
+    if getattr(shape, '_ctrl_pos', None):
+        raise TypeError('symmetry_images(): a sketch or a line is made of its points, so each of its images is a model of its own -- symmetry_image(sketch, symmetry, 1), 2 ...')
     count = len(base_elements(sym._symmetry_def))
     if only is None:
         numbers = list(range(1, count + 1))
@@ -431,57 +359,43 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
                 raise ValueError('symmetry_images(): this symmetry has %d images -- number them 1 to %d, not %s' % (count, count, k))
     if not numbers:
         raise ValueError('symmetry_images(): only= leaves no image')
-    stroke = _is_stroke(shape)
-    images = [(_stroke_image if stroke else symmetry_image)(shape, sym, k) for k in numbers]
-    if distinct:
-        keep = _distinct(shape, images)
-        numbers = [numbers[i] for i in keep]
-        images = [images[i] for i in keep]
-    for im in images:
-        im._symmetry_of = shape
-        im._symmetry_source = sym
+    images = [symmetry_image(shape, sym, k) for k in numbers]
     for im in images[1:]:
         # (the numbers are the shape's: one gizmo is enough -- the others only move with it, as the shape is dragged)
         if getattr(im, '_gizmo', None) is not None:
             im._gizmo_hidden = True
 
     def shown():
-        return list(images)                 # (each is drawn as its own kind of shape is: the interpreter asks every one for its display)
+        from fieldes.stdlib import points
+        return [points.displayed(im) for im in images]
 
-    if not images:
-        # (nothing is made of it that is not the model itself: a set of no shape)
-        from fieldes.stdlib.shapes import emptiness
-        out = emptiness()
-        out._kind = getattr(shape, '_kind', None)
-        out._display = lambda: []
-    elif hasattr(shape, 'xyz'):
+    if hasattr(shape, 'xyz'):
         # A point: its images are a set of points, where they are now (each is drawn as a point of its own: it follows the point as it is dragged)
         from fieldes.stdlib.lattices import PointSet
         places = [tuple(float(c) for c in im._point_pos) for im in images]
         nearest = min([math.dist(a, b) for i, a in enumerate(places) for b in places[i + 1:]] or [1.0])
         out = PointSet(places, nearest if nearest > 0 else 1.0)
         out._display = shown
-    else:
-        field = images[0]
-        for im in images[1:]:
-            field = field.min(im)                              # (the union of the images: the smaller of their fields)
-        if stroke:
-            out = Shape(lib.libfive_tree_copy(field.ptr))
-            out._kind = shape._kind
-        else:
-            out = type(shape).__new__(type(shape))
-            Shape.__init__(out, lib.libfive_tree_copy(field.ptr))
-            for name in _TAKEN:
-                if name in shape.__dict__:
-                    out.__dict__[name] = shape.__dict__[name]
-            boxes = [getattr(im, '_bounds', None) for im in images]
-            if all(boxes):
-                out._bounds = (tuple(min(b[0][i] for b in boxes) for i in range(3)), tuple(max(b[1][i] for b in boxes) for i in range(3)))
-                if any(getattr(im, '_bounds_loose', False) for im in images):
-                    out._bounds_loose = True
-        out._no_gizmo = True                 # (its gizmo is the shape's: the first image has it)
-        out._no_handles = True
-        out._display = shown                 # (what is drawn: the images, each on its own; the union is what an operation made of this model works on)
+        out._symmetry_of = shape
+        out._symmetry_source = sym
+        out._symmetry_set = True
+        return out
+    field = images[0]
+    for im in images[1:]:
+        field = field.min(im)                                  # (the union of bodies: the smaller of their fields)
+    out = type(shape).__new__(type(shape))
+    Shape.__init__(out, lib.libfive_tree_copy(field.ptr))
+    for name in _TAKEN:
+        if name in shape.__dict__:
+            out.__dict__[name] = shape.__dict__[name]
+    boxes = [getattr(im, '_bounds', None) for im in images]
+    if all(boxes):
+        out._bounds = (tuple(min(b[0][i] for b in boxes) for i in range(3)), tuple(max(b[1][i] for b in boxes) for i in range(3)))
+        if any(getattr(im, '_bounds_loose', False) for im in images):
+            out._bounds_loose = True
+    out._no_gizmo = True                     # (its gizmo is the shape's: the first image has it)
+    out._no_handles = True
+    out._display = shown                     # (what is drawn: the images, each on its own; the union is what an operation made of this model works on)
     out._symmetry_of = shape
     out._symmetry_source = sym
     out._symmetry_set = True

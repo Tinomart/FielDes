@@ -1,8 +1,7 @@
 '''
 What the viewport writes when something is made while a symmetry is selected (Shift+S): the images of what is made, as ONE model under it --
-`leg_images = symmetry_images(leg, symmetry_1)` (all the images of a body, a 2D shape, a point, a sketch, a line or a spline, or `only=(1, 3)` of them) -- `symmetry_1` is the symmetry
-model.  What an operation makes of other models (a path_extrude, a union ...) gets `symmetry_images(x, symmetry_1, distinct=True)`: the images that are not the model itself.  A surface
-or a field is written with a model for each image, `symmetry_image(model, symmetry_1, 3)`: 3 is the number of the image in the symmetry.
+`leg_images = symmetry_images(leg, symmetry_1)` (all the images of a body, a 2D shape or a point, or `only=(1, 3)` of them) -- `symmetry_1` is the symmetry model.  A sketch, a line,
+a surface or a field is written with a model for each image, `symmetry_image(model, symmetry_1, 3)`: 3 is the number of the image in the symmetry.
 
 The symmetry arrives in a request as {var: 'symmetry_1', centre: [x, y, z], elements: [{mirror: [nx, ny, nz] | null, turn: [[ax, ay, az], degrees] | null}, ...]}: its name, and
 every image but the identity as the places it takes a point to -- for what has to be known now (an image that is the model itself is not made; where the images of the points of
@@ -145,23 +144,6 @@ def kept_elements(call_text, elements, around, size, prelude=''):
         return list(range(len(elements)))
 
 
-def images_line(var, symmetry_var, arguments=''):
-    ''' The statement of all the images of the model `var` and the line that shows it: `var_images = symmetry_images(var, symmetry_var<arguments>)` '''
-    images = '%s_images' % var
-    return '%s  # shadow: %s, %s\n%s\n' % ('%s = symmetry_images(%s, %s%s)' % (images, var, symmetry_var, arguments), var, symmetry_var, images)
-
-
-def stroke_is_simple(made, shapes, n):
-    ''' Whether the images of a stroke are shapes of their own through points of their own: none meets the stroke or another image (a point on a plane of the symmetry is its own
-        image, and the halves that meet there are joined into one outline: that is written out, with the points).  A simple stroke is `symmetry_images(stroke, symmetry)` '''
-    if len(shapes) < 2:
-        return False
-    used = []
-    for _name, nodes in shapes[1:]:
-        used += list(nodes)
-    return all(k >= n for k in used) and len(set(used)) == len(used)
-
-
 def post_for(var, call_text, request, prelude=''):
     ''' The images of the single model made by `call_text` (named `var`): the statements that go under its display line, '' when it has none '''
     symmetry = request.get('symmetry') or {}
@@ -185,7 +167,8 @@ def post_for(var, call_text, request, prelude=''):
         return ''.join(image_statement(var, '%s_m%d' % (var, k), elements[i], symmetry['var']) for k, i in enumerate(keep, 1))
     # One model for all the images: the union of those of a body or a 2D shape, the set of the images of a point
     only = '' if len(keep) == len(elements) else ', only=(%s)' % ', '.join(str(elements[i].index) for i in keep)
-    return images_line(var, symmetry['var'], only)
+    images = '%s_images' % var
+    return '%s  # shadow: %s, %s\n%s\n' % ('%s = symmetry_images(%s, %s%s)' % (images, var, symmetry['var'], only), var, symmetry['var'], images)
 
 
 def _join_meeting(strokes):
