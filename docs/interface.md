@@ -155,7 +155,7 @@ model had been right-clicked in the viewport:
 
 - **Three parts: Primitives, Parametric shapes and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*,
   *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a sketch; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
-  surface; a distance, a radial and a z field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
+  surface; a distance, a radial, a z and a noise field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
   a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- by kind in the same way. **Operations** are what is done to a model: the operation groups (*Offsets and walls*,
   *Rounding*, *Moving* ...), **Lattice** and **Simulation**. What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them; the quick operations *center*
   and *bounding_box* are below the three.)

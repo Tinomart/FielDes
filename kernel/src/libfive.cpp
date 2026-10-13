@@ -2801,6 +2801,11 @@ libfive_tree libfive_field_noise(float scale, int octaves, unsigned seed, float 
     return libfive::fields::noiseField(scale, octaves, seed, gain, lacunarity).release();
 }
 
+libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float jitter)
+{
+    return libfive::fields::cellularField(scale, seed, mode, jitter).release();
+}
+
 libfive_tree libfive_field_curvature(libfive_tree t, float h)
 {
     return libfive::fields::curvatureField(Tree(t), h).release();

@@ -885,5 +885,7 @@ try:
     lib.libfive_field_noise.argtypes = [ctypes.c_float, ctypes.c_int, ctypes.c_uint, ctypes.c_float,
                                         ctypes.c_float]
     lib.libfive_field_noise.restype = libfive_tree
+    lib.libfive_field_cellular.argtypes = [ctypes.c_float, ctypes.c_uint, ctypes.c_int, ctypes.c_float]
+    lib.libfive_field_cellular.restype = libfive_tree
 except AttributeError:
     pass

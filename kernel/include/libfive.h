@@ -807,6 +807,9 @@ libfive_tree libfive_field_points(const float* xyz, const float* values, int n, 
                                   float power);
 libfive_tree libfive_field_noise(float scale, int octaves, unsigned seed, float gain,
                                  float lacunarity);
+/*  Cellular (Worley) noise at one scale: mode 0 the distance to the nearest point of a jittered grid, 1 the distance from a wall between cells (F2 - F1), 2 the
+ *  distance to the second nearest point; about -1 .. 1.  jitter 0 .. 1: 0 is a regular grid  */
+libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float jitter);
 
 /*  Debug: print the native stack of the first access violation (Windows)  */
 void libfive_debug_crash_handler(void);

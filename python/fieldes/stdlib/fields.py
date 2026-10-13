@@ -1235,22 +1235,84 @@ def field_from_csv(path, x='x', y='y', z='z', value='value', neighbours=8, power
     return field_from_points(pts, vals, neighbours, power)
 
 
-def noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0):
-    ''' Smooth random variation (Perlin noise), about -amplitude..amplitude (`scale` and `amplitude` are numbers or fields):
-        `scale` is the size (mm) of the largest features, each octave adds
-        detail half as large and `gain` as strong.  A different seed gives a
-        different pattern.  E.g. an organic surface texture:
+NOISE_KINDS = ('perlin', 'billow', 'ridged', 'cellular', 'cracks')
+_CELL_MODES = {'cellular': 0, 'cracks': 1}
+
+
+def _noise_unit(kind, seed):
+    ''' One layer of the noise of a kind at a feature size of 1 mm (the kernel makes it; the layers, the stretch and the warp are made of fields) '''
+    seed = int(seed) & 0xffffffff
+    if kind in _CELL_MODES:
+        if getattr(lib, 'libfive_field_cellular', None) is None:
+            raise RuntimeError('this FielDes library is too old for the cellular noises')
+        return Shape(lib.libfive_field_cellular(1.0, seed, _CELL_MODES[kind], 1.0))
+    return Shape(lib.libfive_field_noise(1.0, 1, seed, 1.0, 2.0))
+
+
+def _noise_layer(kind, n):
+    ''' What a kind does to one layer of Perlin noise (the cellular kinds come made).  A layer is mostly inside +-0.55, which is laid over 0 .. 1 '''
+    if kind in ('billow', 'ridged'):
+        m = (n.abs() * (1.0 / 0.55)).min(1.0)
+        if kind == 'billow':
+            return m * 2.0 - 1.0                    # rounded humps, with creases where the noise is zero
+        r = 1.0 - m
+        return r * r * 2.0 - 1.0                    # sharp ridges where the noise is zero
+    return n
+
+
+def _noise_general(scales, octaves, seed, gain, lacunarity, kind, warp):
+    ''' Noise of any kind, stretched by an axis of its own, bent by a warp: layers of unit noise looked at through coordinates divided by the scales (numbers or fields), each
+        layer finer by the lacunarity and weaker by the gain, added and laid over -1 .. 1 by what they add up to '''
+    u = [X() / scales[0], Y() / scales[1], Z() / scales[2]]
+    if is_field(warp) or warp:
+        # (the coordinates pushed about by three other noises: the pattern bends, as marble and flowing organic shapes do)
+        w = [_noise_unit('perlin', int(seed) + 1009 * (axis + 1)).remap(u[0], u[1], u[2]) for axis in range(3)]
+        u = [u[axis] + w[axis] * warp for axis in range(3)]
+    total, norm, a, f = None, 0.0, 1.0, 1.0
+    for o in range(max(1, min(12, int(octaves)))):
+        layer = _noise_layer(kind, _noise_unit(kind, int(seed) + 7919 * o).remap(u[0] * f, u[1] * f, u[2] * f))
+        total = layer * a if total is None else total + layer * a
+        norm += a
+        a *= gain
+        f *= lacunarity
+    return total / norm
+
+
+def noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0, kind='perlin', warp=0.0):
+    ''' Smooth random variation, a field of values around zero (`scale`, `amplitude` and `warp` are numbers or fields).
+        `scale` is the size (mm) of the largest features -- or three sizes, `(x, y, z)`, to stretch the pattern along an axis: `(40, 4, 4)` is streaks along x --, each
+        octave adds detail `lacunarity` times finer and `gain` as strong; a different `seed` gives a different pattern.  `kind`:
+          'perlin'    the classic: soft hills and hollows (Perlin's improved noise).  Four octaves stay mostly inside +-0.3 and rarely go past +-0.6, so
+                      `amplitude` is what sets how strong it is: 3 or so uses the range of -1 .. 1
+          'billow'    puffy, rounded humps with creases where the noise passes through zero
+          'ridged'    sharp ridges where the noise passes through zero (mountains, veins)
+          'cellular'  Worley noise: the distance to the nearest of random points, low in the middle of a cell and high at its walls (bubbles, pits, scales)
+          'cracks'    the distance from the walls between those cells, low along them (a web, a foam's walls, cracks): about -1 .. 1
+        `warp` pushes the coordinates about by three other noises, so the pattern bends (marble, flowing organic shapes); it is in feature sizes, 1 bends it a lot.
+        The billow, ridged and cellular kinds are laid over about -1 .. 1.  E.g. an organic surface texture:
         part - 0.3 * noise_field(4)  '''
     if getattr(lib, 'libfive_field_noise', None) is None:
         raise RuntimeError('this FielDes library is too old for noise_field')
-    if is_field(scale):
-        # (the noise made at a scale of 1 mm, looked at through coordinates divided by the scale at every point: a
-        # pattern that is finer here and coarser there)
-        unit = noise_field(1.0, octaves, seed, gain, lacunarity)
-        n = unit.remap(X() / scale, Y() / scale, Z() / scale)
+    if kind not in NOISE_KINDS:
+        raise ValueError("noise_field: kind is one of %s, not %r" % (', '.join(repr(k) for k in NOISE_KINDS), kind))
+    stretched = isinstance(scale, (tuple, list))
+    if stretched and len(scale) != 3:
+        raise ValueError('noise_field: scale is one number (or field), or three: (x, y, z)')
+    for one in (scale if stretched else [scale]):
+        if not is_field(one) and not float(one) > 0:
+            raise ValueError('noise_field: the scale must be positive (mm)')
+    if kind == 'perlin' and not stretched and not (is_field(warp) or warp):
+        # (the plain noise: the kernel's own, with its layers added in it)
+        if is_field(scale):
+            # (the noise made at a scale of 1 mm, looked at through coordinates divided by the scale at every point: a
+            # pattern that is finer here and coarser there)
+            unit = noise_field(1.0, octaves, seed, gain, lacunarity)
+            n = unit.remap(X() / scale, Y() / scale, Z() / scale)
+        else:
+            n = Shape(lib.libfive_field_noise(float(scale), int(octaves), int(seed) & 0xffffffff,
+                                              float(gain), float(lacunarity)))
     else:
-        n = Shape(lib.libfive_field_noise(float(scale), int(octaves), int(seed) & 0xffffffff,
-                                          float(gain), float(lacunarity)))
+        n = _noise_general(tuple(scale) if stretched else (scale,) * 3, octaves, seed, gain, lacunarity, kind, warp)
     if is_field(amplitude):
         return n * amplitude
     return n if amplitude == 1.0 else n * float(amplitude)

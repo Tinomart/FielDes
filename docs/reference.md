@@ -826,13 +826,13 @@ Write it under a shape's definition, with its gizmo() and handles() calls:
 Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
-(its numbers, its definition, anything it is made of, and the scale of its gizmo) and the copy changes with it.  Where the original is and how it is turned (its gizmo's
-`move` and `rotate`) is NOT followed: the copy starts where the original is, and from then on the two are moved and turned independently.  What a copy has of its own is only WHERE it is: it can be moved and rotated
-(with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs.  Its **surfaces can be dragged**, as the original's can, and they are
-**linked**: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the other way
-round.  (A copy that is scaled is another shape: copy the model's statements instead -- Shift+D in FielDes.)
+(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
+its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, `gizmo(copy, move=..., rotate=...)`.
+Nothing else is its own: no scale knobs (a scale the original has is part of that shape, and the copy has it too).  Its surfaces CAN be dragged, as the original's can,
+and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
+other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
-FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
+FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
 
     plate_2 = instance(plate)  # shadow: plate
     plate_2 = gizmo(
@@ -1456,12 +1456,19 @@ The product of fields (and numbers): a * b * ... at every point
 
 A field with its sign changed: -a at every point
 
-### `noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0)`
+### `noise_field(scale=10.0, octaves=4, seed=1, gain=0.5, lacunarity=2.0, amplitude=1.0, kind='perlin', warp=0.0)`
 
-Smooth random variation (Perlin noise), about -amplitude..amplitude (`scale` and `amplitude` are numbers or fields):
-`scale` is the size (mm) of the largest features, each octave adds
-detail half as large and `gain` as strong.  A different seed gives a
-different pattern.  E.g. an organic surface texture:
+Smooth random variation, a field of values around zero (`scale`, `amplitude` and `warp` are numbers or fields).
+`scale` is the size (mm) of the largest features -- or three sizes, `(x, y, z)`, to stretch the pattern along an axis: `(40, 4, 4)` is streaks along x --, each
+octave adds detail `lacunarity` times finer and `gain` as strong; a different `seed` gives a different pattern.  `kind`:
+  'perlin'    the classic: soft hills and hollows (Perlin's improved noise).  Four octaves stay mostly inside +-0.3 and rarely go past +-0.6, so
+              `amplitude` is what sets how strong it is: 3 or so uses the range of -1 .. 1
+  'billow'    puffy, rounded humps with creases where the noise passes through zero
+  'ridged'    sharp ridges where the noise passes through zero (mountains, veins)
+  'cellular'  Worley noise: the distance to the nearest of random points, low in the middle of a cell and high at its walls (bubbles, pits, scales)
+  'cracks'    the distance from the walls between those cells, low along them (a web, a foam's walls, cracks): about -1 .. 1
+`warp` pushes the coordinates about by three other noises, so the pattern bends (marble, flowing organic shapes); it is in feature sizes, 1 bends it a lot.
+The billow, ridged and cellular kinds are laid over about -1 .. 1.  E.g. an organic surface texture:
 part - 0.3 * noise_field(4)
 
 ### `normal_field(shape)`
@@ -2538,7 +2545,7 @@ It is a surface like the one `select_surface` makes -- a region for `fixed()` an
 and it too is made from the fields alone: the first body's surface is where its field is zero, and "meets" is a number, the
 distance of that surface from the other bodies (their field), so no mesh is made and a body that is dragged or has var()
 numbers moves the selection with it.  In FielDes: select several models in the model tree (Ctrl or Shift click), right-click
-one, Operation > Surfaces > surface_from_bodies: the first selected is the body, the others are what it is met by.
+one, Operations > Surfaces > surface_from_bodies: the first selected is the body, the others are what it is met by.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

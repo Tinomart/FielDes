@@ -165,7 +165,7 @@ The fields to start with:
 | `x_field()`, `y_field()`, `z_field()` | the coordinates |
 | `distance_to_point(p)`, `distance_to_plane(...)`, `depth_below(shape)` | distances |
 | `ramp(field, (a, b), (va, vb))` | map a field linearly (clamped): the workhorse |
-| `noise_field(scale)` | organic variation |
+| `noise_field(scale)` | organic variation (`kind='ridged'`, `'cellular'` ... for other looks) |
 | `result.von_mises`, `result.temperature` | the stress or temperature an analysis found |
 
 Every function of the library follows the rule — see [Fields everywhere](fields.md#fields-everywhere) for where, and for the

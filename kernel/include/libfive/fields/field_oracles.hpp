@@ -41,6 +41,9 @@ Tree pointCloudField(const std::vector<Eigen::Vector3d>& points,
 /*  Seeded Perlin noise (fractal sum of octaves), about -1 .. 1; `scale` is
  *  the size of the largest features  */
 Tree noiseField(double scale, int octaves, unsigned seed, double gain, double lacunarity);
+/*  Cellular (Worley) noise at one scale: mode 0 the distance to the nearest point of a jittered grid, 1 the distance from a wall between cells (F2 - F1), 2 the distance to
+ *  the second nearest; about -1 .. 1  */
+Tree cellularField(double scale, unsigned seed, int mode, double jitter);
 
 }   // namespace fields
 }   // namespace libfive

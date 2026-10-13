@@ -121,7 +121,7 @@ into a true one (see [below](#exact-distances)). Imported STEP parts are accurat
 | `lerp(a, b, t)` (`mix`) | interpolate; `t` may be a field |
 | `smoothstep(field, e0, e1)`, `step_field(field, edge)` | smooth and sharp steps |
 | `wave(axis, period, amplitude, phase)` | a sine along an axis |
-| `noise_field(scale, octaves, seed, gain, lacunarity, amplitude)` | Perlin noise — `part - 0.3 * noise_field(4)` is an organic texture |
+| `noise_field(scale, octaves, seed, gain, lacunarity, amplitude, kind, warp)` | noise, five kinds: `'perlin'` (soft hills, the default), `'billow'` (puffy humps), `'ridged'` (sharp ridges), `'cellular'` (Worley: bubbles and pits) and `'cracks'` (the web between the cells). `scale` can be three sizes, `(40, 4, 4)`, to stretch it into streaks, or a field; `warp` bends the pattern (marble, flowing shapes). `part - 0.3 * noise_field(4)` is an organic texture. Perlin with four octaves stays mostly inside ±0.3: `amplitude` sets how strong it is |
 | `sum_fields(*fields)` | sum |
 | `add_fields`, `subtract_fields`, `multiply_fields`, `divide_fields`, `power_field`, `min_fields`, `max_fields` | arithmetic on any number of fields (and numbers) at every point: `a + b`, `a - b`, `a * b`, `a / b`, `a ** b` as functions, in the model tree's **Operation → Field math** |
 | `abs_field`, `negate_field`, `sqrt_field`, `square_field` | the same on one field |

@@ -215,6 +215,76 @@ private:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+// Cellular (Worley) noise: a point in every cell of a grid, jittered, and the distance to the nearest ones
+
+class CellularData
+{
+public:
+    // mode 0: the distance to the nearest point (low in the middle of a cell, high at its walls); 1: the distance F2 - F1 from the wall between two
+    // cells (low along the walls: the web a foam is made of); 2: the distance to the second nearest point.  `jitter` 0 .. 1: how far a point may be from
+    // the middle of its cell (0: a regular grid)
+    CellularData(double scale, unsigned seed, int mode, double jitter)
+        : scale(scale), seed(seed), mode(std::max(0, std::min(2, mode))), jitter(std::max(0.0, std::min(1.0, jitter)))
+    {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "cellular#%.17g#%u#%d#%.17g", scale, seed, this->mode, this->jitter);
+        key = buf;
+    }
+
+    double value(const V3& p) const
+    {
+        const double f = 1.0 / scale;
+        const double x = p[0] * f, y = p[1] * f, z = p[2] * f;
+        const int ix = int(std::floor(x)), iy = int(std::floor(y)), iz = int(std::floor(z));
+        double d1 = 1e30, d2 = 1e30;
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    double qx, qy, qz;
+                    point(ix + dx, iy + dy, iz + dz, qx, qy, qz);
+                    const double ex = qx - x, ey = qy - y, ez = qz - z;
+                    const double d = ex * ex + ey * ey + ez * ez;
+                    if (d < d1) { d2 = d1; d1 = d; }
+                    else if (d < d2) d2 = d;
+                }
+        d1 = std::sqrt(d1);
+        d2 = std::sqrt(d2);
+        // (what the distances come to for a jitter of 1: the nearest point is at 0.95 at most, the second nearest at 1.1, a wall's distance up to about 0.45 -- the value is
+        // laid over -1 .. 1 by them)
+        const double v = mode == 0 ? d1 / 0.95 : mode == 1 ? (d2 - d1) / 0.45 : d2 / 1.1;
+        return std::max(-1.0, std::min(1.0, 2.0 * std::min(v, 1.0) - 1.0));
+    }
+
+    std::string key;
+
+private:
+    static unsigned mix(unsigned h)
+    {
+        h ^= h >> 16; h *= 0x7feb352dU; h ^= h >> 15; h *= 0x846ca68bU; h ^= h >> 16;
+        return h;
+    }
+    // The point of a cell: the middle of it, moved by the jitter in each direction by a hash of the cell and the seed
+    void point(int cx, int cy, int cz, double& qx, double& qy, double& qz) const
+    {
+        unsigned h = mix(unsigned(cx) * 0x9e3779b1U ^ mix(unsigned(cy) * 0x85ebca6bU ^ mix(unsigned(cz) * 0xc2b2ae35U ^ seed)));
+        const double a = double(h & 0xffff) / 65536.0;
+        h = mix(h + 0x68e31da4U);
+        const double b = double(h & 0xffff) / 65536.0;
+        h = mix(h + 0xb5297a4dU);
+        const double c = double(h & 0xffff) / 65536.0;
+        qx = cx + 0.5 + jitter * (a - 0.5);
+        qy = cy + 0.5 + jitter * (b - 0.5);
+        qz = cz + 0.5 + jitter * (c - 0.5);
+    }
+
+    double scale;
+    unsigned seed;
+    int mode;
+    double jitter;
+};
+
+////////////////////////////////////////////////////////////////////////////////
 
 template <class Data>
 class DataOracle : public OracleStorage<>
@@ -291,6 +361,12 @@ Tree noiseField(double scale, int octaves, unsigned seed, double gain, double la
 {
     auto d = std::make_shared<const NoiseData>(std::max(1e-9, scale), octaves, seed, gain, lacunarity);
     return Tree(std::make_unique<DataClause<NoiseData>>(d, -1.1f, 1.1f, "NoiseField"));
+}
+
+Tree cellularField(double scale, unsigned seed, int mode, double jitter)
+{
+    auto d = std::make_shared<const CellularData>(std::max(1e-9, scale), seed, mode, jitter);
+    return Tree(std::make_unique<DataClause<CellularData>>(d, -1.0f, 1.0f, "CellularField"));
 }
 
 }   // namespace fields

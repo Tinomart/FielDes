@@ -29,6 +29,11 @@
   model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
   the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
   their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
+- **Noise has five kinds, a stretch and a warp.** `noise_field(scale, octaves, seed, gain, lacunarity, amplitude, kind, warp)`: `kind` is `'perlin'` (as before, to the last digit), `'billow'` (puffy humps), `'ridged'`
+  (sharp ridges), `'cellular'` (Worley noise: the distance to the nearest of random points -- bubbles, pits, scales) and `'cracks'` (the distance from the walls between those cells: a web, a foam's walls); the new kinds are
+  laid over about -1 .. 1 (Perlin with four octaves stays mostly inside ±0.3, which is now said in its help). `scale` can be three sizes -- `(40, 4, 4)` is streaks along x -- and `warp` pushes the coordinates about by three other
+  noises, so the pattern bends (marble, flowing organic shapes). The cellular noise is new in the kernel (`libfive_field_cellular`); the rest is field math. Checked: bounded, deterministic, continuous, a seed makes a different
+  pattern, and the plain noise is identical to what it was. `noise_field` is a primitive of the right-click menu.
 - **The right-click menu has three parts -- *Primitives*, *Parametric shapes* and *Operations* -- and a model's menu is 9 lines, not 17.** *Primitives* hold the most basic, low-level representation of each kind, each under its kind
   (*New 3D shape* ...): a sphere, box, cylinder, cone, torus, pyramid; a circle, rectangle, triangle, polygon, sketch; a polyline, spline; a point; a plane, sphere surface, cylinder surface; a distance, radial, z and noise field.
   ***Parametric shapes*** hold the more complicated ones that are made with parameters -- a rounded box, a ring, a wave, *low_level_body*, *low_level_field*, the custom blocks that need no model -- by kind in the same way.
