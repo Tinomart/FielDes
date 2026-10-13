@@ -511,6 +511,11 @@ protected:
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
     /*  The "New ..." entries of the menus of empty space and of a model, and Import model...: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
     void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine);
+    /*  The menu that is being built: the line of the model it is about (-1: the menu of empty space) and whether it has a PLACE in it -- a click on a surface, or empty space -- or none: a
+     *  row of the model tree, a line of the script.  With a place every new model can be made (there); without one only what is made of the model is valid, and the rest is greyed out  */
+    int m_menuModelLine = -1;
+    bool m_menuPlace = true;
+    void checkPrimitive(QAction* action, const QString& name, bool withBodies, int atLine) const;
     QVector3D placementExact(QPoint pos) const;
     /*  Where a 2D shape that is written with an x and a y only (it lies in the plane z = 0) is made by a click: where the ray under the cursor meets that plane, whichever way the view
         looks (on the work plane, while its view is open)  */

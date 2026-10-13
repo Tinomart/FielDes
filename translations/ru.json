@@ -709,6 +709,7 @@
  "(not loaded yet: run the script first)": "(ещё не загружено: сначала запустите скрипт)",
  "With several models selected: the first is the one this is made for, the others are what it uses -- where it acts, its conditions, its material.  With one model: a first version to change in the script.": "Если выбрано несколько моделей: первая — та, для которой это создаётся, остальные — то, что оно использует: где действует, его условия, материал.  С одной моделью: первая версия, которую можно изменить в скрипте.",
  "Needs a second model": "Нужна вторая модель",
+ "This does not take the selected model": "Не принимает выбранную модель",
  "Export": "Экспорт",
  "Give the model a name first: only a variable of the script is exported.": "Сначала дайте модели имя: экспортируется только переменная скрипта.",
  "Mesh": "Сетка",

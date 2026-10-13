@@ -6738,11 +6738,20 @@ bool ScenePanel::hasModel() const
     return false;
 }
 
-bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line0) const
+bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line0, bool strict) const
 {
     if (!m_support) return true;
     // The request of createFromMenu for this entry and this selection (what the library writes it from), without writing anything
     const bool operation = kind == "operation";
+    // A menu with no place in it -- opened from a row of the tree or a line of the script, not by a click on a surface -- is about what can be done WITH the model: a new model
+    // is valid there when it is made of that model (or of the models selected with it), and is not when it takes none -- a sphere, a circle, a material, a cell.  Nothing
+    // is listed by name: whether an entry takes a model is what the library's table of what entries are made of says (`with_bodies`), and the check below asks the library
+    const bool placeless = strict && !operation;
+    if (placeless)
+    {
+        if (operandsFor(line0).isEmpty()) return true;        // (no model: the menu of empty space, where everything is made at the click)
+        if (!takesBodies(name)) return false;
+    }
     const QList<Model> picked = (kind == "primitive" && takesBodies(name)) ? operandsFor(line0) : QList<Model>();
     const auto regionKind = [](const QJsonObject& it) {
         const QString type = it["type"].toString();
@@ -6824,6 +6833,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         request["body_info"] = info;
     }
     request["var"] = "x";
+    if (placeless) request["check"] = true;                   // (the library refuses a selection the entry is not made of, instead of falling back to its own template)
     if (bodyItem["bounds"].toArray().size() == 2)
     {
         request["lo"] = bodyItem["bounds"].toArray()[0];

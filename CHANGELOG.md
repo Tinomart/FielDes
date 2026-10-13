@@ -29,6 +29,10 @@
   model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
   the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
   their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
+- **From a row or a line, a new model is valid only when it is made of the model.** A menu opened from a model's row in the tree or its line in the script has no place to make anything at, and it offered every sphere, circle
+  and material as valid next to *sketch* for a selected surface. Now only what takes the model is valid there -- *sketch* for a surface or for points, a condition for a region -- the rest is **greyed out** with *This does
+  not take the selected model*, and a category with none valid left (*New 3D shape*, *New point*, the materials ...) is not in the menu. A right-click on a surface in the viewport has the click as a place, so everything can still be
+  made there. (Six translations of the new text.)
 - **A selected surface is drawn in the colour its key shows, and the ruler is no longer pink.** The patch of a `select_surface` was drawn in the *last* colour of the boundary-condition map (gold, since the map grew to 13 colours) while
   its key said *Selected surface* in magenta; it is magenta on the model now, as the key and the docs say. And the scale ruler at the bottom took its second half's fill from whatever was drawn before it -- the key's pink swatch -- so the
   ruler turned pink whenever a selection was shown; it now has its own (no) fill.

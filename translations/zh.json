@@ -709,6 +709,7 @@
  "(not loaded yet: run the script first)": "（尚未加载：请先运行脚本）",
  "With several models selected: the first is the one this is made for, the others are what it uses -- where it acts, its conditions, its material.  With one model: a first version to change in the script.": "选中多个模型时：第一个是它所针对的模型，其余的是它所使用的内容——作用位置、条件、材料。选中一个模型时：生成一个初始版本，之后可在脚本中修改。",
  "Needs a second model": "需要第二个模型",
+ "This does not take the selected model": "不接受所选模型",
  "Export": "导出",
  "Give the model a name first: only a variable of the script is exported.": "请先给模型命名：只有脚本中的变量才能导出。",
  "Mesh": "网格",

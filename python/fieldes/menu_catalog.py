@@ -868,6 +868,9 @@ def _call(r):
         built = _from_selection(name, selected, values)
         if built:
             return built
+        if r.get('check'):
+            # (asked whether the entry is valid for this selection, in a menu with no place to make a new one at: it is made of what is selected or it is not)
+            raise ValueError('%s is not made of what is selected' % name)
     if kind == 'primitive' and name in BODY_CONDITIONS and selected:
         # a condition made of the regions selected: whatever is selected says where it acts -- a surface, a field, a body.  The conditions
         # have no body in them: the simulation is given the body

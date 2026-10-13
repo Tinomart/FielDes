@@ -90,7 +90,9 @@ public:
      *  to write the call for that selection, and an entry it refuses -- a part selected with supports and loads for a set of conditions,
      *  conditions without a part for a simulation ... -- is greyed out in the menu, without a word: it is not offered for a selection that
      *  cannot make it  */
-    bool entryAllowed(const QString& kind, const QString& name, int line0) const;
+    /*  `strict`: the menu has no place in it (opened from a row of the model tree or a line of the script): a new model (a primitive) is valid only when it is made of the models
+     *  the menu is about -- the points a sketch goes through, the surface it is the outline of, the regions a condition acts on  */
+    bool entryAllowed(const QString& kind, const QString& name, int line0, bool strict = false) const;
     /*  Whether what a menu on this line (-1: empty space) would work on is points and nothing else: the first menu of a point offers the
      *  field of the distance from it  */
     bool pointsOnly(int line0) const;
