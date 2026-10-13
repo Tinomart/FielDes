@@ -40,7 +40,7 @@ It is a surface like the one `select_surface` makes -- a region for `fixed()` an
 and it too is made from the fields alone: the first body's surface is where its field is zero, and "meets" is a number, the
 distance of that surface from the other bodies (their field), so no mesh is made and a body that is dragged or has var()
 numbers moves the selection with it.  In FielDes: select several models in the model tree (Ctrl or Shift click), right-click
-one, Operation > Surfaces > surface_from_bodies: the first selected is the body, the others are what it is met by.
+one, Operations > Surfaces > surface_from_bodies: the first selected is the body, the others are what it is met by.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

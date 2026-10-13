@@ -166,10 +166,10 @@ static QString guideHtml()
                    "program itself.").arg(keys("edit.undo")) + "</p>";
 
     h += "<h2>" + T("Making things") + "</h2><ul>";
-    h += li(T("<b>Right-click</b> empty space in the viewport: <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New point</b>, "
-              "<b>New surface</b>, <b>New field</b> and <b>New custom block</b> write the call into the script where the cursor is "
-              "(and select it, ready to drag); <b>Add operation</b> and <b>Add simulation</b> work on the selected model. "
-              "Right-click a model for <b>Operation</b> (offsets, moving, field math ...) and <b>Simulation</b> (static, modal, "
+    h += li(T("<b>Right-click</b> empty space in the viewport: <b>Primitives</b> -- <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New 1D shape</b>, <b>New point</b>, "
+              "<b>New surface</b> and <b>New field</b>, the most basic of each -- write the call into the script where the cursor is "
+              "(and select it, ready to drag); <b>Operations</b> work on the selected model and hold <b>Lattice</b>, <b>Simulation</b> and the shapes that are not "
+              "primitives. Right-click a model for the same <b>Operations</b> (offsets, moving, field math ... and <b>Simulation</b>: static, modal, "
               "topology optimization, thermal, flow) on it, written with that model as the argument. Whatever a menu entry "
               "writes that you did not give -- a force, a volume fraction, an element size -- it asks for first."));
     h += li(T("<b>The same menu opens in the text editor and in the model tree</b>: right-click a line of the script that defines "
@@ -276,7 +276,7 @@ static QString guideHtml()
     h += li(T("Put a <code>.py</code> file in the <b>blocks folder</b> (Settings &rarr; Blocks folder... chooses it; "
               "<i>Show the blocks folder</i> opens it) and every function in it is there in every script, with its call tip "
               "and completion: <code>def perforate(body, hole_radius=2.0): ...</code>. Save the file and the scripts that "
-              "use it run again. A block whose first argument is a model is in <b>Add operation &rarr; Custom blocks</b>."));
+              "use it run again. A block whose first argument is a model is in <b>Operations &rarr; Custom blocks</b>."));
     h += "</ul>";
 
     h += "<h2>" + T("Fields and lattices") + "</h2><ul>";
@@ -2113,7 +2113,7 @@ Window::Window(Arguments args)
         });
         // popup open <path>: hover an entry of the open context menu, so that its submenu opens; popup pick <path>:
         // choose an entry; popup grab <file>: a picture of the window with the menus open.  A path is entry names
-        // through the submenus, as "New 3D shape/sphere"
+        // through the submenus, as "Primitives/New 3D shape/sphere"
         a->add("popup", [=](const QString& args){
             const QString cmd = args.section(' ', 0, 0), rest = args.section(' ', 1).trimmed();
             QMenu* root = nullptr;

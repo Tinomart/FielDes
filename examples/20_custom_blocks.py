@@ -8,7 +8,7 @@
 #     bracket(width, height, thickness, depth) an L-shaped bracket with a rounded inside corner
 #
 # There is nothing to import: they are used like sphere() or lattice(), with call tips, completion (Ctrl+Space) and the
-# right-click menus (Add operation > Custom blocks).  Ctrl+click a block's name to read it; edit it, save the file, and this
+# right-click menus (Operations > Custom blocks).  Ctrl+click a block's name to read it; edit it, save the file, and this
 # script runs again.  Settings > Blocks folder... chooses another folder, for blocks of your own.
 #
 # A block is a few lines:

@@ -29,6 +29,13 @@
   model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
   the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
   their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
+- **The right-click menu has two parts, *Primitives* and *Operations*: a model's menu is 9 lines, not 17.** *Primitives* hold the most basic, low-level representation of each kind, each under its kind (*New 3D shape* ...): a sphere,
+  box, cylinder, cone, torus, pyramid; a circle, rectangle, triangle, polygon, sketch; a polyline, spline; a point; a plane, sphere surface, cylinder surface; a distance, radial and z field. **Everything else is under
+  *Operations***, still by kind -- the operation groups, *Lattice*, *Simulation*, and the things that can be made with no argument but are not primitives (a rounded box, a ring, a wave, noise, *low_level_body*,
+  *low_level_field*, the custom blocks) under *New 3D shape*, *New field* ... there. Being a primitive is being the most basic form of its kind, not needing no arguments (`menu_catalog.BASIC`). The same two parts open on empty space,
+  on a model and from its row or its line; *Add operation / Add lattice / Add simulation* are *Operations* now. The tour's menu steps, the guide, the docs and the translations (*Primitives*, *Operations*, six languages) follow.
+- **A right-click on a selected surface opens the surface's menu.** The surface patch lies on the face of its body at the same depth, and the picker took the body (drawn first): the menu was the body's. The patch is pulled
+  towards the viewer in the picker as it is in the picture.
 - **Each library function says what it takes, and the menus read it.** Everything the menus offered for a surface was valid -- a surface fits "any shape", the default of every operation -- so `fillet`, `smooth`,
   `shell_inside` and the rest sat next to `sketch`. Now a function declares the kinds it takes on itself (`fn._takes = takes(...)`, `fieldes.kinds.SHAPES` / `BODIES`), the menu reads that, and the old name-keyed table in
   `menu_catalog.py` is gone: `smooth`, `round_edges`, `fillet`, `shell_inside`, `shell_outside`, `shell_exact`, `lattice`, `random_points`, `surface_from_bodies` and `field_from_body` take a body -- greyed out for a surface, a curve,

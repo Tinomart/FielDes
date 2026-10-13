@@ -25,9 +25,9 @@ Right-click empty space:
 
 | Menu | Entry | What it makes |
 |---|---|---|
-| **New 2D shape** | `sketch` | a sketch. With **three or more points selected** it is made from them, in the order you selected them; with **a surface selected** it is the outline of that surface (see below); with none selected it makes four new points and a sketch of them |
-| **New 1D shape** | `polyline` | a set of lines. With **two or more points selected**, from them; with none, three new points |
-| **New 1D shape** | `spline` | a smooth curve, the same way |
+| **Primitives → New 2D shape** | `sketch` | a sketch. With **three or more points selected** it is made from them, in the order you selected them; with **a surface selected** it is the outline of that surface (see below); with none selected it makes four new points and a sketch of them |
+| **Primitives → New 1D shape** | `polyline` | a set of lines. With **two or more points selected**, from them; with none, three new points |
+| **Primitives → New 1D shape** | `spline` | a smooth curve, the same way |
 
 These are **shapes** (nouns), so they are under **New ... shape**. `extrude` and `path_extrude` are **operations** (verbs): they work on what is selected, so they are
 under **Operation → Extruding**, and are offered only when what is selected fits:
@@ -53,7 +53,7 @@ exact, and the points land on the plane, written as ordinary numbers. When not d
 
 ## A sketch from a surface
 
-Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **New 2D shape → sketch** -- from the right-click menu of the surface in the viewport, of
+Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **Primitives → New 2D shape → sketch** -- from the right-click menu of the surface in the viewport, of
 its row in the tree or of its line in the script, all the same menu: the line written is `sketch(top)`, and what you get is a
 **2D shape of that surface's outline**.
 

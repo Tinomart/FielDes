@@ -746,7 +746,19 @@ void View::redrawPicker()
     Shader::basic->release();
     for (auto& s : shapes)
     {
-        if (!s->noPaint() && !s->is2D()) s->drawMonochrome(m, color);
+        if (!s->noPaint() && !s->is2D())
+        {
+            // (a patch of a surface lies ON the face of the body it was picked on, at the very same depth: it is drawn pulled a little towards the viewer, and so it is here --
+            // else the body, drawn first, is what a click on the patch picks, and the menu is the body's, not the surface's)
+            const bool onTheSurface = s->isSurfacePatch();
+            if (onTheSurface)
+            {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.0f, -1.0f);
+            }
+            s->drawMonochrome(m, color);
+            if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
+        }
         ++color;                // (a point is not painted, nor picked: the numbers of the others stay what they were)
     }
     {
@@ -3825,36 +3837,59 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     }
     double flatScale = scale;
     const QVector3D flat = placementFlat(pos, flatScale);
-    addCreateEntries(menu, point, placementExact(pos), flat, scale, flatScale, atLine);
-    auto ops = menu->addMenu(T("Add operation"));
-    auto lattices = menu->addMenu(TypeIcons::icon("lattice"), T("Add lattice"));
-    lattices->setToolTipsVisible(true);
-    fillLatticeMenu(lattices, point, scale, atLine);
-    auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Add simulation"));
-    sims->setToolTipsVisible(true);
-    // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
-    fillSimulationPrimitives(sims, point, scale, atLine);
-    sims->addSeparator();
-    if (m_scene && !m_scene->hasModel())
-    {
-        ops->menuAction()->setEnabled(false);
-        ops->menuAction()->setToolTip(T("There is no model to work on yet"));
-    }
-    else
-    {
-        addQuickOperations(ops, -1, point, scale);
-        fillOperations(ops, -1, point, scale);
-    }
-    // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
-    fillOperations(sims, -1, point, scale, true);
+    const QVector3D exact = placementExact(pos);
+    // The basic things -- a 3D shape, a 2D shape, a line, a point, a surface, a field: the primitives -- are in a menu of their own, and everything else is under Operations,
+    // each with the categories of its kinds
+    auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
+    primitives->setToolTipsVisible(true);
+    addCreateEntries(primitives, point, exact, flat, scale, flatScale, atLine, true);
+    auto ops = menu->addMenu(T("Operations"));
+    ops->setToolTipsVisible(true);
+    fillOperationsMenu(ops, -1, point, exact, flat, scale, flatScale, atLine);
+    menu->addSeparator();
+    addImportEntry(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
     else menu->deleteLater();
 }
 
+// What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, a Lattice
+// menu and a Simulation menu (each with what it makes and what it is made of), and the things that can be made with no argument and are not primitives (a rounded box, a ring, a
+// wave, your own logic, the custom blocks), by kind
+void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine)
+{
+    if (!m_scene || m_scene->hasModel())
+    {
+        // (with no model there is nothing for an operation to work on: the menu says so by not having them)
+        if (line < 0) addQuickOperations(ops, -1, point, scale);
+        fillOperations(ops, line, point, scale);
+    }
+    auto lattices = ops->addMenu(TypeIcons::icon("lattice"), T("Lattice"));
+    lattices->setToolTipsVisible(true);
+    fillLatticeMenu(lattices, point, scale, line < 0 ? atLine : line);
+    auto sims = ops->addMenu(TypeIcons::icon("simulation"), T("Simulation"));
+    sims->setToolTipsVisible(true);
+    // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
+    fillSimulationPrimitives(sims, point, scale, line < 0 ? atLine : line);
+    sims->addSeparator();
+    // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
+    fillOperations(sims, line, point, scale, true);
+    ops->addSeparator();
+    addCreateEntries(ops, point, exact, flat, scale, flatScale, line < 0 ? atLine : -1, false);
+}
+
+// The Import model... entry: a model can be brought in from a file whatever the menu is
+void View::addImportEntry(QMenu* menu)
+{
+    auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
+    imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
+                    "whichever suits it."));
+}
+
 // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces, fields, and the custom blocks that need no model.
-// (A kind with one entry is that entry.)  What a simulation is made of -- materials, fluids, supports and loads, thermal and flow conditions -- is in the simulation menu,
-// not here.  `point` is where a shape is made, inside what is drawn; a POINT is made exactly at `exact`, where the cursor is -- a dot is drawn wherever it is
-void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine)
+// (A kind with one entry is that entry.)  `basic`: the primitives -- the most basic representation of each kind -- or all the rest.  What a simulation is made of -- materials,
+// fluids, supports and loads, thermal and flow conditions -- is in the simulation menu, not here.  `point` is where a shape is made, inside what is drawn; a POINT is made
+// exactly at `exact`, where the cursor is -- a dot is drawn wherever it is
+void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine, bool basic)
 {
     const QJsonArray list = m_catalog["primitives"].toArray();
     if (list.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
@@ -3868,7 +3903,8 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
         {
             const auto p = v.toObject();
             const QString g = p["group"].toString();
-            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Add simulation, Add lattice)
+            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Simulation, Lattice)
+            if (p["primitive"].toBool() != basic) continue;
             if (!groups.contains(g)) order << g;
             groups[g] << p;
         }
@@ -3900,11 +3936,6 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
             for (const auto& p : entries) make(sub, p);
         }
     }
-    // (a model can be brought in from a file as well: it is in every menu that makes things, wherever the menu was opened)
-    menu->addSeparator();
-    auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
-    imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
-                    "whichever suits it."));
 }
 
 // Where a click puts a POINT: exactly under the cursor -- on the work plane, snapped, while its view is open; else in the plane through the origin that faces the
@@ -3933,21 +3964,19 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         menu->addSeparator();
     }
     addQuickOperations(menu, line, point, scale);
-    fillOperations(menu->addMenu(T("Operation")), line, point, scale);
-    auto lattices = menu->addMenu(TypeIcons::icon("lattice"), T("Lattice"));
-    lattices->setToolTipsVisible(true);
-    fillLatticeMenu(lattices, point, scale, line);
-    auto sims = menu->addMenu(TypeIcons::icon("simulation"), T("Simulation"));
-    sims->setToolTipsVisible(true);
-    fillSimulationPrimitives(sims, point, scale, line);
-    sims->addSeparator();
-    fillOperations(sims, line, point, scale, true);
     // What can be made is offered on a model too, and whichever way its menu was opened: by a right-click on its surface in the viewport (made at the place that
     // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
     // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
-    // makes `sketch` the outline of that surface), not the way the menu was reached
+    // makes `sketch` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, and everything else -- the operations
+    // on the model, the lattice and simulation menus, the shapes that are not primitives -- under Operations
+    auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
+    primitives->setToolTipsVisible(true);
+    addCreateEntries(primitives, point, point, point, scale, scale, -1, true);
+    auto ops = menu->addMenu(T("Operations"));
+    ops->setToolTipsVisible(true);
+    fillOperationsMenu(ops, line, point, point, point, scale, scale, -1);
     menu->addSeparator();
-    addCreateEntries(menu, point, point, point, scale, scale, -1);
+    addImportEntry(menu);
     menu->addSeparator();
     {
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)

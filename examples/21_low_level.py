@@ -6,7 +6,7 @@
 # operators + - * / ** and the methods .min .max .abs .sqrt .square .sin .cos .tan .atan2 .exp .log build the tree, and
 # `.remap(x', y', z')` asks a shape about other coordinates (every transform is one).  `low_level_body(logic)` and
 # `low_level_field(logic)` call your function ONCE with the three coordinates and give back the body or the field it describes
-# (in FielDes: right-click, New 3D shape / New field, low_level_body / low_level_field writes the function and the call for you);
+# (in FielDes: right-click, Operations, New 3D shape / New field, low_level_body / low_level_field writes the function and the call for you);
 # `body_from_field(field, level)` turns a field into a body, `field_from_body(body)` the other way.  Five things made that way:
 #
 #   1. a cube, as the largest of six plane distances            (the Scheme define-shape example)

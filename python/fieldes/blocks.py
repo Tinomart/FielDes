@@ -19,8 +19,8 @@ before it.  Its docstring's first line is what the call tip and the menus say ab
 run again; the editor completes it, shows its call tip and goes to its definition (Ctrl+click).
 
 The folder is the one chosen in Settings > Blocks folder; by default `blocks` next to FielDes (and the python folder).  A block
-that has no required argument but the first is offered in the right-click menus: in "Add operation" under Custom blocks
-when its first argument is the model to work on, in "New custom block" when it needs none.
+that has no required argument but the first is offered in the right-click menus: in "Operations" under Custom blocks
+when its first argument is the model to work on, in "Operations > New custom block" when it needs none.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

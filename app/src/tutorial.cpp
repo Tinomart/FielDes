@@ -1133,7 +1133,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Make things");
-        s.text = T("Right-click empty space, choose New 3D shape, then sphere.");
+        s.text = T("Right-click empty space, choose Primitives ▸ New 3D shape ▸ sphere.");
         s.hint = T("Or press Show me.");
         s.holes = holesOf(viewWidget);
         s.place = InsideTopRight;
@@ -1145,40 +1145,13 @@ void Tutorial::buildSteps()
         };
         s.done = [this] { return m_editor->getScript().count("sphere(") > m_baseline; };
         s.doneNote = T("Nice. The new line is in the script.");
-        s.show = [this](std::function<void()> over) {
+        s.show = [this, walk](std::function<void()> over) {
             const QPoint at(int(m_view->width() * 0.12), int(m_view->height() * 0.80));
-            fakeClick(m_view, at, Qt::RightButton, [this, over] {
-                // the menu is open: its entries lit one after the other
-                QWidget* menu = openMenu();
-                auto root = qobject_cast<QMenu*>(menu);
+            fakeClick(m_view, at, Qt::RightButton, [this, walk, over] {
+                // the menu is open: its entries lit one after the other, the last one chosen
+                auto root = qobject_cast<QMenu*>(openMenu());
                 if (!root) { over(); return; }
-                QAction* found = nullptr;
-                for (QAction* a : root->actions())
-                    if (a->text() == T("New 3D shape")) found = a;
-                if (!found || !found->menu()) { root->close(); over(); return; }
-                root->setActiveAction(found);
-                QPointer<QMenu> sub = found->menu();
-                QPointer<QMenu> top = root;
-                sub->popup(root->mapToGlobal(root->actionGeometry(found).topRight()));
-                // (the entry is lit, then chosen)
-                after(800, [this, sub, top, over] {
-                    if (!sub) { over(); return; }
-                    QPointer<QAction> sphere;
-                    for (QAction* a : sub->actions())
-                        if (a->text() == "sphere") sphere = a;
-                    if (!sphere) { sub->close(); if (top) top->close(); over(); return; }
-                    sub->setActiveAction(sphere);
-                    after(900, [sub, top, sphere, over] {
-                        // (the menu may have been closed meanwhile, and a closed menu is deleted with its entries)
-                        if (sub && top && sphere)
-                        {
-                            sphere->trigger();
-                            sub->close();
-                            top->close();
-                        }
-                        over();
-                    });
-                });
+                (*walk)(root, root, QStringList{T("Primitives"), T("New 3D shape"), "sphere"}, over);
             });
         };
         add(s);
@@ -1187,7 +1160,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Placeholders");
-        s.text = T("A call that is missing something has a placeholder (...) in its place. Right-click drilled, then choose Operation ▸ Offsets and walls ▸ offset.");
+        s.text = T("A call that is missing something has a placeholder (...) in its place. Right-click drilled, then choose Operations ▸ Offsets and walls ▸ offset.");
         s.hint = T("The new call waits for how far to offset: an amber row marks the placeholder. Or press Show me.");
         s.code = statementLines("offset_1 =");
         s.holes = holesOf(panelWidget);
@@ -1224,7 +1197,7 @@ void Tutorial::buildSteps()
                     hideCursor();
                     auto root = qobject_cast<QMenu*>(openMenu());
                     if (!root) { over(); return; }
-                    (*walk)(root, root, QStringList{T("Operation"), T("Offsets and walls"), "offset"}, over);
+                    (*walk)(root, root, QStringList{T("Operations"), T("Offsets and walls"), "offset"}, over);
                 });
             });
         };
@@ -1788,7 +1761,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Sweep a shape along a line");
         s.text = T("A line can guide a shape: the shape is swept along it. Select profile (the circle) and route (the line) -- Ctrl+click the second -- then right-click one of them and "
-                   "choose Operation ▸ Extruding ▸ path_extrude.");
+                   "choose Operations ▸ Extruding ▸ path_extrude.");
         s.hint = T("path_extrude(profile, route): the circle is the start of the tube, and the line runs through the middle of it. Or press Show me.");
         s.code = linesWith("^(profile|route|path_extrude_1) =");
         s.holes = both;
@@ -1832,7 +1805,7 @@ void Tutorial::buildSteps()
                             hideCursor();
                             auto root = qobject_cast<QMenu*>(openMenu());
                             if (!root) { over(); return; }
-                            (*walk)(root, root, QStringList{T("Operation"), T("Extruding"), "path_extrude"}, over);
+                            (*walk)(root, root, QStringList{T("Operations"), T("Extruding"), "path_extrude"}, over);
                         });
                     });
                 });
@@ -2069,7 +2042,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Custom function from block");
         s.text = T("A Python file in the blocks folder is a block: its functions work in every script, like the built-in ones.");
-        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them as New custom block.");
+        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them under Operations ▸ New custom block.");
         s.menuTitle = "Settings";
         s.menuEntry = "Blocks folder...";
         s.place = Right;

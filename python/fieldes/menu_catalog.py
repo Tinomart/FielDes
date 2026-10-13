@@ -1,8 +1,8 @@
 '''
 What the viewport's context menus create: the library's primitives and basic operations.
 
-Right-clicking empty space in the viewport offers New 3D shape / 2D shape / point / surface / field (every primitive of the library, by kind, placed where the
-cursor is), New custom block and Add operation; right-clicking a body offers Operation (the same list, with that body passed in).  The
+Right-clicking empty space in the viewport offers Primitives -- New 3D shape / 2D shape / 1D shape / point / surface / field, the most basic of each (BASIC), placed where the
+cursor is -- and Operations (the operations, Lattice, Simulation, and everything else the library can make with no argument, by kind); right-clicking a body offers the same, with that body passed in.  The
 menus are built from the two lists below, and the call each entry writes into the script comes from its template,
 so this file is the one place that says what the menus offer.
 
@@ -208,6 +208,19 @@ PRIMITIVES = [
     ('slip', 'Flow conditions', 'slip()'),
 ] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
+# The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus and a pyramid for 3D; a circle, a rectangle, a triangle,
+# a polygon and a sketch for 2D; a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial and a z field.  The menus show these under
+# Primitives, apart.  Everything else the library can make with no argument -- a rounded box, a ring, a wave, noise, your own low-level logic, a custom block -- is not a primitive, however
+# little it needs: it is made from the Operations
+BASIC = frozenset((
+    'sphere', 'box', 'cylinder', 'cone', 'torus', 'pyramid',
+    'circle', 'rectangle', 'triangle', 'polygon', 'sketch',
+    'polyline', 'spline',
+    'point',
+    'plane', 'sphere_surface', 'cylinder_surface',
+    'distance_to_point', 'radial_field', 'z_field',
+))
+
 # The number of an operation's call that a FIELD takes the place of when one is selected with the body -- `offset(plate, swell)`, `lattice(part, cell, thickness=density)`
 # -- the way a field dropped on the call in the model tree does it (every size, radius, thickness of the library takes a field)
 FIELD_SLOTS = {n: 't' for n in ('offset', 'shell', 'thicken', 'shell_inside', 'shell_outside', 'shell_centered', 'offset_exact',
@@ -403,7 +416,7 @@ def catalog():
     blocks = _blocks()
     return json.dumps({
         'kinds': describe(),
-        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION,
+        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION, 'primitive': n in BASIC,
                              'from_selection': n in FROM_SELECTION},
                             **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
                             **({'doc': FROM_SELECTION[n][0]} if n in FROM_SELECTION else {}),

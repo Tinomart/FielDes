@@ -200,7 +200,7 @@ part = low_level_body(ball)                              # a body: drawn, a part
 rind = body_from_field(waves, 0.5)                       # a body from a field: where the field is below 0.5
 ```
 
-In FielDes, **right-click → New field → low_level_field** (or **New 3D shape → low_level_body**) writes the function with a working
+In FielDes, **right-click → Operations → New field → low_level_field** (or **Operations → New 3D shape → low_level_body**) writes the function with a working
 first logic -- the distance from the place you clicked -- and the call under it, and selects the model: change the logic in the
 text and it runs again. A function of `x` and `y` alone (`lambda x, y: ...`) is a field that does not depend on `z`. `a.max(b)`,
 `a.min(b)`, and the library's `maximum(a, b, c ...)` and `minimum(a, b, c ...)` stand for Python's `max` and `min`, which cannot

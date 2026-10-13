@@ -8,7 +8,7 @@ Nothing else is its own: no scale knobs (a scale the original has is part of tha
 and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
 other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
-FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
+FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
 
     plate_2 = instance(plate)  # shadow: plate
     plate_2 = gizmo(

@@ -36,7 +36,7 @@ size of its region.
 
 ## In the menus and the model tree
 
-Lattices have a section of their own in the right-click menus: **Lattice** on a model (and **Add lattice** on empty space). It lists the
+Lattices have a section of their own in the right-click menus: **Operations → Lattice** (on a model, and on empty space). It lists the
 operations that fill a model with a lattice (`lattice`, `lattice_surface_conform`), the three steps of a foam (`random_points`, which makes points in a
 model, then `voronoi_lattice` and `delaunay_lattice`, which are made of those points), and under them **every cell** the library has, a menu for each
 family: *Strut cells*, *TPMS cells*, *Planar cells* and *Custom cells* (`cell_custom`, `cell_custom_truss`, `cell_custom_tpms`). A cell entry writes

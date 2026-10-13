@@ -59,8 +59,8 @@ nothing to restart, nothing to reload by hand. A script that does not use a bloc
 |---|---|
 | **The script** | call a block like any function; **Ctrl+click** (or `F12`) its name opens the file at its definition, in a tab |
 | **The editor** | completion and call tips (`Ctrl+Space`); the tip is the signature and the first line of the docstring |
-| **Right-click empty space → Add operation → Custom blocks** | blocks whose **first argument is a model** and that have defaults for all the others: the call is written for the selected model |
-| **Right-click empty space → New custom block** | blocks that need **no** argument: the call is written, and the model selected, ready to drag |
+| **Right-click empty space → Operations → Custom blocks** | blocks whose **first argument is a model** and that have defaults for all the others: the call is written for the selected model |
+| **Right-click empty space → Operations → New custom block** | blocks that need **no** argument: the call is written, and the model selected, ready to drag |
 | **The model tree** | a model a block made has the block's **f** badge; its tooltip names the block |
 
 A block's own arguments are written with their defaults, so the menu entry runs at once; change them in the script.

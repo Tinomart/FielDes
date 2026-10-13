@@ -501,16 +501,20 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
     /*  A right-click (not a pan) on a shape, or on its row in the model tree or a line of the text editor (`onSurface` false: no place on the surface was
-     *  clicked): the operations on that shape, the lattice and simulation menus, everything that can be made (the same categories as the menu of empty space) and
-     *  Select Surface, which opens the menu of the surface selection (it needs the place that was clicked)  */
+     *  clicked): the quick operations, Primitives, Operations (the operations on that shape, Lattice, Simulation, the shapes that are not primitives -- the same as the menu
+     *  of empty space has), Import model... and Select Surface, which opens the menu of the surface selection (it needs the place that was clicked)  */
     void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface = true);
     void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
-    /*  A right-click (not a pan) on empty space: New 3D shape, 2D shape, point, surface, field, custom block, Add operation
-     *  and Add simulation (which also holds the materials, fluids, supports, loads and conditions).  `atLine` (from the text
-     *  editor): what is made is written under that line  */
+    /*  A right-click (not a pan) on empty space: Primitives (a 3D shape, a 2D shape, a line, a point, a surface, a field: the most basic of each), Operations (the operations,
+     *  Lattice, Simulation -- which also holds the materials, fluids, supports, loads and conditions -- and the shapes that are not primitives) and Import model...  `atLine`
+     *  (from the text editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
-    /*  The "New ..." entries of the menus of empty space and of a model, and Import model...: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
-    void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine);
+    /*  What the Operations menu holds, on the model at `line` or on empty space (-1)  */
+    void fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine);
+    void addImportEntry(QMenu* menu);
+    /*  The "New ..." entries of the menus of empty space and of a model: `basic` the primitives, else all the rest.  `point` is where a shape is made, `exact` where a point is
+     *  (under the cursor, as it is)  */
+    void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine, bool basic);
     /*  The menu that is being built: the line of the model it is about (-1: the menu of empty space).  On a model, a new model of the menu is greyed out when it does not fit the model
      *  (a line is made of points, a material is something a simulation takes ...: the library says -- see ScenePanel::entryAllowed); a thing made by number is placed anywhere  */
     int m_menuModelLine = -1;

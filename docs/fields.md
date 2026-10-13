@@ -78,10 +78,10 @@ can **drag a point onto an operation** to put it in the place of a position writ
 
 A **surface** is the zero set of a field with no body behind it: `plane(point, normal)`, `sphere_surface(radius, center)`,
 `cylinder_surface(radius, axis, center)`, `wave_surface(amplitude, period, axis, height)`. It is drawn as the sheet itself (one layer of triangles, no thickness),
-and the right-click menu makes them (*New surface*). A surface is a field like any other: `distance_to_surface(sheet)`,
+and the right-click menu makes them (*Primitives → New surface*). A surface is a field like any other: `distance_to_surface(sheet)`,
 or `lattice_surface_conform(sheet, ...)` for a lattice that follows it.
 
-Both are in the right-click menu of the viewport: *New point* and *New surface* write the call where you clicked.
+Both are in the right-click menu of the viewport: *Primitives → New point* and *Primitives → New surface* write the call where you clicked.
 
 ## Coordinates
 
@@ -127,7 +127,7 @@ into a true one (see [below](#exact-distances)). Imported STEP parts are accurat
 | `abs_field`, `negate_field`, `sqrt_field`, `square_field` | the same on one field |
 | `field_from_body(body)` | the values of a body as a **field**: not a body, not drawn, free to be multiplied (a body itself always keeps its true scale) |
 | `body_from_field(field, level=0)` | the other way: a **body** where the field is below `level` (its surface where it equals `level`): drawn, a part like any other |
-| `low_level_field(logic)`, `low_level_body(logic)` | a field or a body from your own function of the coordinates, `logic(x, y, z)`, called once with x, y and z as fields: see [Low level](scripting.md#low-level-your-own-shapes-from-x-y-and-z). Right-click → New field → low_level_field writes the function and the call for you |
+| `low_level_field(logic)`, `low_level_body(logic)` | a field or a body from your own function of the coordinates, `logic(x, y, z)`, called once with x, y and z as fields: see [Low level](scripting.md#low-level-your-own-shapes-from-x-y-and-z). Right-click → Operations → New field → low_level_field writes the function and the call for you |
 | `maximum(a, b, ...)`, `minimum(a, b, ...)` | the largest or smallest of several fields at every point (Python's `max` and `min` cannot compare fields) |
 
 and the arithmetic of [Scripting](scripting.md#arithmetic-on-fields) (`+ - * / **`, `abs`, `min`, `max`, …): field × field and

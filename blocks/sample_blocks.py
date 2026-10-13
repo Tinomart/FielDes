@@ -6,7 +6,7 @@
 #
 # The whole library is at hand in a block file (no imports).  The first line of the docstring is what the call tip says.
 # A block whose first argument is a model and has defaults for the others is in the right-click menu under
-# "Add operation > Custom blocks"; a block that needs no argument is under "New custom block".
+# "Operations > Custom blocks"; a block that needs no argument is under "Operations > New custom block".
 
 
 def perforate(body, hole_radius=2.0, spacing=10.0):
