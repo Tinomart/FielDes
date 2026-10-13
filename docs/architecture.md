@@ -456,8 +456,8 @@ quiet)` from `setScene`).
 recorded by the scene parser as `locked`, so toggling the way of editing (`gizmo()`'s mode, `gizmo` or `handles`) and the lock
 never write each other's calls. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
 
-The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: the quick operations, Primitives, Operations (`View::fillOperationsMenu`), and Select Surface, which opens
-`View::showSelectMenu`; `View::showEmptyMenu` on empty space: Primitives -- the basic 3D shape / 2D shape / 1D shape / point / surface / field, `menu_catalog.BASIC` --, and Operations). Select emits `surfaceSelectRequested`;
+The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Primitives, Parametric shapes, Operations (`View::fillOperationsMenu`), the quick operations, and Select Surface, which opens
+`View::showSelectMenu`; `View::showEmptyMenu` on empty space: Primitives -- the basic 3D shape / 2D shape / 1D shape / point / surface / field, `menu_catalog.BASIC` --, Parametric shapes (the rest of the shapes) and Operations). Select emits `surfaceSelectRequested`;
 `ScenePanel::addSurfaceSelection` writes the call into the script as an edit, so the selection is code like everything else (and selects the new model).
 A `SurfaceSelection` displays itself through `_display()`: the part it was picked on, coloured by `patch - whole`
 (zero or less where the vertex's nearest surface point is in the patch), with `_color_cutoff = 0`; the viewport gives `Shape` a

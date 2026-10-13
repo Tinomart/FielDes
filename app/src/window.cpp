@@ -167,9 +167,10 @@ static QString guideHtml()
 
     h += "<h2>" + T("Making things") + "</h2><ul>";
     h += li(T("<b>Right-click</b> empty space in the viewport: <b>Primitives</b> -- <b>New 3D shape</b>, <b>New 2D shape</b>, <b>New 1D shape</b>, <b>New point</b>, "
-              "<b>New surface</b> and <b>New field</b>, the most basic of each -- write the call into the script where the cursor is "
-              "(and select it, ready to drag); <b>Operations</b> work on the selected model and hold <b>Lattice</b>, <b>Simulation</b> and the shapes that are not "
-              "primitives. Right-click a model for the same <b>Operations</b> (offsets, moving, field math ... and <b>Simulation</b>: static, modal, "
+              "<b>New surface</b> and <b>New field</b>, the most basic of each -- and <b>Parametric shapes</b> (a rounded box, a ring, noise, your own logic, custom blocks) "
+              "write the call into the script where the cursor is "
+              "(and select it, ready to drag); <b>Operations</b> work on the selected model and hold <b>Lattice</b> and <b>Simulation</b>. "
+              "Right-click a model for the same <b>Operations</b> (offsets, moving, field math ... and <b>Simulation</b>: static, modal, "
               "topology optimization, thermal, flow) on it, written with that model as the argument. Whatever a menu entry "
               "writes that you did not give -- a force, a volume fraction, an element size -- it asks for first."));
     h += li(T("<b>The same menu opens in the text editor and in the model tree</b>: right-click a line of the script that defines "

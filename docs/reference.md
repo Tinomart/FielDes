@@ -1406,7 +1406,7 @@ Write the math with + - * / **, the methods .sqrt() .square() .abs() .sin() .cos
 a.min(b) (or maximum(a, b, c) and minimum(a, b, c)); a number is a constant field.  What you get is a field like any
 other: it is not drawn (display it: its icon opens the field viewer), it goes wherever a number goes (`offset(part,
 waves)`), a lattice's cell size, a load's profile.  low_level_body() is the same for a body; body_from_field() makes a
-body of a field.  In FielDes: right-click, Operations, New field, low_level_field, writes the function and the call for you.
+body of a field.  In FielDes: right-click, Parametric shapes, New field, low_level_field, writes the function and the call for you.
 
 ### `mass_properties(shape, density=1.0, lower=None, upper=None, resolution=None)`
 

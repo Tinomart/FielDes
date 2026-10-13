@@ -153,11 +153,12 @@ The viewport's right-click menus are not only the viewport's: **the same menu op
 on a **line of the script** that defines a model, and on its **row in the model tree** -- and means the same there, as if that
 model had been right-clicked in the viewport:
 
-- **Two parts: Primitives and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*, *New point*,
-  *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a sketch; a polyline, a spline; a point; a plane, a sphere surface, a cylinder surface;
-  a distance, a radial and a z field. **Everything else is under Operations**, still by kind: the operation groups (*Offsets and walls*, *Rounding*, *Moving* ...), **Lattice**, **Simulation**, and the things the library
-  can make with no argument that are not primitives -- a rounded box, a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- under *New 3D shape*, *New field* ... there.
-  What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them.)
+- **Three parts: Primitives, Parametric shapes and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*,
+  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a sketch; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
+  surface; a distance, a radial and a z field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
+  a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- by kind in the same way. **Operations** are what is done to a model: the operation groups (*Offsets and walls*,
+  *Rounding*, *Moving* ...), **Lattice** and **Simulation**. What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them; the quick operations *center*
+  and *bounding_box* are below the three.)
 - **The menu is made of what is valid, and the same wherever it is opened.** A **category** (a submenu, at any depth: *Operations*, *Extruding* inside it, *Lattice*, *Primitives → New 2D shape* ...) is in the menu
   **when there is at least one valid entry in it, and is not in it when there is none** -- it is not greyed out, it is left out -- and that is worked out from the entries themselves, by asking whether
   what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *sketch* (the outline of that surface) whether you right-click it in the
@@ -166,7 +167,7 @@ model had been right-clicked in the viewport:
   (`fn._takes = takes(...)`, with the kinds of `fieldes.kinds`: `SHAPES`, `BODIES`), the menu reads it from there, and a function that declares nothing takes any shape: so `smooth`, `round_edges`, `fillet`, `shell_inside`,
   `shell_outside`, `shell_exact`, `lattice` and `random_points` take a body (not a surface, a curve, a point or a field), `extrude` a 2D shape, a foam its points -- and a new function is covered by one line on it, with
   no list of names in the menus.
-- On a line (or row) that defines a model: the quick operations (*center*, *bounding_box*), **Primitives**, **Operations** (which hold **Lattice** and **Simulation**), **Import model...**, **Select Surface** (greyed outside the viewport: the
+- On a line (or row) that defines a model: **Primitives**, **Parametric shapes**, **Operations** (which hold **Lattice** and **Simulation**), the quick operations (*center*, *bounding_box*), **Import model...**, **Select Surface** (greyed outside the viewport: the
   selection spreads from the place you click on the surface) and **Delete**, written for that model. **Lattice** is a section of its own
   (not a group of the operations): the operations that fill a model with a lattice, the three steps of a foam (random points, then a Voronoi or Delaunay lattice made of them) and a menu for every family of
   cells, each entry making that cell (see [Lattices](lattices.md#in-the-menus-and-the-model-tree)); it is in **Operations**, on empty space too.
@@ -174,8 +175,8 @@ model had been right-clicked in the viewport:
   the viewport, at the middle of the model from its row or its line -- a model can be all there is under the cursor, and somewhere to put a point is not only empty space. **A point made from the menu is exactly where
   the cursor was**: on the surface under it, else in the plane through the origin that faces
   the view (on the work plane while its view is open), not rounded to a grid and not moved into the drawn region (a dot is drawn wherever it is).
-- On a line of the script that defines no model (a blank line, a comment, the imports): the menu of empty space, **Primitives**
-  and **Operations**, and what you make is written **under that line** (a line that is indented, opens a block or is in the middle of a
+- On a line of the script that defines no model (a blank line, a comment, the imports): the menu of empty space, **Primitives**,
+  **Parametric shapes** and **Operations**, and what you make is written **under that line** (a line that is indented, opens a block or is in the middle of a
   call would be cut in two, so the new line goes to the end of the script instead). In the empty space of the tree, and in the
   viewport, it goes to the end of the script.
 - Selected text keeps the text menu (cut, copy, paste): a right-click inside a selection opens it, anywhere else opens the model's.

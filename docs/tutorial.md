@@ -96,11 +96,12 @@ Three keys (with the viewport focused) turn this on and off on the selected mode
 Right-click empty space in the viewport:
 
 <p align="center">
-  <img src="images/menu.png" width="520" alt="The right-click menu: Primitives, Operations">
+  <img src="images/menu.png" width="520" alt="The right-click menu: Primitives, Parametric shapes, Operations">
 </p>
 
 - **Primitives** -- **New 3D shape / 2D shape / 1D shape / point / surface / field**, the most basic of each -- write a call into the script where you
-  clicked — a sphere, a box, a circle, a polyline, a plane, a distance field ... — and select the new model, ready to drag. Each kind has its icon and colour.
+  clicked — a sphere, a box, a circle, a polyline, a plane, a distance field ... — and select the new model, ready to drag. Each kind has its icon and colour. **Parametric shapes** are the more
+  complicated ones (a rounded box, a ring, noise, your own logic ...), made the same way.
 - **Operations** works on the selected model: offsets and walls, rounding, moving, repeating, combining. Right-click a
   *model* for the same list written with that model as its input. With several models selected, *union*, *difference*,
   *intersection* act on all of them, in the order you selected them (hold `Ctrl` to select more than one).

@@ -3838,24 +3838,26 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     double flatScale = scale;
     const QVector3D flat = placementFlat(pos, flatScale);
     const QVector3D exact = placementExact(pos);
-    // The basic things -- a 3D shape, a 2D shape, a line, a point, a surface, a field: the primitives -- are in a menu of their own, and everything else is under Operations,
-    // each with the categories of its kinds
+    // The basic things -- a 3D shape, a 2D shape, a line, a point, a surface, a field: the primitives -- are in a menu of their own, the more complicated shapes made with
+    // parameters in another, and what is done to a model -- the operations, Lattice, Simulation -- under Operations
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, exact, flat, scale, flatScale, atLine, true);
-    auto ops = menu->addMenu(T("Operations"));
+    auto shapes = menu->addMenu(TypeIcons::icon("shapes"), T("Parametric shapes"));
+    shapes->setToolTipsVisible(true);
+    addCreateEntries(shapes, point, exact, flat, scale, flatScale, atLine, false);
+    auto ops = menu->addMenu(TypeIcons::icon("operation"), T("Operations"));
     ops->setToolTipsVisible(true);
-    fillOperationsMenu(ops, -1, point, exact, flat, scale, flatScale, atLine);
+    fillOperationsMenu(ops, -1, point, scale, atLine);
     menu->addSeparator();
     addImportEntry(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
     else menu->deleteLater();
 }
 
-// What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, a Lattice
-// menu and a Simulation menu (each with what it makes and what it is made of), and the things that can be made with no argument and are not primitives (a rounded box, a ring, a
-// wave, your own logic, the custom blocks), by kind
-void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine)
+// What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, and a
+// Lattice menu and a Simulation menu (each with what it makes and what it is made of)
+void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, double scale, int atLine)
 {
     if (!m_scene || m_scene->hasModel())
     {
@@ -3873,8 +3875,6 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, cons
     sims->addSeparator();
     // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
     fillOperations(sims, line, point, scale, true);
-    ops->addSeparator();
-    addCreateEntries(ops, point, exact, flat, scale, flatScale, line < 0 ? atLine : -1, false);
 }
 
 // The Import model... entry: a model can be brought in from a file whatever the menu is
@@ -3963,18 +3963,23 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         addBodyFromField(menu, line, point, scale);
         menu->addSeparator();
     }
-    addQuickOperations(menu, line, point, scale);
     // What can be made is offered on a model too, and whichever way its menu was opened: by a right-click on its surface in the viewport (made at the place that
     // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
     // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
-    // makes `sketch` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, and everything else -- the operations
-    // on the model, the lattice and simulation menus, the shapes that are not primitives -- under Operations
+    // makes `sketch` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
+    // parameters in another, and what is done to the model -- the operations on it, the lattice and simulation menus -- under Operations; the quick ones (center,
+    // bounding_box) are below them
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, point, point, scale, scale, -1, true);
-    auto ops = menu->addMenu(T("Operations"));
+    auto shapes = menu->addMenu(TypeIcons::icon("shapes"), T("Parametric shapes"));
+    shapes->setToolTipsVisible(true);
+    addCreateEntries(shapes, point, point, point, scale, scale, -1, false);
+    auto ops = menu->addMenu(TypeIcons::icon("operation"), T("Operations"));
     ops->setToolTipsVisible(true);
-    fillOperationsMenu(ops, line, point, point, point, scale, scale, -1);
+    fillOperationsMenu(ops, line, point, scale, -1);
+    menu->addSeparator();
+    addQuickOperations(menu, line, point, scale);
     menu->addSeparator();
     addImportEntry(menu);
     menu->addSeparator();

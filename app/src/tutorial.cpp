@@ -2042,7 +2042,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Custom function from block");
         s.text = T("A Python file in the blocks folder is a block: its functions work in every script, like the built-in ones.");
-        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them under Operations ▸ New custom block.");
+        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them under Parametric shapes ▸ New custom block.");
         s.menuTitle = "Settings";
         s.menuEntry = "Blocks folder...";
         s.place = Right;

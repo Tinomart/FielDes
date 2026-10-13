@@ -20,7 +20,7 @@ run again; the editor completes it, shows its call tip and goes to its definitio
 
 The folder is the one chosen in Settings > Blocks folder; by default `blocks` next to FielDes (and the python folder).  A block
 that has no required argument but the first is offered in the right-click menus: in "Operations" under Custom blocks
-when its first argument is the model to work on, in "Operations > New custom block" when it needs none.
+when its first argument is the model to work on, in "Parametric shapes > New custom block" when it needs none.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

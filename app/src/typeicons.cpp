@@ -47,6 +47,9 @@ QHash<QString, Kind>& kinds()
         {"points",     {"Point set",    QColor("#f0a24c")}},
         {"import",     {"Import",       QColor("#2aa198")}},
         {"block",      {"Custom block", QColor("#8da2c0")}},
+        // (not kinds of model: the two parts of the right-click menus that are not primitives)
+        {"operation",  {"Operation",    QColor("#b9c4d0")}},
+        {"shapes",     {"Parametric shape", QColor("#7aa2f0")}},
     };
     return k;
 }
@@ -218,6 +221,32 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.drawLine(QPointF(6, 2), QPointF(14, 2));
         p.drawLine(QPointF(14, 2), QPointF(14, 10));
         p.drawLine(QPointF(11, 13), QPointF(14, 10));
+    }
+    else if (type == "operation")
+    {
+        // what is done to a model: a cog
+        p.setPen(QPen(c, 2.3, Qt::SolidLine, Qt::RoundCap));
+        for (int k = 0; k < 8; ++k)
+        {
+            const double a = kPi / 4 * k;
+            p.drawLine(QPointF(8 + 5.3 * std::cos(a), 8 + 5.3 * std::sin(a)), QPointF(8 + 7.0 * std::cos(a), 8 + 7.0 * std::sin(a)));
+        }
+        p.setPen(QPen(c, 1.9));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPointF(8, 8), 3.9, 3.9);
+    }
+    else if (type == "shapes")
+    {
+        // a shape made with parameters, more than a primitive: a plate with a round hole through it
+        QPainterPath plate;
+        plate.addRoundedRect(QRectF(2.4, 2.4, 11.2, 11.2), 2.6, 2.6);
+        QPainterPath hole;
+        hole.addEllipse(QPointF(8, 8), 3.1, 3.1);
+        p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(alpha(c, 110));
+        p.drawPath(plate.subtracted(hole));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPointF(8, 8), 3.1, 3.1);
     }
     else if (type == "block")
     {

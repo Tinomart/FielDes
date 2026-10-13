@@ -73,7 +73,7 @@ difference(ball, hole)
 ## Making things from the menu
 
 Right-click empty space in the viewport: **Primitives** -- **New 3D shape**, **New 2D shape**, **New 1D shape**, **New point**, **New surface** and **New field**,
-the most basic of each -- write a call into the script where you clicked, and select the new model; **Operations** works on the selected model. The model tree
+the most basic of each -- and **Parametric shapes** (a rounded box, a ring, noise ...) write a call into the script where you clicked, and select the new model; **Operations** works on the selected model. The model tree
 shows each kind of thing with its own icon, and nests the models an operation is made of under it; drag a row onto an
 operation to make it one of its inputs. See [The interface](interface.md#the-model-tree).
 
