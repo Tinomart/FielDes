@@ -1248,16 +1248,36 @@ Shape::RenderGeometry Shape::renderGeometry(const Settings& s) const
     return g;
 }
 
+std::string Shape::extentWhy(const Settings& s)
+{
+    if (!s.autoScale) return "auto scale is off";
+    if (has_hint) return "it has a render hint of its own";
+    if (has_result) return "it is a result";
+    if (m_step_exact || exactCurrent()) return "it is drawn from triangles of its own";
+    if (!tree.is_valid()) return "no tree";
+    if (hasControls() || (m_flat && hasFlatFrame())) return "a line or a face of points";
+    if (hasSweep() || hasPrism()) return "a sweep or a prism";
+    if (m_tree_nodes > 100000) return "a tree of " + std::to_string(m_tree_nodes) + " nodes";
+    return "the search ran out of time or evaluations (" + std::to_string(m_tree_nodes) + " nodes)";
+}
+
 void Shape::measureExtent(const Settings& s)
 {
     m_ext_valid = false;
     if (!s.autoScale) return;
     // A tree that its search could not bound in its time (intervals are too loose for it) is not bounded in it the next time either: it is the tree that is hard, not the numbers
     // -- every render of a drag started with another 50 ms of looking, in the GUI's thread.  It gets a few milliseconds (a number that makes it easy is found at once) until it is
-    // another tree
-    const float seconds = (tree.is_valid() && m_ext_failed == tree.id()) ? 0.004f : 0.05f;
+    // another tree, or the region it is looked for in is another: the first render of a script is made over the region the program starts with, before the script's own is
+    // there, and a shape that is not in that one fails at once -- that must not leave it with a few milliseconds for good
+    const bool again = tree.is_valid() && m_ext_failed == tree.id() && m_ext_failed_lo == s.min && m_ext_failed_hi == s.max;
+    const float seconds = again ? 0.004f : 0.05f;
     m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi, seconds);
     m_ext_failed = (tree.is_valid() && !m_ext_valid) ? tree.id() : libfive::Tree::Id();
+    if (!m_ext_valid)
+    {
+        m_ext_failed_lo = s.min;
+        m_ext_failed_hi = s.max;
+    }
 }
 
 bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
@@ -1321,12 +1341,36 @@ double Shape::autoResolution(const Settings& s) const
     return std::max(res, double(s.res));
 }
 
+bool Shape::meshSize(QVector3D& lo, QVector3D& hi) const
+{
+    if (!mesh) return false;
+    const auto& b = mesh_bounds;
+    const QVector3D l(b.lower.x(), b.lower.y(), b.lower.z()), h(b.upper.x(), b.upper.y(), b.upper.z());
+    if (!(h.x() > l.x() || h.y() > l.y() || h.z() > l.z())) return false;
+    lo = l;
+    hi = h;
+    return true;
+}
+
+void Shape::sizeFirstLevel(const Settings& s)
+{
+    if (m_div_sized || default_div == MESH_DIV_EMPTY) return;
+    QVector3D lo, hi;
+    if (!m_ext_valid && !meshSize(lo, hi)) return;
+    default_div = defaultDivFor(s);
+    m_div_sized = true;
+}
+
 int Shape::defaultDivFor(const Settings& s)
 {
     // (a shape that is drawn from the numbers of its points is meshed in a moment: there is no coarse picture to show first, one pass at the finest level is all it needs)
     if (drawnFromNumbers()) return 0;
-    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return s.defaultDiv();
-    const QVector3D size = m_ext_hi - m_ext_lo;
+    if (!s.autoScale || has_hint || has_result) return s.defaultDiv();
+    // (its size: from the search for its box, else from the mesh it has -- a shape that is a few millimetres across in a region of a hundred starts at a level at which it is
+    // a few cells wide, which draws a leg as a wedge, at every move of a drag)
+    QVector3D lo = m_ext_lo, hi = m_ext_hi;
+    if (!m_ext_valid && !meshSize(lo, hi)) return s.defaultDiv();
+    const QVector3D size = hi - lo;
     const double L = std::max(size.x(), std::max(size.y(), size.z()));
     if (!(L > 1e-6)) return s.defaultDiv();
     const double across = autoResolution(s) * L;            // (samples across the shape at the finest level)
@@ -2981,8 +3025,11 @@ void Shape::startRender(Settings s, libfive::BRepAlgorithm alg)
     const auto t0 = std::chrono::steady_clock::now();
     measureExtent(s);
     if (std::getenv("FIELDES_TIMING"))
-        fprintf(stderr, "[shape] line %d: measureExtent %.0f ms (%s)\n", source_line + 1,
-                1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), m_ext_valid ? "found" : "none");
+        fprintf(stderr, "[shape] line %d: measureExtent %.0f ms (%s%s%s)\n", source_line + 1,
+                1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), m_ext_valid ? "found" : "none",
+                m_ext_valid ? "" : ": ", m_ext_valid ? "" : extentWhy(s).c_str());
+    if (!m_geometry_known || s != m_last_settings) m_div_sized = false;           // (another region or resolution: its level is chosen again)
+    sizeFirstLevel(s);
     startRender(RenderSettings { s, defaultDivFor(s), alg });
 }
 
@@ -3055,7 +3102,11 @@ void Shape::startRender(RenderSettings s)
             // (what the render cache's keys are of: the numbers the evaluators hold now)
             cache_vars = vars;
             ++cache_vars_gen;
-            if (s.div == MESH_DIV_NEW_VARS) measureExtent(s.settings);          // (the numbers changed: the shape is not where it was)
+            if (s.div == MESH_DIV_NEW_VARS)
+            {
+                measureExtent(s.settings);          // (the numbers changed: the shape is not where it was)
+                sizeFirstLevel(s.settings);
+            }
             s.div = (s.div == MESH_DIV_NEW_VARS) ? default_div : 0;
         }
 
@@ -3289,7 +3340,12 @@ void Shape::onFutureFinished()
         gl_ready = false;
         emit(gotMesh());
 
-        auto t = timer.elapsed();
+        // How long the level took the mesher.  It was the time from the render's start to the GUI's thread seeing it finished -- and the GUI's thread is busy while a drag goes on
+        // (a search for the region at every move, the painting): every level then took "more than 50 ms", and the level a drag starts at went one coarser at every move, until a leg
+        // was a wedge at the start of every move
+        const double t = m_levelMs.load();
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[shape] line %d: level %d took the mesher %.1f ms (starts at %d)\n", source_line + 1, target_div, t, default_div);
 
         if (target_div == default_div && !fromCache)
         {
@@ -3547,6 +3603,13 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     }
     seq_div = s.div;
     const auto tLevel = std::chrono::steady_clock::now();
+    struct LevelClock
+    {
+        LevelClock(std::atomic<double>& out, std::chrono::steady_clock::time_point from) : m_out(out), m_from(from) {}
+        ~LevelClock() { m_out.store(1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - m_from).count()); }
+        std::atomic<double>& m_out;
+        std::chrono::steady_clock::time_point m_from;
+    } levelClock(m_levelMs, tLevel);
 
     mesh_settings.reset();
     render_stage.store(0);

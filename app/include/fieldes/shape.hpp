@@ -841,6 +841,7 @@ protected:
     QOpenGLBuffer tri_vbo;
 
     QElapsedTimer timer;
+    std::atomic<double> m_levelMs{0.0};         // (how long the mesher itself took over the last level: not the wait for a thread, nor the GUI's thread being busy)
 
     // The mesher's progress on the level being rendered (0..1), from a
     // ProgressHandler made for each level (one only works once: reused,
@@ -939,8 +940,17 @@ protected:
     bool searchExtent(const std::map<libfive::Tree::Id, float>& numbers, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi, float seconds = 0.05f,
                       float coarse = 0.0f);
     libfive::Tree::Id m_ext_failed = libfive::Tree::Id();      // (the tree whose box the last search could not find in its time)
+    QVector3D m_ext_failed_lo, m_ext_failed_hi;                // (and the region it was searched over: a search over another one is another search)
+    /*  Why no box was found (for the timing log): the first condition that refuses the search, else that it ran out of time  */
+    std::string extentWhy(const Settings& s);
     double autoResolution(const Settings& s) const;
     int defaultDivFor(const Settings& s);
+    /*  The box of the mesh the shape has (what it looked like a moment ago): false before it has one, or before it has been drawn once (the box is read when it is)  */
+    bool meshSize(QVector3D& lo, QVector3D& hi) const;
+    /*  The level a render starts at is chosen by the first render of a shape, before its size is known (and the search for it may never find it: a shape made with var()s is
+        slow for it).  The first time its size is known -- from the search, or from its mesh -- it is chosen again; after that it follows how long the levels take  */
+    void sizeFirstLevel(const Settings& s);
+    bool m_div_sized = false;
     bool m_ext_valid = false;
     QVector3D m_ext_lo, m_ext_hi;
 
