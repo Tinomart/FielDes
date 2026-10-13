@@ -48,9 +48,12 @@ def main(argv):
         print('custom block file {}: {}'.format(os.path.basename(file), why))
     started = time.time()
     try:
+        from fieldes import made_from
         for node in tree.body:
             code = compile(ast.Module([node], []), path, 'exec')
+            inputs = made_from.reads(node, namespace)
             exec(code, namespace)
+            made_from.note(node, namespace, inputs)
     except Exception:
         traceback.print_exc()
         print('FAILED after %.1f s' % (time.time() - started))

@@ -873,8 +873,11 @@ plane of the last):
     'axis'      `planes` planes that all contain the axis, equally spaced (1: a mirror; 2: two at right angles; 3: 60 degrees apart ...)
     'across'    the same, and the plane across the axis (a part is mirrored top to bottom as well)
     'cube'      the nine planes of a cube whose axes are the three lines of the symmetry: three across them, six through its edges
+    'turn'      no planes: `copies` copies of what is made, equally spaced round the axis, each the one before it turned by 360 / copies degrees (3: three legs 120 degrees
+                apart; 5, 7 ...: any number, 1 to 24) -- the rotational symmetry of a three-legged table, a fan, a gear
 
-Every plane makes an image of what is made while the symmetry is on, and so does every turn between them (two planes at right angles make a turn of half a way round): the
+Every plane makes an image of what is made while the symmetry is on, and so does every turn between them (two planes at right angles make a turn of half a way round); a 'turn'
+symmetry has the turns only: the
 images of a symmetry are numbered 1 .. symmetry_count(symmetry).  `symmetry_images(x, mirror)` is all of them (`only=(1, 3)` some of them), `symmetry_image(x, mirror, 2)` one.
 The images FOLLOW what they are the images of and the symmetry: move the original and they move the way a mirror shows; move the symmetry (its gizmo) and every image of it moves
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
@@ -917,11 +920,19 @@ own (so that dragging the shape moves its images as it is dragged, with nothing 
 It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
 a surface of any of them pulls the shape.
 
-### `symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None)`
+What a shape was made from is mirrored TOGETHER with it: the sketches, the lines and the points of the models it was made from -- the sketch and the path of a
+`path_extrude`, the sketch of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
+models -- there is no statement and no row of the model tree for them -- and the ones of the shape you made stay the only ones with numbers: press a dot of any image's and drag
+it, and it is that point of the original that moves.
+
+### `symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None, copies=None)`
 
 A symmetry: mirror planes through `centre`.  `kind` is 'axis' (`planes` planes that all contain the axis `axis`, equally spaced: one is a mirror), 'across' (and the plane
 across the axis) or 'cube' (the nine planes of a cube).  `first` is a line in the first plane (across the axis; any when it is left out): with one plane the plane is the one
 that holds the axis and `first`.  The default is the mirror x = 0.
+
+`kind='turn'` has no planes: it is the rotational symmetry of `copies` copies equally spaced round the axis (`copies=3`: three legs 120 degrees apart; 5, 7 ... up to 24),
+each the one before turned by 360 / copies degrees -- nothing is mirrored.
 
 It is a model: selected in the model tree it has a gizmo -- moved, turned -- and everything made while it is selected is made with its images (see symmetry_image)
 

@@ -214,6 +214,10 @@ class Curve(Shape):
     _kind = 'curve'
     _no_gizmo = True                # (its points have the gizmos: they are what is dragged)
 
+    def _remake(self, points, improper=False):
+        ''' The same line through other points (the images of its points in a symmetry: see symmetries.symmetry_images) '''
+        return _make(points, self.smooth, self.closed)
+
     def _display(self):
         out = Curve(lib.libfive_tree_copy(self.ptr))
         for name, v in self.__dict__.items():

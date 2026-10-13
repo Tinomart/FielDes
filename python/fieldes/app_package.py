@@ -666,8 +666,11 @@ def execute(source, filename, cwd):
     tree = ast.parse(source, filename)
     namespace = {'__name__': '__main__', '__file__': filename, 'var': lambda x: x}
     namespace.update(blocks.namespace())
+    from fieldes import made_from
     for node in tree.body:
+        inputs = made_from.reads(node, namespace)
         exec(compile(ast.Module([node], []), filename, 'exec'), namespace)
+        made_from.note(node, namespace, inputs)
 
 
 def _where(exc, filename):

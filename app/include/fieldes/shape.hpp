@@ -397,6 +397,9 @@ public:
         // One of several images that are one model (symmetry_images): the first one shows the gizmo, the others do not -- they keep their numbers (they are previewed as the
         // original is dragged) but draw no arrows, rings or knobs of their own
         bool hidden = false;
+        // A dot that is the image of a point of a path, drawn with the images of the sweep along it (symmetry_images): its dot is pressed and dragged -- the numbers it moves are the
+        // original point's -- but it has no gizmo of its own to show, whatever is selected
+        bool dotOnly = false;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
     /*  A symmetry model (fieldes.stdlib.symmetries.symmetry_planes): the arrangement of its planes and where it was made, in its own place -- before its gizmo moved and turned it.
@@ -458,6 +461,8 @@ public:
     libfive::Tree::Id sourceId() const { return m_sourceId; }
     libfive::Tree::Id followId() const { return m_followKind != FOLLOW_NONE ? m_followId : libfive::Tree::Id(); }
     void linkSource(Shape* source);
+    /*  The shape of the scene this one is the image of (null when it is none, or is not shown)  */
+    Shape* followedShape() const { return m_followKind != FOLLOW_NONE ? m_follows.data() : nullptr; }
     /*  The numbers a pull of a surface of this shape leaves where they are: its gizmo's, and the symmetry's of an image  */
     std::set<libfive::Tree::Id> pullMask() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */

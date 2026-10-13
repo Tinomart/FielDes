@@ -6982,7 +6982,7 @@ void ScenePanel::createSymmetry(FielDes::Symmetry s)
     auto vec = [](const QVector3D& a) { return QJsonArray{double(a.x()), double(a.y()), double(a.z())}; };
     m_symdefRequest = QJsonObject();
     m_symdefRequest["planes"] = s.count;
-    m_symdefRequest["kind"] = s.kind == Symmetry::Cube ? "cube" : s.kind == Symmetry::AxisAndAcross ? "across" : "axis";
+    m_symdefRequest["kind"] = s.kind == Symmetry::Turn ? "turn" : s.kind == Symmetry::Cube ? "cube" : s.kind == Symmetry::AxisAndAcross ? "across" : "axis";
     m_symdefRequest["centre"] = vec(s.centre);
     m_symdefRequest["axis"] = vec(s.c);
     m_symdefRequest["first"] = vec(s.a);

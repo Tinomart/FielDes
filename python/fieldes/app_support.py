@@ -1701,11 +1701,42 @@ def call_edit(arg):
     edits = []
     for name, text in req['set'].items():
         kw = next((k for k in call.keywords if k.arg == name), None)
-        if kw is not None:
+        if kw is not None and text == '':
+            # (taken out: its line when it is alone on one, else with the comma that goes with it)
+            a, b = offset(kw.lineno, kw.col_offset), end_of(kw.value)
+            j = b
+            while j < len(source) and source[j] in ' \t':
+                j += 1
+            comma = j < len(source) and source[j] == ','
+            if comma:
+                j += 1
+            k = j
+            while k < len(source) and source[k] in ' \t':
+                k += 1
+            line_start = max(i for i in starts if i <= a)
+            alone = source[line_start:a].strip() == '' and (k >= len(source) or source[k] == '\n')
+            if alone:
+                edits.append((line_start, min(k + 1, len(source)), ''))
+            elif comma:
+                edits.append((a, k, ''))
+            else:
+                i = a - 1
+                while i >= 0 and source[i] in ' \t\n':
+                    i -= 1
+                edits.append((i if i >= 0 and source[i] == ',' else a, b, ''))
+        elif kw is not None:
             edits.append((start_of(kw.value), end_of(kw.value), text))
+        elif text == '':
+            continue
         else:
-            last = max([end_of(n) for n in list(call.args) + [k.value for k in call.keywords]] or [end_of(call) - 1])
-            edits.append((last, last, ', %s=%s' % (name, text)))
+            nodes = list(call.args) + [k.value for k in call.keywords]
+            last = max([end_of(n) for n in nodes] or [end_of(call) - 1])
+            lastkw = max(call.keywords, key=lambda k: end_of(k.value)) if call.keywords else None
+            if lastkw is not None and lastkw.lineno > call.lineno and end_of(lastkw.value) == last:
+                # (written one argument to a line: the new one has a line of its own, as far in as the last one)
+                edits.append((last, last, ',\n%s%s=%s' % (' ' * lastkw.col_offset, name, text)))
+            else:
+                edits.append((last, last, ', %s=%s' % (name, text)))
     edits.sort(key=lambda e: -e[0])
     return json.dumps({'edits': [position(a) + position(b) + [text] for a, b, text in edits]})
 

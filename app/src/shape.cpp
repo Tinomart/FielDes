@@ -288,7 +288,7 @@ std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const doub
 
 bool Shape::hasGizmo() const
 {
-    if (m_locked || !m_gizmo.present || m_gizmo.hidden || m_gizmo.mode == Gizmo::NEVER) return false;
+    if (m_locked || !m_gizmo.present || m_gizmo.hidden || m_gizmo.dotOnly || m_gizmo.mode == Gizmo::NEVER) return false;
     if (m_gizmo.mode == Gizmo::CLICK && !isSelected()) return false;
     for (int a = 0; a < 3; ++a)
     {

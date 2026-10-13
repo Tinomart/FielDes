@@ -14,6 +14,7 @@ of the License, or (at your option) any later version.
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -105,6 +106,7 @@ QList<QVector3D> Symmetry::planeNormals() const
     s.normalise();
     const QVector3D b = s.b();
     QList<QVector3D> out;
+    if (kind == Turn) return out;                // (copies turned about the axis: no plane of it mirrors)
     if (kind == Cube)
     {
         const float r = std::sqrt(0.5f);
@@ -201,6 +203,11 @@ QList<SymmetryElement> Symmetry::elements() const
             }
         }
     }
+    else if (kind == Turn)
+    {
+        const int n = std::max(1, std::min(24, count));
+        for (int k = 1; k < n; ++k) linear << turn(360.0f * float(k) / float(n), c);
+    }
     else
     {
         const int n = std::max(1, std::min(8, count));
@@ -262,7 +269,7 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
         "QToolButton#SymmetryClose { background: transparent; border: none; color: #93a1a1;"
         "  padding: 2px 5px; font-size: 9pt; }"
         "QToolButton#SymmetryClose:hover { color: #eee8d5; }"
-        "QDoubleSpinBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
+        "QDoubleSpinBox, QSpinBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
         "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 3px; padding: 1px 2px;"
         "  font-size: 8pt; selection-background-color: rgba(38, 139, 210, 200); }");
 
@@ -298,12 +305,13 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     // How the planes are arranged: round an axis, round an axis and across it, or the planes of a cube
     auto kindRow = new QHBoxLayout;
     kindRow->setSpacing(3);
-    const QString kindNames[3] = {T("Axis"), T("Axis + across"), T("Cube")};
-    const QString kindTips[3] = {
+    const QString kindNames[4] = {T("Axis"), T("Axis + across"), T("Cube"), T("Turns")};
+    const QString kindTips[4] = {
         T("Planes that all contain one axis, equally spaced: one plane is a mirror; with more, what you make is mirrored across each and turned about the axis"),
         T("The planes round the axis, and the plane across the axis: a part is mirrored top to bottom as well"),
-        T("The nine planes of a cube: three across its axes, six through its edges -- everything that takes a cube to itself")};
-    for (int i = 0; i < 3; ++i)
+        T("The nine planes of a cube: three across its axes, six through its edges -- everything that takes a cube to itself"),
+        T("No planes: copies of what you make, equally spaced round the axis, each turned from the one before (3 copies: 120 degrees apart; any number up to 24) -- nothing is mirrored")};
+    for (int i = 0; i < 4; ++i)
     {
         m_kind[i] = button(kindNames[i], kindTips[i], QString("symmetryKind%1").arg(i), true);
         kindRow->addWidget(m_kind[i], 1);
@@ -313,8 +321,8 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     }
     auto countRow = new QHBoxLayout;
     countRow->setSpacing(3);
-    const int counts[6] = {1, 2, 3, 4, 6, 8};
-    for (int i = 0; i < 6; ++i)
+    const int counts[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    for (int i = 0; i < 8; ++i)
     {
         m_count[i] = button(QString::number(counts[i]), counts[i] == 1 ? T("One plane: a mirror") : T("%1 planes through the axis, %2 degrees apart").arg(counts[i]).arg(180.0 / counts[i]),
                             QString("symmetryCount%1").arg(counts[i]), true);
@@ -323,6 +331,16 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
             if (!m_updating) emit(countChanged(counts[i]));
         });
     }
+    m_copies = new QSpinBox;
+    m_copies->setObjectName("symmetryCopies");
+    m_copies->setRange(1, 24);
+    m_copies->setKeyboardTracking(false);
+    m_copies->setFixedWidth(46);
+    m_copies->setToolTip(T("How many copies there are round the axis (1 to 24)"));
+    countRow->addWidget(m_copies);
+    connect(m_copies, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+        if (!m_updating) emit(countChanged(v));
+    });
 
     // Which way the axis goes: along a world axis, along the work plane's normal, up in the view, or across the plane of the 2D shape that is selected
     auto axisRow = new QHBoxLayout;
@@ -350,7 +368,8 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     m_angle->setSuffix(QString(QChar(0x00b0)));
     m_angle->setToolTip(T("How far the first plane is turned about the axis"));
     auto angleRow = new QHBoxLayout;
-    angleRow->addWidget(label(T("Turn")));
+    m_angleLabel = label(T("Turn"));
+    angleRow->addWidget(m_angleLabel);
     angleRow->addWidget(m_angle);
     angleRow->addStretch();
     connect(m_angle, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
@@ -411,12 +430,14 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     auto row = [&](const QString& name, QLayout* l) {
         auto line = new QHBoxLayout;
         line->setSpacing(3);
-        line->addWidget(label(name));
+        auto title = label(name);
+        line->addWidget(title);
         line->addLayout(l, 1);
         body->addLayout(line);
+        return title;
     };
     row(T("Planes"), kindRow);
-    row(T("Count"), countRow);
+    m_countLabel = row(T("Count"), countRow);
     row(T("Axis"), axisRow);
     body->addLayout(angleRow);
     body->addLayout(centreRow);
@@ -429,8 +450,8 @@ SymmetryPanel::SymmetryPanel(QWidget* parent)
     layout->setSpacing(2);
     layout->addLayout(head);
     layout->addWidget(m_body);
-    setMinimumWidth(320);
-    resize(330, 100);
+    setMinimumWidth(370);
+    resize(380, 100);
 
     new CardController(this, "symmetry", m_header, QSize(300, 60));
     connect(m_header, &QToolButton::clicked, this, [this] {
@@ -454,19 +475,29 @@ void SymmetryPanel::setSymmetry(const Symmetry& s, int images, bool exists, bool
     {
         QSignalBlocker a(m_angle), b(m_centre[0]), c(m_centre[1]), d(m_centre[2]), e(m_use);
         m_use->setChecked(inUse);
-        for (int i = 0; i < 3; ++i) m_kind[i]->setChecked(s.kind == i);
-        const int counts[6] = {1, 2, 3, 4, 6, 8};
-        for (int i = 0; i < 6; ++i)
+        QSignalBlocker f(m_copies);
+        for (int i = 0; i < 4; ++i) m_kind[i]->setChecked(s.kind == i);
+        const bool turn = s.kind == Symmetry::Turn;
+        const int counts[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        for (int i = 0; i < 8; ++i)
         {
             m_count[i]->setChecked(s.kind != Symmetry::Cube && s.count == counts[i]);
             m_count[i]->setEnabled(s.kind != Symmetry::Cube);
+            m_count[i]->setToolTip(turn ? (counts[i] == 1 ? T("One copy: nothing is made twice") : T("%1 copies, %2 degrees apart").arg(counts[i]).arg(360.0 / counts[i]))
+                                        : (counts[i] == 1 ? T("One plane: a mirror") : T("%1 planes through the axis, %2 degrees apart").arg(counts[i]).arg(180.0 / counts[i])));
         }
+        m_copies->setVisible(turn);
+        m_copies->setValue(std::max(1, std::min(24, s.count)));
+        m_countLabel->setText(turn ? T("Copies") : T("Count"));
+        m_angleLabel->setVisible(!turn);                 // (copies turned about the axis do not care where a first plane is)
+        m_angle->setVisible(!turn);
         m_angle->setValue(double(s.angleOfFirst()));
         for (int i = 0; i < 3; ++i) m_centre[i]->setValue(double(s.centre[i]));
     }
     m_updating = false;
     auto number = [](float x) { return QString::number(std::fabs(x) < 5e-5f ? 0.0 : double(x), 'g', 4); };
-    m_info->setText(T("Planes: %1. Images of what you make: %2. Axis (%3, %4, %5)").arg(s.planeNormals().size()).arg(images)
+    m_info->setText((s.kind == Symmetry::Turn ? T("Copies: %1. Images of what you make: %2. Axis (%3, %4, %5)") : T("Planes: %1. Images of what you make: %2. Axis (%3, %4, %5)"))
+                        .arg(s.kind == Symmetry::Turn ? s.count : s.planeNormals().size()).arg(images)
                         .arg(number(s.c.x()), number(s.c.y()), number(s.c.z())) + (inUse ? QString() : "  " + T("(not in use)")));
 }
 

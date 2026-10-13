@@ -253,7 +253,7 @@ def _write(key, shape, printed):
     from fieldes.ffi import lib
     if not hasattr(lib, 'libfive_tree_can_save') or not lib.libfive_tree_can_save(shape.ptr):
         return
-    extra = {k: v for k, v in vars(shape).items() if k not in ('ptr', '_content_key')}
+    extra = {k: v for k, v in vars(shape).items() if k not in ('ptr', '_content_key', '_made_from')}          # (_made_from: the models of this run, not part of what is kept)
     if not all(_plain(v) for v in extra.values()):
         return                                         # (something the file cannot hold: kept in memory only)
     tree_path, head_path = _paths(key)

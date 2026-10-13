@@ -44,6 +44,11 @@ class Sketch(Shape):
     _kind = 'profile'
     _no_gizmo = True                # (its points have the gizmos: they are what is dragged)
 
+    def _remake(self, points, improper=False):
+        ''' The same outline through other points (the images of its points in a symmetry: see symmetries.symmetry_images) -- the other way round for a mirror image, which turns
+            the way round: reversed, it faces as this one does '''
+        return sketch(points[::-1] if improper else points, smooth=self.smooth)
+
     def _display(self):
         # What the viewport draws is the face of the outline, made natively from the points' numbers: no field is needed for that, so none is made
         out = C.owned(Shape.wrap(1.0))
@@ -139,7 +144,11 @@ def sketch(source, smooth=False):
         o, u, v = plane
         verts, owners = C.trace(ctrls, smooth, True, normal=C.cross(u, v))        # (the rotation of a point of a sketch is one angle, about the normal of its plane)
         loop = [(C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in verts]
-        field = _polygon_field(loop, plane)
+        # The field is made in coordinates measured from the origin of space along u and v, not from the first point of the sketch: the same shape, but a wall that stands at x = 12 is
+        # `x - 12 = 0` there and `x = 12` here -- and the first one, turned by a gizmo or a symmetry, was meshed with teeth along its walls (a quarter turn of a solid made of it, the
+        # kernel's mesher: +11 % of surface), the second is meshed exactly, as a box is
+        from_origin = [(C.dot(p, u), C.dot(p, v)) for p in verts]
+        field = _polygon_field(from_origin, ((0.0, 0.0, 0.0), u, v))
         out = Sketch(lib.libfive_tree_copy(field.ptr))
         out.plane = plane
         out.profile2d = _polygon_field(loop, None)
@@ -509,7 +518,40 @@ def path_extrude(profile, path, twist=0):
         out._sweep_qflag, out._sweep_qscale, out._sweep_qdefault = path._ctrl_flag, path._ctrl_scale, path._ctrl_default
         out._sweep_qclosed = bool(path.closed)
         out._sweep_twist = Shape.wrap(twist)
+        out._drawn_key = _sweep_key          # (what tells whether two sweeps are the same shape without meshing either: see symmetries.symmetry_images, distinct=True)
     return out
+
+
+def _sweep_key(s):
+    ''' What a sweep is drawn from, as a key: two sweeps with the same key are the same shape -- the same outline carried along the same path, the same thickness and twist --
+        so that the images of a sweep that are the sweep itself (a tube along a path that lies in a plane of the symmetry is its own image in it) are told without sampling its
+        field, which is thousands of terms.  None for a sweep that is not drawn from such numbers (its gizmo turns or scales it).  The outline is the same from whichever of its points
+        it starts and whichever way round it goes '''
+    def num(v):
+        return C.value_of(v) if isinstance(v, Shape) else float(v)
+
+    def q(v):
+        return int(round(num(v) * 1e5))                 # (a hundredth of a micrometre: numbers that agree to that are the same)
+    try:
+        move = (0.0, 0.0, 0.0)
+        place = getattr(s, '_sweep_place', None)
+        if place is not None:
+            _about, mv, rot, scale = place
+            if any(abs(num(v)) > 1e-9 for v in rot) or any(abs(num(v) - 1.0) > 1e-9 for v in scale):
+                return None
+            move = tuple(num(v) for v in mv)
+
+        def points(ppos, prot, pflag, pscale):
+            return [(tuple(q(num(p[i]) + move[i]) for i in range(3)), () if r is None else tuple(q(c) for c in r), int(f), () if sc is None else (q(sc),))
+                    for p, r, f, sc in zip(ppos, prot, pflag, pscale)]
+        ring = points(s._sweep_ppos, s._sweep_prot, s._sweep_pflag, s._sweep_pscale)
+        path = points(s._sweep_qpos, s._sweep_qrot, s._sweep_qflag, s._sweep_qscale)
+        n = len(ring)
+        outline = min(tuple(run[i:] + run[:i]) for run in (ring, ring[::-1]) for i in range(max(n, 1)))
+        return ('sweep', outline, tuple(path), bool(s._sweep_qclosed), q(s._sweep_twist), bool(getattr(s, '_sweep_free', False)),
+                bool(s._sweep_pdefault), bool(s._sweep_qdefault))
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 # What these take (see fieldes.kinds.takes): a 2D shape pulled into a solid; a 2D shape, and the curve it is swept along or the points of one
 from fieldes.kinds import takes as _declare

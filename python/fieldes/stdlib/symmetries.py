@@ -15,8 +15,11 @@ plane of the last):
     'axis'      `planes` planes that all contain the axis, equally spaced (1: a mirror; 2: two at right angles; 3: 60 degrees apart ...)
     'across'    the same, and the plane across the axis (a part is mirrored top to bottom as well)
     'cube'      the nine planes of a cube whose axes are the three lines of the symmetry: three across them, six through its edges
+    'turn'      no planes: `copies` copies of what is made, equally spaced round the axis, each the one before it turned by 360 / copies degrees (3: three legs 120 degrees
+                apart; 5, 7 ...: any number, 1 to 24) -- the rotational symmetry of a three-legged table, a fan, a gear
 
-Every plane makes an image of what is made while the symmetry is on, and so does every turn between them (two planes at right angles make a turn of half a way round): the
+Every plane makes an image of what is made while the symmetry is on, and so does every turn between them (two planes at right angles make a turn of half a way round); a 'turn'
+symmetry has the turns only: the
 images of a symmetry are numbered 1 .. symmetry_count(symmetry).  `symmetry_images(x, mirror)` is all of them (`only=(1, 3)` some of them), `symmetry_image(x, mirror, 2)` one.
 The images FOLLOW what they are the images of and the symmetry: move the original and they move the way a mirror shows; move the symmetry (its gizmo) and every image of it moves
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
@@ -36,7 +39,8 @@ from fieldes.shape import Shape
 
 __all__ = ['symmetry_planes', 'symmetry_image', 'symmetry_images', 'symmetry_count', 'SymmetryPlanes']
 
-KINDS = ('axis', 'across', 'cube')
+KINDS = ('axis', 'across', 'cube', 'turn')
+MAX_COPIES = 24                                  # (a 'turn' symmetry: how many copies there can be)
 
 _PERMUTATIONS = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))
 
@@ -77,14 +81,23 @@ def _reflection(n):
     return [[(1.0 if i == j else 0.0) - 2.0 * n[i] * n[j] for j in range(3)] for i in range(3)]
 
 
+def _exact(v):
+    ''' A number of a turn or a mirror image without the rounding of the sines and cosines it came from: cos(90 degrees) is 6e-17, not 0.  A shape whose faces lie on the planes of the
+        grid it is meshed on (a box, an extrusion, at whole millimetres) has its image's faces there too -- but the noise puts every lattice point of the face a hair to one side or the
+        other, and the mesh grows teeth along it '''
+    r = round(v, 12)
+    return 0.0 if r == 0.0 else r
+
+
 def _rotation(axis, degrees):
     x, y, z = _unit(axis)
     t = math.radians(degrees)
     c, s = math.cos(t), math.sin(t)
     k = 1.0 - c
-    return [[c + x * x * k, x * y * k - z * s, x * z * k + y * s],
-            [y * x * k + z * s, c + y * y * k, y * z * k - x * s],
-            [z * x * k - y * s, z * y * k + x * s, c + z * z * k]]
+    m = [[c + x * x * k, x * y * k - z * s, x * z * k + y * s],
+         [y * x * k + z * s, c + y * y * k, y * z * k - x * s],
+         [z * x * k - y * s, z * y * k + x * s, c + z * z * k]]
+    return [[_exact(v) for v in row] for row in m]
 
 
 def _across(axis, hint):
@@ -118,6 +131,9 @@ def base_elements(definition):
                     s[i][p[i]] = -1.0 if (signs >> i) & 1 else 1.0
                 out.append(_matmul(columns, _matmul(s, _transpose(columns))))
         return out
+    if kind == 'turn':
+        n = max(1, min(MAX_COPIES, int(planes)))
+        return [_rotation(c, 360.0 * k / n) for k in range(1, n)]
     n = max(1, min(8, int(planes)))
     turns = [_rotation(c, 360.0 * k / n) for k in range(1, n)]
     mirrors = []
@@ -211,15 +227,26 @@ class SymmetryPlanes(Shape):
         and the symmetry card; nothing is drawn of it but its planes '''
     _kind = 'symmetry'
 
-    def __init__(self, planes=1, kind='axis', centre=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0), first=None):
+    def __init__(self, planes=1, kind='axis', centre=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0), first=None, copies=None):
         if kind not in KINDS:
             raise ValueError("symmetry_planes(): kind is one of %s, not %r" % (', '.join(repr(k) for k in KINDS), kind))
-        try:
-            n = int(planes)
-        except (TypeError, ValueError):
-            raise TypeError('symmetry_planes(): planes is how many planes there are about the axis, 1 to 8')
-        if not 1 <= n <= 8:
-            raise ValueError('symmetry_planes(): planes is 1 to 8 (the planes about the axis, equally spaced)')
+        if kind == 'turn':
+            # (no planes: the number is how many copies there are, round the axis)
+            try:
+                n = int(3 if copies is None else copies)
+            except (TypeError, ValueError):
+                raise TypeError("symmetry_planes(): copies is how many copies there are round the axis, 1 to %d" % MAX_COPIES)
+            if not 1 <= n <= MAX_COPIES:
+                raise ValueError("symmetry_planes(): copies is 1 to %d (the copies round the axis, equally spaced)" % MAX_COPIES)
+        else:
+            if copies is not None:
+                raise ValueError("symmetry_planes(): copies= is for kind='turn' (a symmetry of copies turned about the axis); the planes of kind='%s' are planes=" % kind)
+            try:
+                n = int(planes)
+            except (TypeError, ValueError):
+                raise TypeError('symmetry_planes(): planes is how many planes there are about the axis, 1 to 8')
+            if not 1 <= n <= 8:
+                raise ValueError('symmetry_planes(): planes is 1 to 8 (the planes about the axis, equally spaced)')
         centre = tuple(float(c) for c in centre)
         if len(centre) != 3:
             raise TypeError('symmetry_planes(): centre is three numbers')
@@ -253,16 +280,19 @@ class SymmetryPlanes(Shape):
 
     def __repr__(self):
         kind, planes, centre, axis, a = self._symmetry_def
-        return 'Symmetry(%s, planes=%d, %d images)' % (kind, planes, self.images)
+        return 'Symmetry(%s, %s=%d, %d images)' % (kind, 'copies' if kind == 'turn' else 'planes', planes, self.images)
 
 
-def symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None):
+def symmetry_planes(planes=1, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=None, copies=None):
     ''' A symmetry: mirror planes through `centre`.  `kind` is 'axis' (`planes` planes that all contain the axis `axis`, equally spaced: one is a mirror), 'across' (and the plane
         across the axis) or 'cube' (the nine planes of a cube).  `first` is a line in the first plane (across the axis; any when it is left out): with one plane the plane is the one
         that holds the axis and `first`.  The default is the mirror x = 0.
 
+        `kind='turn'` has no planes: it is the rotational symmetry of `copies` copies equally spaced round the axis (`copies=3`: three legs 120 degrees apart; 5, 7 ... up to 24),
+        each the one before turned by 360 / copies degrees -- nothing is mirrored.
+
         It is a model: selected in the model tree it has a gizmo -- moved, turned -- and everything made while it is selected is made with its images (see symmetry_image) '''
-    return SymmetryPlanes(planes, kind, centre, axis, first)
+    return SymmetryPlanes(planes, kind, centre, axis, first, copies)
 
 
 def _check(shape, sym, who):
@@ -327,6 +357,7 @@ def _sweep_image(out, shape, mn, cn):
         turned = tuple(_add(_add(_mul(mn[i][0], move[0]), _mul(mn[i][1], move[1])), _mul(mn[i][2], move[2])) for i in range(3))
         out._sweep_place = (_map_place(about, mn, cn), tuple(Shape.wrap(v) for v in turned), tuple(Shape.wrap(0.0) for _ in range(3)), tuple(Shape.wrap(1.0) for _ in range(3)))
     out._sweep_guard = guard
+    out._drawn_key = getattr(shape, '_drawn_key', None)
     return True
 
 
@@ -410,9 +441,36 @@ def symmetry_image(shape, symmetry, index=1):
     return out
 
 
-def _distinct(shape, images):
+def _numeric_map(sym, k):
+    ''' The image numbered `k` of the symmetry as it is now, in numbers: (the matrix, rows, and the centre it turns or mirrors about) -- the place the image takes `p` to is
+        c + M (p - c), and the place its way back takes it from is c + Mt (p - c) '''
+    from fieldes.stdlib.curves import value_of
+    c, turn = _frame_of(sym)
+    m = _matmul_expr(turn, _matmul_expr(base_elements(sym._symmetry_def)[k - 1], _transpose(turn)))
+    return [[value_of(m[i][j]) for j in range(3)] for i in range(3)], tuple(value_of(v) for v in c)
+
+
+def _distinct_by_key(shape, images):
+    ''' `_distinct` for a shape that can say what it is drawn from (`_drawn_key`: a function of the shape that gives a key, equal for the shapes that are the same, or None): told by
+        that and not by its field -- a sweep's field is thousands of terms (a script's var()s and all), and sampling it was seconds to minutes, or an error, where the numbers are
+        told at once.  An image that cannot say is kept: nothing is left out that might be another shape '''
+    first = shape._drawn_key(shape)
+    seen, kept = [first], []
+    for i, im in enumerate(images):
+        key_of = getattr(im, '_drawn_key', None)
+        key = key_of(im) if key_of is not None else None
+        if key is not None and key in seen:
+            continue
+        seen.append(key)
+        kept.append(i)
+    return kept
+
+
+def _distinct(shape, images, sym=None, numbers=None):
     ''' Which of the images are neither the shape itself nor another image, told by the field of each at a spread of places round them (the image of a model is the model's
-        field at the places the way back takes it from, so two are the same shape where their fields are the same).  The numbers (0 ..) of those that are not '''
+        field at the places the way back takes it from, so two are the same shape where their fields are the same).  The numbers (0 ..) of those that are not.  With the symmetry
+        and the numbers of the images (`sym`, `numbers`) the model's field is what is evaluated, once, at the places the way back of each image takes the sample from: the field of
+        every image is not built for it -- a sweep's field is thousands of terms, and an image of it as many again '''
     import random
     if hasattr(shape, 'xyz'):
         def place(s):
@@ -425,6 +483,8 @@ def _distinct(shape, images):
             seen.append(p)
             kept.append(i)
         return kept
+    if getattr(shape, '_drawn_key', None) is not None:
+        return _distinct_by_key(shape, images)
     from fieldes.stdlib.fields import evaluate
     from fieldes.stdlib.points import _view
     boxes = [getattr(s, '_bounds', None) for s in [shape] + list(images)]
@@ -438,11 +498,22 @@ def _distinct(shape, images):
     rng = random.Random(7)
     pts = [tuple(rng.uniform(lo[i] - pad[i], hi[i] + pad[i]) for i in range(3)) for _ in range(120)]
     try:
-        base = evaluate(shape, pts)
+        if sym is not None and numbers is not None:
+            places = list(pts)
+            for k in numbers:
+                mn, cn = _numeric_map(sym, k)
+                places += [tuple(cn[i] + sum(mn[j][i] * (p[j] - cn[j]) for j in range(3)) for i in range(3)) for p in pts]
+            every = evaluate(shape, places)
+            n = len(pts)
+            base = every[:n]
+            fields = [every[n * (i + 1):n * (i + 2)] for i in range(len(images))]
+        else:
+            base = evaluate(shape, pts)
+            fields = None
         scale = max(1.0, max(abs(v) for v in base))
         kept, seen = [], [base]
         for i, im in enumerate(images):
-            values = evaluate(im, pts)
+            values = fields[i] if fields is not None else evaluate(im, pts)
             if any(max(abs(a - b) for a, b in zip(values, other)) < 2e-4 * scale for other in seen):
                 continue
             seen.append(values)
@@ -452,6 +523,55 @@ def _distinct(shape, images):
         return list(range(len(images)))
 
 
+def _carried_parts(shape):
+    ''' The parts of a model that have points of their own to drag -- the sketches, the lines and the points it was made from, found through everything it was made from (see
+        made_from.py: `leg = path_extrude(leg_profile, leg_path)` was made from `leg_profile` and `leg_path`, and `leg = gizmo(leg, ...)` from the leg before it).  A part is a point,
+        or a model with points that can make itself again through other points (`_remake`: a curve, a sketch); what it was made from is its points, not looked into.  The images
+        of a model that is an image already are not looked into either: they bring their own '''
+    from fieldes.shape import Shape
+    parts, seen = [], set()
+
+    def visit(node):
+        if not isinstance(node, Shape) or id(node) in seen:
+            return
+        seen.add(id(node))
+        if getattr(node, '_symmetry_of', None) is not None or getattr(node, '_symmetry_def', None) is not None:
+            return
+        points = getattr(node, 'points', None)
+        if hasattr(node, 'xyz') or (isinstance(points, list) and points and hasattr(node, '_remake') and all(isinstance(p, Shape) and hasattr(p, 'xyz') for p in points)):
+            parts.append(node)
+            return
+        for source in getattr(node, '_made_from', None) or ():
+            visit(source)
+    for source in getattr(shape, '_made_from', None) or ():
+        visit(source)
+    return parts
+
+
+def _carried_images(shape, sym, numbers):
+    ''' What the images of a model bring along: its parts (see `_carried_parts`) taken through each of the numbered images -- a line or a sketch through the images of its points,
+        and a dot for each point.  A dot is the image of the point (see symmetry_image): pressed and dragged, it moves the ORIGINAL point, and every image follows.  Nothing of this is
+        a model of its own: no statement, no row of the tree -- they are parts of the model, and the model and its parts are mirrored together '''
+    parts = _carried_parts(shape)
+    out = []
+    for k in numbers:
+        for part in parts:
+            if hasattr(part, 'xyz'):
+                dot = symmetry_image(part, sym, k)
+                dot._gizmo_dot_only = True              # (it has no gizmo of its own to show: the original point has)
+                out.append(dot)
+                continue
+            dots = [symmetry_image(p, sym, k) for p in part.points]
+            for dot in dots:
+                dot._gizmo_dot_only = True
+            made = part._remake(dots, _determinant(dots[0]._symmetry_linear) < 0)
+            made._editable = False                      # (a press on it puts no point on it: the original's is what has them)
+            made._symmetry_of = part
+            out.append(made)
+            out.extend(dots)
+    return out
+
+
 def symmetry_images(shape, symmetry, only=None, distinct=False):
     ''' ALL the images of `shape` in the symmetry `symmetry`, as ONE model -- or those numbered in `only`, `only=(1, 3)`; with `distinct=True` those that are neither the shape
         itself nor another image (a tube along a path that lies in a plane of the symmetry has no image in that plane) -- so that what a symmetry of several planes makes of a leg
@@ -459,7 +579,12 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
         itself is not in it: it is its own model, the one you edit), and a set of points for a point.  The viewport draws each image as a shape of its own, meshed and moved on its
         own (so that dragging the shape moves its images as it is dragged, with nothing meshed again), all of them one model of the tree: select it and all of them are selected.
         It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
-        a surface of any of them pulls the shape.  '''
+        a surface of any of them pulls the shape.
+
+        What a shape was made from is mirrored TOGETHER with it: the sketches, the lines and the points of the models it was made from -- the sketch and the path of a
+        `path_extrude`, the sketch of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
+        models -- there is no statement and no row of the model tree for them -- and the ones of the shape you made stay the only ones with numbers: press a dot of any image's and drag
+        it, and it is that point of the original that moves.  '''
     sym = symmetry
     _check(shape, sym, 'symmetry_images')
     if getattr(shape, '_ctrl_pos', None):
@@ -479,7 +604,7 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
         raise ValueError('symmetry_images(): only= leaves no image')
     images = [symmetry_image(shape, sym, k) for k in numbers]
     if distinct:
-        keep = _distinct(shape, images)
+        keep = _distinct(shape, images, sym, numbers)
         numbers = [numbers[i] for i in keep]
         images = [images[i] for i in keep]
     for im in images:
@@ -490,8 +615,10 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
         if getattr(im, '_gizmo', None) is not None:
             im._gizmo_hidden = True
 
+    extras = _carried_images(shape, sym, numbers)
+
     def shown():
-        return list(images)                 # (each is drawn as its own kind of shape is: the interpreter asks every one for its display)
+        return list(images) + extras        # (each is drawn as its own kind of shape is: the interpreter asks every one for its display -- the images, and the path of a sweep with them)
 
     if not images:
         # (nothing is made of it that is not the model itself: a set of no shape)

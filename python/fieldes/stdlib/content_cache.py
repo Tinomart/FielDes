@@ -124,6 +124,11 @@ def shape_key(shape):
             key = (LOCAL, ctypes.string_at(p).decode('ascii'))
         finally:
             lib.libfive_free_str(ctypes.cast(p, ctypes.c_char_p))
+    # A symmetry is a tiny ball at its centre: its expression says nothing of how many copies or planes it has, which way its axis goes, what kind it is -- and what is made with it
+    # (the images of a leg) is not the same for another.  Its definition is part of what it is
+    definition = getattr(shape, '_symmetry_def', None)
+    if definition is not None:
+        key = (key, 'symmetry', repr(definition))
     try:
         shape._content_key = (shape.ptr, key, numbers)      # (asked once per shape and set of numbers)
     except Exception:

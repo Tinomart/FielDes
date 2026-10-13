@@ -55,7 +55,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_linked', '_instance_of', '_no_handles', '_symmetry_def')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key')
 
 
 def _is_number(v):
@@ -171,6 +171,25 @@ def _placed_ring(points, about, move, rotate, scale):
     return out
 
 
+def _placed_frame(frame, about, move, rotate, scale):
+    ''' The plane a 2D shape is drawn in -- (origin, u, v), three expressions each; the plane z = 0 when `frame` is None -- as the gizmo places it: scaled about `about`, turned (x,
+        then y, then z) about it, moved.  The shape is drawn as its face in that plane, so a shape that is turned out of z = 0 has its plane turned with it, and is not cut across
+        by the plane it was in '''
+    from fieldes.stdlib.symmetries import _add, _matmul_expr, _mul, _turn_matrix
+    if frame is None:
+        frame = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+    R = _turn_matrix(rotate)
+
+    def turned(w):
+        s = [_mul(scale[i], w[i]) for i in range(3)]
+        return [_add(_add(_mul(R[i][0], s[0]), _mul(R[i][1], s[1])), _mul(R[i][2], s[2])) for i in range(3)]
+    o, u, v = frame
+    rel = [_add(o[i], _mul(-1.0, about[i])) for i in range(3)]
+    t = turned(rel)
+    origin = [_add(_add(about[i], t[i]), move[i]) for i in range(3)]
+    return tuple(tuple(Shape.wrap(c) for c in axis) for axis in (origin, turned(u), turned(v)))
+
+
 def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
     ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
 
@@ -230,6 +249,13 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # (always a new shape, to hang the handles on: the part itself is shared)
     out = _move(out, tuple(move))
     _carry(out, shape)
+    # A 2D shape is drawn as its face in a plane (z = 0, or the one it says it lies in): placed out of that plane -- turned about x or y, moved along z -- its plane is placed
+    # with it, else the face drawn would be the slice of the turned shape at z = 0 (squashed, and gone at a quarter turn)
+    from fieldes.kinds import kind_of
+    if kind_of(shape) == 'profile' and not getattr(shape, 'plane', None):
+        out_of_plane = _var_numbers([rotate[0], rotate[1], move[2]])
+        if out_of_plane is not None and any(abs(x) > 1e-9 for x in out_of_plane):
+            out._flat_frame = _placed_frame(getattr(shape, '_flat_frame', None), about_what, tuple(move), tuple(rotate), tuple(scale))
     # (what a linked copy of the placed shape follows: the shape as it was before the gizmo moved and turned it -- scaled, as the gizmo scaled it: a copy has no scale of its own --
     # so that the copy and the original are each moved and turned by their own numbers)
     out._placed_parts = (shape, about_what, tuple(scale))

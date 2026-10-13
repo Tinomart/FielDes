@@ -864,6 +864,8 @@ def _symmetry_template(r, values):
 
     def vec(v):
         return '(%s)' % ', '.join(_num(float(c)) for c in v)
+    if kind == 'turn':
+        return "symmetry_planes(copies=%d, kind='turn', centre=%s, axis=%s, first=%s)" % (int(planes), vec(centre), vec(axis), vec(first))
     return 'symmetry_planes(planes=%d, kind=%r, centre=%s, axis=%s, first=%s)' % (int(planes), kind, vec(centre), vec(axis), vec(first))
 
 

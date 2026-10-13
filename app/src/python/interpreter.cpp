@@ -1689,7 +1689,7 @@ void Interpreter::recordShape(
                 d.present = true;
                 PyObject* k = PyTuple_GetItem(sd, 0);
                 const std::string kind = PyUnicode_Check(k) ? PyUnicode_AsUTF8(k) : "axis";
-                d.kind = kind == "cube" ? 2 : kind == "across" ? 1 : 0;
+                d.kind = kind == "turn" ? 3 : kind == "cube" ? 2 : kind == "across" ? 1 : 0;
                 d.count = int(PyLong_AsLong(PyTuple_GetItem(sd, 1)));
                 auto vec = [](PyObject* t, QVector3D& out) {
                     if (PyTuple_Check(t) && PyTuple_Size(t) == 3)
@@ -1892,6 +1892,14 @@ void Interpreter::recordShape(
                     PyObject* hid = PyObject_GetAttrString(obj, "_gizmo_hidden");
                     hd.hidden = hid && PyObject_IsTrue(hid) == 1;
                     Py_XDECREF(hid);
+                    PyErr_Clear();
+                }
+                // The image of a point of a path, drawn with the images of its sweep: a dot that is dragged, and has no gizmo of its own
+                if (PyObject_HasAttrString(obj, "_gizmo_dot_only"))
+                {
+                    PyObject* dot = PyObject_GetAttrString(obj, "_gizmo_dot_only");
+                    hd.dotOnly = dot && PyObject_IsTrue(dot) == 1;
+                    Py_XDECREF(dot);
                     PyErr_Clear();
                 }
                 shape->setGizmo(hd);

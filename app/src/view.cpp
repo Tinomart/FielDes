@@ -2126,9 +2126,7 @@ void View::mousePressEvent(QMouseEvent* event)
                 // selected or not and whatever gizmo is shown.  One that has its numbers already is moved at once (a click that does not move selects it); one that has none
                 // is selected (which gives it the numbers it is moved by) and the drag begins as soon as they are there, if the button is still down.  Several selected points
                 // are moved by the dot of their group
-                int selectedCount = 0;
-                for (const Shape* s : shapes)
-                    if (s->isSelected()) ++selectedCount;
+                const int selectedCount = selectedShapeCount();       // (the images of one row, and the dots drawn with them, are one selection)
                 const bool direct = !(event->modifiers() & Qt::ControlModifier) && dot->sourceLine() >= 0 && !dot->isLocked() && !(dot->isSelected() && selectedCount > 1);
                 // (a point has its numbers when its script has the gizmo's move numbers for it: whether it is selected -- which shows the gizmo -- does not matter)
                 const bool numbers = dot->hasMoveVars();
@@ -2188,8 +2186,9 @@ void View::mousePressEvent(QMouseEvent* event)
                     return;
                 }
                 // The face of a sketch: dragged, it takes all its points along in its plane; a click selects it
+                // (the face of an image -- the sketch a sweep's images bring along -- is not dragged: its points are the original's, and a click selects it)
                 if (picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->isFace() && !shapes.at(picked - 1)->isLocked() &&
-                    shapes.at(picked - 1)->sourceLine() >= 0)
+                    !shapes.at(picked - 1)->isSymmetryImage() && shapes.at(picked - 1)->sourceLine() >= 0)
                 {
                     Shape* face = shapes.at(picked - 1);
                     double frame[9];
@@ -3145,12 +3144,30 @@ void View::refreshSymmetry()
 
 void View::setSymmetryKind(int kind)
 {
-    kind = std::max(0, std::min(2, kind));
-    emit(symmetryArguments(QStringList{"kind"}, QStringList{QString("'%1'").arg(kind == 2 ? "cube" : kind == 1 ? "across" : "axis")}));
+    kind = std::max(0, std::min(3, kind));
+    QStringList names{"kind"}, values{QString("'%1'").arg(kind == 3 ? "turn" : kind == 2 ? "cube" : kind == 1 ? "across" : "axis")};
+    // (the number is the planes of one kind and the copies of the other: it goes to the argument that kind has, and the other one is taken out of the call)
+    const bool wasTurn = m_sym.kind == Symmetry::Turn;
+    if (kind == 3 && !wasTurn)
+    {
+        names << "copies" << "planes";
+        values << QString::number(std::max(1, std::min(24, m_sym.count))) << QString();
+    }
+    else if (kind != 3 && wasTurn)
+    {
+        names << "planes" << "copies";
+        values << QString::number(std::max(1, std::min(8, m_sym.count))) << QString();
+    }
+    emit(symmetryArguments(names, values));
 }
 
 void View::setSymmetryCount(int count)
 {
+    if (m_sym.kind == Symmetry::Turn)
+    {
+        emit(symmetryArguments(QStringList{"copies"}, QStringList{QString::number(std::max(1, std::min(24, count)))}));
+        return;
+    }
     count = std::max(1, std::min(8, count));
     QStringList names{"planes"}, values{QString::number(count)};
     if (m_sym.kind == Symmetry::Cube)
@@ -3331,6 +3348,29 @@ static void drawPlanes(QPainter& painter, const std::function<QPointF(const QVec
     }
 }
 
+// The copies of a turn symmetry, drawn as a disc across the axis with a spoke where each copy's sector begins, and the axis
+static void drawTurns(QPainter& painter, const std::function<QPointF(const QVector3D&)>& toScreen, const Symmetry& s, float reach, const QColor& ink, double strength, bool dashed)
+{
+    Symmetry n = s;
+    n.normalise();
+    const QVector3D c = n.centre, a = n.a, b = n.b();
+    const int copies = std::max(1, std::min(24, s.count));
+    const float radius = 0.55f * reach;
+    auto at = [&](float t) { return toScreen(c + radius * (a * std::cos(t) + b * std::sin(t))); };
+    QPolygonF disc;
+    for (int k = 0; k < 72; ++k) disc << at(float(2.0 * M_PI * k / 72.0));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(ink.red(), ink.green(), ink.blue(), int(24 * strength)));
+    painter.drawPolygon(disc);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), int(190 * strength)), 1.5, dashed ? Qt::DashLine : Qt::SolidLine));
+    painter.drawPolygon(disc);
+    painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), int(230 * strength)), 1.5, dashed ? Qt::DashLine : Qt::SolidLine));
+    for (int k = 0; k < copies; ++k) painter.drawLine(toScreen(c), at(float(2.0 * M_PI * k / copies)));
+    painter.setPen(QPen(QColor(ink.red(), ink.green(), ink.blue(), int(150 * strength)), 1.2));
+    painter.drawLine(toScreen(c - n.c * reach), toScreen(c + n.c * reach));
+}
+
 void View::drawSymmetry(QPainter& painter)
 {
     if (!m_symExists) return;
@@ -3344,7 +3384,8 @@ void View::drawSymmetry(QPainter& painter)
         // How far the planes reach: about five hundred pixels' worth of the world at the centre, so that they are as large as the picture whatever the zoom (a plane seen edge
         // on, in the work plane's view, is a line that spans the picture)
         const float reach = std::max(1e-3f, float(scaleAt(toScreen(now.centre).toPoint(), now.centre)) * 5.0f);
-        drawPlanes(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
+        if (now.kind == Symmetry::Turn) drawTurns(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
+        else drawPlanes(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
         // (the middle: a cross, small -- the gizmo of the model is what moves it)
         const QPointF c0 = toScreen(now.centre);
         painter.setPen(QPen(ink, 1.6));
@@ -4207,10 +4248,11 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         {
             if (Shape* dot = pointDotAt(event->pos()))
             {
-                if (pointStyleOf(dot) != 0 && dot->sourceLine() >= 0)
+                const Shape* base = (dot->gizmo().dotOnly && dot->followedShape()) ? dot->followedShape() : dot;
+                if (pointStyleOf(dot) != 0 && base->sourceLine() >= 0)
                 {
                     cancelPlacement();
-                    emit(pointToggleRequested(dot->sourceLine()));
+                    emit(pointToggleRequested(base->sourceLine()));
                     return;
                 }
             }
@@ -4219,12 +4261,14 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
 
-    // A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, and the other way
+    // A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, and the other way (on the dot of an image of the path of a sweep: the point it is
+    // the image of changes)
     if (Shape* dot = pointDotAt(event->pos()))
     {
-        if (pointStyleOf(dot) != 0 && dot->sourceLine() >= 0)
+        const Shape* base = (dot->gizmo().dotOnly && dot->followedShape()) ? dot->followedShape() : dot;
+        if (pointStyleOf(dot) != 0 && base->sourceLine() >= 0)
         {
-            emit(pointToggleRequested(dot->sourceLine()));
+            emit(pointToggleRequested(base->sourceLine()));
             return;
         }
     }
@@ -5834,7 +5878,8 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
     bool anyShown = false, anyLocked = false;
     for (Shape* s : shapes)
     {
-        if (!s->isSelected()) continue;
+        // (the dots of the paths that are drawn with the images of a sweep are pressed and dragged, they are not part of a selection of the row)
+        if (!s->isSelected() || s->gizmo().dotOnly) continue;
         ++selected;
         anyLocked |= s->isLocked();
         if (!s->hasMoveVars()) continue;
@@ -7382,8 +7427,23 @@ void View::dragGizmo(QPoint pos)
         if (l2 < 1) return;
         const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
         std::map<libfive::Tree::Id, float> numbers;          // (every shape that moves with the arrow)
+        float distance = float(t * gizmo_len);
+        // A symmetry, while the work plane's view is open and its grid snaps: its centre lands on the grid.  An arrow along one of the plane's own axes moves it along a line of
+        // the grid -- the centre goes to the nearest of its crossings along the arrow, as a point put down does (the dot and the squares of the gizmo go through
+        // snapToWorkPlane already)
+        if (m_wp.open && m_wp.exists && m_wp.snap && gizmo_active.shape && gizmo_active.shape->isSymmetry())
+        {
+            const bool alongU = std::fabs(std::fabs(QVector3D::dotProduct(gizmo_arrow, m_wp.u)) - 1.0f) < 1e-3f;
+            const bool alongV = std::fabs(std::fabs(QVector3D::dotProduct(gizmo_arrow, m_wp.v)) - 1.0f) < 1e-3f;
+            if (alongU || alongV)
+            {
+                const float step = workPlaneStep();
+                const float before = QVector3D::dotProduct(gizmo_pivot - m_wp.origin(), gizmo_arrow);
+                distance = std::round((before + distance) / step) * step - before;
+            }
+        }
         for (const auto& v : gizmo_vars)
-            numbers[v.id] = v.value0 + float(t * gizmo_len) * (v.mapped ? QVector3D::dotProduct(v.w, gizmo_arrow) : v.weight);
+            numbers[v.id] = v.value0 + distance * (v.mapped ? QVector3D::dotProduct(v.w, gizmo_arrow) : v.weight);
         applyGizmoNumbers(numbers);
     }
     else if (gizmo_active.kind == 3 || gizmo_active.kind == 4)

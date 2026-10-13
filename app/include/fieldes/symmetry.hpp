@@ -16,6 +16,7 @@ of the License, or (at your option) any later version.
 
 class QDoubleSpinBox;
 class QLabel;
+class QSpinBox;
 class QToolButton;
 
 namespace FielDes {
@@ -41,14 +42,15 @@ struct SymmetryElement
  *  follow it (the script keeps them as symmetry_image(...) of the original).  It is a tool of the viewport, as the work plane is: it is not a model of the script.
  *
  *  The planes are of three arrangements, round an axis `c`: `Axis` -- `count` planes that all contain the axis, equally spaced; `AxisAndAcross` -- the same, and the
- *  plane across the axis; `Cube` -- the nine planes of a cube whose axes are `a`, `b`, `c` (three across them, six diagonal).  `a` is a line of the first plane, `b` is c x a
+ *  plane across the axis; `Cube` -- the nine planes of a cube whose axes are `a`, `b`, `c` (three across them, six diagonal).  `a` is a line of the first plane, `b` is c x a.
+ *  The fourth, `Turn`, has no planes: `count` copies (1 to 24) equally spaced round the axis, each the one before it turned by 360 / count degrees, and nothing mirrored
  */
 struct Symmetry
 {
-    enum Kind { Axis = 0, AxisAndAcross = 1, Cube = 2 };
+    enum Kind { Axis = 0, AxisAndAcross = 1, Cube = 2, Turn = 3 };
     bool on = false;
     int kind = Axis;
-    int count = 1;                          // the planes about the axis (Axis, AxisAndAcross): 1 to 8
+    int count = 1;                          // the planes about the axis (Axis, AxisAndAcross): 1 to 8; the copies round it (Turn): 1 to 24
     QVector3D centre{0, 0, 0};
     QVector3D a{0, 1, 0};                   // a line in the first plane, across the axis
     QVector3D c{0, 0, 1};                   // the axis
@@ -108,8 +110,11 @@ protected:
     QToolButton* m_header;
     QToolButton* m_close;
     QWidget* m_body;
-    QToolButton* m_kind[3];
-    QToolButton* m_count[6];
+    QToolButton* m_kind[4];
+    QToolButton* m_count[8];
+    QSpinBox* m_copies = nullptr;           // (Turn: how many copies, up to 24)
+    QLabel* m_countLabel = nullptr;
+    QLabel* m_angleLabel = nullptr;
     QDoubleSpinBox* m_angle;
     QDoubleSpinBox* m_centre[3];
     QLabel* m_info;

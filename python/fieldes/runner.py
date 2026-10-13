@@ -519,7 +519,7 @@ def _continue(state, breakpoints, skip_first):
     import contextlib
     import threading
     import time
-    from fieldes import field_cache, run_progress
+    from fieldes import field_cache, made_from, run_progress
     body, gs, out, lines = state['body'], state['gs'], state['out'], state['lines']
     source_lines = state['source_lines']
     last_paused = -1
@@ -600,6 +600,7 @@ def _continue(state, breakpoints, skip_first):
                     f = compile(mod, '<file>', 'exec')
                     # A field built by `name = ...` that has been built before from the same inputs is not built again
                     # (see field_cache.py): in this session, or from the file an earlier session kept
+                    inputs = made_from.reads(p, gs)         # (the models it reads, before it runs: see made_from.py)
                     hit, key = field_cache.lookup(p, gs, source_lines)
                     if hit is not None:
                         gs[p.targets[0].id] = hit[0]
@@ -613,6 +614,7 @@ def _continue(state, breakpoints, skip_first):
                         if key is not None:
                             field_cache.store(key, gs.get(p.targets[0].id), state['printed'].getvalue()[before:],
                                               time.time() - started)
+                    made_from.note(p, gs, inputs)           # (the model keeps the models it was made from: a field the cache handed back too -- these are this run's)
                 with lock:
                     i = state['i']      # (an edit put into the run while the statement ran has moved it: see apply_edit)
                     out.append(r)
