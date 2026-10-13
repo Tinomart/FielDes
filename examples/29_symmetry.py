@@ -21,7 +21,7 @@
 #     pressed (not in use): it does not.  A box whose centre is on the axis has no images: it is its own image.
 #   * Select the table top: its own planes (it is mirror symmetric: two planes at right angles, and the plane across them) are drawn in teal,
 #     and `Take its planes` in the card makes a symmetry of them.
-#   * With the work plane open (Shift+W), draw a line or a sketch: it is drawn at its images too, through the images of its points -- and half
+#   * With the work plane open (Shift+W), draw a line or a sketch: it is drawn at its images too -- one `spline_1_images` row, through the images of its points -- and half
 #     a shape whose ends are on a plane is closed through its image into one sketch.
 from fieldes import *
 

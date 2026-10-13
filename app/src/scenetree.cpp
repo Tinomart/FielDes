@@ -6816,6 +6816,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         info["type"] = operands[0].item["type"].toString();
         info["role"] = QString();
         info["cls"] = operands[0].item["cls"].toString();
+        info["symmetry_image"] = operands[0].item["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
         othersInfo.append(info);
         other = operands[0].source;
         body.clear();
@@ -6832,6 +6833,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
             info["type"] = operands[i].item["type"].toString();
             info["role"] = operands[i].item["condition_role"].toString();
             info["cls"] = operands[i].item["cls"].toString();
+            info["symmetry_image"] = operands[i].item["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
             othersInfo.append(info);
         }
         other = names.join(", ");
@@ -6853,6 +6855,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         info["type"] = second["type"].toString();
         info["role"] = second["condition_role"].toString();
         info["cls"] = second["cls"].toString();
+        info["symmetry_image"] = second["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
         othersInfo.append(info);
         other = second["var"].toString();
     }
@@ -6872,6 +6875,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         info["type"] = bodyItem["type"].toString();
         info["role"] = bodyItem["condition_role"].toString();
         info["cls"] = bodyItem["cls"].toString();
+        info["symmetry_image"] = bodyItem["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
         info["part"] = bodyItem["part_name"].toString();
         request["body_info"] = info;
     }
@@ -7135,6 +7139,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
             info["type"] = operands[0].item["type"].toString();
             info["role"] = QString();
             info["cls"] = operands[0].item["cls"].toString();
+            info["symmetry_image"] = operands[0].item["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
             othersInfo.append(info);
             other = operands[0].source;
             body.clear();
@@ -7161,6 +7166,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
                     info["type"] = operands[i].item["type"].toString();
                     info["role"] = operands[i].item["condition_role"].toString();
                     info["cls"] = operands[i].item["cls"].toString();
+                    info["symmetry_image"] = operands[i].item["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
                     othersInfo.append(info);
                 }
                 if (operands[i].after > last.after) last = operands[i];
@@ -7210,7 +7216,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         request["smooth"] = placedSmooth;
     }
     // (while the symmetry is on, what is made is made with its images: the library writes them under the model, see symmetry_creation)
-    if (kind == "primitive" && !m_symmetryRequest.isEmpty() && !m_activeSymVar.isEmpty() && name != "symmetry_planes")
+    if ((kind == "primitive" || kind == "operation") && !m_symmetryRequest.isEmpty() && !m_activeSymVar.isEmpty() && name != "symmetry_planes")
     {
         QJsonObject used = m_symmetryRequest;
         used["var"] = m_activeSymVar;
@@ -7227,6 +7233,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         info["type"] = bodyItem["type"].toString();
         info["role"] = bodyItem["condition_role"].toString();
         info["cls"] = bodyItem["cls"].toString();
+        info["symmetry_image"] = bodyItem["symmetry_image"].toBool();       // (what is the images of a model has no images of its own made)
         info["part"] = bodyItem["part_name"].toString();
         request["body_info"] = info;
     }
@@ -7286,8 +7293,10 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
             // Under the definition of the model, with a line showing the result
             const QString indent = indentOf(lineText(target["line"].toInt() - 1));
             const QString last = lineText(after);
+            QString indentedImages = images;                    // (the images of what the operation made, with the symmetry on: under its display line)
+            indentedImages.replace("\n", "\n" + indent);
             edits << TextEdit{after, int(last.size()), after, int(last.size()),
-                              "\n" + indent + statement + "\n" + indent + var};
+                              "\n" + indent + statement + "\n" + indent + var + indentedImages};
             if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
         }
         else if (line0 >= 0 && line0 < src.split('\n').size() && canInsertAfter(src.split('\n'), line0))
