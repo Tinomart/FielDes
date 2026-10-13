@@ -253,6 +253,8 @@ public:
      */
     const libfive::Region<3>& getMeshBounds() const { return mesh_bounds; }
     bool hasMesh() const { return mesh && gl_ready; }
+    /*  The box of the mesh as a drag shows it -- moved, turned and scaled by the numbers of the gizmo that are being dragged -- false when no such picture is shown  */
+    bool previewBox(QVector3D& lo, QVector3D& hi) const;
 
     /*  Read-only access for evaluating the field (slice viewer)  */
     const libfive::Tree& getTree() const { ensureField(); return tree; }

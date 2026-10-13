@@ -959,12 +959,12 @@ Window::Window(Arguments args)
         Shortcuts::add(openAction, "view.workplane", {QKeySequence(Qt::SHIFT | Qt::Key_W)});
         Shortcuts::add(newAction, "view.workplane-new", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_W)});
         Shortcuts::add(faceAction, "view.workplane-face", {QKeySequence(Qt::Key_W)});
-        // Q: the nothing mode of the work plane view -- things are selected, moved, turned and scaled as usual, nothing is put down.  It is there only while the view
-        // is open (a disabled action does not take the key)
+        // The nothing mode of the work plane view -- things are selected, moved, turned and scaled as usual, nothing is put down -- is a right click in the viewport while
+        // a kind of drawing is on (View::mouseReleaseEvent); this entry is the same by the menu.  It is there only while the view is open
         auto selectAction = view_menu->addAction(T("Work plane: select, do not draw"));
-        selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual"));
+        selectAction->setToolTip(T("Leave the drawing: clicks select, move, turn and scale things as usual (a right click in the viewport does it too)"));
         selectAction->setEnabled(false);
-        Shortcuts::add(selectAction, "view.workplane-select", {QKeySequence(Qt::Key_Q)});
+        Shortcuts::add(selectAction, "view.workplane-select", {});
         for (QAction* a : {openAction, newAction, faceAction, selectAction})
         {
             a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -1305,6 +1305,8 @@ Window::Window(Arguments args)
     // Model tree: every action is an edit of the script
     {
         auto scene = view->scenePanel();
+        // (a model dragged out of the render region grows it as it is dragged: the region is written into the script when the drag ends, with the numbers of the drag)
+        connect(view, &View::regionGrown, scene, &ScenePanel::growRegionTo);
         scene->setScriptSource([this]{ return editor->getScript(); });
         // (the statement that makes a shape's surfaces draggable is written by the interpreter, which has the shape)
         scene->setHandlesSource([this](const QString& var, QString* error) {
@@ -1855,17 +1857,36 @@ Window::Window(Arguments args)
             QApplication::processEvents();
             row = findRow(args.section(' ', 1));
             if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
-            const QPoint pos(tree->columnViewportPosition(0) + tree->columnWidth(0) / 2, tree->visualItemRect(row).top() + 1);
+            // (the middle of the row: where the circle with the + is; `clickleft` / `moveleft`: the left end of the gap instead, which is not on the circle)
+            const bool left = what.endsWith("left");
+            QPoint pos(left ? tree->columnViewportPosition(0) + 14 : tree->columnViewportPosition(0) + tree->columnWidth(0) / 2, tree->visualItemRect(row).top() + 1);
+            // (`clickcircle` / `movecircle`: exactly on the circle, where the tour's hand goes)
+            if (what.endsWith("circle")) pos = tree->viewport()->mapFrom(this, view->scenePanel()->sectionGapPoint(args.section(' ', 1), this));
             auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
                 QMouseEvent e(t, pos, tree->viewport()->mapToGlobal(pos), b, bs, Qt::NoModifier);
                 QApplication::sendEvent(tree->viewport(), &e);
                 QApplication::processEvents();
             };
             send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton);
-            if (what == "click")
+            if (what.startsWith("click"))
             {
                 send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
                 send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+            }
+        });
+        // placeholderclick: a click on the amber row of the first placeholder (its three dots are selected in the code editor)
+        a->add("placeholderclick", [=](const QString&){
+            auto* panel = view->scenePanel();
+            const QRect r = panel->placeholderRect(this);
+            if (r.isEmpty()) { std::cerr << "automation: no placeholder row\n"; return; }
+            QWidget* vp = panel->treeViewport();
+            const QPoint pos = vp->mapFrom(this, QPoint(r.left() + 60, r.center().y()));
+            for (const auto t : {QEvent::MouseMove, QEvent::MouseButtonPress, QEvent::MouseButtonRelease})
+            {
+                QMouseEvent e(t, pos, vp->mapToGlobal(pos), t == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                              t == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(vp, &e);
+                QApplication::processEvents();
             }
         });
         // treearrow <hover|click> <text prefix>: the mouse on the arrow at the end of a row (the properties of a result): a hover shows it, a click opens the drawer

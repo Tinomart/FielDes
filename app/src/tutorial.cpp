@@ -290,6 +290,7 @@ struct Tutorial::Step
     std::function<QVector<int>()> code;                 // the lines of the script (0-based) the step is about: framed, and not dimmed
     Place place = Auto;
     bool keys = false;                                  // whether the keyboard works in this step
+    bool showView = false;                              // the viewport is not dimmed (nothing in it to click): the step changes a model, and the change is to be seen
     std::function<void()> enter;
     std::function<void()> leave;                        // what the step wrote into the script for itself goes when it is left
     std::function<bool()> done;                         // what the step asks of the user is done
@@ -670,6 +671,11 @@ void Tutorial::useScript(const QString& text)
     // (the lines a step puts there are not changes the user made: they do not glow)
     m_scriptSeen = text.split('\n');
     m_changed.clear();
+    // The model of another step is framed in the view -- the camera is where the step before left it, and a small model can stand half out of the picture -- once the
+    // script has run and set the region it is in (again when the region has been fitted to the model); not when the user has taken the camera in hand since
+    m_viewTouched = false;
+    for (const int ms : {1200, 3500})
+        after(ms, [this] { if (!m_viewTouched) m_view->zoomTo(); });
 }
 
 void Tutorial::buildSteps()
@@ -730,6 +736,57 @@ void Tutorial::buildSteps()
         };
     };
 
+    // A call is written one argument to a line, so a statement is several lines: where the one that starts with `prefix` ends (the line its parentheses are closed on), and
+    // its text.  A step that asks for something in a call looks at all of it, not at its first line
+    struct Statement { int first = -1, last = -1; QString text; };
+    auto statementAt = [this](const QString& prefix) -> Statement {
+        Statement out;
+        const QStringList lines = m_editor->getScript().split('\n');
+        for (int i = 0; i < lines.size() && out.first < 0; ++i)
+            if (lines[i].startsWith(prefix)) out.first = i;
+        if (out.first < 0) return out;
+        int depth = 0;
+        for (int i = out.first; i < lines.size(); ++i)
+        {
+            out.last = i;
+            out.text += (i > out.first ? "\n" : "") + lines[i];
+            for (const QChar c : lines[i])
+            {
+                if (c == '(' || c == '[') ++depth;
+                else if (c == ')' || c == ']') --depth;
+            }
+            if (depth <= 0) break;
+        }
+        return out;
+    };
+    // (the lines of that statement, and of the line that shows the model under it: what a step frames in the code)
+    auto statementLines = [statementAt](const QString& prefix) {
+        return [statementAt, prefix]() -> QVector<int> {
+            QVector<int> out;
+            const Statement s = statementAt(prefix);
+            for (int i = s.first; s.first >= 0 && i <= s.last; ++i) out << i;
+            return out;
+        };
+    };
+    // (the first number of a call that is written var(...): the one a step asks the user to change, and its place in the text of its line)
+    auto firstVarOf = [](const QString& line, double* value, int* from, int* to) {
+        static const QRegularExpression re(R"(var\(\s*(-?[\d.]+)\s*\))");
+        const auto m = re.match(line);
+        if (!m.hasMatch()) return false;
+        if (value) *value = m.captured(1).toDouble();
+        if (from) *from = m.capturedStart(1);
+        if (to) *to = m.capturedEnd(1);
+        return true;
+    };
+    // (the first number a call is given, written var(5) or 5 alike: typing a number over the row's var(5) leaves a plain number, which is the user's change all the same)
+    auto firstNumberOf = [](const QString& line, double* value) {
+        static const QRegularExpression re(R"(^\w+\s*=\s*\w+\(\s*(?:var\(\s*)?(-?[\d.]+))");
+        const auto m = re.match(line);
+        if (!m.hasMatch()) return false;
+        if (value) *value = m.captured(1).toDouble();
+        return true;
+    };
+
     // (the tree and the viewport together: a menu is opened from either)
     auto both = [this, scene]() -> QVector<QRect> {
         QVector<QRect> out;
@@ -775,9 +832,13 @@ void Tutorial::buildSteps()
     // 0
     {
         Step s;
-        s.title = T("Welcome to FielDes");
-        s.text = T("A short tour of the basics. You can skip any step, or the whole tour.");
-        s.hint = T("It starts again from Help ▸ Guided tour.");
+        s.title = T("Thank you for downloading FielDes");
+        s.text = T("FielDes stands for Field driven Design, which means that it wants you to design clean, organic geometry through the power of math. "
+                   "It is most useful for post processing steps like simulations or topology optimizations of imported CAD files or geometries you modelled directly "
+                   "in FielDes itself. The data from those steps creates fields that can directly improve your designs.")
+                 + "\n\n" + T("Happy designing, and I hope FielDes can make your workflows faster and more intuitive.")
+                 + "\n\n" + "-Tino";
+        s.hint = T("The guided tour is a few minutes. It starts again from Help ▸ Guided tour.");
         s.welcome = true;
         s.place = Center;
         add(s);
@@ -810,6 +871,7 @@ void Tutorial::buildSteps()
             m_editor->scriptWidget()->goToLine(std::max(0, scriptLine("plate =")), false);
         };
         s.done = [this] { bool ok = false; const double v = plateHeight(&ok); return ok && std::abs(v - m_baseline) > 1e-9; };
+        s.showView = true;
         s.doneNote = T("Nice. The plate is thicker.");
         s.show = [this](std::function<void()> over) {
             const int line = scriptLine("plate =");
@@ -889,6 +951,7 @@ void Tutorial::buildSteps()
         s.place = Right;
         s.closeRows = true;
         s.undone = true;                                // (the gizmo line that selecting writes goes with the step)
+        s.showView = true;
         s.enter = [scene] { scene()->clearSelection(); };
         s.done = [scene] { return scene()->selectionKeys().contains("shape:drilled"); };
         s.doneNote = T("Nice. It is selected in the viewport too.");
@@ -936,34 +999,46 @@ void Tutorial::buildSteps()
         s.openRows = QStringList{"drilled"};
         add(s);
     }
-    // 9: the arguments of a call are rows of the tree
+    // 9: the arguments of a call are rows of the tree: a number among them is typed over in the code, and the model is seen to change
     {
         Step s;
         s.title = T("Arguments are rows too");
-        s.text = T("Under a model, every number its call is written with is a row, in the order of the call. Click one: it is selected in the code, ready to type over.");
+        s.text = T("Under a model, every number its call is written with is a row, in the order of the call. Click the r row (the radius) under hole: its number is selected in the code. "
+                   "Type another number over it -- 9, say -- and watch the hole.");
         s.hint = T("The models a call is made of are its children; the other arguments are these dim rows. Or press Show me.");
-        s.code = linesWith("^plate =");
+        s.code = linesWith("^hole =");
         s.holes = holesOf(panelWidget);
-        s.aim = aimRow({"a = ("});
+        s.aim = aimRow({"r = "});
         s.place = Right;
+        s.keys = true;
+        s.showView = true;
         s.closeRows = true;
-        s.openRows = QStringList{"drilled", "plate"};
-        s.enter = [this, scene] {
+        s.openRows = QStringList{"drilled", "hole"};
+        s.enter = [this, scene, statementAt, firstNumberOf] {
             scene()->clearSelection();
+            const Statement st = statementAt("hole =");
+            double v = 0;
+            m_baseline = (st.first >= 0 && firstNumberOf(st.text.section('\n', 0, 0), &v)) ? v : 0;
             QTextCursor c = m_editor->scriptWidget()->textCursor();
             c.clearSelection();
             m_editor->scriptWidget()->setTextCursor(c);
         };
-        s.done = [this] {
-            const QTextCursor c = m_editor->scriptWidget()->textCursor();
-            return c.hasSelection() && c.block().text().startsWith("plate =");
+        s.done = [this, statementAt, firstNumberOf] {
+            const Statement st = statementAt("hole =");
+            double v = 0;
+            return st.first >= 0 && firstNumberOf(st.text.section('\n', 0, 0), &v) && std::abs(v - m_baseline) > 1e-9;
         };
-        s.doneNote = T("Nice. The value is selected in the code: type to replace it.");
-        s.show = [this, scene](std::function<void()> over) {
-            const QRect r = scene()->rowRect("a = (", m_window);
-            if (r.isEmpty()) { over(); return; }
+        s.doneNote = T("Nice. The hole is bigger: the number in the code is what the viewport draws.");
+        s.show = [this, scene, statementAt, firstVarOf](std::function<void()> over) {
+            const QRect r = scene()->rowRect("r = ", m_window);
+            const Statement st = statementAt("hole =");
+            int from = 0, to = 0;
+            if (r.isEmpty() || st.first < 0 || !firstVarOf(st.text.section('\n', 0, 0), nullptr, &from, &to)) { over(); return; }
             QWidget* vp = scene()->treeViewport();
-            fakeClick(vp, vp->mapFrom(m_window, QPoint(r.left() + 100, r.center().y())), Qt::LeftButton, over);
+            const int line = st.first;
+            fakeClick(vp, vp->mapFrom(m_window, QPoint(r.left() + 100, r.center().y())), Qt::LeftButton, [this, line, from, to, over] {
+                typeOver(line, from, to, "9", over);
+            });
         };
         add(s);
     }
@@ -1078,8 +1153,8 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Placeholders");
         s.text = T("A call that is missing something has a placeholder (...) in its place. Right-click drilled, then choose Operation ▸ Offsets and walls ▸ offset.");
-        s.hint = T("The new line waits for how far to offset: an amber row marks the placeholder. Or press Show me.");
-        s.code = linesWith("^offset_\\d+\\b");
+        s.hint = T("The new call waits for how far to offset: an amber row marks the placeholder. Or press Show me.");
+        s.code = statementLines("offset_1 =");
         s.holes = holesOf(panelWidget);
         s.aim = aimRow({"drilled"});
         s.place = Right;
@@ -1088,9 +1163,10 @@ void Tutorial::buildSteps()
             while (auto m = QApplication::activePopupWidget()) m->close();
             scene()->clearSelection();
         };
-        s.done = [this] {
-            static const QRegularExpression re(R"(^\w+ = offset\([^\n]*\.\.\.)", QRegularExpression::MultilineOption);
-            return re.match(m_editor->getScript()).hasMatch();
+        // (a call is written one argument to a line: the placeholder is on a line of its own, so the whole statement is looked at)
+        s.done = [statementAt] {
+            const Statement st = statementAt("offset_1 =");
+            return st.first >= 0 && st.text.contains("...");
         };
         s.doneNote = T("Nice. Amber, not red: it is no error, it is what has to be done for the script to run.");
         s.show = [this, scene, walk](std::function<void()> over) {
@@ -1124,52 +1200,56 @@ void Tutorial::buildSteps()
         s.title = T("Fill in the placeholder");
         s.text = T("The amber row is the placeholder. Click it: the three dots are selected in the code editor. Type a number over them, 1 for instance.");
         s.hint = T("The note under the tree lists every placeholder. Nothing runs while one is left; a row that holds a placeholder stays open. Or press Show me.");
-        s.code = linesWith("^offset_\\d+ =");
+        s.code = statementLines("offset_1 =");
         s.holes = treeAndScript;
         s.cardNear = treeNear;
         s.aim = [this, scene]() { return scene()->placeholderRect(m_window); };
         s.place = Right;
         s.keys = true;
+        s.showView = true;
         s.closeRows = true;
-        s.enter = [this, scene] {
+        s.enter = [this, scene, statementAt] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            // (the line the step works on: the step before made it; when that was skipped it is made here)
-            if (scriptLine("offset_1 =") < 0)
+            // (the call the step works on: the step before made it; when that was skipped it is made here, as the menu writes it)
+            if (statementAt("offset_1 =").first < 0)
             {
                 const QStringList lines = m_editor->getScript().split('\n');
                 for (int i = int(lines.size()) - 1; i >= 0; --i)
                 {
                     if (lines[i].trimmed() != "drilled") continue;
-                    m_editor->applyEdits({TextEdit{i, 0, i, int(lines[i].size()), "drilled\noffset_1 = offset(drilled, o=...)"}}, "Tour");
+                    m_editor->applyEdits({TextEdit{i, 0, i, int(lines[i].size()), "drilled\noffset_1 = offset(\n    drilled,\n    o=...,\n)\noffset_1"}}, "Tour");
                     break;
                 }
             }
             scene()->clearSelection();
         };
-        s.done = [this] {
-            const int i = scriptLine("offset_1 =");
-            return i >= 0 && !m_editor->getScript().split('\n').value(i).contains("...");
+        s.done = [statementAt] {
+            const Statement st = statementAt("offset_1 =");
+            return st.first >= 0 && !st.text.contains("...");
         };
         s.doneNote = T("Nice. The model is made.");
-        s.show = [this](std::function<void()> over) {
-            const int line = scriptLine("offset_1 =");
-            if (line < 0) { over(); return; }
-            const QString text = m_editor->getScript().split('\n').value(line);
-            const int dots = text.indexOf("...");
-            if (dots < 0) { over(); return; }
-            typeOver(line, dots, dots + 3, "1", over);
-        };
-        // (what the step made is the step's own: it goes when the step is left)
-        s.leave = [this] {
-            for (;;)
+        s.show = [this, statementAt](std::function<void()> over) {
+            const Statement st = statementAt("offset_1 =");
+            if (st.first < 0) { over(); return; }
+            const QStringList lines = st.text.split('\n');
+            for (int k = 0; k < lines.size(); ++k)
             {
+                const int dots = lines[k].indexOf("...");
+                if (dots < 0) continue;
+                typeOver(st.first + k, dots, dots + 3, "1", over);
+                return;
+            }
+            over();
+        };
+        // (what the step made is the step's own: it goes when the step is left -- the call and the line that shows it)
+        s.leave = [this, statementAt] {
+            for (int tries = 0; tries < 4; ++tries)
+            {
+                const Statement st = statementAt("offset_1");
+                if (st.first < 0) return;
                 const QStringList lines = m_editor->getScript().split('\n');
-                int at = -1;
-                for (int i = int(lines.size()) - 1; i >= 0; --i)
-                    if (lines[i].startsWith("offset_1")) { at = i; break; }
-                if (at < 0) return;
-                if (at + 1 < lines.size()) m_editor->applyEdits({TextEdit{at, 0, at + 1, 0, QString()}}, "Tour");
-                else if (at > 0) m_editor->applyEdits({TextEdit{at - 1, int(lines[at - 1].size()), at, int(lines[at].size()), QString()}}, "Tour");
+                if (st.last + 1 < lines.size()) m_editor->applyEdits({TextEdit{st.first, 0, st.last + 1, 0, QString()}}, "Tour");
+                else if (st.first > 0) m_editor->applyEdits({TextEdit{st.first - 1, int(lines[st.first - 1].size()), st.last, int(lines[st.last].size()), QString()}}, "Tour");
                 else return;
             }
         };
@@ -1179,7 +1259,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Sections");
-        s.text = T("Group the script in sections: move the mouse into the gap above drilled. It lights up. Click it: a section starts there. Type its name, then press Enter.");
+        s.text = T("Group the script in sections: move the mouse between two rows -- here, above drilled. A small + in a circle shows. Click the circle: a section starts there. Type its name, then press Enter.");
         s.hint = T("A section is a comment, # SECTION name: it folds in the code editor too. Double-click a section's name to rename it. Or press Show me.");
         s.code = linesWith("^\\s*#\\s*SECTION\\b");
         s.holes = holesOf(panelWidget);
@@ -1201,7 +1281,10 @@ void Tutorial::buildSteps()
             const QRect r = scene()->rowRect("drilled", m_window);
             if (r.isEmpty()) { over(); return; }
             QWidget* vp = scene()->treeViewport();
-            fakeClick(vp, vp->mapFrom(m_window, QPoint(r.left() + 120, r.top() + 1)), Qt::LeftButton, [this, over] {
+            // (the hand goes to the circle that shows between the rows: hovering shows it, and a click on it does it)
+            const QPoint circle = scene()->sectionGapPoint("drilled", m_window);
+            if (circle.isNull()) { over(); return; }
+            fakeClick(vp, vp->mapFrom(m_window, circle), Qt::LeftButton, [this, over] {
                 // the name of the new section is typed in at once: a key at a time, then Enter
                 auto editor = [this]() -> QLineEdit* {
                     auto f = qobject_cast<QLineEdit*>(QApplication::focusWidget());
@@ -1310,7 +1393,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("A field instead of a number");
-        s.text = T("swell is a field: a number at every place. Drag it onto grown: it takes the place of the 1.0.");
+        s.text = T("swell is a field: a number at every place. grown is block offset by a number, 1.0: the row o = 1.0 under it. Drag swell onto grown: the field takes the place of the 1.0.");
         s.hint = T("Anywhere a number goes, a field goes: grown is thicker where swell is large. The framed lines show the call change. Or press Show me.");
         s.code = linesWith("^(swell|grown) =");
         s.holes = holesOf(panelWidget);
@@ -1319,13 +1402,21 @@ void Tutorial::buildSteps()
         s.place = Right;
         s.group = "field";
         s.closeRows = true;
+        s.openRows = QStringList{"grown"};              // (what is dragged onto, with its arguments: the 1.0 that the field takes the place of is a row)
+        s.showView = true;
         s.enter = [this, scene, fieldModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             if (QAction* a = sectionAction()) a->setChecked(false);
             useScript(tourHeader(QString()) + fieldModel(false));
             scene()->clearSelection();
         };
-        s.done = [this] { return m_editor->getScript().contains("offset(block, swell)"); };
+        // (a call is written one argument to a line: the whole statement is looked at, without its blanks)
+        s.done = [statementAt] {
+            const Statement st = statementAt("grown =");
+            QString flat = st.text;
+            flat.remove(QRegularExpression("\\s"));
+            return st.first >= 0 && flat.contains("offset(block,swell");
+        };
         s.doneNote = T("Nice. The growth now follows the field.");
         s.show = [this, scene](std::function<void()> over) {
             const QRect a = scene()->rowRect("swell", m_window), b = scene()->rowRect("grown", m_window);
@@ -1372,9 +1463,10 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("One model, two places");
-        s.text = T("Sometimes a model is needed in two places. Here knob stands on its own, and the cap should be made with it too. A normal drag would "
-                   "move knob into the cap, and it would be gone from where it was. A reference lets the cap use knob while knob stays where it is.")
-                 + "\n\n" + T("Hold Ctrl and drag knob onto capped.");
+        s.text = T("Sometimes a model is needed in two places. capped is a union of cap and ring: those two are its arguments, the rows under it. knob stands on its own, and "
+                   "it should be one of the union's arguments too. A normal drag would move knob into the union, and it would be gone from where it was. A reference adds it "
+                   "while knob stays where it is.")
+                 + "\n\n" + T("Hold Ctrl and drag knob onto capped: it is added to its arguments.");
         s.hint = T("capped lists knob as a faded shadow row, and its line says # shadow: knob. Or press Show me.");
         s.code = linesWith("^(knob|capped) =|#\\s*shadow:");
         s.holes = holesOf(panelWidget);
@@ -1383,6 +1475,7 @@ void Tutorial::buildSteps()
         s.place = Right;
         s.group = "reference";
         s.closeRows = true;
+        s.openRows = QStringList{"capped"};             // (the union with its arguments: what knob is added to)
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeader(QString()) +
@@ -1423,7 +1516,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Draw on a work plane");
         s.text = T("Press Shift+W in the viewport for a work plane: a grid to draw on. Click to put down the corners of a shape, then click the first one to close it.")
-                 + "\n\n" + T("E picks line, spline or point; Q stops drawing.");
+                 + "\n\n" + T("E picks line, spline or point.");
         s.hint = T("The plane opens in Line, so the first click draws. Nothing is written until the shape is closed. Or press Show me.");
         s.code = linesWith("sketch\\(|^\\w+_p\\d+ = ");
         s.holes = holesOf(viewWidget);
@@ -1463,14 +1556,80 @@ void Tutorial::buildSteps()
         s.leave = [this] { m_view->setWorkPlaneOpen(false); };
         add(s);
     }
+    // 20b: stopping the drawing: a right click (the work plane has no way to be used without it)
+    {
+        Step s;
+        s.title = T("Stop drawing");
+        s.text = T("While you draw, every click puts down a point. To stop drawing, right-click in the viewport: clicks select, move, turn and scale things as usual again.");
+        s.hint = T("The View menu has the same: Work plane: select, do not draw. A right click and drag still pans the view. Or press Show me.");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.group = "workplane";
+        s.closeRows = true;
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            scene()->clearSelection();
+            m_view->setWorkPlaneOpen(false);
+            m_view->setWorkPlaneOpen(true);                     // (it opens in Line: drawing is on)
+            m_view->setWorkPlaneFrame(QVector3D(0, 0, 0), QVector3D(1, 0, 0), QVector3D(0, 1, 0));      // (the horizontal plane, seen from above: the camera turns, the plane stays)
+            m_view->standardView(View::VIEW_TOP);
+            m_view->setFocus(Qt::OtherFocusReason);
+        };
+        s.done = [this] { return m_view->workPlane().open && m_view->workPlane().mode == 0; };
+        s.doneNote = T("Nice. Nothing is drawn now: clicks select and move things.");
+        s.show = [this](std::function<void()> over) {
+            const QPoint at(m_view->width() / 2, m_view->height() / 2);
+            fakeClick(m_view, at, Qt::RightButton, over);
+        };
+        s.leave = [this] { m_view->setWorkPlaneOpen(false); };
+        add(s);
+    }
+    // 20c: and back
+    {
+        Step s;
+        s.title = T("Back to drawing with E");
+        s.text = T("Press E: it brings back the kind of drawing you had before you stopped -- here the spline -- so there is nothing to pick again. E also goes on to the next kind: "
+                   "line, spline, point.");
+        s.hint = T("Right-click to stop, E to start again where you were. Or press Show me.");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.keys = true;
+        s.group = "workplane";
+        s.closeRows = true;
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            scene()->clearSelection();
+            m_view->setWorkPlaneOpen(false);
+            m_view->setWorkPlaneOpen(true);
+            m_view->setWorkPlaneFrame(QVector3D(0, 0, 0), QVector3D(1, 0, 0), QVector3D(0, 1, 0));
+            m_view->setWorkPlaneMode(2);                        // (the spline was on ...)
+            m_view->setWorkPlaneMode(0);                        // (... and a right click has stopped it)
+            m_view->standardView(View::VIEW_TOP);
+            m_view->setFocus(Qt::OtherFocusReason);
+        };
+        s.done = [this] { return m_view->workPlane().open && m_view->workPlane().mode != 0; };
+        s.doneNote = T("Nice. The spline is back on.");
+        s.show = [this](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "E";
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(900, [this, over] {
+                m_view->cycleWorkPlaneMode();
+                after(900, [this, over] { m_busy = false; hideCursor(); over(); });
+            });
+        };
+        s.leave = [this] { m_view->setWorkPlaneOpen(false); };
+        add(s);
+    }
     // 21: a point pulled out of an edge
     {
         Step s;
         s.title = T("Pull a point out of an edge");
-        s.text = T("A 2D shape has a blue outline. Press an edge and drag: a new point comes out of it and becomes part of the shape.");
-        s.hint = T("The new point is a model of its own, put in the list of the sketch. Or press Show me.");
+        s.text = T("A 2D shape has a blue outline. Press an EDGE -- a blue line between two corners, not a corner -- and drag: a new point comes out of it and becomes part of the shape.");
+        s.hint = T("The arrow points at an edge. The new point is a model of its own, put in the list of the sketch. Or press Show me.");
         s.code = linesWith("^plate =|^\\s+\\[\\w+");
         s.holes = holesOf(viewWidget);
+        s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(0, 12, 0))); };       // (the middle of the top edge)
         s.place = InsideBottom;
         s.group = "sketch";
         s.closeRows = true;
@@ -1541,6 +1700,133 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
+    // The model of the steps on lines: four points, the spline through them, and (`tube`) a circle at the first point and the sweep of it along the line
+    auto lineModel = [](bool tube) {
+        return QString("q1 = point(-25, -12, 0)\nq1\nq2 = point(-8, 10, 8)\nq2\nq3 = point(10, -8, 14)\nq3\nq4 = point(26, 8, 6)\nq4\n"
+                       "route = spline([q1, q2, q3, q4])\nroute") +
+               (tube ? QString("\nprofile = circle(4, (-25, -12))\nprofile\npath_extrude_1 = path_extrude(profile, route)\npath_extrude_1") : QString());
+    };
+    // (the points q1 ... q4 as written in the script, with their gizmos: what a step compares to see that a point has been moved, turned or scaled)
+    auto pointsSignature = [this]() {
+        const QString text = m_editor->getScript();
+        const int a = text.indexOf("q1 = "), b = text.indexOf("route = ");
+        return (a >= 0 && b > a) ? text.mid(a, b - a) : QString();
+    };
+    // 24a: a line is a shape too (a 1D shape): it goes through points
+    {
+        Step s;
+        s.title = T("A line through points");
+        s.text = T("A line is a shape of one dimension, made of points: spline([q1, q2, q3, q4]) is a smooth line through them (polyline joins them with straight pieces). "
+                   "Press the dot of a point and drag: the line follows.");
+        s.hint = T("The line is the blue curve, and a model of its own, in the tree: the points are what it is made of. Or press Show me.");
+        s.code = linesWith("^route =");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.group = "line";
+        s.closeRows = true;
+        s.enter = [this, scene, lineModel, pointsSignature] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + lineModel(false));
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+            m_baselineText = pointsSignature();
+        };
+        s.done = [this, pointsSignature] { return pointsSignature() != m_baselineText; };
+        s.doneNote = T("Nice. The line goes through the points wherever you put them.");
+        s.show = [this](std::function<void()> over) {
+            const QPoint from = m_view->screenPoint(QVector3D(-8, 10, 8));
+            if (!m_view->isVisible() || from.isNull()) { over(); return; }
+            fakeDrag(m_view, from, from + QPoint(40, -36), 900, over);
+        };
+        add(s);
+    }
+    // 24b: a shape swept along it
+    {
+        Step s;
+        s.title = T("Sweep a shape along a line");
+        s.text = T("A line can guide a shape: the shape is swept along it. Select profile (the circle) and route (the line) -- Ctrl+click the second -- then right-click one of them and "
+                   "choose Operation ▸ Extruding ▸ path_extrude.");
+        s.hint = T("path_extrude(profile, route): the circle is the start of the tube, and the line runs through the middle of it. Or press Show me.");
+        s.code = linesWith("^(profile|route|path_extrude_1) =");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "line";
+        s.closeRows = true;
+        s.enter = [this, scene, lineModel] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader(QString()) + lineModel(false) + "\nprofile = circle(4, (-25, -12))\nprofile");
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+        };
+        s.done = [this] { return m_editor->getScript().contains("path_extrude("); };
+        s.doneNote = T("Nice. The tube follows the line.");
+        s.show = [this, scene, walk](std::function<void()> over) {
+            const QRect a = scene()->rowRect("profile", m_window), b = scene()->rowRect("route", m_window);
+            if (a.isEmpty() || b.isEmpty()) { over(); return; }
+            QWidget* vp = scene()->treeViewport();
+            const QPoint pa = vp->mapFrom(m_window, QPoint(a.left() + 70, a.center().y())), pb = vp->mapFrom(m_window, QPoint(b.left() + 70, b.center().y()));
+            QPointer<QWidget> viewport(vp);
+            m_busy = true;
+            setCursor(vp->mapTo(m_window, pa));
+            after(500, [this, viewport, pa, pb, walk, over] {
+                if (!viewport) { m_busy = false; hideCursor(); over(); return; }
+                sendMouse(viewport, QEvent::MouseButtonPress, pa, Qt::LeftButton, Qt::LeftButton);
+                sendMouse(viewport, QEvent::MouseButtonRelease, pa, Qt::LeftButton, Qt::NoButton);
+                after(600, [this, viewport, pb, walk, over] {
+                    if (!viewport) { m_busy = false; hideCursor(); over(); return; }
+                    static_cast<TourLayer*>(m_layer)->cursorKey = "Ctrl";
+                    setCursor(viewport->mapTo(m_window, pb));
+                    sendMouse(viewport, QEvent::MouseButtonPress, pb, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+                    sendMouse(viewport, QEvent::MouseButtonRelease, pb, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+                    after(700, [this, viewport, pb, walk, over] {
+                        static_cast<TourLayer*>(m_layer)->cursorKey.clear();
+                        if (!viewport) { m_busy = false; hideCursor(); over(); return; }
+                        QContextMenuEvent ev(QContextMenuEvent::Mouse, pb, viewport->mapToGlobal(pb));
+                        QApplication::sendEvent(viewport, &ev);
+                        after(400, [this, walk, over] {
+                            m_busy = false;
+                            hideCursor();
+                            auto root = qobject_cast<QMenu*>(openMenu());
+                            if (!root) { over(); return; }
+                            (*walk)(root, root, QStringList{T("Operation"), T("Extruding"), "path_extrude"}, over);
+                        });
+                    });
+                });
+            });
+        };
+        add(s);
+    }
+    // 24c: and it is yours to play with
+    {
+        Step s;
+        s.title = T("Play with the sweep");
+        s.text = T("Now it is yours. Drag a point of the line: the tube bends with it. Select a point: its gold ring makes the tube thicker there, and turning it with its other rings twists the tube. "
+                   "Move the points, scale one, turn one -- and see what happens.");
+        s.hint = T("In the script: path_extrude_1 = path_extrude(profile, route). The line runs through the middle of the tube, whatever its points are. Press Next when you have had enough.");
+        s.code = linesWith("^(route|path_extrude_1) =");
+        s.holes = both;
+        s.cardNear = treeNear;
+        s.place = Right;
+        s.group = "line";
+        s.closeRows = true;
+        s.enter = [this, scene, lineModel, pointsSignature] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            // (the sweep the step before made; when that was skipped it is made here)
+            if (!m_editor->getScript().contains("path_extrude(")) useScript(tourHeader(QString()) + lineModel(true));
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+            m_baselineText = pointsSignature();
+        };
+        s.done = [this, pointsSignature] { return pointsSignature() != m_baselineText; };
+        s.doneNote = T("Nice. The tube follows every number of the points.");
+        s.show = [this](std::function<void()> over) {
+            const QPoint from = m_view->screenPoint(QVector3D(10, -8, 14));
+            if (!m_view->isVisible() || from.isNull()) { over(); return; }
+            fakeDrag(m_view, from, from + QPoint(46, -30), 900, over);
+        };
+        add(s);
+    }
     // 24: the other gizmo, with Shift
     {
         Step s;
@@ -1554,6 +1840,7 @@ void Tutorial::buildSteps()
         s.enter = [this] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             m_view->holdShift(false);
+            m_view->standardView(View::VIEW_ISO);   // (seen from the side: a view dead on the z axis hides the squares that lie along it)
             selectAgain({"drilled"}, 12);           // (the step's model replaces the one before: it is selected once it is in the tree)
         };
         s.show = [this](std::function<void()> over) {
@@ -1572,8 +1859,9 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Copy or link");
-        s.text = T("Shift+D copies the selected model. Ctrl+D links it: the copy IS the model, follows every change of it, and can only be moved and rotated.")
-                 + "\n\n" + T("Select bolt and press Ctrl+D.");
+        s.text = T("Shift+D copies the selected model. Ctrl+D links it: the copy IS the model and follows every change of its shape, but its position and its rotation are its own -- "
+                   "move or turn one and the other stays.")
+                 + "\n\n" + T("Select bolt and press Ctrl+D, then move the copy.");
         s.hint = T("The copy is written bolt_2 = instance(bolt) with # shadow: bolt: bolt keeps its own row and the copy shows a faded shadow of it. Or press Show me.");
         s.code = linesWith("^bolt\\w* =|^bolt\\w*$|#\\s*shadow:");
         s.holes = both;
@@ -1589,7 +1877,7 @@ void Tutorial::buildSteps()
             m_view->setFocus(Qt::OtherFocusReason);            // (Ctrl+D acts while the viewport has the keyboard)
         };
         s.done = [this] { return m_editor->getScript().contains("instance("); };
-        s.doneNote = T("Nice. bolt_2 is bolt: change bolt and it follows.");
+        s.doneNote = T("Nice. bolt_2 is bolt: change the shape of bolt and it follows.");
         s.show = [this, scene](std::function<void()> over) {
             m_busy = true;
             static_cast<TourLayer*>(m_layer)->cursorKey = "Ctrl+D";
@@ -1607,19 +1895,23 @@ void Tutorial::buildSteps()
         s.title = T("Keys worth knowing");
         // (one key a line: the card is narrow, and a line with several keys wraps in the middle of a key in most languages)
         s.text = T("With the viewport focused:") + "\n\n" +
-                 T("Shift+W  work plane") + "\n" +
-                 T("Ctrl+Shift+W  new work plane") + "\n" +
-                 T("W  look at the work plane") + "\n" +
-                 T("E  next gizmo mode, or next kind of drawing") + "\n" +
-                 T("Q  stop drawing") + "\n" +
-                 T("Shift+D  copy") + "\n" +
-                 T("Ctrl+D  link") + "\n" +
+                 T("General") + "\n" +
                  T("D  delete") + "\n" +
                  T("R  lock") + "\n" +
                  T("I  isolate") + "\n" +
                  T("V  show or hide") + "\n" +
+                 T("E  next gizmo mode") + "\n" +
                  T("Shift+X  section view") + "\n" +
-                 T("Home  frame everything");
+                 T("Home  frame everything") + "\n\n" +
+                 T("Copies") + "\n" +
+                 T("Shift+D  copy") + "\n" +
+                 T("Ctrl+D  link") + "\n\n" +
+                 T("Work plane") + "\n" +
+                 T("Shift+W  work plane") + "\n" +
+                 T("Ctrl+Shift+W  new work plane") + "\n" +
+                 T("W  look at the work plane") + "\n" +
+                 T("E  next kind of drawing, or the last one") + "\n" +
+                 T("Right click  stop drawing");
         s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show sketches, linked copies and the work plane.");
         s.place = Right;
         s.enter = [this] { m_view->holdShift(false); m_view->setWorkPlaneOpen(false); };
@@ -1648,6 +1940,7 @@ void Tutorial::buildSteps()
                       "result = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=5)\n"
                       "result");
             scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);                    // (the beam is framed by useScript)
         };
         s.done = [this] {
             static const QRegularExpression re(R"(^\w+ = result\.\w+)", QRegularExpression::MultilineOption);
@@ -1694,41 +1987,6 @@ void Tutorial::buildSteps()
                 });
             });
         };
-        add(s);
-    }
-    // 21
-    {
-        Step s;
-        s.title = T("Render settings");
-        s.text = T("The region and the resolution are lines of the code (auto_scale=True lets the region follow your models). Change the resolution from 4 to 6 in the framed line.");
-        s.hint = T("More samples per mm: a finer picture, slower. The Render settings row in the tree shows the numbers (read-only); a click on it goes to the line. Or press Show me.");
-        s.focus = [this] { return scriptLineRect(std::max(0, scriptLine("view.set_resolution"))); };
-        s.holes = holesOf(scriptWidget);
-        s.point = [this] { const QRect r = scriptLineRect(std::max(0, scriptLine("view.set_resolution"))); return r.isEmpty() ? QPoint() : QPoint(r.right() - 20, r.center().y()); };
-        s.place = Right;
-        s.keys = true;
-        s.closeRows = true;
-        s.enter = [this, scene] {
-            scene()->showSettings(true);
-            static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
-            const auto m = re.match(m_editor->getScript());
-            m_baseline = m.hasMatch() ? m.captured(1).toDouble() : 0;
-            m_editor->scriptWidget()->goToLine(std::max(0, scriptLine("view.set_resolution")), false);
-        };
-        s.show = [this](std::function<void()> over) {
-            const int line = scriptLine("view.set_resolution");
-            if (line < 0) { over(); return; }
-            static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
-            const auto m = re.match(m_editor->getScript().split('\n').value(line));
-            if (!m.hasMatch()) { over(); return; }
-            typeOver(line, m.capturedStart(1), m.capturedEnd(1), "6", over);
-        };
-        s.done = [this] {
-            static const QRegularExpression re(R"(set_resolution\(\s*([\d.]+)\s*\))");
-            const auto m = re.match(m_editor->getScript());
-            return m.hasMatch() && std::abs(m.captured(1).toDouble() - m_baseline) > 1e-9;
-        };
-        s.doneNote = T("Nice. The viewport meshes again at the new resolution.");
         add(s);
     }
     // 22
@@ -1915,15 +2173,26 @@ void Tutorial::showMe()
     const int step = m_index;
     const int gen = m_generation;
     auto over = [this, step, gen] {
-        // (a moment to look at what was done, then back)
-        after(1500, [this, step, gen] {
+        // A moment to look at what was done, then back -- but what was done is looked at once it is on the screen: a model that is still being made
+        // (the script runs, the viewport draws) is not what the demonstration is for, and putting everything back then shows nothing
+        auto settle = std::make_shared<std::function<void(int)>>();
+        *settle = [this, step, gen, settle](int waited) {
             if (!m_demo || gen != m_generation) return;
-            endDemo();
-            const Step& s = (*m_steps)[step];
-            if (s.enter) s.enter();
-            m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") + T("Everything is back as it was. Now you try."));
-            m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
-        });
+            if ((m_editor->scriptRunning() || m_view->isRendering()) && waited < 12000)
+            {
+                after(200, [settle, waited] { (*settle)(waited + 200); });
+                return;
+            }
+            after(1500, [this, step, gen] {
+                if (!m_demo || gen != m_generation) return;
+                endDemo();
+                const Step& s = (*m_steps)[step];
+                if (s.enter) s.enter();
+                m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") + T("Everything is back as it was. Now you try."));
+                m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
+            });
+        };
+        after(800, [settle] { (*settle)(0); });          // (the run an edit makes starts a moment after the edit)
     };
     s.show(over);
     // (a demonstration that never says it is over -- what it was to work on is not there -- does not hold the step)
@@ -1939,12 +2208,17 @@ void Tutorial::showStep()
     m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
     m_note->setVisible(!s.hint.isEmpty());
     m_counter->setText(s.welcome ? QString() : QString("%1 / %2").arg(m_index).arg(m_steps->size() - 1));
-    m_skipTour->setText(s.welcome ? T("No thanks") : (s.last ? QString() : T("Skip the tour")));
+    m_skipTour->setText(s.welcome ? T("Skip the guided tour") : (s.last ? QString() : T("Skip the tour")));
     m_skipTour->setVisible(!s.last);
     m_back->setVisible(!s.welcome && !s.last && m_index > 1);
     m_show->setVisible(bool(s.show));
     m_show->setText(s.showLabel);
-    m_next->setText(s.welcome ? T("Start the tour") : s.last ? T("Finish") : (s.done ? T("Skip step  ▸") : T("Next  ▸")));
+    m_next->setText(s.welcome ? T("Start the guided tour") : s.last ? T("Finish") : (s.done ? T("Skip step  ▸") : T("Next  ▸")));
+    // (the welcome card is the one place the button is orange: it is what the user is asked to choose, and the other way out is quiet)
+    m_next->setStyleSheet(s.welcome
+        ? "QPushButton { background: #ff8a1f; color: #2b1500; border: 1px solid #ff8a1f; border-radius: 6px; padding: 6px 16px; font-size: 10pt; font-weight: bold; }"
+          "QPushButton:hover { background: #ffa347; border-color: #ffa347; }"
+        : QString());
     // (the window is dimmed, the card is above it)
     m_blocker->setGeometry(m_window->rect());
     m_layer->setGeometry(m_window->rect());
@@ -2178,6 +2452,12 @@ void Tutorial::refresh()
             }
         }
     }
+    // (a step that changes a model by a number in the code: the viewport is not greyed, so that the model that changes is where the eye goes)
+    if (s.showView)
+    {
+        const QRect view = widgetRect(m_view);
+        if (!view.isEmpty()) layer->lit << view;
+    }
     if (arrow)
     {
         // from the edge of the card that is nearest to what it points at
@@ -2304,6 +2584,7 @@ void Tutorial::layoutCard(const QRect& hole, const QVector<QRect>& keepClear)
 bool Tutorial::eventFilter(QObject* obj, QEvent* e)
 {
     if (!m_active) return false;
+    if (obj == m_view && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::Wheel)) m_viewTouched = true;
     if (obj == m_window && (e->type() == QEvent::Resize || e->type() == QEvent::Move))
     {
         QTimer::singleShot(0, this, [this] { refresh(); });

@@ -230,6 +230,9 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # (always a new shape, to hang the handles on: the part itself is shared)
     out = _move(out, tuple(move))
     _carry(out, shape)
+    # (what a linked copy of the placed shape follows: the shape as it was before the gizmo moved and turned it -- scaled, as the gizmo scaled it: a copy has no scale of its own --
+    # so that the copy and the original are each moved and turned by their own numbers)
+    out._placed_parts = (shape, about_what, tuple(scale))
     if hasattr(shape, 'xyz'):
         # (a point that is moved is where it is moved to: its coordinates follow the move)
         out.xyz = tuple((c + m) if not (_is_number(c) and _is_number(m)) else float(c) + float(m)

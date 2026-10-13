@@ -33,7 +33,7 @@ the viewport.
 - **Your own building blocks.** A function in a file of the blocks folder is there in every script, with completion, call
   tips and a place in the menus.
 
-New here? FielDes offers a **guided tour** the first time it starts (**Help → Guided tour** any time after): short cards over the
+New here? A welcome card offers a **guided tour** the first time FielDes starts (**Help → Guided tour** any time after): short cards over the
 program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version.
 
 ## What it does
@@ -160,7 +160,7 @@ start by clicking the gap between two rows (they fold in the code editor too), a
    - There is no macOS version.
 
    FielDes speaks English, Spanish, French, German, Japanese, Chinese and Russian (the language of the system by default; **Settings → Language**).
-2. The **guided tour** (it opens by itself the first time; later **Help → Guided tour**) walks through the basics; **File → Import model…** (`Ctrl+I`) brings in a STEP
+2. The **guided tour** (a welcome card offers it the first time; later **Help → Guided tour**) walks through the basics; **File → Import model…** (`Ctrl+I`) brings in a STEP
    file; or open a script from `examples/` (every one runs as it is: the bracket that comes with FielDes, or geometry the script makes).
 3. Right-click empty space to make a shape; click a row in the model tree and drag the gizmo; open the section card
    (`Shift+X`); hover the model.

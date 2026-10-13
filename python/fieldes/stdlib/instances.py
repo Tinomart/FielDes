@@ -2,9 +2,10 @@
 Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
-(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: it can be moved and rotated
-(with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs, and its surfaces cannot be dragged, since its shape is the
-original's.  (A copy that is scaled, or whose surfaces are pulled, is another shape: copy the model's statements instead -- Shift+D in FielDes.)
+(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
+its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, `gizmo(copy, move=..., rotate=...)`.
+Nothing else is its own: no scale knobs, and its surfaces cannot be dragged, since its shape is the original's (a scale the original has is part of that shape, and
+the copy has it too).  (A copy whose surfaces are pulled is another shape: copy the model's statements instead -- Shift+D in FielDes.)
 
 FielDes writes one with Ctrl+D (or Operation > Repeating > instance):
 
@@ -29,7 +30,7 @@ __all__ = ['instance']
 
 # What belongs to the original's own statements, not to what the original IS: its gizmo (the copy has its own), its lock, what it was placed from, the pivot of the faces
 # that were dragged, whether it is kept in the render cache
-_NOT_TAKEN = ('ptr', '_gizmo', '_locked', '_placed_from', '_pivot_shape', '_render_cache', '_literal_seen')
+_NOT_TAKEN = ('ptr', '_gizmo', '_locked', '_placed_from', '_placed_parts', '_pivot_shape', '_render_cache', '_literal_seen')
 
 
 def instance(shape):
@@ -43,10 +44,26 @@ def instance(shape):
     if getattr(shape, '_ctrl_pos', None):
         raise TypeError('instance(): a sketch or a curve is made of its points, which are the models to place -- link the points, or copy the sketch with its '
                         'statements (Shift+D)')
+    # What the copy is made of: the shape as it was BEFORE the gizmo of the original moved and turned it -- scaled as the gizmo scaled it -- so that where the original is, and how
+    # it is turned, are the original's own; the copy has its own gizmo for that (FielDes writes it with the numbers the original's gizmo has, so that it starts on the original)
+    source = shape
+    parts = getattr(shape, '_placed_parts', None)
+    if parts is not None:
+        from fieldes.stdlib.transforms import scale_xyz
+        base, about, scale = parts
+        if all(isinstance(s, (int, float)) and not isinstance(s, bool) and s == 1 for s in scale):
+            source = base
+        else:
+            source = scale_xyz(base, scale, about)
+            for name in ('_bounds', '_bounds_loose'):
+                source.__dict__.pop(name, None)
+            for name, value in base.__dict__.items():
+                if name not in ('ptr', '_bounds', '_bounds_loose') and name not in source.__dict__:
+                    source.__dict__[name] = value
     # (the copy is made without the class's own constructor: some classes -- a point, a surface -- are built from numbers and fields, not from a tree)
-    out = type(shape).__new__(type(shape))
-    Shape.__init__(out, lib.libfive_tree_copy(shape.ptr))
-    for name, value in shape.__dict__.items():
+    out = type(source).__new__(type(source))
+    Shape.__init__(out, lib.libfive_tree_copy(source.ptr))
+    for name, value in source.__dict__.items():
         if name not in _NOT_TAKEN:
             out.__dict__[name] = value
     out._linked = True              # (FielDes: it is dragged by its gizmo only, which has no scale)

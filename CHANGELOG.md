@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### A welcome card, a clearer tour, and four workflow fixes
+- **A welcome card instead of a tour that opens by itself.** The first time FielDes starts it says in a few lines what FielDes is (field driven design) and offers the tour: **Start the guided tour** (orange) or the quieter **Skip the guided tour**. *Help → Guided tour* starts the tour at its first step.
+- **The render region follows a drag at once.** Pull a gizmo arrow, ring or scale handle past the edge of the region: the model is drawn whole while you drag, and the grown region is written **together with the numbers of the drag, in one run, when you let go** -- there is no second run a few seconds later that clips and then un-clips the model.
+- **A section is made by clicking a small + in a circle.** Hovering in the gap between two rows of the model tree shows the circle in the middle of the tree; a click anywhere else in the gap does nothing, so a stray click no longer makes a section.
+- **Copies select the copy.** After *Shift+D* (copy) and *Ctrl+D* (link) only the new models are selected; the originals are not.
+- **A linked copy keeps its own position and rotation.** `instance(shape)` follows the *shape* of its original (and its scale) but not where it is or how it is turned: move the original and the copy stays; the copy starts where the original is, with its own `gizmo(...)` numbers.
+- **`Q` is gone: a right click stops drawing on the work plane**, and **`E` brings back the kind of drawing that was on before** (line, spline or point), then goes on round the three. (A right-button drag still pans.)
+- **Tour:** the rows that a step drags to (an operation's arguments) stay open; the **placeholder steps** recognise a call written one argument to a line; the number step (*Arguments are rows too*) lets you type over the `r` row at once; steps that change a model leave the viewport lit; "Show me" waits until what it did is drawn before it puts things back; the edge step points an arrow at an edge; the Shift gizmo is shown from the iso view; the keys are grouped (general first); the properties step frames the beam; the *Render settings* step is gone. New steps: **stopping with a right click and coming back with `E`**, and **lines through points, a sweep along a line (`path_extrude`) and a sweep to play with**.
+
 ### FielDes apps: a script that anyone can run
 - **An engineer's script becomes a program for other people.** The script declares what the person who runs it may choose -- `app.number('Radius', 5, min=1, max=20, unit='mm')`, `app.text`, `app.flag`, `app.choice`, `app.file`, `app.save_as`, `app.folder`, with `app.title` for the
   heading, `app.asset('step/part.step')` for a file that comes along and `app.output` for a file it makes -- and **File → Export as app...** bundles it into **one `.fieldesapp` file**, together with the custom blocks it uses (only those), the files it needs and the Python modules next to it.
@@ -132,14 +141,14 @@
 - **A new box's gizmo is at its centre.** The centre was searched for in the time there is, and a small shape in a large search was not found, which put the gizmo at the origin. The primitives (box, sphere, cylinder, cone, pyramid, rounded box and the 2D shapes)
   know their own extent, so the gizmo, and the region a model is shown in, come from it at once and exactly.
 - **The corner of a sketch has no scale ring** (as it has no rotation ring): its scale does nothing there.
-- **The work plane's modes look like what they make.** There is no *Select* button: **Line**, **Spline** and **Point** are three buttons with a picture of what each makes, and none on is not drawing (click the one that is on, or `Q`). While drawing the pointer is a
+- **The work plane's modes look like what they make.** There is no *Select* button: **Line**, **Spline** and **Point** are three buttons with a picture of what each makes, and none on is not drawing (click the one that is on, or right-click in the viewport). While drawing the pointer is a
   crosshair and a marker shows the point a click puts down -- a square for a line, a round point with a ring for a spline, a dot for a point; the points already put down have the same marks. Not drawing, there is no marker or readout and the pointer is the usual one.
 
 ### A work plane to draw on
 - **`Shift+W` opens a work plane view; `Ctrl+Shift+W` makes a new work plane; `W` turns the camera to face it.** A light version of a CAD program's sketch plane that writes nothing into the script by itself: the plane is drawn with a grid and has a card
   (grid, snap to grid, snap to points, step, offset, set the view to the plane / the plane to the view). A new plane is the plane of the selected 2D shape, or parallel to the camera view through the origin. The camera turning with
   the middle button leaves the view.
-- **Draw in it:** three kinds of drawing, picked in the card or with `E` (line, spline, point), and **`Q` to stop drawing** (nothing is put down, and things are selected, moved, turned and scaled as usual; the view opens in Line, so the first click draws;
+- **Draw in it:** three kinds of drawing, picked in the card or with `E` (line, spline, point), and a **right click to stop drawing** (`E` then brings back the kind of drawing that was on before; nothing is put down, and things are selected, moved, turned and scaled as usual; the view opens in Line, so the first click draws;
   in a drawing mode a click always puts a point down, attaching to a point that is there). Click to put down the points of a line -- **a click on the first point closes it and makes a sketch** (`Enter` or a double click ends it open as a
   `polyline`), the same with a spline (`smooth=True` when closed), or a point at a click. Nothing is written until the line ends; then the points and the shape are one undo step. The points are exact: snapped to the grid, and to the points
   that are there.

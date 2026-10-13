@@ -116,6 +116,9 @@ public:
     QLineEdit* settingEditor(const QString& fn, int index) const;
     void showSettings(bool open);
     bool settingsOpen() const;
+    /*  The render region a drag has grown to (the viewport grew it as the model was dragged out of it: View::regionGrown): written into the script, to be run with the
+     *  numbers of the drag -- the region is never behind what is on the screen  */
+    void growRegionTo(const QVector3D& lo, const QVector3D& hi);
     /*  For the guided tour: close or open the first row whose text starts with `prefix` (as the arrow in front of it does), and whether it
      *  is open; whether a section is closed; every section closed or opened; where the arrow in front of the first section is, and the
      *  property arrow at the end of a row (in the coordinates of `in`); whether the name of a section is being typed  */
@@ -137,6 +140,9 @@ public:
     /*  Where the first placeholder row, and the first section row, are (in the coordinates of `in`; empty when there is none in view)  */
     QRect placeholderRect(QWidget* in);
     QRect sectionRect(QWidget* in);
+    /*  For the guided tour: where the circle with a plus shows that starts a section in the gap above the first row whose text starts with `prefix` (in `in`'s coordinates; null when
+     *  that row is not shown)  */
+    QPoint sectionGapPoint(const QString& prefix, QWidget* in);
     bool isNaming() const;
     bool dragging() const { return m_dragging; }
     /*  For the tests: whether a row is a shadow (the reference of a statement to a model another statement owns), and the row of a
@@ -602,6 +608,8 @@ protected:
      *  the numbers of view.set_bounds are rewritten in the script -- live, as the model is dragged or typed out -- with whole numbers and
      *  a little room (the line is added when the script has none).  The region only grows.  Off (auto_scale=False): it is what is written  */
     void fitRegion();
+    /*  The call that sets the region, written with the six numbers `text` (low x y z, high x y z)  */
+    void writeRegion(const QStringList& text, const double nlo[3], const double nhi[3]);
     QString m_lastRegionEdit;
     bool m_regionFitted = false;       // (the first scene of a file has been seen: from then on the region may also shrink)
     QElapsedTimer m_regionEditClock;

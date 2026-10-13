@@ -2,7 +2,7 @@
 
 This is a short walk through what FielDes is for, how you work in it, and the few controls that matter most.
 
-> **The program has its own tour.** The first time FielDes starts it offers a **guided tour**: about two minutes of short
+> **The program has its own tour.** The first time FielDes starts a welcome card offers a **guided tour**: a few minutes of short
 > cards over the program itself, each dimming everything but what it is about, pointing at it, and letting you do the one
 > thing it asks (or doing it for you once: **Show me**, which puts everything back as it was so that you can do it yourself; **Back**
 > does the same: each step has a state of its own). Every step can be skipped, and so can the whole tour; **Help → Guided
@@ -205,7 +205,7 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
 
 The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20, 21 and 26 to 28 (sketches and sweeps, copies and linked copies, a sketch on a plane).
 
-The **guided tour** (Help ▸ Guided tour) ends with the newer tools: a shape drawn on a **work plane** (`Shift+W`), a point **pulled out of an edge**, a **corner turned into a spline point**, the gizmo of a point and
+The **guided tour** (Help ▸ Guided tour) ends with the newer tools: a shape drawn on a **work plane** (`Shift+W`; a **right click stops drawing**, `E` brings the kind of drawing back), a point **pulled out of an edge**, a **corner turned into a spline point**, the gizmo of a point, **a line through points and a tube swept along it** (`path_extrude`, which you can play with), and
 the one you get with **Shift**, **`Shift+D` and `Ctrl+D`** (a copy and a linked copy), and the keys worth knowing.
 
 ## The controls that matter

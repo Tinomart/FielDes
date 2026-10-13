@@ -136,14 +136,14 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
     };
 
     // What a click puts down: the points of a shape of straight edges, of a spline, or a point.  There is no button for not drawing: with none of them on, a
-    // click selects, moves, turns and scales things as usual (the active kind is turned off by clicking it again, or with Q)
+    // click selects, moves, turns and scales things as usual (the active kind is turned off by clicking it again, or with a right click in the viewport)
     auto modeRow = new QHBoxLayout;
     modeRow->setSpacing(3);
     const QString names[3] = {T("Line"), T("Spline"), T("Point")};
     const QString tips[3] = {
-        T("Click to put down the corners of a shape with straight edges; a click on the first one closes it, Enter ends it open (E: the next kind, Q: stop drawing)"),
-        T("Click to put down the points of a smooth curve; a click on the first one closes it into a shape, Enter ends it open (E: the next kind, Q: stop drawing)"),
-        T("Every click puts a point on the plane (E: the next kind, Q: stop drawing)")};
+        T("Click to put down the corners of a shape with straight edges; a click on the first one closes it, Enter ends it open (E: the next kind, right click: stop drawing)"),
+        T("Click to put down the points of a smooth curve; a click on the first one closes it into a shape, Enter ends it open (E: the next kind, right click: stop drawing)"),
+        T("Every click puts a point on the plane (E: the next kind, right click: stop drawing)")};
     for (int i = 0; i < 3; ++i)
     {
         m_modes[i] = new QToolButton;

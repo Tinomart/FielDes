@@ -329,6 +329,9 @@ signals:
 
     /*  The render region changed (the section panel's slider range)  */
     void boundsChanged(QVector3D min, QVector3D max);
+    /*  A model that was being dragged reached out of the render region and the region grew to hold it, at once, as it was dragged (auto scale): the region it grew to, said when
+     *  the drag ends, so that it is written into the script with the numbers of the drag  */
+    void regionGrown(QVector3D min, QVector3D max);
 
     /*  Meshing started (true) or every shape finished (false)  */
     void renderBusy(bool running);
@@ -463,6 +466,12 @@ protected:
     int m_dotPressLine = -1;
     bool m_dotMoved = false;
     QPoint m_dotPressPos;
+    /*  Auto scale while a model is dragged: when the picture of it (the mesh, moved by the numbers of the drag) reaches out of the render region, the region grows to hold it
+     *  -- with the room and the whole numbers the script's region has -- and what is shown is meshed again in it at once; the region it has grown to is what is written into the
+     *  script when the drag ends (regionGrown)  */
+    void growRegionForPreview();
+    bool m_regionGrown = false;
+    QVector3D m_grownMin, m_grownMax;
     struct FaceVar { libfive::Tree::Id id; int axis; float value0; };
     QList<FaceVar> m_faceVars;
     void beginPull(QPoint pos);
@@ -515,6 +524,7 @@ protected:
     QVector3D placeOnRay(QPoint pos) const;
     /*  The work plane's state and its pieces in the viewport  */
     WorkPlane m_wp;
+    int m_wpLastMode = 1;                   // (the kind of drawing that was on last: E brings it back after a right click has stopped the drawing)
     QVector3D m_wpCursor;                    // (where the cursor is on the plane, snapped)
     QList<QVector3D> m_wpPlaced;             // (the points of the line or spline that is being put down: not in the script yet)
     // The symmetry of the work plane view (see setWorkPlaneSymmetry)

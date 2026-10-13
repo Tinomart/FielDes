@@ -826,7 +826,8 @@ Write it under a shape's definition, with its gizmo() and handles() calls:
 Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
-(its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: it can be moved and rotated
+(its numbers, its definition, anything it is made of, and the scale of its gizmo) and the copy changes with it.  Where the original is and how it is turned (its gizmo's
+`move` and `rotate`) is NOT followed: the copy starts where the original is, and from then on the two are moved and turned independently.  What a copy has of its own is only WHERE it is: it can be moved and rotated
 (with its gizmo, `gizmo(copy, move=..., rotate=...)`), and nothing else -- no scale knobs, and its surfaces cannot be dragged, since its shape is the
 original's.  (A copy that is scaled, or whose surfaces are pulled, is another shape: copy the model's statements instead -- Shift+D in FielDes.)
 

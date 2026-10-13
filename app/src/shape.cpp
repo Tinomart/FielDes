@@ -1057,6 +1057,22 @@ void Shape::refreshPreview()
     m_previewShown = true;
 }
 
+bool Shape::previewBox(QVector3D& lo, QVector3D& hi) const
+{
+    if (!m_previewShown || !mesh) return false;
+    const auto& b = mesh_bounds;
+    bool any = false;
+    for (int i = 0; i < 8; ++i)
+    {
+        const QVector3D corner((i & 1) ? b.upper.x() : b.lower.x(), (i & 2) ? b.upper.y() : b.lower.y(), (i & 4) ? b.upper.z() : b.lower.z());
+        const QVector3D at = m_previewXform.map(corner);
+        if (!any) { lo = hi = at; any = true; continue; }
+        lo = QVector3D(std::min(lo.x(), at.x()), std::min(lo.y(), at.y()), std::min(lo.z(), at.z()));
+        hi = QVector3D(std::max(hi.x(), at.x()), std::max(hi.y(), at.y()), std::max(hi.z(), at.z()));
+    }
+    return any;
+}
+
 bool Shape::previewGizmoVars(const std::map<libfive::Tree::Id, float>& changed, bool allowed)
 {
     // Only a plain mesh of this shape can be moved as it is: with colours (they are values of a field at the places of the mesh), a result, a deformation, steps, a

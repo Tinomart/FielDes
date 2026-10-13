@@ -163,6 +163,8 @@ private:
     bool m_sectionSeen = false;
     int m_generation = 0;                   // (what a timer of an earlier step must not do)
     double m_baseline = 0;                  // (what a step compares the user's work with)
+    QString m_baselineText;                 // (the same, when the work is a stretch of the script)
+    bool m_viewTouched = false;             // (the user has pressed in the view or turned the wheel since a step put its own model there: its camera is theirs)
     QTimer m_poll;
     QTimer m_tick;
     QVector<QRect> m_holes;

@@ -940,7 +940,7 @@ public:
     bool isEditing() const { return state() == EditingState; }
     QTreeWidgetItem* rowOf(const QModelIndex& index) const { return itemFromIndex(index); }
     // (the rows are made again when the scene changes: a row that was pressed or is hovered is gone with them)
-    void resetDrop() { m_ok = false; m_over = nullptr; m_gap = nullptr; m_propRow = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
+    void resetDrop() { m_ok = false; m_over = nullptr; m_gap = nullptr; m_gapHot = false; m_propRow = nullptr; m_pressRow = nullptr; m_toggleRow = nullptr; m_replay.reset(); viewport()->update(); }
 
     // Where in the tree a point is: above a row (its top third), on it (the middle), below it, or in the empty space
     int where(const QPoint& pos, QTreeWidgetItem** over) const
@@ -962,6 +962,7 @@ protected:
         if (e->type() == QEvent::Leave && (m_gap || m_propRow))
         {
             m_gap = nullptr;
+            m_gapHot = false;
             const bool hadProperties = m_propRow != nullptr;
             m_propRow = nullptr;
             viewport()->unsetCursor();
@@ -972,11 +973,12 @@ protected:
     }
     void mousePressEvent(QMouseEvent* e) override
     {
-        // A press on the lit gap between two rows starts a section there
+        // A press on the circle that shows between two rows (a + in a circle, when the mouse is in the gap) starts a section there; a press anywhere else in the gap is
+        // a press on a row, as it always was
         if (e->button() == Qt::LeftButton && !(e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) && gapClicked && !m_dragging)
         {
             updateGap(e->pos());
-            if (m_gap)
+            if (m_gap && m_gapHot)
             {
                 QTreeWidgetItem* below = m_gap;
                 m_gap = nullptr;
@@ -1258,24 +1260,41 @@ protected:
     }
 
 private:
-    // The gap between two statements of the script (or sections) lights up under the mouse: a click there starts a new section
+    // The gap between two statements of the script (or sections): when the mouse is in it, a small circle with a plus shows in the middle of the tree, between the rows; a click
+    // on the circle (not in the gap beside it) starts a new section there.  Hovering shows the option, and clicking a place of its own does it: a click between two rows
+    // that was meant for a row does not make a section
+    QRect gapCircleFor(QTreeWidgetItem* gap) const
+    {
+        const int radius = 9;
+        const int y = visualItemRect(gap).top();
+        return QRect(viewport()->width() / 2 - radius, y - radius, 2 * radius, 2 * radius);
+    }
     void updateGap(const QPoint& pos)
     {
         QTreeWidgetItem* gap = nullptr;
-        if (gapAbove && !isEditing() && columnAt(pos.x()) == COL_NAME)
+        bool hot = false;
+        // (the mouse on the circle of a gap that is showing keeps it showing: the circle reaches over the rows on both sides of the gap)
+        if (m_gap && gapCircleFor(m_gap).contains(pos))
+        {
+            gap = m_gap;
+            hot = true;
+        }
+        else if (gapAbove && !isEditing() && columnAt(pos.x()) == COL_NAME)
         {
             if (QTreeWidgetItem* row = itemAt(pos))
             {
                 const QRect r = visualItemRect(row);
-                const int edge = std::max(3, r.height() / 5);
+                const int edge = std::max(6, r.height() / 3);
                 if (pos.y() - r.top() <= edge) gap = row;                       // (the gap above this row)
                 else if (r.bottom() - pos.y() <= edge) gap = itemBelow(row);     // (the gap below it, above the next row that is shown)
             }
             if (gap && !gapAbove(gap)) gap = nullptr;
+            if (gap && gapCircleFor(gap).contains(pos)) hot = true;
         }
-        if (gap == m_gap) return;
+        if (gap == m_gap && hot == m_gapHot) return;
         m_gap = gap;
-        if (gap) viewport()->setCursor(Qt::PointingHandCursor);
+        m_gapHot = hot;
+        if (hot) viewport()->setCursor(Qt::PointingHandCursor);
         else viewport()->unsetCursor();
         viewport()->update();
     }
@@ -1283,26 +1302,21 @@ private:
     {
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
-        const int y = visualItemRect(m_gap).top();
         const QColor blue(0x26, 0x8b, 0xd2);
-        const int right = viewport()->width() - 6;
-        p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 70), 7, Qt::SolidLine, Qt::RoundCap));
-        p.drawLine(QPointF(6, y), QPointF(right, y));
-        p.setPen(QPen(blue, 2.0, Qt::SolidLine, Qt::RoundCap));
-        p.drawLine(QPointF(6, y), QPointF(right, y));
-        QFont f = font();
-        f.setPointSizeF(std::max(7.0, f.pointSizeF() * 0.92));
-        p.setFont(f);
-        const QString label = QString("+  ") + T("new section");
-        const QFontMetrics fm(f);
-        const int width = fm.horizontalAdvance(label) + 14;
-        const QRect pill(columnViewportPosition(COL_NAME) + columnWidth(COL_NAME) - width - 6, y - 8, width, 16);
-        p.setPen(QPen(blue, 1.2));
-        p.setBrush(QColor(0x0b, 0x32, 0x40));
-        p.drawRoundedRect(pill, 8, 8);
-        p.setPen(QColor(0xee, 0xe8, 0xd5));
-        p.drawText(pill, Qt::AlignCenter, label);
+        const QRect c = gapCircleFor(m_gap);
+        // (a faint line along the gap, so that it is clear which gap the circle is for)
+        const int y = c.center().y();
+        p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 90), 1.2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(6, y), QPointF(viewport()->width() - 6, y));
+        p.setPen(QPen(blue, m_gapHot ? 2.0 : 1.6));
+        p.setBrush(m_gapHot ? blue : QColor(0x0b, 0x32, 0x40));
+        p.drawEllipse(QRectF(c).adjusted(1, 1, -1, -1));
+        p.setPen(QPen(m_gapHot ? QColor(0xee, 0xe8, 0xd5) : blue, 2.0, Qt::SolidLine, Qt::RoundCap));
+        const QPointF m = QRectF(c).center();
+        p.drawLine(QPointF(m.x() - 4, m.y()), QPointF(m.x() + 4, m.y()));
+        p.drawLine(QPointF(m.x(), m.y() - 4), QPointF(m.x(), m.y() + 4));
     }
+    bool m_gapHot = false;                  // (the mouse is on the circle of the gap that shows)
     QTreeWidgetItem* m_gap = nullptr;       // (the row the lit gap is above)
     QTreeWidgetItem* m_propRow = nullptr;   // (the hovered row that has properties: its arrow is drawn)
     void updateProp(const QPoint& pos)
@@ -1955,6 +1969,15 @@ void ScenePanel::fitRegion()
                                     : regionNumber(nhi[k] > hi[k] ? nhi[k] + room : hi[k], 1));
         }
     }
+    writeRegion(text, nlo, nhi);
+}
+
+// The call that sets the region, written with the six numbers `text` (a corner at a time: low x y z, high x y z); `nlo` / `nhi` the box of the models, which a region
+// that is made of them (`*roi(...)`) is given as a box.  An edit of the script, like any other: it is made when it is not the same text
+void ScenePanel::writeRegion(const QStringList& text, const double nlo[3], const double nhi[3])
+{
+    const auto settings = m_scene["settings"].toObject();
+    const auto setBounds = settings["set_bounds"].toObject();
     // (auto_scale is written out although it is the default: what the script does is in the script, not hidden in a default)
     const QString call = QString("view.set_bounds([%1, %2, %3], [%4, %5, %6], auto_scale=True)").arg(text[0], text[1], text[2], text[3], text[4], text[5]);
     if (!settings.contains("set_bounds") || !setBounds.contains("span"))
@@ -1991,6 +2014,18 @@ void ScenePanel::fitRegion()
     m_regionEditClock.start();
     const QList<TextEdit> edits{TextEdit{span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt(), replacement}};
     emit(editScriptLive(edits, "Grow the region"));
+}
+
+// The region a drag has grown to (the viewport made it live, so that the model that is dragged out of it is never cut off: see View::growRegionForPreview) is written into
+// the script at once, with the numbers of the drag: the run that follows has it, and there is no picture of a model that is cut off, nor a second run to grow it
+void ScenePanel::growRegionTo(const QVector3D& lo, const QVector3D& hi)
+{
+    if (!m_source) return;
+    const auto setBounds = m_scene["settings"].toObject()["set_bounds"].toObject();
+    if (setBounds.contains("auto_scale") && !setBounds["auto_scale"].toBool(true)) return;           // (auto scale off: the region is what the script says)
+    const QStringList text{regionNumber(lo.x(), -1), regionNumber(lo.y(), -1), regionNumber(lo.z(), -1), regionNumber(hi.x(), 1), regionNumber(hi.y(), 1), regionNumber(hi.z(), 1)};
+    const double nlo[3] = {lo.x(), lo.y(), lo.z()}, nhi[3] = {hi.x(), hi.y(), hi.z()};
+    writeRegion(text, nlo, nhi);
 }
 
 void ScenePanel::toggleAutoScale()
@@ -4624,7 +4659,29 @@ void ScenePanel::duplicateLinkedSelected()
         const QString indent = indentOf(lineText(it["line"].toInt() - 1));
         // (the original is only referred to -- `# shadow:` -- always: taken into the copy it would move away from where it is and look like what the copy is made of)
         const QString statement = markShadow(indent + fresh + " = instance(" + old + ")", old);
-        const QString text = statement + "\n" + indent + fresh;
+        // The copy is where the original is and turned as it is, to start with -- its gizmo is written with the numbers the original's has -- but the numbers are its own: a copy
+        // follows the SHAPE of its original, not where it is or how it is turned
+        const QString originalText = groupText(it);
+        auto tupleOf = [&](const QString& key) -> QString {
+            const int at = originalText.indexOf(key + "=(");
+            if (at < 0) return QString();
+            const int from = at + int(key.size()) + 1;
+            int depth = 0;
+            for (int j = from; j < originalText.size(); ++j)
+            {
+                if (originalText[j] == '(') ++depth;
+                else if (originalText[j] == ')' && --depth == 0) return originalText.mid(from, j - from + 1);
+            }
+            return QString();
+        };
+        const QString move = tupleOf("move"), rotate = tupleOf("rotate");
+        QString placing;
+        if (!move.isEmpty() && !rotate.isEmpty())
+        {
+            const QString in = indent + "    ";
+            placing = indent + fresh + " = gizmo(\n" + in + fresh + ",\n" + in + "move=" + move + ",\n" + in + "rotate=" + rotate + ",\n" + indent + ")\n";
+        }
+        const QString text = statement + "\n" + placing + indent + fresh;
         const int at = groupEnd(it);
         if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
         else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
@@ -10175,6 +10232,19 @@ QRect ScenePanel::sectionRect(QWidget* in)
         return QRect(m_tree->viewport()->mapTo(in, QPoint(0, rect.top())), QSize(m_tree->viewport()->width(), rect.height()));
     }
     return QRect();
+}
+
+QPoint ScenePanel::sectionGapPoint(const QString& prefix, QWidget* in)
+{
+    for (auto r : m_tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+    {
+        if (isShadow(r)) continue;
+        const QRect rect = m_tree->visualItemRect(r);
+        if (rect.isEmpty()) return QPoint();
+        // (the circle is in the middle of the tree, on the line between this row and the one above it: see the gap of the tree widget)
+        return m_tree->viewport()->mapTo(in, QPoint(m_tree->viewport()->width() / 2, rect.top()));
+    }
+    return QPoint();
 }
 
 QRect ScenePanel::visibleRowRect(const QString& prefix, QWidget* in)

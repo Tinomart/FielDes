@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <chrono>
 #include <cstdio>
+#include "fieldes/regionformat.hpp"
 #include <QKeyEvent>
 #include <QApplication>
 #include <QCursor>
@@ -1931,7 +1932,7 @@ void View::mousePressEvent(QMouseEvent* event)
     }
 
     // The work plane view, in one of the three kinds of drawing: every click puts down a point (of a line, of a spline, or a point) -- a click on a point that is
-    // there attaches to it, it does not select it; the first point of a line closes it.  Mode 0 (Q) leaves clicks to what they do everywhere: things are selected, moved,
+    // there attaches to it, it does not select it; the first point of a line closes it.  Mode 0 (a right click) leaves clicks to what they do everywhere: things are selected, moved,
     // turned and scaled (Shift and Ctrl keep their meanings)
     if (event->button() == Qt::LeftButton && m_wp.open && m_wp.exists && m_wp.mode != 0 && !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)))
     {
@@ -2347,6 +2348,12 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         gizmo_hover = gizmoAt(event->pos());
         setCursor(gizmo_hover.kind >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
         redrawPicker();
+        // (the region the drag grew to goes into the script with the numbers of the drag: the run that this drag's end starts has both)
+        if (m_regionGrown)
+        {
+            m_regionGrown = false;
+            emit(regionGrown(m_grownMin, m_grownMax));
+        }
         emit(dragEnd());
         if (dotClickLine >= 0) emit(shapeClicked(dotClickLine));
         m_overlay->update();
@@ -2396,6 +2403,17 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton) press_ctrl = false;
     press_target = nullptr;
 
+    // While a kind of drawing is on in the work plane view, a right click (not a drag: that pans) stops the drawing -- clicks select, move, turn and scale as usual again
+    // -- instead of opening a menu; E brings the kind of drawing back
+    if (event->button() == Qt::RightButton && (right_press_target || right_press_empty) && (event->pos() - right_press_pos).manhattanLength() < 4 &&
+        m_wp.open && m_wp.exists && m_wp.mode != 0)
+    {
+        right_press_target = nullptr;
+        right_press_empty = false;
+        mouse.state = mouse.RELEASED;
+        setWorkPlaneMode(0);
+        return;
+    }
     if (event->button() == Qt::RightButton && right_press_target &&
         (event->pos() - right_press_pos).manhattanLength() < 4 && shapes.contains(right_press_target))
     {
@@ -2562,8 +2580,8 @@ void View::setWorkPlaneOpen(bool open)
 {
     if (open && !m_wp.exists) makeWorkPlane();
     if (!open) m_wpPlaced.clear();
-    // Opening it starts in Line: a click draws at once -- a view that opens and does nothing leaves the first thing to do a guess (Q stops drawing)
-    if (open && !m_wp.open) m_wp.mode = 1;
+    // Opening it starts in Line: a click draws at once -- a view that opens and does nothing leaves the first thing to do a guess (a right click stops drawing)
+    if (open && !m_wp.open) { m_wp.mode = 1; m_wpLastMode = 1; }
     m_wp.open = open;
     m_wpCursorValid = false;
     if (!open) emit(workPlaneReadout(QString()));
@@ -2574,7 +2592,7 @@ void View::newWorkPlane()
 {
     m_wpPlaced.clear();
     makeWorkPlane();
-    if (!m_wp.open) m_wp.mode = 1;                  // (opening it starts in Line, as setWorkPlaneOpen does)
+    if (!m_wp.open) { m_wp.mode = 1; m_wpLastMode = 1; }                  // (opening it starts in Line, as setWorkPlaneOpen does)
     m_wp.open = true;
     announceWorkPlane();
 }
@@ -2679,13 +2697,16 @@ void View::setWorkPlaneMode(int mode)
 {
     m_wpPlaced.clear();
     m_wp.mode = std::max(0, std::min(3, mode));
+    // (the kind of drawing that was on last: E brings it back after the drawing has been stopped)
+    if (m_wp.mode != 0) m_wpLastMode = m_wp.mode;
     announceWorkPlane();
 }
 
 void View::cycleWorkPlaneMode()
 {
-    // (round the three kinds of what is put down: from nothing it goes to the line)
-    setWorkPlaneMode(m_wp.mode % 3 + 1);
+    // Not drawing: E goes back to the kind of drawing there was before it was stopped (the line, when there was none); drawing: round the three kinds of what is put down
+    if (m_wp.mode == 0) setWorkPlaneMode(m_wpLastMode);
+    else setWorkPlaneMode(m_wp.mode % 3 + 1);
 }
 
 void View::setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const QVector3D& v)
@@ -6473,7 +6494,11 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
         if (s->previewGizmoVars(m, allowed)) { moved = true; continue; }
         changed |= s->updateVars(m);
     }
-    if (moved) update();
+    if (moved)
+    {
+        update();
+        growRegionForPreview();
+    }
     if (changed)
     {
         busy.show();
@@ -6502,8 +6527,52 @@ void View::applyGizmoNumbers(const std::map<libfive::Tree::Id, float>& m)
                      moved ? (changed ? "some shapes moved, others meshed" : "shapes moved, nothing meshed") : (changed ? "meshed again" : "nothing changed"));
 }
 
+void View::growRegionForPreview()
+{
+    // Auto scale off: the region is what the script says.  The picture of a model that is dragged is its mesh moved: the box of it is where it will be, and the region
+    // must hold that -- now, not after the drag is let go and the script has run
+    if (!settings.autoScale) return;
+    double nlo[3], nhi[3];
+    bool any = false;
+    for (auto& s : shapes)
+    {
+        QVector3D lo, hi;
+        if (!s->previewBox(lo, hi))
+        {
+            if (!s->hasMesh() || s->noPaint()) continue;
+            const auto& b = s->getMeshBounds();
+            lo = QVector3D(b.lower.x(), b.lower.y(), b.lower.z());
+            hi = QVector3D(b.upper.x(), b.upper.y(), b.upper.z());
+        }
+        for (int k = 0; k < 3; ++k)
+        {
+            nlo[k] = any ? std::min(nlo[k], double(lo[k])) : double(lo[k]);
+            nhi[k] = any ? std::max(nhi[k], double(hi[k])) : double(hi[k]);
+        }
+        any = true;
+    }
+    if (!any) return;
+    bool outside = false;
+    for (int k = 0; k < 3; ++k) outside = outside || nlo[k] < settings.min[k] - 1e-6 || nhi[k] > settings.max[k] + 1e-6;
+    if (!outside) return;
+    // (the room and the numbers the script's region gets: ScenePanel::fitRegion)
+    const double longest = std::max(nhi[0] - nlo[0], std::max(nhi[1] - nlo[1], nhi[2] - nlo[2]));
+    const double room = std::max(1.0, 0.1 * longest);
+    Settings next = settings;
+    for (int k = 0; k < 3; ++k)
+    {
+        next.min[k] = float(regionNumber(nlo[k] < settings.min[k] ? nlo[k] - room : double(settings.min[k]), -1).toDouble());
+        next.max[k] = float(regionNumber(nhi[k] > settings.max[k] ? nhi[k] + room : double(settings.max[k]), 1).toDouble());
+    }
+    m_regionGrown = true;
+    m_grownMin = next.min;
+    m_grownMax = next.max;
+    onSettingsFromScript(next, false);          // (what is shown starts meshing again, in the larger region)
+}
+
 void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
 {
+    m_regionGrown = false;
     gizmo_oriented = false;
     gizmo_frame_shape = nullptr;
     if ((g.kind == 5 || g.kind == 6) && g.group)
