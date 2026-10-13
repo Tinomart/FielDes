@@ -6743,13 +6743,16 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
     if (!m_support) return true;
     // The request of createFromMenu for this entry and this selection (what the library writes it from), without writing anything
     const bool operation = kind == "operation";
-    const QList<Model> picked = (kind == "primitive" && takesBodies(name)) ? operandsFor(line0) : QList<Model>();
+    // A new model in the menu of a MODEL (line0 >= 0): whether it fits the model(s) the menu is about is for the library to say, for every entry and not only the ones that take
+    // models (menu_catalog._primitive_fits: a thing made by number is a placement, always valid; a line is made of points, a material is something a simulation takes ...)
+    const bool onModel = kind == "primitive" && line0 >= 0;
+    const QList<Model> picked = (kind == "primitive" && (takesBodies(name) || onModel)) ? operandsFor(line0) : QList<Model>();
     const auto regionKind = [](const QJsonObject& it) {
         const QString type = it["type"].toString();
         return type == "surface" || type == "field";
     };
     const bool regionOnly = picked.size() == 1 && regionKind(picked[0].item) && (line0 >= 0 || !selectedModels().isEmpty());
-    const bool withBodies = picked.size() >= 2 || regionOnly || (kind == "primitive" && !picked.isEmpty() && fromSelection(name));
+    const bool withBodies = picked.size() >= 2 || regionOnly || (kind == "primitive" && !picked.isEmpty() && (fromSelection(name) || onModel));
     if (!operation && !withBodies) return true;             // (no model is needed for it, or none is selected)
     const QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
     if (operands.isEmpty()) return true;                    // (no model to work on: the menu says so itself -- a simulation writes placeholders)
@@ -6824,6 +6827,7 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
         request["body_info"] = info;
     }
     request["var"] = "x";
+    if (onModel) request["check"] = true;                     // (the library refuses what does not fit, instead of falling back to the entry's own template)
     if (bodyItem["bounds"].toArray().size() == 2)
     {
         request["lo"] = bodyItem["bounds"].toArray()[0];

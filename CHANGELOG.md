@@ -34,6 +34,11 @@
   `menu_catalog.py` is gone: `smooth`, `round_edges`, `fillet`, `shell_inside`, `shell_outside`, `shell_exact`, `lattice`, `random_points`, `surface_from_bodies` and `field_from_body` take a body -- greyed out for a surface, a curve,
   a point or a field, and a category with none valid left (*Rounding*, *Surfaces* ...) is not in the menu -- `extrude` a 2D shape, a foam its points. A function that says nothing takes any shape. (Compared on 135,660
   selections of every kind: only those ten functions changed, only from valid to not valid.)
+- **A New entry is valid when it is a placement or when the selection has a use for it.** On a model (in the viewport, from its row or its line) every *New ...* entry used to be valid, so a surface selected showed a
+  material, a fluid, a gravity and a cell next to *sketch*. Now **a shape -- a 3D, 2D or 1D shape (a line and a sketch too), a point, a surface, a field -- is a placement: valid for any selection** (a line or a
+  sketch is made of the points, curve or surface that are selected when they fit, of new points when not); **a condition is valid when what is selected can say where it acts** (a surface, a field, a body -- not a
+  point); and **a material, a fluid, a cell or a load is valid when some function that says what it takes -- a simulation, by its signature, `lattice` -- takes the selection together with it**: for a surface the
+  materials, the fluids and the analyses are not valid, and a category with none valid (*New material*, *New fluid*) is not in the menu. Nothing in the rule names an entry; the library functions say what they take.
 - **A selected surface is drawn in the colour its key shows, and the ruler is no longer pink.** The patch of a `select_surface` was drawn in the *last* colour of the boundary-condition map (gold, since the map grew to 13 colours) while
   its key said *Selected surface* in magenta; it is magenta on the model now, as the key and the docs say. And the scale ruler at the bottom took its second half's fill from whatever was drawn before it -- the key's pink swatch -- so the
   ruler turned pink whenever a selection was shown; it now has its own (no) fill.

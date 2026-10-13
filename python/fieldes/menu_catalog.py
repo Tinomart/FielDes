@@ -558,6 +558,37 @@ def _selection_fits(kind, name, models):
     return any(all(t in accepts for t in tags) and all(any(t in need for t in tags) for need in needs) for accepts, needs in signatures)
 
 
+# What a New entry makes, for whether it fits the models selected.  A SHAPE -- a 3D shape, a 2D shape, a 1D shape, a point, a surface, a field -- is a PLACEMENT: it is made wherever the menu
+# is, so it is valid for any selection (a line or a sketch is made of the points, curve or surface that are selected when they fit, and of new points when not).  Everything else is valid
+# only when the selection has a use for it: a condition when the selection says where it acts (a region), and one that is only something other functions take as an input -- a material, a
+# fluid, a cell, a load -- when some function that says what it takes (see fieldes.kinds.takes; a simulation, by its signature) takes the selection together with it.  Nothing here names an entry
+_PLACEMENT_KINDS = frozenset(('solid', 'profile', 'curve', 'point', 'surface', 'field'))
+
+
+def _primitive_fits(name, models):
+    ''' Whether the New entry `name` is valid for the models selected (each {type, role, cls}); anything is valid for none '''
+    if not models:
+        return True
+    group = next((g for n, g, _t in PRIMITIVES if n == name), None)
+    kind = GROUP_KINDS.get(group, 'solid')
+    if kind in _PLACEMENT_KINDS:
+        return True             # (placed anywhere -- a line or a sketch too: made of the points, curve or surface selected when they fit (see FROM_SELECTION), of new points when not)
+    if name in BODY_CONDITIONS:
+        return bool(_where(models))
+    # (something to be given to another function: the kind, role and class of what it makes, as a selected model of it would be)
+    made = {'type': kind}
+    if kind == 'material':
+        made['cls'] = 'Fluid' if group == 'Fluids' else 'Material'
+    elif kind == 'conditions':
+        try:
+            from fieldes import outline
+            made['role'] = outline._guess_role(name)
+        except Exception:
+            made['role'] = ''
+    users = [n for n, g, _t, _o in OPERATIONS if _takes(n)]
+    return any(_selection_fits('operation', n, list(models) + [made]) for n in users)
+
+
 def _body_first(body, info, others):
     ''' The first model selected is what an operation works on -- unless it is itself something the operation is made of: a condition or a
         material.  Those are conditions in whatever order the models were selected, and the body is then the first solid or profile among
@@ -855,6 +886,9 @@ def _call(r):
             kind, name, ([r['body_info']] if r.get('body') and r.get('body_info') else []) + list(others)):
         # (the menu greys the entry out for such a selection, so this is not reached from it)
         raise ValueError('%s does not take what is selected' % name)
+    if kind == 'primitive' and r.get('check') and not _primitive_fits(name, selected):
+        # (asked whether the entry is valid for this selection, by a menu on a model: the entry is made of what is selected or has a use for it, or it is not valid)
+        raise ValueError('%s does not fit what is selected' % name)
     if kind == 'primitive' and name in FROM_SELECTION and selected:
         built = _from_selection(name, selected, values)
         if built:

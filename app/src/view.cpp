@@ -3513,6 +3513,22 @@ void View::addBodyFromField(QMenu* menu, int line, const QVector3D& point, doubl
                        "another surface of it.  (Operation > Field math has it too, with the rest of the field math.)"));
 }
 
+// Greys out a new model of a menu that does not fit what the menu is about.  On a model: whatever the model(s) are, the library says whether the entry fits (a thing made by
+// number is a placement: it always does); in the menu of empty space only a condition made of the models selected is checked
+void View::checkPrimitive(QAction* action, const QString& name, bool withBodies, int atLine) const
+{
+    if (!m_scene) return;
+    if (m_menuModelLine >= 0)
+    {
+        if (m_scene->entryAllowed("primitive", name, m_menuModelLine)) return;
+        action->setEnabled(false);
+        const QString own = action->toolTip();
+        action->setToolTip(own.isEmpty() || own == action->text() ? T("Does not fit what is selected") : T("Does not fit what is selected") + "\n" + own);
+        return;
+    }
+    if (withBodies && !m_scene->entryAllowed("primitive", name, atLine)) action->setEnabled(false);
+}
+
 void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine)
 {
     // New material, New fluid, New support or load, New thermal condition, New flow condition: each a menu of its own, in the
@@ -3540,14 +3556,14 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
             const QString name = p["name"].toString();
             auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type)), name,
                                          this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
-            // (a condition made of the models selected: not offered for a selection the library cannot write it for)
-            if (p["with_bodies"].toBool() && m_scene && !m_scene->entryAllowed("primitive", name, atLine)) action->setEnabled(false);
             if (p["with_bodies"].toBool())
             {
                 action->setToolTip(T("With several models selected: the first is the body, the others are where it acts (bodies, fields, "
                                    "selected surfaces) -- written with the surface of the body there.  With one model, or none: a placeholder for "
                                    "where it acts, to drop a body, a field or a surface on."));
             }
+            // (made of the models selected, or something to give a simulation: not offered when the selection has no use for it)
+            checkPrimitive(action, name, p["with_bodies"].toBool(), atLine);
         }
     }
 }
@@ -3600,6 +3616,7 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
             auto action = sub->addAction(TypeIcons::icon("cell"), label, this,
                                          [=]{ emit(createRequested("primitive", name, point, scale, line, -1)); });
             action->setToolTip(T("A new cell: %1 -- a lattice operation takes it as its cell").arg(name));
+            checkPrimitive(action, name, false, line);
         }
     }
 }
@@ -3756,6 +3773,10 @@ bool keepCategoriesWithValidEntries(QMenu* menu)
         {
             valid = true;
         }
+        else if (act->data().toString() == "category")
+        {
+            menu->removeAction(act);                      // (an entry that stands for its category, with nothing else in it: no valid entry, so no category)
+        }
     }
     // (the lines that have nothing left to set apart: first, last and twice in a row)
     bool lineBefore = true;
@@ -3788,6 +3809,7 @@ void View::showMenuForLine(int line0, QPoint globalPos)
 void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
 {
     loadMenuCatalog();
+    m_menuModelLine = -1;                   // (empty space: what is made is made at the click)
     QVector3D point;
     double scale = 10;
     placementAt(pos, point, scale);
@@ -3863,12 +3885,14 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
                 auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
                                               this, [=]{ emit(createRequested("primitive", name, at, size, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
+                checkPrimitive(action, name, false, atLine);
                 return action;
             };
             if (entries.size() == 1 && g != "Custom blocks")
             {
                 auto a = make(menu, entries.first());
                 a->setText(titles.value(g, T("New %1").arg(entries.first()["name"].toString())));
+                a->setData(QStringLiteral("category"));         // (a category with one entry is shown as that entry: it goes when it is not valid, as a category does)
                 continue;
             }
             auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
@@ -3898,6 +3922,7 @@ QVector3D View::placementExact(QPoint pos) const
 void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface)
 {
     loadMenuCatalog();
+    m_menuModelLine = line;                 // (a model: what is offered fits it, whether the menu came from its surface in the viewport, its row or its line)
     auto menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setToolTipsVisible(true);
