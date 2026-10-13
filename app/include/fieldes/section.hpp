@@ -260,21 +260,22 @@ protected:
     bool m_collapsed = false;
 };
 
-/*  How the viewer of a field is configured: a plane facing along an axis, at the place of the field's icon (the plane is where the icon
- *  is along that axis) and inside the bounds of the field  */
+/*  How the viewer of a field is configured: a disc, facing along an axis, with its middle at a place (it starts where the field is about;
+ *  the arrows in the viewport move it)  */
 struct FieldViewSettings
 {
-    int axis = 2;            // the plane faces along: 0 = X, 1 = Y, 2 = Z
-    QVector3D centre;        // where the icon is: the place along the axis is centre[axis]
+    int axis = 2;            // the disc faces along: 0 = X, 1 = Y, 2 = Z
+    QVector3D centre;        // its middle: the place along the axis is centre[axis]
+    float radius = 0;        // of the disc (0: not chosen yet)
     float opacity = 0.9f;
     float offset() const { return centre[axis]; }
 };
 
 /*
  *  The field viewer, as a card floating in the viewport's top-right corner like the section card: it edits the viewer of the field that is
- *  selected -- a plane through the field, kept inside the bounds of the field (the box of the object it was made from, else the render
- *  region), with an axis, a position slider and an opacity.  Every field has its own viewer and its own settings.  With several fields
- *  selected, a menu in the card chooses which one it is about.
+ *  selected -- a DISC (a plane of a radius), centred where the field is about -- the point or the body it was made from, else the origin --
+ *  that nothing keeps inside anything: the arrows in the viewport take it wherever it is to go.  It has an axis, a radius and an opacity.
+ *  Every field has its own viewer and its own settings.  With several fields selected, a menu in the card chooses which one it is about.
  */
 class FieldPanel : public QFrame
 {
@@ -290,10 +291,10 @@ public:
 public slots:
     /*  The open viewers (their keys and the names shown) and the one the card is about; the menu is there for two or more  */
     void setFields(const QStringList& keys, const QStringList& names, int current);
-    /*  The viewer the card is about: its settings, and the bounds of its field (the range of the position slider)  */
-    void setViewer(QString key, FieldViewSettings s, QVector3D boundsMin, QVector3D boundsMax);
+    /*  The viewer the card is about: its settings, and the render region (the range of the radius slider)  */
+    void setViewer(QString key, FieldViewSettings s, QVector3D regionMin, QVector3D regionMax);
     void setSlice(FieldSlice s);
-    /*  The icon was dragged in the viewport: the place of the viewer  */
+    /*  The disc was dragged in the viewport: along its normal or in its plane, by an arrow, by the dot in the middle, or by its icon  */
     void setCentre(QString key, FieldViewSettings s);
     /*  The field's value under the mouse in the viewport (empty: none)  */
     void setReadout(const QString& text);
@@ -309,6 +310,7 @@ protected:
     void emitChange();
     void syncWidgets();
     void updateInfo();
+    float radiusMax() const;
 
     FieldViewSettings m_settings;
     QString m_key;
@@ -325,8 +327,8 @@ protected:
     QWidget* m_comboRow;
     QWidget* m_body;
     QToolButton* m_axes[3];
-    QSlider* m_positionSlider;
-    QDoubleSpinBox* m_positionSpin;
+    QSlider* m_radiusSlider;
+    QDoubleSpinBox* m_radiusSpin;
     QSlider* m_opacity;
     FieldLegend* m_legend;
     QLabel* m_info;

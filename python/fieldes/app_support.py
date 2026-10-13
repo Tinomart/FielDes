@@ -1022,24 +1022,10 @@ def _origin_numbers(origin):
     return None
 
 
-def _origin_box(origin):
-    ''' The box of the object a field was made from, as ([lo], [hi]), or None (a position, a point, or nothing that has an extent) '''
-    import time
-    try:
-        if origin is None or hasattr(origin, 'xyz') or getattr(origin, '_point_pos', None) or isinstance(origin, (tuple, list)):
-            return None
-        box = _estimate_bounds([origin], time.time() + 0.4)
-        if box:
-            return ([float(c) for c in box[0]], [float(c) for c in box[1]])
-    except Exception:
-        pass
-    return None
-
-
 def field_sources():
-    ''' The fields of the last scene, for the field viewers: [(key, Shape, origin, shown, bounds)] -- origin is where the field is about, as three
+    ''' The fields of the last scene, for the field viewers: [(key, Shape, origin, shown)] -- origin is where the field is about, as three
         numbers (the point or the middle of the body it was made from), or None (its icon is at the origin); shown is its eye (the script
-        displays it); bounds is the box of the object it was made from, or None (the render region).  An app's viewport adds the fields it is given '''
+        displays it).  An app's viewport adds the fields it is given '''
     out = []
     seen = set()
     try:
@@ -1050,14 +1036,14 @@ def field_sources():
     # (in an app only the viewport shows fields: the ones the script displays by their names are for the editor)
     for key, shape, shown in ([] if in_app else _FIELD_SOURCES):
         origin = getattr(shape, '_field_origin', None)
-        out.append((key, shape, _origin_numbers(origin), bool(shown), _origin_box(origin)))
+        out.append((key, shape, _origin_numbers(origin), bool(shown)))
         seen.add(key)
     try:
         for key, shape in _app._viewport_fields():
             if key in seen:
                 continue
             origin = getattr(shape, '_field_origin', None)
-            out.append((key, shape, _origin_numbers(origin), True, _origin_box(origin)))
+            out.append((key, shape, _origin_numbers(origin), True))
     except Exception:
         pass
     return out

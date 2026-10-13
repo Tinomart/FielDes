@@ -1102,7 +1102,7 @@ void AppWindow::ensureViewport()
         resize(1320, 840);
         m_split->setSizes({560, 760});
 
-        // The fields: an icon for each (with its name over it); a click on it opens the viewer of the field -- a plane of it, inside its bounds --
+        // The fields: an icon for each (with its name over it); a click on it opens the viewer of the field -- a disc of it --
         // and the card edits that viewer
         m_fieldPanel = new FieldPanel(m_view);
         m_fieldPanel->hide();

@@ -901,8 +901,8 @@ Window::Window(Arguments args)
         Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::SHIFT | Qt::Key_X)});
         section_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(section_action);
-        // Every field has an icon in the scene (with its name over it) while it is shown, and a viewer -- a plane of the field inside the
-        // bounds of the field -- while it is selected: in the model tree or by clicking its icon.  The card edits the viewer of the field it is
+        // Every field has an icon in the scene (with its name over it) while it is shown, and a viewer -- a disc of the field, with a radius,
+        // that can be taken anywhere -- while it is selected: in the model tree or by clicking its icon.  The card edits the viewer of the field it is
         // about; with several fields open a menu in it chooses.  It closes when no field is open.  The section card is not touched
         auto syncCard = [=] {
             const QStringList keys = view->openFieldKeys();
@@ -2263,8 +2263,8 @@ Window::Window(Arguments args)
         a->add("varsteps", [=](const QString& args){
             std::cerr << "automation: varsteps found " << editor->testVarSteps(args.trimmed().toInt()) << " numbers" << std::endl;
         });
-        // fieldarrow <key> <axis 0-2> <dx> <dy>: the move arrow of an open viewer (the gizmo of its icon) for that world axis is taken in the middle and
-        // dragged by (dx, dy) pixels in steps
+        // fieldarrow <key> <part 1-4> <dx> <dy>: a part of the gizmo of an open viewer's disc (1, 2 the arrows in its plane, 3 the dot in the middle, 4 the arrow
+        // along its normal) is taken in the middle and dragged by (dx, dy) pixels in steps
         a->add("fieldarrow", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             QPoint from;

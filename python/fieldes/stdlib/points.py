@@ -217,7 +217,7 @@ def displayed(shape):
         return out
     if kind == 'field':
         # A field is not a body: nothing of it is drawn in the viewport.  A displayed field has an icon, which opens the field viewer: it shows
-        # the field at every point of a plane inside the field's bounds
+        # the field at every point of a disc
         from fieldes.stdlib.shapes import emptiness
         return emptiness()
     return shape

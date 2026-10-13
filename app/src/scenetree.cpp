@@ -1847,8 +1847,19 @@ void ScenePanel::setScene(const QString& json)
     // A model made from a viewport menu is selected once the script that makes it has run
     if (!m_selectNew.isEmpty())
     {
-        if (selectVar(m_selectNew)) m_selectNew.clear();
-        else if (++m_selectNewTries > 8) m_selectNew.clear();
+        if (selectVar(m_selectNew))
+        {
+            // (a duplicate of several models: the copies are the selection, all of them -- the old models are not)
+            for (const QString& more : m_selectNewMore) selectVar(more, true);
+            if (!m_selectNewMore.isEmpty()) emit(highlightLines(selectedLines()));
+            m_selectNew.clear();
+            m_selectNewMore.clear();
+        }
+        else if (++m_selectNewTries > 8)
+        {
+            m_selectNew.clear();
+            m_selectNewMore.clear();
+        }
     }
 
     // What is selected is made ready to be dragged after every run, not only after the runs that something asked it of (a model
@@ -2080,6 +2091,7 @@ void ScenePanel::clearScene()
     m_reselectTries = 0;
     m_pending = Pending();
     m_selectNew.clear();
+    m_selectNewMore.clear();
     m_selectNewTries = 0;
     m_afterRun = nullptr;
     m_editPending = false;
@@ -4619,6 +4631,7 @@ void ScenePanel::duplicateSelected()
         made << renames[i].second;
     }
     m_selectNew = made.last();
+    m_selectNewMore = made.mid(0, made.size() - 1);
     m_selectNewTries = 0;
     emit(editScript(edits, "Duplicate " + made.join(", ")));
 }
@@ -4690,6 +4703,7 @@ void ScenePanel::duplicateLinkedSelected()
     static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
     if (!starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
     m_selectNew = made.last();
+    m_selectNewMore = made.mid(0, made.size() - 1);
     m_selectNewTries = 0;
     emit(editScript(edits, "Link " + made.join(", ")));
 }
@@ -6550,18 +6564,20 @@ bool ScenePanel::needsSecond(const QString& operation) const
 ////////////////////////////////////////////////////////////////////////////////
 // The viewport's menus and the I key
 
-bool ScenePanel::selectVar(const QString& var)
+bool ScenePanel::selectVar(const QString& var, bool add)
 {
     const auto it = itemForVar(var);
     if (it.isEmpty()) return false;
     const QString key = keyOf(it);
+    const QItemSelectionModel::SelectionFlags how =
+        (add ? QItemSelectionModel::Select : QItemSelectionModel::ClearAndSelect) | QItemSelectionModel::Rows;
     for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
     {
         if ((*i)->data(COL_NAME, ROLE_KEY).toString() == key &&
             (*i)->data(COL_NAME, ROLE_TYPE).toString() == "item")
         {
             expandTo(*i);
-            m_tree->setCurrentItem(*i);
+            m_tree->setCurrentItem(*i, 0, how);
             m_tree->scrollToItem(*i);
             select(*i, false);
             return true;
@@ -6577,7 +6593,7 @@ bool ScenePanel::selectVar(const QString& var)
         if (k >= 0 && k < parts.size() && parts[k].toObject()["var"].toString() == var)
         {
             expandTo(*i);
-            m_tree->setCurrentItem(*i);
+            m_tree->setCurrentItem(*i, 0, how);
             m_tree->scrollToItem(*i);
             select(*i, false);
             return true;

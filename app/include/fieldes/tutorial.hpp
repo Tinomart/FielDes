@@ -91,6 +91,7 @@ private:
 
     void buildSteps();
     void showStep();
+    void showDoneLook(bool done);
     void refresh();                         // (where things are now: the target, the card, the arrow)
     void layoutCard(const QRect& hole, const QVector<QRect>& keepClear);
     void updateMask();

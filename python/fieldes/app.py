@@ -402,7 +402,7 @@ def viewport(models=None, *more, labels=True):
         unless it is `lock()`ed: click a model to select it and its gizmo shows; there is no model tree and no menu.  A model that is dragged
         writes its new numbers into the script the app runs, which runs again for the picture (with app.running() False), and the numbers are
         there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it
-        was made from; click the icon and the field is shown on a plane inside the field's bounds, with a slider for its position.
+        was made from; click the icon and the field is shown on a disc, with a slider for its radius and arrows to move it.
 
         It is a setting of the app: the editor draws nothing for it and the model tree has no row for it -- the models are in the tree as they are,
         shown by their eyes; File > Preview as app shows the viewport.  `labels=False` leaves the names out. '''

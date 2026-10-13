@@ -386,7 +386,7 @@ button changes its icon at once, and the lines it writes are known when the run 
 ## The section card
 
 `Shift+X` (or **View → Section view**; the key acts while the viewport -- or the model tree -- has the keyboard, so it never types over the editor) opens a card at the top right of the viewport. The section view is a viewer **you switch
-on** when you want it; it cuts models. It is separate from the [field viewer](#the-field-viewer), which shows fields on planes inside their bounds: they
+on** when you want it; it cuts models. It is separate from the [field viewer](#the-field-viewer), which shows fields on discs: they
 work on different things, and **both can be open at the same time** (the field viewer's card then sits below the section card).
 
 - **X / Y / Z** picks the plane's normal; the slider, the position box, or the blue arrow on the plane in
@@ -455,24 +455,23 @@ A *field* model (a distance, a ramp, noise, `field_from_body(...)`, anything mad
   conditions), so that where there are several fields you tell at a glance which is which. It sits **where the field is about**: the place of the
   object it was made from (`distance_to_point(anchor)` at `anchor`, `depth_below(part)` at the middle of `part`; a field made of those, such as
   `ramp(distance_to_point(anchor), ...)` or `a * b`, at the first of them) -- a field made of nothing, such as `x_field()`, at the origin.
-  **Drag the icon** to put it somewhere else: it is positionable, in the plane facing you, and stays inside the field's bounds. When a point's dot is
+  **Drag the icon** to put it somewhere else: it is positionable, in the plane facing you, and the disc goes with it. When a point's dot is
   where the icon would be -- a field made from a point starts on it -- the icon is drawn beside the dot, so the dot can be clicked to select the point (and
   show its gizmo); several icons that would be on top of each other are moved apart in the same way.
-- **The icon has a gizmo of its own while its viewer is open:** three move arrows, along the world's axes, from the icon. Drag one to move the icon -- and the
-  plane with it -- along that axis, inside the bounds of the field. (A field has no model gizmo: nothing of it is moved in the script, the viewer is.)
+- **The disc has arrows of its own while its viewer is open**, as the section plane has: an **arrow along the way it faces** (drag it to move the disc through the field),
+  **two arrows in its plane** (drag one to slide the disc along that axis) and the **dot in the middle**, which moves it freely in its plane, as the dot of a
+  model's gizmo does. Nothing keeps the disc inside the render region or anywhere else. (A field has no model gizmo: nothing of it is moved in the script, the viewer is.)
 - **Show and hide.** A field has an **eye** in the model tree, like every model: when it is off, the icon and the viewer of the field are not in the scene
   at all. (A field is shown when the script displays it -- the eye writes that line, and a field made from the menu is displayed at once. A field
   that only feeds other models, such as the cell size of a lattice, stays hidden until you turn its eye on.)
 - **Select it** by clicking its icon, or its row in the model tree (the two are one selection; Ctrl adds). The icon lights up and **its viewer opens
   where the icon is**. Click the icon again, or select something else, to close it. Several fields can be open at once, each with its own plane.
-- **The viewer is a plane through the field, kept inside the bounds of the field**: the box of the object it was made from (the render region for a
-  field that was made from none). It shows the value at every point of the plane **in the section view's own colours and dark lines**: blue to cream to orange,
-  with a dark line at every round step of the value, and a heavier one where the field is zero. (The scale is found from the field once, over its
-  bounds, and kept while you move the plane.) Hover the plane to read the value. It **cuts no model**.
-- **The card** (like the section card) edits the viewer of the field that is selected: **X / Y / Z** chooses which way the plane faces, the **Position**
-  slider and box move it along that axis **within the bounds of the field** (the icon moves with it), **Opacity**, the colour legend and a flat
-  **2D view** work as on the section card. With several fields open, a menu in the card chooses the one it is about. It has no close button: it is
-  there while a viewer is open.
+- **The viewer is a disc through the field.** It shows the value at every point of a plane **in the section view's own colours and dark lines**: blue to cream to orange,
+  with a dark line at every round step of the value, and a heavier one where the field is zero. (The scale is found from the field once and kept while you move the
+  disc.) Hover the disc to read the value. It **cuts no model**.
+- **The card** (like the section card) edits the viewer of the field that is selected: **X / Y / Z** chooses which way the disc faces, **Radius** (a slider and a box)
+  sizes it, and **Opacity**, the colour legend and a flat **2D view** work as on the section card. There is no position slider. With several fields open, a menu
+  in the card chooses the one it is about. It has no close button: it is there while a viewer is open.
 - It is independent of the section view: the two can be open together, each with its own plane and its own card.
 
 The same icons are in an [app's viewport](apps.md#a-viewport-look-at-it-drag-it): a field given to `app.viewport({'Stress': field})` is an icon with its name
@@ -562,7 +561,8 @@ The first time FielDes starts, a **welcome card** says in a few lines what FielD
 or the quieter **Skip the guided tour**; **Help → Guided tour** starts it at any time, at its first step. It runs on the program itself, not
 on a script: short cards of one or two sentences, 34 steps: the script and the viewport, **selecting a model** and the gizmo first, then the model tree (children, argument rows, renaming), a **placeholder you make from the right-click menu and fill in yourself**, sections and closing rows, the section view, a field in place of a number, **a model used in two places (the Ctrl+drag that makes a shadow reference, and why)**, drawing on a **work plane** (and **stopping with a right click, coming back with `E`**), a point pulled out of an edge, **lines through points and a sweep along one that you can play with**, the Shift gizmo, copies and linked copies, the keys worth knowing (grouped: general first), and the property tab of a result. The steps that need more than the plate -- a field, a reference, a result -- **work on a small model of their own**, so that only what the step is about is there, and the tree shows only the rows it is about; your model is back when the step is left. Each step
 
-- **dims** the window except what it is about, and puts a **glowing frame** round it (and round the line or field it means);
+- **dims** the window except what it is about, and puts a **glowing frame** round it (and round the line or field it means) -- yellow while there is
+  something to do, and **green** (the frames, the arrow, the card's border and its button) as soon as the step is done, so nothing says there is more to do;
 - shows the **script and the picture as one thing**: the lines of the script a step is about stay lit and framed in the editor even
   while the step is about the viewport or the tree, and every line that **changes or moves** -- typed, or edited by a drag in the
   viewport, by a drop or a rename in the tree, by a menu -- glows for a moment and fades (lines that only moved down because one

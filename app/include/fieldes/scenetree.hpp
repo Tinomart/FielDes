@@ -626,7 +626,10 @@ protected:
     /*  The same for a model already found: false if there is nothing to name it by  */
     bool describeModel(const QJsonObject& target, QString* source, int* after) const;
     /*  The row of the model that a variable holds is selected (once the script has run and it is in the tree)  */
-    bool selectVar(const QString& var);
+    /*  Selects the row of a model: that row alone, or (`add`) as one more of the selected.  The selection is set with explicit flags: the
+     *  tree's own rule for a row it is told to make current looks at the keys held down at that moment (Shift or Ctrl, still down from
+     *  the key that made the copy, would add the row to the old selection or toggle it)  */
+    bool selectVar(const QString& var, bool add = false);
     /*  A name for a new model: base_1, base_2, ... whichever the script does not use  */
     QString freeName(const QString& base) const;
     /*  The model a menu operation falls back on when none is named: the selected one, else the last variable  */
@@ -710,6 +713,7 @@ protected:
     QString m_copiedText;                        // (what the clipboard held then: a paste is of this only)
     QSet<QString> m_copiedPart;                  // (which of them were parts of an import)
     QString m_selectNew;
+    QStringList m_selectNewMore;                 // (a duplicate of several models: the other copies, selected with the last one)
     bool m_workPlaneActive = false;
     QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
     QJsonArray m_placedAlso;                   // (and the strokes it has in the symmetry: each an array of points)

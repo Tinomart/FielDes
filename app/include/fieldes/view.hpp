@@ -237,7 +237,7 @@ public slots:
     void createAt(const QString& name, QPoint pos);
 
     /*  The field models of the script, after a run: every field has an icon in the scene (a card with its name over it, at the place of the
-     *  object it was made from) while it is shown, and a viewer -- a plane of its field inside the bounds of the field -- while it is open  */
+     *  object it was made from) while it is shown, and a viewer -- a disc of its field, of a radius, that can be taken anywhere -- while it is open  */
     void setFieldSources(QList<FieldEntry> fields);
     /*  The fields whose viewers are open (the ones selected in the model tree, or whose icons were clicked): by key (a variable's name, or
      *  "line:N").  A field that is not shown (its eye is off) has neither icon nor viewer  */
@@ -247,14 +247,14 @@ public slots:
     QString activeField() const { return m_activeField; }
     /*  The open viewers that are in the scene, by key  */
     QStringList openFieldKeys() const;
-    /*  A viewer's settings and the bounds of its field; false when there is none  */
-    bool fieldViewer(const QString& key, FieldViewSettings& s, QVector3D& boundsMin, QVector3D& boundsMax) const;
-    /*  The card changed a viewer: its axis, its place (the icon moves with it), its opacity  */
+    /*  A viewer's settings and the render region (what the card's radius ranges over); false when there is none  */
+    bool fieldViewer(const QString& key, FieldViewSettings& s, QVector3D& regionMin, QVector3D& regionMax) const;
+    /*  The card changed a viewer: its axis, its radius, its opacity  */
     void setFieldView(QString key, FieldViewSettings s);
     /*  Where a field's icon is on the screen (for scripted tests); false when it is not in the scene  */
     bool fieldIconPoint(const QString& key, QPoint& out) const;
-    /*  Where the middle of a move arrow of an open viewer is on the screen (for scripted tests); false when there is none  */
-    bool fieldGripPoint(const QString& key, int axis, QPoint& out) const;
+    /*  Where a part of the gizmo of an open viewer's disc is on the screen (for scripted tests: 1, 2 the arrows in its plane, 3 the dot, 4 the arrow along its normal); false when there is none  */
+    bool fieldGripPoint(const QString& key, int part, QPoint& out) const;
 
     void toOrthographic() { camera.toOrthographic();  }
     void toPerspective()  { camera.toPerspective();   }
@@ -785,23 +785,22 @@ protected:
         bool shown = true;                       // its eye: icon and viewer are in the scene
         bool hasAnchor = false;
         QVector3D anchor;                        // where the icon starts: the place of the object the field was made from
-        bool hasBounds = false;
-        QVector3D lo, hi;                        // the box of that object (else the render region): the viewer is kept inside it
-        bool open = false;                       // the viewer's plane is open
+        bool open = false;                       // the viewer's disc is open
         bool moved = false;
-        QVector3D centre;                        // where the icon is, once it was moved by hand; the plane is at centre[axis]
-        int axis = 2;
+        QVector3D centre;                        // the middle of the disc, once it was moved by hand (else the field's anchor); the disc is at centre[axis]
+        int axis = 2;                            // the disc faces along: 0 = X, 1 = Y, 2 = Z
+        float radius = 0;                        // 0: not chosen: half the render region
         float opacity = 0.9f;
         bool rangeKnown = false;
         QPair<float, float> range;               // the colours of the field, found when it is first shown and kept until the script runs again
         Plane plane;
     };
-    /*  A move arrow of an open viewer (the gizmo of its icon): the viewer and the world axis it moves the plane along  */
+    /*  A part of the gizmo of an open viewer's disc: the viewer and the part -- 1, 2 the arrows in its plane, 3 the dot in the middle, 4 the arrow along its normal  */
     struct FieldGrip
     {
         FieldViewer* v = nullptr;
-        int axis = 0;
-        bool operator==(const FieldGrip& o) const { return v == o.v && axis == o.axis; }
+        int part = 0;
+        bool operator==(const FieldGrip& o) const { return v == o.v && part == o.part; }
     };
     std::map<QString, std::unique_ptr<FieldViewer>> m_viewers;
     QString m_activeField;
@@ -810,8 +809,7 @@ protected:
     void settleActive();
     void initViewer(FieldViewer* v);
     void retireViewer(FieldViewer* v);
-    /*  The bounds a viewer is kept in (a little room round them, never flat), where its icon is, and its plane as the settings of a section  */
-    void fieldBounds(const FieldViewer& v, QVector3D& lo, QVector3D& hi) const;
+    /*  Where a viewer's disc is (its middle: its icon is beside it), and the disc as the settings of a plane  */
     QVector3D fieldPlace(const FieldViewer& v) const;
     SectionSettings fieldPlane(const FieldViewer& v) const;
     FieldViewSettings fieldSettings(const FieldViewer& v) const;
@@ -831,9 +829,14 @@ protected:
     QPointF m_iconOffset;                 // (how far the icon that is held was drawn from its place when it was taken: it keeps that while it is dragged)
     /*  Where the icons are drawn: at the place of the field, moved aside when the dot of a point or another icon is there, so that the dot can be clicked  */
     QHash<QString, QPointF> iconLayout() const;
-    /*  The move arrows of an open viewer, along the world's axes from the rim of its icon (as long as the arrows of a gizmo): where one is, the one
-     *  under a widget position, and the drag of one -- the plane goes with the icon, kept inside the bounds of the field  */
-    bool fieldArrow(const FieldViewer& v, const QPointF& icon, int axis, QPointF& from, QPointF& to, float& len) const;
+    /*  The radius of a viewer's disc: the one chosen, else half of the render region  */
+    float fieldRadius(const FieldViewer& v) const;
+    /*  The gizmo of an open viewer's disc, the arrow along its normal the section's has, two more in its plane, and a dot in the middle that moves it freely in the plane: the
+     *  screen points of its middle and of the tips of the two arrows (along the two axes of the plane) and of the one along the normal; what part of it a widget position is on
+     *  (0 nothing, 1 / 2 an arrow in the plane, 3 the dot, 4 the arrow along the normal); its drawing; the drag of a part -- nothing keeps the disc inside anything  */
+    bool fieldGizmo(const FieldViewer& v, QPointF& middle, QPointF& tipU, QPointF& tipV, QPointF& tipN, float& length) const;
+    int fieldGizmoHit(const FieldViewer& v, QPoint pos) const;
+    void drawFieldGizmo(QPainter& painter, const FieldViewer& v);
     FieldGrip fieldGripAt(QPoint pos) const;
     void beginFieldGrip(const FieldGrip& g, QPoint pos);
     void dragFieldGrip(QPoint pos);
@@ -844,6 +847,7 @@ protected:
     QVector3D m_fgStart;
     QPointF m_fgDir;
     float m_fgLen = 0;
+    QVector3D m_fgGrab;                   // (the dot: how far the middle of the disc was from where the line of sight met its plane when it was taken)
     bool activeFieldOpen() const;
     void startSliceAt(Plane& plane, bool fine, FieldViewer* viewer = nullptr);
     void onSliceFinished(Plane& plane, FieldViewer* viewer = nullptr);

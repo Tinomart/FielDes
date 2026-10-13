@@ -12,7 +12,7 @@
 # depth_below(...), a result of an analysis ...), and the body follows.
 #
 # To look at a field itself, turn on its eye in the model tree (swell, blend, cells): it becomes an icon in the viewport with
-# its name over it, and a click on the icon opens the field viewer -- a plane through the field with a position slider.
+# its name over it, and a click on the icon opens the field viewer -- a disc through the field with a radius slider.
 from fieldes import *
 
 view.set_bounds([-10, -10, -10], [225, 55, 45], auto_scale=True)

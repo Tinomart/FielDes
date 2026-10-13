@@ -1045,7 +1045,7 @@ void Interpreter::evaluate(QString script, bool resuming)
                 for (Py_ssize_t k = 0; k < PyList_Size(list); ++k)
                 {
                     PyObject* pair = PyList_GetItem(list, k);
-                    if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 5) continue;
+                    if (!pair || !PyTuple_Check(pair) || PyTuple_Size(pair) != 4) continue;
                     PyObject* key = PyTuple_GetItem(pair, 0);
                     PyObject* ptr = PyObject_GetAttrString(PyTuple_GetItem(pair, 1), "ptr");
                     if (key && PyUnicode_Check(key) && ptr && PyLong_Check(ptr))
@@ -1061,21 +1061,6 @@ void Interpreter::evaluate(QString script, bool resuming)
                         {
                             PyObject* shown = PyTuple_GetItem(pair, 3);                 // (its eye)
                             entry.shown = !shown || PyObject_IsTrue(shown) == 1;
-                            PyObject* box = PyTuple_GetItem(pair, 4);                   // (the box of what it was made from, or None)
-                            if (box && PyTuple_Check(box) && PyTuple_Size(box) == 2)
-                            {
-                                PyObject* a = PyTuple_GetItem(box, 0);
-                                PyObject* b = PyTuple_GetItem(box, 1);
-                                if (a && b && PyList_Check(a) && PyList_Check(b) && PyList_Size(a) == 3 && PyList_Size(b) == 3)
-                                {
-                                    entry.lo = QVector3D(float(PyFloat_AsDouble(PyList_GetItem(a, 0))), float(PyFloat_AsDouble(PyList_GetItem(a, 1))),
-                                                         float(PyFloat_AsDouble(PyList_GetItem(a, 2))));
-                                    entry.hi = QVector3D(float(PyFloat_AsDouble(PyList_GetItem(b, 0))), float(PyFloat_AsDouble(PyList_GetItem(b, 1))),
-                                                         float(PyFloat_AsDouble(PyList_GetItem(b, 2))));
-                                    entry.hasBounds = !PyErr_Occurred();
-                                    PyErr_Clear();
-                                }
-                            }
                         }
                         PyObject* origin = PyTuple_GetItem(pair, 2);                    // (where the field is about, or None)
                         if (origin && PyList_Check(origin) && PyList_Size(origin) == 3)

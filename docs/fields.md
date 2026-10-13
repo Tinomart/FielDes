@@ -64,8 +64,8 @@ A **constant field through every numeric slot of the library gives exactly what 
 The kind of thing a value is — a 3D shape, a 2D shape, a field, a surface, a point — is shown by its colour and icon in
 the [model tree](interface.md#the-model-tree). A field is not a body, so **nothing of it is drawn in the viewport**: select it in
 the model tree, or click its **icon** in the viewport (a green icon, with the field's name over it, at the place of the object it was made from), and the
-[field viewer](interface.md#the-field-viewer) opens: a plane through the field, inside its bounds, with the field's value at every point -- move it with the
-position slider to see the field in 3D. The eye of the field in the tree shows or hides its icon and its viewer.
+[field viewer](interface.md#the-field-viewer) opens: a disc through the field with the field's value at every point -- size it with the radius slider and move it
+with its arrows and dot to see the field in 3D. The eye of the field in the tree shows or hides its icon and its viewer.
 
 ## Points and surfaces
 

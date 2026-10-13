@@ -45,7 +45,7 @@ if app.running():
     body = result
 
 # A field in the viewport is an icon (with its name over it) where the object it was made from is -- here the load point: click the icon and the viewer of
-# the field opens, a plane through it inside its bounds with a position slider.  This one is the distance from the load point.
+# the field opens, a disc through it, with a radius slider.  This one is the distance from the load point.
 distance = distance_to_point(pull)
 app.viewport({'Beam': body, 'Load point': pull, 'Distance': distance}, support, load)
 

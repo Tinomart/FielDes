@@ -200,7 +200,7 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
   [Analysis](analysis.md).
 - The **section card** (`Shift+X`) cuts the model and paints the field on the plane; **hover** a coloured model to read
   the value under the cursor. It is a viewer you switch on yourself. A *field* has an **icon** in the viewport, with its name over it: click it (or its row in the
-  model tree) and the **field viewer** opens beside it, showing the field on a plane inside the field's bounds, with a position slider: the two are separate, and
+  model tree) and the **field viewer** opens beside it, showing the field on a disc with a radius slider (move it with its arrows and dot): the two are separate, and
   both can be open at once.
 
 The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20, 21 and 26 to 28 (sketches and sweeps, copies and linked copies, a sketch on a plane).

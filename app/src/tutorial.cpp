@@ -33,6 +33,7 @@ of the License, or (at your option) any later version.
 #include <QPushButton>
 #include <QRegion>
 #include <QRegularExpression>
+#include <QStyle>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QVBoxLayout>
@@ -47,6 +48,7 @@ of the License, or (at your option) any later version.
 namespace FielDes {
 
 static const QColor kAmber(0xff, 0xcc, 0x33);
+static const QColor kDone(0x82, 0xcc, 0x58);          // (what a step that is done is outlined in: nothing is left to do in it)
 
 // The text of a menu of the menu bar without its mnemonic, in the language of the program (the menus are made with T("&View"))
 static QString menuBarText(const QString& english)
@@ -102,6 +104,7 @@ public:
     QString cursorKey;                                  // (a key the pretend hand holds down: "Ctrl")
     QPoint cursor;
     double flash = 0;                                   // (a click outside what the step is about: the frames flare up)
+    QColor accent = kAmber;                             // (the colour of every outline and of the arrow: green once the step is done)
 
 protected:
     void paintEvent(QPaintEvent*) override
@@ -133,12 +136,12 @@ protected:
         // and fade: the script and what is drawn are one thing
         for (const auto& c : changes)
         {
-            QColor fill = kAmber;
+            QColor fill = accent;
             fill.setAlpha(int(95 * c.second));
             p.setPen(Qt::NoPen);
             p.setBrush(fill);
             p.drawRoundedRect(QRectF(c.first).adjusted(-2, -1, 2, 1), 3, 3);
-            QColor edge = kAmber;
+            QColor edge = accent;
             edge.setAlpha(int(255 * c.second));
             p.setPen(QPen(edge, 1.6));
             p.setBrush(Qt::NoBrush);
@@ -148,12 +151,12 @@ protected:
         {
             const QRectF r = QRectF(h).adjusted(-5, -5, 5, 5);
             const double f = std::min(1.0, flash);
-            QColor glow = kAmber;
+            QColor glow = accent;
             glow.setAlpha(int(40 + 50 * pulse + 120 * f));
             p.setPen(QPen(glow, 7 + 4 * f));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 8, 8);
-            QColor line = kAmber;
+            QColor line = accent;
             line.setAlpha(int(170 + 85 * pulse));
             p.setPen(QPen(line, 2.2));
             p.drawRoundedRect(r, 8, 8);
@@ -169,12 +172,12 @@ protected:
         for (const QRect& h : frames)
         {
             const QRectF r = QRectF(h).adjusted(-2, -1, 2, 1);
-            QColor glow = kAmber;
+            QColor glow = accent;
             glow.setAlpha(int(50 + 60 * pulse));
             p.setPen(QPen(glow, 6));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 4, 4);
-            QColor line = kAmber;
+            QColor line = accent;
             line.setAlpha(int(190 + 65 * pulse));
             p.setPen(QPen(line, 2));
             p.drawRoundedRect(r, 4, 4);
@@ -193,7 +196,7 @@ protected:
                 const QPointF mid = (a + b) / 2 + n * std::min(40.0, len * 0.14);
                 QPainterPath curve(a);
                 curve.quadTo(mid, b - u * 6);
-                QPen pen(kAmber, 3.2, Qt::SolidLine, Qt::RoundCap);
+                QPen pen(accent, 3.2, Qt::SolidLine, Qt::RoundCap);
                 p.setPen(pen);
                 p.setBrush(Qt::NoBrush);
                 p.drawPath(curve);
@@ -207,7 +210,7 @@ protected:
                 QPolygonF tri;
                 tri << end << end - dir * head + dn * (head * 0.55) << end - dir * head - dn * (head * 0.55);
                 p.setPen(Qt::NoPen);
-                p.setBrush(kAmber);
+                p.setBrush(accent);
                 p.drawPolygon(tri);
                 p.drawEllipse(a, 4.0, 4.0);
             }
@@ -312,6 +315,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
     m_card->setFixedWidth(440);
     m_card->setStyleSheet(
         "#TourCard { background: #0d3a4a; border: 2px solid #ffcc33; border-radius: 10px; }"
+        "#TourCard[done=\"true\"] { border: 2px solid #82cc58; }"
         "#TourCard QLabel { color: #eee8d5; background: transparent; }"
         "#TourCard QPushButton { color: #eee8d5; background: rgba(147, 161, 161, 40); border: 1px solid rgba(147, 161, 161, 110);"
         "  border-radius: 6px; padding: 5px 12px; font-size: 9.5pt; }"
@@ -319,6 +323,8 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
         "#TourCard QPushButton:disabled { color: #6c8a93; border-color: rgba(147, 161, 161, 50); }"
         "#TourCard QPushButton#TourNext { background: #ffcc33; color: #10303b; border: 1px solid #ffcc33; font-weight: bold; }"
         "#TourCard QPushButton#TourNext:hover { background: #ffd966; }"
+        "#TourCard[done=\"true\"] QPushButton#TourNext { background: #82cc58; border: 1px solid #82cc58; }"
+        "#TourCard[done=\"true\"] QPushButton#TourNext:hover { background: #9bd873; }"
         "#TourCard QPushButton#TourSkip { background: transparent; border: none; color: #93a1a1; padding: 5px 4px; }"
         "#TourCard QPushButton#TourSkip:hover { color: #eee8d5; text-decoration: underline; }");
     auto col = new QVBoxLayout(m_card);
@@ -375,6 +381,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
         if (s.done && s.done())
         {
             m_done = true;
+            showDoneLook(true);
             m_note->setText(s.doneNote);
             m_note->setStyleSheet("font-size: 9.5pt; color: #82cc58; font-weight: bold;");
             m_show->hide();
@@ -1653,9 +1660,10 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Corner or spline point");
         s.text = T("Double-click a point: a corner (a square dot, a hard edge) becomes a spline point (a round dot with a ring), and the outline goes smoothly through it. Again, and it is a corner.");
-        s.hint = T("It is written as smooth=True on the point. Or press Show me.");
+        s.hint = T("The arrow points at a corner. It is written as smooth=True on the point. Or press Show me.");
         s.code = linesWith("smooth=|^\\w+ = point\\(");
         s.holes = holesOf(viewWidget);
+        s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(20, 12, 0))); };       // (the corner at the top right)
         s.place = InsideBottom;
         s.group = "sketch";
         s.closeRows = true;
@@ -2123,6 +2131,7 @@ void Tutorial::goTo(int index, bool viaBack)
     ++m_generation;
     m_index = index;
     m_done = false;
+    showDoneLook(false);
     m_viaBack = viaBack;
     m_busy = false;
     hideCursor();
@@ -2197,6 +2206,19 @@ void Tutorial::showMe()
     s.show(over);
     // (a demonstration that never says it is over -- what it was to work on is not there -- does not hold the step)
     after(25000, [this, gen] { if (m_demo && gen == m_generation) { endDemo(); refresh(); } });
+}
+
+// The card and every outline of the tour are green once what the step asks is done -- yellow means there is still something to do
+void Tutorial::showDoneLook(bool done)
+{
+    m_card->setProperty("done", done);
+    m_title->setStyleSheet(QString("font-size: 12.5pt; font-weight: bold; color: %1;").arg(done ? "#82cc58" : "#ffcc33"));
+    for (QWidget* w : {static_cast<QWidget*>(m_card), static_cast<QWidget*>(m_next)})
+    {
+        w->style()->unpolish(w);
+        w->style()->polish(w);
+        w->update();
+    }
 }
 
 void Tutorial::showStep()
@@ -2346,6 +2368,7 @@ void Tutorial::refresh()
         updateMask();
     }
     layer->holes = holes;
+    layer->accent = m_done ? kDone : kAmber;
     layer->dim = true;
     QRect target;
     for (const QRect& h : holes) target = target.isNull() ? h : target.united(h);
