@@ -6786,7 +6786,23 @@ bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line
     }
     else if (combining && needsSecond(name))
     {
-        return true;                                        // (a second model is what it needs: the menu says that itself)
+        // One model is selected and the entry needs a second: it takes the last other model of the script (what createFromMenu writes), so that pair is what is checked --
+        // an entry is valid when the pair is what it takes, not whenever there is some other model.  (No other model at all: the menu says that itself)
+        QJsonObject second;
+        for (const auto v : m_scene["items"].toArray())
+        {
+            const auto o = v.toObject();
+            if (o["failed"].toBool() || o["reassigned"].toBool() || o["kind"].toString() == "failed") continue;
+            if (o.contains("var") && o["var"].toString() != operands[0].item["var"].toString()) second = o;
+        }
+        if (second.isEmpty()) return true;
+        QJsonObject info;
+        info["name"] = second["var"].toString();
+        info["type"] = second["type"].toString();
+        info["role"] = second["condition_role"].toString();
+        info["cls"] = second["cls"].toString();
+        othersInfo.append(info);
+        other = second["var"].toString();
     }
     QJsonObject request;
     request["kind"] = kind;

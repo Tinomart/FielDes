@@ -144,15 +144,22 @@ _LINE_POINTS, _LINE_LIST = _points(('{xm}', '{y}', '{z}'), ('{x}', '{yp}', '{z}'
 _POLYLINE = _LINE_POINTS + '#@@#\npolyline([' + _LINE_LIST + '])'
 _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
 
-# What the entries that are made of the models selected say when the mouse rests on them (the shape the model tree has: points, a curve, a 2D shape)
+# What an entry can be made OF the models selected, as DATA -- the entries that are made of what is selected, each with the words for its tooltip and the WAYS it is made, tried
+# in the order they are listed: (the kinds of model it is made of, the least and the most of them (None: any number), the call it is written as -- `{names}` is those models in
+# the order they were selected, `{name}` the first).  A way is taken when the selection has the right number of models of its kinds and none of the kinds of the ways before it;
+# with none of them selected the entry is made from its own template (new points to drag).  The menu, its tooltips and the call are all read from this: a function the library
+# can make of a kind of model is one more row here, and nothing else in the menus names it
 FROM_SELECTION = {
-    'sketch': tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
-                 'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
-                 'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-    'polyline': tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
-                   'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-    'spline': tr('A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
-                 'drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+    'sketch': (tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
+                  'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
+                  'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+               [({'point'}, 3, None, 'sketch([{names}])'), ({'curve'}, 1, None, 'sketch({name})'), ({'surface'}, 1, None, 'sketch({name})')]),
+    'polyline': (tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
+                    'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+                 [({'point'}, 2, None, 'polyline([{names}])')]),
+    'spline': (tr('A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
+                  'drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
+               [({'point'}, 2, None, 'spline([{names}])')]),
 }
 
 # (function, group, template)
@@ -399,7 +406,7 @@ def catalog():
         'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION,
                              'from_selection': n in FROM_SELECTION},
                             **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
-                            **({'doc': FROM_SELECTION[n]} if n in FROM_SELECTION else {}),
+                            **({'doc': FROM_SELECTION[n][0]} if n in FROM_SELECTION else {}),
                             # (a 2D shape that is written with an x and a y only lies in the plane z = 0: the place it is made at is where the ray under the cursor meets that plane)
                             **({'flat': True} if g == '2D' and '{z}' not in t else {}))
                        for n, g, t in PRIMITIVES]
@@ -458,45 +465,74 @@ _SHAPES = frozenset(('solid', 'profile', 'curve', 'import', 'simulation', 'field
 _PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
 
-# The simulations of the menu: each takes the body, the conditions of the kinds it has an input for, and a material (a fluid for a flow)
-_SIMULATIONS = ('static_analysis', 'modal_analysis', 'topology_optimization', 'thermal_analysis', 'fluid_analysis',
-                'thermal_topology_optimization', 'flow_topology_optimization')
-_FLOWS = ('fluid_analysis', 'flow_topology_optimization')          # (what has a fluid, not a material)
+# The simulations of the menu are the entries of the group of that name: each takes its part(s), the conditions of the kinds it has an input for, and a material (a fluid for
+# a flow).  What a simulation takes is read from its signature in the library, so that a new one needs no more than its row in the group
+_SIMULATIONS = tuple(n for n, g, _t, _o in OPERATIONS if g == 'Simulations')
 # (the conditions of the menu are made of the regions selected: bodies, fields and surfaces)
 _TAKES_CONDITION = [(_REGIONS, [])]
+
+
+def _parameters_of(name):
+    ''' The names of the parameters of the library's function `name`, in order ([] when there is none of that name) '''
+    try:
+        import fieldes
+        return list(inspect.signature(getattr(fieldes, name)).parameters)
+    except Exception:
+        return []
 
 
 def _slots_of(name):
     ''' The inputs of the analysis `name` that are kinds of conditions -- its parameters that are named like one (`supports`, `loads`,
         `inlets`, `outlets` ...), in the order it lists them: what the library says, not a list kept here '''
     try:
-        import fieldes
         from fieldes.stdlib.fea import _SLOTS
-        return [p for p in inspect.signature(getattr(fieldes, name)).parameters if p in _SLOTS]
     except Exception:
         return []
+    return [p for p in _parameters_of(name) if p in _SLOTS]
+
+
+def _is_flow(name):
+    ''' Whether the analysis `name` has a fluid, not a material: its signature says so (`fluid=`) '''
+    return 'fluid' in _parameters_of(name)
+
+
+def _parts_of(name):
+    ''' How many models the analysis `name` is made for -- a body, and for a flow the domain it sits in: the parameters of its signature that come before its conditions '''
+    try:
+        from fieldes.stdlib.fea import _SLOTS
+    except Exception:
+        return 1
+    n = 0
+    for p in _parameters_of(name):
+        if p in _SLOTS or p in ('material', 'fluid'):
+            break
+        n += 1
+    return max(1, n)
+
+
+# What an operation takes, as DATA: its SIGNATURES (the kinds it accepts, and the kinds it must be given at least one of, one list for each).  An operation that is not here
+# takes any shape (see _SHAPES), and a simulation what its signature says (below)
+_TAKES = {
+    'distance_to_point': [({'point'}, [])],                                 # (the distance from a point: a point is what it is made of)
+    'extrude': [({'profile'}, [{'profile'}])],                              # (a 2D shape)
+    'path_extrude': [({'profile', 'curve', 'point'}, [{'profile'}, {'curve', 'point'}])],      # (a 2D shape, and the curve it is swept along or the points of one)
+    # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all it takes -- they know the
+    # model it fills)
+    'lattice': [(_SHAPES | {'cell'}, [_SHAPES])],
+    'lattice_surface_conform': [(_SHAPES | {'cell'}, [_SHAPES])],
+    'random_points': [(_SHAPES, [_SHAPES])],
+    'voronoi_lattice': [({'points'}, [{'points'}])],
+    'delaunay_lattice': [({'points'}, [{'points'}])],
+}
 
 
 def _takes(name):
-    if name == 'distance_to_point':
-        return [({'point'}, [])]                # (the distance from a point: a point is what it is made of)
-    if name == 'extrude':
-        return [({'profile'}, [{'profile'}])]                               # (a 2D shape)
-    if name == 'path_extrude':
-        return [({'profile', 'curve', 'point'}, [{'profile'}, {'curve', 'point'}])]      # (a 2D shape, and the curve it is swept along or the points of one)
-
-    # (a lattice is made of a model, and of the cell selected with it; points are made in a model; a foam is made around points, and they are all
-    # it takes -- they know the model it fills)
-    if name in ('lattice', 'lattice_surface_conform'):
-        return [(_SHAPES | {'cell'}, [_SHAPES])]
-    if name == 'random_points':
-        return [(_SHAPES, [_SHAPES])]
-    if name in ('voronoi_lattice', 'delaunay_lattice'):
-        return [({'points'}, [{'points'}])]
+    if name in _TAKES:
+        return _TAKES[name]
     # (a simulation takes a part, the conditions of the kinds it has an input for and a material -- and needs none of them: what is not selected
     # is a placeholder in the call)
     if name in _SIMULATIONS:
-        return [(_PART | set(_slots_of(name)) | ({'fluid'} if name in _FLOWS else {'material'}), [])]
+        return [(_PART | set(_slots_of(name)) | ({'fluid'} if _is_flow(name) else {'material'}), [])]
     return None
 
 
@@ -524,7 +560,7 @@ def _selection_fits(kind, name, models):
         return True
     if name in _SIMULATIONS:
         # (one input takes one part and one material: a second one has nowhere to go -- the conditions are lists, they take any number)
-        if sum(t in _PART for t in tags) > (2 if name in _FLOWS else 1):
+        if sum(t in _PART for t in tags) > _parts_of(name):
             return False
         if sum(t in ('material', 'fluid') for t in tags) > 1:
             return False
@@ -546,23 +582,17 @@ def _body_first(body, info, others):
 
 
 def _from_selection(name, models, values):
-    ''' The call of a New entry that is made of the models selected -- the points a sketch or a curve goes through (in the order they were selected), a
-        curve or a surface a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own template then,
-        with new points) '''
-    points = [m['name'] for m in models if m.get('type') == 'point']
-    curves = [m['name'] for m in models if m.get('type') == 'curve']
-    surfaces = [m['name'] for m in models if m.get('type') == 'surface']
-    profiles = [m['name'] for m in models if m.get('type') == 'profile']
-    if name == 'sketch':
-        if len(points) >= 3:
-            return 'sketch([%s])' % ', '.join(points)
-        if curves and not points:
-            return 'sketch(%s)' % curves[0]
-        if surfaces and not points and not curves:
-            return 'sketch(%s)' % surfaces[0]
-    elif name in ('polyline', 'spline'):
-        if len(points) >= 2:
-            return '%s([%s])' % (name, ', '.join(points))
+    ''' The call of a New entry that is made of the models selected (the ways it is made are data: see FROM_SELECTION) -- the points a sketch or a curve goes through (in the
+        order they were selected), a curve or a surface a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own
+        template then, with new points) '''
+    ways = FROM_SELECTION.get(name, (None, []))[1]
+    present = {m.get('type') for m in models}
+    earlier = set()
+    for kinds, least, most, template in ways:
+        mine = [m['name'] for m in models if m.get('type') in kinds]
+        if not earlier & present and len(mine) >= least and (most is None or len(mine) <= most):
+            return template.format(names=', '.join(mine), name=mine[0])
+        earlier |= kinds
     return None
 
 
@@ -633,14 +663,10 @@ def _build_operation(name, v, others):
         # The body, then the conditions that were selected, each in the input of its kind -- every input that is not given is a placeholder
         # (the completion writes it), as is every other argument the call cannot do without, the body too when none was selected
         # (the flow optimisation has two: the body and the fluid domain it sits in, in the order they were selected)
-        try:
-            import fieldes
-            params = list(inspect.signature(getattr(fieldes, name)).parameters)
-        except Exception:
-            params = []
+        params = _parameters_of(name)
         parts = ([body] if body else []) + [o['name'] for o in others if o.get('type') in ('solid', 'profile', 'import', 'simulation', 'lattice')]
         args, missing = [], False
-        for k in range(2 if name in _FLOWS else 1):
+        for k in range(_parts_of(name)):
             if k < len(parts):
                 args.append(parts[k] if not missing else '%s=%s' % (params[k] if k < len(params) else 'part', parts[k]))
             else:
@@ -653,7 +679,7 @@ def _build_operation(name, v, others):
         for s in _slots_of(name):
             if s in by_slot:
                 args.append('%s=[%s]' % (s, ', '.join(by_slot[s])))
-        if name in _FLOWS:
+        if _is_flow(name):
             fluid = _fluids(others)
             if fluid:
                 args.append('fluid=%s' % fluid[0])

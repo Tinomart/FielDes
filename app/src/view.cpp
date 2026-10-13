@@ -3736,6 +3736,42 @@ void View::addQuickOperations(QMenu* menu, int line, const QVector3D& point, dou
     }
 }
 
+namespace {
+
+// The categories of a menu come from what is in them, not from a list of them: a category -- a submenu, at any depth -- is in the menu when there is a valid entry
+// somewhere in it, and is not in it (not greyed out: not there) when there is none.  Only categories are decided so; the entries of one are as they are.  A category
+// that is added to a menu later is covered by this and needs no rule of its own.  Returns whether `menu` holds anything valid
+bool keepCategoriesWithValidEntries(QMenu* menu)
+{
+    bool valid = false;
+    for (QAction* act : menu->actions())
+    {
+        if (act->isSeparator()) continue;
+        if (QMenu* sub = act->menu())
+        {
+            if (!act->isEnabled() || !keepCategoriesWithValidEntries(sub)) menu->removeAction(act);
+            else valid = true;
+        }
+        else if (act->isEnabled())
+        {
+            valid = true;
+        }
+    }
+    // (the lines that have nothing left to set apart: first, last and twice in a row)
+    bool lineBefore = true;
+    for (QAction* act : menu->actions())
+    {
+        if (!act->isSeparator()) { lineBefore = false; continue; }
+        if (lineBefore) menu->removeAction(act);
+        lineBefore = true;
+    }
+    const QList<QAction*> left = menu->actions();
+    if (!left.isEmpty() && left.last()->isSeparator()) menu->removeAction(left.last());
+    return valid;
+}
+
+}   // namespace
+
 void View::showMenuForLine(int line0, QPoint globalPos)
 {
     loadMenuCatalog();
@@ -3768,12 +3804,6 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     double flatScale = scale;
     const QVector3D flat = placementFlat(pos, flatScale);
     addCreateEntries(menu, point, placementExact(pos), flat, scale, flatScale, atLine);
-    menu->addSeparator();
-    {
-        auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
-        imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
-                        "whichever suits it."));
-    }
     auto ops = menu->addMenu(T("Add operation"));
     auto lattices = menu->addMenu(TypeIcons::icon("lattice"), T("Add lattice"));
     lattices->setToolTipsVisible(true);
@@ -3795,7 +3825,8 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     }
     // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
     fillOperations(sims, -1, point, scale, true);
-    menu->popup(globalPos);
+    if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
+    else menu->deleteLater();
 }
 
 // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces, fields, and the custom blocks that need no model.
@@ -3845,6 +3876,11 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
             for (const auto& p : entries) make(sub, p);
         }
     }
+    // (a model can be brought in from a file as well: it is in every menu that makes things, wherever the menu was opened)
+    menu->addSeparator();
+    auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
+    imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
+                    "whichever suits it."));
 }
 
 // Where a click puts a POINT: exactly under the cursor -- on the work plane, snapped, while its view is open; else in the plane through the origin that faces the
@@ -3881,14 +3917,13 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     fillSimulationPrimitives(sims, point, scale, line);
     sims->addSeparator();
     fillOperations(sims, line, point, scale, true);
-    if (onSurface)
-    {
-        // What can be made is offered on a model too, at the place that was clicked on its surface (a point exactly there): somewhere to put a point is not only
-        // empty space, and a model can be all there is under the cursor
-        menu->addSeparator();
-        addCreateEntries(menu, point, point, point, scale, scale, -1);
-        menu->addSeparator();
-    }
+    // What can be made is offered on a model too, and whichever way its menu was opened: by a right-click on its surface in the viewport (made at the place that
+    // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
+    // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
+    // makes `sketch` the outline of that surface), not the way the menu was reached
+    menu->addSeparator();
+    addCreateEntries(menu, point, point, point, scale, scale, -1);
+    menu->addSeparator();
     {
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
         const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
@@ -3918,7 +3953,8 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         menu->addSeparator();
         menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); });
     }
-    menu->popup(globalPos);
+    if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
+    else menu->deleteLater();
 }
 
 void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)

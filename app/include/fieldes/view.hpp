@@ -500,15 +500,16 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent* event) override;
 
-    /*  A right-click (not a pan) on a shape: first a menu with Operation (the operations, on that shape) and
-     *  Select Surface, which opens the menu of the surface selection  */
+    /*  A right-click (not a pan) on a shape, or on its row in the model tree or a line of the text editor (`onSurface` false: no place on the surface was
+     *  clicked): the operations on that shape, the lattice and simulation menus, everything that can be made (the same categories as the menu of empty space) and
+     *  Select Surface, which opens the menu of the surface selection (it needs the place that was clicked)  */
     void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface = true);
     void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
     /*  A right-click (not a pan) on empty space: New 3D shape, 2D shape, point, surface, field, custom block, Add operation
      *  and Add simulation (which also holds the materials, fluids, supports, loads and conditions).  `atLine` (from the text
      *  editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
-    /*  The "New ..." entries of the menus of empty space and of a model: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
+    /*  The "New ..." entries of the menus of empty space and of a model, and Import model...: `point` is where a shape is made, `exact` where a point is (under the cursor, as it is)  */
     void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine);
     QVector3D placementExact(QPoint pos) const;
     /*  Where a 2D shape that is written with an x and a y only (it lies in the plane z = 0) is made by a click: where the ray under the cursor meets that plane, whichever way the view

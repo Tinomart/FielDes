@@ -22,6 +22,13 @@
   turn their whole arrangement about its middle).
 - **Deleting a sketch deletes its points.** A sketch (or a `polyline` / `spline`) made from points takes the points it was made from with it, in the same undo step -- they would stay as dots with nothing to do. A point
   that anything else still uses (a second sketch, a move, ...) stays; deleting a single point still only takes it out of the sketch.
+- **The right-click menu is made of what is valid, the same wherever it is opened.** The *New ...* categories (and *Import model...*) were only in the menu of a right-click on a model's surface in the viewport -- from the
+  model's row in the tree, or its line in the script, they were missing, and with them *New 2D shape → sketch* for a selected surface. Now **a category is in the menu when there is a valid entry in it and left out when there
+  is none** (not greyed out), at every depth and for every kind of menu: it is worked out from the entries, not from a list of categories, so a new entry or category is covered without a rule of its own. For that the check
+  of an entry that needs a second model now tests the pair it would be written with (the selected model and the last other model of the script) -- before, it called such an entry valid whenever the script had another
+  model, so *Extruding* was in the menu of every model. In the library of the menus (`menu_catalog.py`) what an entry is made of is data, not a branch for its name: the ways a *sketch*, *polyline* or *spline* is made of
+  the selected points, curve or surface are rows in one table (`FROM_SELECTION`), the simulations are the entries of their group and what they take (their parts, their conditions, a fluid or a material) is read from
+  their signatures in the library. (Checked against 135,660 selections of every kind: nothing the menus write or accept changed.)
 - **A selected surface is drawn in the colour its key shows, and the ruler is no longer pink.** The patch of a `select_surface` was drawn in the *last* colour of the boundary-condition map (gold, since the map grew to 13 colours) while
   its key said *Selected surface* in magenta; it is magenta on the model now, as the key and the docs say. And the scale ruler at the bottom took its second half's fill from whatever was drawn before it -- the key's pink swatch -- so the
   ruler turned pink whenever a selection was shown; it now has its own (no) fill.

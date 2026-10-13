@@ -53,7 +53,8 @@ exact, and the points land on the plane, written as ordinary numbers. When not d
 
 ## A sketch from a surface
 
-Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **New 2D shape → sketch**: the line written is `sketch(top)`, and what you get is a
+Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(...)` line), select it in the model tree and make **New 2D shape → sketch** -- from the right-click menu of the surface in the viewport, of
+its row in the tree or of its line in the script, all the same menu: the line written is `sketch(top)`, and what you get is a
 **2D shape of that surface's outline**.
 
 - **A flat face is exact.** The sketch lies in the plane of the face and has the outline of the face -- its corners where its edges meet, a hole in it as a hole in the sketch. Its edges are found against the part's own field

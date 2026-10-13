@@ -1833,6 +1833,19 @@ Window::Window(Arguments args)
             send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
         });
+        // treecontext <text prefix>: a right-click on the name of a model-tree row -- its menu opens as it does for a hand (then popup dump / popup grab / popup pick work on it)
+        a->add("treecontext", [=](const QString& args){
+            auto row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            auto tree = row->treeWidget();
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            const QPoint pos = QPoint(tree->columnViewportPosition(0) + tree->columnWidth(0) / 2, tree->visualItemRect(row).center().y());
+            QContextMenuEvent e(QContextMenuEvent::Mouse, pos, tree->viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(tree->viewport(), &e);
+        });
         // treebutton <column> <text prefix>: a real click (mouse events) on a button of a model-tree row: 1 the eye, 2 the gizmo, 3 the
         // lock, 4 the cache, 5 reimport, 6 reset, 7 delete -- the way a hand clicks it, which selects the row first
         a->add("treebutton", [=](const QString& args){
@@ -2125,6 +2138,26 @@ Window::Window(Arguments args)
             if (!root)
             {
                 std::cerr << "automation: no context menu is open" << std::endl;
+                return;
+            }
+            if (cmd == "dump")
+            {
+                // popup dump <file>: every entry of the open context menu and of its submenus, one per line, indented by depth ("-" for a
+                // disabled entry, "+" for an enabled one), with the entry's tooltip
+                QFile f(rest);
+                if (!f.open(QIODevice::WriteOnly)) return;
+                std::function<void(QMenu*, int)> walk = [&](QMenu* m, int depth) {
+                    for (QAction* act : m->actions())
+                    {
+                        const QString indent(depth * 2, ' ');
+                        if (act->isSeparator()) { f.write((indent + "----\n").toUtf8()); continue; }
+                        QString line = indent + (act->isEnabled() ? "+ " : "- ") + act->text().remove('&');
+                        if (!act->toolTip().isEmpty() && act->toolTip() != act->text()) line += "    [" + act->toolTip().left(90).replace('\n', ' ') + "]";
+                        f.write((line + "\n").toUtf8());
+                        if (act->menu()) walk(act->menu(), depth + 1);
+                    }
+                };
+                walk(root, 0);
                 return;
             }
             QMenu* menu = root;

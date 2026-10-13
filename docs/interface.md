@@ -153,12 +153,18 @@ The viewport's right-click menus are not only the viewport's: **the same menu op
 on a **line of the script** that defines a model, and on its **row in the model tree** -- and means the same there, as if that
 model had been right-clicked in the viewport:
 
+- **The menu is made of what is valid, and the same wherever it is opened.** A **category** (a submenu, at any depth: *Operation*, *Extruding* inside it, *Lattice*, *New 2D shape* ...) is in the menu
+  **when there is at least one valid entry in it, and is not in it when there is none** -- it is not greyed out, it is left out -- and that is worked out from the entries themselves, by asking whether
+  what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *sketch* (the outline of that surface) whether you right-click it in the
+  viewport, on its row in the tree or on its line in the script, and *Extruding* is not in the menu of a solid and is in the menu of a 2D shape (it holds something valid there). An entry that takes a second model
+  is valid when the pair it would be written with -- the selected model and the last other model of the script -- is what it takes.
 - On a line (or row) that defines a model: **Operation**, **Lattice**, **Simulation**, **Select Surface** (greyed outside the viewport: the
   selection spreads from the place you click on the surface) and **Delete**, written for that model. **Lattice** is a section of its own
   (not a group of the operations): the operations that fill a model with a lattice, the three steps of a foam (random points, then a Voronoi or Delaunay lattice made of them) and a menu for every family of
   cells, each entry making that cell (see [Lattices](lattices.md#in-the-menus-and-the-model-tree)); on empty space it is **Add lattice**.
-- **A right-click on a model in the viewport also has the *New ...* entries of empty space** (New 3D shape, New 2D shape, New point ...), made at the place you clicked on its surface -- a model can be all
-  there is under the cursor, and somewhere to put a point is not only empty space. **A point made from the menu is exactly where the cursor was**: on the surface under it, else in the plane through the origin that faces
+- **A right-click on a model has the *New ...* entries of empty space and *Import model...*** (New 3D shape, New 2D shape, New point ...), **wherever it is opened**: made at the place you clicked on its surface in
+  the viewport, at the middle of the model from its row or its line -- a model can be all there is under the cursor, and somewhere to put a point is not only empty space. **A point made from the menu is exactly where
+  the cursor was**: on the surface under it, else in the plane through the origin that faces
   the view (on the work plane while its view is open), not rounded to a grid and not moved into the drawn region (a dot is drawn wherever it is).
 - On a line of the script that defines no model (a blank line, a comment, the imports): the menu of empty space, **New 3D shape**
   and the rest, and what you make is written **under that line** (a line that is indented, opens a block or is in the middle of a
