@@ -220,6 +220,9 @@ class Curve(Shape):
             if name != 'ptr':
                 out.__dict__[name] = v
         shift = getattr(self, '_weld_shift', None)
+        if shift is None and getattr(self, 'points', None):
+            from fieldes.stdlib.points import weld_shift_of
+            shift = weld_shift_of(self.points[0])               # (the image of a path: through the images of its points, which are drawn where the sweep's image is)
         if shift is not None:
             # The path of a sweep of a sketch is drawn where the sweep goes -- from the middle of the sketch, through the middle of the cross-section -- whatever its own numbers
             # say (the sweep starts at the sketch: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen

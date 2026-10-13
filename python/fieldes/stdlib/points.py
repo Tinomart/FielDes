@@ -49,10 +49,25 @@ def _view():
     return res, lo, hi
 
 
+def weld_shift_of(shape):
+    ''' The shift a point or a curve is DRAWN with: its own (path_extrude sets it on the path of a sweep and on its points), or -- for the image of such a point in a symmetry -- the
+        original's, taken through the turn or mirror the image is made by.  The image of a path is drawn where the image of its sweep is, as the path is where its sweep is.
+        None when it is drawn where it is '''
+    shift = getattr(shape, '_weld_shift', None)
+    if shift is not None:
+        return shift
+    source, linear = getattr(shape, '_symmetry_of', None), getattr(shape, '_symmetry_linear', None)
+    if source is not None and linear is not None:
+        s = weld_shift_of(source)
+        if s is not None:
+            return tuple(sum(linear[i][j] * s[j] for j in range(3)) for i in range(3))
+    return None
+
+
 def _weld_displayed(shape):
     ''' What is drawn for a point: itself, except a point of the path of a sweep of a sketch (see path_extrude), which is drawn where the path is -- moved with it, its gizmo too --
         so that the path and its points run through the middle of the sweep.  Dragged, it is moved by what it is dragged by, as it is seen: only where it is drawn is shifted '''
-    shift = getattr(shape, '_weld_shift', None)
+    shift = weld_shift_of(shape)
     if shift is None:
         return shape
     out = Shape(lib.libfive_tree_copy(shape.ptr))
@@ -64,7 +79,11 @@ def _weld_displayed(shape):
         out._point_pos = tuple(float(p) + s for p, s in zip(pos, shift))
     g = getattr(shape, '_gizmo', None)
     if g is not None:
-        out._gizmo = (g[0], tuple(float(a) + s for a, s in zip(g[1], shift)), g[2], g[3], g[4])
+        # (the gizmo of the image of a point is the ORIGINAL's, placed by the viewport through the turn or mirror image: its pivot is shifted by the original's shift -- shifted by the
+        # image's, it would be taken through the mirror twice)
+        source = getattr(shape, '_symmetry_of', None) if getattr(shape, '_symmetry', None) is not None else None
+        gshift = (weld_shift_of(source) if source is not None else None) or shift
+        out._gizmo = (g[0], tuple(float(a) + s for a, s in zip(g[1], gshift)), g[2], g[3], g[4])
     return out
 
 

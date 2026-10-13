@@ -67,6 +67,11 @@ def _transpose(m):
     return [[m[j][i] for j in range(3)] for i in range(3)]
 
 
+def _determinant(m):
+    return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+
+
 def _reflection(n):
     n = _unit(n)
     return [[(1.0 if i == j else 0.0) - 2.0 * n[i] * n[j] for j in range(3)] for i in range(3)]
@@ -267,6 +272,64 @@ def _check(shape, sym, who):
         raise TypeError('%s(): the second argument is a symmetry, made with symmetry_planes(...)' % who)
 
 
+def _native_sweep(shape):
+    ''' Whether the image of this sweep can be drawn natively, from the numbers of its profile and its path, as the sweep is: it has them, no point of either is turned, and its gizmo
+        places it by a move only (a turn or a scale of it is a number that must stay what it is: see the guard) '''
+    from fieldes.stdlib.curves import value_of
+
+    def number(v):
+        return value_of(v) if isinstance(v, Shape) else float(v)
+    if getattr(shape, '_sweep_ppos', None) is None or getattr(shape, '_sweep_qpos', None) is None:
+        return False
+    for rotations in (getattr(shape, '_sweep_prot', None), getattr(shape, '_sweep_qrot', None)):
+        for r in rotations or []:
+            if r is not None and any(abs(number(c)) > 1e-9 for c in r):
+                return False
+    return True
+
+
+def _map_place(p, mn, cn):
+    ''' The place `p` (three numbers, or expressions of var()s) taken through the turn or mirror image: c + M (p - c) '''
+    d = [_add(p[j], -cn[j]) for j in range(3)]
+    return tuple(_add(cn[i], _add(_add(_mul(mn[i][0], d[0]), _mul(mn[i][1], d[1])), _mul(mn[i][2], d[2]))) for i in range(3))
+
+
+def _sweep_image(out, shape, mn, cn):
+    ''' Gives `out`, the image of a sweep, what the viewport draws a sweep from: the outline of its profile and the points of its path, taken through the turn or mirror image
+        (expressions of the original's numbers, so that it follows a point of the path as the sweep does, and nothing is meshed), the twist turned the other way for a mirror
+        image, and its gizmo's move turned with it.  A mirror image turns the outline the way round: its points are taken in reverse, so that it faces as the original does '''
+    from fieldes.stdlib.curves import value_of
+
+    def number(v):
+        return value_of(v) if isinstance(v, Shape) else float(v)
+    improper = _determinant(mn) < 0
+    ring = [_map_place(p, mn, cn) for p in shape._sweep_ppos]
+    rot, flag, scale = list(shape._sweep_prot), list(shape._sweep_pflag), list(shape._sweep_pscale)
+    if improper:
+        ring.reverse()
+        rot.reverse()
+        flag.reverse()
+        scale.reverse()
+    out._sweep_ppos, out._sweep_prot, out._sweep_pflag, out._sweep_pscale = ring, rot, flag, scale
+    out._sweep_pdefault = shape._sweep_pdefault
+    out._sweep_qpos = [_map_place(p, mn, cn) for p in shape._sweep_qpos]
+    out._sweep_qrot, out._sweep_qflag, out._sweep_qscale = shape._sweep_qrot, shape._sweep_qflag, shape._sweep_qscale
+    out._sweep_qdefault, out._sweep_qclosed = shape._sweep_qdefault, shape._sweep_qclosed
+    out._sweep_twist = Shape.wrap(shape._sweep_twist) * (-1.0 if improper else 1.0)
+    out._sweep_free = False                      # (its outline is given in space: the plane is the one its points make)
+    guard = list(getattr(shape, '_sweep_guard', []))
+    place = getattr(shape, '_sweep_place', None)
+    if place is not None:
+        about, move, rotate, scale_ = place
+        guard += [(v, 0.0) for v in rotate if isinstance(v, Shape)] + [(v, 1.0) for v in scale_ if isinstance(v, Shape)]
+        if any(abs(number(v)) > 1e-9 for v in rotate) or any(abs(number(v) - 1.0) > 1e-9 for v in scale_):
+            return False                         # (it is turned or scaled by its gizmo now: drawn from its field)
+        turned = tuple(_add(_add(_mul(mn[i][0], move[0]), _mul(mn[i][1], move[1])), _mul(mn[i][2], move[2])) for i in range(3))
+        out._sweep_place = (_map_place(about, mn, cn), tuple(Shape.wrap(v) for v in turned), tuple(Shape.wrap(0.0) for _ in range(3)), tuple(Shape.wrap(1.0) for _ in range(3)))
+    out._sweep_guard = guard
+    return True
+
+
 def symmetry_image(shape, symmetry, index=1):
     ''' The image of `shape` in the symmetry `symmetry`: `index` is the number of the image (1 .. symmetry_count(symmetry)).  It follows both: change the shape, or move the
         symmetry, and the image changes with it.  It has no gizmo and no numbers of its own: pulling it pulls the shape.  FielDes writes it for everything that is made while the
@@ -288,16 +351,25 @@ def symmetry_image(shape, symmetry, index=1):
     X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
     d = [_add(V, _mul(-1.0, c[i])) for i, V in enumerate((X, Y, Z))]
     # A place of the image is the place of the shape that the way back -- the transpose, the matrix is a turn or a mirror image -- takes it from
-    pre = tuple(_add(c[i], _add(_add(_mul(m[0][i], d[0]), _mul(m[1][i], d[1])), _mul(m[2][i], d[2]))) for i in range(3))
+    from fieldes.stdlib.curves import value_of
+    mn = [[value_of(m[i][j]) for j in range(3)] for i in range(3)]
+    cn = tuple(value_of(v) for v in c)
+    # A sweep is drawn natively from the numbers of its path (its field has none of them: it is made of numbers), so its image is drawn the same way, and its field is the original's
+    # taken through the turn or mirror image AS IT IS NOW -- a field of thousands of terms, with the symmetry's numbers in every one of them, was minutes to mesh and seconds to key
+    native = _native_sweep(shape)
+    if native:
+        dn = [_add(V, -cn[i]) for i, V in enumerate((X, Y, Z))]
+        pre = tuple(_add(cn[i], _add(_add(_mul(mn[0][i], dn[0]), _mul(mn[1][i], dn[1])), _mul(mn[2][i], dn[2]))) for i in range(3))
+    else:
+        pre = tuple(_add(c[i], _add(_add(_mul(m[0][i], d[0]), _mul(m[1][i], d[1])), _mul(m[2][i], d[2]))) for i in range(3))
     moved = shape.remap(*pre)
     out = type(shape).__new__(type(shape))
     Shape.__init__(out, lib.libfive_tree_copy(moved.ptr))
     for name in _TAKEN:
         if name in shape.__dict__:
             out.__dict__[name] = shape.__dict__[name]
-    from fieldes.stdlib.curves import value_of
-    mn = [[value_of(m[i][j]) for j in range(3)] for i in range(3)]
-    cn = tuple(value_of(v) for v in c)
+    if native:
+        _sweep_image(out, shape, mn, cn)
     if hasattr(shape, 'xyz'):
         # A point is the point its image is: its coordinates follow the original's (numbers, or the expressions of its var()s)
         from fieldes.stdlib.points import Point
@@ -306,6 +378,7 @@ def symmetry_image(shape, symmetry, index=1):
                                   _mul(m[i][2], _add(p[2], _mul(-1.0, c[2]))))) for i in range(3))
         out = Point(q[0], q[1], q[2], smooth=getattr(shape, '_smooth', None))
         out._kind = getattr(shape, '_kind', 'point')
+        out._symmetry_linear = mn            # (the turn or mirror image: what a shift the original is drawn with becomes -- see points.weld_shift_of)
     box = getattr(shape, '_bounds', None)
     if box and not hasattr(shape, 'xyz'):
         try:
