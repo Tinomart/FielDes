@@ -1684,7 +1684,9 @@ Window::Window(Arguments args)
             if (!tree) return nullptr;
             const int at = prefix.indexOf('@');
             if (at > 0) return scene->rowUnder(prefix.mid(at + 1).trimmed(), prefix.left(at).trimmed());
-            for (auto row : tree->findItems(prefix, Qt::MatchStartsWith | Qt::MatchRecursive, 0))
+            // (a name ending in `$` is the whole text of the row: `spline_1$` is not `spline_1_m1`)
+            const bool exact = prefix.endsWith('$');
+            for (auto row : tree->findItems(exact ? prefix.left(prefix.size() - 1) : prefix, (exact ? Qt::MatchExactly : Qt::MatchStartsWith) | Qt::MatchRecursive, 0))
             {
                 if (!scene->isShadow(row)) return row;
             }
@@ -2503,6 +2505,12 @@ Window::Window(Arguments args)
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             if (p.size() < 3) return;
             view->createAt(p[0], QPoint(p[1].toInt(), p[2].toInt()));
+        });
+        // hovertarget <x> <y>: what the viewport has under that place (viewport coordinates) for a pull of a surface, as it is now
+        a->add("hovertarget", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 2) return;
+            std::cerr << "automation: hover " << view->hoverDescription(QPoint(p[0].toInt(), p[1].toInt())).toStdString() << std::endl;
         });
         a->add("dotstate", [=](const QString&){
             int i = 0;

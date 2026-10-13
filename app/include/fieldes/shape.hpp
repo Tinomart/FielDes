@@ -445,6 +445,14 @@ public:
     bool meshBox(QVector3D& lo, QVector3D& hi) const;
     /*  The variables of the gizmo: dragging a surface leaves them where they are  */
     std::set<libfive::Tree::Id> gizmoVars() const;
+    /*  The numbers of the symmetry an image is made in (fieldes.stdlib.symmetries.symmetry_image): the image's field has them, but a surface of an image is pulled by the numbers of the
+        model it is the image of -- never by the symmetry's, which would move the planes and so every image of everything  */
+    void setFrozenVars(const std::set<libfive::Tree::Id>& v) { m_frozenVars = v; }
+    /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
+    void setSymmetryImage(bool v) { m_symmetryImage = v; }
+    bool isSymmetryImage() const { return m_symmetryImage; }
+    /*  The numbers a pull of a surface of this shape leaves where they are: its gizmo's, and the symmetry's of an image  */
+    std::set<libfive::Tree::Id> pullMask() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
     std::map<libfive::Tree::Id, float> dragWeights() const;
     /*  Where the part turns after the move: the pivot the gizmo sits at  */
@@ -958,6 +966,8 @@ protected:
     libfive::BRepAlgorithm m_last_alg = libfive::BRepAlgorithm::DUAL_CONTOURING;
 
     Gizmo m_gizmo;
+    std::set<libfive::Tree::Id> m_frozenVars;
+    bool m_symmetryImage = false;
     bool m_locked = false;
     bool m_linked = false;
     SymmetryDef m_symDef;

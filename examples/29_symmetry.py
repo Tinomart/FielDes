@@ -10,6 +10,8 @@
 # row in the tree and one line here.  The leg is the only one with numbers.
 #
 # Things to try:
+#   * Hover a surface of the leg and pull it (its handles): its radius, its height, where it stands -- every image follows, mirrored.  Pull the surface of
+#     an IMAGE and the leg changes, not the symmetry.
 #   * Select `mirror` and drag its gizmo (the arrows): all three images of the leg move with it.  Drag a leg's arrow (or the leg's surfaces):
 #     the other legs follow, mirrored.  Select `leg_images` and drag its gizmo, or the surface of any of its legs: the leg moves -- the other
 #     way, as a mirror shows it.
@@ -31,8 +33,8 @@ view.set_quality(8)
 mirror = symmetry_planes(planes=2, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=(0, 1, 0))
 mirror = gizmo(
     mirror,
-    move=(var(-8.21652), var(0.563743), var(-0.152549)),
-    rotate=(var(-4.954e-08), var(2.94942), var(-9.8365)),
+    move=(var(0), var(0), var(0)),
+    rotate=(var(0), var(0), var(0)),
 )
 mirror
 
@@ -42,6 +44,7 @@ top
 
 # One leg, and all its images.
 leg = cylinder(5, 30, (40, 22, 0))
+leg = handles(leg, [var(40.0), var(22.0), var(5.0), var(30.0), var(0.0)])
 leg = gizmo(
     leg,
     move=(var(0), var(0), var(0)),

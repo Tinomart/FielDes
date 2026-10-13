@@ -1900,6 +1900,30 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        // The numbers of the symmetry an image is made in (`_symmetry_vars`): the image's field has them, but a surface of it is pulled by the original's numbers only
+        if (PyObject_HasAttrString(obj, "_symmetry_vars"))
+        {
+            PyObject* sv = PyObject_GetAttrString(obj, "_symmetry_vars");
+            if (sv && PyTuple_Check(sv))
+            {
+                std::set<libfive::Tree::Id> ids;
+                for (Py_ssize_t i = 0; i < PyTuple_Size(sv); ++i)
+                {
+                    PyObject* v = PyTuple_GetItem(sv, i);
+                    PyObject* p = (v && PyObject_HasAttrString(v, "ptr")) ? PyObject_GetAttrString(v, "ptr") : nullptr;
+                    if (p && PyLong_Check(p)) ids.insert(static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(p)));
+                    Py_XDECREF(p);
+                }
+                shape->setFrozenVars(ids);
+            }
+            Py_XDECREF(sv);
+            PyErr_Clear();
+        }
+
+        // An image of another model in a symmetry (`_symmetry_of`)
+        shape->setSymmetryImage(PyObject_HasAttrString(obj, "_symmetry_of") == 1);
+        PyErr_Clear();
+
         // A model the app's viewport shows, and the name it was given there (fieldes.app.viewport)
         if (viewport && PyObject_HasAttrString(obj, "_app_shown"))
         {

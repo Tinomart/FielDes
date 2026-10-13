@@ -339,6 +339,13 @@ std::set<libfive::Tree::Id> Shape::gizmoVars() const
     return out;
 }
 
+std::set<libfive::Tree::Id> Shape::pullMask() const
+{
+    std::set<libfive::Tree::Id> out = gizmoVars();
+    out.insert(m_frozenVars.begin(), m_frozenVars.end());
+    return out;
+}
+
 double Shape::evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const
 {
     libfive::ArrayEvaluator e(t, v);
@@ -937,7 +944,7 @@ bool Shape::nativeDragOk() const
     // thread, when a click that missed a point of the path landed on the tube beside it: seconds to minutes of a window that did not answer)
     if (hasSweep()) return false;
     buildDeps();
-    const auto gizmo = gizmoVars();
+    const auto gizmo = pullMask();
     for (const void* d : m_deps)
     {
         if (vars.count(static_cast<libfive::Tree::Id>(d)) && !gizmo.count(static_cast<libfive::Tree::Id>(d)))
@@ -2601,6 +2608,8 @@ bool Shape::updateFrom(const Shape* other)
     // (the same tree: only whether its gizmo is shown, and its pivot,
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
+    m_frozenVars = other->m_frozenVars;
+    m_symmetryImage = other->m_symmetryImage;
     m_symDef = other->m_symDef;
     m_locked = other->m_locked;
     m_linked = other->m_linked;

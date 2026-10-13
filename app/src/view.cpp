@@ -1916,7 +1916,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
                 *drag_eval.first, drag_eval.second,
                 drag_target->getVars(),
                 {cursor_pos.x(), cursor_pos.y(), cursor_pos.z()},
-                drag_target->gizmoVars(), 25000, drag_weights);
+                drag_target->pullMask(), 25000, drag_weights);
         const qint64 tSolved = timing ? clock.nsecsElapsed() : 0;
         emit(varsDragged(QMap<libfive::Tree::Id, float>(sol.second)));
         const qint64 tWritten = timing ? clock.nsecsElapsed() : 0;
@@ -5807,9 +5807,31 @@ float View::gizmoLength(const QVector3D& pivot) const
 
 int View::selectedShapeCount() const
 {
+    // (the images of one statement -- `leg_images = symmetry_images(leg, mirror)` is drawn as a shape for each image, and selecting its row selects them all -- are one selection:
+    // a surface of one of them can be pulled, which pulls the model they are the images of)
     int n = 0;
-    for (const auto* s : shapes) if (s->isSelected()) ++n;
+    QSet<int> imageLines;
+    for (const auto* s : shapes)
+    {
+        if (!s->isSelected()) continue;
+        if (s->isSymmetryImage() && s->sourceLine() >= 0)
+        {
+            if (imageLines.contains(s->sourceLine())) continue;
+            imageLines.insert(s->sourceLine());
+        }
+        ++n;
+    }
     return n;
+}
+
+QString View::hoverDescription(QPoint pos) const
+{
+    const auto picked = pick_img.valid(pos) ? pickedNear(pos) : 0;
+    const Shape* s = (picked && int(picked) <= shapes.size()) ? shapes.at(int(picked) - 1) : nullptr;
+    if (!s) return QString("nothing under (%1, %2); %3 selected; hover shape %4").arg(pos.x()).arg(pos.y()).arg(selectedShapeCount()).arg(hover_target ? "yes" : "none");
+    return QString("shape line %1 under (%2, %3): pullable %4, symmetry image %5, gizmo %6; %7 selected; hover shape %8")
+        .arg(s->sourceLine()).arg(pos.x()).arg(pos.y()).arg(pullableAt(s, pos) ? "yes" : "no").arg(s->isSymmetryImage() ? "yes" : "no").arg(s->hasGizmo() ? "yes" : "no")
+        .arg(selectedShapeCount()).arg(hover_target == s ? "is it" : hover_target ? "is another" : "none");
 }
 
 bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const

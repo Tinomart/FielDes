@@ -325,6 +325,10 @@ def symmetry_image(shape, symmetry, index=1):
         out._gizmo = g
         out._symmetry = (tuple(v for row in mn for v in row), cn)
     out._no_handles = True
+    # The symmetry's own numbers (its gizmo's) are in the image's field, but a pull of the image's surface changes the original's numbers, never these: the viewport leaves them
+    sg = getattr(sym, '_gizmo', None)
+    if sg is not None:
+        out._symmetry_vars = tuple(v for group in sg[2:5] if group for v in group if isinstance(v, Shape))
     out._symmetry_of = shape
     out._symmetry_source = sym
     out._symmetry_index = k

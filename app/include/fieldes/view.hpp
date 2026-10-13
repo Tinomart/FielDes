@@ -150,6 +150,8 @@ public:
     /*  The widget position of a grip of the gizmo of the first part (for
      *  scripted tests): kind 0 = move arrow, 1 = rotation ring; the axis 0-2  */
     bool gizmoGripPoint(int kind, int axis, QPoint& pos) const;
+    /*  What the viewport has under the mouse for a pull of a surface (the automation verb `hovertarget`): the line of its shape, whether it is pullable, how many are selected  */
+    QString hoverDescription(QPoint pos) const;
     /*  Holds Shift down for the gizmo (for scripted tests: the events sent from a script do not change the keyboard)  */
     void holdShift(bool on);
 
