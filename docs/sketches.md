@@ -78,6 +78,7 @@ Pick a surface on a part (right-click it, **Select Surface**: a `select_surface(
 - **Double-click a sketch** to frame it: the view also **turns to face the plane of the sketch**.
 - **The default is a hard edge** for a sketch and a polyline, a smooth curve for a spline: `sketch(points, smooth=False)`. With `smooth=True` every point is a spline point, except where a point says `smooth=False`.
 - **Delete a point** with its trash button in the model tree: it leaves the list of the sketch.
+- **Delete a sketch** (or a line) and the points it was made from go with it, in the same undo step. A point that something else also uses -- another sketch, a `move`, a field -- stays.
 
 ## Rotating and scaling a point
 

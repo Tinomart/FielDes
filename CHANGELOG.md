@@ -20,6 +20,8 @@
   made ready (given its `handles(...)` line) when a copy is selected.
 - **Several points selected are scaled and turned one by one.** The gold ring scales every point by its own scale and the ring in the plane turns every point by its own rotation; the points **stay where they are** (the rings used to scale and
   turn their whole arrangement about its middle).
+- **Deleting a sketch deletes its points.** A sketch (or a `polyline` / `spline`) made from points takes the points it was made from with it, in the same undo step -- they would stay as dots with nothing to do. A point
+  that anything else still uses (a second sketch, a move, ...) stays; deleting a single point still only takes it out of the sketch.
 - **A section can be started at the end of the model tree too**: hover under the last row and the + in a circle shows there.
 - **Ctrl+drag of a row is always that row**, as a shadow reference: it is dragged at once and becomes the selection, whether it was selected or not (before, a row that was not selected joined the selection, the models were made ready to be
   dragged and the tree rebuilt under the hand, so nothing was dragged).

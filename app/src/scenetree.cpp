@@ -4921,6 +4921,36 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
             }
         }
     }
+    // A sketch (or a line) is made of its points: when it goes, the points that only it was made of go with it -- they were made for it, and would stay behind as dots with nothing
+    // to do.  A point that anything else still uses stays
+    {
+        QSet<QString> gone;
+        for (const auto& o : all) gone << keyOf(o);
+        QList<QJsonObject> points;
+        for (const auto& o : all)
+        {
+            const QString callee = o["callee"].toString();
+            if (callee != "sketch" && callee != "polyline" && callee != "spline") continue;
+            for (const QString& name : directInputs(o))
+            {
+                const QJsonObject p = itemForVar(name);
+                // (a point whose statement failed to run has no type, but it is still `point(...)`)
+                if (p.isEmpty() || (p["type"].toString() != "point" && p["callee"].toString() != "point") || gone.contains(keyOf(p))) continue;
+                // (used = named anywhere in another statement that stays: as an argument, a keyword or deeper in an expression)
+                bool used = false;
+                for (const auto v : m_scene["items"].toArray())
+                {
+                    const auto c = v.toObject();
+                    if (gone.contains(keyOf(c)) || keyOf(c) == keyOf(p)) continue;
+                    for (const auto iv : c["inputs"].toArray()) used = used || iv.toObject()["name"].toString() == name;
+                }
+                if (used) continue;
+                points << p;
+                gone << keyOf(p);
+            }
+        }
+        for (const auto& p : points) all << p;
+    }
     if (all.isEmpty()) return;
     // Every line that goes is checked to be the line the rows say it is (see lineIs): rows of another text than the script's would
     // have a definition, a lock or a gizmo line of ANOTHER model deleted.  Nothing is written when one is not
