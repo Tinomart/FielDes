@@ -576,6 +576,7 @@ protected:
     bool symmetric() const { return m_sym.on; }
     Shape* symmetryShape() const;                               // (the model that is selected and is a symmetry)
     void refreshSymmetry();                                     // (what the model says now: its planes, the card, the scene)
+    void linkFollowers();                                       // (the images and linked copies that are shown follow the mesh of the model they are of, when that is shown)
     /*  The images of a point: the point, then one for each element of the symmetry  */
     QList<QVector3D> symmetryImages(const QVector3D& p) const;
     bool onSymmetryPlane(const QVector3D& p) const;             // (the point is on one of the planes of the symmetry)

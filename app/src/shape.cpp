@@ -81,6 +81,7 @@ Shape::Shape(const libfive::Tree& t,
       tri_vbo(QOpenGLBuffer::IndexBuffer)
 {
     cache_vars = vars;
+    m_sourceId = built_tree.id();
 
     // (the optimised tree and the evaluators that mesh it are made when something reads the field: see ensureField)
 
@@ -1355,6 +1356,8 @@ bool Shape::meshSize(QVector3D& lo, QVector3D& hi) const
 void Shape::sizeFirstLevel(const Settings& s)
 {
     if (m_div_sized || default_div == MESH_DIV_EMPTY) return;
+    // (a shape whose last level took the mesher a quarter of a second has learned its level from that: it is not a small shape in a big region)
+    if (m_levelMs.load() > 250.0) { m_div_sized = true; return; }
     QVector3D lo, hi;
     if (!m_ext_valid && !meshSize(lo, hi)) return;
     default_div = defaultDivFor(s);
@@ -2631,6 +2634,9 @@ bool Shape::updateFrom(const Shape* other)
     m_gizmo = other->m_gizmo;
     m_frozenVars = other->m_frozenVars;
     m_symmetryImage = other->m_symmetryImage;
+    m_sourceId = other->m_sourceId;
+    m_followId = other->m_followId;
+    m_followKind = other->m_followKind;
     m_symDef = other->m_symDef;
     m_locked = other->m_locked;
     m_linked = other->m_linked;
@@ -2776,6 +2782,7 @@ bool Shape::updateVars(const std::map<libfive::Tree::Id, float>& vs)
     // value.  In this case, we want to render at div = 0; otherwise, we
     // see a visual glitch when the script re-evaluates after a drag.
     int div = MESH_DIV_NEW_VARS_SMALL;
+    std::vector<libfive::Tree::Id> used;            // (the numbers this shape uses that changed)
 
     for (auto& v : vs)
     {
@@ -2794,7 +2801,23 @@ bool Shape::updateVars(const std::map<libfive::Tree::Id, float>& vs)
                 div = MESH_DIV_NEW_VARS;
             }
             changed = true;
+            used.push_back(v.first);
         }
+    }
+
+    // A shape that is another one moved or mirrored, and the numbers that changed are the model's own geometry (a surface of it is pulled): it is not meshed -- it is the same
+    // shape -- it takes the mesh of the model when that is made.  (The evaluators are given the numbers now: whatever renders it next is of them)
+    if (changed && canFollow(used))
+    {
+        for (auto& e : es) e.updateVars(vars);
+        color_evals.clear();
+        probe_eval.reset();
+        cache_vars = vars;
+        ++cache_vars_gen;
+        m_followPending = true;
+        if (std::getenv("FIELDES_TIMING"))
+            fprintf(stderr, "[vars] the shape of line %d follows the mesh of the shape of line %d\n", source_line + 1, m_follows ? m_follows->source_line + 1 : 0);
+        return false;
     }
 
     if (changed)
@@ -2817,6 +2840,114 @@ bool Shape::updateVars(const std::map<libfive::Tree::Id, float>& vs)
     }
 
     return changed;
+}
+
+void Shape::linkSource(Shape* source)
+{
+    if (source == m_follows.data()) return;
+    if (m_followConnection) QObject::disconnect(m_followConnection);
+    m_followConnection = QMetaObject::Connection();
+    m_follows = source;
+    m_followPending = false;
+    if (source && m_followKind != FOLLOW_NONE) m_followConnection = connect(source, &Shape::gotMesh, this, &Shape::adoptMeshFromSource);
+}
+
+bool Shape::plainMesh() const
+{
+    return mesh && !has_color && !has_result && !has_deform && !m_flat && !hasControls() && !m_isPoint && !exactCurrent() && !m_exact && m_steps.empty() &&
+           !hasSweep() && !hasPrism();
+}
+
+bool Shape::canFollow(const std::vector<libfive::Tree::Id>& changed) const
+{
+    Shape* source = m_follows.data();
+    // (idle: a shape that is being meshed goes on with that)
+    if (!source || source == this || m_followKind == FOLLOW_NONE || !m_gizmo.present || running || next.div != MESH_DIV_EMPTY) return false;
+    if (!plainMesh() || !source->plainMesh()) return false;
+    if (m_followKind == FOLLOW_IMAGE && !m_gizmo.mapped) return false;
+    if (m_followKind == FOLLOW_COPY && !source->m_gizmo.present) return false;
+    // (only the numbers that make the model's own geometry: its gizmo's are drawn by moving its mesh, no mesh is made; the symmetry's change the map; a copy's own place is its own)
+    const auto mine = gizmoVars(), theirs = source->gizmoVars();
+    for (const auto id : changed)
+    {
+        if (!source->usesVar(id) || mine.count(id) || theirs.count(id) || m_frozenVars.count(id)) return false;
+    }
+    return true;
+}
+
+void Shape::adoptMeshFromSource()
+{
+    Shape* source = m_follows.data();
+    if (!source || !m_followPending || running || next.div != MESH_DIV_EMPTY) return;
+    auto meshAgain = [&]() {
+        m_followPending = false;
+        startRender(RenderSettings { m_last_settings, MESH_DIV_NEW_VARS, m_last_alg });
+    };
+    if (!source->mesh || !plainMesh() || !source->plainMesh()) { meshAgain(); return; }
+    // What takes the model's mesh to this shape's: the map of the symmetry; or, for a copy, its own move and turn after the model's undone (both are moved and turned about the same
+    // place, by their own numbers -- the model's scale is the copy's too)
+    QMatrix4x4 X;
+    GizmoNumbers made = m_meshGizmo;
+    if (m_followKind == FOLLOW_IMAGE)
+    {
+        X = m_gizmo.map;
+        made = source->m_meshGizmo;
+    }
+    else
+    {
+        if ((m_gizmo.about - source->m_gizmo.about).length() > 1e-3f) { meshAgain(); return; }
+        const QVector3D one(1, 1, 1);
+        bool invertible = false;
+        const QMatrix4x4 back = source->gizmoMatrix(source->m_meshGizmo.move, source->m_meshGizmo.rotate, one).inverted(&invertible);
+        if (!invertible) { meshAgain(); return; }
+        made = gizmoNumbersIn(vars);
+        X = gizmoMatrix(made.move, made.rotate, one) * back;
+    }
+    const auto& sv = source->mesh->verts;
+    auto copy = std::make_shared<libfive::Mesh>();
+    copy->verts.resize(sv.size());
+    for (size_t i = 0; i < sv.size(); ++i)
+    {
+        const QVector3D p = X.map(QVector3D(sv[i].x(), sv[i].y(), sv[i].z()));
+        copy->verts[i] = Eigen::Vector3f(p.x(), p.y(), p.z());
+    }
+    // (a mirror image faces the other way: its triangles are turned over)
+    const bool flip = X.determinant() < 0;
+    copy->branes.reserve(source->mesh->branes.size());
+    for (const auto& t : source->mesh->branes)
+    {
+        auto u = t;
+        if (flip) std::swap(u[1], u[2]);
+        copy->branes.push_back(u);
+    }
+    mesh = copy;
+    m_meshGizmo = made;
+    refreshPreview();
+    m_outlines.clear();
+    color_values.clear();
+    step_values.clear();
+    step_disp.clear();
+    lines_dirty = true;
+    prev_div = mesh_div;
+    prev_seq = mesh_seq;
+    prev_verts = mesh_verts;
+    mesh_div = source->mesh_div;
+    mesh_seq = source->mesh_seq;
+    mesh_verts = copy->verts.size();
+    {
+        const auto& b = source->render_bounds;
+        QVector3D lo, hi;
+        for (int i = 0; i < 8; ++i)
+        {
+            const QVector3D at = X.map(QVector3D((i & 1) ? b.upper.x() : b.lower.x(), (i & 2) ? b.upper.y() : b.lower.y(), (i & 4) ? b.upper.z() : b.lower.z()));
+            lo = i == 0 ? at : QVector3D(std::min(lo.x(), at.x()), std::min(lo.y(), at.y()), std::min(lo.z(), at.z()));
+            hi = i == 0 ? at : QVector3D(std::max(hi.x(), at.x()), std::max(hi.y(), at.y()), std::max(hi.z(), at.z()));
+        }
+        render_bounds = libfive::Region<3>({lo.x(), lo.y(), lo.z()}, {hi.x(), hi.y(), hi.z()});
+    }
+    if (mesh_div == 0) m_followPending = false;           // (the model's finest level is here: nothing more is to come)
+    gl_ready = false;
+    emit(gotMesh());
 }
 
 void Shape::draw(const QMatrix4x4& M)

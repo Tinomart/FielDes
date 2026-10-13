@@ -436,6 +436,23 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     update();
     requestSlice();
     refreshSymmetry();              // (the symmetry model is another shape now)
+    linkFollowers();
+}
+
+void View::linkFollowers()
+{
+    std::map<libfive::Tree::Id, Shape*> made;
+    for (Shape* s : shapes) made[s->sourceId()] = s;
+    for (Shape* s : shapes)
+    {
+        Shape* model = nullptr;
+        if (const auto of = s->followId())
+        {
+            const auto it = made.find(of);
+            if (it != made.end() && it->second != s) model = it->second;
+        }
+        s->linkSource(model);
+    }
 }
 
 bool View::isRendering() const

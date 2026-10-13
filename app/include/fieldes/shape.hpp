@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QStringList>
 #include <QtConcurrent>
 #include <QOpenGLVertexArrayObject>
@@ -448,6 +449,15 @@ public:
     /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
     void setSymmetryImage(bool v) { m_symmetryImage = v; }
     bool isSymmetryImage() const { return m_symmetryImage; }
+    /*  A shape that is another one, moved or mirrored: the image of a model in a symmetry (its mesh is the model's through the symmetry's map), a linked copy (`instance`: the
+        model's through the move and turn of the copy).  While a surface of the model is pulled the shape does not mesh its own field -- it is the same shape -- it takes the model's
+        mesh, level by level, as it is made.  `setFollows` says which tree it is the image of (the script knows), `linkSource` which shape of the scene that is (null when it is not
+        shown: the shape then meshes itself, as ever)  */
+    enum Follow { FOLLOW_NONE = 0, FOLLOW_IMAGE = 1, FOLLOW_COPY = 2 };
+    void setFollows(int kind, libfive::Tree::Id of) { m_followKind = kind; m_followId = of; }
+    libfive::Tree::Id sourceId() const { return m_sourceId; }
+    libfive::Tree::Id followId() const { return m_followKind != FOLLOW_NONE ? m_followId : libfive::Tree::Id(); }
+    void linkSource(Shape* source);
     /*  The numbers a pull of a surface of this shape leaves where they are: its gizmo's, and the symmetry's of an image  */
     std::set<libfive::Tree::Id> pullMask() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
@@ -951,6 +961,16 @@ protected:
         slow for it).  The first time its size is known -- from the search, or from its mesh -- it is chosen again; after that it follows how long the levels take  */
     void sizeFirstLevel(const Settings& s);
     bool m_div_sized = false;
+    // Following another shape's mesh (see setFollows)
+    libfive::Tree::Id m_sourceId = libfive::Tree::Id();         // (the tree the script made this shape from: what the shapes that follow it name)
+    libfive::Tree::Id m_followId = libfive::Tree::Id();
+    int m_followKind = FOLLOW_NONE;
+    QPointer<Shape> m_follows;
+    QMetaObject::Connection m_followConnection;
+    bool m_followPending = false;               // (numbers of the model's own shape changed: its mesh, when it comes, is this one's)
+    bool plainMesh() const;                     // (a mesh that can be moved as it is: see previewGizmoVars)
+    bool canFollow(const std::vector<libfive::Tree::Id>& changed) const;
+    void adoptMeshFromSource();
     bool m_ext_valid = false;
     QVector3D m_ext_lo, m_ext_hi;
 

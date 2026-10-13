@@ -1924,6 +1924,27 @@ void Interpreter::recordShape(
         shape->setSymmetryImage(PyObject_HasAttrString(obj, "_symmetry_of") == 1);
         PyErr_Clear();
 
+        // A shape that is another one moved or mirrored -- the image of a model in a symmetry (`_symmetry_of`), a linked copy (`_instance_of`): the tree of the model, so that the
+        // viewport can give it the model's mesh instead of meshing it again (Shape::setFollows)
+        {
+            auto treeOf = [&](const char* attribute) -> libfive::Tree::Id {
+                libfive::Tree::Id id = nullptr;
+                if (!PyObject_HasAttrString(obj, attribute)) return id;
+                PyObject* model = PyObject_GetAttrString(obj, attribute);
+                if (model && PyObject_HasAttrString(model, "ptr"))
+                {
+                    PyObject* p = PyObject_GetAttrString(model, "ptr");
+                    if (p && PyLong_Check(p)) id = static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(p));
+                    Py_XDECREF(p);
+                }
+                Py_XDECREF(model);
+                PyErr_Clear();
+                return id;
+            };
+            if (const auto of = treeOf("_symmetry_of")) shape->setFollows(Shape::FOLLOW_IMAGE, of);
+            else if (const auto copyOf = treeOf("_instance_of")) shape->setFollows(Shape::FOLLOW_COPY, copyOf);
+        }
+
         // A model the app's viewport shows, and the name it was given there (fieldes.app.viewport)
         if (viewport && PyObject_HasAttrString(obj, "_app_shown"))
         {
