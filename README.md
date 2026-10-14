@@ -44,7 +44,7 @@ the viewport.
   tips and a place in the menus.
 
 New here? A welcome card offers a **guided tour** the first time FielDes starts (**Help → Guided tour** any time after): short cards over the
-program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version.
+program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version. **File → Open example file** has 31 scripts; `26` to `31` open at once, the analyses take seconds to minutes (the [examples README](examples/README.md) says how long each takes).
 
 ## What it does
 

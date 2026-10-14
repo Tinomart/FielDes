@@ -9,6 +9,22 @@ the application switches to a script's folder when it opens it.
 The first import of a file takes a few seconds and is cached next to the STEP file in `<file>.fieldes-cache.py` and
 `.fieldes-cache.trees/`. These caches can be deleted at any time.
 
+## How long they take
+
+Where to start, and what to expect. These are the seconds the **script itself** takes with every cache empty (`python scripts/cold_vs_warm.py` measures them, as of 2026-10-14; a second run is
+faster, see [caching and performance](../docs/caching-and-performance.md)). The first *picture* adds the meshing of what is shown: seconds for most, up to a minute for a lattice that fills a whole part (the
+progress bar shows it).
+
+| Time | Examples |
+|---|---|
+| **Start here -- they open at once** (under 2 s) | `26` to `31` (profiles and sweeps, copies and linked copies, a profile on a plane, the symmetry, noise, texture), `04` (handles), `09` (a lattice), `11` (custom cells), `14` (a conformal lattice), `18` (fields everywhere), `19`, `20`, `21`, `22`, `24`, `25` (apps), `02`, `03` |
+| A few seconds | `01` (import a part, 4 s), `07` (thermal analysis, 3 s), `10` (field-driven design, 5 s), `12` (mesh export and import, 3 s) |
+| Up to half a minute | `05` (static analysis, 29 s), `06` (modal analysis, 22 s), `23` (the lattice gallery, 23 s) |
+| About a minute | `15` (a conformal lattice in the walls of a whole bracket, 48 s) |
+| **Minutes** -- start them and read the script meanwhile | `16` (water past a post, 2 min), `08` (topology optimisation, 2 min), `17` (flow topology optimisation, 3 min) |
+
+The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the bracket that comes with FielDes.
+
 | Script | Part | Shows |
 |---|---|---|
 | `01_import_a_part.py` | the bracket | `import_model`, `roi`, `roi_resolution`, the view settings, `mass_properties` |

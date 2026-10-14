@@ -14,7 +14,7 @@
 ### Report a bug, and the known issues
 - **Help ▸ Report a bug...** opens a new issue on GitHub in the browser, filled in with the version of FielDes (and the kernel revision), the system, the Qt version and the graphics driver -- what a bug needs to be found. Nothing is sent from the program: the issue is read and
   submitted on GitHub. The script is not in it unless you choose *Open it and copy my script*, which puts it on the clipboard to paste (a script is too long for a link). **`KNOWN_ISSUES.md`** lists what does not work as it should yet (the round-corner fill is a mesh, splines are
-  measured in pieces, notches on an extrusion's copy at resolution 2, the coarse picture while a ring is dragged, the unsigned Windows setup, the platforms).
+  measured in pieces, the coarse picture while a ring is dragged, the unsigned Windows setup, the platforms).
 
 ### Where the keyboard is
 - **The pane that has the keyboard has a thin blue frame, and the status bar says *Keys: viewport* or *Keys: editor*.** The viewport's single keys (`W`, `E`, `D`, `R`, `I`, `V`, `C` ... and `Shift+W`, `Shift+S`, `Ctrl+D`) are letters in the script editor, and nothing on the screen said which one

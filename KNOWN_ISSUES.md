@@ -14,8 +14,7 @@ What does not work as it should yet, so that you do not lose time on it. The lim
 
 ## The picture
 
-- **A copy (an image of a symmetry, a turned copy) of an extrusion, meshed at resolution 2, can show small notches along its walls.** A finer resolution removes them.
-- **While you drag a gizmo ring on a large model the picture is a coarse mesh**, which can look cut into layers; the fine mesh comes when you let go.
+- **While you drag a handle or a gizmo ring on a large model the picture is the quick, coarse level of the mesher** (it keeps up with the hand); the fine mesh comes when you let go.
 
 ## Platforms
 
