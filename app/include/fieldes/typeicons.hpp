@@ -25,16 +25,20 @@ namespace FielDes {
  */
 namespace TypeIcons {
 
-/*  The icon of a kind; `block` adds the mark a model made by a custom block carries.  A kind that is not known is a solid  */
-QIcon icon(const QString& type, bool block = false);
+/*  The icon of a kind; `block` adds the mark a model made by a custom block carries.  A kind that is not known is a solid.  `domain` (structural, thermal, fluid)
+ *  is the engineering domain of a simulation and of what an analysis is given: each has the colour and the picture of its domain  */
+QIcon icon(const QString& type, bool block = false, const QString& domain = QString());
 
-/*  The colour and the words for a kind (for tooltips)  */
-QColor color(const QString& type);
+/*  The colour and the words for a kind (for tooltips); the colour of a simulation or of its conditions is that of their domain  */
+QColor color(const QString& type, const QString& domain = QString());
 QString label(const QString& type);
 
 /*  The colours and words the interpreter says the kinds have ({kind: {label, color}}, the "kinds" of the model tree's scene
  *  and of the menus' catalog); what it does not say stays as it is  */
 void setKinds(const QJsonObject& kinds);
+
+/*  The domains the interpreter says there are ({domain: {label, color, conditions}}: the colour of a simulation and of what it is given)  */
+void setDomains(const QJsonObject& domains);
 
 }   // namespace TypeIcons
 

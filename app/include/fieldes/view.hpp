@@ -575,11 +575,14 @@ protected:
     void showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface = true);
     void showSelectMenu(QPoint globalPos, int line, const QVector3D& point);
     /*  A right-click (not a pan) on empty space: Primitives (a 3D shape, a 2D shape, a line, a point, a surface, a field: the most basic of each), Parametric shapes (the
-     *  more complicated ones, made with parameters), Operations (the operations, Lattice, Simulation -- which also holds the materials, fluids, supports, loads and
-     *  conditions) and Import model...  `atLine` (from the text editor): what is made is written under that line  */
+     *  more complicated ones, made with parameters), Operations (the operations and Lattice), Engineering (a category for each domain -- Structural, Thermal, Fluid -- with
+     *  what its analyses are given and the analyses, and the materials) and Import model...  `atLine` (from the text editor): what is made is written under that line  */
     void showEmptyMenu(QPoint globalPos, QPoint pos, int atLine = -1);
-    /*  What the Operations menu holds, on the model at `line` or on empty space (-1): the operations, Lattice and Simulation  */
+    /*  What the Operations menu holds, on the model at `line` or on empty space (-1): the operations and Lattice  */
     void fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, double scale, int atLine);
+    /*  What the Engineering menu holds: a category for each domain (Structural, Thermal, Fluid, each with the icon and the colour of its domain), each with what an analysis of
+     *  it is given and its analyses and optimisations; then the materials, which an analysis of any domain takes  */
+    void fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine);
     void addImportEntry(QMenu* menu);
     /*  The "New ..." entries of the menus of empty space and of a model: `basic` the primitives, else the Parametric shapes (all the rest).  `point` is where a shape is made, `exact` where a point is
      *  (under the cursor, as it is)  */
@@ -593,17 +596,17 @@ protected:
         looks (on the work plane, while its view is open)  */
     QVector3D placementFlat(QPoint pos, double& scale) const;
     bool flatPrimitive(const QString& name) const;
-    /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the simulations are
-     *  their own menu: `simulations` says which of the two is listed (the boundary conditions and the analyses are in it)  */
-    void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false);
+    /*  The operations as a menu's entries (the combining ones greyed when there is no second model); the analyses are
+     *  in the Engineering menu: `simulations` says which of the two is listed, and `domain` (structural, thermal, fluid) which analyses of them  */
+    void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false, const QString& domain = QString());
     /*  The lattice section of a menu: the operations that fill a model with a lattice (and make points for it), then a menu for each family of
      *  cells -- struts, TPMS, planar patterns, non-periodic, custom -- each entry making that cell at once (no model is needed)  */
     void fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line);
     /*  The entry that makes a body from the field of the model at `line` (-1: the selected field the viewer shows)  */
     void addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale);
-    /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of a simulation
-     *  menu: what an analysis is given, made at a place like any new model  */
-    void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine);
+    /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of the Engineering
+     *  menu: what an analysis is given, made at a place like any new model.  `domain`: the ones of that domain (empty: those of no domain, the materials)  */
+    void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain);
     /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
     QVector3D placeOnRay(QPoint pos) const;
     /*  The work plane's state and its pieces in the viewport  */

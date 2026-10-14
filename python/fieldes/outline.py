@@ -41,10 +41,10 @@ _DISPLAYS = {}
 _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
-_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'bounds', 'can_handles',
+_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
               'handle_count', 'handle_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
-_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'cls', 'is_list', 'is_pair', 'surface_selection')
+_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
 # Calls that make nothing a model (a statement that is only such a call is not a displayed model)
 _NOT_MODELS = {
@@ -187,7 +187,7 @@ def _hole_info(value, span):
 
 def facts_of(v):
     ''' What a value says about the model a statement made: the facts a run gives the tree '''
-    from fieldes.kinds import kind_of
+    from fieldes.kinds import kind_of, domain_of_value
     Shape, FailedPart = A._types()
     failed = bool(FailedPart) and isinstance(v, FailedPart)
     shape = isinstance(v, Shape)
@@ -201,6 +201,10 @@ def facts_of(v):
         f['error'] = v.error
     if mkind == 'conditions':
         f['condition_role'] = A._condition_role(v)
+    if mkind in ('conditions', 'simulation'):
+        domain = domain_of_value(v)         # (the colour and the icon of its engineering domain)
+        if domain:
+            f['domain'] = domain
     if mkind in ('conditions', 'material', 'surface'):
         f['cls'] = type(v).__name__
     if getattr(v, '_is_viewport', False):
@@ -454,7 +458,7 @@ def seed(items_json):
                 continue
             facts = {'model': True, 'failed': bool(it.get('failed')), 'result': bool(it.get('result')), 'type': it.get('type'),
                      'shown': it.get('displayable') is not False, 'no_gizmo': bool(it.get('no_gizmo'))}
-            for k in ('error', 'condition_role', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap'):
+            for k in ('error', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap'):
                 if k in it:
                     facts[k] = it[k]
             _LATEST.setdefault(var, (None, it.get('callee', ''), facts))
@@ -594,7 +598,7 @@ def outline_json(arg):
     except SyntaxError as e:
         # (a line that is being typed: the tree stays as it was, and says nothing -- the editor says what is wrong)
         return json.dumps({'syntax_error': '%s (line %s)' % (e.msg, e.lineno), 'source_md5': md5})
-    from fieldes.kinds import describe as describe_kinds
+    from fieldes.kinds import describe as describe_kinds, describe_domains, domain_of
     ns = _namespace()
     blocks = A._block_names()
     src = A._Source(source)
@@ -813,6 +817,10 @@ def outline_json(arg):
                         item['attribute_of'] = node.id
                     if mkind == 'conditions':
                         item['condition_role'] = facts.get('condition_role') or _guess_role(callee)
+                    if mkind in ('conditions', 'simulation'):
+                        domain = facts.get('domain') or domain_of(callee)
+                        if domain:
+                            item['domain'] = domain
                     if mkind == 'surface' and (facts.get('surface_selection') or callee == 'select_surface'):
                         first = [i for i in inputs if i.get('index') == 0 and not i.get('in_list') and 'keyword' not in i]
                         if first:
@@ -896,6 +904,10 @@ def outline_json(arg):
             mkind = facts.get('type') or _guess_type(A._callee_name(stmt.value), [], by_name, ns)
             if mkind:
                 item['type'] = mkind
+            if mkind in ('conditions', 'simulation'):
+                domain = facts.get('domain') or domain_of(A._callee_name(stmt.value))
+                if domain:
+                    item['domain'] = domain
             item['inputs'], item['variadic'], item['numbers'] = A._inputs_of(stmt.value, ns, by_name)
             if item['variadic']:
                 item['min_inputs'] = A._min_inputs(ns.get(A._callee_name(stmt.value)))
@@ -1019,7 +1031,7 @@ def outline_json(arg):
         if v is not None:
             settings.setdefault(k, {})['value'] = v
 
-    return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(), 'truncated': truncated,
+    return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(), 'domains': describe_domains(), 'truncated': truncated,
                        'sections': sections,
                        'errored': bool(error), 'run_done': bool(req.get('run_done')),
                        'done_line': tree.body[-1].end_lineno if tree.body else 0, 'source_md5': md5,

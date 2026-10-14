@@ -315,6 +315,10 @@ GROUP_KINDS = {'1D': 'curve', '3D': 'solid', '2D': 'profile', 'Points': 'point',
                'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
                'Thermal conditions': 'conditions', 'Flow conditions': 'conditions',
                'Strut cells': 'cell', 'TPMS cells': 'cell', 'Planar cells': 'cell', 'Custom cells': 'cell'}
+# The domain of the groups of primitives that are about one (the categories of the Engineering menu: see fieldes.kinds); a material is of none -- an analysis of any
+# domain takes one
+PRIMITIVE_DOMAINS = {'Supports and loads': 'structural', 'Thermal conditions': 'thermal', 'Flow conditions': 'fluid', 'Fluids': 'fluid'}
+
 # What an operation makes, where it is not what its group makes (the operations of the lattice section make lattices, but random_points makes points)
 OPERATION_KINDS = {'random_points': 'points'}
 
@@ -416,13 +420,15 @@ def _blocks():
 def catalog():
     ''' The lists as JSON for the menus: {"primitives": [{name, group, type}], "operations": [{name, group, other}]}; the custom
         blocks are in them too (group "Custom blocks", type "block") '''
-    from fieldes.kinds import describe
+    from fieldes.kinds import describe, describe_domains, DOMAIN_OF_FUNCTION
     blocks = _blocks()
     return json.dumps({
         'kinds': describe(),
+        'domains': describe_domains(),
         'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION, 'primitive': n in BASIC,
                              'from_selection': n in FROM_SELECTION},
                             **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
+                            **({'domain': PRIMITIVE_DOMAINS[g]} if g in PRIMITIVE_DOMAINS else {}),
                             **({'doc': FROM_SELECTION[n][0]} if n in FROM_SELECTION else {}),
                             # (a 2D shape that is written with an x and a y only lies in the plane z = 0: the place it is made at is where the ray under the cursor meets that plane)
                             **({'flat': True} if g == '2D' and '{z}' not in t else {}))
@@ -432,6 +438,7 @@ def catalog():
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
         'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK},
                             **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
+                            **({'domain': DOMAIN_OF_FUNCTION[n]} if g == 'Simulations' and n in DOMAIN_OF_FUNCTION else {}),
                             **({'type': OPERATION_KINDS[n]} if n in OPERATION_KINDS else
                                                                                        {'type': 'lattice'} if g == 'Lattices' else {}))
                        for n, g, _, o in OPERATIONS]

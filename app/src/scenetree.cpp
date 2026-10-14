@@ -665,7 +665,7 @@ QIcon itemIcon(const QJsonObject& it, bool failed)
     const QString kind = it["kind"].toString();
     if (kind == "import") return TypeIcons::icon("import");
     const QString type = it["type"].toString();
-    if (!type.isEmpty()) return TypeIcons::icon(type, it.contains("block"));
+    if (!type.isEmpty()) return TypeIcons::icon(type, it.contains("block"), it["domain"].toString());
     return kindIcon(kind, false);
 }
 
@@ -1815,6 +1815,7 @@ void ScenePanel::setScene(const QString& json)
     if (m_source && m_scene["run_done"].toBool() && !m_scene["errored"].toBool() && m_scene["source_md5"].toString() == md5Hex(m_source()))
         saveSceneCache(json, m_scene["source_md5"].toString());
     TypeIcons::setKinds(m_scene["kinds"].toObject());
+    TypeIcons::setDomains(m_scene["domains"].toObject());
     ++m_generation;
     rebuild();
     // Expressions that were named for a multi-selection: the selection is the same models again, under their new names
@@ -2809,7 +2810,7 @@ void ScenePanel::rebuild()
                 for (auto c : group) at = std::min(at, int(rows.indexOf(c)));
                 for (auto c : group) rows.removeAll(c);
                 const QString gkey = parent->data(COL_NAME, ROLE_KEY).toString() + ">bc";
-                auto g = makeRow(nullptr, T("boundary conditions"), TypeIcons::icon("conditions"), "bcgroup", pit, gkey);
+                auto g = makeRow(nullptr, T("boundary conditions"), TypeIcons::icon("conditions", false, pit["domain"].toString()), "bcgroup", pit, gkey);
                 nested.insert(g);
                 conditionGroups << qMakePair(g, gkey);
                 g->setToolTip(COL_NAME, T("The conditions of %1: a placeholder for every kind it takes, and the conditions in them.\n"
@@ -3688,6 +3689,7 @@ void ScenePanel::showCached()
     m_sceneClock.start();
     m_predicted = false;
     TypeIcons::setKinds(m_scene["kinds"].toObject());
+    TypeIcons::setDomains(m_scene["domains"].toObject());
     ++m_generation;
     rebuild();
     updateMultiNote();
@@ -7676,7 +7678,7 @@ ScenePanel::OnPlan ScenePanel::planFill(const QList<QJsonObject>& models, const 
         {
             if (m["type"].toString() != "conditions")
             {
-                p.why = T("%1 takes conditions: '%2' is not one. Make one of it first (the Simulation menu: New support or load, New thermal condition, "
+                p.why = T("%1 takes conditions: '%2' is not one. Make one of it first (the Engineering menu: New support or load, New thermal condition, "
                           "New flow condition).").arg(slot, m["var"].toString());
                 return p;
             }
@@ -10327,7 +10329,7 @@ void ScenePanel::openProperties(QTreeWidgetItem* row, const QPoint& global)
         auto head = new QHBoxLayout;
         head->setSpacing(7);
         auto icon = new QLabel;
-        icon->setPixmap(TypeIcons::icon(it["type"].toString("simulation")).pixmap(16, 16));
+        icon->setPixmap(TypeIcons::icon(it["type"].toString("simulation"), false, it["domain"].toString()).pixmap(16, 16));
         auto title = new QLabel(var);
         title->setObjectName("DrawerTitle");
         auto sub = new QLabel(T("PROPERTIES"));

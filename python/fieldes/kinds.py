@@ -47,6 +47,50 @@ KINDS = {
     'block':      ('Custom block', '#8da2c0'),
 }
 
+# The DOMAINS of engineering: what an analysis is about.  The Engineering block of the right-click menus has a category for each, and the model tree shows a
+# simulation, and what an analysis is given, in the colour and icon of its domain: the result in the full colour, its conditions in a lighter tint of it.
+# domain: (the words for it, the colour of a simulation, the colour of what it is given)
+DOMAINS = {
+    'structural': ('Structural', '#ee6a5e', '#f4958c'),
+    'thermal':    ('Thermal',    '#f08c2a', '#f5b46e'),
+    'fluid':      ('Fluid',      '#6f86f2', '#a1b0f7'),
+}
+
+# The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
+DOMAIN_OF_FUNCTION = {
+    'static_analysis': 'structural', 'modal_analysis': 'structural', 'topology_optimization': 'structural',
+    'fixed': 'structural', 'force': 'structural', 'gravity': 'structural', 'thermal_expansion': 'structural',
+    'thermal_analysis': 'thermal', 'thermal_topology_optimization': 'thermal',
+    'fixed_temperature': 'thermal', 'heat_input': 'thermal', 'heat_generation': 'thermal', 'convection': 'thermal',
+    'fluid_analysis': 'fluid', 'flow_topology_optimization': 'fluid',
+    'inlet': 'fluid', 'outlet': 'fluid', 'wall': 'fluid', 'slip': 'fluid',
+}
+
+# ... and of a value, by its class (a subclass is of its parent's domain)
+_DOMAIN_OF_CLASS = {
+    'Result': 'structural', 'ModalResult': 'structural', 'TopologyResult': 'structural',
+    'ThermalResult': 'thermal', 'ThermalTopologyResult': 'thermal',
+    'FluidResult': 'fluid', 'FlowTopologyResult': 'fluid',
+    '_Support': 'structural', '_Force': 'structural', '_Gravity': 'structural', '_Thermal': 'structural',
+    '_Temperature': 'thermal', '_Heat': 'thermal', '_HeatInput': 'thermal', '_HeatGeneration': 'thermal', '_Convection': 'thermal',
+    '_Inlet': 'fluid', '_Outlet': 'fluid', '_Wall': 'fluid', '_Slip': 'fluid',
+}
+
+
+def domain_of(callee):
+    ''' The domain of what the function `callee` (a name) makes, or '' '''
+    return DOMAIN_OF_FUNCTION.get(callee or '', '')
+
+
+def domain_of_value(value):
+    ''' The domain of a simulation or of a condition (its class, or its parent's), or '' '''
+    for cls in type(value).__mro__:
+        found = _DOMAIN_OF_CLASS.get(cls.__name__)
+        if found:
+            return found
+    return ''
+
+
 # The classes of the library that are not shapes, by name (a subclass is of its parent's kind)
 _BY_CLASS = {
     'Result': 'simulation', 'ModalResult': 'simulation', 'ThermalResult': 'simulation', 'FluidResult': 'simulation',
@@ -103,6 +147,11 @@ def keep_kind(out, shape):
 def describe():
     ''' The kinds as {kind: {label, color}}, for the model tree '''
     return {k: {'label': label, 'color': color} for k, (label, color) in KINDS.items()}
+
+
+def describe_domains():
+    ''' The domains as {domain: {label, color, conditions}}, for the model tree and the menus: the colour of a simulation and of what it is given '''
+    return {k: {'label': label, 'color': color, 'conditions': tint} for k, (label, color, tint) in DOMAINS.items()}
 
 
 # What a function can be GIVEN, as the kinds of model it takes.  A function says it of itself, next to its definition -- `fn._takes = takes(...)` -- and everything that asks (the

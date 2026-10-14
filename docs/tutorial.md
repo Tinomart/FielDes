@@ -107,7 +107,7 @@ Right-click empty space in the viewport:
   *model* for the same list written with that model as its input. With several models selected, *union*, *difference*,
   *intersection* act on all of them, in the order you selected them (hold `Ctrl` to select more than one).
 
-- **Simulation** (on a model): *static_analysis*, *modal_analysis*, *topology_optimization*, *thermal_analysis*, *fluid_analysis*,
+- **Engineering** (on a model): *static_analysis*, *modal_analysis*, *topology_optimization*, *thermal_analysis*, *fluid_analysis*,
   written with that model as the part and a first set of supports and loads laid on its ends, for you to change.
 
 The same menu opens **on a line of the script that defines a model, and on its row in the model tree** -- right-click there and it

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Engineering: a menu of its own, with a category for each domain
+- **The Simulation menu left Operations: right-click has an Engineering menu of its own** (beside Primitives, Parametric shapes and Operations, on a model and on empty space), with a category for each domain --
+  **Structural** (supports and loads; *static_analysis*, *modal_analysis*, *topology_optimization*), **Thermal** (thermal conditions; *thermal_analysis*, *thermal_topology_optimization*) and **Fluid**
+  (flow conditions and fluids; *fluid_analysis*, *flow_topology_optimization*) -- and the materials, which an analysis of any domain takes, under them. A category shows only when it has a valid entry, as every
+  category does. **Every domain has its own colour and icon**, in the menus and in the model tree: a simulation in the full colour (structural red with bars, thermal orange with a thermometer, fluid blue with
+  streamlines), and what an analysis is given in a lighter tint of the same colour with a picture of its own (a load on a support, heat rising, a flow into a channel), so what feeds which analysis shows at a
+  glance. A model's `domain` comes with its row (`fieldes/kinds.py`: `DOMAINS`, `DOMAIN_OF_FUNCTION`, one list for the menus, the tree and the icons); the Engineering menu has a truss as its icon. There is no
+  Operations > Simulation any more (a beta change: no alias). The in-app guide, the docs, the README and the six translations say it.
+
 ### 10-node tetrahedra: `element='tet10'`
 - **A quadratic element for `static_analysis` and `modal_analysis`: `element='tet10'`.** The same mesh with a node in the middle of every edge: the displacement is a quadratic in each element, the stress is linear in it, and the edges on the surface
   are bent onto it (a midside node is moved along the faces' normals to where the part's field is zero; an element that would be turned inside out keeps it straight). **Accuracy**: the cantilever beam reads -0.8 % with 1,296 elements where 66,816 linear ones

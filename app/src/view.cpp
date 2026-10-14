@@ -3599,6 +3599,7 @@ void View::loadMenuCatalog()
     if (!m_catalog.isEmpty() || !m_catalogSource) return;
     m_catalog = QJsonDocument::fromJson(m_catalogSource().toUtf8()).object();
     TypeIcons::setKinds(m_catalog["kinds"].toObject());
+    TypeIcons::setDomains(m_catalog["domains"].toObject());
 }
 
 namespace {
@@ -3644,7 +3645,7 @@ void View::checkPrimitive(QAction* action, const QString& name, bool withBodies,
     if (withBodies && !m_scene->entryAllowed("primitive", name, atLine)) action->setEnabled(false);
 }
 
-void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine)
+void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain)
 {
     // New material, New fluid, New support or load, New thermal condition, New flow condition: each a menu of its own, in the
     // order the catalog has them
@@ -3657,19 +3658,19 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     {
         const auto p = v.toObject();
         const QString g = p["group"].toString();
-        if (isSimulationPrimitive(g)) groups[g] << p;
+        if (isSimulationPrimitive(g) && p["domain"].toString() == domain) groups[g] << p;
     }
     for (const QString& g : order)
     {
         if (!groups.contains(g)) continue;
         const auto& entries = groups[g];
         const QString type = entries.first()["type"].toString("conditions");
-        auto sub = menu->addMenu(TypeIcons::icon(type), titles.value(g, T(g)));
+        auto sub = menu->addMenu(TypeIcons::icon(type, false, domain), titles.value(g, T(g)));
         sub->setToolTipsVisible(true);
         for (const auto& p : entries)
         {
             const QString name = p["name"].toString();
-            auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type)), name,
+            auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type), false, domain), name,
                                          this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
             if (p["with_bodies"].toBool())
             {
@@ -3736,14 +3737,16 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
     }
 }
 
-void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations)
+void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations, const QString& domain)
 {
     QJsonArray ops;
     for (const auto v : m_catalog["operations"].toArray())
     {
         if (v.toObject()["quick"].toBool()) continue;          // (in the first menu: see addQuickOperations)
         if (v.toObject()["section"].toString() == "lattice") continue;      // (the lattice section has them: see fillLatticeMenu)
-        if (isSimulationOperation(v.toObject()["group"].toString()) == simulations) ops.append(v);
+        if (isSimulationOperation(v.toObject()["group"].toString()) != simulations) continue;
+        if (simulations && !domain.isEmpty() && v.toObject()["domain"].toString() != domain) continue;      // (a category of the Engineering menu: its analyses)
+        ops.append(v);
     }
     if (ops.isEmpty())
     {
@@ -3775,7 +3778,7 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         const QString name = o["name"].toString();
         auto action = sub->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
-        if (simulations) action->setIcon(TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation"));
+        if (simulations) action->setIcon(TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation", false, o["domain"].toString()));
         if (!o["doc"].toString().isEmpty()) action->setToolTip(o["doc"].toString());
         else if (o["other"].toBool() && !o["needs_other"].toBool(true))
         {
@@ -3942,7 +3945,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     const QVector3D flat = placementFlat(pos, flatScale);
     const QVector3D exact = placementExact(pos);
     // The basic things -- a 3D shape, a 2D shape, a line, a point, a surface, a field: the primitives -- are in a menu of their own, the more complicated shapes made with
-    // parameters in another, and what is done to a model -- the operations, Lattice, Simulation -- under Operations
+    // parameters in another, what is done to a model -- the operations, Lattice -- under Operations, and what is worked out about it -- the analyses -- under Engineering
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, exact, flat, scale, flatScale, atLine, true);
@@ -3952,6 +3955,9 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto ops = menu->addMenu(TypeIcons::icon("operation"), T("Operations"));
     ops->setToolTipsVisible(true);
     fillOperationsMenu(ops, -1, point, scale, atLine);
+    auto engineering = menu->addMenu(TypeIcons::icon("engineering"), T("Engineering"));
+    engineering->setToolTipsVisible(true);
+    fillEngineeringMenu(engineering, -1, point, scale, atLine);
     menu->addSeparator();
     addImportEntry(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
@@ -3959,7 +3965,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
 }
 
 // What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, and a
-// Lattice menu and a Simulation menu (each with what it makes and what it is made of)
+// Lattice menu (with what it makes and what it is made of)
 void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, double scale, int atLine)
 {
     if (!m_scene || m_scene->hasModel())
@@ -3971,13 +3977,26 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, doub
     auto lattices = ops->addMenu(TypeIcons::icon("lattice"), T("Lattice"));
     lattices->setToolTipsVisible(true);
     fillLatticeMenu(lattices, point, scale, line < 0 ? atLine : line);
-    auto sims = ops->addMenu(TypeIcons::icon("simulation"), T("Simulation"));
-    sims->setToolTipsVisible(true);
-    // (a material, a fluid, a support or a condition is a model of its own: no other model is needed for it)
-    fillSimulationPrimitives(sims, point, scale, line < 0 ? atLine : line);
-    sims->addSeparator();
-    // (the analyses work on what is selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there)
-    fillOperations(sims, line, point, scale, true);
+}
+
+// What the Engineering menu holds: a category for each domain -- Structural, Thermal, Fluid -- each with the icon and the colour of its domain, each with what an analysis of it is
+// given (a support or a load, a thermal or a flow condition: a model of its own, no other model is needed for it) and the analyses and optimisations of it (they work on what is
+// selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there); then the materials, which an analysis of any domain takes
+void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
+{
+    static const QList<QPair<QString, QString>> categories = {
+        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}};
+    const int at = line < 0 ? atLine : line;
+    for (const auto& c : categories)
+    {
+        auto sub = menu->addMenu(TypeIcons::icon("simulation", false, c.first), c.second);
+        sub->setToolTipsVisible(true);
+        fillSimulationPrimitives(sub, point, scale, at, c.first);
+        sub->addSeparator();
+        fillOperations(sub, line, point, scale, true, c.first);
+    }
+    menu->addSeparator();
+    fillSimulationPrimitives(menu, point, scale, at, QString());
 }
 
 // The Import model... entry: a model can be brought in from a file whatever the menu is
@@ -4006,7 +4025,7 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
         {
             const auto p = v.toObject();
             const QString g = p["group"].toString();
-            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Simulation, Lattice)
+            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Engineering, Lattice)
             if (p["primitive"].toBool() != basic) continue;
             if (!groups.contains(g)) order << g;
             groups[g] << p;
@@ -4070,8 +4089,8 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
     // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
     // makes `profile` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
-    // parameters in another, and what is done to the model -- the operations on it, the lattice and simulation menus -- under Operations; the quick ones (center,
-    // bounding_box) are below them
+    // parameters in another, what is done to the model -- the operations on it and the lattice menu -- under Operations, and what is worked out about it -- the analyses --
+    // under Engineering; the quick ones (center, bounding_box) are below them
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, point, point, scale, scale, -1, true);
@@ -4081,6 +4100,9 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     auto ops = menu->addMenu(TypeIcons::icon("operation"), T("Operations"));
     ops->setToolTipsVisible(true);
     fillOperationsMenu(ops, line, point, scale, -1);
+    auto engineering = menu->addMenu(TypeIcons::icon("engineering"), T("Engineering"));
+    engineering->setToolTipsVisible(true);
+    fillEngineeringMenu(engineering, line, point, scale, -1);
     menu->addSeparator();
     addQuickOperations(menu, line, point, scale);
     menu->addSeparator();

@@ -48,11 +48,25 @@ QHash<QString, Kind>& kinds()
         {"import",     {"Import",       QColor("#2aa198")}},
         {"symmetry",   {"Symmetry",     QColor("#d33682")}},
         {"block",      {"Custom block", QColor("#8da2c0")}},
-        // (not kinds of model: the two parts of the right-click menus that are not primitives)
+        // (not kinds of model: the parts of the right-click menus that are not primitives)
         {"operation",  {"Operation",    QColor("#b9c4d0")}},
+        {"engineering", {"Engineering", QColor("#b9c4d0")}},
         {"shapes",     {"Parametric shape", QColor("#7aa2f0")}},
     };
     return k;
+}
+
+// The engineering domains: the colour of a simulation and the lighter one of what it is given (the same as fieldes/kinds.py says)
+struct Domain { QColor result, conditions; };
+
+QHash<QString, Domain>& domains()
+{
+    static QHash<QString, Domain> d = {
+        {"structural", {QColor("#ee6a5e"), QColor("#f4958c")}},
+        {"thermal",    {QColor("#f08c2a"), QColor("#f5b46e")}},
+        {"fluid",      {QColor("#6f86f2"), QColor("#a1b0f7")}},
+    };
+    return d;
 }
 
 QHash<QString, QIcon>& cache()
@@ -81,7 +95,7 @@ QColor alpha(QColor c, int a)
     return c;
 }
 
-void drawKind(QPainter& p, const QString& type, const QColor& c)
+void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& domain)
 {
     if (type == "curve")
     {
@@ -139,6 +153,34 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.setBrush(c);
         p.drawEllipse(QPointF(8, 8), 2.7, 2.7);
     }
+    else if (type == "simulation" && domain == "thermal")
+    {
+        // a thermal result: a thermometer, its column filled
+        p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(6.6, 1.8, 2.8, 8.8), 1.4, 1.4);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawEllipse(QPointF(8, 11.7), 2.7, 2.7);
+        p.drawRoundedRect(QRectF(7.25, 5.6, 1.5, 6.0), 0.7, 0.7);
+        p.setPen(QPen(alpha(c, 210), 1.2, Qt::SolidLine, Qt::RoundCap));
+        for (double y : {3.6, 5.8, 8.0}) p.drawLine(QPointF(11.0, y), QPointF(12.8, y));
+    }
+    else if (type == "simulation" && domain == "fluid")
+    {
+        // a flow result: streamlines
+        p.setBrush(Qt::NoBrush);
+        for (int k = 0; k < 3; ++k)
+        {
+            const double y = 4.2 + k * 3.8;
+            QPainterPath path;
+            path.moveTo(1.6, y);
+            path.cubicTo(4.6, y - 2.6, 6.4, y + 2.6, 8.2, y);
+            path.cubicTo(10.0, y - 2.6, 11.8, y + 2.6, 14.4, y);
+            p.setPen(QPen(k == 1 ? c : alpha(c, 185), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.drawPath(path);
+        }
+    }
     else if (type == "simulation")
     {
         // a result: bars of a plot on a base line
@@ -160,6 +202,34 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         p.drawRoundedRect(QRectF(2.4, 3.2, 11.2, 9.6), 1.2, 1.2);
         p.setPen(QPen(c, 1.1, Qt::SolidLine, Qt::RoundCap));
         for (int k = 0; k < 3; ++k) p.drawLine(QPointF(3.6 + 3.2 * k, 12.0), QPointF(6.6 + 3.2 * k, 4.4));
+    }
+    else if (type == "conditions" && domain == "thermal")
+    {
+        // what a thermal analysis is given: heat rising from a surface
+        p.setBrush(Qt::NoBrush);
+        for (int k = 0; k < 3; ++k)
+        {
+            const double x = 4.2 + k * 3.8;
+            QPainterPath path;
+            path.moveTo(x, 12.0);
+            path.cubicTo(x - 2.2, 9.0, x + 2.2, 6.2, x, 2.6);
+            p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.drawPath(path);
+        }
+        p.setPen(QPen(c, 2.0, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(2.4, 14.0), QPointF(13.6, 14.0));
+    }
+    else if (type == "conditions" && domain == "fluid")
+    {
+        // what a flow analysis is given: a flow into a channel between two walls
+        p.setPen(QPen(alpha(c, 220), 1.8, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(1.6, 3.0), QPointF(14.4, 3.0));
+        p.drawLine(QPointF(1.6, 13.0), QPointF(14.4, 13.0));
+        p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(2.6, 8.0), QPointF(10.6, 8.0));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        p.drawPolygon(QPolygonF({QPointF(9.6, 5.0), QPointF(14.0, 8.0), QPointF(9.6, 11.0)}));
     }
     else if (type == "conditions")
     {
@@ -238,6 +308,19 @@ void drawKind(QPainter& p, const QString& type, const QColor& c)
         right << QPointF(13.8, 4.0) << QPointF(9.6, 8.0) << QPointF(13.8, 12.0);
         p.drawPolygon(right);
     }
+    else if (type == "engineering")
+    {
+        // what is worked out about a model: a truss, three bars and their joints
+        p.setPen(QPen(c, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(alpha(c, 45));
+        p.drawPolygon(QPolygonF({QPointF(2.0, 13.2), QPointF(8.0, 2.8), QPointF(14.0, 13.2)}));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(5.0, 8.0), QPointF(11.0, 8.0));
+        p.drawLine(QPointF(8.0, 8.0), QPointF(8.0, 13.2));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c);
+        for (const QPointF& n : {QPointF(2.0, 13.2), QPointF(8.0, 2.8), QPointF(14.0, 13.2), QPointF(8.0, 8.0)}) p.drawEllipse(n, 1.5, 1.5);
+    }
     else if (type == "operation")
     {
         // what is done to a model: a cog
@@ -313,8 +396,13 @@ void drawBlockMark(QPainter& p)
 
 }   // anonymous namespace
 
-QColor color(const QString& type)
+QColor color(const QString& type, const QString& domain)
 {
+    if (!domain.isEmpty() && (type == "simulation" || type == "conditions"))
+    {
+        auto d = domains().constFind(domain);
+        if (d != domains().constEnd()) return type == "simulation" ? d->result : d->conditions;
+    }
     auto it = kinds().constFind(type);
     return it == kinds().constEnd() ? kinds()["solid"].color : it->color;
 }
@@ -325,18 +413,34 @@ QString label(const QString& type)
     return it == kinds().constEnd() ? type : T(it->label);
 }
 
-QIcon icon(const QString& type, bool block)
+QIcon icon(const QString& type, bool block, const QString& domain)
 {
-    const QString key = type + (block ? "+block" : "");
+    // (only a simulation and what an analysis is given have a picture of their domain)
+    const QString d = (type == "simulation" || type == "conditions") ? domain : QString();
+    const QString key = type + (block ? "+block" : "") + (d.isEmpty() ? QString() : "@" + d);
     auto it = cache().constFind(key);
     if (it != cache().constEnd()) return *it;
-    const QColor c = color(type);
+    const QColor c = color(type, d);
     QIcon made = draw([&](QPainter& p) {
-        drawKind(p, type, c);
+        drawKind(p, type, c, d);
         if (block) drawBlockMark(p);
     });
     cache().insert(key, made);
     return made;
+}
+
+void setDomains(const QJsonObject& given)
+{
+    bool changed = false;
+    for (auto it = given.constBegin(); it != given.constEnd(); ++it)
+    {
+        const QJsonObject o = it.value().toObject();
+        Domain& d = domains()[it.key()];
+        const QColor r(o["color"].toString()), c(o["conditions"].toString());
+        if (r.isValid() && r != d.result) { d.result = r; changed = true; }
+        if (c.isValid() && c != d.conditions) { d.conditions = c; changed = true; }
+    }
+    if (changed) cache().clear();
 }
 
 void setKinds(const QJsonObject& given)

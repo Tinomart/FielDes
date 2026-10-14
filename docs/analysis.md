@@ -111,12 +111,12 @@ viewport over the model, not meshed with it: they follow the zoom and are never 
 coloured places are the part's own surface, drawn a hair towards the eye -- only those: the part is not drawn with them, so it can stay displayed or not. A place counts as in a region when it is within
 about a hundredth of the part's size of it. `describe(condition)` says one line about a condition.
 
-**Making them.** Right-click empty space -> **Operations** -> **Simulation** -> **New support or load** (fixed, force, gravity, thermal
+**Making them.** Right-click empty space -> **Engineering** -> **Structural** -> **New support or load** (fixed, force, gravity, thermal
 expansion), **New thermal condition** (fixed temperature, heat input, heat generation, convection), **New flow condition** (inlet,
 outlet, wall, slip) writes one, **with a placeholder where it acts** (`force_1 = force(region=..., vector=..., profile=None)`: like any argument that is missing, that statement waits -- the rest of the script runs -- and the placeholder row of the
 model tree takes a body, a field or a surface dropped on it -- the menu makes no box of its own for a region). **Select the regions first** -- surfaces, fields or bodies -- and the same entries write the condition for what is selected:
 `fixed_1 = fixed(selection_1)`, or `force(a, b, (0, -100, 0))` for several. **Every condition takes any number of regions, one argument after the other**, and in the model tree a body, a surface or a field dropped on a
-condition is one more of them. **A force is written with its `vector`** (0, -100, 0 newtons to begin with), where it is changed. **Simulation -> static_analysis** (and modal, topology optimization, thermal, fluid) writes the simulation of the body selected, **with the conditions selected written in the input of their kind** and a placeholder
+condition is one more of them. **A force is written with its `vector`** (0, -100, 0 newtons to begin with), where it is changed. **Engineering -> Structural -> static_analysis** (and modal, topology optimization; thermal and fluid in their own categories) writes the simulation of the body selected, **with the conditions selected written in the input of their kind** and a placeholder
 for every other input (`fluid_analysis(body, domain, inlets=[inlet_1], outlets=..., boundaries=...)`): nothing is built for you, the run stops before the line until the placeholders are filled. A condition has **no body**: the simulation is given it.
 
 **Dragging them in.** In the model tree, drag a condition -- or several, selected with Ctrl or Shift -- onto the simulation, onto its **boundary conditions** row or onto the placeholder of its kind: they go into
@@ -146,7 +146,7 @@ factor), thermal conductivity (W/(mm·K)) and expansion coefficient (1/K). Prede
 These are typical handbook values. Check them against the real material before relying on a result.
 
 **A material is a model** (a kind of its own, `material`: tan, a hatched block in the tree and the menus): `steel_1 = Material(...)`
-is a row of the model tree, and so is a fluid (`Fluid(...)`, `water`). Right-click empty space -> **Operations** -> **Simulation** -> **New material** writes one of the
+is a row of the model tree, and so is a fluid (`Fluid(...)`, `water`). Right-click empty space -> **Engineering** -> **New material** writes one of the
 presets above with its numbers (steel, stainless steel, aluminium, titanium, PLA, PETG, ABS, nylon) or a material of your own;
 **New fluid** the same for water, air, oil, glycerol. An analysis is given its material as `material=steel_1` (a flow, its fluid
 as `fluid=`): **drag the material's row onto the analysis** and it becomes that argument (it replaces the one the analysis has),
