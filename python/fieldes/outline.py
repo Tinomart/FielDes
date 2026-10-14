@@ -246,7 +246,8 @@ def exports_of(value):
         from fieldes.stdlib import exporting as E
         from fieldes.stdlib import fea
         if isinstance(value, fea.TetResult):
-            out += ['fea', 'results']
+            # (the finite-element model is what was solved: a 10-node analysis has none that another solver could read yet)
+            out += ['results'] if getattr(value, 'element', 'tet') == 'tet10' else ['fea', 'results']
         if E.result_summary(value):
             out.append('summary')
         try:

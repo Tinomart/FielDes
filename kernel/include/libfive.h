@@ -455,6 +455,8 @@ void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, flo
 void libfive_tetfea_set_stiffness_field(libfive_tetfea* f, libfive_tree E);
 void libfive_tetfea_set_density_field(libfive_tetfea* f, libfive_tree density);
 void libfive_tetfea_set_expansion_field(libfive_tetfea* f, libfive_tree alpha);
+/*  The element: 1 (the default), the linear tetrahedron; 2, the 10-node tetrahedron (static and modal analysis; see TetProblem::setOrder)  */
+void libfive_tetfea_set_order(libfive_tetfea* f, int order);
 void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
                                       int load_case, libfive_tree profile);
 /*  Meshes the part and resolves supports and loads; 1 on success (else the message says why)  */

@@ -16,6 +16,7 @@ from fieldes import *
 L, b, h = 100.0, 10.0, 10.0          # mm: length, width, depth
 P = 100.0                            # N, across the free end (down)
 TOLERANCE = 0.05                     # 5 %: linear tetrahedra at this element size (the program gets about 2 % here)
+TOLERANCE_10 = 0.02                  # 2 %: 10-node tetrahedra, two elements across the depth (the program gets about 0.8 % here)
 
 view.set_bounds((-10, -10, -10), (L + 10, b + 10, h + 10), auto_scale=True)
 view.set_resolution(2)
@@ -35,5 +36,14 @@ print("tip deflection: static_analysis %.4f mm, beam theory %.4f mm: %+.1f %%  (
 if abs(error) > TOLERANCE:
     raise AssertionError("the tip deflection is %.1f %% from beam theory: more than %.0f %%" % (100 * error, 100 * TOLERANCE))
 print("ok: within %.0f %%" % (100 * TOLERANCE))
+
+# The same beam with 10-node elements (element='tet10'): two elements across its depth read it better than eight linear ones
+quad = static_analysis(beam, supports=[fixed(wall)], loads=[force(tip, (0, 0, -P))], material=steel, element_size=5.0, element='tet10', cache=False)
+computed10 = abs(quad.uz(L, b / 2, h / 2))
+error10 = computed10 / theory - 1.0
+print("with 10-node elements:  %.4f mm, beam theory %.4f mm: %+.1f %%  (%d elements)" % (computed10, theory, 100 * error10, quad.elements))
+if abs(error10) > TOLERANCE_10:
+    raise AssertionError("the tip deflection with 10-node elements is %.1f %% from beam theory: more than %.0f %%" % (100 * error10, 100 * TOLERANCE_10))
+print("ok: within %.0f %%" % (100 * TOLERANCE_10))
 
 result                               # shown: the beam, bent

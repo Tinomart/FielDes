@@ -12,6 +12,11 @@ What does not work as it should yet, so that you do not lose time on it. The lim
   of a spline is drawn as the curve.
 - **A round corner on a line, or on the path of a sweep, is a hard corner.** The radius belongs to the corners of a profile.
 
+## Analysis
+
+- **The 10-node element (`element='tet10'`) is for static and modal analysis.** Topology optimisation, thermal and flow analysis have no 10-node version, and `export_fea` has no model of it. Its conjugate-gradient
+  solve needs up to twice the iterations of the linear element's, so a modal analysis with it is slow (a beam of 7,000 nodes: 19 s); a better preconditioner would help.
+
 ## The picture
 
 - **While you drag a handle or a gizmo ring on a large model the picture is the quick, coarse level of the mesher** (it keeps up with the hand); the fine mesh comes when you let go.

@@ -73,4 +73,4 @@ boxes) for this part. To try them on a part of your own, put its STEP file in `s
 
 `verification/` holds four scripts that solve a problem with a known answer and **stop with an error when FielDes is farther from it than a tolerance**: a cantilever beam, a plate with a hole,
 the flow between two plates and the conduction through a bar (see [Verification](../docs/analysis.md#verification-four-known-answers)). They check the program, not your design; run them after
-a change: `python scripts/run_example.py examples/verification/v1_cantilever_beam.py`. They take a second each, except the plate (40 s).
+a change: `python scripts/run_example.py examples/verification/v1_cantilever_beam.py`. They take a second each, except the plate (about 30 s: the linear and the 10-node solve).

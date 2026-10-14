@@ -438,6 +438,9 @@ try:
     lib.libfive_tetfea_set_gravity.restype = None
     lib.libfive_tetfea_set_thermal.argtypes = [libfive_tetfea_p, libfive_tree, ctypes.c_float, ctypes.c_float]
     lib.libfive_tetfea_set_thermal.restype = None
+    if getattr(lib, 'libfive_tetfea_set_order', None) is not None:
+        lib.libfive_tetfea_set_order.argtypes = [libfive_tetfea_p, ctypes.c_int]
+        lib.libfive_tetfea_set_order.restype = None
     for name in ('stiffness', 'density', 'expansion'):
         fn = getattr(lib, 'libfive_tetfea_set_%s_field' % name, None)
         if fn is not None:

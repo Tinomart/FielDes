@@ -1348,6 +1348,12 @@ void libfive_tetfea_set_expansion_field(libfive_tetfea* f, libfive_tree alpha)
     f->prepared = f->solved = false;
 }
 
+void libfive_tetfea_set_order(libfive_tetfea* f, int order)
+{
+    f->problem->setOrder(order);
+    f->prepared = f->solved = false;
+}
+
 void libfive_tetfea_add_force_profile(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
                                       int load_case, libfive_tree profile)
 {

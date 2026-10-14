@@ -22,6 +22,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/fea/tetfea.hpp"
 #include "libfive/tree/content_key.hpp"
 #include "tet_common.hpp"
+#include "tet_quad.hpp"
 #include "libfive/eval/eval_array.hpp"
 #include "libfive/eval/feature.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
@@ -481,6 +482,12 @@ void TetProblem::setThermal(const Tree& temperature, double alpha, double refere
     m_prepared = false;
 }
 
+void TetProblem::setOrder(int order)
+{
+    m_order = order == 2 ? 2 : 1;
+    m_prepared = false;
+}
+
 bool TetProblem::prepare(std::string& error)
 {
     if (!(m_h > 0) || !(m_E > 0) || !(m_nu > -1 && m_nu < 0.5))
@@ -576,7 +583,37 @@ bool TetProblem::prepare(std::string& error)
             }
         }
     }
-    const size_t nv = mesh->pos.size(), nt = mesh->tets.size();
+    // The 10-node elements: a node in the middle of every edge.  What the supports, the loads and the matrix below are made on is then every
+    // node, the mesh is the nodes cut into linear tetrahedra (what the results are on), and `corners` is the linear mesh the elements were made on
+    std::shared_ptr<TetMesh> corners;
+    std::shared_ptr<QuadMesh> quad;
+    if (m_order == 2)
+    {
+        // (the stiffness matrix of this many nodes, about 16 kB to a corner of the linear mesh: a mesh that this machine cannot hold is refused
+        // here, with a way out, rather than by running out of memory in the middle of the solve)
+        const double needed = 16.0e3 * double(mesh->pos.size());
+        const double have = availableMemory();
+        const double limit = have > 0 ? 0.7 * have : 12.0e9;
+        if (needed > limit)
+        {
+            char buf[300];
+            snprintf(buf, sizeof(buf), "the 10-node mesh is too fine for this computer's memory (its stiffness matrix would want about %.1f GB, "
+                     "and about %.1f GB are free): use a larger element_size -- 10-node elements need about three times the size of linear ones "
+                     "for the same accuracy", needed / 1e9, have / 1e9);
+            error = buf;
+            return false;
+        }
+        quad = std::make_shared<QuadMesh>();
+        if (!buildQuadMesh(*mesh, m_shape, *quad, error)) return false;
+        corners = mesh;
+        mesh = refinedMesh(*corners, *quad);
+        if (fixedMask(*mesh, mask) == 0)
+        {
+            error = "the support regions don't touch the part";
+            return false;
+        }
+    }
+    const size_t nv = mesh->pos.size(), nt = quad ? quad->elem.size() : mesh->tets.size();
     const size_t nDof = 3 * nv;
     std::vector<unsigned char> fixedDof(nDof, 0);
     m_fixedNodes = 0;
@@ -629,12 +666,13 @@ bool TetProblem::prepare(std::string& error)
     m_totalLoad = Vec3::Zero();
     std::vector<char> loaded(nv, 0);
     {
-        // boundary triangles: centres and areas
-        std::vector<Eigen::Vector3f> centres(mesh->faces.size());
-        std::vector<double> area(mesh->faces.size());
-        for (size_t f = 0; f < mesh->faces.size(); ++f)
+        // boundary triangles: centres and areas (of the linear mesh the 10-node elements were made on)
+        const auto& lf = quad ? corners->faces : mesh->faces;
+        std::vector<Eigen::Vector3f> centres(lf.size());
+        std::vector<double> area(lf.size());
+        for (size_t f = 0; f < lf.size(); ++f)
         {
-            const auto& tri = mesh->faces[f];
+            const auto& tri = lf[f];
             const Vec3 &a = mesh->pos[size_t(tri[0])], &b = mesh->pos[size_t(tri[1])], &c = mesh->pos[size_t(tri[2])];
             centres[f] = ((a + b + c) / 3.0).cast<float>();
             area[f] = 0.5 * (b - a).cross(c - a).norm();
@@ -670,11 +708,11 @@ bool TetProblem::prepare(std::string& error)
                 // The boundary triangles the region covers: those with all three corners inside it (a
                 // triangle on the side of a bar, next to a loaded end, has one corner inside and is
                 // not the end's); if there are none, those whose centre is inside
-                std::vector<char> take(mesh->faces.size(), 0);
+                std::vector<char> take(lf.size(), 0);
                 double sel = 0, selArea = 0;
                 for (size_t f = 0; f < take.size(); ++f)
                 {
-                    const auto& tri = mesh->faces[f];
+                    const auto& tri = lf[f];
                     take[f] = vn[size_t(tri[0])] <= rch && vn[size_t(tri[1])] <= rch && vn[size_t(tri[2])] <= rch;
                     if (take[f]) { sel += weightOfFace(f); selArea += area[f]; }
                 }
@@ -700,7 +738,9 @@ bool TetProblem::prepare(std::string& error)
                         const Vec3 share = fo.total * (weightOfFace(f) / sel) / 3.0;
                         for (int p = 0; p < 3; ++p)
                         {
-                            const size_t n = size_t(mesh->faces[f][size_t(p)]);
+                            // (a 10-node face takes its load on the nodes in the middle of its edges)
+                            const size_t n = quad ? size_t(quad->midNode(size_t(corners->faceTet[f]), lf[f][size_t(p)], lf[f][size_t((p + 1) % 3)]))
+                                                  : size_t(lf[f][size_t(p)]);
                             addNodal(n, share, fo.loadCase);
                             loaded[n] = 1;
                         }
@@ -737,8 +777,8 @@ bool TetProblem::prepare(std::string& error)
             }
         }
     }
-    std::vector<TetGeom> geom(nt);
-    parallelRange(nt, [&](size_t b0, size_t b1) {
+    std::vector<TetGeom> geom(quad ? 0 : nt);
+    parallelRange(geom.size(), [&](size_t b0, size_t b1) {
         for (size_t t = b0; t < b1; ++t)
         {
             const auto& v = mesh->tets[t];
@@ -756,7 +796,7 @@ bool TetProblem::prepare(std::string& error)
         for (size_t t = 0; t < nt; ++t)
         {
             Vec3 c = Vec3::Zero();
-            for (int p = 0; p < 4; ++p) c += mesh->pos[size_t(mesh->tets[t][size_t(p)])];
+            for (int p = 0; p < 4; ++p) c += mesh->pos[size_t(quad ? quad->elem[t][size_t(p)] : mesh->tets[t][size_t(p)])];
             centres[t] = (c / 4.0).cast<Eigen::Vector3f::Scalar>();
         }
         auto sample = [&](const Tree& field, const char* what, bool strictlyPositive, std::vector<double>& out) {
@@ -807,10 +847,13 @@ bool TetProblem::prepare(std::string& error)
         for (size_t t = 0; t < nt; ++t)
         {
             const double rho = m_elementDensity.empty() ? m_density : m_elementDensity[t];
-            const Vec3 share = m_gravity * (rho * geom[t].vol / 4.0);
-            for (int p = 0; p < 4; ++p)
+            double qvol = 0, qN[10], qGrad[10][3];
+            if (quad) quadIntegrals(*quad, t, &qvol, qN, qGrad);
+            for (int p = 0; p < (quad ? 10 : 4); ++p)
             {
-                const size_t n = size_t(mesh->tets[t][size_t(p)]);
+                // (a linear element's weight is a quarter to each node; a 10-node one's is the integral of each node's shape function)
+                const Vec3 share = m_gravity * (rho * (quad ? qN[p] : geom[t].vol / 4.0));
+                const size_t n = size_t(quad ? quad->elem[t][size_t(p)] : mesh->tets[t][size_t(p)]);
                 for (int a = 0; a < 3; ++a) force[3 * n + size_t(a)] += share[a];
                 if (nCases > 1)
                     for (auto& cf : caseForce)              // (gravity acts in every case)
@@ -826,7 +869,7 @@ bool TetProblem::prepare(std::string& error)
         for (size_t t = 0; t < nt; ++t)
         {
             Vec3 c = Vec3::Zero();
-            for (int p = 0; p < 4; ++p) c += mesh->pos[size_t(mesh->tets[t][size_t(p)])];
+            for (int p = 0; p < 4; ++p) c += mesh->pos[size_t(quad ? quad->elem[t][size_t(p)] : mesh->tets[t][size_t(p)])];
             centres[t] = (c / 4.0).cast<Eigen::Vector3f::Scalar>();
         }
         std::vector<float> T;
@@ -845,10 +888,13 @@ bool TetProblem::prepare(std::string& error)
             const double e = alpha * (double(T[t]) - m_reference);
             m_thermalStrain[t] = e;
             const double stiffness = m_scale.empty() ? 1.0 : m_scale[t];
-            for (int p = 0; p < 4; ++p)
+            double qvol = 0, qN[10], qGrad[10][3];
+            if (quad) quadIntegrals(*quad, t, &qvol, qN, qGrad);
+            for (int p = 0; p < (quad ? 10 : 4); ++p)
             {
-                const size_t n = size_t(mesh->tets[t][size_t(p)]);
-                for (int a = 0; a < 3; ++a) force[3 * n + size_t(a)] += geom[t].vol * bulk * stiffness * e * geom[t].g[p][a];
+                const size_t n = size_t(quad ? quad->elem[t][size_t(p)] : mesh->tets[t][size_t(p)]);
+                for (int a = 0; a < 3; ++a)
+                    force[3 * n + size_t(a)] += quad ? bulk * stiffness * e * qGrad[p][a] : geom[t].vol * bulk * stiffness * e * geom[t].g[p][a];
             }
         }
     }
@@ -943,6 +989,7 @@ bool TetProblem::prepare(std::string& error)
     uint64_t hsh = 1469598103934665603ull;
     const double hdr[] = {m_h, m_E, m_nu, double(nv), double(nt), m_alpha, m_reference};
     hsh = fnv(hsh, hdr, sizeof(hdr));
+    if (m_order != 1) hsh = fnv(hsh, &m_order, sizeof(m_order));       // (the same mesh with another element is another problem)
     hsh = fnv(hsh, mesh->pos.data(), mesh->pos.size() * sizeof(Vec3));
     hsh = fnv(hsh, mesh->tets.data(), mesh->tets.size() * sizeof(std::array<int, 4>));
     hsh = fnv(hsh, fixedDof.data(), fixedDof.size());
@@ -956,6 +1003,7 @@ bool TetProblem::prepare(std::string& error)
     m_hash = hsh;
 
     m_mesh = mesh;
+    m_quad = quad;
     m_fixedDof.swap(fixedDof);
     m_force.swap(force);
     m_caseForce.swap(caseForce);
@@ -971,6 +1019,7 @@ bool TetProblem::prepare(std::string& error)
 bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, const std::atomic<bool>* cancel)
 {
     if (!m_prepared && !prepare(error)) return false;
+    if (m_quad) return solveQuad(maxIterations, tolerance, error, cancel);
     const auto t0 = std::chrono::steady_clock::now();
     run_progress::Task task("solving");
     task.set(0.0, "assembling the stiffness matrix");
@@ -1120,6 +1169,11 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
 
 bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic<bool>* cancel)
 {
+    if (m_order == 2)
+    {
+        error = "topology optimization designs one density to each linear tetrahedron: it has no 10-node element (use element='tet')";
+        return false;
+    }
     if (!m_prepared && !prepare(error)) return false;
     if (!m_thermalStrain.empty())
     {
@@ -1943,16 +1997,37 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
     const size_t nv = mesh.pos.size(), n = 3 * nv;
     const Mat6 D = elasticity(m_E, m_nu);
     Assembly A;
-    buildPattern(mesh, A);
-    assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
-    buildPreconditioner(m_fixedDof, A);
-    // The lumped mass: a quarter of each element's mass at each of its nodes
     std::vector<double> mass(n, 0.0);
-    for (size_t t = 0; t < mesh.tets.size(); ++t)
+    if (m_quad)
     {
-        const double rho = m_elementDensity.empty() ? density : m_elementDensity[t];
-        for (int p = 0; p < 4; ++p)
-            for (int a = 0; a < 3; ++a) mass[3 * size_t(mesh.tets[t][size_t(p)]) + size_t(a)] += rho * A.geom[t].vol / 4.0;
+        // The 10-node elements.  The lumped mass of an element is its mass shared out by the diagonal of its consistent mass matrix (a corner's
+        // share is 1/36, a midside node's 4/27 of it: the rule for straight-sided ten-node tetrahedra, the one that keeps every mass positive)
+        const QuadMesh& q = *m_quad;
+        buildPatternQuad(q, A);
+        assembleQuad(q, D, m_scale.empty() ? nullptr : &m_scale, A);
+        buildPreconditioner(m_fixedDof, A);
+        std::vector<double> volume;
+        quadVolumes(q, volume);
+        for (size_t t = 0; t < q.elem.size(); ++t)
+        {
+            const double rho = m_elementDensity.empty() ? density : m_elementDensity[t];
+            for (int p = 0; p < 10; ++p)
+                for (int a = 0; a < 3; ++a)
+                    mass[3 * size_t(q.elem[t][size_t(p)]) + size_t(a)] += rho * volume[t] * (p < 4 ? 1.0 / 36.0 : 4.0 / 27.0);
+        }
+    }
+    else
+    {
+        buildPattern(mesh, A);
+        assemble(mesh, D, m_scale.empty() ? nullptr : &m_scale, A);
+        buildPreconditioner(m_fixedDof, A);
+        // The lumped mass: a quarter of each element's mass at each of its nodes
+        for (size_t t = 0; t < mesh.tets.size(); ++t)
+        {
+            const double rho = m_elementDensity.empty() ? density : m_elementDensity[t];
+            for (int p = 0; p < 4; ++p)
+                for (int a = 0; a < 3; ++a) mass[3 * size_t(mesh.tets[t][size_t(p)]) + size_t(a)] += rho * A.geom[t].vol / 4.0;
+        }
     }
     for (size_t i = 0; i < n; ++i) if (m_fixedDof[i]) mass[i] = 0.0;
 
@@ -2000,11 +2075,198 @@ bool TetProblem::modal(int count, double density, int maxIterations, double tole
             R->minValue[f] = mn;
             R->maxValue[f] = mx;
         }
-        R->elements = int(mesh.tets.size());
+        R->elements = int(m_quad ? m_quad->elem.size() : mesh.tets.size());
         R->nodes = int(nv);
         R->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         m_modes.push_back(R);
     }
+    return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The 10-node elements
+
+namespace {
+
+// A node's fields from the volume-weighted sums of the stresses of the elements around it (acc: xx yy zz xy yz zx, then the strain energy
+// density) and its displacement
+void setNodalFields(MeshResult& res, size_t i, double w, const double acc[7], double ux, double uy, double uz)
+{
+    if (!(w > 0)) return;
+    const double sxx = acc[0] / w, syy = acc[1] / w, szz = acc[2] / w, sxy = acc[3] / w, syz = acc[4] / w, szx = acc[5] / w;
+    const double vm = std::sqrt(0.5 * ((sxx - syy) * (sxx - syy) + (syy - szz) * (syy - szz) + (szz - sxx) * (szz - sxx)) +
+                                3 * (sxy * sxy + syz * syz + szx * szx));
+    Eigen::Matrix3d S;
+    S << sxx, sxy, szx, sxy, syy, syz, szx, syz, szz;
+    const Vec3 pr = Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>(S, Eigen::EigenvaluesOnly).eigenvalues();
+    res.fields[Result::VON_MISES][i] = float(vm);
+    res.fields[Result::SXX][i] = float(sxx);
+    res.fields[Result::SYY][i] = float(syy);
+    res.fields[Result::SZZ][i] = float(szz);
+    res.fields[Result::SXY][i] = float(sxy);
+    res.fields[Result::SYZ][i] = float(syz);
+    res.fields[Result::SZX][i] = float(szx);
+    res.fields[Result::MAX_PRINCIPAL][i] = float(pr[2]);
+    res.fields[Result::MIN_PRINCIPAL][i] = float(pr[0]);
+    res.fields[Result::STRAIN_ENERGY][i] = float(acc[6] / w);
+    res.fields[Result::UX][i] = float(ux);
+    res.fields[Result::UY][i] = float(uy);
+    res.fields[Result::UZ][i] = float(uz);
+    res.fields[Result::DISPLACEMENT][i] = float(std::sqrt(ux * ux + uy * uy + uz * uz));
+}
+
+}   // anonymous namespace
+
+bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& error, const std::atomic<bool>* cancel)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    run_progress::Task task("solving");
+    task.set(0.0, "assembling the stiffness matrix");
+
+    const QuadMesh& q = *m_quad;
+    const TetMesh& mesh = *m_mesh;          // (the nodes cut into linear tetrahedra: what the results are on)
+    const size_t nn = q.pos.size(), ne = q.elem.size(), n = 3 * nn;
+    const Mat6 D = elasticity(m_E, m_nu);
+    Assembly A;
+    buildPatternQuad(q, A);
+    assembleQuad(q, D, m_scale.empty() ? nullptr : &m_scale, A);
+    buildPreconditioner(m_fixedDof, A);
+    task.set(0.05, "preparing the solver");
+
+    const std::vector<unsigned char>& fixed = m_fixedDof;
+    std::vector<double> u(n, 0.0);
+    CgResult cg;
+    if (!cgSolve(A, fixed, m_force, u, tolerance, maxIterations, cancel,
+                 [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error))
+        return false;
+    const int it = cg.iterations;
+    const double rel = cg.residual;
+    if (rel > std::max(tolerance * 100, 1e-3))
+    {
+        error = "the solver did not converge (" + std::to_string(it) + " iterations, residual " +
+                std::to_string(rel) + "): the supports may not hold the part in place";
+        return false;
+    }
+    if (std::getenv("FIELDES_FEA_DEBUG"))
+        fprintf(stderr, "[tetfea] %zu nodes, %zu 10-node tetrahedra, %d iterations, residual %.2e\n", nn, ne, it, rel);
+
+    // (held in every direction but still free to turn: see solve)
+    {
+        Vec3 lo = q.pos[0], hi = q.pos[0];
+        for (const auto& p : q.pos)
+        {
+            lo = lo.cwiseMin(p);
+            hi = hi.cwiseMax(p);
+        }
+        double umax = 0;
+        for (size_t i = 0; i < n; ++i) umax = std::max(umax, std::abs(u[i]));
+        if (!(umax < 10 * (hi - lo).maxCoeff()))
+        {
+            error = "the supports don't hold the part: fix more of it, or in more directions";
+            return false;
+        }
+    }
+
+    // Reactions at the supports, compliance
+    std::vector<double> Ku(n);
+    A.K.matvec(u.data(), Ku.data());
+    Vec3 reaction = Vec3::Zero();
+    double compliance = 0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (fixed[i]) reaction[int(i % 3)] += Ku[i] - m_force[i];
+        compliance += m_force[i] * u[i];
+    }
+
+    std::vector<double> volume;
+    quadVolumes(q, volume);
+    auto elementU = [&](size_t e, double ue[30]) {
+        for (int p = 0; p < 10; ++p)
+            for (int a = 0; a < 3; ++a) ue[3 * p + a] = u[3 * size_t(q.elem[e][size_t(p)]) + size_t(a)];
+    };
+    // The stress (and the strain energy density) of element e at a point of it: linear in the element, from the quadratic displacement
+    auto stressAt = [&](size_t e, const double xi[3], const double ue[30], Vec6& sig, double& energy) {
+        Vec6 eps = quadStrainAt(q, e, xi, ue);
+        if (!m_thermalStrain.empty())
+            for (int c = 0; c < 3; ++c) eps[c] -= m_thermalStrain[e];       // (the stress-free part)
+        sig = (m_scale.empty() ? 1.0 : m_scale[e]) * (D * eps);
+        energy = 0.5 * sig.dot(eps);
+    };
+
+    auto res = std::make_shared<MeshResult>();
+    res->mesh = m_mesh;
+    // The fields at the nodes: the stress at a node is the average, by volume, of what each element round it has there
+    for (auto& f : res->fields) f.assign(nn, 0.0f);
+    parallelRange(nn, [&](size_t b0, size_t b1) {
+        for (size_t i = b0; i < b1; ++i)
+        {
+            double w = 0, acc[7] = {0, 0, 0, 0, 0, 0, 0};
+            for (uint32_t ee = A.vtStart[i]; ee < A.vtStart[i + 1]; ++ee)
+            {
+                const size_t e = A.vtList[ee];
+                int li = 0;
+                for (int p = 0; p < 10; ++p) if (size_t(q.elem[e][size_t(p)]) == i) li = p;
+                double ue[30];
+                elementU(e, ue);
+                Vec6 sig;
+                double energy = 0;
+                stressAt(e, kNodeXi[li], ue, sig, energy);
+                w += volume[e];
+                for (int c = 0; c < 6; ++c) acc[c] += volume[e] * sig[c];
+                acc[6] += volume[e] * energy;
+            }
+            setNodalFields(*res, i, w, acc, u[3 * i], u[3 * i + 1], u[3 * i + 2]);
+        }
+    }, 64);
+    // The stress of each of the linear tetrahedra the elements are cut into: the element's at their centre
+    res->elementStress.resize(8 * ne);
+    parallelRange(ne, [&](size_t b0, size_t b1) {
+        for (size_t e = b0; e < b1; ++e)
+        {
+            double ue[30];
+            elementU(e, ue);
+            const int (*sub)[4] = kSubTets[q.diagonal[e]];
+            for (int s = 0; s < 8; ++s)
+            {
+                double xi[3] = {0, 0, 0};
+                for (int p = 0; p < 4; ++p)
+                    for (int k = 0; k < 3; ++k) xi[k] += 0.25 * kNodeXi[sub[s][p]][k];
+                Vec6 sig;
+                double energy = 0;
+                stressAt(e, xi, ue, sig, energy);
+                for (int c = 0; c < 6; ++c) res->elementStress[8 * e + size_t(s)][size_t(c)] = float(sig[c]);
+                res->elementStress[8 * e + size_t(s)][6] = float(energy);
+            }
+        }
+    }, 64);
+    for (int f = 0; f < Result::FIELD_COUNT; ++f)
+    {
+        float mn = std::numeric_limits<float>::max(), mx = -std::numeric_limits<float>::max();
+        for (float x : res->fields[f])
+        {
+            mn = std::min(mn, x);
+            mx = std::max(mx, x);
+        }
+        res->minValue[f] = mn;
+        res->maxValue[f] = mx;
+    }
+    res->locator = std::make_shared<TetLocator>(mesh);
+    res->elements = int(ne);
+    res->nodes = int(nn);
+    res->dofs = int(n);
+    res->fixedNodes = m_fixedNodes;
+    res->loadedNodes = m_loadedNodes;
+    res->looseElements = m_looseElements;
+    res->iterations = it;
+    res->residual = rel;
+    res->compliance = compliance;
+    res->reaction = reaction;
+    res->totalLoad = m_totalLoad;
+    double vol = 0;
+    for (double v : volume) vol += v;
+    res->volume = vol;
+    res->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    m_result = res;
     return true;
 }
 

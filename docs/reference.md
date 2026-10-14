@@ -2758,6 +2758,15 @@ topology_optimization (thermal_analysis has it too):
                  tetrahedron is constant in it; linear tetrahedra are stiff in
                  bending, so refine (a cantilever four elements thick reads 96 %
                  of beam theory, eight thick 99 %)
+    'tet10'      the same tetrahedra with a node in the middle of every edge: 10-node
+                 (quadratic) elements, a displacement that is a quadratic in each
+                 element and a stress that is linear in it, with the edges on the
+                 part's surface curved to follow it.  For static_analysis and
+                 modal_analysis.  They do not bend stiff, and for a smooth part about
+                 three times the element size of 'tet' reads the same stress -- but
+                 on the same mesh they cost about 15 times the memory and the time,
+                 so use them where the stress matters (a notch, a hole, a fillet)
+                 and the part's thin features do not set the element size
     'hex'        a voxel grid of cubes, `element_size` on a side, each one
                  trilinear hexahedron with incompatible modes: bends without
                  spurious shear; its stiffness follows how much of the cube lies
@@ -2855,8 +2864,10 @@ One natural mode of a part on a body-fitted tetrahedral mesh (see Mode)
 
 A static analysis on a body-fitted tetrahedral mesh: its elements are tetrahedra
 that follow the part's surface (not a voxelization), the stress in each is its
-own (constant in it), and the fields are read anywhere in the mesh.  Everything
-of Result: fields as shapes, .range(), .element_range(), ...
+own (constant in it; with element='tet10' linear in it), and the fields are read
+anywhere in the mesh.  Everything of Result: fields as shapes, .range(),
+.element_range(), ...  With the 10-node element the fields are on its nodes, and
+are drawn on the element cut into eight linear tetrahedra.
 
 #### `TetResult.element_text(self)`
 
@@ -2943,9 +2954,11 @@ vibrates.  No loads are needed; the
 material's E and density are used.
 
 modes        how many (the lowest first)
-element_size mm (default: about 40 elements along the longest side)
-element      'tet' (default), 'hex' or 'hex_basic': see the module
-             documentation
+element_size mm (default: about 40 elements along the longest side;
+             20 with element='tet10')
+element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
+             part that bends are far better on the same mesh), 'hex' or
+             'hex_basic': see the module documentation
 
 Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
 fields -- displacement, ux, uy, uz).  The shapes are fields like any
@@ -2961,8 +2974,10 @@ loads      what pushes it: force(...) / gravity(...) / thermal_expansion(...) it
            The conditions have no body in them (this function is given it); each is a model of its own and is drawn on the part
 material   a Material (default steel); E in MPa
 element_size   the element edge in mm (default: the part's longest
-           side over 60)
+           side over 60; over 30 with element='tet10')
 element    'tet' (default: tetrahedra that follow the part's surface),
+           'tet10' (the same with 10 nodes: quadratic elements, about
+           three times the element size for the same accuracy),
            'hex' or 'hex_basic' (a voxel grid): see the module
            documentation
 bounds     region to analyse, ((x0, y0, z0), (x1, y1, z1)); found

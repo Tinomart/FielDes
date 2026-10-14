@@ -28,6 +28,15 @@ topology_optimization (thermal_analysis has it too):
                  tetrahedron is constant in it; linear tetrahedra are stiff in
                  bending, so refine (a cantilever four elements thick reads 96 %
                  of beam theory, eight thick 99 %)
+    'tet10'      the same tetrahedra with a node in the middle of every edge: 10-node
+                 (quadratic) elements, a displacement that is a quadratic in each
+                 element and a stress that is linear in it, with the edges on the
+                 part's surface curved to follow it.  For static_analysis and
+                 modal_analysis.  They do not bend stiff, and for a smooth part about
+                 three times the element size of 'tet' reads the same stress -- but
+                 on the same mesh they cost about 15 times the memory and the time,
+                 so use them where the stress matters (a notch, a hole, a fillet)
+                 and the part's thin features do not set the element size
     'hex'        a voxel grid of cubes, `element_size` on a side, each one
                  trilinear hexahedron with incompatible modes: bends without
                  spurious shear; its stiffness follows how much of the cube lies
@@ -63,8 +72,8 @@ ELEMENTS = {'tet': 0, 'hex': 1, 'hex_basic': 2}
 
 def _set_element(ptr, element):
     if element not in ELEMENTS:
-        raise ValueError("element is 'tet' (six tetrahedra a cell, the default), 'hex' "
-                         "(hexahedra with incompatible modes) or 'hex_basic' (plain hexahedra)")
+        raise ValueError("element is 'tet' (tetrahedra that follow the part, the default), 'tet10' (the same with 10 nodes: static and modal "
+                         "analysis), 'hex' (voxel hexahedra with incompatible modes) or 'hex_basic' (plain hexahedra)")
     if getattr(lib, 'libfive_fea_set_element', None) is None:
         if element != 'hex':
             raise FeaError('this FielDes library is too old for the {!r} element'.format(element))
@@ -475,11 +484,11 @@ def _fields_in_use(material, loads=()):
 
 
 def _refuse_fields(material, loads, element, what):
-    if element != 'tet':
+    if element not in ('tet', 'tet10'):
         used = _fields_in_use(material, loads)
         if used:
             raise FeaError("{}: {} {} a field -- fields in a material and in loads work with the tetrahedral elements "
-                           "(element='tet', the default), not {!r}".format(what, ', '.join(used),
+                           "(element='tet', the default, or 'tet10'), not {!r}".format(what, ', '.join(used),
                                                                            'is' if len(used) == 1 else 'are', element))
 
 
@@ -740,8 +749,10 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    The conditions have no body in them (this function is given it); each is a model of its own and is drawn on the part
         material   a Material (default steel); E in MPa
         element_size   the element edge in mm (default: the part's longest
-                   side over 60)
+                   side over 60; over 30 with element='tet10')
         element    'tet' (default: tetrahedra that follow the part's surface),
+                   'tet10' (the same with 10 nodes: quadratic elements, about
+                   three times the element size for the same accuracy),
                    'hex' or 'hex_basic' (a voxel grid): see the module
                    documentation
         bounds     region to analyse, ((x0, y0, z0), (x1, y1, z1)); found
@@ -783,7 +794,7 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / 60.0
+        element_size = max(size) / (30.0 if element == 'tet10' else 60.0)
     element_size = float(element_size)
     if not element_size > 0:
         raise FeaError('element_size must be positive')
@@ -796,9 +807,9 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
-    if element == 'tet':
+    if element in ('tet', 'tet10'):
         return _static_analysis_tet(shape, supports, loads, material, element_size, region, max(size),
-                                    max_iterations, tolerance, cache, ekey)
+                                    max_iterations, tolerance, cache, ekey, element)
 
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('fea', ekey, 'static analysis')
@@ -863,15 +874,17 @@ class _TetHandle:
 class TetResult(Result):
     ''' A static analysis on a body-fitted tetrahedral mesh: its elements are tetrahedra
         that follow the part's surface (not a voxelization), the stress in each is its
-        own (constant in it), and the fields are read anywhere in the mesh.  Everything
-        of Result: fields as shapes, .range(), .element_range(), ... '''
+        own (constant in it; with element='tet10' linear in it), and the fields are read
+        anywhere in the mesh.  Everything of Result: fields as shapes, .range(),
+        .element_range(), ...  With the 10-node element the fields are on its nodes, and
+        are drawn on the element cut into eight linear tetrahedra. '''
 
-    def __init__(self, handle, shape, material, element_size, size):
+    def __init__(self, handle, shape, material, element_size, size, element='tet'):
         self._handle = handle
         self.shape = shape
         self.material = material
         self.element_size = element_size
-        self.element = 'tet'
+        self.element = element
         self._size = float(size)
         p = handle.ptr
         self._ranges = {}
@@ -899,7 +912,9 @@ class TetResult(Result):
             if lib.libfive_tetfea_element_range(p, i, ctypes.byref(lo_), ctypes.byref(hi_)):
                 self._element_ranges[name] = (lo_.value, hi_.value)
         self.max_von_mises_smoothed = self._ranges['von_mises'][1]
-        self.max_von_mises = self._element_ranges.get('von_mises', self._ranges['von_mises'])[1]
+        # (a 10-node element's stress is linear in it and highest at a node: the peak is read at the nodes, as their elements average it)
+        self.max_von_mises = (self._ranges['von_mises'] if element == 'tet10' else
+                              self._element_ranges.get('von_mises', self._ranges['von_mises']))[1]
         self.max_displacement = self._ranges['displacement'][1]
         ys = material.yield_strength
         self.safety_factor = (ys / self.max_von_mises) if ys and self.max_von_mises > 0 else None
@@ -908,6 +923,8 @@ class TetResult(Result):
         return self._size
 
     def element_text(self):
+        if self.element == 'tet10':
+            return _tr('%s 10-node tetrahedra \u00b7 %s nodes') % ('{:,}'.format(self.elements), '{:,}'.format(self.nodes))
         return _tr('%s tetrahedra \u00b7 %s nodes') % ('{:,}'.format(self.elements), '{:,}'.format(self.nodes))
 
     def _element_grid(self):
@@ -956,17 +973,21 @@ def _remember_conditions(result, supports, loads):
 
 
 def _static_analysis_tet(shape, supports, loads, material, element_size, region, size, max_iterations,
-                         tolerance, cache, ekey=None):
-    ''' static_analysis on a body-fitted tetrahedral mesh '''
+                         tolerance, cache, ekey=None, element='tet'):
+    ''' static_analysis on a body-fitted tetrahedral mesh (element 'tet10': with 10-node elements) '''
     if getattr(lib, 'libfive_tetfea_new', None) is None:
         raise FeaError("this FielDes library is too old for tetrahedral meshing")
+    if element == 'tet10' and getattr(lib, 'libfive_tetfea_set_order', None) is None:
+        raise FeaError("this FielDes library is too old for the 10-node element")
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetfea', ekey, 'static analysis')
     if loaded is not None:
-        return _remember_conditions(TetResult(_TetHandle(loaded[0]), shape, material, element_size, size), supports, loads)
+        return _remember_conditions(TetResult(_TetHandle(loaded[0]), shape, material, element_size, size, element), supports, loads)
     # (a Young's modulus that is a field is measured against 1 MPa: each element has its own value of it)
     ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
     handle = _TetHandle(ptr)
+    if element == 'tet10':
+        lib.libfive_tetfea_set_order(ptr, 2)
     _material_fields(ptr, material)
     for s in supports:
         if not isinstance(s, _Support):
@@ -987,7 +1008,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
             raise TypeError('loads must be force(...), gravity(...) or thermal_expansion(...) items')
     if not lib.libfive_tetfea_prepare(ptr):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
-    key = ('tet', lib.libfive_tetfea_hash(ptr))
+    key = (element, lib.libfive_tetfea_hash(ptr))
     if cache and key in _cache:
         result = _cache[key]
         _cache.move_to_end(key)
@@ -998,7 +1019,7 @@ def _static_analysis_tet(shape, supports, loads, material, element_size, region,
         lib.libfive_tetfea_set_salt(ptr, result_cache.salt('tetfea', ekey))
     if not lib.libfive_tetfea_solve(ptr, int(max_iterations), float(tolerance)):
         raise FeaError(lib.libfive_tetfea_message(ptr).decode('utf-8', 'replace'))
-    result = _remember_conditions(TetResult(handle, shape, material, element_size, size), supports, loads)
+    result = _remember_conditions(TetResult(handle, shape, material, element_size, size, element), supports, loads)
     result_cache.save('tetfea', ekey, ptr, 'static analysis')
     if cache:
         _cache[key] = result
@@ -1149,9 +1170,11 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
         material's E and density are used.
 
         modes        how many (the lowest first)
-        element_size mm (default: about 40 elements along the longest side)
-        element      'tet' (default), 'hex' or 'hex_basic': see the module
-                     documentation
+        element_size mm (default: about 40 elements along the longest side;
+                     20 with element='tet10')
+        element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
+                     part that bends are far better on the same mesh), 'hex' or
+                     'hex_basic': see the module documentation
 
         Returns a ModalResult: .frequencies (Hz), .modes[i] (the shape as
         fields -- displacement, ux, uy, uz).  The shapes are fields like any
@@ -1178,15 +1201,17 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / 40.0
+        element_size = max(size) / (20.0 if element == 'tet10' else 40.0)
     element_size = float(element_size)
     pad = 1e-6 * max(max(size), 1e-9)
     region = libfive_region_t()
     for i, axis in enumerate((region.X, region.Y, region.Z)):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
-    tet = element == 'tet'
+    tet = element in ('tet', 'tet10')
     if tet and getattr(lib, 'libfive_tetfea_new', None) is None:
         raise FeaError("this FielDes library is too old for tetrahedral meshing")
+    if element == 'tet10' and getattr(lib, 'libfive_tetfea_set_order', None) is None:
+        raise FeaError("this FielDes library is too old for the 10-node element")
     kind = 'tetfea' if tet else 'fea'
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load(kind, key, 'modal analysis')
@@ -1200,6 +1225,8 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     if tet:
         ptr = lib.libfive_tetfea_new(shape.ptr, region, element_size, _number(material.E, 1.0), material.nu)
         handle = _TetHandle(ptr)
+        if element == 'tet10':
+            lib.libfive_tetfea_set_order(ptr, 2)
         _material_fields(ptr, material)
     else:
         ptr = lib.libfive_fea_new(shape.ptr, region, element_size, material.E, material.nu)
@@ -1521,6 +1548,10 @@ def topology_optimization(part, supports, loads, material=steel, volume_fraction
         raise TypeError('topology_optimization: the part must be a Shape')
     if getattr(lib, 'libfive_fea_optimize', None) is None:
         raise FeaError('this FielDes library is too old for topology optimization')
+    if element == 'tet10':
+        raise FeaError("topology_optimization has no 10-node element: it designs one density to each linear tetrahedron "
+                       "(element='tet', the default) -- and it solves the analysis 30 to 100 times, which the 10-node element makes "
+                       "about 15 times dearer.  static_analysis(element='tet10') checks the stress of the design it finds")
     cases = [_given(c, 'loads', 'topology_optimization') for c in loads] if _is_cases(loads) else [
         _given(loads, 'loads', 'topology_optimization')]
     case_supports = None            # (one list of supports for each load case when each case has its own)

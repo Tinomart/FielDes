@@ -203,7 +203,7 @@ result                                             # shown: the stress on the de
 `static_analysis(shape, supports, loads, material=steel, element_size=None, bounds=None,
 tolerance=1e-6, cache=True, element='tet')` with the
 conditions of [Boundary conditions](#boundary-conditions) (`loads=[]` for none). The element size defaults to the part's
-longest side over 60. It raises `FeaError` if the problem cannot be solved as given (no support touching the
+longest side over 60 (over 30 with `element='tet10'`, the 10-node element: see [Elements and accuracy](#elements-and-accuracy)). It raises `FeaError` if the problem cannot be solved as given (no support touching the
 part, supports that do not hold it in place).
 
 ## Reading a result
@@ -575,8 +575,23 @@ steady flow to optimise, and the optimiser works on the unstable symmetric one.
 | `element=` | |
 |---|---|
 | `'tet'` (default) | Linear tetrahedra that **follow the part's surface**: an unstructured mesh built on the shape's own field. Boundary vertices lie on the surface, sharp edges are followed to a fraction of an element. `element_size` is the edge length. Stiff in bending: refine (a cantilever four elements thick reads 96 % of beam theory, eight thick 99 %). |
+| `'tet10'` | **10-node (quadratic) tetrahedra** on the same mesh: a node in the middle of every edge, so the displacement is a quadratic in each element and the stress is linear in it, and the edges on the surface are bent to follow it. `element_size` is the edge of the tetrahedra they are made on. **Much more accurate for the same element size** -- about three times the size of `'tet'` reads the same stress on a smooth part -- but **dearer on the same mesh**: 6 to 7 times as many unknowns, 14 times as many entries in the stiffness matrix (and the memory for it), and a solver that needs up to twice the iterations -- 15 to 45 times the time. Use it where the stress matters (a hole, a notch, a fillet) and the part's thin features do not set the element size (a lattice's struts do: there `'tet'` is the one). For `static_analysis` (loads, fields and conditions as with `'tet'`) and `modal_analysis`; topology optimisation, thermal and flow analysis have no 10-node version. The fields are on the nodes (the corners and the middles of the edges) and are drawn on each element cut into eight linear tetrahedra; the result's `elements` counts the 10-node elements. `export_fea` has no model of it yet. |
 | `'hex'` | A voxel grid of cubes, `element_size` on a side, each a trilinear hexahedron with incompatible modes (bends without spurious shear). Its stiffness follows how much of the cube lies inside the part, so the surface is a staircase. |
 | `'hex_basic'` | The same grid with the plain trilinear hexahedron (shear-locks in bending). |
+
+**What the 10-node element costs and what it gives** (measured on this program's own problems, 2026-10-14; the *time* is the solver's):
+
+| Problem | Linear (`'tet'`) | 10-node (`'tet10'`) |
+|---|---|---|
+| the cantilever beam: tip movement against beam theory | -2.0 % with 66,816 elements (14,000 nodes), 0.8 s | **-0.8 %** with **1,296** elements (2,500 nodes), **0.1 s** |
+| the plate with a hole: stress concentration against Peterson (one eighth by symmetry) | -3.7 % with 963,000 elements, 22 s | **+0.4 %** with **45,000** elements, 13 s; -0.3 % with 127,000 elements, 41 s |
+| a round bar bent by a tip load (a curved surface) | -1.0 % with 469,000 elements, 12 s | **+0.1 %** with **4,456** elements, **1.8 s** |
+| the first bending mode of the beam, `modal_analysis` (converged: about 812 Hz) | 818 Hz with 66,816 elements, 23 s | **813 Hz** with 1,296 elements, 3.6 s |
+| **the same mesh** (the beam, 66,816 elements) | 0.8 s | 35 s: 101,000 nodes instead of 14,000, 2,900 iterations instead of 1,200 |
+
+A mesh that is too coarse for the feature is not saved by the extra nodes: 10-node elements of 1 mm on the plate's hole (four to its radius) read the stress 20 % **too high**, 0.7 mm
+and 0.5 mm read it right. As with linear elements, **halve the size and see whether the peak moves**. A patch of uniform stress, a bar hanging by its weight and a bar held between its ends and heated
+are reproduced exactly (the checks that were run on the element); a very fine 10-node mesh is refused with the memory it would want and how much is free, rather than run out of it.
 
 Smaller elements are more accurate and slower. A reasonable workflow: solve coarsely to find the load path,
 then halve `element_size` once and see whether the peak stress moved by more than a few percent. The solver
@@ -598,7 +613,8 @@ of it is found in the render cache too. `cache=False` solves every time. See
 - Linear elasticity: small strains, linear isotropic material, **no contact**, no plasticity, no buckling,
   no dynamics beyond natural frequencies. Always compare the peak stress with the material's yield strength
   *and* with a hand calculation.
-- Linear tetrahedra need refinement in bending; check convergence.
+- Linear tetrahedra need refinement in bending; check convergence (the 10-node element, `element='tet10'`, needs far less -- and is dearer on the same mesh).
+- The 10-node element is for static and modal analysis. Its result card peak is read at the nodes, where the elements round a node are averaged; the finite-element model for another solver is not exported.
 - Fields as properties and loads work with the tetrahedral elements only; the flow solver takes numbers.
 - A stress singularity (a sharp re-entrant corner or a point load) does not converge with refinement; the
   peak there means nothing. Load over a region.
@@ -617,11 +633,10 @@ examples/verification/v1_cantilever_beam.py`). They do not use the result cache,
 
 | Script | The problem | The exact answer | FielDes (as measured 2026-10-14) | Tolerance |
 |---|---|---|---|---|
-| `v1_cantilever_beam.py` | a steel bar 100 x 10 x 10 mm held at one end, 100 N across the other | tip movement by Timoshenko beam theory, 0.2016 mm | 0.1975 mm, **−2.0 %** (67,000 tetrahedra, 1 s) | 5 % |
-| `v2_plate_with_hole.py` | a plate 80 x 40 x 1 mm with a hole of 8 mm, pulled with 100 MPa | stress concentration 3.14 (Peterson, for the width of the plate) | 2.97, **−5.2 %** (140,000 tetrahedra, 40 s) | 10 % |
+| `v1_cantilever_beam.py` | a steel bar 100 x 10 x 10 mm held at one end, 100 N across the other | tip movement by Timoshenko beam theory, 0.2016 mm | 0.1975 mm, **−2.0 %** (67,000 tetrahedra, 1 s); 10-node: **−0.8 %** (1,300 elements, 0.1 s) | 5 % and 2 % |
+| `v2_plate_with_hole.py` | a plate 80 x 40 x 3 mm with a hole of 8 mm, pulled with 100 MPa (one eighth of it is solved, by symmetry) | stress concentration 3.14 (Peterson, for the width of the plate) | 3.02, **−3.7 %** (960,000 tetrahedra, 18 s); 10-node: **+0.4 %** (45,000 elements, 13 s) | 6 % and 3 % |
 | `v3_channel_flow.py` | water between two plates 10 mm apart, mean speed 5 mm/s, developed inlet | speed at the middle 1.5 x the mean; pressure gradient 12 mu U / H^2 | **−0.3 %** and **+0.2 %** (22,000 tetrahedra, 1 s) | 3 % and 6 % |
 | `v4_slab_conduction.py` | an aluminium bar held at 100 C and 20 C at its ends, the sides insulated | a straight line in temperature, Fourier's heat flux | 0.14 K and **−0.5 %** (5,000 tetrahedra) | 0.3 K and 2 % |
 
-Linear tetrahedra are stiff in bending and average a stress over each element, so the first two come out a little low and come nearer as the elements get smaller; the
-two others are exact for what linear elements can represent. Four cases do not make a validation: **compare any result with a hand calculation and, where it matters, a test,
+Linear tetrahedra are stiff in bending and average a stress over each element, so the first two come out a little low and come nearer as the elements get smaller -- slowly (the beam: -5.6 % with 4 elements across its depth, -1.0 % with 16; the plate: -9 % with 1 mm elements, -8 % with 0.5 mm, -4 % with 0.25 mm), so the stress at a notch is the number to be most careful with: it comes out **low**. The 10-node elements (`element='tet10'`) do much better at the same size, and the first two scripts check them too (the beam -0.8 %, the plate +0.4 %). The two others are exact for what linear elements can represent. Four cases do not make a validation: **compare any result with a hand calculation and, where it matters, a test,
 before you rely on it.**

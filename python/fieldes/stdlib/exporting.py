@@ -398,6 +398,10 @@ def export_fea(result, path, **options):
     ext = os.path.splitext(path)[1].lower()
     if ext not in EXPORT_FEA_FORMATS:
         raise ValueError('export_fea({!r}): the model formats are {}'.format(path, ', '.join(EXPORT_FEA_FORMATS)))
+    if getattr(result, 'element', 'tet') == 'tet10':
+        raise ValueError("export_fea: the model of a 10-node analysis cannot be written yet -- what FielDes keeps of it is its nodes cut into linear "
+                         "tetrahedra (what the result is drawn on), not the 10-node elements it was solved on, and another solver would not give the same "
+                         "numbers on it.  Solve with element='tet' to export a model; export_results writes the fields of this result")
     data = _tet_data(result, 'export_fea')
     sets = _node_sets(data, result)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)

@@ -108,6 +108,8 @@ struct MeshResult
  *  the tetrahedron that holds the point  */
 Tree meshFieldTree(std::shared_ptr<const MeshResult> result, int field);
 
+namespace tet { struct QuadMesh; }
+
 class TetProblem
 {
 public:
@@ -133,6 +135,11 @@ public:
     void setExpansionField(const Tree& alpha);
     void setGravity(Eigen::Vector3d g, double density);
     void setThermal(const Tree& temperature, double alpha, double reference);
+    /*  The element: 1 (the default), the linear tetrahedron; 2, the 10-node tetrahedron on the same mesh (a node in the middle of every edge:
+     *  quadratic displacement, linear stress in each element).  The result is on the nodes, cut into linear tetrahedra, eight to an element:
+     *  MeshResult::mesh is that mesh, MeshResult::elements the number of 10-node elements.  For static and modal analysis; not for topology
+     *  optimization  */
+    void setOrder(int order);
 
     /*  Meshes the part and resolves the supports and loads; false with a
      *  message if the problem can't be solved as given  */
@@ -211,6 +218,7 @@ public:
 
 private:
     friend struct ResultIO;
+    bool solveQuad(int maxIterations, double tolerance, std::string& error, const std::atomic<bool>* cancel);
     Tree m_shape;
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_E, m_nu;
@@ -227,7 +235,9 @@ private:
 
     // Prepared
     bool m_prepared = false;
-    std::shared_ptr<TetMesh> m_mesh;
+    std::shared_ptr<TetMesh> m_mesh;            // (with 10-node elements: their nodes cut into linear tetrahedra, what the results are on)
+    int m_order = 1;
+    std::shared_ptr<tet::QuadMesh> m_quad;      // (the 10-node elements, when m_order is 2)
     std::vector<unsigned char> m_fixedDof;      // per DOF (3 * vertex + axis)
     std::vector<double> m_force;                // per DOF: the loads, gravity and thermal expansion together
     std::vector<std::vector<double>> m_caseForce;   // per load case, when there are several

@@ -308,6 +308,9 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
         axis.lower, axis.upper = lo[i] - pad, hi[i] + pad
     # 'tet' (the default): tetrahedra that follow the part's surface; 'hex' and 'hex_basic' are the
     # same trilinear hexahedron on a voxel grid (there are no locking modes in heat flow)
+    if element == 'tet10':
+        raise FeaError("{}: the 10-node element (element='tet10') is for static_analysis and modal_analysis; a temperature "
+                       "is smooth and linear tetrahedra read it well: use element='tet', the default".format(what))
     if element not in ('tet', 'hex', 'hex_basic'):
         raise ValueError("element is 'tet' (tetrahedra that follow the part, the default) or 'hex' "
                          "(voxel hexahedra)")
