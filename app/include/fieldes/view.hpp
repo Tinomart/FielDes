@@ -92,6 +92,8 @@ public:
      *  seconds until all are (negative: no estimate yet); they render at
      *  the same time, so the longest one  */
     bool isRendering() const;
+    /*  The graphics driver the viewport draws with -- vendor, renderer, OpenGL version -- for a bug report; empty when there is no context yet  */
+    QString graphicsInfo();
     /*  How many shapes the viewport holds (for scripted tests)  */
     int shapeCount() const { return shapes.size(); }
     const QList<Shape*>& allShapes() const { return shapes; }
@@ -129,6 +131,8 @@ public slots:
     void frameAll();
 
 public:
+    /*  The mouse gestures the view has beside the ones everyone has (see setNavigationPreset)  */
+    enum NavigationPreset { NAV_DEFAULT, NAV_BLENDER, NAV_TOUCHPAD };
     /*  Union of the displayed shapes' mesh bounds; false if none yet  */
     bool meshBounds(QVector3D& lo, QVector3D& hi) const;
 
@@ -287,6 +291,9 @@ public slots:
     void setLowRotSensitivity()  { camera.setRotationSensitivity(240); }
     void setMedRotSensitivity()  { camera.setRotationSensitivity(360); }
     void setHighRotSensitivity() { camera.setRotationSensitivity(720); }
+    /*  Mouse gestures for other hands, an OPTION beside the ones everyone has (right drag pans, the wheel zooms, Shift + left drag and the middle button turn): the Blender style
+        also pans with Shift + the middle button, the touchpad style with Alt + the left button.  The default is NAV_DEFAULT, and stays it  */
+    void setNavigationPreset(int preset) { m_navPreset = preset; }
     void setZoomCursorCentric() { zoom_cursor_centric = true; }
     void setZoomSceneCentric() { zoom_cursor_centric = false; }
     void zoomTo() { camera.zoomTo(settings.min, settings.max); }
@@ -315,6 +322,8 @@ public slots:
 signals:
     /*  The work plane changed (its view opened or closed, a new plane, its options): for its card ...  */
     void workPlaneStateChanged(FielDes::WorkPlane plane, float step);
+    /*  Turning the view (Shift + left drag, the middle button) closed the work plane view that was open: the window says so, and how to get it back  */
+    void workPlaneTurnedAway();
     /*  ... for the scene, which writes what is made on it in its axes: whether new models go on it, where it is, its axes, and the step the places snap to (0: none)  */
     void workPlaneChanged(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
     /*  The symmetry that is in use changed (its planes, its centre, in use or not), and how many images it makes: for the scene, which makes the images of what is made  */
@@ -712,6 +721,7 @@ protected:
     bool y_up=false;
 
     bool zoom_cursor_centric = true;
+    int m_navPreset = NAV_DEFAULT;
     bool zoom_on_next_settings = false;
 
     /*  Framebuffer to render pick data  */

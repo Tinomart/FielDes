@@ -89,6 +89,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/regionformat.hpp"
 #include "fieldes/theme.hpp"
 #include "fieldes/tutorial.hpp"
+#include "fieldes/focuscue.hpp"
 #include "fieldes/scenetree.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/section.hpp"
@@ -848,6 +849,31 @@ Window::Window(Arguments args)
     else
         cursor_centric->setChecked(true);
 
+    {   // Navigation: the default is what it is (Shift + left drag turns, right drag pans, the wheel zooms: it works on a laptop's touchpad, which has no middle button); two more sets
+        // of gestures for other hands are an option, and add to it -- nothing the default does stops working
+        auto nav_menu = new QMenu(T("Navigation"));
+        nav_menu->setToolTipsVisible(true);
+        auto nav_group = new QActionGroup(nav_menu);
+        auto nav = [=](const QString& name, const QString& tip, const QString& key, int preset) {
+            QAction* a = nav_menu->addAction(name);
+            a->setCheckable(true);
+            a->setToolTip(tip);
+            nav_group->addAction(a);
+            connect(a, &QAction::toggled, this, [this, key, preset](bool on) {
+                if (!on) return;
+                view->setNavigationPreset(preset);
+                if (!qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) settings.setValue("navigation", key);
+            });
+            return a;
+        };
+        QAction* nav_default = nav(T("FielDes (default)"), T("Shift + left drag or the middle button turns the view, right drag pans, the wheel zooms"), "default", View::NAV_DEFAULT);
+        QAction* nav_blender = nav(T("Blender style"), T("The default, and Shift + the middle button pans"), "blender", View::NAV_BLENDER);
+        QAction* nav_touchpad = nav(T("Touchpad"), T("The default, and Alt + left drag pans (no right or middle button needed)"), "touchpad", View::NAV_TOUCHPAD);
+        settings_menu->addMenu(nav_menu);
+        const QString chosen = settings.value("navigation", "default").toString();
+        (chosen == "blender" ? nav_blender : chosen == "touchpad" ? nav_touchpad : nav_default)->setChecked(true);
+    }
+
     view_menu->addSeparator();
     auto tree_action = view_menu->addAction(T("Model tree"));
     tree_action->setCheckable(true);
@@ -990,6 +1016,20 @@ Window::Window(Arguments args)
             if (plane.open) panel->raise();
         });
         connect(view, &View::workPlaneReadout, panel, &WorkPlanePanel::setReadout);
+        // Turning the view leaves the work plane view (the plane is parallel to the view it was opened in): the status bar says so and how to come back, with the keys as they are bound now
+        connect(view, &View::workPlaneTurnedAway, this, [=] {
+            const auto keyOf = [](const QString& id) {
+                for (const auto& e : Shortcuts::entries())
+                    if (e.id == id && e.action && !e.action->shortcuts().isEmpty()) return e.action->shortcuts().first().toString(QKeySequence::NativeText);
+                return QString();
+            };
+            const QString open = keyOf("view.workplane"), face = keyOf("view.workplane-face");
+            statusBar()->showMessage(open.isEmpty()
+                ? T("Turning the view left the work plane view. View ▸ Work plane opens it again.")
+                : face.isEmpty()
+                    ? T("Turning the view left the work plane view. %1 opens it again.").arg(open)
+                    : T("Turning the view left the work plane view. %1 opens it again, and %2 turns the view to look straight at the plane.").arg(open, face), 10000);
+        });
         connect(view, &View::workPlaneChanged, view->scenePanel(), &ScenePanel::setWorkPlane);
         connect(panel, &WorkPlanePanel::optionsChanged, view, &View::setWorkPlaneOptions);
         connect(panel, &WorkPlanePanel::modeChanged, view, &View::setWorkPlaneMode);
@@ -1272,6 +1312,8 @@ Window::Window(Arguments args)
     help_menu->addSeparator();
     connect(help_menu->addAction(T("About")), &QAction::triggered,
             this, &Window::onAbout);
+    connect(help_menu->addAction(T("Report a bug...")), &QAction::triggered,
+            this, &Window::onReportBug);
     {   // The guided tour: the main tour, and chapters on a subject (drawing, copies and symmetry) that run on their own
         QMenu* tour_menu = help_menu->addMenu(T("Guided tour"));
         for (int chapter = 0; chapter < Tutorial::chapterCount(); ++chapter)
@@ -1475,6 +1517,46 @@ Window::Window(Arguments args)
         auto region = new QLabel;
         region->setStyleSheet("color: palette(mid); padding-right: 6px;");
         statusBar()->addPermanentWidget(region);
+        {   // Where the keyboard is: a frame round the pane that has it, and a word in the status bar -- the viewport's single keys (W, E, D, R ...) are letters in the script editor
+            auto keys = new QLabel;
+            keys->setObjectName("KeysLabel");
+            keys->setStyleSheet("color: palette(mid); padding-right: 14px;");
+            statusBar()->insertPermanentWidget(0, keys);
+            auto cue = new FocusCue(this);
+            cue->addPane(editor, "editor");
+            cue->addPane(view, "viewport");
+            // (the keys of the viewport are what its actions say now -- the ones that act only while it has the keyboard -- so a key that is changed or added is here too)
+            auto viewKeys = [=]() {
+                QStringList out;
+                for (QAction* a : view->actions())
+                {
+                    if (a->shortcutContext() != Qt::WidgetWithChildrenShortcut || a->shortcuts().isEmpty()) continue;
+                    // (the first key an action has: the keypad's twin of a key is the same key, and the list is short to read)
+                    const QString text = a->shortcuts().first().toString(QKeySequence::NativeText);
+                    if (!out.contains(text)) out << text;
+                }
+                return out.join(", ");
+            };
+            auto say = [=](const QString& where) {
+                if (where == "viewport")
+                {
+                    keys->setText(T("Keys: viewport"));
+                    keys->setToolTip(T("The keyboard is in the viewport (it has the frame): its keys work here (%1). Click the script editor to type in it.").arg(viewKeys()));
+                }
+                else if (where == "editor")
+                {
+                    keys->setText(T("Keys: editor"));
+                    keys->setToolTip(T("The keyboard is in the script editor (it has the frame): keys type here. The viewport's keys (%1) act once you click the viewport.").arg(viewKeys()));
+                }
+                else
+                {
+                    keys->clear();
+                    keys->setToolTip(QString());
+                }
+            };
+            connect(cue, &FocusCue::focusedChanged, keys, say);
+            say(cue->focused());
+        }
         connect(editor, &Editor::settingsChanged, region, [=](Settings s, bool) {
             auto fmt = [](float v) { return regionNumber(double(v)); };       // (whole numbers: see regionNumber)
             auto fmtN = [](float v) { return QString::number(v, 'g', 4); };
@@ -1569,6 +1651,20 @@ Window::Window(Arguments args)
         });
         a->add("focus", [=](const QString& w){
             if (w == "view") view->setFocus(); else script->setFocus();
+        });
+        // reportbug: Help > Report a bug (the dialog opens once this command is over, so that the commands after it run while it is open; a scripted run opens no browser)
+        a->add("reportbug", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onReportBug(); }); });
+        // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
+        a->add("navigation", [=](const QString& what){
+            const QString w = what.trimmed();
+            view->setNavigationPreset(w == "blender" ? View::NAV_BLENDER : w == "touchpad" ? View::NAV_TOUCHPAD : View::NAV_DEFAULT);
+        });
+        // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
+        a->add("focusstate", [=](const QString&){
+            const auto cue = findChild<FocusCue*>();
+            const auto keys = statusBar()->findChild<QLabel*>("KeysLabel");
+            std::cerr << "automation: focus pane=[" << (cue ? cue->focused().toStdString() : "no cue") << "] label=[" << (keys ? keys->text().toStdString() : "")
+                      << "] tip=[" << (keys ? keys->toolTip().toStdString() : "") << "]" << std::endl;
         });
         // waitrender [seconds [seconds to start]]: wait until the render that the script started has finished (at most
         // that long; 1800 s by default), so that a grab shows the finished picture however long it takes.  The render
@@ -1780,7 +1876,9 @@ Window::Window(Arguments args)
                 const QString m = p.takeLast().toLower();
                 if (m.contains("ctrl")) mods |= Qt::ControlModifier;
                 if (m.contains("shift")) mods |= Qt::ShiftModifier;
+                if (m.contains("alt")) mods |= Qt::AltModifier;
                 if (m.contains("middle")) btn = Qt::MiddleButton;
+                if (m.contains("right")) btn = Qt::RightButton;
             }
             if (p.size() < 3) return;
             const QPoint pos(p[1].toInt(), p[2].toInt());
@@ -3755,6 +3853,45 @@ void Window::onAbout(bool)
     if (revision != "N/A") info += T("Kernel revision: <code>%1</code><br>").arg(revision);
     info += T("Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)");
     QMessageBox::about(this, T("About FielDes"), info);
+}
+
+void Window::onReportBug(bool)
+{
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(T("Report a bug"));
+    box.setText(T("This opens a new issue on GitHub in your browser."));
+    box.setInformativeText(T("The form is filled in with the version of FielDes, your system and your graphics driver. Nothing is sent from here: you read the issue and press the button on "
+                             "GitHub yourself. Your script is not in it unless you choose the second button, which copies it to the clipboard for you to paste into the issue "
+                             "(a script is too long for a link)."));
+    QAbstractButton* plain = box.addButton(T("Open the issue form"), QMessageBox::AcceptRole);
+    QAbstractButton* withScript = box.addButton(T("Open it and copy my script"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(static_cast<QPushButton*>(plain));
+    box.exec();
+    if (box.clickedButton() != plain && box.clickedButton() != withScript) return;
+    const bool script = box.clickedButton() == withScript;
+    if (script) QGuiApplication::clipboard()->setText(editor->getScript());
+    // (the issue is written for the author, in English: the form's questions, and what a bug needs to be found -- the version and what the program runs on)
+    const QString revision = libfive_git_revision();
+    QString body = "**What happened**\n\n\n**What I expected**\n\n\n**How to make it happen**\n";
+    body += script ? "(my script is copied: paste it here)\n" : "(a script that shows it is the best help)\n";
+    body += QString("\n---\nFielDes %1").arg(QCoreApplication::applicationVersion());
+    if (revision != "N/A") body += QString(" (kernel %1)").arg(revision.left(10));
+    body += QString("\n%1 (%2)\nQt %3\nGraphics: %4\n").arg(QSysInfo::prettyProductName(), QSysInfo::currentCpuArchitecture(), QString::fromLatin1(qVersion()), view->graphicsInfo());
+    const QUrl url = QUrl::fromEncoded("https://github.com/Tinomart/FielDes/issues/new?body=" + QUrl::toPercentEncoding(body));
+    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION"))
+    {
+        // (a scripted test never opens the user's browser: it says what it would have opened, and what the clipboard got)
+        std::cerr << "automation: issue url " << url.toString(QUrl::FullyDecoded).toStdString() << "\nautomation: clipboard has script " << (script ? 1 : 0) << std::endl;
+        return;
+    }
+    if (!QDesktopServices::openUrl(url))
+    {
+        QMessageBox::warning(this, T("Report a bug"), T("The browser could not be opened. The issues are at %1").arg("https://github.com/Tinomart/FielDes/issues"));
+        return;
+    }
+    statusBar()->showMessage(script ? T("Your script is on the clipboard: paste it into the issue.") : T("The issue form is open in your browser."), 10000);
 }
 
 void Window::onImportModel(bool)

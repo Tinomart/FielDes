@@ -250,6 +250,8 @@ takes a few seconds and is cached next to it.
 
 ## Known limitations
 
+What is a rough edge rather than a limit of the design is in [KNOWN_ISSUES.md](KNOWN_ISSUES.md); **Help ▸ Report a bug** opens a new issue with your version and system filled in.
+
 - **Free-form faces are fitted, not exact, in the field.** The importer rebuilds B-spline faces as
   closed-form surfaces (planes, quadrics, extrusions, revolutions, helices, fillets); where that is poor
   the import says so and colours it, and `exclude()` / `auto_exclude` put the real surface there as a locked
@@ -267,6 +269,8 @@ takes a few seconds and is cached next to it.
 - Units: STEP units are read and converted; STL/OBJ/PLY/OFF carry none and are assumed to be millimetres
   (`file_units=`).
 - Analyses are linear (small strain, linear material) and use tetrahedra (or voxel hexahedra); no contact.
+- **Not validated for safety-critical use.** FielDes is a design tool, not a certified solver. Four known-answer checks (a beam, a plate with a hole, a channel flow, conduction through a bar) are in
+  `examples/verification/` and described in [Verification](docs/analysis.md#verification-four-known-answers): the result card says it too. Compare any result with a hand calculation and a test.
 
 ## Project layout
 

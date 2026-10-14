@@ -52,3 +52,9 @@ two lugs with round holes at the front. It is the one sample part that is distri
 GrabCAD download whose author's terms are not known; see [`../NOTICE.md`](../NOTICE.md)). The scripts place their regions (supports, loads,
 boxes) for this part. To try them on a part of your own, put its STEP file in `step/`, change the path in the script, and adjust those numbers
 (the importing, the fields and the lattices work with any STEP file).
+
+## Verification
+
+`verification/` holds four scripts that solve a problem with a known answer and **stop with an error when FielDes is farther from it than a tolerance**: a cantilever beam, a plate with a hole,
+the flow between two plates and the conduction through a bar (see [Verification](../docs/analysis.md#verification-four-known-answers)). They check the program, not your design; run them after
+a change: `python scripts/run_example.py examples/verification/v1_cantilever_beam.py`. They take a second each, except the plate (40 s).

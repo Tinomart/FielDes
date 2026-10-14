@@ -32,6 +32,7 @@ set(SRCS
     src/editor.cpp
     src/fileassoc.cpp
     src/findbar.cpp
+    src/focuscue.cpp
     src/i18n.cpp
     src/icons.cpp
     src/language.cpp
@@ -78,6 +79,7 @@ set(QOBJECTS
     include/fieldes/result_panel.hpp
     include/fieldes/section.hpp
     include/fieldes/carddrag.hpp
+    include/fieldes/focuscue.hpp
     include/fieldes/shape.hpp
     include/fieldes/shortcuts.hpp
     include/fieldes/symmetry.hpp

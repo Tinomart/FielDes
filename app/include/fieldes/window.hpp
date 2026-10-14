@@ -74,6 +74,8 @@ protected slots:
     void exportModel(const QString& var, const QString& kind, const QString& ext);
     void exportModelTo(const QString& var, const QString& kind, const QString& path);
     void onAbout(bool=false);
+    /*  Help > Report a bug: opens a new issue on GitHub in the browser, filled in with the version, the system and the graphics driver; the script goes only when the user asks for it  */
+    void onReportBug(bool=false);
     bool loadTourModel();
     bool onLoadDefault(bool=false);
     void onAutoLoad(const QString&);

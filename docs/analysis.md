@@ -20,6 +20,7 @@ fill the part they came from.
 - [Elements and accuracy](#elements-and-accuracy)
 - [Caching](#caching)
 - [Limitations](#limitations)
+- [Verification: four known answers](#verification-four-known-answers)
 
 ## Units and conventions
 
@@ -606,3 +607,21 @@ of it is found in the render cache too. `cache=False` solves every time. See
   STEP file's own mesh) and the analysis mesh follows that.
 - Fluid flow: laminar, steady, incompressible, isothermal; no boundary-layer elements (see [Fluid flow](#fluid-flow)).
 - FielDes is a design tool, not a certified solver. Do not use it as the sole basis for safety decisions.
+
+## Verification: four known answers
+
+**FielDes is not validated for safety-critical use.** It is a design tool: the result card says so, and the limits are above. What is checked is the program, against four
+problems whose answers are known, in `examples/verification/`. Each script solves its problem, prints the program's number next to the exact one, and **stops with an error
+when they differ by more than its tolerance** -- run them after a change to the solvers, the elements or the caches (`python scripts/run_example.py
+examples/verification/v1_cantilever_beam.py`). They do not use the result cache, so they always solve.
+
+| Script | The problem | The exact answer | FielDes (as measured 2026-10-14) | Tolerance |
+|---|---|---|---|---|
+| `v1_cantilever_beam.py` | a steel bar 100 x 10 x 10 mm held at one end, 100 N across the other | tip movement by Timoshenko beam theory, 0.2016 mm | 0.1975 mm, **−2.0 %** (67,000 tetrahedra, 1 s) | 5 % |
+| `v2_plate_with_hole.py` | a plate 80 x 40 x 1 mm with a hole of 8 mm, pulled with 100 MPa | stress concentration 3.14 (Peterson, for the width of the plate) | 2.97, **−5.2 %** (140,000 tetrahedra, 40 s) | 10 % |
+| `v3_channel_flow.py` | water between two plates 10 mm apart, mean speed 5 mm/s, developed inlet | speed at the middle 1.5 x the mean; pressure gradient 12 mu U / H^2 | **−0.3 %** and **+0.2 %** (22,000 tetrahedra, 1 s) | 3 % and 6 % |
+| `v4_slab_conduction.py` | an aluminium bar held at 100 C and 20 C at its ends, the sides insulated | a straight line in temperature, Fourier's heat flux | 0.14 K and **−0.5 %** (5,000 tetrahedra) | 0.3 K and 2 % |
+
+Linear tetrahedra are stiff in bending and average a stress over each element, so the first two come out a little low and come nearer as the elements get smaller; the
+two others are exact for what linear elements can represent. Four cases do not make a validation: **compare any result with a hand calculation and, where it matters, a test,
+before you rely on it.**

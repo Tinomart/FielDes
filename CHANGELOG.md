@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Four known answers, and a notice
+- **`examples/verification/` has four scripts that solve a problem with a known answer and stop with an error when FielDes is farther from it than a tolerance**: a cantilever beam against Timoshenko beam theory (−2.0 %), a plate with a hole against Peterson's stress concentration (−5.2 %),
+  Poiseuille flow between plates (−0.3 % on the peak speed, +0.2 % on the pressure gradient) and conduction through a bar against Fourier's law (0.14 K, 0.5 %). They never use the result cache, so they always solve; run them after a change to the solvers, the elements or the caches. They are in
+  [docs/analysis.md](docs/analysis.md#verification-four-known-answers) with the numbers as measured today. **The result card now says *Not validated for safety-critical use*** (its tooltip says why and where the checks are), and so does the README. Four cases do not make a validation, and the text says so.
+
+### Settings ▸ Navigation: an option beside the default
+- **Two more sets of mouse gestures for other hands, as an option.** *Blender style* adds **Shift + the middle button** to pan; *Touchpad* adds **Alt + left drag** to pan, for a laptop that has no right or middle button to spare. **The default is not changed and stays the default**
+  (*FielDes*: Shift + left drag or the middle button turns, right drag pans, the wheel zooms); the others only add to it, so nothing it does stops working. The choice is kept in the settings.
+
+### Report a bug, and the known issues
+- **Help ▸ Report a bug...** opens a new issue on GitHub in the browser, filled in with the version of FielDes (and the kernel revision), the system, the Qt version and the graphics driver -- what a bug needs to be found. Nothing is sent from the program: the issue is read and
+  submitted on GitHub. The script is not in it unless you choose *Open it and copy my script*, which puts it on the clipboard to paste (a script is too long for a link). **`KNOWN_ISSUES.md`** lists what does not work as it should yet (the round-corner fill is a mesh, splines are
+  measured in pieces, notches on an extrusion's copy at resolution 2, the coarse picture while a ring is dragged, the unsigned Windows setup, the platforms).
+
+### Where the keyboard is
+- **The pane that has the keyboard has a thin blue frame, and the status bar says *Keys: viewport* or *Keys: editor*.** The viewport's single keys (`W`, `E`, `D`, `R`, `I`, `V`, `C` ... and `Shift+W`, `Shift+S`, `Ctrl+D`) are letters in the script editor, and nothing on the screen said which one
+  had the keyboard -- a key that did nothing, or typed a letter into the script, was the only answer. The frame follows the keyboard (a click, `Ctrl+Shift+W`, a tour step that gives it to the viewport) and is gone while a menu, a dialog or another program has it; the model tree
+  belongs to the viewport, the output pane to the editor. Hovering the label lists the viewport's keys **as they are bound now**: the list is read from the actions the viewport owns, so a key that is changed in *Keyboard shortcuts* or added later is in it. It is a small `FocusCue` widget
+  (`app/src/focuscue.cpp`) that any pane can be added to.
+- **Turning the view says that it closed the work plane view.** Shift + left drag (and the middle button) turns the camera, and the work plane view -- the plane is parallel to the view it was opened in -- is left; the grid and the drawing were gone without a word. The status bar
+  now says it and how to come back (*Shift+W opens it again, and W turns the view to look straight at the plane*), with the keys as they are bound now.
+
 ### The guided tour is a main tour and chapters
 - **The tour has a main tour (25 steps after the welcome card) and two chapters that run on their own: Drawing and sweeps (9 steps) and Copies and symmetry (8).** The 42 steps in one line were a long walk for someone who wanted one subject; the work plane, the profile steps and the
   line and sweep steps are now the chapter *Drawing and sweeps*, and the shadow reference, copies and linked copies, and the six symmetry steps are *Copies and symmetry*. **Help ▸ Guided tour is a submenu** listing the main tour and the chapters; each has its own counter

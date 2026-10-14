@@ -215,6 +215,14 @@ ResultPanel::ResultPanel(QWidget* parent)
         });
     }
     layout->addWidget(m_info);
+    {   // (a design tool, not a certified solver: said on the card that shows the numbers, where they are read -- and where the checks of the program are)
+        auto notice = new QLabel(T("Not validated for safety-critical use"));
+        notice->setObjectName("resultDisclaimer");
+        notice->setWordWrap(true);
+        notice->setToolTip(T("FielDes is a design tool, not a certified solver. The program is checked against four known answers (examples/verification: a beam, a plate with a hole, "
+                             "a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it."));
+        layout->addWidget(notice);
+    }
     setMinimumWidth(220);
     resize(240, 100);
     new CardController(this, "result", nullptr, QSize(220, 120));      // (dragged by any empty place, resized from its edges)

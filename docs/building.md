@@ -161,6 +161,17 @@ python scripts\run_example.py examples\05_static_analysis.py
 what the script prints and the time it took; nothing is drawn, `view.set_*` calls are remembered only, and
 `var(3)` is the plain number 3. Any Python 3.8+ works; there is nothing to install.
 
+## Before a release: cold against warm
+
+```
+python scripts\cold_vs_warm.py
+```
+
+Runs every example three times -- with the caches as they are shipped beside the STEP files, with every cache deleted, and again right after that, with the caches the second run made --
+each in a copy of the examples folder with cache folders of its own, so nothing of yours is read or written, and compares what each run prints and a hash of the field of every shape it made
+(`run_example.py --digest`). A difference means a cache that does not give back what the program makes now (or a result that is not repeatable): the stale-cache class of bug, which no test of a single
+run finds. It takes a while (the analyses and the optimisations run three times); `python scripts\cold_vs_warm.py 05_static_analysis 16_fluid_flow` runs the ones named. The exit code is 1 when anything differs or fails.
+
 ## Regenerating the library reference
 
 ```

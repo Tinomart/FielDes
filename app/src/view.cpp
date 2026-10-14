@@ -461,6 +461,16 @@ bool View::isRendering() const
     return false;
 }
 
+QString View::graphicsInfo()
+{
+    if (!context()) return QString();
+    makeCurrent();
+    auto text = [this](GLenum name) { return QString::fromLatin1(reinterpret_cast<const char*>(glGetString(name))); };
+    const QString out = QString("%1 / %2, OpenGL %3").arg(text(GL_VENDOR), text(GL_RENDERER), text(GL_VERSION));
+    doneCurrent();
+    return out;
+}
+
 double View::renderFraction() const
 {
     if (shapes.isEmpty()) return 1.0;
@@ -2109,11 +2119,26 @@ void View::mousePressEvent(QMouseEvent* event)
             press_target = nullptr;
             return;
         }
+        // The options for other hands (Settings ▸ Navigation): the Blender style pans with Shift + the middle button, the touchpad style with Alt + the left button
+        if ((m_navPreset == NAV_BLENDER && event->button() == Qt::MiddleButton && (event->modifiers() & Qt::ShiftModifier)) ||
+            (m_navPreset == NAV_TOUCHPAD && event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier)))
+        {
+            press_pos = QPoint(-100000, -100000);   // not a selection click
+            press_target = nullptr;
+            press_ctrl = false;
+            drag_target = nullptr;
+            mouse.state = mouse.DRAG_PAN;
+            return;
+        }
         if ((event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)) ||
             event->button() == Qt::MiddleButton)
         {
             // Shift + left drag and the middle button's drag turn the view; such a press selects nothing -- and turning the view leaves the work plane view
-            if (m_wp.open) setWorkPlaneOpen(false);
+            if (m_wp.open)
+            {
+                setWorkPlaneOpen(false);
+                emit(workPlaneTurnedAway());        // (the grid and the drawing are gone without a word otherwise)
+            }
             press_pos = QPoint(-100000, -100000);   // not a selection click
             press_target = nullptr;
             press_ctrl = false;
