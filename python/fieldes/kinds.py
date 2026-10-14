@@ -54,6 +54,7 @@ DOMAINS = {
     'structural': ('Structural', '#ee6a5e', '#f4958c'),
     'thermal':    ('Thermal',    '#f08c2a', '#f5b46e'),
     'fluid':      ('Fluid',      '#6f86f2', '#a1b0f7'),
+    'manufacturing': ('Manufacturing', '#46c37b', '#86d9a8'),
 }
 
 # The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
@@ -64,6 +65,8 @@ DOMAIN_OF_FUNCTION = {
     'fixed_temperature': 'thermal', 'heat_input': 'thermal', 'heat_generation': 'thermal', 'convection': 'thermal',
     'fluid_analysis': 'fluid', 'flow_topology_optimization': 'fluid',
     'inlet': 'fluid', 'outlet': 'fluid', 'wall': 'fluid', 'slip': 'fluid',
+    'manufacturing_analysis': 'manufacturing', 'manufacturing_optimization': 'manufacturing',
+    'manufacturing_constraint': 'manufacturing', 'fff_constraint': 'manufacturing', 'cnc_constraint': 'manufacturing', 'molding_constraint': 'manufacturing',
 }
 
 # ... and of a value, by its class (a subclass is of its parent's domain)
@@ -74,6 +77,7 @@ _DOMAIN_OF_CLASS = {
     '_Support': 'structural', '_Force': 'structural', '_Gravity': 'structural', '_Thermal': 'structural',
     '_Temperature': 'thermal', '_Heat': 'thermal', '_HeatInput': 'thermal', '_HeatGeneration': 'thermal', '_Convection': 'thermal',
     '_Inlet': 'fluid', '_Outlet': 'fluid', '_Wall': 'fluid', '_Slip': 'fluid',
+    'ManufacturingConstraint': 'manufacturing', 'ManufacturingAnalysis': 'manufacturing', 'ManufacturingResult': 'manufacturing',
 }
 
 
@@ -99,6 +103,7 @@ def domain_of_value(value):
 _BY_CLASS = {
     'Result': 'simulation', 'ModalResult': 'simulation', 'ThermalResult': 'simulation', 'FluidResult': 'simulation',
     'TopologyResult': 'simulation', 'FlowTopologyResult': 'simulation', 'ParametricResult': 'simulation',
+    'ManufacturingAnalysis': 'simulation', 'ManufacturingResult': 'simulation', 'ManufacturingConstraint': 'conditions',
     'Material': 'material', 'Fluid': 'material', '_Support': 'conditions', '_Force': 'conditions',
     '_Gravity': 'conditions', '_Thermal': 'conditions', '_Temperature': 'conditions', '_Heat': 'conditions',
     '_HeatInput': 'conditions', '_HeatGeneration': 'conditions',

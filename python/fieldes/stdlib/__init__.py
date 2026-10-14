@@ -23,6 +23,7 @@ from fieldes.stdlib.selection import *
 from fieldes.stdlib.thermal import *
 from fieldes.stdlib.fluid import *
 from fieldes.stdlib.parametric import *
+from fieldes.stdlib.manufacturing import *
 from fieldes.stdlib.fields import *
 from fieldes.stdlib.fieldargs import *
 from fieldes.stdlib.regression import *

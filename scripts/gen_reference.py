@@ -38,6 +38,7 @@ MODULES = [
     ('thermal', 'Thermal analysis and thermal topology optimization', 'fieldes.stdlib.thermal'),
     ('fluid', 'Fluid flow analysis', 'fieldes.stdlib.fluid'),
     ('parametric', 'Parametric optimization', 'fieldes.stdlib.parametric'),
+    ('manufacturing', 'Manufacturing: constraints, the check and the shell', 'fieldes.stdlib.manufacturing'),
     ('content_cache', 'Caching', 'fieldes.stdlib.content_cache'),
     ('render_cache', 'Keeping rendered meshes (render cache)', 'fieldes.stdlib.render_cache'),
     ('custom_resolution', 'A resolution of its own for one body', 'fieldes.stdlib.custom_resolution'),

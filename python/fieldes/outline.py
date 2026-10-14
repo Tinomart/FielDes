@@ -101,7 +101,8 @@ def _function_kinds():
 
 _ROLE_OF = {'fixed': 'supports', 'force': 'loads', 'gravity': 'loads', 'thermal_expansion': 'loads',
             'fixed_temperature': 'fixed_temperatures', 'heat_input': 'heat_inputs', 'heat_generation': 'heat_generations',
-            'convection': 'convections', 'inlet': 'inlets', 'outlet': 'outlets', 'wall': 'boundaries', 'slip': 'boundaries', 'symmetry': 'boundaries'}
+            'convection': 'convections', 'inlet': 'inlets', 'outlet': 'outlets', 'wall': 'boundaries', 'slip': 'boundaries', 'symmetry': 'boundaries',
+            'manufacturing_constraint': 'constraints', 'fff_constraint': 'constraints', 'cnc_constraint': 'constraints', 'molding_constraint': 'constraints'}
 
 
 def _guess_role(callee):

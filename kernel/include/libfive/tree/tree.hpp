@@ -148,8 +148,14 @@ public:
      *  them against the same canonical map, then compare their ids. */
     Tree cooptimize(std::unordered_map<TreeDataKey, Tree>& canonical) const;
 
-    /*  Returns a tree with all remap operations expanded. */
-    Tree flatten() const;
+    /*  Returns a tree with all remap operations expanded.
+     *
+     *  `share` false (the default) expands a node again every time it is reached, as flatten always did: the numbers of a tree that handles() makes
+     *  draggable are counted in the tree this makes, and what a saved script says about them (the list of numbers under handles(...)) was counted so.
+     *  `share` true remembers what a node comes to under a substitution and uses that every time it is reached: the same values, a graph with as many
+     *  nodes as there are different ones, and the only way to expand a field made of shifted copies of fields made of shifted copies in a time that
+     *  does not grow with every level (what the optimizer and the evaluators are made from). */
+    Tree flatten(bool share = false) const;
 
     /*  Checks the number of unique nodes in the tree */
     size_t size() const;
@@ -214,6 +220,8 @@ protected:
      *  whether it was returned from optimized()) */
     enum {
         TREE_FLAG_IS_OPTIMIZED=(1<<0),
+        // optimized() left the tree as it was because it is a graph with so many ways through it that the optimizing walk would not end
+        TREE_FLAG_BRANCHING=(1<<1),
     };
     uint32_t flags;
 

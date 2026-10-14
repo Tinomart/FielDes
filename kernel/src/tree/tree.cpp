@@ -7,18 +7,22 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <numeric>
 #include <stack>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <boost/container/small_vector.hpp>
 
 #include "libfive/tree/tree.hpp"
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/archive.hpp"
+#include "libfive/tree/content_key.hpp"
 #include "libfive/eval/eval_array.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 
@@ -386,7 +390,7 @@ Tree Tree::apply(Tree var, Tree value) const {
     return Tree(new Data(TreeApply { var, value, *this }));
 }
 
-Tree Tree::flatten() const {
+Tree Tree::flatten(bool share) const {
     if (!(ptr->flags & TreeData::TREE_FLAG_HAS_REMAP)) {
         return *this;
     }
@@ -426,12 +430,29 @@ Tree Tree::flatten() const {
      */
     using MapPointer = std::shared_ptr<std::unordered_map<const Data*, Tree>>;
     struct Task {
-        enum { DOWN, UP } v;
+        enum { DOWN, UP, STORE } v;
         const Data* t;
         MapPointer m;
     };
     std::stack<Task> todo;
     std::stack<Tree> out;
+
+    /*  What a node comes to under a substitution, remembered.  A node that several others share is the same node under the same substitution each
+     *  time it is reached, and without this it was expanded again for every way of reaching it: a field made of shifted copies of fields that are
+     *  made of shifted copies -- every remap that is nested in another -- cost a multiple of itself at each level of the nesting (about five times
+     *  for each).  The substitutions are kept alive for the length of the call, so that the address of one is never another's.  */
+    struct MemoKey {
+        const Data* t;
+        const void* m;
+        bool operator==(const MemoKey& o) const { return t == o.t && m == o.m; }
+    };
+    struct MemoHash {
+        size_t operator()(const MemoKey& k) const {
+            return std::hash<const void*>()(k.t) * 1000003u ^ std::hash<const void*>()(k.m);
+        }
+    };
+    std::unordered_map<MemoKey, Tree, MemoHash> memo;
+    std::vector<MapPointer> alive;
 
     todo.push({Task::DOWN, ptr, nullptr});
 
@@ -449,7 +470,18 @@ Tree Tree::flatten() const {
             return Tree(t);
         };
 
+        if (k.v == Task::STORE) {
+            if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, out.top());
+            continue;
+        }
         if (k.v == Task::DOWN) {
+            if (share) {
+                const auto hit = memo.find(MemoKey{k.t, k.m.get()});
+                if (hit != memo.end()) {
+                    out.push(hit->second);
+                    continue;
+                }
+            }
             if (std::get_if<TreeNonaryOp>(k.t)) {
                 out.push(get(k.t));
             } else if (auto t=std::get_if<TreeUnaryOp>(k.t)) {
@@ -467,6 +499,7 @@ Tree Tree::flatten() const {
                             get(Tree::Y().ptr),
                             get(Tree::Z().ptr)));
                 out.push(new_oracle);
+                if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, new_oracle);
             } else if (auto t=std::get_if<TreeRemap>(k.t)) {
                 todo.push({Task::UP, k.t, k.m});
                 todo.push({Task::DOWN, t->z.ptr, k.m});
@@ -485,6 +518,7 @@ Tree Tree::flatten() const {
                 } else {
                     out.push(Tree(k.t));
                 }
+                if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, out.top());
             } else if (auto t=std::get_if<TreeBinaryOp>(k.t)) {
                 const auto lhs = out.top();
                 out.pop();
@@ -495,6 +529,7 @@ Tree Tree::flatten() const {
                 } else {
                     out.push(Tree(k.t));
                 }
+                if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, out.top());
             } else if (auto t=std::get_if<TreeRemap>(k.t)) {
                 // Update the map with X/Y/Z values
                 auto m = std::make_shared<std::unordered_map<const Data*, Tree>>(
@@ -507,6 +542,8 @@ Tree Tree::flatten() const {
                 m->insert_or_assign(Tree::X().ptr, out.top());
                 out.pop();
 
+                alive.push_back(m);
+                todo.push({Task::STORE, k.t, k.m});
                 todo.push({Task::DOWN, t->t.ptr, m});
             } else if (auto t=std::get_if<TreeApply>(k.t)) {
                 // Update the map with the new value
@@ -514,6 +551,8 @@ Tree Tree::flatten() const {
                         k.m ? *(k.m) : MapPointer::element_type());
                 m->insert_or_assign(t->target.ptr, out.top());
                 out.pop();
+                alive.push_back(m);
+                todo.push({Task::STORE, k.t, k.m});
                 todo.push({Task::DOWN, t->t.ptr, m});
             } else {
                 // We shouldn't ever get here, because Nonary, Constant,
@@ -529,7 +568,7 @@ Tree Tree::flatten() const {
 
 std::vector<const Tree::Data*> Tree::walk() const {
     if (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) {
-        return flatten().walk();
+        return flatten(true).walk();
     }
     // Store how many times each tree (by id) is referenced
     std::unordered_map<Id, unsigned> count;
@@ -609,9 +648,62 @@ Tree Tree::without_flags(uint32_t clear_flags) const {
     return Tree(ptr, true, flags & (~clear_flags));
 }
 
+/*  How many nodes the optimizing walk below would visit: it goes down a node once for every way there is to reach it, and a tree made of shifted
+ *  copies of trees that are made of shifted copies (every remap inside another) is a graph in which the ways multiply with each level.  Counted
+ *  in one pass over the nodes, parents before children: the paths to a node are the paths to its parents.  */
+static double optimizing_visits(const Tree& root, double* unique)
+{
+    const auto flat = root.walk();                      // (children before their parents)
+    *unique = double(flat.size());
+    std::unordered_map<const Tree::Data*, double> paths;
+    paths[root.get()] = 1.0;
+    double total = 0.0;
+    for (auto itr = flat.rbegin(); itr != flat.rend(); ++itr) {
+        const double here = paths[*itr];
+        total += here;
+        if (auto d = std::get_if<TreeUnaryOp>(*itr)) {
+            paths[d->lhs.get()] += here;
+        } else if (auto d = std::get_if<TreeBinaryOp>(*itr)) {
+            paths[d->lhs.get()] += here;
+            paths[d->rhs.get()] += here;
+        }
+        if (total > 1e12) break;
+    }
+    return total;
+}
+
+// (a part imported from a file has about one way to each node, and is optimized as it was; a field made of shifted copies of fields made of
+// shifted copies has hundreds, which is a walk that goes on for seconds to save a tape that is short already)
+static bool too_branching(double visits, double unique)
+{
+    return visits > 3.0e6 || (visits > 2.0e5 && visits > 30.0 * unique);
+}
+
 Tree Tree::optimized() const {
+    if (flags & TREE_FLAG_IS_OPTIMIZED) {
+        return *this;
+    }
+    const bool timing = std::getenv("FIELDES_TREE_TIMING") != nullptr;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto lap = [&](const char* what, double extra) {
+        if (timing) {
+            std::cerr << "[tree] " << what << " " << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
+                      << " s (" << extra << ")" << std::endl;
+        }
+    };
+    const Tree flat = (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) ? flatten(true) : *this;
+    lap("flattened", 0);
+    // A tree that is a graph with a great many ways through it is left as it is: the walk would take longer than anything is gained by it
+    double unique = 0;
+    const double visits = optimizing_visits(flat, &unique);
+    lap("paths counted", visits);
+    if (too_branching(visits, unique)) {
+        return flat.with_flags(TREE_FLAG_IS_OPTIMIZED | TREE_FLAG_BRANCHING);
+    }
     std::unordered_map<Data::Key, Tree> canonical;
-    return optimized_helper(canonical);
+    const auto out = flat.optimized_helper(canonical);
+    lap("optimized", visits);
+    return out;
 }
 
 Tree Tree::optimized_helper(
@@ -620,7 +712,7 @@ Tree Tree::optimized_helper(
     if (flags & TREE_FLAG_IS_OPTIMIZED) {
         return *this;
     } else if (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) {
-        return flatten().optimized_helper(canonical);
+        return flatten(true).optimized_helper(canonical);
     }
 
     using AffineMap = std::unordered_map<Tree, float>;
@@ -969,7 +1061,26 @@ Tree Tree::optimized_helper(
 }
 
 Tree Tree::cooptimize(std::unordered_map<Data::Key, Tree>& canonical) const {
-    return without_flags(TREE_FLAG_IS_OPTIMIZED).optimized_helper(canonical);
+    Tree base = without_flags(TREE_FLAG_IS_OPTIMIZED);
+    if (!(base.flags & TREE_FLAG_BRANCHING) && (base.ptr->flags & TreeData::TREE_FLAG_HAS_REMAP)) {
+        // (optimized_helper flattens a tree with shifted copies first: it is told here whether that makes a graph that it would walk for good)
+        const Tree flat = base.flatten(true);
+        double unique = 0;
+        if (too_branching(optimizing_visits(flat, &unique), unique)) {
+            base = flat.with_flags(TREE_FLAG_BRANCHING);
+        }
+    }
+    if (base.flags & TREE_FLAG_BRANCHING) {
+        // A tree optimized() left as it was is not walked here either.  It is told from the others by what it is -- the same field made twice is
+        // one tree, as the optimizing walk makes it -- so that the shape that has not changed is not drawn again
+        Data::Key key(std::string("\x01" "branching:") + treeContentKey(base));
+        auto found = canonical.find(key);
+        if (found != canonical.end()) {
+            return found->second;
+        }
+        return canonical.emplace(std::move(key), base.with_flags(TREE_FLAG_IS_OPTIMIZED | TREE_FLAG_BRANCHING)).first->second;
+    }
+    return base.optimized_helper(canonical);
 }
 
 size_t Tree::size() const {

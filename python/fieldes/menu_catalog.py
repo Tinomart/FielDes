@@ -207,6 +207,11 @@ PRIMITIVES = [
     ('outlet', 'Flow conditions', 'outlet()'),
     ('wall', 'Flow conditions', 'wall()'),
     ('slip', 'Flow conditions', 'slip()'),
+    # What a manufacturing check or shell is given: the rules, as a constraint of your own or one of the presets of a process
+    ('manufacturing_constraint', 'Manufacturing constraints', 'manufacturing_constraint()'),
+    ('fff_constraint', 'Manufacturing constraints', 'fff_constraint()'),
+    ('cnc_constraint', 'Manufacturing constraints', 'cnc_constraint()'),
+    ('molding_constraint', 'Manufacturing constraints', 'molding_constraint()'),
 ] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
 # The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus and a pyramid for 3D; a circle, a rectangle, a triangle,
@@ -313,11 +318,12 @@ BODY_CONDITIONS = {
 # What a group of primitives makes (the kind: see fieldes.kinds), for the icon beside each entry
 GROUP_KINDS = {'1D': 'curve', '3D': 'solid', '2D': 'profile', 'Points': 'point', 'Surfaces': 'surface', 'Fields': 'field', 'Symmetry': 'symmetry',
                'Materials': 'material', 'Fluids': 'material', 'Supports and loads': 'conditions',
-               'Thermal conditions': 'conditions', 'Flow conditions': 'conditions',
+               'Thermal conditions': 'conditions', 'Flow conditions': 'conditions', 'Manufacturing constraints': 'conditions',
                'Strut cells': 'cell', 'TPMS cells': 'cell', 'Planar cells': 'cell', 'Custom cells': 'cell'}
 # The domain of the groups of primitives that are about one (the categories of the Engineering menu: see fieldes.kinds); a material is of none -- an analysis of any
 # domain takes one
-PRIMITIVE_DOMAINS = {'Supports and loads': 'structural', 'Thermal conditions': 'thermal', 'Flow conditions': 'fluid', 'Fluids': 'fluid'}
+PRIMITIVE_DOMAINS = {'Supports and loads': 'structural', 'Thermal conditions': 'thermal', 'Flow conditions': 'fluid', 'Fluids': 'fluid',
+                     'Manufacturing constraints': 'manufacturing'}
 
 # What an operation makes, where it is not what its group makes (the operations of the lattice section make lattices, but random_points makes points)
 OPERATION_KINDS = {'random_points': 'points'}
@@ -404,6 +410,9 @@ OPERATIONS = [
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
     ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),
+    # Manufacturing: the check of a part against constraints (where it breaks them, as colours on it) and the shell that changes the part until it keeps them
+    ('manufacturing_analysis', 'Simulations', 'manufacturing_analysis({body})', 'optional'),
+    ('manufacturing_optimization', 'Simulations', 'manufacturing_optimization({body})', 'optional'),
 ]
 
 

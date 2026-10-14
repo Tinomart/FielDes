@@ -3610,7 +3610,7 @@ namespace {
 bool isSimulationPrimitive(const QString& group)
 {
     return group == "Materials" || group == "Fluids" || group == "Supports and loads" ||
-           group == "Thermal conditions" || group == "Flow conditions";
+           group == "Thermal conditions" || group == "Flow conditions" || group == "Manufacturing constraints";
 }
 
 bool isSimulationOperation(const QString& group)
@@ -3651,8 +3651,9 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     // order the catalog has them
     static const QHash<QString, QString> titles = {
         {"Materials", T("New material")}, {"Fluids", T("New fluid")}, {"Supports and loads", T("New support or load")},
-        {"Thermal conditions", T("New thermal condition")}, {"Flow conditions", T("New flow condition")}};
-    static const QStringList order = {"Materials", "Fluids", "Supports and loads", "Thermal conditions", "Flow conditions"};
+        {"Thermal conditions", T("New thermal condition")}, {"Flow conditions", T("New flow condition")},
+        {"Manufacturing constraints", T("New manufacturing constraint")}};
+    static const QStringList order = {"Materials", "Fluids", "Supports and loads", "Thermal conditions", "Flow conditions", "Manufacturing constraints"};
     QHash<QString, QList<QJsonObject>> groups;
     for (const auto v : m_catalog["primitives"].toArray())
     {
@@ -3988,7 +3989,7 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, doub
 void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
 {
     static const QList<QPair<QString, QString>> categories = {
-        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}};
+        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}};
     const int at = line < 0 ? atLine : line;
     for (const auto& c : categories)
     {

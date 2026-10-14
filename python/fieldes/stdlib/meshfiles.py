@@ -193,6 +193,32 @@ def write_3mf(path, xyz, tri, name='fieldes'):
         z.writestr('3D/3dmodel.model', model)
 
 
+def write_3mf_objects(path, objects):
+    ''' A 3MF with several objects: [(name, xyz, tri, kind)] -- kind 'model' (a part), 'support' (a support that is not part of the print's shape) or 'other' (a volume that is not
+        printed: a no-support region).  Each is an object of its own in the file and an item of the build, so that a slicer lists them apart '''
+    resources, items = [], []
+    for k, (name, xyz, tri, kind) in enumerate(objects, start=1):
+        verts = ''.join('<vertex x="%s" y="%s" z="%s"/>' % (_num(xyz[i]), _num(xyz[i + 1]), _num(xyz[i + 2])) for i in range(0, len(xyz), 3))
+        tris = ''.join('<triangle v1="%d" v2="%d" v3="%d"/>' % (tri[t], tri[t + 1], tri[t + 2]) for t in range(0, len(tri), 3))
+        resources.append('<object id="%d" type="%s" name="%s"><mesh><vertices>%s</vertices><triangles>%s</triangles></mesh></object>' % (
+            k, kind if kind in ('model', 'support', 'solidsupport', 'surface', 'other') else 'model', _clean_name(name), verts, tris))
+        items.append('<item objectid="%d"/>' % k)
+    model = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+             '<metadata name="Application">FielDes</metadata><resources>%s</resources><build>%s</build></model>' % (''.join(resources), ''.join(items)))
+    types = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+             '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+             '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', types)
+        z.writestr('_rels/.rels', rels)
+        z.writestr('3D/3dmodel.model', model)
+
+
 # ---------------------------------------------------------------------------
 # glTF 2.0 (.glb, .gltf): metres, Y up
 

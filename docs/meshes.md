@@ -81,6 +81,11 @@ the objects and their connections), and handles **meshes only**: geometry, the t
 materials, animation, skins or cameras. Because the format is not specified, another program may read less of what FielDes writes than FielDes reads of
 its own files: STL, OBJ, PLY, 3MF and glTF are the safer ways to hand a model on. DXF is the same: only meshes made of faces.
 
+When no `bounds` is given a body is meshed in its own extent plus one cell all round (a face that lies exactly on the edge of the region meshed is not found by it).
+
+Other files of a body: `export_print(result, "part.3mf")` (the part, its supports and no-support volumes as separate objects: see [manufacturing](manufacturing.md)), `export_layers(part, "layers.dxf", layer_height=0.2)` (the
+contours of each layer as closed polylines) and `export_slice(part, "slice.svg", z)` (one layer as a picture). The layers are read from the body's field, not from a mesh, and are not G-code.
+
 ## Analyses: models and results
 
 A static analysis can be handed to another solver, and what any analysis found can be taken out as files:

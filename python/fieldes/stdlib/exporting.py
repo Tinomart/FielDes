@@ -26,7 +26,7 @@ from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib import meshfiles
 
-__all__ = ['export_mesh', 'export_fea', 'export_results', 'export_field', 'result_summary', 'key_results', 'EXPORT_FEA_FORMATS',
+__all__ = ['export_mesh', 'export_print', 'export_layers', 'export_slice', 'export_fea', 'export_results', 'export_field', 'result_summary', 'key_results', 'EXPORT_FEA_FORMATS',
            'EXPORT_RESULT_FORMATS']
 
 EXPORT_FEA_FORMATS = ('.inp', '.bdf', '.msh')
@@ -47,6 +47,8 @@ def _body_of(x, what):
     ''' The shape an export is about: a shape, the body of an analysis' result, the design an optimisation made '''
     if isinstance(x, Shape):
         return x
+    if type(x).__name__ == 'ManufacturingResult':
+        return x.oriented()                   # (a part the shell made is written the way up it is printed: turned into it, the model in the tree stays as it is)
     shape = getattr(x, 'shape', None)
     if isinstance(shape, Shape):
         return shape
@@ -73,6 +75,10 @@ def _surface_arrays(shape, bounds, resolution):
         if resolution is None:
             size = max(h - l for l, h in zip(lo, hi))
             resolution = max(0.5, min(20.0, 200.0 / max(size, 1e-9)))
+    if bounds is None:
+        # (the extent of a body is the box its faces lie on: a region that ends exactly on a face has no face inside it -- one cell more all round)
+        pad = max(1.0 / resolution, 0.005 * max(h - l for l, h in zip(lo, hi)))
+        lo, hi = tuple(l - pad for l in lo), tuple(h + pad for h in hi)
     region = libfive_region_t(*[libfive_interval_t(a, b) for a, b in zip(lo, hi)])
     mesh_p = render_mesh(shape, region, resolution)
     if not mesh_p:
@@ -120,6 +126,153 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
     meshfiles.write_mesh(path, xyz, tri, name=name, ascii=ascii)
+    return path
+
+
+def export_print(result, path, bounds=None, resolution=None):
+    ''' Writes what a print is made of as a 3MF with an object for each: the part (what manufacturing_optimization made, turned so that the way up of the print is z), its supports
+        (an object of type support) and the volumes where no support may be made (objects of type other, named support_blocker_N), all turned the same way, in millimetres.  A
+        plain body is the one object.  There is no G-code here and no slicing: the file is for a slicer to read; how a slicer treats the objects of type support and other is its own.
+        Returns the path. '''
+    path = os.fspath(path)
+    if os.path.splitext(path)[1].lower() != '.3mf':
+        raise ValueError('export_print({!r}): the file is a .3mf'.format(path))
+    objects = []
+    turn = getattr(result, 'oriented', None) if type(result).__name__ == 'ManufacturingResult' else None
+    part = _body_of(result, 'export_print')
+    x, t = _surface_arrays(part, bounds, resolution)
+    objects.append(('part', x, t, 'model'))
+    supports = getattr(result, 'supports', None)
+    if supports is not None:
+        sh = turn(supports) if turn is not None else supports
+        sx, st = _surface_arrays(sh, None, resolution)
+        if len(st):
+            objects.append(('supports', sx, st, 'support'))
+    for k, blocker in enumerate(getattr(result, 'blockers', None) or [], start=1):
+        bh = turn(blocker) if turn is not None else blocker
+        bx, bt = _surface_arrays(bh, None, resolution)
+        if len(bt):
+            objects.append(('support_blocker_%d' % k, bx, bt, 'other'))
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    meshfiles.write_3mf_objects(path, objects)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Layers: the contours of a body at heights, read from its field by the kernel's 2D contouring (nothing is meshed)
+
+class _Vec2(ctypes.Structure):
+    _fields_ = [('x', ctypes.c_float), ('y', ctypes.c_float)]
+
+
+class _Contour(ctypes.Structure):
+    _fields_ = [('pts', ctypes.POINTER(_Vec2)), ('count', ctypes.c_uint32)]
+
+
+class _Contours(ctypes.Structure):
+    _fields_ = [('cs', ctypes.POINTER(_Contour)), ('count', ctypes.c_uint32)]
+
+
+class _Region2(ctypes.Structure):
+    _fields_ = [('X', libfive_interval_t), ('Y', libfive_interval_t)]
+
+
+def _slice_contours(body, z, lo, hi, resolution):
+    ''' The closed contours of `body` at height z, as lists of (x, y) -- the outer ones and the holes -- found by the kernel's 2D contouring of its field '''
+    fn = getattr(lib, 'libfive_tree_render_slice', None)
+    if fn is None:
+        raise RuntimeError('this FielDes library has no slice contouring')
+    fn.argtypes = [ctypes.c_void_p, _Region2, ctypes.c_float, ctypes.c_float]
+    fn.restype = ctypes.POINTER(_Contours)
+    region = _Region2()
+    region.X.lower, region.X.upper = lo[0], hi[0]
+    region.Y.lower, region.Y.upper = lo[1], hi[1]
+    found = fn(body.ptr, region, float(z), float(resolution))
+    out = []
+    if found:
+        cs = found.contents
+        for i in range(cs.count):
+            c = cs.cs[i]
+            pts = [(c.pts[k].x, c.pts[k].y) for k in range(c.count)]
+            if len(pts) > 1 and abs(pts[0][0] - pts[-1][0]) < 1e-6 and abs(pts[0][1] - pts[-1][1]) < 1e-6:
+                pts.pop()                                # (a loop is closed by saying so, not by repeating its first point)
+            if len(pts) >= 3:
+                out.append(pts)
+        lib.libfive_contours_delete.argtypes = [ctypes.POINTER(_Contours)]
+        lib.libfive_contours_delete(found)
+    return out
+
+
+def _layer_resolution(resolution):
+    if resolution is None:
+        resolution = _host('__resolution', None)
+    return float(resolution) if resolution else 4.0
+
+
+def export_layers(part, path, layer_height=0.2, bounds=None, resolution=None, first=None, name=None):
+    ''' Writes the layers of a body -- its contours at heights, one layer every `layer_height` mm -- as a DXF: closed 3D polylines, the outer contours and the holes, on a DXF layer
+        of their own for each (L0001, L0002 ...), at their height.  The contours are read from the body's field by the kernel's 2D contouring: nothing is meshed.  Another program
+        reads them for a laser or a router, or to see the stack.  It is not G-code and there are no paths, no infill and no perimeters.
+
+            part          a body (a part that manufacturing_optimization made is written turned into the way up of its print, as export_mesh does)
+            layer_height  mm between layers (default 0.2); each layer is cut through the middle of its layer (at first + 0.5 layer, ...)
+            first         the height of the bottom of the first layer (default: the bottom of the body)
+            resolution    samples per mm of the contours (the scene's resolution when not given)
+
+        Millimetres.  Returns the path and writes nothing it could not read from the field. '''
+    from fieldes.stdlib.fields import _shape_bounds
+    path = os.fspath(path)
+    if os.path.splitext(path)[1].lower() != '.dxf':
+        raise ValueError('export_layers({!r}): the file is a .dxf (one layer as a picture: export_slice, .svg)'.format(path))
+    h = float(layer_height)
+    if not h > 0:
+        raise ValueError('export_layers: layer_height is more than 0 (mm)')
+    body = _body_of(part, 'export_layers')
+    lo, hi = _shape_bounds(body, bounds)
+    z0 = float(lo[2] if first is None else first)
+    res = _layer_resolution(resolution)
+    pad = 0.5 / res
+    flat = ((lo[0] - pad, lo[1] - pad), (hi[0] + pad, hi[1] + pad))
+    out = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES']
+    layers = 0
+    z = z0 + 0.5 * h
+    while z < hi[2]:
+        contours = _slice_contours(body, z, flat[0], flat[1], res)
+        if contours:
+            layers += 1
+            layer = 'L%04d' % layers
+            for pts in contours:
+                out += ['0', 'POLYLINE', '8', layer, '66', '1', '70', '9']
+                for (x, y) in pts:
+                    out += ['0', 'VERTEX', '8', layer, '10', '%.6g' % x, '20', '%.6g' % y, '30', '%.6g' % z, '70', '32']
+                out += ['0', 'SEQEND', '8', layer]
+        z += h
+    out += ['0', 'ENDSEC', '0', 'EOF']
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', encoding='ascii', newline='\r\n') as f:
+        f.write('\n'.join(out) + '\n')
+    return path
+
+
+def export_slice(part, path, z, bounds=None, resolution=None):
+    ''' Writes one layer of a body -- its contours at the height `z` -- as an SVG picture in millimetres (y up as in the model; the outer contours and the holes are one path, filled
+        with the even-odd rule, so that a hole is a hole).  Read from the body's field, not from a mesh.  Returns the path. '''
+    from fieldes.stdlib.fields import _shape_bounds
+    path = os.fspath(path)
+    if os.path.splitext(path)[1].lower() != '.svg':
+        raise ValueError('export_slice({!r}): the file is an .svg (the layers of a body as a stack: export_layers, .dxf)'.format(path))
+    body = _body_of(part, 'export_slice')
+    lo, hi = _shape_bounds(body, bounds)
+    res = _layer_resolution(resolution)
+    pad = 0.5 / res
+    contours = _slice_contours(body, float(z), (lo[0] - pad, lo[1] - pad), (hi[0] + pad, hi[1] + pad), res)
+    d = ' '.join('M ' + ' L '.join('%.5g %.5g' % (x, -y) for x, y in pts) + ' Z' for pts in contours)
+    w, hh = (hi[0] - lo[0]) + 2 * pad, (hi[1] - lo[1]) + 2 * pad
+    svg = ('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="%.5gmm" height="%.5gmm" viewBox="%.5g %.5g %.5g %.5g">'
+           '<path d="%s" fill="#444" fill-rule="evenodd" stroke="none"/></svg>\n') % (w, hh, lo[0] - pad, -(hi[1] + pad), w, hh, d)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(svg)
     return path
 
 

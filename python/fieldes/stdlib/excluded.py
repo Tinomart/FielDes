@@ -187,6 +187,8 @@ THROUGH = {
     'fea': ['static_analysis', 'modal_analysis'],
     'thermal': ['thermal_analysis'],
     'fluid': ['fluid_analysis'],
+    'parametric': ['parametric_optimization'],
+    'manufacturing': ['manufacturing_analysis', 'manufacturing_optimization'],       # (the shell leaves the locked regions of its part as they are by itself)
     'selection': ['select_surface', 'surface_from_bodies'],
     'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom', 'random_points'],
     'conformal': ['lattice_surface_conform'],
@@ -216,6 +218,7 @@ NO_BODY = {
     'fea': ['fixed', 'force', 'gravity', 'thermal_expansion'],
     'thermal': ['fixed_temperature', 'heat_input', 'heat_generation', 'convection'],
     'fluid': ['inlet', 'outlet', 'wall', 'slip', 'symmetry'],
+    'manufacturing': ['manufacturing_constraint', 'fff_constraint', 'cnc_constraint', 'molding_constraint'],
     'fields': ['x_field', 'y_field', 'z_field', 'radial_field', 'angle_field', 'polar_field', 'distance_to_point',
                'distance_to_points', 'distance_to_line', 'distance_to_segment', 'distance_to_polyline',
                'distance_to_plane', 'attractor', 'wave', 'field_from_points', 'field_from_csv', 'noise_field',

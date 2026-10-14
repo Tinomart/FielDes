@@ -171,7 +171,7 @@ static QString guideHtml()
               "<b>New surface</b> and <b>New field</b>, the most basic of each -- and <b>Parametric shapes</b> (a rounded box, a ring, noise, your own logic, custom blocks) "
               "write the call into the script where the cursor is "
               "(and select it, ready to drag); <b>Operations</b> work on the selected model and hold <b>Lattice</b>; <b>Engineering</b> has a category for "
-              "each domain -- <b>Structural</b>, <b>Thermal</b>, <b>Fluid</b> -- with what its analyses are given and the analyses and optimizations themselves. "
+              "each domain -- <b>Structural</b>, <b>Thermal</b>, <b>Fluid</b>, <b>Manufacturing</b> -- with what its analyses are given and the analyses and optimizations themselves. "
               "Right-click a model for the same <b>Operations</b> (offsets, moving, field math ...) on it and the <b>Engineering</b> analyses (static, modal, "
               "topology optimization, thermal, flow), written with that model as the argument. Whatever a menu entry "
               "writes that you did not give -- a force, a volume fraction, an element size -- it asks for first."));

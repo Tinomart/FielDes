@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Manufacturing: constraints, a check of them, and a shell that changes the part until it keeps them
+- **Engineering > Manufacturing** (a category of its own, green): **constraints** as inputs, like a support or a load -- `manufacturing_constraint` with every rule optional (`overhang`, `min_wall`, `min_gap`, `max_bridge`, `min_radius`,
+  `draft`, `undercut_along`, a `region=`, a `build_direction` that can be left free) and the presets `fff_constraint`, `cnc_constraint` and `molding_constraint` with the numbers of a process (from published guides, not a standard); the
+  overhang rule is off in the presets (slicers make supports) and is for what supports cannot reach, scoped with a region. **`manufacturing_analysis`** is the check: every rule is a **field** on the part, drawn as colours on it (the result card
+  switches the rule), and the report says how much of the surface breaks each rule, how badly and where. **`manufacturing_optimization`** is the shell: it **changes the geometry** -- thin walls thickened (an offset that follows how thin the wall
+  is), narrow gaps closed or widened, inside corners rounded to a radius (the part closed by a ball), a draft put on the walls, undercuts filled, overhangs made to stand (a gusset at the angle asked, or a teardrop cut above a channel) -- and
+  the result is a body, coloured by what changed (red added, blue cut), with what was added and cut, a **budget** (`max_change`: a remedy that would change more of the part is not made, and says so), the regions that are excluded or kept left alone,
+  and what is still broken, where. `.oriented()` turns the part so that the way up of the print is z, and an export writes it turned.
+- **How it is made.** The check and the remedies read the part's own field: normals by central differences, the thickness along the normal found where the field crosses 0, what a ball reaches, shifted copies of the field -- nothing is meshed. The
+  numbers of a report (how much of the surface, where) are **measured** on a few thousand points of the surface, found by projecting random points onto it, and are worked out a second way (plain arithmetic on the values of the field along the lines
+  each rule looks along), so the colours and the numbers are made two ways. **Verified on known answers**: 8 check cases (a 0.6 mm fin against a 0.8 mm wall, a 0.3 mm gap, an inside corner, a ledge, a vertical wall, a groove, bridges of 30 and 10 mm
+  with 20 asked) and 8 shell cases (the fin thickened and the pillar left alone, a gusset under a ledge, a groove filled, a draft of 2 degrees, a gap closed, an inside corner rounded to its radius, a teardrop above a hole -- 104.7 mm^3 cut where the
+  geometry says about 108). A check of the part's own field is not a substitute for the check of the one who makes it.
+- **Supports and the files of a print.** `support='block'` on a constraint (with the overhang rule) lets the shell add, under every surface of its result that still leans out more than asked, a **block straight under it** (to the plate or the
+  part below, `support_gap` from the part), as a separate body: `.supports`, `.support_volume`, and `no_support=` regions where none may be made. `export_print(result, "part.3mf")` writes the part (turned into the way up of its print), its supports (type
+  `support`) and the no-support volumes (type `other`) as separate objects of one 3MF; `export_layers(part, "layers.dxf", layer_height=0.2)` writes the contours of each layer as closed polylines on a DXF layer each, and `export_slice(part, "slice.svg", z)`
+  one layer as a picture -- both read from the body's field, nothing meshed, no G-code. A constraint with a free `build_direction` stands the part the way that leaves the least leaning out (the first 0.6 mm on the plate excepted), the lowest print among ties.
+- **Fixed on the way.** `export_mesh` of a body whose extent is exactly its faces (a box) found nothing to write: the region is now one cell larger all round when no `bounds` is given. The surface a ray meets first (`_entry`) missed a face that a sample
+  landed on exactly. In the window, a run whose result is a field of shifted copies of shifted copies froze the main thread when the viewport compared it with the shapes it already had (`Tree::cooptimize` walked it as `optimized()` used to): it now
+  tells such a tree by its content instead of walking it.
+- **Why the result took minutes to draw, and what it takes now.** A remedy asks the part's field for its value at other places (how far to the far side of a wall, what is above a point), and the mesher then works through those lookups for every cell. Two
+  causes were found by measuring, not guessed: (1) **exact ties in a `min` or `max`** -- looking at a part from where the lookup does not move what it sees (straight up at a vertical wall) gives the same value over a whole region, and the mesher, placing a
+  vertex, tries every way such a tie could be settled: 24 such lookups took 53 s to mesh and 0.4 s when each was a few microns apart in value, so every place that combines lookups, and every remedy united with the part, now keeps them a few microns apart
+  (`_join`; the walls remedy alone: 115 s to 1.8 s); (2) **too many lookups**: the overhang remedy used 625 (a 24-sided disc at 25 depths) and now uses 54 (8 sides, 6 depths close together near the surface) -- the same result on the example to a tenth
+  of a cubic millimetre, in a quarter of the time -- and is limited to where there is part above the point, as the thin-wall and gap remedies are to where the surface is near. Example 33 draws in 133 s at resolution 3 (it never finished before).
+- **Kernel: a field made of fields made of shifted copies no longer costs a multiple of itself at every level.** `Tree::optimized()` walked a graph once for every way to reach a node, so nesting copies (smooth, the manufacturing remedies, every remap
+  inside another) multiplied the cost by about five for each level: 0.85 to 3.5 s for a chain of seven. It now counts the ways first (one pass over the nodes) and leaves a tree that has hundreds of ways to each node as it is (a part imported from a file has
+  about one, and is optimized as before): 0.005 s, whatever the depth, and the values are the same. `Tree::flatten()` remembers what a shared node comes to under a substitution. The check of a thin wall is 0.01 s to set up instead of 0.9 s, and the shell
+  on a part with a thin fin takes 2.4 s instead of 69 s. Example `33_manufacturing.py`; docs `manufacturing.md`; six translations.
+
 ### Parametric optimization: the best numbers for the var()s of a model, over any analysis
 - **`parametric_optimization(analysis, [(var, low, high), ...], minimize= | maximize=, constraints=)`** (in the Engineering menu, directly: it works over an analysis of any domain) finds the numbers of the
   `var()`s that make a measure of an analysis as small (or large) as it can be while the constraints hold -- the lightest beam under 90 MPa that bends less than 0.5 mm, the stiffest bar of a given mass, the coolest slab.

@@ -181,6 +181,18 @@ void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& 
             p.drawPath(path);
         }
     }
+    else if (type == "simulation" && domain == "manufacturing")
+    {
+        // a manufacturing result: the layers a part is built of, each a little further out than the one below
+        p.setPen(Qt::NoPen);
+        const double starts[4] = {4.4, 3.0, 5.2, 2.4};
+        const double widths[4] = {6.0, 8.6, 5.4, 9.6};
+        for (int i = 0; i < 4; ++i)
+        {
+            p.setBrush(i == 1 ? c : alpha(c, 175));
+            p.drawRoundedRect(QRectF(starts[i], 2.4 + i * 3.1, widths[i], 2.2), 0.8, 0.8);
+        }
+    }
     else if (type == "simulation")
     {
         // a result: bars of a plot on a base line
@@ -230,6 +242,15 @@ void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& 
         p.setPen(Qt::NoPen);
         p.setBrush(c);
         p.drawPolygon(QPolygonF({QPointF(9.6, 5.0), QPointF(14.0, 8.0), QPointF(9.6, 11.0)}));
+    }
+    else if (type == "conditions" && domain == "manufacturing")
+    {
+        // what a manufacturing check is given: a limit, a gauge with its ticks
+        p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(alpha(c, 60));
+        p.drawRoundedRect(QRectF(1.8, 5.2, 12.4, 5.6), 1.0, 1.0);
+        p.setPen(QPen(c, 1.2, Qt::SolidLine, Qt::RoundCap));
+        for (int k = 0; k < 4; ++k) p.drawLine(QPointF(4.2 + k * 2.6, 5.4), QPointF(4.2 + k * 2.6, k % 2 == 0 ? 8.6 : 7.4));
     }
     else if (type == "conditions")
     {
