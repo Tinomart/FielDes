@@ -566,7 +566,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
     // The profile in the coordinates of its own plane, from the middle of the box of its outline
     std::vector<Vec> where;
     for (const auto& c : in.profile) where.push_back(c.pos);
-    // (the outline of a primitive is in the plane z = 0, its axes x and y: no plane is worked out of its corners.  In every other way it is a sketch to the sweep)
+    // (the outline of a primitive is in the plane z = 0, its axes x and y: no plane is worked out of its corners.  In every other way it is a profile to the sweep)
     double frame[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
     if (!in.free && !libfive::pointshapes::planeOf(where, frame)) return nullptr;
     const Vec o(frame[0], frame[1], frame[2]), pu(frame[3], frame[4], frame[5]), pv(frame[6], frame[7], frame[8]);
@@ -604,7 +604,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
     auto V = libfive::pointshapes::polyline(in.path, in.pathDefault, in.closed, 14, &owners);
     const int n = int(V.size());
     if (n < 2) return nullptr;
-    // The sweep starts at the sketch: the path says how it travels, not where from.  The first point of the path is the middle of the box of the profile (path_extrude of sketch.py
+    // The sweep starts at the profile: the path says how it travels, not where from.  The first point of the path is the middle of the box of the profile (path_extrude of profile.py
     // moves the field the same way)
     {
         const Vec shift = (o + pu * cx + pv * cy) - V[0];
@@ -629,9 +629,9 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
         const double l = t.norm();
         return l > 1e-12 ? Vec(t / l) : T[size_t(std::min(k, pieces - 1))];
     };
-    // The frames.  The sketch is carried along the path as it is -- its two axes u and v, each next frame carried along without turning about the path (the double reflection of
-    // Wang et al.) -- so the first ring is the sketch itself, at whatever angle the path leaves it.  A sketch whose plane holds the direction of the path (nothing could be swept) is
-    // turned the least that puts it across the path (path_extrude of sketch.py does the same)
+    // The frames.  The profile is carried along the path as it is -- its two axes u and v, each next frame carried along without turning about the path (the double reflection of
+    // Wang et al.) -- so the first ring is the profile itself, at whatever angle the path leaves it.  A profile whose plane holds the direction of the path (nothing could be swept) is
+    // turned the least that puts it across the path (path_extrude of profile.py does the same)
     std::vector<Vec> Uf, Wf, N, B;
     Uf.resize(size_t(pieces));
     Wf.resize(size_t(pieces));
@@ -668,7 +668,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
         Uf[size_t(k + 1)] = nu.norm() > 1e-12 ? Vec(nu.normalized()) : Uf[size_t(k)];
         Wf[size_t(k + 1)] = nw.norm() > 1e-12 ? Vec(nw.normalized()) : Wf[size_t(k)];
     }
-    // (the frame the twist is measured in, across the path: u across it -- v when u lies along it -- u itself when the sketch is across the path)
+    // (the frame the twist is measured in, across the path: u across it -- v when u lies along it -- u itself when the profile is across the path)
     for (int k = 0; k < pieces; ++k)
     {
         Vec across = Uf[size_t(k)] - T[size_t(k)] * Uf[size_t(k)].dot(T[size_t(k)]);
@@ -727,7 +727,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
         const double cs = std::cos(phi), sn = std::sin(phi);
         const Vec Tk = T[size_t(k)];
         const Vec nk = turned(Uf[size_t(k)], Tk, cs, sn), bk = turned(Wf[size_t(k)], Tk, cs, sn);
-        // (which way the profile faces along the path: a sketch that the path leaves backwards is swept the other way round)
+        // (which way the profile faces along the path: a profile that the path leaves backwards is swept the other way round)
         const double facing = nk.cross(bk).dot(Tk) >= 0 ? 1.0 : -1.0;
         const uint32_t base = uint32_t(out->verts.size());
         // (the ring at the start of the piece, then the one at its end: the profile in this piece's frame, slid along the piece onto the plane that bisects the corner)
@@ -738,7 +738,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
             const double size = sizeAt(at);
             const Vec cut = tangentAt(at);
             const double slope = cut.dot(Tk);
-            // (the ends of an open path are the profile itself -- the sketch at the start, its copy at the end -- not cut square across the path)
+            // (the ends of an open path are the profile itself -- the profile at the start, its copy at the end -- not cut square across the path)
             const bool freeEnd = !closed && ((end == 0 && k == 0) || (end == 1 && k == pieces - 1));
             for (const auto& q : prof)
             {
@@ -882,6 +882,65 @@ int Shape::controlAfterPiece(int piece) const
     std::vector<std::pair<int, double>> owners;
     libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14, &owners);
     return piece >= 0 && piece < int(owners.size()) ? owners[size_t(piece)].first : -1;
+}
+
+int Shape::arcControlOfPiece(int piece) const
+{
+    std::vector<libfive::pointshapes::Control> cs;
+    if (!isFace() || !controlsNow(cs)) return -1;
+    std::vector<std::pair<int, double>> owners;
+    libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14, &owners);
+    const int n = int(owners.size());
+    if (n < 3 || piece < 0 || piece >= n) return -1;
+    // (every vertex of an arc belongs to its control, at 0: the piece between two of them is a piece of the arc -- a straight piece joins vertices of two controls, and a control that
+    // is not round has one vertex)
+    const auto& a = owners[size_t(piece)];
+    const auto& b = owners[size_t((piece + 1) % n)];
+    if (a.first != b.first || a.second != 0.0 || b.second != 0.0) return -1;
+    for (const auto& f : libfive::pointshapes::fillets(cs, m_controls_default, m_controls_closed))
+        if (f.control == a.first) return a.first;
+    return -1;
+}
+
+bool Shape::filletHandle(int control, FilletHandle& out) const
+{
+    std::vector<libfive::pointshapes::Control> cs;
+    if (!isFace() || !controlsNow(cs) || control < 0 || control >= int(cs.size()) || control >= int(m_controls.size())) return false;
+    const libfive::Tree::Id var = m_controls[size_t(control)].radiusVar;
+    const auto found = vars.find(var);
+    if (!var || found == vars.end()) return false;
+    const auto arcs = libfive::pointshapes::fillets(cs, m_controls_default, m_controls_closed);
+    const auto mine = std::find_if(arcs.begin(), arcs.end(), [&](const libfive::pointshapes::Fillet& f) { return f.control == control; });
+    if (mine == arcs.end()) return false;
+    // The largest radius this corner can have, the others as they are: what the kernel makes of a very large one
+    auto big = cs;
+    big[size_t(control)].radius = 1e9;
+    double cap = 0.0;
+    for (const auto& f : libfive::pointshapes::fillets(big, m_controls_default, m_controls_closed))
+        if (f.control == control) cap = f.radius;
+    double frame[9];
+    if (!(cap > 0) || !planeNow(frame)) return false;
+    const Eigen::Vector3d toCentre = (mine->centre - mine->corner).normalized();
+    const Eigen::Vector3d normal = Eigen::Vector3d(frame[3], frame[4], frame[5]).cross(Eigen::Vector3d(frame[6], frame[7], frame[8])).normalized();
+    out.control = control;
+    for (int a = 0; a < 3; ++a)
+    {
+        out.corner[a] = mine->corner[a];
+        out.toCentre[a] = toCentre[a];
+        out.normal[a] = normal[a];
+    }
+    out.sinHalf = std::sin(0.5 * mine->theta);
+    out.scale = std::max(1e-6, cs[size_t(control)].scale);
+    out.radius = mine->radius;
+    out.cap = cap;
+    out.var = var;
+    out.value0 = found->second;
+    return true;
+}
+
+bool Shape::roundWithoutVar(int control) const
+{
+    return control >= 0 && control < int(m_controls.size()) && m_controls[size_t(control)].hasRadius && !m_controls[size_t(control)].radiusVar;
 }
 
 void Shape::setVirtualPoint(bool on, int after, QVector3D pos)
@@ -2727,6 +2786,7 @@ void Shape::buildDeps() const
                 if (c.hasRot) add(c.rot[a]);
             }
             if (c.hasScale) add(c.scale);
+            if (c.hasRadius) add(c.radius);                 // (a round corner's radius: dragged by its arc)
         }
         for (const ControlPoint& c : m_prism_points)
         {
@@ -2736,6 +2796,7 @@ void Shape::buildDeps() const
                 if (c.hasRot) add(c.rot[a]);
             }
             if (c.hasScale) add(c.scale);
+            if (c.hasRadius) add(c.radius);
         }
         add(m_prism_a);
         add(m_prism_b);
@@ -2750,6 +2811,7 @@ void Shape::buildDeps() const
                     if (c.hasRot) add(c.rot[a]);
                 }
                 if (c.hasScale) add(c.scale);
+                if (c.hasRadius) add(c.radius);
             }
         }
         add(m_sweep_twist);
@@ -3594,7 +3656,10 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
         const auto pid = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
         key += QString("|prism %1|f%2").arg(m_prism_points.size()).arg(quintptr(built_tree.id()));
         for (const ControlPoint& c : m_prism_points)
+        {
             for (int a = 0; a < 3; ++a) key += QString(",%1").arg(pid(c.pos[a]));
+            if (c.hasRadius) key += QString(",R%1").arg(pid(c.radius));            // (a round corner: its radius is a number of the shape)
+        }
         key += QString(";%1,%2").arg(pid(m_prism_a)).arg(pid(m_prism_b));
     }
     if (hasSweep())
@@ -3610,6 +3675,7 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
                 if (c.hasRot)
                     for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(sid(c.rot[a]));
                 if (c.hasScale) key += QString(",s%1").arg(sid(c.scale));
+                if (c.hasRadius) key += QString(",R%1").arg(sid(c.radius));
             }
         }
         key += QString(";t%1").arg(sid(m_sweep_twist));
@@ -3626,6 +3692,7 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
         if (c.hasRot)
             for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(id(c.rot[a]));
         if (c.hasScale) key += QString(",s%1").arg(id(c.scale));
+        if (c.hasRadius) key += QString(",R%1").arg(id(c.radius));
     }
     return key;
 }
@@ -3778,7 +3845,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
     std::unique_ptr<libfive::Mesh> m;
-    // A prism -- a straight extrusion of a sketch of points -- is made from the numbers its points have now, and its a and b: no field is meshed, so it follows a point as it is
+    // A prism -- a straight extrusion of a profile of points -- is made from the numbers its points have now, and its a and b: no field is meshed, so it follows a point as it is
     // dragged.  (When it cannot be -- a handle pulled, a gizmo placing it, an outline that crosses itself -- its field is meshed as ever)
     if (hasPrism())
     {

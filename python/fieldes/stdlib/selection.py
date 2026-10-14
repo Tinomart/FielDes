@@ -172,8 +172,8 @@ def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution
     out = SurfaceSelection(lib.libfive_tree_copy(band.ptr))
     out.shape, out.seed, out.angle, out.mode = shape, seed, float(angle), mode
     out.samples, out.spacing, out.cover = count, used, cover
-    # (the points of the surface the walk took, and the way the surface faces at each: x, y, z of each, one after the other -- what a sketch of the
-    # patch is made from, see `sketch`)
+    # (the points of the surface the walk took, and the way the surface faces at each: x, y, z of each, one after the other -- what a profile of the
+    # patch is made from, see `profile`)
     out.sample_points, out.sample_normals = sample_xyz, sample_normals
     out.patch = field - cover
     # the surface itself, as a field: the height above the patch along its normal (zero on it, positive on the side it faces) -- what a

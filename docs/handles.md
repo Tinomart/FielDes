@@ -48,9 +48,9 @@ own mode again.
 
 **Several points selected are scaled and turned one by one.** Select two or more points (Ctrl+click, a Shift range, a rectangle) and their shared gizmo has two rings round the middle of
 them all besides the arrows or the dot: the **gold ring scales** every point by its own scale -- pull it out to make each one bigger, push it in to make each smaller; the factor is
-shown beside it -- and the **ring in the plane turns** every point by its own rotation (the plane of their sketch, or the work plane's while its view is open, else the plane facing the camera);
-the angle is shown. **The points stay where they are**: the rings change the scale and the rotation numbers of each point's `gizmo(...)`, not the arrangement of the points -- a sketch made of
-them keeps its shape, and a sweep along a line gets thicker or twists at every selected point. Points of a sketch stay in its plane.
+shown beside it -- and the **ring in the plane turns** every point by its own rotation (the plane of their profile, or the work plane's while its view is open, else the plane facing the camera);
+the angle is shown. **The points stay where they are**: the rings change the scale and the rotation numbers of each point's `gizmo(...)`, not the arrangement of the points -- a profile made of
+them keeps its shape, and a sweep along a line gets thicker or twists at every selected point. Points of a profile stay in its plane.
 
 **A locked model can be in a selection of several, but then the whole selection cannot be moved or edited.** Select
 them as any models (Ctrl+click, a Shift range, a rectangle): a warning says that *when a locked object is part of a multi
@@ -64,8 +64,8 @@ rows): they are all unlocked, and still selected.
 that faces the camera (all the selected models together, for the shared gizmo).
 
 **A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, always uniform, dragged with the one
-gold ring round the dot -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a sketch has no arrows**: its dot, pressed and dragged, moves it in the plane of the sketch (several points of one sketch selected
-together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Sketches](sketches.md).
+gold ring round the dot -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a profile has no arrows**: its dot, pressed and dragged, moves it in the plane of the profile (several points of one profile selected
+together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Profiles](profiles.md).
 
 **The gizmo of a point of a curve faces the way the curve does.** Its blue axis -- the arrow and the ring -- is the direction the curve (the path of a `path_extrude`) takes through the point, and the red and green are
 across it. So the **blue ring turns what is swept about the curve** (the twist of a sweep at that point), the other two rings tilt the direction the curve leaves the point by, the blue arrow slides the point along the
@@ -143,7 +143,7 @@ plate_2 = gizmo(
   The copy's shape, sizes, colours and every other property are the original's, so **when the original changes the copy changes with it**. All it has of its own is where it is: it can be **moved and rotated** with its gizmo (which has no
   scale knob), and nothing else -- its surfaces cannot be dragged and `gizmo(copy, scale=...)` and `handles(copy, ...)` are refused, because they would change the original's shape. The original is only **referred to**, always (the mark `# shadow: plate`),
   whether it is locked or not: it keeps its own row in the model tree and the copy shows a shadow of it -- taking the original into the copy would move its row away and make it look like what the copy is made of. *Operation → Repeating → instance*
-  writes the same block. A sketch or a curve cannot be linked (it is made of its points: link those, or copy it with `Shift+D`); a number, a material or the result of an analysis has no shape to follow.
+  writes the same block. A profile or a curve cannot be linked (it is made of its points: link those, or copy it with `Shift+D`); a number, a material or the result of an analysis has no shape to follow.
 
 ## Handles: drag a surface
 

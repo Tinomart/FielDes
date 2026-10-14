@@ -1943,7 +1943,7 @@ void ScenePanel::fitRegion()
     double nlo[3], nhi[3];
     bool any = false;
     int unknown = 0;                // (bodies that are meshed in the region and whose extent is not known: the region cannot be said to hold them.
-                                    // A sketch or a line is drawn from its points, not meshed: the region has nothing to hold of it)
+                                    // A profile or a line is drawn from its points, not meshed: the region has nothing to hold of it)
     auto drawnBody = [](const QString& t) { return t == "solid" || t == "lattice" || t == "import"; };
     for (const auto v : m_scene["items"].toArray())
     {
@@ -4707,18 +4707,18 @@ void ScenePanel::duplicateLinkedSelected()
         m_afterRun = [=] { duplicateLinkedSelected(); };       // (the script is being edited to get the models ready: the scene is a run behind)
         return;
     }
-    // What can be linked: a shape (a body, a 2D shape, a surface, a lattice).  A sketch or a curve is made of its points, a number or a material has no shape to follow
+    // What can be linked: a shape (a body, a 2D shape, a surface, a lattice).  A profile or a curve is made of its points, a number or a material has no shape to follow
     QList<QJsonObject> items;
     QStringList refused;
     for (const auto& it : selected)
     {
         const QString type = it["type"].toString(), callee = it["callee"].toString();
         const bool shape = type.isEmpty() || type == "solid" || type == "profile" || type == "surface" || type == "lattice";
-        if (shape && callee != "sketch" && callee != "polyline" && callee != "spline") items << it;
+        if (shape && callee != "profile" && callee != "polyline" && callee != "spline") items << it;
         else refused << it["var"].toString();
     }
     if (!refused.isEmpty())
-        notify(T("%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A sketch or a curve is made of its points, which are the models to link; "
+        notify(T("%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; "
                  "Shift+D copies a model with all it is made of.").arg(refused.join(", ")));
     if (items.isEmpty()) return;
     const QString src = m_source ? m_source() : QString();
@@ -4935,7 +4935,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
             }
         }
     }
-    // A sketch (or a line) is made of its points: when it goes, the points that only it was made of go with it -- they were made for it, and would stay behind as dots with nothing
+    // A profile (or a line) is made of its points: when it goes, the points that only it was made of go with it -- they were made for it, and would stay behind as dots with nothing
     // to do.  A point that anything else still uses stays
     {
         QSet<QString> gone;
@@ -4944,7 +4944,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
         for (const auto& o : all)
         {
             const QString callee = o["callee"].toString();
-            if (callee != "sketch" && callee != "polyline" && callee != "spline") continue;
+            if (callee != "profile" && callee != "polyline" && callee != "spline") continue;
             for (const QString& name : directInputs(o))
             {
                 const QJsonObject p = itemForVar(name);
@@ -4966,7 +4966,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items)
         for (const auto& p : points) all << p;
     }
     // The images of a model (`image = symmetry_image(model, ...)`) are made for it and have no numbers of their own: they go with it -- an image that stayed would name a model
-    // that is not there.  (The images of the points of a sketch go with those points, when the points go)
+    // that is not there.  (The images of the points of a profile go with those points, when the points go)
     {
         QSet<QString> gone;
         for (const auto& o : all) gone << keyOf(o);
@@ -6069,7 +6069,7 @@ void ScenePanel::selectFieldKey(const QString& key, bool toggle)
     else selectByLine(line0);
 }
 
-void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at)
+void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at, int index)
 {
     if (!m_support || !m_source)
     {
@@ -6086,8 +6086,9 @@ void ScenePanel::editPoints(const QString& op, int line0, const QVector3D& press
     request["px"] = double(press.x());
     request["py"] = double(press.y());
     request["pz"] = double(press.z());
+    if (index >= 0) request["index"] = index;
     QString error;
-    const QString answer = m_support("sketch_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    const QString answer = m_support("profile_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
     if (answer.isEmpty())
     {
         notify(error.isEmpty() ? T("The points could not be edited") : error);
@@ -7229,7 +7230,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     request["scale"] = scale;
     if (m_workPlaneActive && kind == "primitive")
     {
-        // (a new model made while the work plane's view is open: where it is, and the plane's axes, which the points of a sketch are laid out in)
+        // (a new model made while the work plane's view is open: where it is, and the plane's axes, which the points of a profile are laid out in)
         auto vec = [](const QVector3D& a) { return QJsonArray{double(a.x()), double(a.y()), double(a.z())}; };
         QJsonObject plane;
         plane["origin"] = vec(m_workPlaneOrigin);
@@ -7350,16 +7351,16 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
                 if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
             }
         }
-        // A sketch made of selected points lies in the plane of the first three that are not on a line: the others are put onto it, by the numbers
+        // A profile made of selected points lies in the plane of the first three that are not on a line: the others are put onto it, by the numbers
         // written in their point(...) -- in the same edit, so that one undo takes both back
-        if (kind == "primitive" && name == "sketch" && withBodies)
+        if (kind == "primitive" && name == "profile" && withBodies)
         {
             QJsonObject snap;
             snap["op"] = "snap";
             snap["source"] = src;
             snap["call"] = call;
             QString snapError;
-            const QString moved = m_support("sketch_edit", QString::fromUtf8(QJsonDocument(snap).toJson(QJsonDocument::Compact)), &snapError);
+            const QString moved = m_support("profile_edit", QString::fromUtf8(QJsonDocument(snap).toJson(QJsonDocument::Compact)), &snapError);
             if (!moved.isEmpty())
             {
                 for (const auto v : QJsonDocument::fromJson(moved.toUtf8()).object()["edits"].toArray())

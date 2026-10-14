@@ -428,7 +428,7 @@ def finish(source, gs, out):
             if _time.time() > deadline:
                 break
             if view.get('_has_var') or facts.get('colored') or not view.get('_own') or getattr(shapes[0], '_no_handles', False):
-                continue                    # (a shape that is made from another -- a sketch of a surface -- has no faces of its own to pull)
+                continue                    # (a shape that is made from another -- a profile of a surface -- has no faces of its own to pull)
             n = A._handle_count(shapes[0])
             facts['can_handles'] = 0 < n <= A._MAX_HANDLES
             facts['handle_count'] = n

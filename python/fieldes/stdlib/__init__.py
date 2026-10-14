@@ -28,7 +28,7 @@ from fieldes.stdlib.regression import *
 from fieldes.stdlib.surfaces import *
 from fieldes.stdlib.points import *
 from fieldes.stdlib.curves import *
-from fieldes.stdlib.sketch import *
+from fieldes.stdlib.profile import *
 from fieldes.stdlib.measure import *
 from fieldes.stdlib.lattices import *
 from fieldes.stdlib.conformal import *

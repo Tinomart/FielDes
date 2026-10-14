@@ -6,7 +6,7 @@ or a field is written with a model for each image, `symmetry_image(model, symmet
 
 The symmetry arrives in a request as {var: 'symmetry_1', centre: [x, y, z], elements: [{mirror: [nx, ny, nz] | null, turn: [[ax, ay, az], degrees] | null}, ...]}: its name, and
 every image but the identity as the places it takes a point to -- for what has to be known now (an image that is the model itself is not made; where the images of the points of
-a stroke are).  This file makes the statements of the images from it: of a single model (a body, a point ...), and of a stroke -- the points of a sketch, a line or a spline,
+a stroke are).  This file makes the statements of the images from it: of a single model (a body, a point ...), and of a stroke -- the points of a profile, a line or a spline,
 whose images are made again through the images of the points, so that every point of an image follows the point it is the image of.
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -245,10 +245,10 @@ def stroke_structure(points, elements, name, close, tol):
         if not any(set(ids) == set(other) for other in strokes):
             strokes.append(ids)
     if close:
-        shapes = [('sketch', s) for s in strokes]
+        shapes = [('profile', s) for s in strokes]
     else:
         loops, rest = _join_meeting(strokes) if len(strokes) > 1 else ([], strokes)
-        shapes = [('sketch', s) for s in loops] + [(name, s) for s in rest]
+        shapes = [('profile', s) for s in loops] + [(name, s) for s in rest]
     return made, shapes
 
 

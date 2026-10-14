@@ -20,6 +20,7 @@ be tried on it.
 - [5. Every number can be a field](#5-every-number-can-be-a-field)
 - [6. Your own blocks](#6-your-own-blocks)
 - [7. Real parts and real analysis](#7-real-parts-and-real-analysis)
+- [Words worth knowing](#words-worth-knowing)
 - [The controls that matter](#the-controls-that-matter)
 - [Habits that pay off](#habits-that-pay-off)
 - [Where next](#where-next)
@@ -204,10 +205,24 @@ carry a small **f** in the tree. See [Custom blocks](blocks.md).
   model tree) and the **field viewer** opens beside it, showing the field on a disc with a radius slider (move it with its arrows and dot): the two are separate, and
   both can be open at once.
 
-The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20, 21 and 26 to 28 (sketches and sweeps, copies and linked copies, a sketch on a plane).
+The `examples/` folder has a script for each of these. The ones that need no STEP file are 14, 16, 17, 18, 19, 20, 21 and 26 to 28 (profiles and sweeps, copies and linked copies, a profile on a plane).
 
 The **guided tour** (Help ▸ Guided tour) ends with the newer tools: a shape drawn on a **work plane** (`Shift+W`; a **right click stops drawing**, `E` brings the kind of drawing back), a point **pulled out of an edge**, a **corner turned into a spline point**, the gizmo of a point, **a line through points and a tube swept along it** (`path_extrude`, which you can play with), and
 the one you get with **Shift**, **`Shift+D` and `Ctrl+D`** (a copy and a linked copy), and the keys worth knowing.
+
+## Words worth knowing
+
+A few words mean something particular in FielDes, and some mean something else in other programs:
+
+| Word | In FielDes |
+|---|---|
+| **Gizmo** | the tool that is drawn on a selected model: arrows move it, rings turn it, a ring (or knob) scales it -- it changes the model's place, turn and size, and is written into the script as `gizmo(...)`. In a drawing program the little squares of a selection are called *handles*; here they are the gizmo's. |
+| **Handles** | pulling a **surface** of a shape directly, with no tool drawn: hover the surface and drag, and the numbers behind it (`handles(...)`) change. Every shape has them. See [Handles](handles.md). |
+| **Profile** | any 2D shape -- a circle, a rectangle, or `profile(points)`, which makes one of any outline you like (corners, spline points, round corners). `extrude` pulls it into a solid and `path_extrude` sweeps it along a line. |
+| **Copy / linked copy** | `Shift+D` writes the statements of a model again under new names; `Ctrl+D` makes `instance(model)`, which *is* the model -- it follows every change of its shape and has a place of its own. |
+| **Images** | what a symmetry makes of a model (`symmetry_images(model, mirror)`): one row for all of them, drawn and meshed apart, with no numbers of their own -- drag one and the original moves. |
+| **Shadow** | a faded row in the tree and a `# shadow:` comment in the script: a model that another statement uses, held by reference, without moving it out of its place. |
+| **Field** | a number at every point of space: a shape is one (negative inside), and so is a ramp, a noise, a distance or a result. Wherever a number goes, a field goes. |
 
 ## The controls that matter
 
@@ -251,7 +266,7 @@ the one you get with **Shift**, **`Shift+D` and `Ctrl+D`** (a copy and a linked 
 | [Custom blocks](blocks.md) | your own functions in every script |
 | [Apps](apps.md) | a script as a program for other people: a form, a Run button, one `.fieldesapp` file |
 | [Handles](handles.md) | the gizmo, the handles on the surfaces, `gizmo()` and `handles()` |
-| [Sketches](sketches.md) | 2D, 1D and 3D shapes made of points: `sketch`, `curve`, `extrude`, `path_extrude` |
+| [Profiles](profiles.md) | 2D, 1D and 3D shapes made of points: `profile`, `curve`, `extrude`, `path_extrude` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Lattices](lattices.md) | cells, graded and conformal lattices |
 | [Importing STEP files](step-import.md) | how a CAD part becomes a field |

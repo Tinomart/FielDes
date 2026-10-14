@@ -221,7 +221,7 @@ public slots:
     /*  The plane set to a frame at once: its origin and its two axes (for scripted tests)  */
     void setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const QVector3D& v);
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
-        into a sketch), or a point of its own.  Nothing of a line or a spline is written until it ends: `finishPlacement` ends it (closed: a sketch; open: the line or the
+        into a profile), or a point of its own.  Nothing of a line or a spline is written until it ends: `finishPlacement` ends it (closed: a profile; open: the line or the
         spline), `cancelPlacement` drops it, `undoPlacedPoint` takes the last point back  */
     void placeAt(QPoint pos);
     void finishPlacement(bool close);
@@ -328,7 +328,7 @@ signals:
     void symmetryNotice(QString text);
     /*  Where the cursor is on the plane, in its coordinates (empty: not on it)  */
     void workPlaneReadout(QString text);
-    /*  A line or a spline was put down (or a sketch: closed): its name in the library (`sketch`, `polyline`, `spline`), its points, and whether the outline is smooth  */
+    /*  A line or a spline was put down (or a profile: closed): its name in the library (`profile`, `polyline`, `spline`), its points, and whether the outline is smooth  */
     void placementFinished(QString name, QList<QVector3D> points, bool smooth);
 
     /*
@@ -419,12 +419,17 @@ signals:
     void fieldsRectSelected(QStringList keys, bool add);
 
     /*
-     *  A point was pulled out of the outline of a sketch or the line of a curve and let go: it is to be put in the script (the 0-based line that displays
+     *  A point was pulled out of the outline of a profile or the line of a curve and let go: it is to be put in the script (the 0-based line that displays
      *  the model, where the outline was pressed, where the point was let go).  While it was pulled it was drawn by the view, from numbers, without the script
      */
     void outlineInsertRequested(int line0, QVector3D press, QVector3D at);
+    /*
+     *  The arc of a round corner was pressed, and the radius of its point is a plain number (`radius=5`): it is to be made a number that can be dragged (`radius=var(5)`) -- the
+     *  0-based line that displays the profile, and the number of the point in its list.  The press does nothing else: the arc is not an edge to pull a point out of
+     */
+    void radiusVarRequested(int line0, int control);
 
-    /*  A double click on the dot of a point of a sketch or a curve: it is to change between a corner and a spline point (the 0-based line that displays it)  */
+    /*  A double click on the dot of a point of a profile or a curve: it is to change between a corner and a spline point (the 0-based line that displays it)  */
     void pointToggleRequested(int line0);
 
     /*
@@ -473,17 +478,31 @@ protected:
     /*  The dot of a point (the middle point of a gizmo, always drawn), the point whose dot is at a widget position, and the names of an app  */
     void drawPointDots(QPainter& painter);
     Shape* pointDotAt(QPoint pos) const;
-    /*  The outlines of sketches and the lines of curves, drawn blue: the one the mouse is over is brighter  */
+    /*  The outlines of profiles and the lines of curves, drawn blue: the one the mouse is over is brighter  */
     void drawOutlines(QPainter& painter);
-    /*  What a click or a double click does where the mouse is, in a few words beside it (on the outline of a sketch or a curve, on the dot of one of
+    /*  What a click or a double click does where the mouse is, in a few words beside it (on the outline of a profile or a curve, on the dot of one of
         their points)  */
     void drawHints(QPainter& painter);
-    /*  The editable outline (of a sketch, a curve) that passes under a widget position (within a few pixels): its shape, the point of it that is
+    /*  The editable outline (of a profile, a curve) that passes under a widget position (within a few pixels): its shape, the point of it that is
         there, and the number of the piece of the line (counted over all its polylines)  */
     bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const;
     Shape* m_outlineHover = nullptr;
-    /*  A press on the outline of a sketch or the line of a curve: the point that is pulled out of it (a click on a curve selects the curve: its line is all there is
-        of it, so a drag is what pulls a point out), and a press on the face of a sketch that drags all its points in its plane  */
+    bool m_outlineArcHover = false;             // (what is hovered is the arc of a round corner: a handle for its radius, not an edge to pull a point out of)
+    /*
+     *  The arc of a round corner is the HANDLE of its radius: pressed and dragged along the way the corner looks, it sets the point's radius (a var(): the number the point itself
+     *  gives) -- pulled in it is rounder, pushed out towards the corner it is sharper -- and it is limited by what the geometry allows.  It runs as a gizmo drag of kind 7 (the
+     *  numbers are written into the script as they are dragged, the script runs when the mouse is let go).  `s0` is where the press was, along the bisector from the corner
+     */
+    struct FilletDrag
+    {
+        Shape::FilletHandle h;
+        Shape* shape = nullptr;
+        double s0 = 0, apex0 = 0;
+    } m_fillet;
+    void beginFilletDrag(Shape* shape, const Shape::FilletHandle& h, const QVector3D& hit);
+    void dragFillet(QPoint pos);
+    /*  A press on the outline of a profile or the line of a curve: the point that is pulled out of it (a click on a curve selects the curve: its line is all there is
+        of it, so a drag is what pulls a point out), and a press on the face of a profile that drags all its points in its plane  */
     Shape* m_pullShape = nullptr;
     bool m_pullActive = false;
     int m_pullAfter = 0, m_pullPiece = 0;
@@ -589,7 +608,7 @@ protected:
     QList<int> m_symLines;                                      // (the lines that show the symmetry model that is selected)
     bool m_symExists = false;
     bool m_symInUse = true;
-    QVector3D m_faceRef;                     // (the point of a sketch that its drag keeps on the grid)
+    QVector3D m_faceRef;                     // (the point of a profile that its drag keeps on the grid)
     bool m_faceHasRef = false;
     bool m_wpCursorValid = false;
     bool m_wpCursorSnapped = false;
@@ -950,7 +969,7 @@ protected:
     /*  Several points are selected: they share one gizmo, and two rings of it scale and turn them -- evenly, about the middle of them all, which moves each of them (it is the
         numbers that move each that change).  Each point's place and its move numbers when a drag of a ring began  */
     bool groupOfPoints(const QList<Shape*>& members) const;
-    QVector3D groupRingNormal(const QList<Shape*>& members) const;     // (the axis they turn about: the plane of their sketch, else the work plane's, else the way the camera looks)
+    QVector3D groupRingNormal(const QList<Shape*>& members) const;     // (the axis they turn about: the plane of their profile, else the work plane's, else the way the camera looks)
     // (the place of a point of a group and the numbers that move it; and the numbers of its own scale and rotation: the group's rings change those, point by point)
     struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; libfive::Tree::Id scaleId[3]; float scale0[3]; libfive::Tree::Id rotId[3]; float rot0[3]; };
     QVector<GroupPoint> gizmo_group;
@@ -991,7 +1010,7 @@ protected:
     float snappedTurn(float turn, float start = 0.0f, bool absolute = false) const;
     QPoint m_lastPos;                    // (where the last mouse event of the viewport was)
     bool m_leftDown = false;             // (the left button, as the mouse events of the viewport say: a script that sends events sets it as a real mouse does)
-    /*  A point of a sketch has ONE rotation ring, in the plane of the sketch (about its normal): whether `s` is one, and that normal  */
+    /*  A point of a profile has ONE rotation ring, in the plane of the profile (about its normal): whether `s` is one, and that normal  */
     bool planarRingNormal(const Shape* s, QVector3D& normal) const;
     /*  The axes the arrows, the plane squares and the rings of the gizmo of `s` are along.  The world's, except for a point of a curve: its blue axis is the way the curve faces
         there and the red and green are across it, so that the ring about the blue axis twists what is swept along the curve and the other two tilt where the curve goes (the
@@ -1004,10 +1023,10 @@ protected:
     libfive::Tree::Id gizmo_rot_id[3] = {nullptr, nullptr, nullptr};          // ...and the rotation numbers of the shape, with the values they had at the start
     float gizmo_rot0[3] = {0, 0, 0};
     QPolygonF planeSquareIn(const QVector3D& pivot, float length, const QVector3D& eb, const QVector3D& ec) const;
-    /*  Whether all of `members` are points of sketches that lie in one plane -- selected together they have the dot that moves them in that plane, and no arrows  */
-    bool groupInSketchPlane(const QList<Shape*>& members, QVector3D& normal) const;
-    /*  What a point's dot says: 1 a corner (a square), 2 a spline point (a round dot with a ring), 0 neither (a plain round dot: it belongs to no sketch or curve).
-        Taken from the sketch or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
+    /*  Whether all of `members` are points of profiles that lie in one plane -- selected together they have the dot that moves them in that plane, and no arrows  */
+    bool groupInProfilePlane(const QList<Shape*>& members, QVector3D& normal) const;
+    /*  What a point's dot says: 1 a corner (a square), 2 a spline point (a round dot with a ring), 0 neither (a plain round dot: it belongs to no profile or curve).
+        Taken from the profile or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
         the library made on it  */
     int pointStyleOf(const Shape* s) const;
     /*  Shift + the mouse wheel scales what is selected (every selected shape or point that has scale numbers): one gesture, written to the script when the

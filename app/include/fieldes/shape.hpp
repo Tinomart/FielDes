@@ -135,7 +135,7 @@ public:
     bool flatEdgeFrom(QVector3D& p) const;
 
     /*
-     *  The plane a flat shape lies in when it is not z = 0 (fieldes.stdlib.sketch: the plane through the first three points): the point and the
+     *  The plane a flat shape lies in when it is not z = 0 (fieldes.stdlib.profile: the plane through the first three points): the point and the
      *  two unit vectors that span it, nine expressions of the script's numbers -- they move with the points that make the plane
      */
     void setFlatFrame(std::vector<libfive::Tree> trees);
@@ -147,7 +147,7 @@ public:
     const std::vector<std::vector<Eigen::Vector3f>>& outlines() const { return m_outlines; }
 
     /*
-     *  The points of a sketch or a curve (fieldes.stdlib.sketch, curves): each three expressions of the script's numbers for where it is, three for its
+     *  The points of a profile or a curve (fieldes.stdlib.profile, curves): each three expressions of the script's numbers for where it is, three for its
      *  rotation, and what it says of itself.  The line or the face is made from their numbers natively, at every render -- and so while a point is dragged --
      *  by libfive::pointshapes: no script is run, and no field is needed.  A face is painted; a line is not
      */
@@ -160,26 +160,27 @@ public:
         bool hasScale = false;
         libfive::Tree radius = libfive::Tree::invalid();                // the radius of a round corner (the scale of the point is in it); a hard corner or a spline point has none
         bool hasRadius = false;
+        libfive::Tree::Id radiusVar = nullptr;                          // the one number the point itself gives for its radius (a var()), when it does: what the arc of the corner drags
         int flag = -1;                                                  // -1: what the shape says, 0: a corner, 1: a spline point
         libfive::Tree::Id var[3] = {nullptr, nullptr, nullptr};         // the number that moves it along each axis (its gizmo's), when it has one
     };
     void setControls(std::vector<ControlPoint> points, bool smoothDefault, bool closed, bool face);
     /*
-     *  A straight extrusion of a sketch of points (`extrude(sketch, a, b)`) is a PRISM: it is drawn from the numbers of the points and of a and b at every render -- as the face
-     *  of a sketch is -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `guard` are numbers of the script (a gizmo's, a pulled
+     *  A straight extrusion of a profile of points (`extrude(profile, a, b)`) is a PRISM: it is drawn from the numbers of the points and of a and b at every render -- as the face
+     *  of a profile is -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `guard` are numbers of the script (a gizmo's, a pulled
      *  face's) that must still have the values they were made with: with another value the shape is something else than the prism, and its field is meshed as ever
      */
     void setPrism(std::vector<ControlPoint> points, bool smoothDefault, libfive::Tree a, libfive::Tree b, std::vector<std::pair<libfive::Tree::Id, float>> guard);
     bool hasPrism() const { return !m_prism_points.empty(); }
     /*
-     *  A SWEEP -- `path_extrude(sketch, curve)` of a sketch of points along a curve of points -- is drawn the same way: ring by ring, from the numbers the points of the sketch and
+     *  A SWEEP -- `path_extrude(profile, curve)` of a profile of points along a curve of points -- is drawn the same way: ring by ring, from the numbers the points of the profile and
      *  of the path have now (the thickness of a path point, its rotation, the twist), placed by the numbers of the shape's gizmo.  Nothing is meshed, so a point that is dragged is
      *  followed at once, and a sweep that took minutes to mesh takes a few milliseconds
      */
     void setSweep(std::vector<ControlPoint> profile, bool profileDefault, std::vector<ControlPoint> path, bool pathDefault, bool closed, libfive::Tree twist,
                   bool placed, const double about[3], const libfive::Tree move[3], const libfive::Tree rotate[3], const libfive::Tree scale[3]);
-    /*  The profile of the sweep is the outline of a primitive (a circle, a rectangle, ...) rather than a sketch: its corners are in the plane z = 0, its axes x and y (no plane is
-     *  worked out of them).  In every other way it is a sketch to the sweep: the sweep starts at it  */
+    /*  The profile of the sweep is the outline of a primitive (a circle, a rectangle, ...) rather than a profile: its corners are in the plane z = 0, its axes x and y (no plane is
+     *  worked out of them).  In every other way it is a profile to the sweep: the sweep starts at it  */
     void setSweepFree(bool free) { m_sweep_free = free; }
     /*  Numbers of the script that must still be what they were for the sweep to be drawn from its outline (a gizmo's turn about x or y of the profile, its move along z: a profile
      *  that leaves the plane z = 0 is not the outline): (a var, its value)  */
@@ -190,7 +191,7 @@ public:
     bool hasControls() const { return !m_controls.empty(); }
     bool isCurve() const { return hasControls() && !m_controls_face; }
     bool isFace() const { return hasControls() && m_controls_face; }
-    /*  A 2D shape (a flat one, or a sketch): drawn over the 3D ones, whatever is in front of it, in a shade of its own, and picked before them  */
+    /*  A 2D shape (a flat one, or a profile): drawn over the 3D ones, whatever is in front of it, in a shade of its own, and picked before them  */
     bool is2D() const { return m_flat || isFace(); }
     const std::vector<ControlPoint>& controlPoints() const { return m_controls; }
     bool smoothDefault() const { return m_controls_default; }
@@ -199,7 +200,7 @@ public:
     bool controlsNow(std::vector<libfive::pointshapes::Control>& out) const;
     /*  The plane of a face now (origin, u, v), and the direction the line leaves control i in  */
     bool planeNow(double frame[9]) const;
-    /*  The plane a 2D shape lies in -- (origin, u, v), nine numbers -- as it is now: a sketch's, a flat shape's own, z = 0 for the others; false when it is not a 2D shape  */
+    /*  The plane a 2D shape lies in -- (origin, u, v), nine numbers -- as it is now: a profile's, a flat shape's own, z = 0 for the others; false when it is not a 2D shape  */
     bool flatPlane(double frame[9]) const;
     bool tangentAt(int i, QVector3D& out) const;
     /*  Which control of this shape a point is (by the numbers that move it), or -1  */
@@ -208,17 +209,36 @@ public:
     int controlAt(const QVector3D& p) const;
     /*  The control the piece of the line numbered `piece` (as outlines() lists them) is after  */
     int controlAfterPiece(int piece) const;
+    /*  The round corner whose ARC the piece numbered `piece` is a part of (the number of its control), or -1: the piece is a straight one, or an edge of a curve  */
+    int arcControlOfPiece(int piece) const;
+    /*
+     *  What dragging the arc of the round corner of control `control` needs, as it is now: where the corner is, the way from it to the arc's centre (the arc's apex is on that line),
+     *  the plane's normal, sin(half the angle between the edges), the point's scale (the radius is the number it says times the scale), the largest radius the geometry allows, and
+     *  the number that is dragged -- the point's own radius, a var() -- with its value now.  False when the corner has no such number (its radius is the profile's default, or
+     *  an expression, or a plain number that must be made a var() first)
+     */
+    struct FilletHandle
+    {
+        int control = -1;
+        double corner[3] = {0, 0, 0}, toCentre[3] = {0, 0, 1}, normal[3] = {0, 0, 1};
+        double sinHalf = 0, scale = 1, radius = 0, cap = 0;
+        libfive::Tree::Id var = nullptr;
+        float value0 = 0;
+    };
+    bool filletHandle(int control, FilletHandle& out) const;
+    /*  Whether the corner of `control` has a radius at all (it is round) whose number is not a var() the viewport can drag  */
+    bool roundWithoutVar(int control) const;
     /*  A point being pulled out of the line, not in the script yet: drawn as a control after `after`, at `pos`, until the script has it  */
     void setVirtualPoint(bool on, int after = 0, QVector3D pos = QVector3D());
     bool hasVirtualPoint() const { return m_virtual_on; }
     /*  Render again with the numbers it has now  */
     void refresh();
 
-    /*  A shape whose outline is a place to press (a sketch, a curve): a press on it pulls a point out of it, one that is drawn blue  */
+    /*  A shape whose outline is a place to press (a profile, a curve): a press on it pulls a point out of it, one that is drawn blue  */
     void setEditable(bool on) { m_editable = on; }
     bool isEditable() const { return m_editable; }
 
-    /*  How the dot of a point is drawn: 0 as any point, 1 a corner of a sketch or a curve (a square), 2 a spline point (a circle with a ring)  */
+    /*  How the dot of a point is drawn: 0 as any point, 1 a corner of a profile or a curve (a square), 2 a spline point (a circle with a ring)  */
     void setPointStyle(int s) { m_point_style = s; }
     int pointStyle() const { return m_point_style; }
     bool isHovered() const { return hover; }
@@ -736,7 +756,7 @@ public:
 
     /*  What tells this shape from the others of a run, next to its tree: its colours, and -- for a line or a face of points, which is shown with a tree
      *  that says nothing of them -- the points: how many, what each says of itself (corner or spline point) and the numbers its place, rotation and scale are
-     *  made of (their VALUES are not part of it: a drag changes those, and the shape goes on).  A sketch whose point was added, or toggled, is another
+     *  made of (their VALUES are not part of it: a drag changes those, and the shape goes on).  A profile whose point was added, or toggled, is another
      *  shape: it is made again from its points, not kept with the points it had.  */
     QString identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical);
 

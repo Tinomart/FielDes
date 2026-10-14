@@ -120,7 +120,7 @@ HINTS = {
     'instance': tr('A linked copy of the selected model: the same shape, following every change of it, that can only be moved and rotated (Ctrl+D)'),
 }
 
-# A sketch or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
+# A profile or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
 # rotates it), in the horizontal plane at the place of the click
 def _gizmoed_point(name, x, y, z):
     ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged) '''
@@ -129,7 +129,7 @@ def _gizmoed_point(name, x, y, z):
 
 
 def _points(*places, base='{var}'):
-    ''' The points a sketch or a line made from the menu is made of: each a model of its own, with its gizmo (so that it can be dragged, and the face or the line
+    ''' The points a profile or a line made from the menu is made of: each a model of its own, with its gizmo (so that it can be dragged, and the face or the line
         with all of them), written above the call.  `places` are the (x, y, z) texts of the template '''
     out = []
     for k, (x, y, z) in enumerate(places, 1):
@@ -137,8 +137,8 @@ def _points(*places, base='{var}'):
     return ''.join(out), ', '.join('%s_p%d' % (base, k) for k in range(1, len(places) + 1))
 
 
-_SKETCH_POINTS, _SKETCH_LIST = _points(('{xm}', '{ym}', '{z}'), ('{xp}', '{ym}', '{z}'), ('{xp}', '{yp}', '{z}'), ('{xm}', '{yp}', '{z}'))
-_SKETCH = _SKETCH_POINTS + '#@@#\nsketch([' + _SKETCH_LIST + '])'
+_PROFILE_POINTS, _PROFILE_LIST = _points(('{xm}', '{ym}', '{z}'), ('{xp}', '{ym}', '{z}'), ('{xp}', '{yp}', '{z}'), ('{xm}', '{yp}', '{z}'))
+_PROFILE = _PROFILE_POINTS + '#@@#\nprofile([' + _PROFILE_LIST + '])'
 
 _LINE_POINTS, _LINE_LIST = _points(('{xm}', '{y}', '{z}'), ('{x}', '{yp}', '{z}'), ('{xp}', '{y}', '{z}'))
 _POLYLINE = _LINE_POINTS + '#@@#\npolyline([' + _LINE_LIST + '])'
@@ -150,10 +150,10 @@ _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
 # with none of them selected the entry is made from its own template (new points to drag).  The menu, its tooltips and the call are all read from this: a function the library
 # can make of a kind of model is one more row here, and nothing else in the menus names it
 FROM_SELECTION = {
-    'sketch': (tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
+    'profile': (tr('A 2D shape from points or from a surface.  With points selected: made from them, in the order you selected them.  With a surface selected: its '
                   'outline (a flat face exactly; a surface that is not flat is projected onto a plane).  With none: four new points to drag.  '
                   'Press its edge and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
-               [({'point'}, 3, None, 'sketch([{names}])'), ({'curve'}, 1, None, 'sketch({name})'), ({'surface'}, 1, None, 'sketch({name})')]),
+               [({'point'}, 3, None, 'profile([{names}])'), ({'curve'}, 1, None, 'profile({name})'), ({'surface'}, 1, None, 'profile({name})')]),
     'polyline': (tr('A set of lines through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                     'drag.  Press the line and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
                  [({'point'}, 2, None, 'polyline([{names}])')]),
@@ -179,7 +179,7 @@ PRIMITIVES = [
     ('ring', '2D', 'ring({h}, {q}, ({x}, {y}))'),
     ('polygon', '2D', 'polygon({h}, {n}, ({x}, {y}))'),
     ('triangle', '2D', 'triangle(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}))'),
-    ('sketch', '2D', _SKETCH),
+    ('profile', '2D', _PROFILE),
     ('polyline', '1D', _POLYLINE),
     ('spline', '1D', _SPLINE),
     ('point', 'Points', 'point({x}, {y}, {z})'),
@@ -210,12 +210,12 @@ PRIMITIVES = [
 ] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
 # The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus and a pyramid for 3D; a circle, a rectangle, a triangle,
-# a polygon and a sketch for 2D; a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial, a z and a noise field.  The menus show these under
+# a polygon and a profile for 2D; a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial, a z and a noise field.  The menus show these under
 # Primitives, apart.  Everything else the library can make with no argument -- a rounded box, a ring, a wave, noise, your own low-level logic, a custom block -- is not a primitive, however
 # little it needs: it is a Parametric shape
 BASIC = frozenset((
     'sphere', 'box', 'cylinder', 'cone', 'torus', 'pyramid',
-    'circle', 'rectangle', 'triangle', 'polygon', 'sketch',
+    'circle', 'rectangle', 'triangle', 'polygon', 'profile',
     'polyline', 'spline',
     'point',
     'symmetry_planes',
@@ -576,7 +576,7 @@ def _selection_fits(kind, name, models):
 
 
 # What a New entry makes, for whether it fits the models selected.  A SHAPE -- a 3D shape, a 2D shape, a 1D shape, a point, a surface, a field -- is a PLACEMENT: it is made wherever the menu
-# is, so it is valid for any selection (a line or a sketch is made of the points, curve or surface that are selected when they fit, and of new points when not).  Everything else is valid
+# is, so it is valid for any selection (a line or a profile is made of the points, curve or surface that are selected when they fit, and of new points when not).  Everything else is valid
 # only when the selection has a use for it: a condition when the selection says where it acts (a region), and one that is only something other functions take as an input -- a material, a
 # fluid, a cell, a load -- when some function that says what it takes (see fieldes.kinds.takes; a simulation, by its signature) takes the selection together with it.  Nothing here names an entry
 _PLACEMENT_KINDS = frozenset(('solid', 'profile', 'curve', 'point', 'surface', 'field'))
@@ -589,7 +589,7 @@ def _primitive_fits(name, models):
     group = next((g for n, g, _t in PRIMITIVES if n == name), None)
     kind = GROUP_KINDS.get(group, 'solid')
     if kind in _PLACEMENT_KINDS:
-        return True             # (placed anywhere -- a line or a sketch too: made of the points, curve or surface selected when they fit (see FROM_SELECTION), of new points when not)
+        return True             # (placed anywhere -- a line or a profile too: made of the points, curve or surface selected when they fit (see FROM_SELECTION), of new points when not)
     if name in BODY_CONDITIONS:
         return bool(_where(models))
     # (something to be given to another function: the kind, role and class of what it makes, as a selected model of it would be)
@@ -621,8 +621,8 @@ def _body_first(body, info, others):
 
 
 def _from_selection(name, models, values):
-    ''' The call of a New entry that is made of the models selected (the ways it is made are data: see FROM_SELECTION) -- the points a sketch or a curve goes through (in the
-        order they were selected), a curve or a surface a sketch is the outline of -- or None when what is selected is not what the entry takes (it is made from its own
+    ''' The call of a New entry that is made of the models selected (the ways it is made are data: see FROM_SELECTION) -- the points a profile or a curve goes through (in the
+        order they were selected), a curve or a surface a profile is the outline of -- or None when what is selected is not what the entry takes (it is made from its own
         template then, with new points) '''
     ways = FROM_SELECTION.get(name, (None, []))[1]
     present = {m.get('type') for m in models}
@@ -636,7 +636,7 @@ def _from_selection(name, models, values):
 
 
 def _own_point_names(shape_name):
-    ''' The names of the points the model `shape_name` is made of (the corners of a sketch): the variables of the last run that hold those very points '''
+    ''' The names of the points the model `shape_name` is made of (the corners of a profile): the variables of the last run that hold those very points '''
     try:
         from fieldes import runner
         names = runner.last_globals
@@ -685,8 +685,8 @@ def _build_operation(name, v, others):
         models = [dict(v.get('body_info') or {}, name=body)] + list(others)
         profile = next((m['name'] for m in models if m.get('type') == 'profile'), None)
         path = next((m['name'] for m in models if m.get('type') == 'curve'), None)
-        # (the points a 2D shape is made of are not points of the path: selecting a sketch together with the points along its path must not put the sketch's own
-        # corners into the path -- a path that goes round the sketch's outline too is a sweep of dozens of pieces)
+        # (the points a 2D shape is made of are not points of the path: selecting a profile together with the points along its path must not put the profile's own
+        # corners into the path -- a path that goes round the profile's outline too is a sweep of dozens of pieces)
         own = _own_point_names(profile)
         points = [m['name'] for m in models if m.get('type') == 'point' and m['name'] not in own]
         if profile and path:
@@ -782,18 +782,18 @@ def _regions(r, scale):
 
 
 def _stroke_text(name, places, smooth, r):
-    ''' A sketch, a polyline or a spline of the points `places` (3-tuples of numbers as texts): the points, each a model of its own with its gizmo, written above the call.  While
+    ''' A profile, a polyline or a spline of the points `places` (3-tuples of numbers as texts): the points, each a model of its own with its gizmo, written above the call.  While
         the symmetry is on (`r['symmetry']`) the images of the points are made too, each following the point it is the image of (`symmetry_image`), and the shapes through them:
         the stroke itself and its images, those that meet where they cross a plane joined into one outline '''
     from fieldes import symmetry_creation as sym
     elements = sym.elements_of(r.get('symmetry'))
     points, listing = _points(*places)
-    smooth_arg = ', smooth=True' if name == 'sketch' and smooth else ''
+    smooth_arg = ', smooth=True' if name == 'profile' and smooth else ''
     if not elements:
         return points + '#@@#\n' + '%s([%s]%s)' % (name, listing, smooth_arg)
     positions = [tuple(float(c) for c in p) for p in places]
     step = float((r.get('plane') or {}).get('step') or 0.0)
-    made, shapes = sym.stroke_structure(positions, elements, name, name == 'sketch', max(1e-4, 1e-3 * step))
+    made, shapes = sym.stroke_structure(positions, elements, name, name == 'profile', max(1e-4, 1e-3 * step))
     n = len(places)
     r['_symmetric'] = True
     # (the image points, each held to the point it is the image of)
@@ -806,8 +806,8 @@ def _stroke_text(name, places, smooth, r):
         return ', '.join(sym.point_name('{var}', k, n, made) for k in nodes)
 
     def call(shape_name, nodes):
-        if shape_name == 'sketch' and smooth:
-            return 'sketch(\n    [%s],\n    smooth=True,\n)' % names(nodes)
+        if shape_name == 'profile' and smooth:
+            return 'profile(\n    [%s],\n    smooth=True,\n)' % names(nodes)
         return '%s([%s])' % (shape_name, names(nodes))
 
     # (the first shape is the model itself; the others are each a shape of its own beside it, named `var_m1`, `var_m2` ...)
@@ -819,8 +819,8 @@ def _stroke_text(name, places, smooth, r):
 
 
 def _plane_template(name, r):
-    ''' A sketch or a line made on the work plane (`r['plane']`: origin, u, v, and the step of its grid, 0 for none): its points are laid out in the plane's own axes
-        round the place of the click -- the corners of a square for a sketch -- not in the horizontal plane, and on the grid when the plane snaps '''
+    ''' A profile or a line made on the work plane (`r['plane']`: origin, u, v, and the step of its grid, 0 for none): its points are laid out in the plane's own axes
+        round the place of the click -- the corners of a square for a profile -- not in the horizontal plane, and on the grid when the plane snaps '''
     plane = r['plane']
     u = tuple(float(c) for c in plane['u'])
     v = tuple(float(c) for c in plane['v'])
@@ -833,13 +833,13 @@ def _plane_template(name, r):
     def at(a, b):
         return tuple(_num(c + a * x + b * y) for c, x, y in zip(centre, u, v))
 
-    places = [at(-h, -h), at(h, -h), at(h, h), at(-h, h)] if name == 'sketch' else [at(-h, 0.0), at(0.0, h), at(h, 0.0)]
+    places = [at(-h, -h), at(h, -h), at(h, h), at(-h, h)] if name == 'profile' else [at(-h, 0.0), at(0.0, h), at(h, 0.0)]
     return _stroke_text(name, places, False, r)
 
 
 def _placed_template(name, r):
-    ''' A sketch, a polyline or a spline put down on the work plane: the points the user clicked, each a model of its own with its gizmo, and the call through them.
-        A sketch of a spline (`smooth`) has spline points '''
+    ''' A profile, a polyline or a spline put down on the work plane: the points the user clicked, each a model of its own with its gizmo, and the call through them.
+        A profile of a spline (`smooth`) has spline points '''
     places = [tuple(_num(float(c)) for c in p) for p in r['points']]
     return _stroke_text(name, places, r.get('smooth'), r)
 
@@ -870,8 +870,8 @@ def _symmetry_template(r, values):
 
 
 def _default_stroke_template(name, values, r):
-    ''' The sketch, polyline or spline of the menu with a symmetry on: the places of its points, from the template's own numbers '''
-    if name == 'sketch':
+    ''' The profile, polyline or spline of the menu with a symmetry on: the places of its points, from the template's own numbers '''
+    if name == 'profile':
         places = [(values['xm'], values['ym'], values['z']), (values['xp'], values['ym'], values['z']), (values['xp'], values['yp'], values['z']),
                   (values['xm'], values['yp'], values['z'])]
     else:
@@ -910,7 +910,7 @@ def _values(r):
 
 def _images_after(r, head, expression):
     ''' The images a model made with the symmetry on has, written under it (see symmetry_creation): the models a menu entry places -- a shape, a point, a surface, a field -- and
-        not what it is made of other models (an operation, a condition), a sketch or a line (their points have the images: see _stroke_text) '''
+        not what it is made of other models (an operation, a condition), a profile or a line (their points have the images: see _stroke_text) '''
     if r.get('_symmetric') or not (r.get('symmetry') or {}).get('elements') or not (r.get('symmetry') or {}).get('var'):
         return ''
     from fieldes import symmetry_creation as sym
@@ -920,7 +920,7 @@ def _images_after(r, head, expression):
         return ''
     for n, group, _ in PRIMITIVES:
         if n == r['name']:
-            if group not in _PLACED_GROUPS or n in ('material', 'sketch', 'polyline', 'spline', 'symmetry_planes'):
+            if group not in _PLACED_GROUPS or n in ('material', 'profile', 'polyline', 'spline', 'symmetry_planes'):
                 return ''
             break
     else:
@@ -1023,20 +1023,20 @@ def _call(r):
         built = _build_operation(name, values, others)
         if built:
             return built
-    if kind == 'primitive' and r.get('points') and name in ('sketch', 'polyline', 'spline'):
+    if kind == 'primitive' and r.get('points') and name in ('profile', 'polyline', 'spline'):
         r['_templated'] = True
         return _placed_template(name, r).format(**values)
     if kind == 'primitive' and name == 'symmetry_planes':
         r['_templated'] = True
         return _symmetry_template(r, values)
-    if kind == 'primitive' and r.get('plane') and name in ('sketch', 'polyline', 'spline'):
+    if kind == 'primitive' and r.get('plane') and name in ('profile', 'polyline', 'spline'):
         r['_templated'] = True
         return _plane_template(name, r).format(**values)
     if kind == 'primitive':
         for n, _, template in PRIMITIVES:
             if n == name:
                 r['_templated'] = True
-                if name in ('sketch', 'polyline', 'spline') and (r.get('symmetry') or {}).get('elements'):
+                if name in ('profile', 'polyline', 'spline') and (r.get('symmetry') or {}).get('elements'):
                     return _default_stroke_template(name, values, r).format(**values)
                 return template.format(**values)
     elif kind == 'operation':

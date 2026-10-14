@@ -43,7 +43,7 @@ def instance(shape):
         raise TypeError('instance(): only a shape can be linked (a body, a 2D shape, a surface, a point ...), not %s -- a number, a material or the result of an '
                         'analysis has no shape to follow' % type(shape).__name__)
     if getattr(shape, '_ctrl_pos', None):
-        raise TypeError('instance(): a sketch or a curve is made of its points, which are the models to place -- link the points, or copy the sketch with its '
+        raise TypeError('instance(): a profile or a curve is made of its points, which are the models to place -- link the points, or copy the profile with its '
                         'statements (Shift+D)')
     # What the copy is made of: the shape as it was BEFORE the gizmo of the original moved and turned it -- scaled as the gizmo scaled it -- so that where the original is, and how
     # it is turned, are the original's own; the copy has its own gizmo for that (FielDes writes it with the numbers the original's gizmo has, so that it starts on the original)

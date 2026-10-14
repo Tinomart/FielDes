@@ -25,7 +25,7 @@ The images FOLLOW what they are the images of and the symmetry: move the origina
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
 one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); what is
 made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
-gets one model for each image, `symmetry_image`; so does a sketch, a line or a spline: it is made of its points, which are the models, so each point has its images
+gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: it is made of its points, which are the models, so each point has its images
 (`symmetry_image(point, mirror, 3)`) and the stroke goes through them.
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -371,7 +371,7 @@ def symmetry_image(shape, symmetry, index=1):
     sym = symmetry
     _check(shape, sym, 'symmetry_image')
     if getattr(shape, '_ctrl_pos', None):
-        raise TypeError('symmetry_image(): a sketch or a curve is made of its points -- make the images of the points, and the sketch through them')
+        raise TypeError('symmetry_image(): a profile or a curve is made of its points -- make the images of the points, and the profile through them')
     elements = base_elements(sym._symmetry_def)
     try:
         k = int(index)
@@ -527,9 +527,9 @@ def _distinct(shape, images, sym=None, numbers=None):
 
 
 def _carried_parts(shape):
-    ''' The parts of a model that have points of their own to drag -- the sketches, the lines and the points it was made from, found through everything it was made from (see
+    ''' The parts of a model that have points of their own to drag -- the profiles, the lines and the points it was made from, found through everything it was made from (see
         made_from.py: `leg = path_extrude(leg_profile, leg_path)` was made from `leg_profile` and `leg_path`, and `leg = gizmo(leg, ...)` from the leg before it).  A part is a point,
-        or a model with points that can make itself again through other points (`_remake`: a curve, a sketch); what it was made from is its points, not looked into.  The images
+        or a model with points that can make itself again through other points (`_remake`: a curve, a profile); what it was made from is its points, not looked into.  The images
         of a model that is an image already are not looked into either: they bring their own '''
     from fieldes.shape import Shape
     parts, seen = [], set()
@@ -552,7 +552,7 @@ def _carried_parts(shape):
 
 
 def _carried_images(shape, sym, numbers):
-    ''' What the images of a model bring along: its parts (see `_carried_parts`) taken through each of the numbered images -- a line or a sketch through the images of its points,
+    ''' What the images of a model bring along: its parts (see `_carried_parts`) taken through each of the numbered images -- a line or a profile through the images of its points,
         and a dot for each point.  A dot is the image of the point (see symmetry_image): pressed and dragged, it moves the ORIGINAL point, and every image follows.  Nothing of this is
         a model of its own: no statement, no row of the tree -- they are parts of the model, and the model and its parts are mirrored together '''
     parts = _carried_parts(shape)
@@ -584,14 +584,14 @@ def symmetry_images(shape, symmetry, only=None, distinct=False):
         It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
         a surface of any of them pulls the shape.
 
-        What a shape was made from is mirrored TOGETHER with it: the sketches, the lines and the points of the models it was made from -- the sketch and the path of a
-        `path_extrude`, the sketch of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
+        What a shape was made from is mirrored TOGETHER with it: the profiles, the lines and the points of the models it was made from -- the profile and the path of a
+        `path_extrude`, the profile of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
         models -- there is no statement and no row of the model tree for them -- and the ones of the shape you made stay the only ones with numbers: press a dot of any image's and drag
         it, and it is that point of the original that moves.  '''
     sym = symmetry
     _check(shape, sym, 'symmetry_images')
     if getattr(shape, '_ctrl_pos', None):
-        raise TypeError('symmetry_images(): a sketch or a line is made of its points, so each of its images is a model of its own -- symmetry_image(point, symmetry, 1), 2 ... for each point, and the sketch through them')
+        raise TypeError('symmetry_images(): a profile or a line is made of its points, so each of its images is a model of its own -- symmetry_image(point, symmetry, 1), 2 ... for each point, and the profile through them')
     count = len(base_elements(sym._symmetry_def))
     if only is None:
         numbers = list(range(1, count + 1))

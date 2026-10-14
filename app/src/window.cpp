@@ -1433,6 +1433,7 @@ Window::Window(Arguments args)
         });
         connect(view, &View::outlineInsertRequested, scene, [=](int line, QVector3D press, QVector3D at) { scene->editPoints("insert", line, press, at); });
         connect(view, &View::pointToggleRequested, scene, [=](int line) { scene->editPoints("toggle", line, QVector3D(), QVector3D()); });
+        connect(view, &View::radiusVarRequested, scene, [=](int line, int control) { scene->editPoints("radius", line, QVector3D(), QVector3D(), control); });
         connect(scene, &ScenePanel::pointEditDone, view, &View::expectNewPoint);
         connect(view, &View::fieldsRectSelected, this, [=](QStringList keys, bool add) {
             scene->selectFieldKeys(keys, add);

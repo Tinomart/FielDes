@@ -1,18 +1,18 @@
-# A sketch in a plane of its own: the work plane.
+# A profile in a plane of its own: the work plane.
 #
-# A sketch lies in the plane through its first three points, whatever that plane is: this one is tilted 30 degrees about the x axis. extrude()
+# A profile lies in the plane through its first three points, whatever that plane is: this one is tilted 30 degrees about the x axis. extrude()
 # pulls it along the normal of ITS plane, so the slab stands on the tilted plane and the badge on top of it is built the same way.
 #
 # To draw on such a plane yourself:
 #   * Shift+W opens the work plane view (Ctrl+Shift+W makes a new plane: with a 2D shape selected it is that shape's plane, otherwise it is parallel to
 #     the view). W turns the camera to look straight at the plane. The grid snaps what you put down, and the points you drag.
 #   * The card has three kinds of drawing: LINE (the corners of a shape), SPLINE (a smooth curve) and POINT -- E goes round them. A click puts a point
-#     down; a click on the FIRST point closes the line into a sketch; Enter ends it open; Backspace takes a point back; Q (or the button that is on,
+#     down; a click on the FIRST point closes the line into a profile; Enter ends it open; Backspace takes a point back; Q (or the button that is on,
 #     clicked again) stops drawing, and then a click selects and moves things as usual. A double click on a point still changes it between a
 #     corner and a spline point.
-#   * Select the slab's sketch, press Ctrl+Shift+W, and draw a second shape on the same plane: it is made of points in that plane, written as
+#   * Select the slab's profile, press Ctrl+Shift+W, and draw a second shape on the same plane: it is made of points in that plane, written as
 #     ordinary numbers.
-# The work plane is a tool of the viewport: it is not saved in the script, the points and the sketches are.
+# The work plane is a tool of the viewport: it is not saved in the script, the points and the profiles are.
 from fieldes import *
 
 view.set_bounds([-15, -15, -10], [70, 70, 60], auto_scale=True)
@@ -30,7 +30,7 @@ s4 = point(20, 34.64, 20)
 s4
 s5 = point(0, 21.65, 12.5)
 s5
-slab_outline = sketch(
+slab_outline = profile(
     [s1, s2, s3, s4, s5],
     smooth=False,
 )
@@ -51,7 +51,7 @@ t3 = point(26, 19.05, 11)
 t3
 t4 = point(14, 19.05, 11)
 t4
-badge_outline = sketch(
+badge_outline = profile(
     [t1, t2, t3, t4],
     smooth=True,
 )

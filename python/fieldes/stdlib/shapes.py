@@ -35,7 +35,7 @@ def _bounded(shape, lo, hi):
 def _ringed(shape, make):
     ''' `shape`, told how its outline is drawn from numbers: `make()` gives the corners of the outline as (x, y) pairs -- numbers, or expressions of var()s -- round the origin of the
         plane the shape lies in, or None when the numbers it has now are not a shape that an outline can be made of.  `path_extrude` draws a sweep of such a shape natively, from the
-        numbers of its path, the way it draws the sweep of a sketch, so that a point of the path is followed at once while it is dragged (a curved outline is many short sides) '''
+        numbers of its path, the way it draws the sweep of a profile, so that a point of the path is followed at once while it is dragged (a curved outline is many short sides) '''
     shape._ring_points = make
     return shape
 

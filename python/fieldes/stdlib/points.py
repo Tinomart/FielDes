@@ -65,7 +65,7 @@ def weld_shift_of(shape):
 
 
 def _weld_displayed(shape):
-    ''' What is drawn for a point: itself, except a point of the path of a sweep of a sketch (see path_extrude), which is drawn where the path is -- moved with it, its gizmo too --
+    ''' What is drawn for a point: itself, except a point of the path of a sweep of a profile (see path_extrude), which is drawn where the path is -- moved with it, its gizmo too --
         so that the path and its points run through the middle of the sweep.  Dragged, it is moved by what it is dragged by, as it is seen: only where it is drawn is shifted '''
     shift = weld_shift_of(shape)
     if shift is None:
@@ -127,8 +127,8 @@ class Point(Shape):
     def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
-        self._smooth = None if smooth is None else bool(smooth)      # (what it is in a sketch: a spline point or a corner; None: what the sketch says)
-        self._radius = radius                   # (what it is in a sketch: a round corner of this radius -- a number or a var() -- or None: what the sketch says)
+        self._smooth = None if smooth is None else bool(smooth)      # (what it is in a profile: a spline point or a corner; None: what the profile says)
+        self._radius = radius                   # (what it is in a profile: a round corner of this radius -- a number or a var() -- or None: what the profile says)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
@@ -188,8 +188,8 @@ class Surface(Shape):
 
 def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
     ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
-        In a `sketch` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
-        its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  In a `sketch` it can also be a ROUND corner, `radius=r`: an exact arc
+        In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
+        its gizmo's rotation gives) and a corner when False; None (the default): what the profile says.  In a `profile` it can also be a ROUND corner, `radius=r`: an exact arc
         of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
         dot goes from a corner to a spline point to a round corner and back to a corner '''
     if isinstance(x, (tuple, list)) and y == 0.0 and z == 0.0 and len(x) == 3:
@@ -241,7 +241,7 @@ def displayed(shape):
         return _weld_displayed(shape)
     if kind == 'profile':
         # The same field: the app meshes it as the face where it is negative, in the plane z = 0 -- or the plane the shape says it lies in, `_flat_frame`
-        # (origin, u, v: a sketch) -- (libfive Mesh::renderFlat), not as a body
+        # (origin, u, v: a profile) -- (libfive Mesh::renderFlat), not as a body
         out = _as(shape, shape)
         out._flat2d = True
         return out

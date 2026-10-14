@@ -1519,15 +1519,15 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
-    // The model of the steps on sketches: four points and the sketch through them (`smooth`: the corner at the top right is a spline point)
-    auto sketchModel = [](bool smooth) {
+    // The model of the steps on profiles: four points and the profile through them (`smooth`: the corner at the top right is a spline point)
+    auto profileModel = [](bool smooth) {
         return QString("a = point(-20, -12, 0)\na\nb = point(20, -12, 0)\nb\n") +
                (smooth ? "c = point(20, 12, 0, smooth=True)\n" : "c = point(20, 12, 0)\n") +
-               "c\nd = point(-20, 12, 0)\nd\nplate = sketch(\n    [a, b, c, d],\n    smooth=False,\n)\nplate";
+               "c\nd = point(-20, 12, 0)\nd\nplate = profile(\n    [a, b, c, d],\n    smooth=False,\n)\nplate";
     };
-    // (the sketch's points: how many the call lists)
-    auto sketchPoints = [this]() {
-        static const QRegularExpression re(R"(plate\s*=\s*sketch\(\s*\[([^\]]*)\])");
+    // (the profile's points: how many the call lists)
+    auto profilePoints = [this]() {
+        static const QRegularExpression re(R"(plate\s*=\s*profile\(\s*\[([^\]]*)\])");
         const auto m = re.match(m_editor->getScript());
         return m.hasMatch() ? int(m.captured(1).count(',')) + 1 : 0;
     };
@@ -1542,7 +1542,7 @@ void Tutorial::buildSteps()
         s.text = T("Press Shift+W in the viewport for a work plane: a grid to draw on. Click to put down the corners of a shape, then click the first one to close it.")
                  + "\n\n" + T("E picks line, spline or point.");
         s.hint = T("The plane opens in Line, so the first click draws. Nothing is written until the shape is closed. Or press Show me.");
-        s.code = linesWith("sketch\\(|^\\w+_p\\d+ = ");
+        s.code = linesWith("profile\\(|^\\w+_p\\d+ = ");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.keys = true;
@@ -1557,8 +1557,8 @@ void Tutorial::buildSteps()
             m_view->standardView(View::VIEW_TOP);              // (the plane that opens is parallel to the view: the one the points go on)
             m_view->setFocus(Qt::OtherFocusReason);            // (Shift+W acts while the viewport has the keyboard)
         };
-        s.done = [this] { return m_editor->getScript().contains("sketch("); };
-        s.doneNote = T("Nice. The points and the sketch are in the script, as plain numbers.");
+        s.done = [this] { return m_editor->getScript().contains("profile("); };
+        s.doneNote = T("Nice. The points and the profile are in the script, as plain numbers.");
         s.show = [this](std::function<void()> over) {
             m_busy = true;
             static_cast<TourLayer*>(m_layer)->cursorKey = "Shift+W";                 // (the shortcut is pressed: a key cap by the cursor says so)
@@ -1652,21 +1652,21 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Pull a point out of an edge");
         s.text = T("A 2D shape has a blue outline. Press an EDGE -- a blue line between two corners, not a corner -- and drag: a new point comes out of it and becomes part of the shape.");
-        s.hint = T("The arrow points at an edge. The new point is a model of its own, put in the list of the sketch. Or press Show me.");
+        s.hint = T("The arrow points at an edge. The new point is a model of its own, put in the list of the profile. Or press Show me.");
         s.code = linesWith("^plate =|^\\s+\\[\\w+");
         s.holes = holesOf(viewWidget);
         s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(0, 12, 0))); };       // (the middle of the top edge)
         s.place = InsideBottom;
-        s.group = "sketch";
+        s.group = "profile";
         s.closeRows = true;
-        s.enter = [this, scene, sketchModel] {
+        s.enter = [this, scene, profileModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader(QString()) + sketchModel(false));
+            useScript(tourHeader(QString()) + profileModel(false));
             scene()->clearSelection();
             m_view->standardView(View::VIEW_TOP);
         };
-        s.done = [sketchPoints] { return sketchPoints() >= 5; };
-        s.doneNote = T("Nice. The sketch has another point.");
+        s.done = [profilePoints] { return profilePoints() >= 5; };
+        s.doneNote = T("Nice. The profile has another point.");
         s.show = [this](std::function<void()> over) {
             const QPoint from = m_view->screenPoint(QVector3D(0, 12, 0));       // (the middle of the top edge)
             if (!m_view->isVisible() || from.isNull()) { over(); return; }
@@ -1684,11 +1684,11 @@ void Tutorial::buildSteps()
         s.holes = holesOf(viewWidget);
         s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(20, 12, 0))); };       // (the corner at the top right)
         s.place = InsideBottom;
-        s.group = "sketch";
+        s.group = "profile";
         s.closeRows = true;
-        s.enter = [this, scene, sketchModel] {
+        s.enter = [this, scene, profileModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader(QString()) + sketchModel(false));
+            useScript(tourHeader(QString()) + profileModel(false));
             scene()->clearSelection();
             m_view->standardView(View::VIEW_TOP);
         };
@@ -1711,17 +1711,17 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("The gizmo of a point");
-        s.text = T("Select a point and press its dot to move it, in the plane of the sketch. The gold ring scales it, evenly; the blue ring (on a spline point) turns the direction the curve leaves it.");
+        s.text = T("Select a point and press its dot to move it, in the plane of the profile. The gold ring scales it, evenly; the blue ring (on a spline point) turns the direction the curve leaves it.");
         s.hint = T("A corner has neither ring: it has no direction and no strength. In a sweep along a line, the scale of a point is how thick the sweep is there.");
         s.code = linesWith("^c = |^c$");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
-        s.group = "sketch";
+        s.group = "profile";
         s.closeRows = true;
         s.undone = true;
-        s.enter = [this, scene, sketchModel] {
+        s.enter = [this, scene, profileModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader(QString()) + sketchModel(true));
+            useScript(tourHeader(QString()) + profileModel(true));
             m_view->standardView(View::VIEW_TOP);
             scene()->selectModel("c");
         };
@@ -2086,7 +2086,7 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Lines and sweeps");
-        s.text = T("Draw a line or a sketch on the work plane with mirror selected: every point gets its images, and the line goes through them. A path_extrude made of them gets its images too.");
+        s.text = T("Draw a line or a profile on the work plane with mirror selected: every point gets its images, and the line goes through them. A path_extrude made of them gets its images too.");
         s.hint = T("Move a point of the original: the tube and all its images bend with it. Example 29_symmetry shows a table; File ▸ Open example file.");
         s.holes = both;
         s.cardNear = treeNear;
@@ -2120,7 +2120,7 @@ void Tutorial::buildSteps()
                  T("E  next kind of drawing, or the last one") + "\n" +
                  T("Shift+S  symmetry on or off") + "\n" +
                  T("Right click  stop drawing");
-        s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show sketches, linked copies and the work plane.");
+        s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show profiles, linked copies and the work plane.");
         s.place = Right;
         s.enter = [this] { m_view->holdShift(false); m_view->setWorkPlaneOpen(false); };
         add(s);

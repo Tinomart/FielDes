@@ -129,6 +129,8 @@ std::vector<Fillet> fillets(const std::vector<Control>& c, bool smoothDefault, b
         const Eigen::Vector3d bisector = (k.u1 + k.u2).normalized();
         f.centre = P[size_t(i)] + bisector * (radius / std::sin(0.5 * k.theta));
         f.radius = radius;
+        f.corner = P[size_t(i)];
+        f.theta = k.theta;
         out.push_back(f);
     }
     return out;

@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Sketches and extrusions](#sketches-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -883,7 +883,7 @@ The images FOLLOW what they are the images of and the symmetry: move the origina
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
 one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); what is
 made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
-gets one model for each image, `symmetry_image`; so does a sketch, a line or a spline: it is made of its points, which are the models, so each point has its images
+gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: it is made of its points, which are the models, so each point has its images
 (`symmetry_image(point, mirror, 3)`) and the stroke goes through them.
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -920,8 +920,8 @@ own (so that dragging the shape moves its images as it is dragged, with nothing 
 It follows the shape and the symmetry as each image does (see symmetry_image) and has no numbers of its own: its gizmo is the shape's, drawn at the first image, and pulling
 a surface of any of them pulls the shape.
 
-What a shape was made from is mirrored TOGETHER with it: the sketches, the lines and the points of the models it was made from -- the sketch and the path of a
-`path_extrude`, the sketch of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
+What a shape was made from is mirrored TOGETHER with it: the profiles, the lines and the points of the models it was made from -- the profile and the path of a
+`path_extrude`, the profile of an `extrude`, whatever the operation -- are drawn with each image, as a copy of the line or the outline and a dot for each point.  They are not
 models -- there is no statement and no row of the model tree for them -- and the ones of the shape you made stay the only ones with numbers: press a dot of any image's and drag
 it, and it is that point of the original that moves.
 
@@ -986,8 +986,8 @@ A plane through `point`, positive on the side `normal` points to: a surface
 ### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None)`
 
 A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
-In a `sketch` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
-its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  In a `sketch` it can also be a ROUND corner, `radius=r`: an exact arc
+In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
+its gizmo's rotation gives) and a corner when False; None (the default): what the profile says.  In a `profile` it can also be a ROUND corner, `radius=r`: an exact arc
 of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
 dot goes from a corner to a spline point to a round corner and back to a corner
 
@@ -1022,7 +1022,7 @@ None when it is drawn where it is
 
 A curve is a model of its own kind (a 1D shape), made of points and drawn as a line.  It stands on its own, and anything that takes a curve takes it as it is:
 
-    face = sketch(loop)                         # the 2D shape a closed curve encloses (see sketch)
+    face = profile(loop)                         # the 2D shape a closed curve encloses (see profile)
     tube = offset(smooth, 1.5)                  # a 3D shape: the points at most 1.5 from the curve (a tube round it)
     beam = path_extrude(face, smooth)           # a 2D shape swept along it
 
@@ -1043,7 +1043,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `Control`
 
-One point of a curve or sketch: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
+One point of a curve or profile: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
 while the point is dragged), what it says of itself (-1: what the shape says, 0: a corner, 1: a spline point) and its rotation
 
 #### `Control.smooth(self, default)`
@@ -1061,7 +1061,7 @@ ends, .vertices the line it is drawn as (x, y, z)
 
 ### `controls(points, rounds=False, radius_default=0.0, smooth_default=False)`
 
-The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a sketch (`rounds` True)
+The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a profile (`rounds` True)
 
 ### `cross(a, b)`
 
@@ -1079,7 +1079,7 @@ arc or past the next point)
 
 ### `mark(ctrls, default, kind)`
 
-Tell each point what the curve or sketch made of it: a corner or a spline point (the viewport draws the two differently, and the double click
+Tell each point what the curve or profile made of it: a corner or a spline point (the viewport draws the two differently, and the double click
 changes it), and the default it follows
 
 ### `mul(a, k)`
@@ -1160,30 +1160,30 @@ The number a coordinate has now: a number, or a field that is the same everywher
 What the viewport draws the line or the face from while a point is dragged: the expressions of each point's place and rotation (their numbers move with
 the script's var()s), and what each says of itself.  The line is made again from them at every frame, natively: no script is run
 
-## Sketches and extrusions
+## Profiles and extrusions
 
-A 2D shape from points or from a closed curve: `sketch`.
+A 2D shape from points or from a closed curve: `profile`.
 
     a = point(0, 0, 0)
     b = point(40, 0, 0)
     c = point(40, 20, 0)
     d = point(0, 20, 0, smooth=True)
-    plate = sketch([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
-    round = sketch([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
+    plate = profile([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
+    round = profile([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
     outline = spline([a, b, c, d], closed=True)
-    plate = sketch(outline)                     # the same, from a curve
+    plate = profile(outline)                     # the same, from a curve
     body = extrude(plate, 0, 5)                 # a solid: the face pulled 5 along its normal
 
 The points are ordinary points (`point(x, y, z)`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
 the first).  The shape lies in the PLANE through the first three points (the first that is not on a line with the first two); every other point is
-projected onto that plane, so a sketch is made whatever the points are.  A tuple of three numbers stands for a point too.
+projected onto that plane, so a profile is made whatever the points are.  A tuple of three numbers stands for a point too.
 
 Each point is a corner (a hard edge: straight to its neighbours) or a spline point (the outline is a smooth curve through it) -- see `spline`, which makes the
-outline.  `smooth=` of the sketch says which a point is that does not say itself (False, a hard edge, by default); `point(..., smooth=True)` says it for
+outline.  `smooth=` of the profile says which a point is that does not say itself (False, a hard edge, by default); `point(..., smooth=True)` says it for
 that point -- FielDes toggles it when you double-click the point.  The ROTATION of a spline point -- its gizmo's rotate numbers, which a point has no other use
 for -- turns the direction in which the outline leaves it.
 
-A sketch is drawn from the numbers its points have, natively, while you drag them.  Its field (for `extrude`, `offset`, analyses ...) is plain math, made
+A profile is drawn from the numbers its points have, natively, while you drag them.  Its field (for `extrude`, `offset`, analyses ...) is plain math, made
 when the script runs: the signed distance to the outline -- the distance to the nearest edge, with the side taken from that nearest edge or corner alone, so
 the renderer drops the edges that are far from where it looks.
 
@@ -1191,38 +1191,38 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `Sketch`
+### `Profile`
 
-A 2D shape made of points (see `sketch`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
+A 2D shape made of points (see `profile`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
 .smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v)
 
-### `SurfaceSketch`
+### `SurfaceProfile`
 
-A 2D shape made from a surface (see `sketch`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
+A 2D shape made from a surface (see `profile`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
 numbers each, u x v the way the surface faces --, .profile2d the same field in the coordinates of that plane, .flat whether the surface is flat (it is projected
 onto the plane when it is not), .away how far the surface is from the plane at most, .loops the outline as [(polygon, hole)] with the points as (s, t)
 
 ### `extrude(shape, a, b)`
 
 A 2D shape pulled into a solid: the part of space between the distances `a` and `b` from its plane, along the plane's normal (the plane is
-z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a sketch is the plane of its points,
+z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a profile is the plane of its points,
 and the normal is the direction u x v of that plane).  `extrude(circle(5), 0, 10)` is a cylinder 10 tall
 
 ### `path_extrude(profile, path, twist=0)`
 
-A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a sketch) -- carried
+A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a profile) -- carried
 along `path`, turning with it, without twisting about it unless the points of the curve say so.
 THE 2D SHAPE IS WHERE THE SWEEP STARTS: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
 the shape (the middle of the box of its outline), and its first ring is the shape itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted
 when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into.  A circle
-or a rectangle is such a shape as a sketch is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
+or a rectangle is such a shape as a profile is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
 points with it -- whatever its own numbers say; only its shape matters, and the first point of it is the middle of the shape:
 the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
 smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
 with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
 the spline through them
 
-### `sketch(source, smooth=False, radius=0)`
+### `profile(source, smooth=False, radius=0)`
 
 The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
 through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or

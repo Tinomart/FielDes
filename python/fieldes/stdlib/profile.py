@@ -1,26 +1,26 @@
 '''
-A 2D shape from points or from a closed curve: `sketch`.
+A 2D shape from points or from a closed curve: `profile`.
 
     a = point(0, 0, 0)
     b = point(40, 0, 0)
     c = point(40, 20, 0)
     d = point(0, 20, 0, smooth=True)
-    plate = sketch([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
-    round = sketch([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
+    plate = profile([a, b, c, d])                # the face the points enclose; hard edges unless a point says smooth=True
+    round = profile([a, b, c, d], smooth=True)   # ...or every point a spline, but where a point says smooth=False
     outline = spline([a, b, c, d], closed=True)
-    plate = sketch(outline)                     # the same, from a curve
+    plate = profile(outline)                     # the same, from a curve
     body = extrude(plate, 0, 5)                 # a solid: the face pulled 5 along its normal
 
 The points are ordinary points (`point(x, y, z)`, dragged with their gizmo): any number of them, joined in the order they are given and closed (the last to
 the first).  The shape lies in the PLANE through the first three points (the first that is not on a line with the first two); every other point is
-projected onto that plane, so a sketch is made whatever the points are.  A tuple of three numbers stands for a point too.
+projected onto that plane, so a profile is made whatever the points are.  A tuple of three numbers stands for a point too.
 
 Each point is a corner (a hard edge: straight to its neighbours) or a spline point (the outline is a smooth curve through it) -- see `spline`, which makes the
-outline.  `smooth=` of the sketch says which a point is that does not say itself (False, a hard edge, by default); `point(..., smooth=True)` says it for
+outline.  `smooth=` of the profile says which a point is that does not say itself (False, a hard edge, by default); `point(..., smooth=True)` says it for
 that point -- FielDes toggles it when you double-click the point.  The ROTATION of a spline point -- its gizmo's rotate numbers, which a point has no other use
 for -- turns the direction in which the outline leaves it.
 
-A sketch is drawn from the numbers its points have, natively, while you drag them.  Its field (for `extrude`, `offset`, analyses ...) is plain math, made
+A profile is drawn from the numbers its points have, natively, while you drag them.  Its field (for `extrude`, `offset`, analyses ...) is plain math, made
 when the script runs: the signed distance to the outline -- the distance to the nearest edge, with the side taken from that nearest edge or corner alone, so
 the renderer drops the edges that are far from where it looks.
 
@@ -35,11 +35,11 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib import curves as C
 
-__all__ = ['sketch', 'Sketch', 'extrude', 'path_extrude']
+__all__ = ['profile', 'Profile', 'extrude', 'path_extrude']
 
 
-class Sketch(Shape):
-    ''' A 2D shape made of points (see `sketch`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
+class Profile(Shape):
+    ''' A 2D shape made of points (see `profile`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
         .smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v) '''
     _kind = 'profile'
     _no_gizmo = True                # (its points have the gizmos: they are what is dragged)
@@ -47,7 +47,7 @@ class Sketch(Shape):
     def _remake(self, points, improper=False):
         ''' The same outline through other points (the images of its points in a symmetry: see symmetries.symmetry_images) -- the other way round for a mirror image, which turns
             the way round: reversed, it faces as this one does '''
-        return sketch(points[::-1] if improper else points, smooth=self.smooth, radius=getattr(self, 'radius', 0))
+        return profile(points[::-1] if improper else points, smooth=self.smooth, radius=getattr(self, 'radius', 0))
 
     def _display(self):
         # What the viewport draws is the face of the outline, made natively from the points' numbers: no field is needed for that, so none is made
@@ -56,12 +56,12 @@ class Sketch(Shape):
             if name != 'ptr':
                 out.__dict__[name] = v
         out._kind = 'profile'
-        out._sketch_face = True
+        out._profile_face = True
         return out
 
 
-class SurfaceSketch(Shape):
-    ''' A 2D shape made from a surface (see `sketch`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
+class SurfaceProfile(Shape):
+    ''' A 2D shape made from a surface (see `profile`): the outline of the surface in its plane, holes included.  .plane the plane it lies in -- (origin, u, v), three
         numbers each, u x v the way the surface faces --, .profile2d the same field in the coordinates of that plane, .flat whether the surface is flat (it is projected
         onto the plane when it is not), .away how far the surface is from the plane at most, .loops the outline as [(polygon, hole)] with the points as (s, t) '''
     _kind = 'profile'
@@ -85,9 +85,9 @@ def _polygon_field(loop, frame, arcs=None):
 
 
 def _from_surface(selection):
-    ''' The 2D shape a surface picked on a part makes (see `sketch`) '''
-    from fieldes.stdlib import surface_sketch
-    plane, loops, flat, away = surface_sketch.outline_of(selection)
+    ''' The 2D shape a surface picked on a part makes (see `profile`) '''
+    from fieldes.stdlib import surface_profile
+    plane, loops, flat, away = surface_profile.outline_of(selection)
 
     def field(frame):
         out = None
@@ -101,7 +101,7 @@ def _from_surface(selection):
                 out = out.max(C.polygon_field(polygon, frame) * -1.0)          # (what is inside a hole is outside)
         return out
 
-    made = C.owned(field(plane), SurfaceSketch)          # (the field is held for the whole call: see curves.owned)
+    made = C.owned(field(plane), SurfaceProfile)          # (the field is held for the whole call: see curves.owned)
     made.plane, made.profile2d, made.flat, made.away, made.loops = plane, C.owned(field(None)), flat, away, loops
     made.surface = selection
     o, u, v = plane
@@ -111,12 +111,12 @@ def _from_surface(selection):
         made._centre2d = (0.5 * (min(s for s, t in flat) + max(s for s, t in flat)), 0.5 * (min(t for s, t in flat) + max(t for s, t in flat)))
     made._no_handles = True                  # (no faces of its own to pull: it is made from the surface)
     if not flat:
-        print('sketch: the surface is not flat (it is up to %.3g mm from the plane through its middle): its outline is projected onto that plane, along the way it '
+        print('profile: the surface is not flat (it is up to %.3g mm from the plane through its middle): its outline is projected onto that plane, along the way it '
               'faces on average' % away)
     return made
 
 
-def sketch(source, smooth=False, radius=0):
+def profile(source, smooth=False, radius=0):
     ''' The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
         through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
         smooth=False): False, a corner (a hard edge: the default), or True, a spline point.  A spline point leaves in the direction the rotation of its gizmo
@@ -138,17 +138,17 @@ def sketch(source, smooth=False, radius=0):
         items = list(source)
     smooth = bool(smooth)
     if C.value_of(radius) < 0:
-        raise ValueError('sketch(..., radius=%g): a radius is not negative (0 is a hard corner)' % C.value_of(radius))
+        raise ValueError('profile(..., radius=%g): a radius is not negative (0 is a hard corner)' % C.value_of(radius))
     ctrls = C.controls(items, rounds=True, radius_default=radius, smooth_default=smooth)
-    C.mark(ctrls, smooth, 'sketch')
+    C.mark(ctrls, smooth, 'profile')
     plane = C.plane_of(ctrls)
     if plane is None:
-        out = C.owned(Shape.wrap(1e9), Sketch)
+        out = C.owned(Shape.wrap(1e9), Profile)
         out.vertices, out._owners, out.plane, out.profile2d = [], [], None, out
     else:
         o, u, v = plane
         normal = C.cross(u, v)
-        # (the rotation of a point of a sketch is one angle, about the normal of its plane.)  The outline as it is drawn has every arc cut into pieces; the field is made on the
+        # (the rotation of a point of a profile is one angle, about the normal of its plane.)  The outline as it is drawn has every arc cut into pieces; the field is made on the
         # outline with every arc as its chord and the arcs themselves, which are exact
         verts, owners = C.trace(ctrls, smooth, True, normal=normal)
         rounded = [c for c in ctrls if c.rounded]
@@ -160,13 +160,13 @@ def sketch(source, smooth=False, radius=0):
         loop = [(C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in verts]
         loop_chord = [(C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in chord]
         arcs_loop = [tuple((C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in (a, b, c)) + (r,) for _i, a, b, c, r in arcs3]
-        # The field is made in coordinates measured from the origin of space along u and v, not from the first point of the sketch: the same shape, but a wall that stands at x = 12 is
+        # The field is made in coordinates measured from the origin of space along u and v, not from the first point of the profile: the same shape, but a wall that stands at x = 12 is
         # `x - 12 = 0` there and `x = 12` here -- and the first one, turned by a gizmo or a symmetry, was meshed with teeth along its walls (a quarter turn of a solid made of it, the
         # kernel's mesher: +11 % of surface), the second is meshed exactly, as a box is
         from_origin = [(C.dot(p, u), C.dot(p, v)) for p in chord]
         arcs_origin = [tuple((C.dot(p, u), C.dot(p, v)) for p in (a, b, c)) + (r,) for _i, a, b, c, r in arcs3]
         field = _polygon_field(from_origin, ((0.0, 0.0, 0.0), u, v), arcs_origin)
-        out = Sketch(lib.libfive_tree_copy(field.ptr))
+        out = Profile(lib.libfive_tree_copy(field.ptr))
         out.plane = plane
         out.profile2d = _polygon_field(loop_chord, None, arcs_loop)
         out.vertices, out._owners = verts, owners
@@ -179,7 +179,7 @@ def sketch(source, smooth=False, radius=0):
     return out
 
 
-sketch._makes_no_gizmo = True
+profile._makes_no_gizmo = True
 
 
 def _box_of_points(points):
@@ -206,7 +206,7 @@ def _linear(n, off):
 
 def extrude(shape, a, b):
     ''' A 2D shape pulled into a solid: the part of space between the distances `a` and `b` from its plane, along the plane's normal (the plane is
-        z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a sketch is the plane of its points,
+        z = 0 for the shapes that lie there -- a circle, a rectangle -- so that is zmin and zmax; the plane of a profile is the plane of its points,
         and the normal is the direction u x v of that plane).  `extrude(circle(5), 0, 10)` is a cylinder 10 tall '''
     shape = Shape.wrap(shape)
     plane = getattr(shape, 'plane', None)
@@ -231,10 +231,10 @@ def extrude(shape, a, b):
             da, db = nums
             out._bounds = (tuple(box[0][k] + min(da * n[k], db * n[k]) for k in range(3)),
                            tuple(box[1][k] + max(da * n[k], db * n[k]) for k in range(3)))
-    # A straight extrusion of a sketch of points is a PRISM: the viewport draws it from the numbers of the points and of a and b at every render -- as it draws the face of
-    # the sketch -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `_prism_guard` are the numbers (var()s) that must still
+    # A straight extrusion of a profile of points is a PRISM: the viewport draws it from the numbers of the points and of a and b at every render -- as it draws the face of
+    # the profile -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `_prism_guard` are the numbers (var()s) that must still
     # be what they were for the shape to be nothing but that prism: handles() and gizmo() add theirs (a pulled face, a placed shape make it something else)
-    if getattr(shape, '_ctrl_pos', None) and plane is not None and getattr(shape, '_sketch_face', None) is None and isinstance(shape, Sketch):
+    if getattr(shape, '_ctrl_pos', None) and plane is not None and getattr(shape, '_profile_face', None) is None and isinstance(shape, Profile):
         out._prism_pos = shape._ctrl_pos
         out._prism_rot = shape._ctrl_rot
         out._prism_flag = shape._ctrl_flag
@@ -249,14 +249,14 @@ def extrude(shape, a, b):
 
 def _profile_at(profile, a, b, size=None, centre=None):
     ''' The 2D shape as a field of two coordinates a and b (fields): where its own plane's origin is the point of the path and a, b run along its own two axes
-        -- x and y for a shape in the plane z = 0, u and v for a sketch.  `size` (a field, or None): how many times as big it is there -- the shape
+        -- x and y for a shape in the plane z = 0, u and v for a profile.  `size` (a field, or None): how many times as big it is there -- the shape
         is looked at from 1 / size as far, and the distance it says is made as many times as long, so that it is still a distance '''
     profile = Shape.wrap(profile)
     inner = getattr(profile, 'profile2d', None)
     base = inner if inner is not None else profile
-    # A sketch is carried by the MIDDLE of its outline (the box of it), so that the path runs through the middle of what is swept, not along its first point; the
+    # A profile is carried by the MIDDLE of its outline (the box of it), so that the path runs through the middle of what is swept, not along its first point; the
     # thickness of a point scales the profile about that middle too
-    # (`centre`: the middle of the box of a shape in the plane z = 0 that is not a sketch -- see path_extrude)
+    # (`centre`: the middle of the box of a shape in the plane z = 0 that is not a profile -- see path_extrude)
     cx, cy = centre if centre is not None else getattr(profile, '_centre2d', (0.0, 0.0))
     if size is None:
         return base.remap(a + cx if cx else a, b + cy if cy else b, Shape.wrap(0))
@@ -281,12 +281,12 @@ def _turned(v, t, cs, sn):
 
 
 def path_extrude(profile, path, twist=0):
-    ''' A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a sketch) -- carried
+    ''' A 2D shape swept along a curve: the `profile` -- its own axes across the curve (x and y for a shape in the plane z = 0, the two axes of the plane of a profile) -- carried
         along `path`, turning with it, without twisting about it unless the points of the curve say so.
         THE 2D SHAPE IS WHERE THE SWEEP STARTS: the curve says how it travels, not where from -- the whole sweep is moved so that the first point of the curve is the middle of
         the shape (the middle of the box of its outline), and its first ring is the shape itself, in its own plane at whatever angle the curve leaves it (the sweep is slanted
         when it is oblique; a shape whose plane holds the direction of the curve is turned across it), so that the shape you edit is the base of what it is swept into.  A circle
-        or a rectangle is such a shape as a sketch is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
+        or a rectangle is such a shape as a profile is.  The path is DRAWN where the sweep goes -- through the middle of its cross-section, from the middle of the shape, its
         points with it -- whatever its own numbers say; only its shape matters, and the first point of it is the middle of the shape:
         the ROTATION of a point (its gizmo's rotate numbers) twists the profile about the curve there, and the twist runs between the points as a
         smooth change.  `twist` (degrees) turns the whole profile about the curve besides.  The ends are cut square.  A curve with corners is swept
@@ -313,17 +313,17 @@ def path_extrude(profile, path, twist=0):
         owners = [owners[j] for j in keep]
         n = len(V)
     # The 2D shape is where the sweep STARTS (the path says how it travels): the sweep is moved so that the first point of the path is the middle of the shape -- the middle of
-    # the box of its outline -- and (below) its first ring is the shape, so that the shape being edited is the base of what it is swept into.  A sketch has its own plane; a
+    # the box of its outline -- and (below) its first ring is the shape, so that the shape being edited is the base of what it is swept into.  A profile has its own plane; a
     # shape in the plane z = 0 (a circle, a rectangle, whatever a gizmo or handles() has made of one) has the plane z = 0, its axes x and y
     base_plane = None
     centre2d = (0.0, 0.0)
     ring = None                 # (the outline in numbers, from the middle of the box of it: the box of the sweep, and what the viewport draws a sweep of points from)
     primitive_ring = None       # (the same, as expressions of the numbers of a primitive: what the viewport draws a sweep of a primitive from)
     box_ring = None             # (the four corners of the box of a shape that has no outline to give, from the middle of it)
-    if isinstance(profile, (Sketch, SurfaceSketch)) and getattr(profile, 'plane', None) is not None:
+    if isinstance(profile, (Profile, SurfaceProfile)) and getattr(profile, 'plane', None) is not None:
         base_plane = profile.plane
         centre2d = getattr(profile, '_centre2d', (0.0, 0.0))
-    elif not isinstance(profile, (Sketch, SurfaceSketch)):
+    elif not isinstance(profile, (Profile, SurfaceProfile)):
         outline = None
         make = getattr(profile, '_ring_points', None) if getattr(path, '_ctrl_pos', None) else None
         if make is not None:
@@ -379,8 +379,8 @@ def path_extrude(profile, path, twist=0):
             return T[pieces - 1]
         return C.unit(C.add(T[k - 1], T[k]))
 
-    # The frames.  A SKETCH is carried along the path as it is -- its two axes u and v, turned with the path (each next frame carried along without turning about the path:
-    # the double reflection of Wang et al.) -- so that the first ring is the sketch itself, at whatever angle the path leaves it.  A sketch whose plane holds the direction of
+    # The frames.  A PROFILE is carried along the path as it is -- its two axes u and v, turned with the path (each next frame carried along without turning about the path:
+    # the double reflection of Wang et al.) -- so that the first ring is the profile itself, at whatever angle the path leaves it.  A profile whose plane holds the direction of
     # the path (nothing could be swept) and every other profile start across the path: from the axis it is least along (so a path that starts up the z axis has the profile's
     # x along x and y along y)
     U = [None] * pieces
@@ -392,7 +392,7 @@ def path_extrude(profile, path, twist=0):
     if U[0] is None:
         first = None
         if base_plane is not None:
-            # (the sketch's own axis u, across the path -- v when the path leaves along u)
+            # (the profile's own axis u, across the path -- v when the path leaves along u)
             for across in (base_plane[1], base_plane[2]):
                 candidate = C.sub(across, C.mul(T[0], C.dot(across, T[0])))
                 if C.dot(candidate, candidate) > 1e-12:
@@ -406,7 +406,7 @@ def path_extrude(profile, path, twist=0):
     for k in range(pieces - 1):
         U[k + 1] = C.unit(_transported(V[k], V[k + 1], T[k], T[k + 1], U[k]))
         W[k + 1] = C.unit(_transported(V[k], V[k + 1], T[k], T[k + 1], W[k]))
-    # the frame the twist is measured in, across the path: u across it (v when u lies along it) -- u itself when the sketch is across the path
+    # the frame the twist is measured in, across the path: u across it (v when u lies along it) -- u itself when the profile is across the path
     N, B = [], []
     for k in range(pieces):
         across = C.sub(U[k], C.mul(T[k], C.dot(U[k], T[k])))
@@ -445,12 +445,12 @@ def path_extrude(profile, path, twist=0):
         s1 = sizes[i1] if (closed or i + 1 < len(ctrls)) else s0
         return max(s0 * (1 - t) + s1 * t, 1e-3)
 
-    # The profile as the rings of the sweep have it: the outline of a sketch, from the middle of it (the extent of the rings is the box of the sweep)
-    if isinstance(profile, Sketch) and getattr(profile, '_ctrl_pos', None) and getattr(path, '_ctrl_pos', None) and getattr(profile, 'plane', None) is not None:
+    # The profile as the rings of the sweep have it: the outline of a profile, from the middle of it (the extent of the rings is the box of the sweep)
+    if isinstance(profile, Profile) and getattr(profile, '_ctrl_pos', None) and getattr(path, '_ctrl_pos', None) and getattr(profile, 'plane', None) is not None:
         po, pu, pv = profile.plane
         cx, cy = centre2d
         ring = [(C.dot(C.sub(p, po), pu) - cx, C.dot(C.sub(p, po), pv) - cy) for p in profile.vertices]
-    # The box of the sweep.  A profile that is not drawn from numbers (an offset of a circle, a sketch of a path that is not made of points ...) is meshed from its field, and the
+    # The box of the sweep.  A profile that is not drawn from numbers (an offset of a circle, a profile of a path that is not made of points ...) is meshed from its field, and the
     # field of a sweep has no box that can be found in the time there is: the box the profile was told (its `_bounds`) carried along the path is one that holds the sweep, so
     # that the render region grows to hold it -- the region of the scene is not a place the sweep is cut off at
     if box_ring is None:
@@ -471,7 +471,7 @@ def path_extrude(profile, path, twist=0):
         cs, sn = math.cos(phi), math.sin(phi)
         nk, bk = _turned(U[k], T[k], cs, sn), _turned(W[k], T[k], cs, sn)
         # (where a point is on the profile's plane, seen along the path: its coordinates a and b along the two axes of the profile -- the way they are when the profile is
-        # across the path, and slanted when the path leaves the sketch at an angle)
+        # across the path, and slanted when the path leaves the profile at an angle)
         det = C.dot(nk, C.cross(bk, T[k]))
         ra, rb = C.mul(C.cross(bk, T[k]), 1.0 / det), C.mul(C.cross(T[k], nk), 1.0 / det)
         a = _linear(ra, -C.dot(ra, V[k]))
@@ -495,7 +495,7 @@ def path_extrude(profile, path, twist=0):
         # the joint is inside, not a plane where the field is zero
         mk, mj = tangent_at(k), tangent_at(j)
         if base_plane is not None and not closed and (k == 0 or k == pieces - 1):
-            # (the ends of the sweep of a sketch are the sketch -- the one that was drawn at the start, its copy at the end -- not cut square across the path)
+            # (the ends of the sweep of a profile are the profile -- the one that was drawn at the start, its copy at the end -- not cut square across the path)
             flat = C.cross(nk, bk)
             side = 1.0 if C.dot(flat, T[k]) >= 0 else -1.0
             if k == 0:
@@ -513,13 +513,13 @@ def path_extrude(profile, path, twist=0):
         out._bounds = (tuple(lo[a] - pad for a in range(3)), tuple(hi[a] + pad for a in range(3)))
         out._bounds_loose = True
     if ring:
-        # A sweep of a sketch is drawn natively from the numbers of the points of the sketch and of the path (as a straight extrusion is: see `extrude`), so it
+        # A sweep of a profile is drawn natively from the numbers of the points of the profile and of the path (as a straight extrusion is: see `extrude`), so it
         # follows a point while the point is dragged and nothing is meshed.  Its field (above) is for what is made *of* it -- and it is not searched for or counted
         # for handles: it is a field of thousands of terms
         out._kind = 'solid'
         out._no_handles = True
         if primitive_ring is not None:
-            # (the outline of a primitive: corners in the plane z = 0, its axes x and y -- the sweep starts at it, as at a sketch)
+            # (the outline of a primitive: corners in the plane z = 0, its axes x and y -- the sweep starts at it, as at a profile)
             zero = Shape.wrap(0.0)
             out._sweep_ppos = [(x, y, zero) for x, y in primitive_ring]
             out._sweep_prot = [None] * len(primitive_ring)

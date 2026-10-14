@@ -1,5 +1,5 @@
 '''
-The outline of a surface, for `sketch(surface)` (see fieldes.stdlib.sketch): a surface picked on a part (`select_surface`) is made of the points of the part's surface
+The outline of a surface, for `profile(surface)` (see fieldes.stdlib.profile): a surface picked on a part (`select_surface`) is made of the points of the part's surface
 that the walk took, and the way the surface faces at each.  This finds the plane they lie in and the outline they cover on it -- one loop round, and one for every hole.
 
   * The plane is the one through the middle of the points, facing the way the surface faces on average.  A flat face lies in it exactly; a surface that is
@@ -221,7 +221,7 @@ def outline_of(selection):
     points = getattr(selection, 'sample_points', None)
     normals = getattr(selection, 'sample_normals', None)
     if not points or not normals or len(points) < 9:
-        raise ValueError('sketch(surface): this surface has no points to make an outline from -- a sketch is made from a surface picked on a part (select_surface)')
+        raise ValueError('profile(surface): this surface has no points to make an outline from -- a profile is made from a surface picked on a part (select_surface)')
     n = len(points) // 3
     step = float(getattr(selection, 'spacing', 0.0)) or 1.0
     plane, away = _plane(points, normals)
@@ -237,7 +237,7 @@ def outline_of(selection):
         h *= 1.5
     traced = _contours(flat2d, h)
     if not traced:
-        raise ValueError('sketch(surface): no outline could be traced from this surface (is the patch a single point or a line?)')
+        raise ValueError('profile(surface): no outline could be traced from this surface (is the patch a single point or a line?)')
     field = getattr(selection, 'shape', None)
     delta = 1e-4 * size
     if flat and field is not None:
@@ -261,7 +261,7 @@ def outline_of(selection):
         polygon = _corners_made_exact(loop, kept, h) if flat else [loop[k] for k in kept]
         loops.append((polygon, _area(loop) < 0))
     if not any(not hole for _, hole in loops):
-        raise ValueError('sketch(surface): no outline could be traced from this surface')
+        raise ValueError('profile(surface): no outline could be traced from this surface')
     return plane, loops, flat, away
 
 

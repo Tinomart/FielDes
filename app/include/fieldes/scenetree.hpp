@@ -184,11 +184,11 @@ public slots:
      *  or "operation" (on the model displayed by the (0-based) line `line0`, or, for a negative line, the
      *  selected model; written under its definition)  */
     void createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation = -1);
-    /*  The work plane, while its view is open: what the menu makes at a place is made in its axes (a sketch's points are in the plane, not horizontal); `step` is
+    /*  The work plane, while its view is open: what the menu makes at a place is made in its axes (a profile's points are in the plane, not horizontal); `step` is
         the grid the places snap to, 0 when they do not  */
     void setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
-    /*  A line, a spline or a sketch put down on the work plane (`name` is polyline, spline or sketch): written into the script with its points, each a model of its own
-        with its gizmo, as one step; `smooth` makes the points of a sketch spline points  */
+    /*  A line, a spline or a profile put down on the work plane (`name` is polyline, spline or profile): written into the script with its points, each a model of its own
+        with its gizmo, as one step; `smooth` makes the points of a profile spline points  */
     /*  What was put down on the work plane: `points`, and -- `also` -- the strokes it has in the symmetry of the plane, each a shape of its own  */
     void createPlaced(QString name, QList<QVector3D> points, bool smooth);
     /*  The symmetry of the viewport (see symmetry.hpp): while it is on, what a menu or the work plane makes is made with its images (the library writes them)  */
@@ -271,11 +271,11 @@ public slots:
     void selectFieldKeys(const QStringList& keys, bool add);
 
     /*
-     *  Editing the points of a sketch or a curve from the viewport: `op` is "insert" (a point on its outline, where the mouse pressed: `at`) or
+     *  Editing the points of a profile or a curve from the viewport: `op` is "insert" (a point on its outline, where the mouse pressed: `at`) or
      *  "toggle" (the point displayed by the line: a corner becomes a spline point and the other way).  `line0` is the 0-based line that displays
      *  the model.  Both are edits of the script; pointEditDone says which line displays the new point (-1 when none)
      */
-    void editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at);
+    void editPoints(const QString& op, int line0, const QVector3D& press, const QVector3D& at, int index = -1);
 
     /*  A selection rectangle drawn in the viewport: the models displayed by these lines are the selection
      *  (with `add`, they join the selection that there is)  */
@@ -723,7 +723,7 @@ protected:
     mutable QHash<QString, bool> m_combining;
     mutable QHash<QString, bool> m_needsSecond;
     mutable QSet<QString> m_withBodies;
-    mutable QSet<QString> m_fromSelection;      // (the entries that are made of the models selected: sketch, curve, extrude, path_extrude)
+    mutable QSet<QString> m_fromSelection;      // (the entries that are made of the models selected: profile, curve, extrude, path_extrude)
     mutable QSet<QString> m_simulations;
 
     /*  A variable to select once the script that creates it has run (tries counts the runs waited)  */

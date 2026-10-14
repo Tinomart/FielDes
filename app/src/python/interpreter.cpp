@@ -1385,7 +1385,7 @@ void Interpreter::recordShape(
             return out;
         };
         {
-            // (the plane of a flat shape that is not z = 0: (origin, u, v), each three expressions -- see fieldes.stdlib.sketch)
+            // (the plane of a flat shape that is not z = 0: (origin, u, v), each three expressions -- see fieldes.stdlib.profile)
             PyObject* fr = PyObject_GetAttrString(obj, "_flat_frame");
             if (fr && PyTuple_Check(fr) && PyTuple_Size(fr) == 3)
             {
@@ -1404,7 +1404,7 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
-            // (the points of a sketch or a curve: where each is and what it says of itself, as expressions of the script's numbers -- the line or the face is
+            // (the points of a profile or a curve: where each is and what it says of itself, as expressions of the script's numbers -- the line or the face is
             // made from them natively at every render, see Shape::setControls and fieldes.stdlib.curves)
             PyObject* cp = PyObject_GetAttrString(obj, "_ctrl_pos");
             if (cp && PyList_Check(cp) && PyList_Size(cp) > 0)
@@ -1414,9 +1414,11 @@ void Interpreter::recordShape(
                 PyObject* cf = PyObject_GetAttrString(obj, "_ctrl_flag");
                 PyObject* crad = PyObject_GetAttrString(obj, "_ctrl_radius");
                 if (!crad) PyErr_Clear();
+                PyObject* cown = PyObject_GetAttrString(obj, "_ctrl_radius_own");        // (the number each point itself gives for its radius: the one its arc drags)
+                if (!cown) PyErr_Clear();
                 PyObject* cd = PyObject_GetAttrString(obj, "_ctrl_default");
                 PyObject* cl = PyObject_GetAttrString(obj, "closed");
-                PyObject* cface = PyObject_GetAttrString(obj, "_sketch_face");
+                PyObject* cface = PyObject_GetAttrString(obj, "_profile_face");
                 const bool face = cface && PyObject_IsTrue(cface) == 1;
                 std::vector<Shape::ControlPoint> points;
                 bool good = true;
@@ -1455,6 +1457,12 @@ void Interpreter::recordShape(
                         c.radius = treeOfShape(rad);
                         c.hasRadius = c.radius.is_valid();
                     }
+                    PyObject* own = (cown && PyList_Check(cown) && i < PyList_Size(cown)) ? PyList_GetItem(cown, i) : nullptr;
+                    if (own && own != Py_None)
+                    {
+                        const libfive::Tree t = treeOfShape(own);
+                        if (t.is_valid()) c.radiusVar = Shape::soleVarOf(t);
+                    }
                     points.push_back(std::move(c));
                 }
                 if (good)
@@ -1466,6 +1474,7 @@ void Interpreter::recordShape(
                 Py_XDECREF(cs);
                 Py_XDECREF(cf);
                 Py_XDECREF(crad);
+                Py_XDECREF(cown);
                 Py_XDECREF(cd);
                 Py_XDECREF(cl);
                 Py_XDECREF(cface);
@@ -1474,8 +1483,8 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
-            // (a straight extrusion of a sketch of points -- a prism: its points, and a and b, as expressions of the script's numbers, and the numbers that must still be what
-            // they were; the viewport makes it from them natively at every render: see Shape::setPrism and fieldes.stdlib.sketch.extrude)
+            // (a straight extrusion of a profile of points -- a prism: its points, and a and b, as expressions of the script's numbers, and the numbers that must still be what
+            // they were; the viewport makes it from them natively at every render: see Shape::setPrism and fieldes.stdlib.profile.extrude)
             PyObject* pp = PyObject_GetAttrString(obj, "_prism_pos");
             if (pp && PyList_Check(pp) && PyList_Size(pp) > 0)
             {
@@ -1551,8 +1560,8 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
-            // (a sweep of a sketch of points along a curve of points: both lists of points, the twist and where the gizmo places it -- the viewport makes it from the numbers
-            // natively at every render: see Shape::setSweep and fieldes.stdlib.sketch.path_extrude)
+            // (a sweep of a profile of points along a curve of points: both lists of points, the twist and where the gizmo places it -- the viewport makes it from the numbers
+            // natively at every render: see Shape::setSweep and fieldes.stdlib.profile.path_extrude)
             PyObject* pp = PyObject_GetAttrString(obj, "_sweep_ppos");
             PyObject* qp = PyObject_GetAttrString(obj, "_sweep_qpos");
             if (pp && PyList_Check(pp) && PyList_Size(pp) > 0 && qp && PyList_Check(qp) && PyList_Size(qp) > 0)
@@ -1671,19 +1680,19 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
         {
-            // (a sketch, a curve: its outline is a place to press that puts a point there)
+            // (a profile, a curve: its outline is a place to press that puts a point there)
             PyObject* ed = PyObject_GetAttrString(obj, "_editable");
             shape->setEditable(ed && PyObject_IsTrue(ed) == 1);
             Py_XDECREF(ed);
             PyErr_Clear();
         }
         {
-            // (a point of a sketch or a curve: a corner or a spline point)
+            // (a point of a profile or a curve: a corner or a spline point)
             PyObject* sm = PyObject_GetAttrString(obj, "_curve_smooth");
             if (sm && PyBool_Check(sm)) shape->setPointStyle(PyObject_IsTrue(sm) == 1 ? 2 : 1);
             Py_XDECREF(sm);
             PyErr_Clear();
-            // (a round corner of a sketch: a corner with a radius)
+            // (a round corner of a profile: a corner with a radius)
             PyObject* rc = PyObject_GetAttrString(obj, "_curve_round");
             if (rc && PyBool_Check(rc) && PyObject_IsTrue(rc) == 1) shape->setPointStyle(3);
             Py_XDECREF(rc);

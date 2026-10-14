@@ -1667,7 +1667,7 @@ def app_cli(arg):
 def call_edit(arg):
     ''' Edits that give keyword arguments of a call new values -- the card of the symmetry changes the planes of its model that way.  `arg` is JSON {source, var, line, set: {name:
         text}}: the statement `var = call(...)` on the 1-based `line`, and the text each argument is to have.  An argument that is there has its value replaced, one that is not is
-        added after the last.  The answer is JSON {"edits": [[line, column, end line, end column, text], ...]} (0-based, as sketch_edit gives them), the last place first '''
+        added after the last.  The answer is JSON {"edits": [[line, column, end line, end column, text], ...]} (0-based, as profile_edit gives them), the last place first '''
     req = json.loads(arg)
     source = req['source']
     tree = ast.parse(source)
@@ -1741,7 +1741,7 @@ def call_edit(arg):
     return json.dumps({'edits': [position(a) + position(b) + [text] for a, b, text in edits]})
 
 
-def sketch_edit(arg):
-    ''' The edits that put a point on the outline of a sketch or a curve, or toggle one of its points between a corner and a spline point (see fieldes.sketch_edit) '''
-    from fieldes import sketch_edit as _edit
+def profile_edit(arg):
+    ''' The edits that put a point on the outline of a profile or a curve, or toggle one of its points between a corner and a spline point (see fieldes.profile_edit) '''
+    from fieldes import profile_edit as _edit
     return _edit.edit(arg)

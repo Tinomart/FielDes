@@ -170,7 +170,7 @@ MOVES = {
 
 REFUSES = {
     'shapes': ['array_x', 'array_xy', 'array_xyz', 'array_polar_z', 'array_polar'],
-    'sketch': ['extrude', 'path_extrude'],
+    'profile': ['extrude', 'path_extrude'],
     'csg': ['loft', 'loft_between'],
     'transforms': ['symmetric_x', 'symmetric_y', 'symmetric_z', 'taper_x_y', 'taper_xy_z', 'shear_x_y',
                    'repel', 'repel_x', 'repel_y', 'repel_z', 'repel_xy', 'repel_yz', 'repel_xz',
@@ -212,7 +212,7 @@ NO_BODY = {
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],
     'points': ['point', 'surface', 'plane', 'sphere_surface', 'cylinder_surface', 'wave_surface'],
     'curves': ['polyline', 'spline'],
-    'sketch': ['sketch'],
+    'profile': ['profile'],
     'fea': ['fixed', 'force', 'gravity', 'thermal_expansion'],
     'thermal': ['fixed_temperature', 'heat_input', 'heat_generation', 'convection'],
     'fluid': ['inlet', 'outlet', 'wall', 'slip', 'symmetry'],

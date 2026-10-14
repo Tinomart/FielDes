@@ -10,7 +10,7 @@
 
 A curve is a model of its own kind (a 1D shape), made of points and drawn as a line.  It stands on its own, and anything that takes a curve takes it as it is:
 
-    face = sketch(loop)                         # the 2D shape a closed curve encloses (see sketch)
+    face = profile(loop)                         # the 2D shape a closed curve encloses (see profile)
     tube = offset(smooth, 1.5)                  # a 3D shape: the points at most 1.5 from the curve (a tube round it)
     beam = path_extrude(face, smooth)           # a 2D shape swept along it
 
@@ -96,7 +96,7 @@ def rotated(t, rotation):
 
 
 class Control:
-    ''' One point of a curve or sketch: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
+    ''' One point of a curve or profile: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
         while the point is dragged), what it says of itself (-1: what the shape says, 0: a corner, 1: a spline point) and its rotation '''
     def __init__(self, item, rounds=False, radius_default=0.0, smooth_default=False):
         xyz = getattr(item, 'xyz', None)
@@ -127,13 +127,16 @@ class Control:
             parts = vec(scale[4])
             self.scale_expr = (parts[0] + parts[1] + parts[2]) * (1.0 / 3.0)
             self.scale = max(0.0, sum(value_of(c) for c in parts) / 3.0)
-        # A ROUND corner (a point of a sketch -- `rounds` -- that says `point(..., radius=r)`, or the sketch's own `radius` for the points that do not say): an exact arc of that
+        # A ROUND corner (a point of a profile -- `rounds` -- that says `point(..., radius=r)`, or the profile's own `radius` for the points that do not say): an exact arc of that
         # radius, tangent to both edges, takes the place of the corner.  The point's scale multiplies the radius -- the gold ring of its gizmo -- as the scale of a sphere multiplies
-        # its radius.  A spline point has no radius (it says so itself, or the sketch says it); radius=0 is a hard corner whatever the sketch says
+        # its radius.  A spline point has no radius (it says so itself, or the profile says it); radius=0 is a hard corner whatever the profile says
         self.radius_expr = None
+        self.radius_own = None                  # (the radius the POINT says -- the number the viewport drags by the arc of the corner -- as an expression; None: the sketch's)
         self.radius = 0.0
         if rounds:
             given = getattr(item, '_radius', None)
+            if given is not None:
+                self.radius_own = Shape.wrap(given)
             if given is None:
                 given = radius_default
             spline = self.flag == 1 or (self.flag < 0 and bool(smooth_default))
@@ -151,7 +154,7 @@ class Control:
 
 
 def controls(points, rounds=False, radius_default=0.0, smooth_default=False):
-    ''' The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a sketch (`rounds` True) '''
+    ''' The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a profile (`rounds` True) '''
     return [Control(p, rounds, radius_default, smooth_default) for p in points]
 
 
@@ -227,7 +230,7 @@ def plane_of(ctrls):
 
 
 def mark(ctrls, default, kind):
-    ''' Tell each point what the curve or sketch made of it: a corner or a spline point (the viewport draws the two differently, and the double click
+    ''' Tell each point what the curve or profile made of it: a corner or a spline point (the viewport draws the two differently, and the double click
         changes it), and the default it follows '''
     n = len(ctrls)
     for i, c in enumerate(ctrls):
@@ -237,7 +240,7 @@ def mark(ctrls, default, kind):
             c.item._curve_kind = kind
             c.item._curve_round = c.rounded
             # (how long the shorter of its two edges is: where a double click that makes the corner round starts its radius)
-            if kind == 'sketch' and n >= 3:
+            if kind == 'profile' and n >= 3:
                 c.item._curve_edge = min(math.dist(c.pos, ctrls[i - 1].pos), math.dist(c.pos, ctrls[(i + 1) % n].pos))
         except AttributeError:
             pass
@@ -251,6 +254,7 @@ def viewport_data(out, ctrls, default, closed):
     out._ctrl_flag = [c.flag for c in ctrls]
     out._ctrl_scale = [c.scale_expr for c in ctrls]
     out._ctrl_radius = [c.radius_expr for c in ctrls]          # (the radius of a round corner, as an expression -- the scale of the point is in it -- or None)
+    out._ctrl_radius_own = [c.radius_own if c.rounded else None for c in ctrls]       # (the number the point itself gives: what an arc dragged in the viewport changes)
     out._ctrl_default = bool(default)
     out.closed = bool(closed)
     out._editable = True
@@ -276,8 +280,8 @@ class Curve(Shape):
             from fieldes.stdlib.points import weld_shift_of
             shift = weld_shift_of(self.points[0])               # (the image of a path: through the images of its points, which are drawn where the sweep's image is)
         if shift is not None:
-            # The path of a sweep of a sketch is drawn where the sweep goes -- from the middle of the sketch, through the middle of the cross-section -- whatever its own numbers
-            # say (the sweep starts at the sketch: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen
+            # The path of a sweep of a profile is drawn where the sweep goes -- from the middle of the profile, through the middle of the cross-section -- whatever its own numbers
+            # say (the sweep starts at the profile: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen
             out._ctrl_pos = [tuple(c + s for c, s in zip(expr, shift)) for expr in self._ctrl_pos]
             out.vertices = [tuple(a + s for a, s in zip(v, shift)) for v in self.vertices]
         return out

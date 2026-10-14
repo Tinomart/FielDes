@@ -3,7 +3,7 @@ What a model was made from.
 
 A statement `leg = path_extrude(leg_profile, leg_path)` makes a model out of other models of the script: the names it reads are its inputs -- the children it has in the model
 tree.  This module notes them on the model it makes (`leg._made_from = [leg_profile, leg_path]`), whatever the function is: nothing of it is in the function, so every
-operation, a library one or a block of your own, has it.  What looks for the parts of a model that can be dragged -- the sketches, the lines and the points it is made of -- to
+operation, a library one or a block of your own, has it.  What looks for the parts of a model that can be dragged -- the profiles, the lines and the points it is made of -- to
 carry them with its images (see `symmetries.symmetry_images`) walks this record.
 
 The statements are run by `runner` (the application and its command line), by `app_package` (an app) and by `scripts/run_example.py`: each calls `reads` before a statement

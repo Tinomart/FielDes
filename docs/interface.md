@@ -154,14 +154,14 @@ on a **line of the script** that defines a model, and on its **row in the model 
 model had been right-clicked in the viewport:
 
 - **Three parts: Primitives, Parametric shapes and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*,
-  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a sketch; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
+  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a profile; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
   surface; a distance, a radial, a z and a noise field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
   a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- by kind in the same way. **Operations** are what is done to a model: the operation groups (*Offsets and walls*,
   *Rounding*, *Moving* ...), **Lattice** and **Simulation**. What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them; the quick operations *center*
   and *bounding_box* are below the three.)
 - **The menu is made of what is valid, and the same wherever it is opened.** A **category** (a submenu, at any depth: *Operations*, *Extruding* inside it, *Lattice*, *Primitives → New 2D shape* ...) is in the menu
   **when there is at least one valid entry in it, and is not in it when there is none** -- it is not greyed out, it is left out -- and that is worked out from the entries themselves, by asking whether
-  what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *sketch* (the outline of that surface) whether you right-click it in the
+  what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *profile* (the outline of that surface) whether you right-click it in the
   viewport, on its row in the tree or on its line in the script, and *Extruding* is not in the menu of a solid and is in the menu of a 2D shape (it holds something valid there). An entry that takes a second model
   is valid when the pair it would be written with -- the selected model and the last other model of the script -- is what it takes. **What an entry takes is declared by the library function itself**
   (`fn._takes = takes(...)`, with the kinds of `fieldes.kinds`: `SHAPES`, `BODIES`), the menu reads it from there, and a function that declares nothing takes any shape: so `smooth`, `round_edges`, `fillet`, `shell_inside`,
@@ -232,8 +232,8 @@ it. **Render settings** at the top lists the script's `view.set_*` statements an
 | Icon | Kind | Is |
 |---|---|---|
 | cube, blue | **3D shape** | a body: its field is negative inside |
-| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn as a flat face in the z = 0 plane, with no thickness, its **edges blue**; pulled by its edges. A **sketch** is a 2D shape made of points, in the plane of its first three: click an edge to put a point there, double-click a point to make it a corner or a spline point -- see [Sketches](sketches.md) |
-| curve, light | **1D shape** | a `curve` through points: a blue line in the viewport, the path of `path_extrude`, the outline of a `sketch`; as a field the distance to it. Select it by a click on its line; press the line and drag to put a point on it |
+| square, teal | **2D shape** | a profile (a field that does not depend on z), drawn as a flat face in the z = 0 plane, with no thickness, its **edges blue**; pulled by its edges. A **profile** is a 2D shape made of points, in the plane of its first three: click an edge to put a point there, double-click a point to make it a corner or a spline point -- see [Profiles](profiles.md) |
+| curve, light | **1D shape** | a `curve` through points: a blue line in the viewport, the path of `path_extrude`, the outline of a `profile`; as a field the distance to it. Select it by a click on its line; press the line and drag to put a point on it |
 | soft disc, green | **field** | a value at every point that is not a body: a distance, a ramp, noise, a stress; not drawn: it has an icon in the viewport (with its name over it) and an eye in the tree, and selecting it opens its [field viewer](#the-field-viewer) |
 | sheet, purple | **surface** | the zero of a field with no body behind it; drawn as the sheet itself, with no thickness |
 | cross, amber | **point** | a point: a dot in the viewport (the middle point of a gizmo), always there while the point is shown (its eye); click the dot to select it, and its full gizmo shows |
@@ -423,13 +423,13 @@ section view is on.
 
 ## The work plane
 
-A **work plane** is a plane to put points in -- a small, light version of the sketch planes of a CAD program: nothing about it is written into your script, only what you make on it (points, lines, shapes) is, as ordinary
+A **work plane** is a plane to draw on with a pen tool -- points, lines and splines, as in a vector drawing program, with no constraints or dimensions: the numbers of a point are its coordinates, in the script. Nothing about the plane is written into your script, only what you make on it (points, lines, shapes) is, as ordinary
 models with ordinary numbers. Three keys, all of which act while the viewport (or the model tree) has the keyboard:
 
 | Key | |
 |---|---|
 | `Shift+W` (or **View → Work plane**) | opens and closes the **work plane view**: the plane is drawn with a grid, and its card is shown. A plane is made when there is none |
-| `Ctrl+Shift+W` (or **View → New work plane**; **works wherever the keyboard is**, in the code editor too, and gives it to the viewport) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a sketch, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
+| `Ctrl+Shift+W` (or **View → New work plane**; **works wherever the keyboard is**, in the code editor too, and gives it to the viewport) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a profile, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
 | `W` (or **View → Set view to work plane**) | turns the camera to **look straight at** the plane. It only moves the camera: it never changes the script |
 
 The card (top right, below the section card when that is open) has three buttons that say what a click draws -- **Line**, **Spline**, **Point**, each with a picture of what it makes -- a line that says whether you are drawing, and the plane's settings: **Grid** on and off, **Snap to grid** and **Snap to points**, the **grid step** (automatic, from how large the picture is, or a number), the plane's
@@ -437,28 +437,28 @@ The card (top right, below the section card when that is open) has three buttons
 read out under them. **Turning the camera with the middle mouse button leaves the work plane view**, and so does closing the card; the plane is kept for the next time you open it.
 
 **Symmetry.** What you put down on the plane can be made at its mirror images too: that is [the symmetry](#the-symmetry), a model of its own. With the work plane's view open, `Shift+S` makes one on the plane
--- its axis the plane's normal, its first plane along the plane's u axis -- and **a point, a line, a spline or a sketch you put down is put down at its images too**. The lines the symmetry's planes make in the plane are a thing to
+-- its axis the plane's normal, its first plane along the plane's u axis -- and **a point, a line, a spline or a profile you put down is put down at its images too**. The lines the symmetry's planes make in the plane are a thing to
 snap to (with *Snap to points* on): a point put down near one lands **on** it -- on the grid's steps along it when the plane snaps -- so what you draw on both sides of a plane **meets on it**. **A shape that is closed through the
-symmetry is made into one**: draw half a circle from one point of a plane to another, and its image on the other side closes it -- the two are joined where they meet and written as **one closed sketch** (one that meets only at
+symmetry is made into one**: draw half a circle from one point of a plane to another, and its image on the other side closes it -- the two are joined where they meet and written as **one closed profile** (one that meets only at
 one end is one line). It is made the moment the stroke comes back to a plane of the symmetry -- the click that puts the last point on it closes it, as a click on the first point does.
 
-**What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a sketch made of new points is made in the plane's own axes, not horizontal), and the points you drag --
-by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a sketch moves all its points together, any other
+**What it does.** While its view is open, **the places of new models are on the plane**, snapped (right-click → *New ...*, a profile made of new points is made in the plane's own axes, not horizontal), and the points you drag --
+by their dot -- move in the plane and land on the grid (or on a point that is there). When **not drawing**, a **2D shape that lies in the plane** is moved about in it by pressing it, in steps of the grid: a profile moves all its points together, any other
 2D shape moves through its own move numbers.
 
 **What a click does.** The three buttons -- **Line**, **Spline** and **Point** -- pick what a click draws; `E` goes round them. **None of them on is not drawing**, and there is no button for it: the view **opens in Line**, so a click draws at once, and with none on clicks work as they do
 everywhere -- things are selected, moved, turned and scaled. Click the button that is on to turn it off, or **right-click in the viewport** (a right click that does not move; dragging with the right button still pans). `E` then brings back the kind of drawing that was on before it was stopped. You can tell which you are in: while drawing the pointer is a crosshair and a **marker shows the point a click will put down**
 -- a **square** for a line (a corner), a **round point with a ring** for a spline, a plain **dot** for a point, as the points of the script look -- the points already put down have the same marks, and the line under the buttons says what a click does. Not
 drawing there is no marker, no readout of the cursor's place, and the pointer is the usual arrow. In a drawing mode **every click puts a point down**, also on a point that is already there -- the line attaches to it, it does not select it -- and
-that is what not drawing is for. A **double click on a point** of a sketch or a line changes it between a corner and a spline point, drawing or not.
+that is what not drawing is for. A **double click on a point** of a profile goes from a corner to a spline point to a round corner and back, drawing or not (on a line it changes between a corner and a spline point).
 
-- **Line**: every click puts down a point of a line; the line through them follows the cursor. **A click on the first point closes it, and a shape is made out of it**: a sketch with hard corners. `Enter` or a double click
+- **Line**: every click puts down a point of a line; the line through them follows the cursor. **A click on the first point closes it, and a shape is made out of it**: a profile with hard corners. `Enter` or a double click
   ends it open, as a `polyline`. `Backspace` takes the last point back, `Esc` drops the whole line.
-- **Spline**: the same with a smooth curve through the points; closed, a sketch with spline points (`smooth=True`); open, a `spline`.
+- **Spline**: the same with a smooth curve through the points; closed, a profile with spline points (`smooth=True`); open, a `spline`.
 - **Point**: every click puts a point on the plane.
 
-Nothing of a line or a spline is written until it ends, and then it is one step (one undo): the points, each a model of its own with its gizmo, and the `sketch(...)`, `polyline(...)` or `spline(...)` through them. (Shift and Ctrl keep their
-meaning in every mode: Shift turns the view, Ctrl adds to the selection.) See [Sketches](sketches.md).
+Nothing of a line or a spline is written until it ends, and then it is one step (one undo): the points, each a model of its own with its gizmo, and the `profile(...)`, `polyline(...)` or `spline(...)` through them. (Shift and Ctrl keep their
+meaning in every mode: Shift turns the view, Ctrl adds to the selection.) See [Profiles](profiles.md).
 
 ## The symmetry
 
@@ -469,7 +469,7 @@ copies, two of them mirror images, at the corners of a rectangle; `copies=4` mak
 the place of the work plane while its view is open (its axis the plane's normal), else it is the mirror x = 0.
 
 **Select a symmetry in the model tree and it is the one in use.** Its planes are drawn in magenta, its card opens in the corner of the viewport, and **everything you make from then on is made at its images too**: a body, a point, a
-surface, a field -- and a sketch, a line or a spline (through the images of its points), and what an operation makes of them: a `path_extrude`, a union, a shell. **All the images of a model are one model**, written under it:
+surface, a field -- and a profile, a line or a spline (through the images of its points), and what an operation makes of them: a `path_extrude`, a union, a shell. **All the images of a model are one model**, written under it:
 
 ```python
 box_1 = box((8, 4, 0), (26, 14, 8))
@@ -483,10 +483,10 @@ the original is the only model with numbers, the images are only what the symmet
 whose centre is on a plane -- is not made.) Each image is still drawn, meshed and moved as a shape of its own, so **dragging the original moves every image with it as you drag, with nothing meshed again**; select the row and all
 the images are selected. **The images follow both**: change the original and they change the way a mirror shows it -- and **move the symmetry with its gizmo and every image of it moves with it**. **They have no numbers of their own: drag
 the gizmo shown at the first image, or the surfaces of any of them, and the original moves** -- the other way, as a mirror shows it (an arrow moves the original the opposite way across the plane, a ring turns it the opposite way). The images
-of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things. A sketch, a line or a spline is made of its points, which are models, so each point has its images (`symmetry_image(point, symmetry_1, 3)`) and the stroke goes through them. **What an operation makes is given its images too**, `path_extrude_1_images = symmetry_images(path_extrude_1, symmetry_1,
+of a model that goes are deleted with it. **The images are written when the model is made**, under it: select a symmetry first, then make things. A profile, a line or a spline is made of its points, which are models, so each point has its images (`symmetry_image(point, symmetry_1, 3)`) and the stroke goes through them. **What an operation makes is given its images too**, `path_extrude_1_images = symmetry_images(path_extrude_1, symmetry_1,
 distinct=True)`: `distinct` leaves out the images that would be the model itself or another image (a tube along a path in a plane of the symmetry has none in that plane); what is made of
-images already is not given more. The images of a path extrude are drawn the way it is -- from the numbers of its path, so they follow a dragged point at once -- **and what a model was made from is mirrored with it, whatever the operation** (a statement `leg = path_extrude(profile, path)` knows the models it read: the tree shows them as its children): every image comes with its own copy of the sketches and lines the model was made from -- the blue curve and the outline of a path extrude's sketch, the sketch of an `extrude`, through a chain of offsets, unions and moves -- and a dot for each of their points, lying on the image as the original's lie on the original. They are not models (no statement, no row in the tree: the sketch and the path are the only ones with numbers), and **a dot of any image's is pressed and dragged -- it is the original's point that moves, and every image follows**; a double click on one changes the original point between a corner and a spline point; change the number of copies on the card and the images follow. (Draw the path and the sketch with the symmetry off, `Shift+S`: what a model is made from is mirrored with it, and drawn with the symmetry in use it would also have images of its own, one on top of the other.) Pulling the surface of an image changes the model it is the image of, never the symmetry. (A surface or a field has a model for each image,
-`symmetry_image(model, symmetry_1, 3)` -- 3 is the number of the image in the symmetry; a shape whose halves meet on a plane closes through their images into one sketch.)
+images already is not given more. The images of a path extrude are drawn the way it is -- from the numbers of its path, so they follow a dragged point at once -- **and what a model was made from is mirrored with it, whatever the operation** (a statement `leg = path_extrude(profile, path)` knows the models it read: the tree shows them as its children): every image comes with its own copy of the profiles and lines the model was made from -- the blue curve and the outline of a path extrude's profile, the profile of an `extrude`, through a chain of offsets, unions and moves -- and a dot for each of their points, lying on the image as the original's lie on the original. They are not models (no statement, no row in the tree: the profile and the path are the only ones with numbers), and **a dot of any image's is pressed and dragged -- it is the original's point that moves, and every image follows**; a double click on one changes the original point between a corner and a spline point; change the number of copies on the card and the images follow. (Draw the path and the profile with the symmetry off, `Shift+S`: what a model is made from is mirrored with it, and drawn with the symmetry in use it would also have images of its own, one on top of the other.) Pulling the surface of an image changes the model it is the image of, never the symmetry. (A surface or a field has a model for each image,
+`symmetry_image(model, symmetry_1, 3)` -- 3 is the number of the image in the symmetry; a shape whose halves meet on a plane closes through their images into one profile.)
 
 Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
 

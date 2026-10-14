@@ -1,6 +1,6 @@
 '''
-Editing a sketch or a curve from the viewport (fieldes.stdlib.sketch, fieldes.stdlib.curves): a point put on its outline, a point toggled between a corner
-and a spline point, and the points of a new sketch put onto its plane.  All are edits of the script text, answered as JSON
+Editing a profile or a curve from the viewport (fieldes.stdlib.profile, fieldes.stdlib.curves): a point put on its outline, a point toggled between a corner
+and a spline point, and the points of a new profile put onto its plane.  All are edits of the script text, answered as JSON
 
     {edits: [[line0, col0, line1, col1, text], ...], label, line (the 0-based line that displays the new point, or -1), name (the new point's variable)}
 
@@ -44,10 +44,10 @@ def _call_name(node):
 
 
 def _owner_list(tree, name, before):
-    ''' (the assignment, the list of points) of the sketch or curve `name`: its call's first argument is the list; a sketch made of a curve is the curve's '''
+    ''' (the assignment, the list of points) of the profile or curve `name`: its call's first argument is the list; a profile made of a curve is the curve's '''
     for _ in range(4):
         found = _assignments_of(tree, name, before)
-        call = next((a for a in reversed(found) if _call_name(a.value) in ('sketch', 'polyline', 'spline')), None)
+        call = next((a for a in reversed(found) if _call_name(a.value) in ('profile', 'polyline', 'spline')), None)
         if call is None or not call.value.args:
             return None, None
         first = call.value.args[0]
@@ -93,9 +93,9 @@ def _number_of(node):
 
 
 def _snap(req):
-    ''' The points of a sketch about to be made -- `req['call']`, `sketch([a, b, c, d])` -- put onto its plane: the plane through the first three of them
+    ''' The points of a profile about to be made -- `req['call']`, `profile([a, b, c, d])` -- put onto its plane: the plane through the first three of them
         that are not on a line (they stay where they are), and every other point moved along the plane's normal onto it, by the numbers written in its
-        `point(x, y, z)`.  A point whose numbers are not written as numbers is left (the sketch projects it anyway).  The edits are in the coordinates of
+        `point(x, y, z)`.  A point whose numbers are not written as numbers is left (the profile projects it anyway).  The edits are in the coordinates of
         the script as it was '''
     from fieldes import runner
     from fieldes.stdlib import curves as C
@@ -161,8 +161,10 @@ def edit(arg):
     obj = runner.last_globals.get(name)
     if op == 'toggle':
         return _toggle(tree, lines, name, line, obj)
+    if op == 'radius':
+        return _radius_var(tree, lines, name, line, int(req['index']))
     if obj is None or not hasattr(obj, 'vertices') or not hasattr(obj, '_owners'):
-        raise ValueError('%s is not a sketch or a curve of the last run' % name)
+        raise ValueError('%s is not a profile or a curve of the last run' % name)
     owner, plist = _owner_list(tree, name, line)
     if owner is None:
         raise ValueError('the points of %s are not written as a list in its call: put a point there in the script' % name)
@@ -170,7 +172,7 @@ def edit(arg):
     if len(points) != len(plist.elts):
         raise ValueError('the list of points of %s is not one point to an element' % name)
     V = [tuple(v) for v in obj.vertices]
-    # (the path of a sweep of a sketch is DRAWN where the sweep goes -- shifted, see Curve._display -- so what the press and the drop say is where it is seen: the numbers of the
+    # (the path of a sweep of a profile is DRAWN where the sweep goes -- shifted, see Curve._display -- so what the press and the drop say is where it is seen: the numbers of the
     # script are the shift away)
     shift = getattr(obj, '_weld_shift', None) or (0.0, 0.0, 0.0)
     # (the piece that was pressed, from where the press was; the point goes where it was let go)
@@ -205,26 +207,45 @@ def edit(arg):
     return json.dumps({'edits': edits, 'label': 'Add a point to %s' % name, 'line': select, 'name': new if select >= 0 else ''})
 
 
+def _radius_var(tree, lines, name, line, index):
+    ''' The radius a point says, made a number the viewport can drag: `point(.., radius=5)` becomes `point(.., radius=var(5))` (a number written into the script by a drag is a
+        var(), so that the editor can find it again).  `name` is the profile on the 1-based `line`, `index` the number of the point in its list.  Nothing is changed when the
+        radius is a var() already, or is not a plain number '''
+    nothing = json.dumps({'edits': [], 'label': 'Radius', 'line': -1, 'name': ''})
+    owner, plist = _owner_list(tree, name, line)
+    if owner is None or not 0 <= index < len(plist.elts) or not isinstance(plist.elts[index], ast.Name):
+        return nothing
+    point = plist.elts[index].id
+    assign = next((a for a in reversed(_assignments_of(tree, point, owner.lineno)) if _call_name(a.value) == 'point'), None)
+    kw = next((k for k in assign.value.keywords if k.arg == 'radius'), None) if assign is not None else None
+    if kw is None or _call_name(kw.value) == 'var' or _number_of(kw.value) is None:
+        return nothing
+    v = kw.value
+    text = ast.get_source_segment('\n'.join(lines), v)
+    edits = [[v.lineno - 1, _char_col(lines[v.lineno - 1], v.col_offset), v.end_lineno - 1, _char_col(lines[v.end_lineno - 1], v.end_col_offset), 'var(%s)' % text]]
+    return json.dumps({'edits': edits, 'label': 'The radius of %s can be dragged' % point, 'line': -1, 'name': point})
+
+
 def _toggle(tree, lines, name, line, obj):
-    ''' A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, a spline point a round corner (in a sketch -- in a curve it goes back to a
-        corner), a round corner a corner again.  The point says what it is with `smooth=` and `radius=`: a keyword that says what the sketch says anyway is left out '''
+    ''' A double click on the dot of a point of a profile or a curve: a corner becomes a spline point, a spline point a round corner (in a profile -- in a curve it goes back to a
+        corner), a round corner a corner again.  The point says what it is with `smooth=` and `radius=`: a keyword that says what the profile says anyway is left out '''
     effective = getattr(obj, '_curve_smooth', None)
     default = getattr(obj, '_curve_default', False)
     if effective is None:
-        raise ValueError('%s is not a point of a sketch or a curve' % name)
+        raise ValueError('%s is not a point of a profile or a curve' % name)
     rounded = bool(getattr(obj, '_curve_round', False))
-    in_sketch = getattr(obj, '_curve_kind', None) == 'sketch'
+    in_profile = getattr(obj, '_curve_kind', None) == 'profile'
     assign = next((a for a in _assignments_of(tree, name, line) if _call_name(a.value) == 'point'), None)
     if assign is None:
-        raise ValueError('%s is not written as point(...): what it is in a sketch cannot be changed there' % name)
+        raise ValueError('%s is not written as point(...): what it is in a profile cannot be changed there' % name)
     call = assign.value
     state = 'round' if rounded else ('spline' if effective else 'corner')
-    new_state = {'corner': 'spline', 'spline': 'round' if in_sketch else 'corner', 'round': 'corner'}[state]
-    # What the point says of itself now.  A round corner is a corner with a radius: it says no `smooth=` (a radius beats the sketch's default), and its radius starts at a quarter of
+    new_state = {'corner': 'spline', 'spline': 'round' if in_profile else 'corner', 'round': 'corner'}[state]
+    # What the point says of itself now.  A round corner is a corner with a radius: it says no `smooth=` (a radius beats the profile's default), and its radius starts at a quarter of
     # its shorter edge
     smooth = {'corner': False, 'spline': True, 'round': None}[new_state]
     if smooth is not None and smooth == bool(default):
-        smooth = None                                              # (what the sketch says anyway)
+        smooth = None                                              # (what the profile says anyway)
     radius = None
     if new_state == 'round':
         edge = float(getattr(obj, '_curve_edge', 0.0) or 0.0)
@@ -235,7 +256,7 @@ def _toggle(tree, lines, name, line, obj):
     if smooth is not None:
         kept.append('smooth=%r' % smooth)
     if radius is not None:
-        kept.append('radius=%s' % radius)
+        kept.append('radius=var(%s)' % radius)             # (a var(): the number that the arc of the corner drags in the viewport)
     text = '%s(%s)' % (ast.get_source_segment(source, call.func), ', '.join(kept))
     edits = [[call.lineno - 1, _char_col(lines[call.lineno - 1], call.col_offset), call.end_lineno - 1, _char_col(lines[call.end_lineno - 1], call.end_col_offset), text]]
     label = {'corner': 'corner', 'spline': 'spline point', 'round': 'round corner'}[new_state]

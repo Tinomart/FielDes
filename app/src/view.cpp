@@ -1856,15 +1856,19 @@ void View::mouseMoveEvent(QMouseEvent* event)
         }
         // (the dot of a point lights up under the mouse: it can be clicked)
         Shape* dot = (grip.kind < 0 && !onField) ? pointDotAt(event->pos()) : nullptr;
-        // (and the outline of a sketch or a curve: a press on it puts a point there)
+        // (and the outline of a profile or a curve: a press on it puts a point there)
         Shape* lineShape = nullptr;
         QVector3D lineHit;
         int linePiece = 0;
         if (grip.kind < 0 && !onField && !dot && !outlineAt(event->pos(), lineShape, lineHit, linePiece)) lineShape = nullptr;
         const bool hover = sectionHandleHit(event->pos());
-        if (lineShape != m_outlineHover)
+        // (the arc of a round corner is a handle for its radius, not an edge to pull a point out of: the hand that moves it says so)
+        const bool arcHover = lineShape && lineShape->isFace() && !lineShape->isLocked() && lineShape->arcControlOfPiece(linePiece) >= 0;
+        if (lineShape != m_outlineHover || arcHover != m_outlineArcHover)
         {
             m_outlineHover = lineShape;
+            m_outlineArcHover = arcHover;
+            setCursor(arcHover ? Qt::SizeAllCursor : lineShape ? Qt::PointingHandCursor : Qt::ArrowCursor);
             m_overlay->update();
         }
         if (gripChanged || dot != m_dotHover || hover != section_hover || icon != m_iconHover || !(fgrip == m_fieldGrip))
@@ -2122,7 +2126,7 @@ void View::mousePressEvent(QMouseEvent* event)
             // The dot of a point: it is not in the pick buffer (nothing of it is painted), and it wins over what is behind it
             if (Shape* dot = pointDotAt(event->pos()))
             {
-                // A point is moved by pressing its dot and dragging -- a point of a sketch in the plane of the sketch, any other in the plane that faces the camera -- whether it is
+                // A point is moved by pressing its dot and dragging -- a point of a profile in the plane of the profile, any other in the plane that faces the camera -- whether it is
                 // selected or not and whatever gizmo is shown.  One that has its numbers already is moved at once (a click that does not move selects it); one that has none
                 // is selected (which gives it the numbers it is moved by) and the drag begins as soon as they are there, if the button is still down.  Several selected points
                 // are moved by the dot of their group
@@ -2163,7 +2167,7 @@ void View::mousePressEvent(QMouseEvent* event)
             }
             syncPicker();
             auto picked = pickedNear(event->pos());
-            // The outline of a sketch, the line of a curve: a press on it pulls a point out of it (drawn at once from numbers, written into the script when
+            // The outline of a profile, the line of a curve: a press on it pulls a point out of it (drawn at once from numbers, written into the script when
             // it is let go)
             if (!(event->modifiers() & Qt::ControlModifier))
             {
@@ -2175,18 +2179,31 @@ void View::mousePressEvent(QMouseEvent* event)
                     press_pos = QPoint(-100000, -100000);   // not a selection click
                     press_target = nullptr;
                     drag_target = nullptr;
+                    // The arc of a round corner is the HANDLE of its radius: it is dragged to change it -- and never an edge to pull a point out of (that would break the corner).  When the
+                    // radius is a plain number, the press makes it a number that can be dragged (`radius=var(5)`); the next press drags
+                    if (lineShape->isFace())
+                    {
+                        const int arc = lineShape->arcControlOfPiece(linePiece);
+                        if (arc >= 0)
+                        {
+                            Shape::FilletHandle handle;
+                            if (lineShape->filletHandle(arc, handle)) beginFilletDrag(lineShape, handle, lineHit);
+                            else if (lineShape->roundWithoutVar(arc)) emit(radiusVarRequested(lineShape->sourceLine(), arc));
+                            return;
+                        }
+                    }
                     m_pullShape = lineShape;
                     m_pullHit = lineHit;
                     m_pullPiece = linePiece;
                     m_pullPressPos = event->pos();
                     m_pullActive = false;
-                    // (an edge of a sketch is pulled at once, so that a click puts a point there; the line of a curve waits for the mouse to move, so that
+                    // (an edge of a profile is pulled at once, so that a click puts a point there; the line of a curve waits for the mouse to move, so that
                     // a click selects the curve)
                     if (!lineShape->isCurve()) beginPull(event->pos());
                     return;
                 }
-                // The face of a sketch: dragged, it takes all its points along in its plane; a click selects it
-                // (the face of an image -- the sketch a sweep's images bring along -- is not dragged: its points are the original's, and a click selects it)
+                // The face of a profile: dragged, it takes all its points along in its plane; a click selects it
+                // (the face of an image -- the profile a sweep's images bring along -- is not dragged: its points are the original's, and a click selects it)
                 if (picked && int(picked) <= shapes.size() && shapes.at(picked - 1)->isFace() && !shapes.at(picked - 1)->isLocked() &&
                     !shapes.at(picked - 1)->isSymmetryImage() && shapes.at(picked - 1)->sourceLine() >= 0)
                 {
@@ -2600,7 +2617,7 @@ bool View::planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const
         v = QVector3D(float(f[6]), float(f[7]), float(f[8])).normalized();
         return true;
     }
-    // Three points or more: the plane a sketch of them would lie in (through the first three that are not on a line)
+    // Three points or more: the plane a profile of them would lie in (through the first three that are not on a line)
     std::vector<Eigen::Vector3d> points;
     for (const Shape* s : shapes)
     {
@@ -2937,7 +2954,7 @@ void View::finishPlacement(bool close)
     const QList<QVector3D> points = m_wpPlaced;
     m_wpPlaced.clear();
     m_overlay->update();
-    const QString name = close ? QString("sketch") : (m_wp.mode == 2 ? QString("spline") : QString("polyline"));
+    const QString name = close ? QString("profile") : (m_wp.mode == 2 ? QString("spline") : QString("polyline"));
     // (the stroke; with the symmetry on, its images are made with it -- through the images of its points, the halves that meet on a plane joined into one outline -- by the scene)
     emit(placementFinished(name, points, m_wp.mode == 2));
 }
@@ -4027,7 +4044,7 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     // What can be made is offered on a model too, and whichever way its menu was opened: by a right-click on its surface in the viewport (made at the place that
     // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
     // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
-    // makes `sketch` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
+    // makes `profile` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
     // parameters in another, and what is done to the model -- the operations on it, the lattice and simulation menus -- under Operations; the quick ones (center,
     // bounding_box) are below them
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
@@ -4209,7 +4226,7 @@ void View::beginPull(QPoint pos)
     double frame[9];
     if (m_pullShape->planeNow(frame))
     {
-        // (a point of a sketch is pulled in the plane of the sketch: that is where its outline is -- unless that plane is edge on to the eye)
+        // (a point of a profile is pulled in the plane of the profile: that is where its outline is -- unless that plane is edge on to the eye)
         const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
         const QVector3D n = QVector3D::crossProduct(u, w).normalized();
         if (std::fabs(QVector3D::dotProduct(n, m_pullNormal)) > 0.2f) m_pullNormal = n;
@@ -4242,7 +4259,7 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
     // A double click while a line or a spline is being put down ends it, open (the first click of it put the last point)
     if (m_wp.open && m_wp.mode != 0 && !m_wpPlaced.isEmpty())
     {
-        // (a double click on the dot of a point of a sketch or a line, whose first click only started a stroke there -- one point put down: it is dropped -- changes the point
+        // (a double click on the dot of a point of a profile or a line, whose first click only started a stroke there -- one point put down: it is dropped -- changes the point
         // between a corner and a spline point, as it does when not drawing)
         if (m_wpPlaced.size() == 1)
         {
@@ -4261,7 +4278,7 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
 
-    // A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, and the other way (on the dot of an image of the path of a sweep: the point it is
+    // A double click on the dot of a point of a profile or a curve: a corner becomes a spline point, and the other way (on the dot of an image of the path of a sweep: the point it is
     // the image of changes)
     if (Shape* dot = pointDotAt(event->pos()))
     {
@@ -4279,7 +4296,7 @@ void View::mouseDoubleClickEvent(QMouseEvent* event)
         ? (pick_img.pixel(event->pos()) & 0xFFFFFF) : 0;
     if (picked && int(picked) <= shapes.size())
     {
-        // (a sketch: the camera turns to look at its face, from the side it is on)
+        // (a profile: the camera turns to look at its face, from the side it is on)
         double frame[9];
         if (shapes.at(picked - 1)->isFace() && shapes.at(picked - 1)->planeNow(frame))
         {
@@ -5902,8 +5919,8 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
     return true;
 }
 
-// Whether every one of these shapes is a point of a sketch that lies in the same plane (and which, as the way its normal faces: the sketch's own)
-bool View::groupInSketchPlane(const QList<Shape*>& members, QVector3D& normal) const
+// Whether every one of these shapes is a point of a profile that lies in the same plane (and which, as the way its normal faces: the profile's own)
+bool View::groupInProfilePlane(const QList<Shape*>& members, QVector3D& normal) const
 {
     bool first = true;
     for (const Shape* s : members)
@@ -5931,7 +5948,7 @@ bool View::groupOfPoints(const QList<Shape*>& members) const
 QVector3D View::groupRingNormal(const QList<Shape*>& members) const
 {
     QVector3D normal;
-    if (groupInSketchPlane(members, normal)) return normal.normalized();
+    if (groupInProfilePlane(members, normal)) return normal.normalized();
     if (m_wp.open && m_wp.exists) return m_wp.normal();
     return camera.towardViewer().normalized();
 }
@@ -5983,7 +6000,7 @@ bool View::overDraggableSurface(QPoint pos) const
 
 bool View::pullableAt(const Shape* s, QPoint pos, QVector3D* edge) const
 {
-    if (!s || s->isEditable() || !s->nativeDragOk()) return false;          // (the outline of a sketch is where a point is put, not an edge to pull)
+    if (!s || s->isEditable() || !s->nativeDragOk()) return false;          // (the outline of a profile is where a point is put, not an edge to pull)
     if (!s->isFlat()) return true;
     // A flat face has no surface inside it: what is pulled is its nearest edge, when that is close to the cursor
     // (where the line of sight meets the plane of the shape: not the depth under the cursor, which is the background's where the press is just outside the face)
@@ -6078,10 +6095,10 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
                 return GizmoGrip{members[0], 3, 0, true};
             }
             const bool shift = shiftHeld();
-            // (points of one sketch have no arrows and no squares: the dot moves them, in the plane of the sketch)
-            QVector3D sketchNormal;
-            const bool inSketch = groupInSketchPlane(members, sketchNormal);
-            for (int a = 0; a < 3 && !inSketch; ++a)
+            // (points of one profile have no arrows and no squares: the dot moves them, in the plane of the profile)
+            QVector3D profileNormal;
+            const bool inProfile = groupInProfilePlane(members, profileNormal);
+            for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
                 {
@@ -6139,7 +6156,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             continue;
         }
         const bool shift = shiftHeld();
-        // (a point of a sketch has no arrows and no squares: it is moved by its dot, in the plane of the sketch -- and has its one ring and its scale knobs)
+        // (a point of a profile has no arrows and no squares: it is moved by its dot, in the plane of the profile -- and has its one ring and its scale knobs)
         QVector3D facePlane;
         const bool inPlane = planarRingNormal(s, facePlane);
         // (a point of a curve: the arrows, the squares and the rings are along the way the curve faces there, see gizmoFrame -- and need all three numbers of a kind)
@@ -6171,7 +6188,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            // (the hard corner of a sketch has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
+            // (the hard corner of a profile has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
             if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
             {
                 // (the ring: within a few pixels of the circle round the middle)
@@ -6196,7 +6213,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         {
             if (!h.rotate[a] || !vars.count(h.rotate[a])) continue;
             if (turned && !rotatesAll) continue;
-            // (a point of a sketch has the one ring in the plane, and only a spline point: the rotation of a corner turns nothing)
+            // (a point of a profile has the one ring in the plane, and only a spline point: the rotation of a corner turns nothing)
             if (inPlane && (a != 2 || pointStyleOf(s) != 2)) continue;
             QVector3D u, v;
             planeBasis(ring[a], u, v);
@@ -6497,12 +6514,12 @@ void View::drawPointDots(QPainter& painter)
         const int style = pointStyleOf(s);
         if (style == 1)
         {
-            // a corner of a sketch or a curve: a square, a hard edge
+            // a corner of a profile or a curve: a square, a hard edge
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
         else if (style == 3)
         {
-            // a round corner of a sketch: a square with round corners -- an arc takes the place of the corner
+            // a round corner of a profile: a square with round corners -- an arc takes the place of the corner
             painter.drawRoundedRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r), 0.55 * r, 0.55 * r);
         }
         else if (style == 2)
@@ -6541,7 +6558,7 @@ void View::drawPointDots(QPainter& painter)
     painter.restore();
 }
 
-// The outline of the face of a sketch and the line of a curve are drawn blue: a place to press (a point is put where it is pressed), and to
+// The outline of the face of a profile and the line of a curve are drawn blue: a place to press (a point is put where it is pressed), and to
 // see where a 2D shape ends
 void View::drawOutlines(QPainter& painter)
 {
@@ -6587,6 +6604,7 @@ void View::drawHints(QPainter& painter)
     else if (gizmo_hover.group && gizmo_hover.kind == 6) text = T("Drag the ring to turn each point: they stay where they are");
     else if (gizmo_hover.kind == 2 && gizmo_hover.shape && (gizmo_hover.shape->isPoint() || shiftHeld())) text = T("Drag the ring to scale evenly");
     else if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner, spline point or round corner");
+    else if (m_outlineHover && m_outlineArcHover) text = T("Drag to change the radius of this corner");
     else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to pull a point out of the line") : T("Drag to pull a point out of the edge");
     if (text.isEmpty()) return;
     painter.save();
@@ -6766,9 +6784,9 @@ void View::drawGizmo(QPainter& painter)
                 const GizmoGrip g{members[0], kind, a, true};
                 return g == gizmo_hover || (gizmo_drag && g == gizmo_active);
             };
-            QVector3D sketchNormal;
-            const bool inSketch = groupInSketchPlane(members, sketchNormal);           // (points of one sketch: the dot only, it moves them in the plane)
-            for (int a = 0; a < 3 && !inSketch; ++a)
+            QVector3D profileNormal;
+            const bool inProfile = groupInProfilePlane(members, profileNormal);           // (points of one profile: the dot only, it moves them in the plane)
+            for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
                 {
@@ -6866,7 +6884,7 @@ void View::drawGizmo(QPainter& painter)
         QVector3D ring[3];
         gizmoRingAxes(s, ring);
         QVector3D facePlane;
-        const bool inPlane = planarRingNormal(s, facePlane);        // (a point of a sketch: one ring, in the plane of the sketch)
+        const bool inPlane = planarRingNormal(s, facePlane);        // (a point of a profile: one ring, in the plane of the profile)
         if (inPlane) ring[2] = facePlane;
         // (a point of a curve: the gizmo is along the way the curve faces there, see gizmoFrame)
         QVector3D F[3] = {QVector3D(1, 0, 0), QVector3D(0, 1, 0), QVector3D(0, 0, 1)};
@@ -6896,7 +6914,7 @@ void View::drawGizmo(QPainter& painter)
             painter.setPen(QPen(c, on ? 3.5 : 2.2));
             painter.drawPolyline(poly);
         }
-        for (int a = 0; a < 3 && !inPlane; ++a)             // (a point of a sketch has no arrows and no squares: its dot moves it, in the plane of the sketch)
+        for (int a = 0; a < 3 && !inPlane; ++a)             // (a point of a profile has no arrows and no squares: its dot moves it, in the plane of the profile)
         {
             if (shift)
             {
@@ -6931,7 +6949,7 @@ void View::drawGizmo(QPainter& painter)
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a sketch: see gizmoAt)
+            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
                 const bool on = now.kind == 2 && now.shape == s;
@@ -7259,16 +7277,16 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         }
         else
         {
-            // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera -- a point of a sketch in the plane of the sketch
+            // The dot: the shapes follow the cursor in the plane through the pivot that faces the camera -- a point of a profile in the plane of the profile
             // (that is where its outline is, and a point dragged out of it is put back onto it), unless that plane is edge on to the eye
             free_normal = camera.towardViewer().normalized();
             int controlIndex = -1;
             Shape* owner = g.group ? nullptr : controlOwner(g.shape, controlIndex);
             double frame[9];
-            QVector3D sketchNormal;
-            if (g.group && groupInSketchPlane(members, sketchNormal))
+            QVector3D profileNormal;
+            if (g.group && groupInProfilePlane(members, profileNormal))
             {
-                if (std::fabs(QVector3D::dotProduct(sketchNormal, free_normal)) > 0.2f) free_normal = sketchNormal;      // (several points of one sketch: in its plane)
+                if (std::fabs(QVector3D::dotProduct(profileNormal, free_normal)) > 0.2f) free_normal = profileNormal;      // (several points of one profile: in its plane)
             }
             else if (owner && owner->planeNow(frame))
             {
@@ -7278,7 +7296,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             }
             else if (!owner && m_wp.open && m_wp.exists && std::fabs(QVector3D::dotProduct(m_wp.normal(), free_normal)) > 0.2f)
             {
-                free_normal = m_wp.normal();          // (a point that is no sketch's moves in the work plane while its view is open)
+                free_normal = m_wp.normal();          // (a point that is no profile's moves in the work plane while its view is open)
             }
             if (!ringPoint(pos, gizmo_pivot, free_normal, free_hit0)) return;
         }
@@ -7366,8 +7384,53 @@ float View::snappedTurn(float turn, float start, bool absolute) const
     return absolute ? std::round((start + turn) / step) * step - start : std::round(turn / step) * step;
 }
 
+void View::beginFilletDrag(Shape* shape, const Shape::FilletHandle& h, const QVector3D& hit)
+{
+    m_fillet.h = h;
+    m_fillet.shape = shape;
+    // (where the press was along the way the corner looks, and how far the arc's apex is from the corner now: the arc follows the hand by how far it moves, so that it does not jump)
+    const QVector3D corner(float(h.corner[0]), float(h.corner[1]), float(h.corner[2])), toCentre(float(h.toCentre[0]), float(h.toCentre[1]), float(h.toCentre[2]));
+    m_fillet.s0 = double(QVector3D::dotProduct(hit - corner, toCentre));
+    m_fillet.apex0 = h.radius * (1.0 / h.sinHalf - 1.0);
+    m_regionGrown = false;
+    gizmo_oriented = false;
+    gizmo_frame_shape = nullptr;
+    gizmo_sign = 1.0f;
+    gizmo_active = GizmoGrip();
+    gizmo_active.shape = shape;
+    gizmo_active.kind = 7;
+    gizmo_active.axis = h.control;
+    m_dotPressLine = -1;
+    m_dotMoved = false;
+    gizmo_drag = true;
+    setCursor(Qt::ClosedHandCursor);
+    emit(dragStart());
+    m_overlay->update();
+}
+
+void View::dragFillet(QPoint pos)
+{
+    const auto& h = m_fillet.h;
+    const QVector3D corner(float(h.corner[0]), float(h.corner[1]), float(h.corner[2])), toCentre(float(h.toCentre[0]), float(h.toCentre[1]), float(h.toCentre[2])),
+        normal(float(h.normal[0]), float(h.normal[1]), float(h.normal[2]));
+    QVector3D at;
+    if (!ringPoint(pos, corner, normal, at)) return;
+    // The arc's apex is `apex` from the corner along the way it looks: radius * (1 / sin(half the angle) - 1).  Pulled in, the apex goes further from the corner and the corner is rounder
+    const double apex = std::max(0.0, m_fillet.apex0 + double(QVector3D::dotProduct(at - corner, toCentre)) - m_fillet.s0);
+    double radius = apex * h.sinHalf / (1.0 - h.sinHalf);
+    radius = std::min(radius, h.cap);                                     // (no more than the geometry allows: the arcs take no more of an edge than it is long)
+    // (the point's own number is the radius before its scale: the radius is that times the scale)
+    const float number = float(std::max(1e-3, radius / h.scale));
+    applyGizmoNumbers({{h.var, number}});
+}
+
 void View::dragGizmo(QPoint pos)
 {
+    if (gizmo_active.kind == 7)
+    {
+        dragFillet(pos);
+        return;
+    }
     if ((gizmo_active.kind == 5 || gizmo_active.kind == 6) && gizmo_active.group)
     {
         // The points' places now: scaled about the middle by how far the cursor is from it against where it was pressed, or turned about it by the cursor's turn; the numbers

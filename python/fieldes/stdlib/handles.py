@@ -93,7 +93,7 @@ _PRISM = ('_prism_pos', '_prism_rot', '_prism_flag', '_prism_scale', '_prism_rad
 
 
 def _carry_prism(out, shape, guard=(), still=True):
-    ''' What makes a shape a prism (see sketch.extrude) goes on to what places or edits it, with the numbers that must still be what they are for it to be nothing else
+    ''' What makes a shape a prism (see profile.extrude) goes on to what places or edits it, with the numbers that must still be what they are for it to be nothing else
         than that prism: (a var(), its value) for each.  `still` False: it is not a prism any more (a number that is plain is not what it was) '''
     if not still or getattr(shape, '_prism_pos', None) is None:
         return
