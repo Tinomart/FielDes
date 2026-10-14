@@ -2187,7 +2187,8 @@ void Tutorial::buildSteps()
                  T("E  next kind of drawing, or the last one") + "\n" +
                  T("Shift+S  symmetry on or off") + "\n" +
                  T("Right click  stop drawing");
-        s.hint = T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show profiles, linked copies and the work plane.");
+        s.hint = T("The pane that has the keyboard has a blue frame, and the status bar says which.") + " " +
+                 T("Shift+F1 lists every shortcut. The examples 26, 27 and 28 show profiles, linked copies and the work plane.");
         s.place = Right;
         s.enter = [this] { m_view->holdShift(false); m_view->setWorkPlaneOpen(false); };
         add(s);

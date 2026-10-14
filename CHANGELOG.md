@@ -20,7 +20,7 @@
 - **The pane that has the keyboard has a thin blue frame, and the status bar says *Keys: viewport* or *Keys: editor*.** The viewport's single keys (`W`, `E`, `D`, `R`, `I`, `V`, `C` ... and `Shift+W`, `Shift+S`, `Ctrl+D`) are letters in the script editor, and nothing on the screen said which one
   had the keyboard -- a key that did nothing, or typed a letter into the script, was the only answer. The frame follows the keyboard (a click, `Ctrl+Shift+W`, a tour step that gives it to the viewport) and is gone while a menu, a dialog or another program has it; the model tree
   belongs to the viewport, the output pane to the editor. Hovering the label lists the viewport's keys **as they are bound now**: the list is read from the actions the viewport owns, so a key that is changed in *Keyboard shortcuts* or added later is in it. It is a small `FocusCue` widget
-  (`app/src/focuscue.cpp`) that any pane can be added to.
+  (`app/src/focuscue.cpp`) that any pane can be added to; the tour's *Keys worth knowing* step says it.
 - **Turning the view says that it closed the work plane view.** Shift + left drag (and the middle button) turns the camera, and the work plane view -- the plane is parallel to the view it was opened in -- is left; the grid and the drawing were gone without a word. The status bar
   now says it and how to come back (*Shift+W opens it again, and W turns the view to look straight at the plane*), with the keys as they are bound now.
 
