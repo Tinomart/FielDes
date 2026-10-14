@@ -124,10 +124,11 @@ class Point(Shape):
         bounds of what is made of it: nothing of the ball is painted.) '''
     _kind = 'point'
 
-    def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None):
+    def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
         self._smooth = None if smooth is None else bool(smooth)      # (what it is in a sketch: a spline point or a corner; None: what the sketch says)
+        self._radius = radius                   # (what it is in a sketch: a round corner of this radius -- a number or a var() -- or None: what the sketch says)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
@@ -185,13 +186,23 @@ class Surface(Shape):
         return _as(self, self)
 
 
-def point(x=0.0, y=0.0, z=0.0, smooth=None):
+def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
     ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
         In a `sketch` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
-        its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  A double click on its dot toggles it '''
+        its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  In a `sketch` it can also be a ROUND corner, `radius=r`: an exact arc
+        of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
+        dot goes from a corner to a spline point to a round corner and back to a corner '''
     if isinstance(x, (tuple, list)) and y == 0.0 and z == 0.0 and len(x) == 3:
         x, y, z = x
-    return Point(x, y, z, smooth)
+    if radius is not None:
+        # (said before the point is made: a point that is refused is never half-made)
+        value = float(radius(0.0, 0.0, 0.0)) if isinstance(radius, Shape) else float(radius)
+        if value < 0:
+            raise ValueError('point(..., radius=%g): a radius is not negative -- 0 is a hard corner, a positive number rounds it with an arc of that radius' % value)
+        if smooth:
+            raise ValueError('point(..., smooth=True, radius=%g): a spline point has no radius, because the curve goes smoothly through it and there is no corner to round -- '
+                             'a point is a corner (smooth=False), a spline point (smooth=True) or a round corner (radius=r: a corner with a radius)' % value)
+    return Point(x, y, z, smooth, radius)
 
 
 def surface(field):

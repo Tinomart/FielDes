@@ -32,7 +32,29 @@ struct Control
     double scale = 1.0;                                    // how strongly a spline leaves it: the direction it leaves in is this many times as long (1: Catmull-Rom)
     bool planar = false;                                   // the point belongs to a face: its rotation is ONE angle (the z number of `rotate`), about `normal`
     Eigen::Vector3d normal = Eigen::Vector3d::UnitZ();     // (the normal of the plane of the face)
+    double radius = 0.0;                                   // > 0 at a corner of a face: a ROUND corner -- an exact circular arc of this radius, tangent to both edges, takes the
+                                                           // place of the corner (the point stays where the two edges would meet).  Ignored at a spline point and at the ends of an open line
 };
+
+/*
+ *  The arc that takes the place of a round corner: from `a` (on the edge before the point) to `b` (on the edge after it), round `centre`, `radius` (as made: the radius
+ *  that was asked for, made smaller where the arc would run into the next one or past the next point).  The arc is the short way round from `a` to `b` and lies in the
+ *  plane of the two edges (the plane of the face, for a face)
+ */
+struct Fillet
+{
+    int control = 0;
+    Eigen::Vector3d a = Eigen::Vector3d::Zero(), b = Eigen::Vector3d::Zero(), centre = Eigen::Vector3d::Zero();
+    double radius = 0.0;
+};
+
+/*
+ *  The round corners of the line or face through the controls, in the order of the controls (a control that is not round, or cannot be -- a straight run, a spike, a
+ *  spline point, an end of an open line -- has none).  The radius of each is limited by the two edges it sits on: with t = radius / tan(half the angle between the edges)
+ *  the length its arc takes from each edge, the two arcs on one edge may take no more than the edge is long, so that a square with a round corner of at least half its side
+ *  at each corner is a circle
+ */
+std::vector<Fillet> fillets(const std::vector<Control>& controls, bool smoothDefault, bool closed);
 
 /*
  *  The direction the line leaves each spline point in (zero at a corner): half the way from the point before to the point after, turned by the point's
@@ -46,10 +68,11 @@ std::vector<Eigen::Vector3d> tangents(const std::vector<Control>& controls, bool
  *  cubic curve that leaves one in its tangent and arrives at the other in its (Catmull-Rom: half the way from the point before to the
  *  point after, turned by the point's rotation; an end of an open line looks along its one edge).  A closed line ends where it
  *  begins; an open one at its last point.  `owners` (when given) gets, for every vertex, the number of the control it is after and how far
- *  along towards the next it is (0 to 1)
+ *  along towards the next it is (0 to 1).  A round corner (see `Fillet`) is its arc in place of the corner: the vertices from `a` to `b`, `arcPieces` pieces to a
+ *  quarter turn (0: only `a` and `b`, the chord -- what the exact field of a face is made on); they all belong to the control
  */
 std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& controls, bool smoothDefault, bool closed, int pieces = 14,
-                                      std::vector<std::pair<int, double>>* owners = nullptr);
+                                      std::vector<std::pair<int, double>>* owners = nullptr, int arcPieces = 8);
 
 /*
  *  The plane through the first three points that are not on a line: frame = (origin, u, v), nine numbers, u and v unit vectors,

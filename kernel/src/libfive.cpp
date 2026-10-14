@@ -2732,9 +2732,8 @@ libfive_tree libfive_beam_lattice(const float* nodes, int node_count, const int*
     return libfive::lattice::beamLattice(g, r, blend).release();
 }
 
-int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale,
-                                const double* normal, int n, int smooth_default, int closed, int pieces,
-                                double* out_vertices, int* out_owner, double* out_t, int capacity)
+static std::vector<libfive::pointshapes::Control> pointshapeControls(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale,
+                                                                       const double* radius, const double* normal, int n)
 {
     std::vector<libfive::pointshapes::Control> controls(size_t(std::max(0, n)));
     for (int i = 0; i < n; ++i)
@@ -2745,14 +2744,23 @@ int libfive_pointshape_polyline(const double* pos, const int* smooth, const int*
         c.turned = turned && turned[i];
         if (rotate) c.rotate = Eigen::Vector3d(rotate[3 * i], rotate[3 * i + 1], rotate[3 * i + 2]);
         if (scale) c.scale = scale[i];
+        if (radius) c.radius = radius[i];
         if (normal)
         {
             c.planar = true;
             c.normal = Eigen::Vector3d(normal[0], normal[1], normal[2]);
         }
     }
+    return controls;
+}
+
+int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale, const double* radius,
+                                const double* normal, int n, int smooth_default, int closed, int pieces, int arc_pieces,
+                                double* out_vertices, int* out_owner, double* out_t, int capacity)
+{
+    const auto controls = pointshapeControls(pos, smooth, turned, rotate, scale, radius, normal, n);
     std::vector<std::pair<int, double>> owners;
-    const auto v = libfive::pointshapes::polyline(controls, smooth_default != 0, closed != 0, pieces, &owners);
+    const auto v = libfive::pointshapes::polyline(controls, smooth_default != 0, closed != 0, pieces, &owners, arc_pieces);
     if (int(v.size()) > capacity) return int(v.size());
     for (size_t i = 0; i < v.size(); ++i)
     {
@@ -2763,6 +2771,28 @@ int libfive_pointshape_polyline(const double* pos, const int* smooth, const int*
         if (out_t) out_t[i] = owners[i].second;
     }
     return int(v.size());
+}
+
+int libfive_pointshape_fillets(const double* pos, const int* smooth, const double* radius, const double* normal, int n, int smooth_default, int closed,
+                               double* out, int capacity)
+{
+    const auto controls = pointshapeControls(pos, smooth, nullptr, nullptr, nullptr, radius, normal, n);
+    const auto arcs = libfive::pointshapes::fillets(controls, smooth_default != 0, closed != 0);
+    if (int(arcs.size()) > capacity) return int(arcs.size());
+    for (size_t i = 0; i < arcs.size(); ++i)
+    {
+        const auto& f = arcs[i];
+        double* o = out + 11 * i;
+        o[0] = double(f.control);
+        for (int k = 0; k < 3; ++k)
+        {
+            o[1 + k] = f.a[k];
+            o[4 + k] = f.b[k];
+            o[7 + k] = f.centre[k];
+        }
+        o[10] = f.radius;
+    }
+    return int(arcs.size());
 }
 
 bool libfive_pointshape_plane(const double* pos, int n, double* frame)

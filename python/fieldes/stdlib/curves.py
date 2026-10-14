@@ -98,7 +98,7 @@ def rotated(t, rotation):
 class Control:
     ''' One point of a curve or sketch: where it is (three numbers; the expressions the script gave are kept for the viewport, which draws the line from them
         while the point is dragged), what it says of itself (-1: what the shape says, 0: a corner, 1: a spline point) and its rotation '''
-    def __init__(self, item):
+    def __init__(self, item, rounds=False, radius_default=0.0, smooth_default=False):
         xyz = getattr(item, 'xyz', None)
         flag = getattr(item, '_smooth', None)
         rotation = None
@@ -127,13 +127,32 @@ class Control:
             parts = vec(scale[4])
             self.scale_expr = (parts[0] + parts[1] + parts[2]) * (1.0 / 3.0)
             self.scale = max(0.0, sum(value_of(c) for c in parts) / 3.0)
+        # A ROUND corner (a point of a sketch -- `rounds` -- that says `point(..., radius=r)`, or the sketch's own `radius` for the points that do not say): an exact arc of that
+        # radius, tangent to both edges, takes the place of the corner.  The point's scale multiplies the radius -- the gold ring of its gizmo -- as the scale of a sphere multiplies
+        # its radius.  A spline point has no radius (it says so itself, or the sketch says it); radius=0 is a hard corner whatever the sketch says
+        self.radius_expr = None
+        self.radius = 0.0
+        if rounds:
+            given = getattr(item, '_radius', None)
+            if given is None:
+                given = radius_default
+            spline = self.flag == 1 or (self.flag < 0 and bool(smooth_default))
+            if not spline and value_of(given) > 0.0:
+                self.flag = 0
+                self.radius_expr = Shape.wrap(given) * (self.scale_expr if self.scale_expr is not None else 1.0)
+                self.radius = value_of(given) * self.scale
 
     def smooth(self, default):
         return bool(default) if self.flag < 0 else self.flag == 1
 
+    @property
+    def rounded(self):
+        return self.radius > 0.0
 
-def controls(points):
-    return [Control(p) for p in points]
+
+def controls(points, rounds=False, radius_default=0.0, smooth_default=False):
+    ''' The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a sketch (`rounds` True) '''
+    return [Control(p, rounds, radius_default, smooth_default) for p in points]
 
 
 def _array(ctype, values):
@@ -146,10 +165,11 @@ def owned(shape, cls=Shape):
     return cls(lib.libfive_tree_copy(shape.ptr))
 
 
-def trace(ctrls, default, closed, pieces=PIECES, normal=None):
+def trace(ctrls, default, closed, pieces=PIECES, normal=None, arc_pieces=8):
     ''' (the vertices of the line through the controls, as (x, y, z); for each the number of the control it is after and how far along towards the next it is)
         -- made by the kernel.  `normal`: the normal of the plane of a face the points belong to -- the rotation of a point is then one angle about it, in
-        the plane (the z number of its rotation) -- or None for a line in space '''
+        the plane (the z number of its rotation) -- or None for a line in space.  A round corner is its arc, `arc_pieces` to a quarter turn (0: only the two ends of
+        the arc: the chord, which is what the exact field of a face is made on, see `fillets`) '''
     n = len(ctrls)
     if n == 0:
         return [], []
@@ -158,18 +178,40 @@ def trace(ctrls, default, closed, pieces=PIECES, normal=None):
     turned = _array(ctypes.c_int, [1 if ctl.turned else 0 for ctl in ctrls])
     rot = _array(ctypes.c_double, [a for ctl in ctrls for a in ctl.rot])
     scales = _array(ctypes.c_double, [ctl.scale for ctl in ctrls])
+    radii = _array(ctypes.c_double, [ctl.radius for ctl in ctrls])
     axis = _array(ctypes.c_double, list(normal)) if normal is not None else None
-    cap = n * pieces + 2
+    cap = n * (pieces + 4 * max(arc_pieces, 1) + 2) + 2
     while True:
         verts = (ctypes.c_double * (3 * cap))()
         owner = (ctypes.c_int * cap)()
         along = (ctypes.c_double * cap)()
-        got = lib.libfive_pointshape_polyline(pos, flags, turned, rot, scales, axis, n, 1 if default else 0, 1 if closed else 0, pieces, verts, owner, along, cap)
+        got = lib.libfive_pointshape_polyline(pos, flags, turned, rot, scales, radii, axis, n, 1 if default else 0, 1 if closed else 0, pieces, arc_pieces, verts, owner, along, cap)
         if got <= cap:
             break
         cap = got
     return ([(verts[3 * i], verts[3 * i + 1], verts[3 * i + 2]) for i in range(got)],
             [(owner[i], along[i]) for i in range(got)])
+
+
+def fillets(ctrls, default, closed, normal=None):
+    ''' The round corners of the line or face through the controls, made by the kernel: a list of (control, a, b, centre, radius) -- the arc runs from `a` to `b` (the short
+        way round) about `centre`, in the plane of the face; the radius is what the arc has been made with (smaller than the one asked for where it would run into the next
+        arc or past the next point) '''
+    n = len(ctrls)
+    if n < 3 or not any(c.rounded for c in ctrls):
+        return []
+    pos = _array(ctypes.c_double, [c for ctl in ctrls for c in ctl.pos])
+    flags = _array(ctypes.c_int, [ctl.flag for ctl in ctrls])
+    radii = _array(ctypes.c_double, [ctl.radius for ctl in ctrls])
+    axis = _array(ctypes.c_double, list(normal)) if normal is not None else None
+    cap = n
+    while True:
+        out = (ctypes.c_double * (11 * cap))()
+        got = lib.libfive_pointshape_fillets(pos, flags, radii, axis, n, 1 if default else 0, 1 if closed else 0, out, cap)
+        if got <= cap:
+            break
+        cap = got
+    return [(int(out[11 * i]), tuple(out[11 * i + 1:11 * i + 4]), tuple(out[11 * i + 4:11 * i + 7]), tuple(out[11 * i + 7:11 * i + 10]), out[11 * i + 10]) for i in range(got)]
 
 
 def plane_of(ctrls):
@@ -187,11 +229,16 @@ def plane_of(ctrls):
 def mark(ctrls, default, kind):
     ''' Tell each point what the curve or sketch made of it: a corner or a spline point (the viewport draws the two differently, and the double click
         changes it), and the default it follows '''
-    for c in ctrls:
+    n = len(ctrls)
+    for i, c in enumerate(ctrls):
         try:
             c.item._curve_smooth = c.smooth(default)
             c.item._curve_default = bool(default)
             c.item._curve_kind = kind
+            c.item._curve_round = c.rounded
+            # (how long the shorter of its two edges is: where a double click that makes the corner round starts its radius)
+            if kind == 'sketch' and n >= 3:
+                c.item._curve_edge = min(math.dist(c.pos, ctrls[i - 1].pos), math.dist(c.pos, ctrls[(i + 1) % n].pos))
         except AttributeError:
             pass
 
@@ -203,6 +250,7 @@ def viewport_data(out, ctrls, default, closed):
     out._ctrl_rot = [c.rot_expr for c in ctrls]
     out._ctrl_flag = [c.flag for c in ctrls]
     out._ctrl_scale = [c.scale_expr for c in ctrls]
+    out._ctrl_radius = [c.radius_expr for c in ctrls]          # (the radius of a round corner, as an expression -- the scale of the point is in it -- or None)
     out._ctrl_default = bool(default)
     out.closed = bool(closed)
     out._editable = True
@@ -318,9 +366,46 @@ def _triangulate(pts):
     return triangles
 
 
-def polygon_field(loop, frame):
+def _arc_squared(s, t, arc):
+    ''' The distance, squared, from the point (s, t) -- expressions -- to a circular arc: (a, b, centre, radius), the short way round from a to b, in the same coordinates.
+        Exact: within the wedge between the two radii it is the distance to the circle, outside it the distance to the nearer end.  (Outside the wedge the circle's distance is
+        made large, so that the least of the three is the right one: it is not a distance there, and it is never the least.) '''
+    a, b, c, r = arc
+    wx, wy = s + (-c[0]), t + (-c[1])
+    e1 = (a[0] - c[0], a[1] - c[1])
+    e2 = (b[0] - c[0], b[1] - c[1])
+    turn = 1.0 if e1[0] * e2[1] - e1[1] * e2[0] >= 0.0 else -1.0
+    across1 = (wy * e1[0] + wx * (-e1[1])) * turn                 # (e1 x w, turned the way the arc turns: not negative on the arc's side of the first radius)
+    across2 = (wx * e2[1] + wy * (-e2[0])) * turn                 # (w x e2)
+    outside = (across1.min(across2) * -1.0).max(0.0)               # (how far it is outside the wedge: 0 inside it)
+    body = ((wx.square() + wy.square()).sqrt() + (-r)).square() + outside * 1000.0
+    end_a = (s + (-a[0])).square() + (t + (-a[1])).square()
+    end_b = (s + (-b[0])).square() + (t + (-b[1])).square()
+    return end_a.min(end_b).min(body)
+
+
+def _arc_sign(s, t, arc):
+    ''' -1 inside the circular segment between the chord of the arc and the arc, +1 outside it (0 on its edge): the side of the outline flips there '''
+    a, b, c, r = arc
+    mx, my = 0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])
+    nx, ny = c[0] - mx, c[1] - my
+    length = math.hypot(nx, ny)
+    if length < 1e-300:
+        return None
+    nx, ny = nx / length, ny / length
+    side = s * nx + t * ny + (-(mx * nx + my * ny))                # (negative on the far side of the chord from the centre: where the arc bulges)
+    disc = (s + (-c[0])).square() + (t + (-c[1])).square()
+    return (disc.sqrt() + (-r)).max(side).compare(0.0)
+
+
+def polygon_field(loop, frame, arcs=None):
     ''' The signed distance to the polygon whose corners are `loop` (s, t) -- negative inside, in the plane of `frame` (origin, u, v: s and t are the
         coordinates along u and v), or in x and y when there is none.  An exact distance, concave outlines too.
+
+        `arcs`: round corners, (a, b, centre, radius) in the same coordinates, each the short way round from a to b; `loop` then has the chord from a to b as an edge
+        in place of each of them (see `fillets`).  The distance is to the arc, exact (the chord is not an edge of the outline), and the side of the outline is that of the
+        polygon of the chords turned over inside every circular segment between a chord and its arc: a segment that bulges out of the polygon is added to it, one that bulges
+        into it is cut out.
 
         Made the way a vector renderer measures a polygon, of two parts, both a plain `min` over small pieces so that the renderer drops the pieces that are far
         from where it looks (a polygon of a hundred edges costs what the few pieces near the point cost):
@@ -344,16 +429,35 @@ def polygon_field(loop, frame):
         o, u, v = frame
         s = _linear_in(u, -sum(a * b for a, b in zip(o, u)))
         t = _linear_in(v, -sum(a * b for a, b in zip(o, v)))
+    arcs = list(arcs or [])
+    span0 = max(max(q[0] for q in pts) - min(q[0] for q in pts), max(q[1] for q in pts) - min(q[1] for q in pts), 1e-12)
+    near = 1e-9 * span0
+
+    def same(p, q):
+        return abs(p[0] - q[0]) <= near and abs(p[1] - q[1]) <= near
+
     best = None
     for i in range(n if n > 2 else max(1, n - 1)):
-        got = _segment((s, t), pts[i], pts[(i + 1) % n])
+        p, q = pts[i], pts[(i + 1) % n]
+        # (the chord of an arc is no edge of the outline: the arc is)
+        if any((same(p, arc[0]) and same(q, arc[1])) or (same(p, arc[1]) and same(q, arc[0])) for arc in arcs):
+            continue
+        got = _segment((s, t), p, q)
         if got is not None:
             best = got[0] if best is None else best.min(got[0])
+    for arc in arcs:
+        term = _arc_squared(s, t, arc)
+        best = term if best is None else best.min(term)
     if best is None:
         best = (s + (-pts[0][0])).square() + (t + (-pts[0][1])).square()
     distance = best.sqrt()
     if n < 3:
         return distance
+    flips = None
+    for arc in arcs:
+        sign = _arc_sign(s, t, arc)
+        if sign is not None:
+            flips = sign if flips is None else flips * sign
     triangles = _triangulate(pts)
     if triangles is None:
         turn = None
@@ -363,7 +467,8 @@ def polygon_field(loop, frame):
                 d2, p, dot, e = got
                 angle = (p[1] * e[0] + p[0] * (-e[1])).atan2((p[0].square() + p[1].square()) + (-1.0) * dot)
                 turn = angle if turn is None else turn + angle
-        return distance * (turn.abs() * (-1.0 / math.pi) + 1.0)
+        out = distance * (turn.abs() * (-1.0 / math.pi) + 1.0)
+        return out if flips is None else out * flips
     span = max(max(q[0] for q in pts) - min(q[0] for q in pts), max(q[1] for q in pts) - min(q[1] for q in pts))
     over = 1e-4 * span                  # (how far a triangle goes over a cut: far more than the rounding of a float, far less than anything that is drawn)
     inside = None
@@ -378,7 +483,8 @@ def polygon_field(loop, frame):
             line = s * nx + t * ny + (-(pts[a][0] * nx + pts[a][1] * ny) - (over if cut else 0.0))
             lines = line if lines is None else lines.max(line)
         inside = lines if inside is None else inside.min(lines)
-    return distance * inside.compare(0.0)
+    side = inside.compare(0.0)
+    return distance * (side if flips is None else side * flips)
 
 
 def _linear_in(n, off):

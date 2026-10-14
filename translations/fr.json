@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "Faites glisser l’anneau pour mettre chaque point à l’échelle de la même façon : ils restent où ils sont",
  "Drag the ring to turn each point: they stay where they are": "Faites glisser l’anneau pour tourner chaque point : ils restent où ils sont",
  "Drag the ring to scale evenly": "Faites glisser l'anneau pour mettre à l'échelle uniformément",
- "Double-click: corner or spline point": "Double-clic : coin ou point de spline",
+ "Double-click: corner, spline point or round corner": "Double-clic : coin, point de spline ou coin arrondi",
  "Drag to pull a point out of the line": "Glisser pour tirer un point de la ligne",
  "Drag to pull a point out of the edge": "Glisser pour tirer un point du bord",
  "unbound": "non affecté",

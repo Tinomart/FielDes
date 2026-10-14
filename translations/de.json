@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "Ziehen Sie den Ring, um jeden Punkt gleichmäßig zu skalieren: Sie bleiben, wo sie sind",
  "Drag the ring to turn each point: they stay where they are": "Ziehen Sie den Ring, um jeden Punkt zu drehen: Sie bleiben, wo sie sind",
  "Drag the ring to scale evenly": "Ring ziehen, um gleichmäßig zu skalieren",
- "Double-click: corner or spline point": "Doppelklick: Ecke oder Spline-Punkt",
+ "Double-click: corner, spline point or round corner": "Doppelklick: Ecke, Spline-Punkt oder runde Ecke",
  "Drag to pull a point out of the line": "Ziehen, um einen Punkt aus der Linie zu ziehen",
  "Drag to pull a point out of the edge": "Ziehen, um einen Punkt aus der Kante zu ziehen",
  "unbound": "nicht belegt",

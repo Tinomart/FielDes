@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "リングをドラッグすると各点が同じ割合で拡大縮小します。点は元の位置にとどまります",
  "Drag the ring to turn each point: they stay where they are": "リングをドラッグすると各点が回転します。点は元の位置にとどまります",
  "Drag the ring to scale evenly": "リングをドラッグして均等に拡大縮小",
- "Double-click: corner or spline point": "ダブルクリック: 角またはスプライン点",
+ "Double-click: corner, spline point or round corner": "ダブルクリック: 角、スプライン点、または丸い角",
  "Drag to pull a point out of the line": "ドラッグして線から点を引き出す",
  "Drag to pull a point out of the edge": "ドラッグして縁から点を引き出す",
  "unbound": "未割り当て",

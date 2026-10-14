@@ -4413,6 +4413,7 @@ int View::pointStyleOf(const Shape* s) const
     {
         const auto& c = owner->controlPoints()[size_t(index)];
         const bool smooth = c.flag < 0 ? owner->smoothDefault() : c.flag != 0;
+        if (!smooth && c.hasRadius) return 3;                // (a round corner: a corner with a radius -- the rotation ring is not shown for it, as for any corner)
         return smooth ? 2 : 1;
     }
     return s ? s->pointStyle() : 0;
@@ -6170,8 +6171,8 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            // (the corner of a sketch has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, which a corner is not)
-            if (any && !(inPlane && pointStyleOf(s) != 2))
+            // (the hard corner of a sketch has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
+            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
             {
                 // (the ring: within a few pixels of the circle round the middle)
                 const double d = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
@@ -6499,6 +6500,11 @@ void View::drawPointDots(QPainter& painter)
             // a corner of a sketch or a curve: a square, a hard edge
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
+        else if (style == 3)
+        {
+            // a round corner of a sketch: a square with round corners -- an arc takes the place of the corner
+            painter.drawRoundedRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r), 0.55 * r, 0.55 * r);
+        }
         else if (style == 2)
         {
             // a spline point: a circle with a ring round it, the curve goes smoothly through it
@@ -6580,7 +6586,7 @@ void View::drawHints(QPainter& painter)
     if (gizmo_hover.group && gizmo_hover.kind == 5) text = T("Drag the ring to scale each point evenly: they stay where they are");
     else if (gizmo_hover.group && gizmo_hover.kind == 6) text = T("Drag the ring to turn each point: they stay where they are");
     else if (gizmo_hover.kind == 2 && gizmo_hover.shape && (gizmo_hover.shape->isPoint() || shiftHeld())) text = T("Drag the ring to scale evenly");
-    else if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner or spline point");
+    else if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner, spline point or round corner");
     else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to pull a point out of the line") : T("Drag to pull a point out of the edge");
     if (text.isEmpty()) return;
     painter.save();
@@ -6925,7 +6931,7 @@ void View::drawGizmo(QPainter& painter)
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
-            if (any && !(inPlane && pointStyleOf(s) != 2))              // (not on the corner of a sketch: see gizmoAt)
+            if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a sketch: see gizmoAt)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
                 const bool on = now.kind == 2 && now.shape == s;

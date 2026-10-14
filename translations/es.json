@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "Arrastre el anillo para escalar cada punto por igual: se quedan donde están",
  "Drag the ring to turn each point: they stay where they are": "Arrastre el anillo para girar cada punto: se quedan donde están",
  "Drag the ring to scale evenly": "Arrastre el anillo para escalar de forma uniforme",
- "Double-click: corner or spline point": "Doble clic: esquina o punto de spline",
+ "Double-click: corner, spline point or round corner": "Doble clic: esquina, punto de spline o esquina redondeada",
  "Drag to pull a point out of the line": "Arrastra para sacar un punto de la línea",
  "Drag to pull a point out of the edge": "Arrastra para sacar un punto del borde",
  "unbound": "sin asignar",

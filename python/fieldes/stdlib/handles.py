@@ -55,7 +55,7 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key')
 
 
 def _is_number(v):
@@ -89,7 +89,7 @@ def _centre_of(shape):
     return tuple(0.5 * (float(b[0][i]) + float(b[1][i])) for i in range(3))
 
 
-_PRISM = ('_prism_pos', '_prism_rot', '_prism_flag', '_prism_scale', '_prism_default', '_prism_a', '_prism_b')
+_PRISM = ('_prism_pos', '_prism_rot', '_prism_flag', '_prism_scale', '_prism_radius', '_prism_default', '_prism_a', '_prism_b')
 
 
 def _carry_prism(out, shape, guard=(), still=True):
@@ -277,7 +277,7 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             out._ring_guard = list(getattr(shape, '_ring_guard', [])) + guard
     # (a sweep drawn natively from its points is placed natively too: the viewport places it by the numbers of the gizmo, about the point `c`)
     if getattr(shape, '_sweep_ppos', None) is not None and getattr(shape, '_sweep_place', None) is None:
-        for name in ('_sweep_ppos', '_sweep_prot', '_sweep_pflag', '_sweep_pscale', '_sweep_pdefault', '_sweep_qpos', '_sweep_qrot', '_sweep_qflag', '_sweep_qscale',
+        for name in ('_sweep_ppos', '_sweep_prot', '_sweep_pflag', '_sweep_pscale', '_sweep_pradius', '_sweep_pdefault', '_sweep_qpos', '_sweep_qrot', '_sweep_qflag', '_sweep_qscale',
                      '_sweep_qdefault', '_sweep_qclosed', '_sweep_twist'):
             setattr(out, name, getattr(shape, name))
         out._sweep_free = getattr(shape, '_sweep_free', False)          # (the sweep of a primitive: its outline is in the plane z = 0)

@@ -983,11 +983,13 @@ What FielDes draws for a shape (see the top of this file)
 
 A plane through `point`, positive on the side `normal` points to: a surface
 
-### `point(x=0.0, y=0.0, z=0.0, smooth=None)`
+### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None)`
 
 A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
 In a `sketch` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
-its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  A double click on its dot toggles it
+its gizmo's rotation gives) and a corner when False; None (the default): what the sketch says.  In a `sketch` it can also be a ROUND corner, `radius=r`: an exact arc
+of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
+dot goes from a corner to a spline point to a round corner and back to a corner
 
 ### `sphere_surface(radius=10.0, center=(0, 0, 0))`
 
@@ -1057,9 +1059,9 @@ ends, .vertices the line it is drawn as (x, y, z)
 
 *(no description yet)*
 
-### `controls(points)`
+### `controls(points, rounds=False, radius_default=0.0, smooth_default=False)`
 
-*(no description yet)*
+The controls of a curve (`rounds` False: a point that says it is round is a corner there) or of a sketch (`rounds` True)
 
 ### `cross(a, b)`
 
@@ -1068,6 +1070,12 @@ ends, .vertices the line it is drawn as (x, y, z)
 ### `dot(a, b)`
 
 *(no description yet)*
+
+### `fillets(ctrls, default, closed, normal=None)`
+
+The round corners of the line or face through the controls, made by the kernel: a list of (control, a, b, centre, radius) -- the arc runs from `a` to `b` (the short
+way round) about `centre`, in the plane of the face; the radius is what the arc has been made with (smaller than the one asked for where it would run into the next
+arc or past the next point)
 
 ### `mark(ctrls, default, kind)`
 
@@ -1087,10 +1095,15 @@ is already freed, the temporary having died as soon as its pointer was read)
 
 (origin, u, v) of the plane through the first three points that are not on a line (numbers), or None
 
-### `polygon_field(loop, frame)`
+### `polygon_field(loop, frame, arcs=None)`
 
 The signed distance to the polygon whose corners are `loop` (s, t) -- negative inside, in the plane of `frame` (origin, u, v: s and t are the
 coordinates along u and v), or in x and y when there is none.  An exact distance, concave outlines too.
+
+`arcs`: round corners, (a, b, centre, radius) in the same coordinates, each the short way round from a to b; `loop` then has the chord from a to b as an edge
+in place of each of them (see `fillets`).  The distance is to the arc, exact (the chord is not an edge of the outline), and the side of the outline is that of the
+polygon of the chords turned over inside every circular segment between a chord and its arc: a segment that bulges out of the polygon is added to it, one that bulges
+into it is cut out.
 
 Made the way a vector renderer measures a polygon, of two parts, both a plain `min` over small pieces so that the renderer drops the pieces that are far
 from where it looks (a polygon of a hundred edges costs what the few pieces near the point cost):
@@ -1123,11 +1136,12 @@ distance to the curve
 
 *(no description yet)*
 
-### `trace(ctrls, default, closed, pieces=14, normal=None)`
+### `trace(ctrls, default, closed, pieces=14, normal=None, arc_pieces=8)`
 
 (the vertices of the line through the controls, as (x, y, z); for each the number of the control it is after and how far along towards the next it is)
 -- made by the kernel.  `normal`: the normal of the plane of a face the points belong to -- the rotation of a point is then one angle about it, in
-the plane (the z number of its rotation) -- or None for a line in space
+the plane (the z number of its rotation) -- or None for a line in space.  A round corner is its arc, `arc_pieces` to a quarter turn (0: only the two ends of
+the arc: the chord, which is what the exact field of a face is made on, see `fillets`)
 
 ### `unit(a)`
 
@@ -1208,12 +1222,15 @@ smooth change.  `twist` (degrees) turns the whole profile about the curve beside
 with mitered joints.  `path_extrude(circle(2), spline([a, b, c]))` is a bent tube; `extrude` is the straight case.  `path` may be a list of points:
 the spline through them
 
-### `sketch(source, smooth=False)`
+### `sketch(source, smooth=False, radius=0)`
 
 The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
 through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
 smooth=False): False, a corner (a hard edge: the default), or True, a spline point.  A spline point leaves in the direction the rotation of its gizmo
-says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty.
+says (no rotation: from its neighbours).  A point can also be a ROUND corner, `point(..., radius=r)`: an exact arc of radius r, tangent to both edges, takes the place
+of the corner (the point stays where the two edges would meet; the scale of its gizmo multiplies the radius; where the arc would run into the next one or past the next
+point the radius is made smaller, and a square whose four corners ask for half its side is a circle).  `radius` is what a corner is that does not say, 0 (a hard
+corner) by default.  With fewer than three points, or all on a line, it is empty.
 
 `source` can also be a SURFACE picked on a part (`select_surface`): the 2D shape of its outline -- the outline of the face, holes included, in the plane
 of the face (exact for a flat face), or, for a surface that is not flat, of its projection onto the plane through its middle, along the way it faces on

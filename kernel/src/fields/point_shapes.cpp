@@ -54,7 +54,85 @@ Eigen::Vector3d turnedBy(const Control& c, const Eigen::Vector3d& t)
     return c.turned ? rotated(t, c.rotate) : t;
 }
 
+// The places of the controls.  The points of a face are put onto its plane first (the plane through the first one, across the face's normal): a corner is rounded in the
+// plane of the face, whatever height a point was given
+std::vector<Eigen::Vector3d> positionsOf(const std::vector<Control>& c)
+{
+    std::vector<Eigen::Vector3d> p;
+    p.reserve(c.size());
+    for (const auto& k : c) p.push_back(k.pos);
+    if (!c.empty() && c[0].planar && c[0].normal.squaredNorm() > 1e-24)
+    {
+        const Eigen::Vector3d n = c[0].normal.normalized();
+        const Eigen::Vector3d origin = p[0];
+        for (auto& q : p) q -= n * n.dot(q - origin);
+    }
+    return p;
+}
+
 }   // anonymous namespace
+
+std::vector<Fillet> fillets(const std::vector<Control>& c, bool smoothDefault, bool closed)
+{
+    std::vector<Fillet> out;
+    const int n = int(c.size());
+    if (n < 3) return out;
+    const std::vector<Eigen::Vector3d> P = positionsOf(c);
+    auto smooth = [&](int i) { return c[size_t(i)].smooth < 0 ? smoothDefault : c[size_t(i)].smooth != 0; };
+    auto prev = [&](int i) { return closed ? (i - 1 + n) % n : i - 1; };
+    auto next = [&](int i) { return closed ? (i + 1) % n : i + 1; };
+
+    // What each round corner asks for: the length t its arc takes from each of its two edges, radius / tan(half the angle between the edges)
+    struct Corner { bool round = false; double t = 0, radius = 0, theta = 0; Eigen::Vector3d u1, u2; };
+    std::vector<Corner> corner;
+    corner.resize(size_t(n));
+    for (int i = 0; i < n; ++i)
+    {
+        if (!(c[size_t(i)].radius > 0) || smooth(i) || (!closed && (i == 0 || i == n - 1))) continue;
+        const Eigen::Vector3d a = P[size_t(prev(i))] - P[size_t(i)], b = P[size_t(next(i))] - P[size_t(i)];
+        const double la = a.norm(), lb = b.norm();
+        if (la < 1e-12 || lb < 1e-12) continue;
+        Corner& k = corner[size_t(i)];
+        k.u1 = a / la;
+        k.u2 = b / lb;
+        k.theta = std::acos(std::max(-1.0, std::min(1.0, k.u1.dot(k.u2))));
+        if (k.theta < 1e-4 || k.theta > kPi - 1e-4) continue;                       // (a spike, or a straight run: nothing to round)
+        k.round = true;
+        k.radius = c[size_t(i)].radius;
+        k.t = k.radius / std::tan(0.5 * k.theta);
+    }
+    // The two arcs on one edge may take no more than the edge is long: both are made smaller by the same share (a corner by the least share of its two edges)
+    std::vector<double> share(size_t(n), 1.0);
+    const int edges = closed ? n : n - 1;
+    for (int i = 0; i < edges; ++i)
+    {
+        const int j = next(i);
+        const double length = (P[size_t(j)] - P[size_t(i)]).norm();
+        const double wanted = (corner[size_t(i)].round ? corner[size_t(i)].t : 0.0) + (corner[size_t(j)].round ? corner[size_t(j)].t : 0.0);
+        if (wanted > length && wanted > 0)
+        {
+            const double s = length / wanted;
+            share[size_t(i)] = std::min(share[size_t(i)], s);
+            share[size_t(j)] = std::min(share[size_t(j)], s);
+        }
+    }
+    for (int i = 0; i < n; ++i)
+    {
+        const Corner& k = corner[size_t(i)];
+        if (!k.round) continue;
+        const double radius = k.radius * share[size_t(i)], t = k.t * share[size_t(i)];
+        if (!(radius > 1e-12)) continue;
+        Fillet f;
+        f.control = i;
+        f.a = P[size_t(i)] + k.u1 * t;
+        f.b = P[size_t(i)] + k.u2 * t;
+        const Eigen::Vector3d bisector = (k.u1 + k.u2).normalized();
+        f.centre = P[size_t(i)] + bisector * (radius / std::sin(0.5 * k.theta));
+        f.radius = radius;
+        out.push_back(f);
+    }
+    return out;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -78,7 +156,7 @@ std::vector<Eigen::Vector3d> tangents(const std::vector<Control>& c, bool smooth
 }
 
 std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& c, bool smoothDefault, bool closed, int pieces,
-                                      std::vector<std::pair<int, double>>* owners)
+                                      std::vector<std::pair<int, double>>* owners, int arcPieces)
 {
     std::vector<Eigen::Vector3d> out;
     if (owners) owners->clear();
@@ -86,34 +164,67 @@ std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& c, bool smooth
     if (n == 0) return out;
     if (pieces < 1) pieces = 1;
     auto smooth = [&](int i) { return c[size_t(i)].smooth < 0 ? smoothDefault : c[size_t(i)].smooth != 0; };
+    const std::vector<Eigen::Vector3d> P = positionsOf(c);
     const std::vector<Eigen::Vector3d> tangent = tangents(c, smoothDefault, closed);
+    const std::vector<Fillet> arcs = fillets(c, smoothDefault, closed);
+    std::vector<const Fillet*> round(size_t(n), nullptr);
+    for (const auto& f : arcs) round[size_t(f.control)] = &f;
+
+    // (a vertex is not given twice in a row: two arcs that meet share the point where they do)
+    auto push = [&](const Eigen::Vector3d& v, int owner, double along) {
+        if (!out.empty() && (out.back() - v).norm() <= 1e-12 * (1.0 + v.norm())) return;
+        out.push_back(v);
+        if (owners) owners->push_back({owner, along});
+    };
+    // The vertices of a control itself: where it is, or -- a round corner -- its arc from `a` to `b`
+    auto place = [&](int i) {
+        const Fillet* f = round[size_t(i)];
+        if (!f)
+        {
+            push(P[size_t(i)], i, 0.0);
+            return;
+        }
+        const Eigen::Vector3d e1 = f->a - f->centre;
+        const Eigen::Vector3d eb = f->b - f->centre;
+        const double r = e1.norm();
+        Eigen::Vector3d w = eb - e1 * (eb.dot(e1) / e1.squaredNorm());              // (across the first radius, towards b)
+        const double across = w.norm();
+        const double sweep = std::atan2(across, eb.dot(e1) / r);                    // (the angle from a to b, as seen from the centre: less than a half turn)
+        const Eigen::Vector3d e2 = across > 1e-300 ? Eigen::Vector3d(w * (r / across)) : Eigen::Vector3d::Zero();
+        const int count = arcPieces <= 0 ? 1 : std::max(1, int(std::ceil(sweep / (0.5 * kPi) * double(arcPieces))));
+        push(f->a, i, 0.0);
+        for (int k = 1; k < count; ++k)
+        {
+            const double phi = sweep * double(k) / double(count);
+            push(f->centre + e1 * std::cos(phi) + e2 * std::sin(phi), i, 0.0);
+        }
+        push(f->b, i, 0.0);
+    };
 
     const int last = closed ? n : n - 1;
     for (int i = 0; i < last; ++i)
     {
         const int j = (i + 1) % n;
-        const Eigen::Vector3d& a = c[size_t(i)].pos;
-        const Eigen::Vector3d& b = c[size_t(j)].pos;
-        if (!smooth(i) && !smooth(j))
-        {
-            out.push_back(a);
-            if (owners) owners->push_back({i, 0.0});
-            continue;
-        }
+        place(i);
+        if (!smooth(i) && !smooth(j)) continue;                                      // (a straight piece: nothing between its ends)
+        // (a curve between two controls starts where the arc of the first ends and ends where the arc of the second begins: along the same chord)
+        const Eigen::Vector3d a = round[size_t(i)] ? round[size_t(i)]->b : P[size_t(i)];
+        const Eigen::Vector3d b = round[size_t(j)] ? round[size_t(j)]->a : P[size_t(j)];
         const Eigen::Vector3d chord = b - a;
         const Eigen::Vector3d h1 = a + (smooth(i) ? tangent[size_t(i)] : chord) / 3.0;
         const Eigen::Vector3d h2 = b - (smooth(j) ? tangent[size_t(j)] : chord) / 3.0;
-        for (int k = 0; k < pieces; ++k)
+        for (int k = 1; k < pieces; ++k)
         {
             const double t = double(k) / double(pieces), m = 1 - t;
-            out.push_back(a * (m * m * m) + h1 * (3 * m * m * t) + h2 * (3 * m * t * t) + b * (t * t * t));
-            if (owners) owners->push_back({i, t});
+            push(a * (m * m * m) + h1 * (3 * m * m * t) + h2 * (3 * m * t * t) + b * (t * t * t), i, t);
         }
     }
-    if (!closed)
+    if (!closed) place(n - 1);
+    // (a closed line that ends where it begins -- the arcs of its last and first corners meet -- does not give that point twice)
+    if (closed && out.size() > 1 && (out.front() - out.back()).norm() <= 1e-12 * (1.0 + out.front().norm()))
     {
-        out.push_back(c[size_t(n - 1)].pos);
-        if (owners) owners->push_back({n - 1, 0.0});
+        out.pop_back();
+        if (owners) owners->pop_back();
     }
     return out;
 }

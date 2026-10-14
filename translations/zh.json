@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "拖动圆环可均匀缩放每个点：它们保持在原来的位置",
  "Drag the ring to turn each point: they stay where they are": "拖动圆环可旋转每个点：它们保持在原来的位置",
  "Drag the ring to scale evenly": "拖动圆环进行等比缩放",
- "Double-click: corner or spline point": "双击:切换为拐角或样条点",
+ "Double-click: corner, spline point or round corner": "双击:切换为拐角、样条点或圆角",
  "Drag to pull a point out of the line": "拖动以从线上拉出一个点",
  "Drag to pull a point out of the edge": "拖动以从边上拉出一个点",
  "unbound": "未绑定",

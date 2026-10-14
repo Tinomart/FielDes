@@ -834,7 +834,7 @@
  "Drag the ring to scale each point evenly: they stay where they are": "Перетащите кольцо, чтобы одинаково масштабировать каждую точку: они остаются на своих местах",
  "Drag the ring to turn each point: they stay where they are": "Перетащите кольцо, чтобы повернуть каждую точку: они остаются на своих местах",
  "Drag the ring to scale evenly": "Перетащите кольцо, чтобы масштабировать равномерно",
- "Double-click: corner or spline point": "Двойной щелчок: угол или точка сплайна",
+ "Double-click: corner, spline point or round corner": "Двойной щелчок: угол, точка сплайна или скруглённый угол",
  "Drag to pull a point out of the line": "Перетащите, чтобы вытянуть точку из линии",
  "Drag to pull a point out of the edge": "Перетащите, чтобы вытянуть точку из ребра",
  "unbound": "не назначено",

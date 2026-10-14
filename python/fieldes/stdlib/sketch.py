@@ -47,7 +47,7 @@ class Sketch(Shape):
     def _remake(self, points, improper=False):
         ''' The same outline through other points (the images of its points in a symmetry: see symmetries.symmetry_images) -- the other way round for a mirror image, which turns
             the way round: reversed, it faces as this one does '''
-        return sketch(points[::-1] if improper else points, smooth=self.smooth)
+        return sketch(points[::-1] if improper else points, smooth=self.smooth, radius=getattr(self, 'radius', 0))
 
     def _display(self):
         # What the viewport draws is the face of the outline, made natively from the points' numbers: no field is needed for that, so none is made
@@ -80,8 +80,8 @@ class SurfaceSketch(Shape):
         return out
 
 
-def _polygon_field(loop, frame):
-    return C.owned(C.polygon_field(loop, frame))
+def _polygon_field(loop, frame, arcs=None):
+    return C.owned(C.polygon_field(loop, frame, arcs))
 
 
 def _from_surface(selection):
@@ -116,11 +116,14 @@ def _from_surface(selection):
     return made
 
 
-def sketch(source, smooth=False):
+def sketch(source, smooth=False, radius=0):
     ''' The 2D shape the points of `source` enclose -- a list of points, or a curve -- as a closed outline through them in the order given, in the plane
         through the first three of them (the others are projected onto it).  `smooth` is what a point is that does not say (point(..., smooth=True) or
         smooth=False): False, a corner (a hard edge: the default), or True, a spline point.  A spline point leaves in the direction the rotation of its gizmo
-        says (no rotation: from its neighbours).  With fewer than three points, or all on a line, it is empty.
+        says (no rotation: from its neighbours).  A point can also be a ROUND corner, `point(..., radius=r)`: an exact arc of radius r, tangent to both edges, takes the place
+        of the corner (the point stays where the two edges would meet; the scale of its gizmo multiplies the radius; where the arc would run into the next one or past the next
+        point the radius is made smaller, and a square whose four corners ask for half its side is a circle).  `radius` is what a corner is that does not say, 0 (a hard
+        corner) by default.  With fewer than three points, or all on a line, it is empty.
 
         `source` can also be a SURFACE picked on a part (`select_surface`): the 2D shape of its outline -- the outline of the face, holes included, in the plane
         of the face (exact for a flat face), or, for a surface that is not flat, of its projection onto the plane through its middle, along the way it faces on
@@ -134,7 +137,9 @@ def sketch(source, smooth=False):
     else:
         items = list(source)
     smooth = bool(smooth)
-    ctrls = C.controls(items)
+    if C.value_of(radius) < 0:
+        raise ValueError('sketch(..., radius=%g): a radius is not negative (0 is a hard corner)' % C.value_of(radius))
+    ctrls = C.controls(items, rounds=True, radius_default=radius, smooth_default=smooth)
     C.mark(ctrls, smooth, 'sketch')
     plane = C.plane_of(ctrls)
     if plane is None:
@@ -142,21 +147,33 @@ def sketch(source, smooth=False):
         out.vertices, out._owners, out.plane, out.profile2d = [], [], None, out
     else:
         o, u, v = plane
-        verts, owners = C.trace(ctrls, smooth, True, normal=C.cross(u, v))        # (the rotation of a point of a sketch is one angle, about the normal of its plane)
+        normal = C.cross(u, v)
+        # (the rotation of a point of a sketch is one angle, about the normal of its plane.)  The outline as it is drawn has every arc cut into pieces; the field is made on the
+        # outline with every arc as its chord and the arcs themselves, which are exact
+        verts, owners = C.trace(ctrls, smooth, True, normal=normal)
+        rounded = [c for c in ctrls if c.rounded]
+        if rounded:
+            chord = C.trace(ctrls, smooth, True, normal=normal, arc_pieces=0)[0]
+            arcs3 = C.fillets(ctrls, smooth, True, normal=normal)
+        else:
+            chord, arcs3 = verts, []
         loop = [(C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in verts]
+        loop_chord = [(C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in chord]
+        arcs_loop = [tuple((C.dot(C.sub(p, o), u), C.dot(C.sub(p, o), v)) for p in (a, b, c)) + (r,) for _i, a, b, c, r in arcs3]
         # The field is made in coordinates measured from the origin of space along u and v, not from the first point of the sketch: the same shape, but a wall that stands at x = 12 is
         # `x - 12 = 0` there and `x = 12` here -- and the first one, turned by a gizmo or a symmetry, was meshed with teeth along its walls (a quarter turn of a solid made of it, the
         # kernel's mesher: +11 % of surface), the second is meshed exactly, as a box is
-        from_origin = [(C.dot(p, u), C.dot(p, v)) for p in verts]
-        field = _polygon_field(from_origin, ((0.0, 0.0, 0.0), u, v))
+        from_origin = [(C.dot(p, u), C.dot(p, v)) for p in chord]
+        arcs_origin = [tuple((C.dot(p, u), C.dot(p, v)) for p in (a, b, c)) + (r,) for _i, a, b, c, r in arcs3]
+        field = _polygon_field(from_origin, ((0.0, 0.0, 0.0), u, v), arcs_origin)
         out = Sketch(lib.libfive_tree_copy(field.ptr))
         out.plane = plane
-        out.profile2d = _polygon_field(loop, None)
+        out.profile2d = _polygon_field(loop_chord, None, arcs_loop)
         out.vertices, out._owners = verts, owners
         out._outline_box = _box_of_points(verts)
         # (the middle of the box of the outline, in the plane's own coordinates: where a sweep puts the path -- through the middle of the profile, not through its first point)
         out._centre2d = (0.5 * (min(x for x, y in loop) + max(x for x, y in loop)), 0.5 * (min(y for x, y in loop) + max(y for x, y in loop)))
-    out.points, out.smooth = items, smooth
+    out.points, out.smooth, out.radius = items, smooth, radius
     out._ctrls = ctrls
     C.viewport_data(out, ctrls, smooth, True)
     return out
@@ -222,6 +239,7 @@ def extrude(shape, a, b):
         out._prism_rot = shape._ctrl_rot
         out._prism_flag = shape._ctrl_flag
         out._prism_scale = shape._ctrl_scale
+        out._prism_radius = shape._ctrl_radius
         out._prism_default = shape._ctrl_default
         out._prism_a = Shape.wrap(a)
         out._prism_b = Shape.wrap(b)
@@ -507,6 +525,7 @@ def path_extrude(profile, path, twist=0):
             out._sweep_prot = [None] * len(primitive_ring)
             out._sweep_pflag = [0] * len(primitive_ring)
             out._sweep_pscale = [None] * len(primitive_ring)
+            out._sweep_pradius = [None] * len(primitive_ring)
             out._sweep_pdefault = False
             out._sweep_free = True
             # (numbers that must stay what they are for the outline to be the shape's: a gizmo's turn about x or y, its move along z -- see handles.gizmo)
@@ -514,6 +533,7 @@ def path_extrude(profile, path, twist=0):
         else:
             out._sweep_ppos, out._sweep_prot = profile._ctrl_pos, profile._ctrl_rot
             out._sweep_pflag, out._sweep_pscale, out._sweep_pdefault = profile._ctrl_flag, profile._ctrl_scale, profile._ctrl_default
+            out._sweep_pradius = profile._ctrl_radius
         out._sweep_qpos, out._sweep_qrot = path._ctrl_pos, path._ctrl_rot
         out._sweep_qflag, out._sweep_qscale, out._sweep_qdefault = path._ctrl_flag, path._ctrl_scale, path._ctrl_default
         out._sweep_qclosed = bool(path.closed)

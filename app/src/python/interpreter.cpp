@@ -1412,6 +1412,8 @@ void Interpreter::recordShape(
                 PyObject* cr = PyObject_GetAttrString(obj, "_ctrl_rot");
                 PyObject* cs = PyObject_GetAttrString(obj, "_ctrl_scale");
                 PyObject* cf = PyObject_GetAttrString(obj, "_ctrl_flag");
+                PyObject* crad = PyObject_GetAttrString(obj, "_ctrl_radius");
+                if (!crad) PyErr_Clear();
                 PyObject* cd = PyObject_GetAttrString(obj, "_ctrl_default");
                 PyObject* cl = PyObject_GetAttrString(obj, "closed");
                 PyObject* cface = PyObject_GetAttrString(obj, "_sketch_face");
@@ -1447,6 +1449,12 @@ void Interpreter::recordShape(
                     }
                     PyObject* flag = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
                     if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
+                    PyObject* rad = (crad && PyList_Check(crad) && i < PyList_Size(crad)) ? PyList_GetItem(crad, i) : nullptr;
+                    if (rad && rad != Py_None)
+                    {
+                        c.radius = treeOfShape(rad);
+                        c.hasRadius = c.radius.is_valid();
+                    }
                     points.push_back(std::move(c));
                 }
                 if (good)
@@ -1457,6 +1465,7 @@ void Interpreter::recordShape(
                 Py_XDECREF(cr);
                 Py_XDECREF(cs);
                 Py_XDECREF(cf);
+                Py_XDECREF(crad);
                 Py_XDECREF(cd);
                 Py_XDECREF(cl);
                 Py_XDECREF(cface);
@@ -1473,6 +1482,8 @@ void Interpreter::recordShape(
                 PyObject* pr = PyObject_GetAttrString(obj, "_prism_rot");
                 PyObject* ps = PyObject_GetAttrString(obj, "_prism_scale");
                 PyObject* pf = PyObject_GetAttrString(obj, "_prism_flag");
+                PyObject* prad = PyObject_GetAttrString(obj, "_prism_radius");
+                if (!prad) PyErr_Clear();
                 PyObject* pd = PyObject_GetAttrString(obj, "_prism_default");
                 PyObject* pa = PyObject_GetAttrString(obj, "_prism_a");
                 PyObject* pb = PyObject_GetAttrString(obj, "_prism_b");
@@ -1507,6 +1518,12 @@ void Interpreter::recordShape(
                     }
                     PyObject* flag = (pf && PyList_Check(pf) && i < PyList_Size(pf)) ? PyList_GetItem(pf, i) : nullptr;
                     if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
+                    PyObject* rad = (prad && PyList_Check(prad) && i < PyList_Size(prad)) ? PyList_GetItem(prad, i) : nullptr;
+                    if (rad && rad != Py_None)
+                    {
+                        c.radius = treeOfShape(rad);
+                        c.hasRadius = c.radius.is_valid();
+                    }
                     points.push_back(std::move(c));
                 }
                 const libfive::Tree treeA = treeOfShape(pa), treeB = treeOfShape(pb);
@@ -1524,6 +1541,7 @@ void Interpreter::recordShape(
                 Py_XDECREF(pr);
                 Py_XDECREF(ps);
                 Py_XDECREF(pf);
+                Py_XDECREF(prad);
                 Py_XDECREF(pd);
                 Py_XDECREF(pa);
                 Py_XDECREF(pb);
@@ -1539,11 +1557,13 @@ void Interpreter::recordShape(
             PyObject* qp = PyObject_GetAttrString(obj, "_sweep_qpos");
             if (pp && PyList_Check(pp) && PyList_Size(pp) > 0 && qp && PyList_Check(qp) && PyList_Size(qp) > 0)
             {
-                auto readPoints = [&](const char* pos, const char* rot, const char* scale, const char* flag, std::vector<Shape::ControlPoint>& points) -> bool {
+                auto readPoints = [&](const char* pos, const char* rot, const char* scale, const char* flag, const char* radius, std::vector<Shape::ControlPoint>& points) -> bool {
                     PyObject* cp = PyObject_GetAttrString(obj, pos);
                     PyObject* cr = PyObject_GetAttrString(obj, rot);
                     PyObject* cs = PyObject_GetAttrString(obj, scale);
                     PyObject* cf = PyObject_GetAttrString(obj, flag);
+                    PyObject* crad = radius ? PyObject_GetAttrString(obj, radius) : nullptr;      // (the points of a path have no radius: a round corner is a corner of a face)
+                    if (!crad) PyErr_Clear();
                     bool good = cp && PyList_Check(cp);
                     for (Py_ssize_t i = 0; good && i < PyList_Size(cp); ++i)
                     {
@@ -1573,17 +1593,24 @@ void Interpreter::recordShape(
                         }
                         PyObject* fl = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
                         if (fl && PyLong_Check(fl)) c.flag = int(PyLong_AsLong(fl));
+                        PyObject* rd = (crad && PyList_Check(crad) && i < PyList_Size(crad)) ? PyList_GetItem(crad, i) : nullptr;
+                        if (rd && rd != Py_None)
+                        {
+                            c.radius = treeOfShape(rd);
+                            c.hasRadius = c.radius.is_valid();
+                        }
                         points.push_back(std::move(c));
                     }
                     Py_XDECREF(cp);
                     Py_XDECREF(cr);
                     Py_XDECREF(cs);
                     Py_XDECREF(cf);
+                    Py_XDECREF(crad);
                     return good;
                 };
                 std::vector<Shape::ControlPoint> profile, path;
-                bool good = readPoints("_sweep_ppos", "_sweep_prot", "_sweep_pscale", "_sweep_pflag", profile) &&
-                            readPoints("_sweep_qpos", "_sweep_qrot", "_sweep_qscale", "_sweep_qflag", path);
+                bool good = readPoints("_sweep_ppos", "_sweep_prot", "_sweep_pscale", "_sweep_pflag", "_sweep_pradius", profile) &&
+                            readPoints("_sweep_qpos", "_sweep_qrot", "_sweep_qscale", "_sweep_qflag", nullptr, path);
                 PyObject* pd = PyObject_GetAttrString(obj, "_sweep_pdefault");
                 PyObject* qd = PyObject_GetAttrString(obj, "_sweep_qdefault");
                 PyObject* qc = PyObject_GetAttrString(obj, "_sweep_qclosed");
@@ -1655,6 +1682,11 @@ void Interpreter::recordShape(
             PyObject* sm = PyObject_GetAttrString(obj, "_curve_smooth");
             if (sm && PyBool_Check(sm)) shape->setPointStyle(PyObject_IsTrue(sm) == 1 ? 2 : 1);
             Py_XDECREF(sm);
+            PyErr_Clear();
+            // (a round corner of a sketch: a corner with a radius)
+            PyObject* rc = PyObject_GetAttrString(obj, "_curve_round");
+            if (rc && PyBool_Check(rc) && PyObject_IsTrue(rc) == 1) shape->setPointStyle(3);
+            Py_XDECREF(rc);
             PyErr_Clear();
         }
         {

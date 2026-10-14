@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Round corners: a point with a radius
+- **A point of a sketch can be a round corner: `point(x, y, z, radius=4)`.** An exact circular arc of that radius, tangent to both edges, takes the place of the corner; the point stays where the two edges would meet, so it is still the
+  one you drag. It is a corner with a radius (`radius=0` is a hard corner again), `sketch(points, radius=5)` rounds every corner that does not say otherwise, and a spline point has no radius (`point(..., smooth=True, radius=4)` is
+  an error that says why). **The arc is exact in the field** -- the distance is measured to the circle, not to a polygon -- so `extrude`, `offset`, `shell` and a simulation see a true circle at any resolution; the viewport draws the face from
+  the numbers of its points while you drag, as before. **The radius is limited by the geometry**: the two arcs on one edge may take no more than the edge is long, so a square asked for round corners of half its side (or more) is
+  a circle, and a rectangle asked for more than half its short side is a stadium. **It uses the point's own gizmo**: its scale ring is the radius (the radius in the call times the scale), its rotation ring is not shown (an arc has no
+  direction), moving it moves the corner. **A double click on a point goes corner, spline point, round corner**, and back to a corner (a new round corner starts at a quarter of its shorter edge); the dot of a round corner is a square with
+  round corners. (Spline segments are still cut into straight pieces by the kernel -- a cubic has no closed form for its distance -- and on a line or the path of a sweep a round corner is a hard corner.)
+
 ### 2D shapes on top, a symmetry that is a model, linked handles, a tour with a state per step
 - **The guided tour has a symmetry section** (six steps, after *Copy or link*): a mirror is a model and the one that is selected is in use; making something puts its images under it; editing the original, and editing it through an image; Shift+S; lines and sweeps. Each works on a table of its own, has a *Show me*, and undoes itself -- the tour now saves and restores the symmetry in use with the rest of a step's state.
 - **The symmetry is a model, in 3D.** `mirror = symmetry_planes(planes=2)` is a model of the script like a point or a surface -- a row in the model tree with an icon of its own, a gizmo that moves and turns it, its planes drawn in the

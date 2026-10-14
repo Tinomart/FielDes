@@ -74,12 +74,38 @@ its row in the tree or of its line in the script, all the same menu: the line wr
 - **Pull a point out of an edge.** Press on an edge of a sketch (every 2D shape has its edges drawn **blue**, and the blue line brightens under the mouse) and drag: a new point comes out of the edge and follows the
   mouse, drawn at once. Let go and it is written: a model of its own above the sketch, put in its list in the right place (`plate = sketch([a, p5, b, c, d])`). On a line **press the line and drag**; a click on a
   line only selects it.
-- **Double-click a point** of a sketch or a line and it changes between a **corner** (a **square** dot: a hard edge) and a **spline point** (a **round** dot with a ring: the curve goes smoothly through it). What is
-  written is `smooth=True` or `smooth=False` on the point; a point that says nothing is what its sketch or line says. The dot always shows what the point is **in its sketch or line**; a point that is in neither is a plain round dot.
+- **Double-click a point** of a sketch and it goes from a **corner** (a **square** dot: a hard edge) to a **spline point** (a **round** dot with a ring: the curve goes smoothly through it) to a **round corner**
+  (a **square with round corners**: an arc takes the place of the corner, see below) and back to a corner; on a line it changes between corner and spline point. What is written is `smooth=True` / `smooth=False`
+  or `radius=` on the point; a point that says nothing is what its sketch or line says. The dot always shows what the point is **in its sketch or line**; a point that is in neither is a plain round dot.
 - **Double-click a sketch** to frame it: the view also **turns to face the plane of the sketch**.
 - **The default is a hard edge** for a sketch and a polyline, a smooth curve for a spline: `sketch(points, smooth=False)`. With `smooth=True` every point is a spline point, except where a point says `smooth=False`.
+  `sketch(points, radius=5)` rounds every corner that does not say otherwise with an arc of radius 5 (`radius=0`, the default, is a hard corner).
 - **Delete a point** with its trash button in the model tree: it leaves the list of the sketch.
 - **Delete a sketch** (or a line) and the points it was made from go with it, in the same undo step. A point that something else also uses -- another sketch, a `move`, a field -- stays.
+
+## Round corners
+
+A point of a sketch can be a **round corner**: `point(20, 12, 0, radius=4)`. An **exact circular arc** of radius 4, tangent to both edges, takes the place of the corner; the point stays where the two edges would meet,
+so it is still the one you drag. It is a corner with a radius -- there is no separate kind to learn -- and `radius=0` is a hard corner again. A spline point has no radius (the curve goes smoothly through it: there is no corner
+to round), and `point(..., smooth=True, radius=4)` says so in an error.
+
+```python
+a = point(0, 0, 0, radius=4)
+b = point(40, 0, 0, radius=4)
+c = point(40, 20, 0, radius=4)
+d = point(0, 20, 0, radius=4)
+slot = sketch([a, b, c, d])                 # a rectangle with round corners
+disc = sketch([a, b, c, d], radius=10)      # ...with corners that ask for more than the sides allow: a stadium (the long sides keep their length)
+```
+
+- **The scale ring of a round corner is its radius**: the radius in the call times the scale of the point's gizmo, as the scale of a sphere multiplies its radius. Its rotation ring is not shown (an arc has no direction).
+- **The radius has a limit, and it is the geometry's own.** The arc takes a length `t = radius / tan(half the angle between the edges)` from each of its two edges, and the two arcs on one edge may take no more than the
+  edge is long. Ask for more and the radius is made smaller, both arcs by the same share: a square with a round corner of half its side (or more) at each corner is a **circle**, and a rectangle asked for more than half its short
+  side is a stadium. Nothing is left over and nothing runs past a point.
+- **Exact.** The arc is an arc in the field: the distance to the shape is measured to the circle, not to a polygon that approximates it, so an `extrude`, an `offset`, a `shell` or a simulation of it sees a true circle at any
+  resolution. (The pieces of a spline are cut into straight pieces by the kernel, 14 to a segment -- a cubic has no closed form for its distance; an arc does.) It is drawn from the numbers of its points while you drag, like any sketch.
+- **A round corner next to a spline point**: the arc is tangent to the straight line to that point, and the spline leaves the end of the arc along that line. The ends of an open line cannot be round, and a round corner
+  on a `polyline` or `spline` is a hard corner there: the sketch is where a corner has a radius.
 
 ## Rotating and scaling a point
 
@@ -89,7 +115,7 @@ A point has the gizmo of any model, and two of its handles mean something to the
   **A point of a sketch has one rotation ring, in the plane of the sketch, and only a spline point has it**: it turns the direction about the plane's normal, and a corner does not leave in a direction, so its ring is not shown.
   A point of a line in space has the three rings of any gizmo. In a `path_extrude` the rotation of a point **twists** the profile about the path there (between points the twist runs smoothly).
 - **Scale a point** with its **one scale handle**, a gold **ring** round the dot (the uniform scale handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has one scale,
-  always uniform; the three numbers of its `gizmo(...)` are moved together. A spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
+  always uniform; the three numbers of its `gizmo(...)` are moved together. On a **round corner it is the radius's factor** (see above). A spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
   it as straight as a corner). In a `path_extrude`, **the scale of a point is how thick the profile is there**, tapering smoothly between points: a point with scale 2 makes the tube twice as thick at that point.
 - **Shift + the mouse wheel** scales what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 

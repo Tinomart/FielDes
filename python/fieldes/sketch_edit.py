@@ -206,35 +206,37 @@ def edit(arg):
 
 
 def _toggle(tree, lines, name, line, obj):
+    ''' A double click on the dot of a point of a sketch or a curve: a corner becomes a spline point, a spline point a round corner (in a sketch -- in a curve it goes back to a
+        corner), a round corner a corner again.  The point says what it is with `smooth=` and `radius=`: a keyword that says what the sketch says anyway is left out '''
     effective = getattr(obj, '_curve_smooth', None)
     default = getattr(obj, '_curve_default', False)
     if effective is None:
         raise ValueError('%s is not a point of a sketch or a curve' % name)
-    new_state = not effective
+    rounded = bool(getattr(obj, '_curve_round', False))
+    in_sketch = getattr(obj, '_curve_kind', None) == 'sketch'
     assign = next((a for a in _assignments_of(tree, name, line) if _call_name(a.value) == 'point'), None)
     if assign is None:
-        raise ValueError('%s is not written as point(...): its smoothness cannot be changed there' % name)
+        raise ValueError('%s is not written as point(...): what it is in a sketch cannot be changed there' % name)
     call = assign.value
-    kw = next((k for k in call.keywords if k.arg == 'smooth'), None)
-    edits = []
-    nothing = json.dumps({'edits': [], 'label': 'Point %s' % name, 'line': -1, 'name': name})
-    if new_state == default:
-        # (what the sketch says anyway: the keyword is taken out)
-        if kw is None:
-            return nothing
-        before = [n for n in list(call.args) + [k for k in call.keywords if k is not kw]
-                  if (n.end_lineno, n.end_col_offset) <= (kw.lineno, kw.col_offset)]
-        if not before:
-            return nothing
-        start = max(before, key=lambda n: (n.end_lineno, n.end_col_offset))
-        edits.append([start.end_lineno - 1, _char_col(lines[start.end_lineno - 1], start.end_col_offset),
-                      kw.end_lineno - 1, _char_col(lines[kw.end_lineno - 1], kw.end_col_offset), ''])
-    elif kw is not None:
-        v = kw.value
-        edits.append([v.lineno - 1, _char_col(lines[v.lineno - 1], v.col_offset),
-                      v.end_lineno - 1, _char_col(lines[v.end_lineno - 1], v.end_col_offset), repr(new_state)])
-    else:
-        last = max(list(call.args) + list(call.keywords), key=lambda n: (n.end_lineno, n.end_col_offset))
-        l1, c1 = last.end_lineno - 1, _char_col(lines[last.end_lineno - 1], last.end_col_offset)
-        edits.append([l1, c1, l1, c1, ', smooth=%r' % new_state])
-    return json.dumps({'edits': edits, 'label': '%s: %s' % (name, 'spline point' if new_state else 'corner'), 'line': -1, 'name': name})
+    state = 'round' if rounded else ('spline' if effective else 'corner')
+    new_state = {'corner': 'spline', 'spline': 'round' if in_sketch else 'corner', 'round': 'corner'}[state]
+    # What the point says of itself now.  A round corner is a corner with a radius: it says no `smooth=` (a radius beats the sketch's default), and its radius starts at a quarter of
+    # its shorter edge
+    smooth = {'corner': False, 'spline': True, 'round': None}[new_state]
+    if smooth is not None and smooth == bool(default):
+        smooth = None                                              # (what the sketch says anyway)
+    radius = None
+    if new_state == 'round':
+        edge = float(getattr(obj, '_curve_edge', 0.0) or 0.0)
+        radius = _num_text(float('%.2g' % (0.25 * edge))) if edge > 0 else '1'
+    source = '\n'.join(lines)
+    kept = [ast.get_source_segment(source, n) for n in call.args]
+    kept += [ast.get_source_segment(source, k) for k in call.keywords if k.arg not in ('smooth', 'radius')]
+    if smooth is not None:
+        kept.append('smooth=%r' % smooth)
+    if radius is not None:
+        kept.append('radius=%s' % radius)
+    text = '%s(%s)' % (ast.get_source_segment(source, call.func), ', '.join(kept))
+    edits = [[call.lineno - 1, _char_col(lines[call.lineno - 1], call.col_offset), call.end_lineno - 1, _char_col(lines[call.end_lineno - 1], call.end_col_offset), text]]
+    label = {'corner': 'corner', 'spline': 'spline point', 'round': 'round corner'}[new_state]
+    return json.dumps({'edits': edits, 'label': '%s: %s' % (name, label), 'line': -1, 'name': name})

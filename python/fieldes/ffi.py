@@ -844,8 +844,10 @@ except AttributeError:
 try:
     _dp = ctypes.POINTER(ctypes.c_double)
     _ip = ctypes.POINTER(ctypes.c_int)
-    lib.libfive_pointshape_polyline.argtypes = [_dp, _ip, _ip, _dp, _dp, _dp, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, _dp, _ip, _dp, ctypes.c_int]
+    lib.libfive_pointshape_polyline.argtypes = [_dp, _ip, _ip, _dp, _dp, _dp, _dp, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, _dp, _ip, _dp, ctypes.c_int]
     lib.libfive_pointshape_polyline.restype = ctypes.c_int
+    lib.libfive_pointshape_fillets.argtypes = [_dp, _ip, _dp, _dp, ctypes.c_int, ctypes.c_int, ctypes.c_int, _dp, ctypes.c_int]
+    lib.libfive_pointshape_fillets.restype = ctypes.c_int
     lib.libfive_pointshape_plane.argtypes = [_dp, ctypes.c_int, _dp]
     lib.libfive_pointshape_plane.restype = ctypes.c_bool
 except AttributeError:

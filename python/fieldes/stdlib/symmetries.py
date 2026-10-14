@@ -45,7 +45,7 @@ MAX_COPIES = 24                                  # (a 'turn' symmetry: how many 
 _PERMUTATIONS = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))
 
 # What an image has of the original: what the original IS and is called, not where it is (its gizmo, its outline, its box, its lines of points are placed by the symmetry)
-_TAKEN = ('_step_metrics', '_part_name', '_step_ref', '_kind', '_smooth', 'size')
+_TAKEN = ('_step_metrics', '_part_name', '_step_ref', '_kind', '_smooth', '_radius', 'size')
 
 
 # ---- small matrices of plain numbers
@@ -335,12 +335,15 @@ def _sweep_image(out, shape, mn, cn):
     improper = _determinant(mn) < 0
     ring = [_map_place(p, mn, cn) for p in shape._sweep_ppos]
     rot, flag, scale = list(shape._sweep_prot), list(shape._sweep_pflag), list(shape._sweep_pscale)
+    radius = list(getattr(shape, '_sweep_pradius', None) or [None] * len(ring))
     if improper:
         ring.reverse()
         rot.reverse()
         flag.reverse()
         scale.reverse()
+        radius.reverse()
     out._sweep_ppos, out._sweep_prot, out._sweep_pflag, out._sweep_pscale = ring, rot, flag, scale
+    out._sweep_pradius = radius
     out._sweep_pdefault = shape._sweep_pdefault
     out._sweep_qpos = [_map_place(p, mn, cn) for p in shape._sweep_qpos]
     out._sweep_qrot, out._sweep_qflag, out._sweep_qscale = shape._sweep_qrot, shape._sweep_qflag, shape._sweep_qscale
@@ -407,7 +410,7 @@ def symmetry_image(shape, symmetry, index=1):
         p = tuple(shape.xyz)
         q = tuple(_add(c[i], _add(_add(_mul(m[i][0], _add(p[0], _mul(-1.0, c[0]))), _mul(m[i][1], _add(p[1], _mul(-1.0, c[1])))),
                                   _mul(m[i][2], _add(p[2], _mul(-1.0, c[2]))))) for i in range(3))
-        out = Point(q[0], q[1], q[2], smooth=getattr(shape, '_smooth', None))
+        out = Point(q[0], q[1], q[2], smooth=getattr(shape, '_smooth', None), radius=getattr(shape, '_radius', None))
         out._kind = getattr(shape, '_kind', 'point')
         out._symmetry_linear = mn            # (the turn or mirror image: what a shift the original is drawn with becomes -- see points.weld_shift_of)
     box = getattr(shape, '_bounds', None)

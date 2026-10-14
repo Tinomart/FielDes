@@ -411,6 +411,12 @@ bool Shape::controlNumbersOf(const std::vector<ControlPoint>& points, bool face,
             if (!std::isfinite(s)) return false;
             k.scale = std::max(0.0, s);
         }
+        if (c.hasRadius)
+        {
+            const double r = owner->evalConstant(c.radius, v);
+            if (!std::isfinite(r)) return false;
+            k.radius = std::max(0.0, r);
+        }
         out.push_back(k);
     }
     // The points of a face turn about the normal of its plane, by one angle

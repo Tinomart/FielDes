@@ -158,6 +158,8 @@ public:
         bool hasRot = false;
         libfive::Tree scale = libfive::Tree::invalid();                 // how strongly a spline leaves it, and how thick a sweep is there (one number: see curves.Control)
         bool hasScale = false;
+        libfive::Tree radius = libfive::Tree::invalid();                // the radius of a round corner (the scale of the point is in it); a hard corner or a spline point has none
+        bool hasRadius = false;
         int flag = -1;                                                  // -1: what the shape says, 0: a corner, 1: a spline point
         libfive::Tree::Id var[3] = {nullptr, nullptr, nullptr};         // the number that moves it along each axis (its gizmo's), when it has one
     };
