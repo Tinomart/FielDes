@@ -394,6 +394,7 @@ def export_fea(result, path, **options):
         The model is the one FielDes solved (the same nodes and tetrahedra).  A force is spread over the nodes of the surface it acts on by the
         area each carries, so that the sum is the force.  Materials with a field (a graded stiffness) and thermal_expansion loads are not model
         file contents: the first is refused, the second said in a note.  Units: mm, N, MPa, tonne.  Returns the path. '''
+    result = _analysis_of(result)
     path = os.fspath(path)
     ext = os.path.splitext(path)[1].lower()
     if ext not in EXPORT_FEA_FORMATS:
@@ -413,7 +414,7 @@ def export_fea(result, path, **options):
 # Results
 
 # Numbers of a result that are computed when asked for (a property of its class): drag and lift of a flow
-_COMPUTED_NUMBERS = ('drag_force', 'lift_force', 'drag_coefficient', 'lift_coefficient')
+_COMPUTED_NUMBERS = ('drag_force', 'lift_force', 'drag_coefficient', 'lift_coefficient', 'mass')
 
 # What a number of a result is called, and in what unit: (label, unit).  The order is the order they are shown in
 _RESULT_NUMBERS = [
@@ -424,6 +425,7 @@ _RESULT_NUMBERS = [
     ('total_load', _tr('total load (x, y, z)'), 'N'),
     ('compliance', _tr('compliance'), 'N mm'),
     ('volume', _tr('volume'), 'mm^3'),
+    ('mass', _tr('mass'), 'kg'),
     ('drag_force', _tr('drag force'), 'N'),
     ('lift_force', _tr('lift force'), 'N'),
     ('drag_coefficient', _tr('drag coefficient'), ''),
@@ -553,7 +555,12 @@ _KIND_NAMES = {'TetResult': _tr('static analysis'), 'Result': _tr('static analys
                'ThermalTopologyResult': _tr('thermal topology optimization')}
 
 
-def _write_txt(path, result):
+def _analysis_of(result):
+    ''' The analysis a parametric optimisation found its best design in (what is exported of it); any other result is itself '''
+    return result.result if type(result).__name__ == 'ParametricResult' else result
+
+
+def _write_txt(path, result, optimisation=None):
     rows = result_summary(result)
     name = _KIND_NAMES.get(type(result).__name__, type(result).__name__)
     mat = getattr(getattr(result, 'material', None), 'name', None)
@@ -561,6 +568,8 @@ def _write_txt(path, result):
     width = max((len(r[0]) for r in rows), default=10)
     for label, text, unit in rows:
         lines.append('%s  %s%s' % (label.ljust(width), text, (' ' + unit) if unit else ''))
+    if optimisation is not None:
+        lines = [repr(optimisation), ''] + lines
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
 
@@ -635,13 +644,15 @@ def export_results(result, path, **options):
                    flow, temperatures, natural frequencies ... (every kind of result)
 
         Units: mm, N, MPa.  Returns the path. '''
+    optimisation = result if type(result).__name__ == 'ParametricResult' else None
+    result = _analysis_of(result)
     path = os.fspath(path)
     ext = os.path.splitext(path)[1].lower()
     if ext not in EXPORT_RESULT_FORMATS:
         raise ValueError('export_results({!r}): the result formats are {}'.format(path, ', '.join(EXPORT_RESULT_FORMATS)))
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     if ext == '.txt':
-        _write_txt(path, result)
+        _write_txt(path, result, optimisation)
         return path
     data = _tet_data(result, 'export_results')
     (_write_vtu if ext == '.vtu' else _write_csv)(path, data, result)

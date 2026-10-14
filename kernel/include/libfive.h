@@ -217,6 +217,12 @@ libfive_tree libfive_tree_var();
 bool libfive_tree_is_var(libfive_tree t);
 
 /*
+ *  Gives a free variable the number it stands for in the evaluators that are made without the script's numbers (the analyses):
+ *  what a parametric optimisation does to try a design.  Nothing happens for a tree that is not a free variable.
+ */
+void libfive_tree_set_var_value(libfive_tree t, float value);
+
+/*
  *  Constructs a new tree that contains the given constant value
  */
 libfive_tree libfive_tree_const(float f);
@@ -495,6 +501,9 @@ float libfive_tetfea_field_max(libfive_tetfea* f, int field);
 double libfive_tetfea_stat(libfive_tetfea* f, int which);
 /*  vertices, tetrahedra, boundary triangles of the (prepared) mesh  */
 void libfive_tetfea_counts(libfive_tetfea* f, int64_t* out3);
+
+/*  The volume of the tetrahedra of the mesh (mm^3): what a modal analysis has of the part, which has no static result to read it from  */
+double libfive_tetfea_mesh_volume(libfive_tetfea* f);
 /*  The mesh: 3 floats per vertex, 4 ints per tetrahedron, 3 per boundary triangle
  *  (normals out), and the tetrahedron each of those belongs to  */
 void libfive_tetfea_mesh(libfive_tetfea* f, float* vertices, int32_t* tets, int32_t* faces, int32_t* face_tet);

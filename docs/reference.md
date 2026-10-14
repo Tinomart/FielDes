@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -3510,6 +3510,83 @@ the fluid slides along it
 
 A wall moving with `velocity` (mm/s; no-slip) inside `region` (any number of regions, one argument after the other).  Surfaces in no region are walls at rest, so
 this is for moving walls, and for naming a wall whose force is wanted (wall_forces).
+
+## Parametric optimization
+
+parametric_optimization: the best numbers for the var()s of a model, over an analysis.
+
+    from fieldes import *
+
+    width = var(20)
+    height = var(12)
+    beam = box((0, 0, 0), (100, width, height))
+    wall = fixed(box((-1, -1, -1), (1, 25, 25)))
+    pull = force(box((99, -1, -1), (101, 25, 25)), (0, 0, -200))
+    stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium)
+
+    best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)], minimize='mass',
+                                   constraints=['max_von_mises <= 90', 'max_displacement <= 0.5'])
+
+The analysis is solved again with each set of numbers the search tries -- the model is made again from the numbers, the mesh, the
+solve, every measure of the result -- and the numbers that give the best design stay in the var()s: the model, and everything after
+the call, is the best design.  The search needs no derivatives: it samples the ranges, then closes in on the best design with a
+search over surrogates of the objective and of every constraint that puts a design that meets the constraints before one that does not.  It tries a few tens of designs; every
+one is an ordinary analysis that is kept by its content, so a run again (or another search over the same designs) finds what it
+tried in the cache.  Everything it tried is listed in the result.
+
+What it can be asked for -- `minimize=` or `maximize=` and the `constraints=` -- is a measure of the analysis' result: the name of
+one of its numbers ('mass', 'max_von_mises', 'max_displacement', 'compliance', 'safety_factor', 'volume', 'max_temperature',
+'pressure_drop', 'frequencies[0]' ...), an expression of them ('mass + 0.01 * compliance'), or a function of the result
+(`lambda r: r.max_von_mises / r.mass`).  A constraint is a comparison of two measures, in a text ('max_von_mises <= 90',
+'frequencies[0] >= 80'), or a function of the result that gives how much it is broken (0 or less when it is kept).
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `ParametricError`
+
+The optimisation cannot be made as asked
+
+### `ParametricResult`
+
+What parametric_optimization found.  It is the analysis of the best design (its fields, its numbers: `best.max_von_mises`, `best.von_mises`)
+and what the search did:
+
+    values       the best numbers, {name of the var: number}
+    objective    the best design's value of what was minimised or maximised
+    feasible     whether the best design keeps every constraint (when no design does, it is the one that breaks them the least)
+    history      every design tried, in order: {values, objective, violation, feasible, measures, seconds, error}
+    result       the analysis of the best design
+    evaluations  how many designs were tried
+    apply()      writes the best numbers into the var()s of the script (apply=True in the call does it at the run)
+
+#### `ParametricResult.apply(self)`
+
+Writes the best numbers into the var()s of the script, in the text, when the run is over
+
+#### `ParametricResult.table(self)`
+
+Every design tried, as text
+
+### `parametric_optimization(analysis, variables, minimize=None, maximize=None, constraints=(), max_evaluations=None, tolerance=0.002, apply=False)`
+
+The best numbers for the var()s of a model, over an analysis: the designs the search tries are solved with `analysis` again, each with
+other numbers for the variables, and the numbers of the best one stay in the var()s.
+
+analysis      the result of an analysis of this script (static_analysis, modal_analysis, thermal_analysis, fluid_analysis ...), made of the
+              var()s
+variables     what is changed: (var, low, high) -- the var() and the range it is searched in -- or a list of them
+minimize      what is made as small as it can be: a measure of the result -- the name of one of its numbers ('mass', 'max_von_mises', ...),
+maximize      or what is made as large (give one of the two)       an expression of them, or a function of the result
+constraints   what the best design keeps: a list of comparisons in a text ('max_von_mises <= 90', 'frequencies[0] >= 80'), or functions of the
+              result that are 0 or less when kept
+max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
+tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
+apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
+
+Returns a ParametricResult: the analysis of the best design, `.values`, `.objective`, `.feasible`, `.history`.  When no design keeps the
+constraints it says so and is the one that breaks them least.
 
 ## Caching
 

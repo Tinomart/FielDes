@@ -3745,7 +3745,8 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         if (v.toObject()["quick"].toBool()) continue;          // (in the first menu: see addQuickOperations)
         if (v.toObject()["section"].toString() == "lattice") continue;      // (the lattice section has them: see fillLatticeMenu)
         if (isSimulationOperation(v.toObject()["group"].toString()) != simulations) continue;
-        if (simulations && !domain.isEmpty() && v.toObject()["domain"].toString() != domain) continue;      // (a category of the Engineering menu: its analyses)
+        // (a category of the Engineering menu: its analyses; the domain "-" is what has no domain, what works over an analysis of any -- it is in the menu itself)
+        if (simulations && !domain.isEmpty() && (domain == "-" ? !v.toObject()["domain"].toString().isEmpty() : v.toObject()["domain"].toString() != domain)) continue;
         ops.append(v);
     }
     if (ops.isEmpty())
@@ -3778,7 +3779,9 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         const QString name = o["name"].toString();
         auto action = sub->addAction(name, this, [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (o["type"].toString() == "block") action->setIcon(TypeIcons::icon("block"));
-        if (simulations) action->setIcon(TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation", false, o["domain"].toString()));
+        if (simulations)
+            action->setIcon(o["domain"].toString().isEmpty() && group != "Conditions" ? TypeIcons::icon("engineering")
+                                                                                      : TypeIcons::icon(group == "Conditions" ? "conditions" : "simulation", false, o["domain"].toString()));
         if (!o["doc"].toString().isEmpty()) action->setToolTip(o["doc"].toString());
         else if (o["other"].toBool() && !o["needs_other"].toBool(true))
         {
@@ -3997,6 +4000,8 @@ void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, do
     }
     menu->addSeparator();
     fillSimulationPrimitives(menu, point, scale, at, QString());
+    menu->addSeparator();
+    fillOperations(menu, line, point, scale, true, "-");       // (what works over an analysis of any domain)
 }
 
 // The Import model... entry: a model can be brought in from a file whatever the menu is

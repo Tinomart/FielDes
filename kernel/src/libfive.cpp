@@ -28,6 +28,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
 #include "libfive/tree/expose.hpp"
+#include "libfive/eval/default_vars.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/fields/point_shapes.hpp"
 
@@ -134,6 +135,11 @@ libfive_tree libfive_tree_var() { return Tree::var().release(); }
 bool libfive_tree_is_var(libfive_tree t)
 {
     return t->op() == Opcode::VAR_FREE;
+}
+
+void libfive_tree_set_var_value(libfive_tree t, float value)
+{
+    if (t && t->op() == Opcode::VAR_FREE) DefaultVars::set(t, value);
 }
 
 float libfive_tree_get_const(libfive_tree t, bool* success)
@@ -1492,6 +1498,21 @@ double libfive_tetfea_stat(libfive_tetfea* f, int which)
         case 19: return r->looseElements;
         default: return 0;
     }
+}
+
+double libfive_tetfea_mesh_volume(libfive_tetfea* f)
+{
+    auto m = f->problem->mesh();
+    if (!m) return 0;
+    double volume = 0;
+    for (const auto& t : m->tets)
+    {
+        const Eigen::Vector3d a = m->pos[size_t(t[1])] - m->pos[size_t(t[0])];
+        const Eigen::Vector3d b = m->pos[size_t(t[2])] - m->pos[size_t(t[0])];
+        const Eigen::Vector3d c = m->pos[size_t(t[3])] - m->pos[size_t(t[0])];
+        volume += std::abs(a.dot(b.cross(c))) / 6.0;
+    }
+    return volume;
 }
 
 void libfive_tetfea_counts(libfive_tetfea* f, int64_t* out)

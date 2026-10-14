@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Parametric optimization: the best numbers for the var()s of a model, over any analysis
+- **`parametric_optimization(analysis, [(var, low, high), ...], minimize= | maximize=, constraints=)`** (in the Engineering menu, directly: it works over an analysis of any domain) finds the numbers of the
+  `var()`s that make a measure of an analysis as small (or large) as it can be while the constraints hold -- the lightest beam under 90 MPa that bends less than 0.5 mm, the stiffest bar of a given mass, the coolest slab.
+  Each design the search tries is the analysis solved again with other numbers in the `var()`s (the model, the mesh and the solve: static, modal, thermal or flow), kept in the result cache like any other; the
+  search needs no derivatives (a spread of designs, then surrogates of the objective and of each constraint pick the next design, closing in on a bound or a limit), a design that keeps the constraints always
+  comes before one that does not, and a design the mesh cannot hold is listed as failed. The measure is the name of a number of the result (`'mass'`, `'max_von_mises'`, `'frequencies[0]'` ...), an expression of
+  them or a function of the result; a constraint is a comparison in a text (`'max_von_mises <= 90'`) or a function. The result is the analysis of the best design (its fields, its numbers, the result card, the exports) with
+  `.values`, `.objective`, `.feasible` (when no design keeps the constraints it says so and is the one that breaks them least) and `.history`, every design tried -- the output pane lists them all.
+  `apply=True` writes the best numbers into the text. Measured: the lightest cantilever (width and height): 36 designs, 4.3 s, 8 x 14.3 mm, the displacement limit decides (beam theory: 14.26 mm), 5 % lighter
+  than the best of a grid of 156 designs (63 s); the stiffest bar of a given mass finds the square section (12.2 mm, beam theory 12.17). `Result.mass` (kg) and `ModalResult.volume`, `.mass` are new for
+  the objectives; a result that stands for a design is exported as its analysis. Example `32_parametric_optimization.py`; the Engineering menu entry needs a result selected.
+
 ### Engineering: a menu of its own, with a category for each domain
 - **The Simulation menu left Operations: right-click has an Engineering menu of its own** (beside Primitives, Parametric shapes and Operations, on a model and on empty space), with a category for each domain --
   **Structural** (supports and loads; *static_analysis*, *modal_analysis*, *topology_optimization*), **Thermal** (thermal conditions; *thermal_analysis*, *thermal_topology_optimization*) and **Fluid**

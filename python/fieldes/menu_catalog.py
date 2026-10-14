@@ -401,6 +401,9 @@ OPERATIONS = [
     # and the fluid domain it sits in, the three flow inputs)
     ('thermal_topology_optimization', 'Simulations', 'thermal_topology_optimization({body})', 'optional'),
     ('flow_topology_optimization', 'Simulations', 'flow_topology_optimization({body})', 'optional'),
+    # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
+    # finds the best numbers for the var()s the model is made of
+    ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),
 ]
 
 

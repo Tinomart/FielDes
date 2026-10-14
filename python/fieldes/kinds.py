@@ -83,7 +83,11 @@ def domain_of(callee):
 
 
 def domain_of_value(value):
-    ''' The domain of a simulation or of a condition (its class, or its parent's), or '' '''
+    ''' The domain of a simulation or of a condition (its class, or its parent's), or ''.  A result that wraps another says it of itself
+        (`_engineering_domain`: a parametric optimisation is of the domain of its analysis) '''
+    own = getattr(value, '_engineering_domain', None)
+    if isinstance(own, str) and own:
+        return own
     for cls in type(value).__mro__:
         found = _DOMAIN_OF_CLASS.get(cls.__name__)
         if found:
@@ -94,7 +98,7 @@ def domain_of_value(value):
 # The classes of the library that are not shapes, by name (a subclass is of its parent's kind)
 _BY_CLASS = {
     'Result': 'simulation', 'ModalResult': 'simulation', 'ThermalResult': 'simulation', 'FluidResult': 'simulation',
-    'TopologyResult': 'simulation', 'FlowTopologyResult': 'simulation',
+    'TopologyResult': 'simulation', 'FlowTopologyResult': 'simulation', 'ParametricResult': 'simulation',
     'Material': 'material', 'Fluid': 'material', '_Support': 'conditions', '_Force': 'conditions',
     '_Gravity': 'conditions', '_Thermal': 'conditions', '_Temperature': 'conditions', '_Heat': 'conditions',
     '_HeatInput': 'conditions', '_HeatGeneration': 'conditions',

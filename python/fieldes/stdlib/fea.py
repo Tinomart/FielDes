@@ -359,7 +359,13 @@ def _with_conditions(fn):
                 '{fn}({first}, {example}, ...). One list that holds conditions of several kinds is not an input any more.'.format(
                     fn=fn.__name__, missing=', '.join(missing), was='was' if len(missing) == 1 else 'were', first=first,
                     example=', '.join('%s=[...]' % n for n in kinds))) from None
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+        # (how the result was asked for: parametric_optimization asks again with other numbers in the var()s of the model)
+        try:
+            result._recipe = (wrapper, args, kwargs)
+        except AttributeError:
+            pass
+        return result
     return wrapper
 
 
@@ -611,6 +617,14 @@ class Result(FieldResult):
     @property
     def fields(self):
         return OrderedDict((name, getattr(self, name)) for name in _FIELDS)
+
+    @property
+    def mass(self):
+        ''' The part's mass in kg: the volume of its mesh times the material's density (None when the density is a field) '''
+        density = self.material.density
+        if isinstance(density, Shape):
+            return None
+        return self.volume * density * 1000.0
 
     def range(self, field='von_mises'):
         ''' (min, max) of a field over the part: of the smooth field (the nodal values;
@@ -1116,10 +1130,12 @@ class ModalResult(FieldResult):
         self.seconds = seconds
         if size is not None:
             # (on a tetrahedral mesh)
+            self.volume = lib.libfive_tetfea_mesh_volume(p) if hasattr(lib, 'libfive_tetfea_mesh_volume') else 0.0
             n = lib.libfive_tetfea_mode_count(p)
             self.modes = [TetMode(handle, i, lib.libfive_tetfea_mode_frequency(p, i), shape, size, element_size)
                           for i in range(n)]
         else:
+            self.volume = lib.libfive_fea_stat(p, 6)
             grid = (int(lib.libfive_fea_stat(p, 16)), int(lib.libfive_fea_stat(p, 17)),
                     int(lib.libfive_fea_stat(p, 18)))
             n = lib.libfive_fea_mode_count(p)
@@ -1129,6 +1145,14 @@ class ModalResult(FieldResult):
 
     def __getitem__(self, i):
         return self.modes[i]
+
+    @property
+    def mass(self):
+        ''' The part's mass in kg: the volume of its mesh times the material's density (None when the density is a field) '''
+        density = self.material.density
+        if isinstance(density, Shape):
+            return None
+        return self.volume * density * 1000.0
 
     def _as_field(self):
         mode = self.modes[0]

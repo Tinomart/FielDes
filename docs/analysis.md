@@ -17,6 +17,7 @@ fill the part they came from.
 - [Topology optimization](#topology-optimization)
 - [Fluid flow](#fluid-flow)
 - [Flow topology optimization](#flow-topology-optimization)
+- [Parametric optimization](#parametric-optimization)
 - [Elements and accuracy](#elements-and-accuracy)
 - [Caching](#caching)
 - [Limitations](#limitations)
@@ -569,6 +570,72 @@ runs at 4.5e-7 (a round-ended body 19 mm long) and ran to the limit. The nodal s
 the flow sees the body as a porous solid whose wall lies a fraction of an element inside the design's wall (refine
 to tighten); laminar flow only; at a Reynolds number where the wake sheds (above about 50 for a post) there is no
 steady flow to optimise, and the optimiser works on the unstable symmetric one.
+
+## Parametric optimization
+
+`parametric_optimization` finds the best numbers for the `var()`s of a model, over an analysis of it. Write the numbers that
+may change as `var(...)` (they are the numbers you can drag), make the analysis from them as usual, and give the result of the
+analysis to the optimisation with the range of each variable and what is to be made best:
+
+```python
+width = var(20)
+height = var(12)
+beam = box((0, 0, 0), (100, width, height))
+wall = fixed(box((-1, -1, -1), (1, 60, 60)))
+pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
+stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=4)
+
+best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
+                               minimize='mass',
+                               constraints=['max_von_mises <= 90', 'max_displacement <= 0.5'])
+```
+
+It is in the **Engineering** menu, directly (it works over an analysis of any domain, so it is in none of the categories): select a
+result and choose it, and the call is written with `variables=...` and `minimize=...` for you to fill in.
+
+| Argument | |
+|---|---|
+| `analysis` | the result of an analysis made in this script and made of the `var()`s -- a static, modal, thermal or flow analysis. |
+| `variables` | `(var, low, high)`: the `var()` that is changed and the range it is looked for in; a list of them for several. |
+| `minimize` / `maximize` | what is made as small (large) as it can be -- **a measure** of the result: the name of one of its numbers (`'mass'`, `'max_von_mises'`, `'max_displacement'`, `'compliance'`, `'safety_factor'`, `'volume'`, `'max_temperature'`, `'pressure_drop'`, `'frequencies[0]'` ...), an expression of them (`'mass + 0.01 * compliance'`: numbers, `+ - * / **`, `[index]`, `abs`, `min`, `max`, `sqrt`, `log`, `exp`), or a function of the result (`lambda r: r.max_von_mises / r.mass`). A name the result does not have is refused with the list of those it has. |
+| `constraints` | what the best design keeps: comparisons in a text (`'max_von_mises <= 90'`, `'frequencies[0] >= 80'`, `'mass <= 0.05'`), or functions of the result that give how much the limit is broken (0 or less when it is kept). A limit is kept when it is broken by less than a millionth of its size. |
+| `max_evaluations` | how many designs it tries at most (default 20, and 10 for each variable). |
+| `tolerance` | it stops when it has closed in to this fraction of the ranges and nothing better comes (default 0.2 %). |
+| `apply` | `True` writes the best numbers into the `var()`s of the text when the run is over, the way dragging does. Otherwise they hold for the run only: the model, and everything after the call, is the best design, and the numbers in the text are as you wrote them. |
+
+**What it does.** Each design the search tries is an ordinary analysis -- the model is made again from the numbers, meshed and
+solved -- so every kind of analysis works, with its own element and mesh, and its result is kept like any other: running the
+script again, or another search over the same designs, finds them in the cache. The search needs **no derivatives**: it solves a
+spread of designs over the ranges, learns from all of them how the objective and each constraint move with the variables
+(radial basis functions through the designs), and solves the design that those surrogates say is best and keeps the constraints,
+and again, closing in on the best design near the best one found, and on a bound or a limit when that is where it is; a design that
+keeps the constraints always comes before one that does not. A design the mesh cannot hold (a wall thinner than the elements, a
+part that falls apart) is listed as failed, and the search goes on without it.
+
+**The result** is the analysis of the best design: its fields and its numbers are those of `best` (`best.von_mises`,
+`best.max_displacement`), the result card shows it, and it is exported as that analysis is. It also says what the search did:
+
+| | |
+|---|---|
+| `best.values` | the best numbers, by the name of the variable in the script |
+| `best.objective` | the best value of what was minimised or maximised |
+| `best.feasible` | whether the best design keeps every constraint. When **no design does**, the result says so and is the one that breaks them least |
+| `best.history` | every design tried, in order: its numbers, its objective, how far it breaks the constraints, what each constraint measured, and why it failed if it did |
+| `best.result` | the analysis of the best design |
+| `best.apply()` | writes the best numbers into the text (what `apply=True` does) |
+
+The output pane lists every design (the ones that broke a limit are marked), so the whole search can be read. If **none of the numbers it looked at changed
+with the variables**, it says so: the analysis is not made of them.
+
+**Measured** (the beam above, 2026-10-15): 36 designs in 4.3 s give 8 x 14.3 mm, 0.0307 kg, bending 0.490 mm (the limit is 0.5) under 76.5 MPa (the limit is
+90): the displacement limit decides, and the width is at its lower bound. Beam theory for a tip load gives 14.26 mm for 0.5 mm at 8 mm wide (4 F L^3 / E b h^3), 0.4 % less. A
+grid of 156 designs over the same ranges (a design every 2 mm and 1.5 mm) finds 0.0323 kg, 5 % more, in 63 s. Maximising the first natural frequency of a bar of a given mass (a modal analysis, 26 designs, 14 s) finds 12.2 x 12.2 mm: the
+square section, 12.17 mm by beam theory.
+
+**Limits.** It changes `var()` numbers of the script, nothing else (a `var()` made inside a function of yours cannot be changed from outside it); the model must be made of them -- it says when it is not.
+It finds a good design in a few tens of analyses, not a proven best one: a problem with several equally good designs ends in one of them, and the answer is as good as the analysis: the peak
+stress of a mesh jumps by a few percent from one design to the next (a corner that has a singularity), so a limit on it is kept within that, and an optimum that sits on such a limit
+is found within it. Refine `element_size` (or use `element='tet10'`) where it matters. A search is as long as its analyses: forty designs of a modal analysis take forty modal analyses.
 
 ## Elements and accuracy
 

@@ -100,6 +100,10 @@ lib.libfive_opcode_enum.restype = ctypes.c_int
 lib.libfive_tree_is_var.argtypes = [libfive_tree]
 lib.libfive_tree_is_var.restype = ctypes.c_uint8
 
+if hasattr(lib, 'libfive_tree_set_var_value'):
+    lib.libfive_tree_set_var_value.argtypes = [libfive_tree, ctypes.c_float]
+    lib.libfive_tree_set_var_value.restype = None
+
 lib.libfive_opcode_args.argtypes = [ctypes.c_int]
 lib.libfive_opcode_args.restype = ctypes.c_int
 
@@ -487,6 +491,9 @@ try:
     lib.libfive_tetfea_stat.restype = ctypes.c_double
     lib.libfive_tetfea_counts.argtypes = [libfive_tetfea_p, ctypes.POINTER(ctypes.c_int64)]
     lib.libfive_tetfea_counts.restype = None
+    if hasattr(lib, 'libfive_tetfea_mesh_volume'):
+        lib.libfive_tetfea_mesh_volume.argtypes = [libfive_tetfea_p]
+        lib.libfive_tetfea_mesh_volume.restype = ctypes.c_double
     lib.libfive_tetfea_mesh.argtypes = [libfive_tetfea_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int32),
                                         ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_int32)]
     lib.libfive_tetfea_mesh.restype = None
