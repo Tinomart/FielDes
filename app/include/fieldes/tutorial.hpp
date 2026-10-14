@@ -57,8 +57,12 @@ public:
 
     /*  The welcome card: start the tour, or not (the first time FielDes runs)  */
     void offer();
-    /*  Starts the tour from its first step (loads its model first)  */
-    void start();
+    /*  Starts the tour from its first step (loads its model first).  The tour is the main tour and chapters that are run on their own: `chapter` 0 is the main tour, the others are
+     *  the chapters (Help ▸ Guided tour lists them): each has its own first and last step, and Next / Back / the counter / Finish go by those  */
+    void start(int chapter = 0);
+    /*  The chapters besides the main tour: how many chapters there are (the main tour is chapter 0), and the title of one  */
+    static int chapterCount();
+    static QString chapterTitle(int chapter);
     /*  Ends it: `completed` is whether it was gone through to the end (the offer is not made again either way)  */
     void stop(bool completed);
 
@@ -148,6 +152,10 @@ private:
     QPushButton* m_next = nullptr;
 
     QVector<Step>* m_steps = nullptr;
+    /*  The steps are listed main tour first, then each chapter; the chapter that is run, and where it begins and ends (inclusive) in that list  */
+    int m_chapter = 0, m_first = 0, m_last = 0;
+    QVector<int> m_chapterFirst, m_chapterLast;
+    void setChapter(int chapter);
     int m_index = -1;
     bool m_active = false;
     bool m_done = false;

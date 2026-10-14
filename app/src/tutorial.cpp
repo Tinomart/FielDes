@@ -17,6 +17,7 @@ of the License, or (at your option) any later version.
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFrame>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -289,6 +290,7 @@ struct Tutorial::Step
     bool closeRows = false;                             // the tree shows only what the step is about: every row with rows under it is closed ...
     QStringList openRows;                               // ... except these models
     QString group;                                      // steps of a group work on models of their own, put back when the group is left
+    int chapter = 0;                                    // 0: the main tour; or a chapter (made of whole groups, see buildSteps), run on its own from Help
     bool undone = false;                                // what the step made goes when it is left
     std::function<QVector<int>()> code;                 // the lines of the script (0-based) the step is about: framed, and not dimmed
     Place place = Auto;
@@ -385,7 +387,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
             m_note->setText(s.doneNote);
             m_note->setStyleSheet("font-size: 9.5pt; color: #82cc58; font-weight: bold;");
             m_show->hide();
-            m_next->setText(m_index + 1 < m_steps->size() ? T("Next  ▸") : T("Finish"));
+            m_next->setText(m_index < m_last ? T("Next  ▸") : T("Finish"));
             // (the note stays until the user goes on: it says what happened, and it is read at the user's pace)
         }
     });
@@ -404,6 +406,26 @@ Tutorial::~Tutorial()
 }
 
 int Tutorial::stepCount() const { return m_steps->size(); }
+
+// The chapters: parts of the tour that are run on their own (Help ▸ Guided tour), for those who want a subject and not the walk through the basics.  The main tour is chapter 0
+int Tutorial::chapterCount() { return 3; }
+QString Tutorial::chapterTitle(int chapter)
+{
+    switch (chapter)
+    {
+    case 1: return T("Drawing and sweeps");
+    case 2: return T("Copies and symmetry");
+    default: return QString();
+    }
+}
+
+void Tutorial::setChapter(int chapter)
+{
+    if (chapter < 0 || chapter >= m_chapterFirst.size() || m_chapterFirst[chapter] < 0) chapter = 0;
+    m_chapter = chapter;
+    m_first = m_chapterFirst.value(chapter);
+    m_last = m_chapterLast.value(chapter);
+}
 QString Tutorial::stepTitle() const { return m_index >= 0 && m_index < m_steps->size() ? (*m_steps)[m_index].title : QString(); }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -874,7 +896,7 @@ void Tutorial::buildSteps()
                    "in FielDes itself. The data from those steps creates fields that can directly improve your designs.")
                  + "\n\n" + T("Happy designing, and I hope FielDes can make your workflows faster and more intuitive.")
                  + "\n\n" + "-Tino";
-        s.hint = T("The guided tour is a few minutes. It starts again from Help ▸ Guided tour.");
+        s.hint = T("The main tour is a few minutes. Help ▸ Guided tour starts it again, and has short chapters on drawing and on copies and symmetry.");
         s.welcome = true;
         s.place = Center;
         add(s);
@@ -1477,6 +1499,51 @@ void Tutorial::buildSteps()
             QPoint p;
             if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
             fakeDrag(m_view, p, p + QPoint(70, 0), 900, over);
+        };
+        add(s);
+    }
+    // 18b: a lattice whose wall thickness is a field (a model of its own): what a field is for, made visible -- one line changes every cell
+    {
+        Step s;
+        s.title = T("A lattice that follows a field");
+        s.text = T("foam fills a block with a gyroid lattice, and the thickness of its walls is walls: a field, thin at the left and thick at the right. In the walls line, change the 2.4 to 3.5.");
+        s.hint = T("One line changes every cell: the lattice is made where the field says. A lattice takes a moment to draw. Or press Show me.");
+        s.code = linesWith("^(walls|foam) =");
+        s.holes = holesOf(scriptWidget);
+        s.focus = [this]() -> QRect { return scriptLineRect(std::max(0, scriptLine("walls ="))); };
+        s.point = [this] { const QRect r = scriptLineRect(std::max(0, scriptLine("walls ="))); return r.isEmpty() ? QPoint() : QPoint(r.right() - 20, r.center().y()); };
+        s.place = Right;
+        s.keys = true;
+        s.group = "field";
+        s.closeRows = true;
+        s.showView = true;
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            if (QAction* a = sectionAction()) a->setChecked(false);
+            useScript(tourHeader("[-36, -26, -8], [36, 26, 12]", 3) +
+                      "block = box((-30, -20, -6), (30, 20, 6))\n"
+                      "walls = ramp(x_field(), (-30, 30), (0.8, 2.4))\n"
+                      "foam = lattice(block, cell_periodic('gyroid'), cell_size=12, thickness=walls)\n"
+                      "foam");
+            scene()->clearSelection();
+        };
+        // (the call is changed, and is still whole: a half-typed number is not the step done)
+        s.done = [statementAt] {
+            const Statement st = statementAt("walls =");
+            QString flat = st.text;
+            flat.remove(QRegularExpression("\\s"));
+            return st.first >= 0 && flat.endsWith("))") && flat != "walls=ramp(x_field(),(-30,30),(0.8,2.4))";
+        };
+        s.doneNote = T("Nice. Every cell of the lattice follows the field.");
+        s.show = [this](std::function<void()> over) {
+            const int line = scriptLine("walls =");
+            if (line < 0) { over(); return; }
+            const QString text = m_editor->getScript().split('\n').value(line);
+            static const QRegularExpression re(R"(-?[\d.]+)");
+            QRegularExpressionMatch last;
+            for (auto m = re.globalMatch(text); m.hasNext();) last = m.next();
+            if (!last.hasMatch()) { over(); return; }
+            typeOver(line, last.capturedStart(), last.capturedEnd(), "3.5", over);
         };
         add(s);
     }
@@ -2244,7 +2311,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("That is the tour");
         s.text = T("Shift+F1 opens the guide with every feature and shortcut. To see how the different features of FielDes work, open the examples: File ▸ Open example file.");
-        s.hint = T("Each example is a small script to read, run and change. Help ▸ Guided tour starts this tour again.");
+        s.hint = T("Each example is a small script to read, run and change. Help ▸ Guided tour starts this tour again, or one of its chapters: drawing and sweeps, copies and symmetry.");
         s.last = true;
         // (the File menu is drawn beside the card, with the entry framed, as for the blocks folder: it lists the examples)
         s.menuTitle = "File";
@@ -2258,6 +2325,24 @@ void Tutorial::buildSteps()
     // section that was made -- so that every step starts from its own state, whatever was done before it
     for (int i = 1; i < steps.size(); ++i)
         if (steps[i].group.isEmpty() && !steps[i].last) steps[i].undone = true;
+    // The tour is the main tour and chapters (run on their own from Help).  A chapter is made of whole groups -- the steps of a group work on models of their own, so they do not
+    // depend on the steps before them -- and the steps are listed main tour first, each chapter after it, every step in its own order within it (a stable sort): the steps are
+    // written in the order they are told in, and nothing in them refers to the number of another step
+    static const QHash<QString, int> chapterOfGroup = {
+        {"workplane", 1}, {"profile", 1}, {"line", 1},                    // Drawing and sweeps
+        {"reference", 2}, {"copies", 2}, {"symmetry", 2},                 // Copies and symmetry
+    };
+    for (Step& st : steps) st.chapter = chapterOfGroup.value(st.group, 0);
+    std::stable_sort(steps.begin(), steps.end(), [](const Step& a, const Step& b) { return a.chapter < b.chapter; });
+    m_chapterFirst = QVector<int>(chapterCount(), -1);
+    m_chapterLast = QVector<int>(chapterCount(), -1);
+    for (int i = 0; i < steps.size(); ++i)
+    {
+        const int c = steps[i].chapter;
+        if (m_chapterFirst[c] < 0) m_chapterFirst[c] = i;
+        m_chapterLast[c] = i;
+    }
+    setChapter(0);
     m_entry.resize(steps.size());
     m_hasEntry = QVector<char>(steps.size(), 0);
 }
@@ -2271,6 +2356,7 @@ void Tutorial::offer()
     m_offering = true;
     m_active = true;
     m_hasEntry.fill(0);
+    setChapter(0);
     qApp->installEventFilter(this);
     m_window->installEventFilter(this);
     goTo(0);
@@ -2280,13 +2366,14 @@ void Tutorial::offer()
     m_poll.start();
 }
 
-void Tutorial::start()
+void Tutorial::start(int chapter)
 {
     if (m_loadTour && !m_loadTour())
     {
         stop(false);
         return;
     }
+    setChapter(chapter);
     // (the tour's model has just replaced the script: its lines are not changes, and the steps are all to be opened for the first time)
     m_scriptSeen.clear();
     m_changed.clear();
@@ -2304,7 +2391,8 @@ void Tutorial::start()
     m_view->standardView(View::VIEW_ISO);       // (the faces the steps point at are the ones that face the camera)
     // (the model is loaded and runs: the tour begins once it is drawn)
     ++m_generation;
-    after(900, [this] { goTo(1); });
+    // (the main tour begins after its welcome card, which is for the first time FielDes runs; a chapter begins with its first step)
+    after(900, [this] { goTo(m_chapter == 0 ? 1 : m_first); });
 }
 
 void Tutorial::stop(bool completed)
@@ -2347,6 +2435,8 @@ void Tutorial::goTo(int index, bool viaBack)
         stop(true);
         return;
     }
+    // (a step of another chapter than the one that is run -- a jump by hand, the tests' `tour goto` -- is run as its own chapter: its range is what Next, Back and Finish go by)
+    if ((*m_steps)[index].chapter != m_chapter) setChapter((*m_steps)[index].chapter);
     endDemo();                              // (what a "Show me" did is undone before the step changes)
     if (m_index >= 0 && m_index < m_steps->size())
     {
@@ -2396,13 +2486,14 @@ void Tutorial::next()
     if (!m_active) return;
     if (m_index < 0) { start(); return; }
     if (m_offering && m_index == 0) { start(); return; }
-    if (m_index + 1 >= m_steps->size()) { stop(true); return; }
+    if (m_index >= m_last) { stop(true); return; }          // (the last step of the tour, or of the chapter that is run)
     goTo(m_index + 1);
 }
 
 void Tutorial::back()
 {
-    if (!m_active || m_index <= 1) return;
+    // (not back to the welcome card, nor out of a chapter's first step)
+    if (!m_active || m_index <= (m_chapter == 0 ? 1 : m_first)) return;
     goTo(m_index - 1, true);
 }
 
@@ -2465,13 +2556,17 @@ void Tutorial::showStep()
     m_note->setText(s.hint);
     m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
     m_note->setVisible(!s.hint.isEmpty());
-    m_counter->setText(s.welcome ? QString() : QString("%1 / %2").arg(m_index).arg(m_steps->size() - 1));
-    m_skipTour->setText(s.welcome ? T("Skip the guided tour") : (s.last ? QString() : T("Skip the tour")));
-    m_skipTour->setVisible(!s.last);
-    m_back->setVisible(!s.welcome && !s.last && m_index > 1);
+    // (the main tour counts from its first step after the welcome card; a chapter from its own first step)
+    const bool atEnd = m_index >= m_last;
+    m_counter->setText(s.welcome ? QString()
+                       : m_chapter == 0 ? QString("%1 / %2").arg(m_index).arg(m_last)
+                                        : QString("%1 / %2").arg(m_index - m_first + 1).arg(m_last - m_first + 1));
+    m_skipTour->setText(s.welcome ? T("Skip the guided tour") : (s.last ? QString() : (m_chapter == 0 ? T("Skip the tour") : T("Skip this chapter"))));
+    m_skipTour->setVisible(!s.last && !(atEnd && m_chapter != 0));
+    m_back->setVisible(!s.welcome && !s.last && m_index > (m_chapter == 0 ? 1 : m_first));
     m_show->setVisible(bool(s.show));
     m_show->setText(s.showLabel);
-    m_next->setText(s.welcome ? T("Start the guided tour") : s.last ? T("Finish") : (s.done ? T("Skip step  ▸") : T("Next  ▸")));
+    m_next->setText(s.welcome ? T("Start the guided tour") : atEnd ? T("Finish") : (s.done ? T("Skip step  ▸") : T("Next  ▸")));
     // (the welcome card is the one place the button is orange: it is what the user is asked to choose, and the other way out is quiet)
     m_next->setStyleSheet(s.welcome
         ? "QPushButton { background: #ff8a1f; color: #2b1500; border: 1px solid #ff8a1f; border-radius: 6px; padding: 6px 16px; font-size: 10pt; font-weight: bold; }"

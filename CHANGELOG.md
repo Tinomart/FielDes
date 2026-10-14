@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### The guided tour is a main tour and chapters
+- **The tour has a main tour (25 steps after the welcome card) and two chapters that run on their own: Drawing and sweeps (9 steps) and Copies and symmetry (8).** The 42 steps in one line were a long walk for someone who wanted one subject; the work plane, the profile steps and the
+  line and sweep steps are now the chapter *Drawing and sweeps*, and the shadow reference, copies and linked copies, and the six symmetry steps are *Copies and symmetry*. **Help ▸ Guided tour is a submenu** listing the main tour and the chapters; each has its own counter
+  (`3 / 9`), its own first step (Back stops there), its own *Finish*, and *Skip this chapter*. The welcome card and the last card say that the chapters are there. A chapter loads the tour's model, like the main tour: the steps of a chapter work on models of their own, so
+  none depends on a step of the main tour. **A new step, *A lattice that follows a field***, comes after *Move the point*: a block filled with a gyroid whose wall thickness is a field (`walls`, a ramp thin at the left and thick at the right); changing one number in its line changes every cell.
+  The automation command `tour goto N` counts over all the steps (main tour first, then each chapter) and `tour start N` starts chapter N.
+
 ### A sketch is a profile
 - **`sketch` is now `profile`.** A name says what a thing is, not how it is made: the 2D shape that a closed outline through points encloses -- corners, spline points and round corners -- is a *profile* (the word nTop and CAD programs use for
   the extrudable region of an outline; the drawing and its constraints, which FielDes does not have, are what CAD calls a sketch). `profile(points)`, `profile(surface)`, the *New 2D shape ▸ profile* entry, the models `profile_1`, the

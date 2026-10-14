@@ -1272,7 +1272,15 @@ Window::Window(Arguments args)
     help_menu->addSeparator();
     connect(help_menu->addAction(T("About")), &QAction::triggered,
             this, &Window::onAbout);
-    connect(help_menu->addAction(T("Guided tour")), &QAction::triggered, this, [this]{ if (tour) tour->start(); });
+    {   // The guided tour: the main tour, and chapters on a subject (drawing, copies and symmetry) that run on their own
+        QMenu* tour_menu = help_menu->addMenu(T("Guided tour"));
+        for (int chapter = 0; chapter < Tutorial::chapterCount(); ++chapter)
+        {
+            if (chapter == 1) tour_menu->addSeparator();
+            connect(tour_menu->addAction(chapter == 0 ? T("The main tour") : Tutorial::chapterTitle(chapter)), &QAction::triggered, this,
+                    [this, chapter]{ if (tour) tour->start(chapter); });
+        }
+    }
     auto ref_action = help_menu->addAction(T("Shape reference"));
     Shortcuts::add(ref_action, "help.shape-reference", {QKeySequence(Qt::Key_F1)});
     connect(ref_action, &QAction::triggered, editor, &Editor::onShowDocs);
@@ -1543,12 +1551,13 @@ Window::Window(Arguments args)
             std::cerr << "automation: assoc registered=" << FileAssociation::isRegistered() << "\n";
         });
         a->add("previewapp", [=](const QString&){ onPreviewApp(); });
-        // tour <offer|start|goto N|next|back|showme|skip|state>: the guided tour, step by step; prints where it is
+        // tour <offer|start [chapter]|goto N|next|back|showme|skip|state>: the guided tour, step by step; prints where it is (`goto N` counts over all the steps: the main tour, then
+        // each chapter)
         a->add("tour", [=](const QString& args){
             const QString cmd = args.section(' ', 0, 0);
             const QString rest = args.section(' ', 1);
             if (cmd == "offer") tour->offer();
-            else if (cmd == "start") tour->start();
+            else if (cmd == "start") tour->start(rest.toInt());
             else if (cmd == "goto") tour->goTo(rest.toInt());
             else if (cmd == "next") tour->next();
             else if (cmd == "back") tour->back();
