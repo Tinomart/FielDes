@@ -16,7 +16,7 @@ the libraries inside. See [Building](building.md) for how they are made and what
 **From source.** See [Building from source](building.md).
 
 FielDes always opens maximised, so the model has the room. The first time, a card offers the **guided tour** (about two
-minutes, on the program itself; every step and the whole tour can be skipped; **Help → Guided tour** starts it again, or one of its chapters on drawing and on copies and symmetry; the
+minutes, on the program itself; every step and the whole tour can be skipped, and a skipped tour says where it is found again: **Help → Guided tour**; the
 written version is the [tutorial](tutorial.md)); afterwards the split between editor and viewport and the recent files are
 remembered.
 
