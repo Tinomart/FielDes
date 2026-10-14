@@ -486,6 +486,17 @@ protected:
     /*  The editable outline (of a profile, a curve) that passes under a widget position (within a few pixels): its shape, the point of it that is
         there, and the number of the piece of the line (counted over all its polylines)  */
     bool outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) const;
+    /*  One line of an outline as it is drawn and as a press is looked for on it: its vertices, and between the ends of the arc of a round corner not the pieces the face is cut
+        along but points of the arc itself, as many as the screen tells apart (so the arc is the circle to a twentieth of a pixel at any zoom).  `piece` is the number of the piece
+        of the line that starts at the point (all of an arc has the number of its first piece); `pieceBase` is the number of the first piece of this line  */
+    struct OutlinePoint
+    {
+        QVector3D world;
+        QPointF screen;
+        bool front = false;                     // (in front of the camera: `screen` is only there then)
+        int piece = 0;
+    };
+    void outlineLine(const Shape* s, size_t line, int pieceBase, std::vector<OutlinePoint>& out) const;
     Shape* m_outlineHover = nullptr;
     bool m_outlineArcHover = false;             // (what is hovered is the arc of a round corner: a handle for its radius, not an edge to pull a point out of)
     /*

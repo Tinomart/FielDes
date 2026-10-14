@@ -106,7 +106,8 @@ disc = profile([a, b, c, d], radius=10)      # ...with corners that ask for more
   edge is long. Ask for more and the radius is made smaller, both arcs by the same share: a square with a round corner of half its side (or more) at each corner is a **circle**, and a rectangle asked for more than half its short
   side is a stadium. Nothing is left over and nothing runs past a point.
 - **Exact.** The arc is an arc in the field: the distance to the shape is measured to the circle, not to a polygon that approximates it, so an `extrude`, an `offset`, a `shell` or a simulation of it sees a true circle at any
-  resolution. (The pieces of a spline are cut into straight pieces by the kernel, 14 to a segment -- a cubic has no closed form for its distance; an arc does.) It is drawn from the numbers of its points while you drag, like any profile.
+  resolution. (The distance to a spline is measured to straight pieces by the kernel, 14 to a segment -- a cubic has no closed form for its distance; an arc does.) It is drawn from the numbers of its points while you drag, like any profile, and its blue
+  outline is the arc itself, cut on the screen to a twentieth of a pixel at the zoom you have -- so it stays a circle however far you zoom in (a spline's too). The filled face is a mesh of triangles.
 - **A round corner next to a spline point**: the arc is tangent to the straight line to that point, and the spline leaves the end of the arc along that line. The ends of an open line cannot be round, and a round corner
   on a `polyline` or `spline` is a hard corner there: the profile is where a corner has a radius.
 

@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -145,6 +146,27 @@ public:
      *  The outline of the face of a flat shape, and the line of a curve: polylines in space (closed ones end where they begin)
      */
     const std::vector<std::vector<Eigen::Vector3f>>& outlines() const { return m_outlines; }
+    /*
+     *  The curves among the pieces of outlines(): the pieces `first` to `last` of line `line` (vertex `first` to vertex `last`) are cut from either the arc of a round corner or
+     *  the cubic of a spline, and `point(t)`, t from 0 to 1, is a point of that curve itself.  An arc is cut from the circle with this centre and these two radius vectors (`e1`
+     *  to its start, `e2` across it, as long as the radius): the point at angle phi is centre + e1 cos(phi) + e2 sin(phi), phi from 0 to `sweep`.  A cubic has the four
+     *  control points of a Bezier curve.  The viewport draws them from this, to the pixel at any zoom, and not the pieces
+     */
+    struct OutlineCurve
+    {
+        int line = 0, first = 0, last = 0;
+        bool arc = true;
+        Eigen::Vector3d centre = Eigen::Vector3d::Zero(), e1 = Eigen::Vector3d::Zero(), e2 = Eigen::Vector3d::Zero();
+        double sweep = 0;
+        Eigen::Vector3d p[4] = {Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
+        Eigen::Vector3d point(double t) const
+        {
+            if (arc) return centre + e1 * std::cos(t * sweep) + e2 * std::sin(t * sweep);
+            const double m = 1 - t;
+            return p[0] * (m * m * m) + p[1] * (3 * m * m * t) + p[2] * (3 * m * t * t) + p[3] * (t * t * t);
+        }
+    };
+    const std::vector<OutlineCurve>& outlineCurves() const { return m_outline_curves; }
 
     /*
      *  The points of a profile or a curve (fieldes.stdlib.profile, curves): each three expressions of the script's numbers for where it is, three for its
@@ -785,6 +807,7 @@ protected:
         std::vector<std::vector<float>> channels;   // result fields at the vertices
         std::vector<Eigen::Vector3f> disp;          // displacements at the vertices
         std::vector<std::vector<Eigen::Vector3f>> outlines;     // the outline of a flat face, the line of a curve
+        std::vector<OutlineCurve> curves;                         // the arcs of its round corners and its splines
     };
 
     void startRender(RenderSettings s);
@@ -830,6 +853,7 @@ protected:
     /*  The prism's numbers now -- its points, and the distances a and b -- when it is drawn as one (its guard holds) and everything can be read; false when it is the field's to mesh  */
     bool prismNow(const std::map<libfive::Tree::Id, float>& v, std::vector<libfive::pointshapes::Control>& cs, double& a, double& b) const;
     std::vector<std::vector<Eigen::Vector3f>> m_outlines;
+    std::vector<OutlineCurve> m_outline_curves;
     double evalConstant(const libfive::Tree& t, const std::map<libfive::Tree::Id, float>& v) const;
     void updateFrameNumbers();
     float opacity=1.0f;

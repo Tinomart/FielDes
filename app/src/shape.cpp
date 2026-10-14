@@ -2992,6 +2992,7 @@ void Shape::adoptMeshFromSource()
     m_meshGizmo = made;
     refreshPreview();
     m_outlines.clear();
+    m_outline_curves.clear();
     color_values.clear();
     step_values.clear();
     step_disp.clear();
@@ -3508,6 +3509,7 @@ void Shape::onFutureFinished()
         m_meshGizmo = m_runGizmo;                       // (the new mesh is of the numbers its render started with; shown moved when the shape has been dragged since)
         refreshPreview();
         m_outlines = std::move(bm.outlines);
+        m_outline_curves = std::move(bm.curves);
         prev_div = mesh_div;
         prev_seq = mesh_seq;
         prev_verts = mesh_verts;
@@ -3844,6 +3846,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
 
     static const double identity[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     std::vector<std::vector<Eigen::Vector3f>> flat_outlines;
+    std::vector<OutlineCurve> flat_curves;
     std::unique_ptr<libfive::Mesh> m;
     // A prism -- a straight extrusion of a profile of points -- is made from the numbers its points have now, and its a and b: no field is meshed, so it follows a point as it is
     // dragged.  (When it cannot be -- a handle pulled, a gizmo placing it, an outline that crosses itself -- its field is meshed as ever)
@@ -3927,7 +3930,8 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                 v.pos = Eigen::Vector3d(m_run_virtual_pos.x(), m_run_virtual_pos.y(), m_run_virtual_pos.z());
                 cs.insert(cs.begin() + std::min<size_t>(cs.size(), size_t(std::max(0, m_run_virtual_after)) + 1), v);
             }
-            const auto verts = libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14);
+            std::vector<std::pair<int, double>> owners;
+            const auto verts = libfive::pointshapes::polyline(cs, m_controls_default, m_controls_closed, 14, &owners);
             std::vector<Eigen::Vector3f> line;
             bool faced = false;
             if (planar && verts.size() >= 3)
@@ -3947,6 +3951,65 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                 if (m_controls_closed && !line.empty()) line.push_back(line.front());
                 flat_outlines.clear();
                 if (line.size() >= 2) flat_outlines.push_back(std::move(line));
+            }
+            // The arcs of the round corners and the splines among the pieces of that outline: the viewport draws them from the curves themselves, to the pixel at any zoom (the pieces stay what a press is
+            // looked for on, and what the face is cut into).  The pieces of an arc are the ones whose two ends are on it: vertices it owns, or that are its start or its end (where
+            // it meets the arc before it, the vertex is the other's)
+            const int N = int(verts.size());
+            const bool closes = !flat_outlines.empty() && int(flat_outlines[0].size()) == N + 1;
+            if (N >= 2 && !flat_outlines.empty() && (closes || int(flat_outlines[0].size()) == N))
+            {
+                const int pieces = N + (closes ? 1 : 0) - 1;
+                for (const auto& f : libfive::pointshapes::fillets(cs, m_controls_default, m_controls_closed))
+                {
+                    const double tol = 1e-9 * (1.0 + f.a.norm());
+                    auto on = [&](int k) {
+                        const size_t v = size_t(k % N);
+                        return (owners[v].first == f.control && owners[v].second == 0.0) || (verts[v] - f.a).norm() <= tol || (verts[v] - f.b).norm() <= tol;
+                    };
+                    int first = -1, last = -1;
+                    for (int k = 0; k < pieces; ++k)
+                    {
+                        if (on(k) && on(k + 1))
+                        {
+                            if (first < 0) first = k;
+                            last = k + 1;
+                        }
+                        else if (first >= 0) break;
+                    }
+                    const Eigen::Vector3d e1 = f.a - f.centre, eb = f.b - f.centre;
+                    const double r = e1.norm();
+                    if (first < 0 || !(r > 0)) continue;
+                    const Eigen::Vector3d across = eb - e1 * (eb.dot(e1) / e1.squaredNorm());
+                    const double sideways = across.norm();
+                    if (!(sideways > 1e-300)) continue;
+                    OutlineCurve arc;
+                    arc.first = first;
+                    arc.last = last;
+                    arc.centre = f.centre;
+                    arc.e1 = e1;
+                    arc.e2 = across * (r / sideways);
+                    arc.sweep = std::atan2(sideways, eb.dot(e1) / r);
+                    flat_curves.push_back(arc);
+                }
+                // (and the splines: the cubic after a control is the run of vertices it owns at 0 < along < 1, between the vertex before them and the one after)
+                for (const auto& cubic : libfive::pointshapes::curves(cs, m_controls_default, m_controls_closed))
+                {
+                    int s = -1, e = -1;
+                    for (int v = 0; v < N; ++v)
+                    {
+                        if (owners[size_t(v)].first != cubic.control || !(owners[size_t(v)].second > 0.0)) continue;
+                        if (s < 0) s = v;
+                        e = v;
+                    }
+                    if (s < 1 || e + 1 > pieces) continue;
+                    OutlineCurve spline;
+                    spline.arc = false;
+                    spline.first = s - 1;
+                    spline.last = e + 1;
+                    for (int k = 0; k < 4; ++k) spline.p[k] = cubic.p[k];
+                    flat_curves.push_back(spline);
+                }
             }
         }
     }
@@ -4040,6 +4103,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     out.mesh = m.release();
     out.region = r;
     out.outlines = std::move(flat_outlines);
+    out.curves = std::move(flat_curves);
 
     // A result: every field and the displacements at every vertex
     if (has_result && out.mesh)

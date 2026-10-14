@@ -6564,10 +6564,6 @@ void View::drawOutlines(QPainter& painter)
 {
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
-    const QMatrix4x4 M = camera.M();
-    auto inFront = [&](const QVector3D& p) {
-        return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
-    };
     for (Shape* s : shapes)
     {
         // (a face of points is drawn natively from its points, so it is not "flat" -- it has no field to mesh -- but its outline is drawn like a flat shape's)
@@ -6576,24 +6572,92 @@ void View::drawOutlines(QPainter& painter)
         const bool on = s->isSelected();
         QColor c = hot ? QColor(120, 195, 255) : on ? QColor(105, 180, 255) : QColor(52, 140, 245);
         painter.setPen(QPen(c, hot ? 3.4 : on ? 2.8 : 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        for (const auto& line : s->outlines())
+        std::vector<OutlinePoint> points;
+        for (size_t li = 0; li < s->outlines().size(); ++li)
         {
+            points.clear();
+            outlineLine(s, li, 0, points);
             QPolygonF poly;
-            for (const auto& v : line)
+            for (const auto& o : points)
             {
-                const QVector3D p(v.x(), v.y(), v.z());
-                if (!inFront(p))
+                if (!o.front)
                 {
                     if (poly.size() > 1) painter.drawPolyline(poly);
                     poly.clear();
                     continue;
                 }
-                poly << toScreen(p);
+                poly << o.screen;
             }
             if (poly.size() > 1) painter.drawPolyline(poly);
         }
     }
     painter.restore();
+}
+
+// The points of one line of an outline, for drawing it and for finding a press on it.  A straight piece is its two ends.  The arc of a round corner and the cubic of a spline are not
+// the pieces the face is cut along: each is the curve itself (Shape::OutlineCurve), taken at as many points as the screen tells apart -- a piece is cut in two while its middle is
+// more than a twentieth of a pixel off its chord -- so zooming in never shows a corner on it
+void View::outlineLine(const Shape* s, size_t li, int pieceBase, std::vector<OutlinePoint>& out) const
+{
+    const auto& line = s->outlines()[li];
+    const QMatrix4x4 M = camera.M();
+    auto make = [&](const QVector3D& p, int piece) {
+        OutlinePoint o;
+        o.world = p;
+        o.front = M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
+        if (o.front) o.screen = toScreen(p);
+        o.piece = piece;
+        return o;
+    };
+    std::vector<const Shape::OutlineCurve*> curves;
+    for (const auto& a : s->outlineCurves())
+        if (a.line == int(li) && a.first >= 0 && a.last > a.first && a.last < int(line.size())) curves.push_back(&a);
+    std::sort(curves.begin(), curves.end(), [](const Shape::OutlineCurve* a, const Shape::OutlineCurve* b) { return a->first < b->first; });
+    size_t next = 0;
+    for (size_t k = 0; k < line.size(); ++k)
+    {
+        out.push_back(make(QVector3D(line[k].x(), line[k].y(), line[k].z()), pieceBase + int(k)));
+        while (next < curves.size() && curves[next]->first < int(k)) ++next;
+        if (next >= curves.size() || curves[next]->first != int(k)) continue;
+        const Shape::OutlineCurve& a = *curves[next++];
+        const int piece = pieceBase + a.first;
+        auto at = [&](double t) {
+            const Eigen::Vector3d q = a.point(t);
+            return make(QVector3D(float(q.x()), float(q.y()), float(q.z())), piece);
+        };
+        std::function<void(double, const OutlinePoint&, double, const OutlinePoint&, int)> cut =
+            [&](double t0, const OutlinePoint& p0, double t1, const OutlinePoint& p1, int depth) {
+            const double tm = 0.5 * (t0 + t1);
+            const OutlinePoint pm = at(tm);
+            bool split = false;
+            if (p0.front && p1.front && pm.front)
+            {
+                const QPointF d = p1.screen - p0.screen, e = pm.screen - p0.screen;
+                const double len = std::hypot(d.x(), d.y());
+                const double off = len > 1e-9 ? std::abs(d.x() * e.y() - d.y() * e.x()) / len : std::hypot(e.x(), e.y());
+                split = off > 0.05 && depth < (len > 2e4 ? 6 : 12);
+            }
+            else
+            {
+                split = depth < 4;                  // (partly behind the camera: only far enough to find where the arc goes behind it)
+            }
+            if (!split) return;
+            cut(t0, p0, tm, pm, depth + 1);
+            out.push_back(pm);
+            cut(tm, pm, t1, p1, depth + 1);
+        };
+        const int parts = a.arc ? std::max(2, int(std::ceil(a.sweep / (M_PI / 8)))) : 8;
+        OutlinePoint previous = out.back();         // (the start of the curve: the vertex that was just given)
+        for (int i = 1; i <= parts; ++i)
+        {
+            const double t0 = double(i - 1) / parts, t1 = double(i) / parts;
+            const OutlinePoint end = i == parts ? make(QVector3D(line[size_t(a.last)].x(), line[size_t(a.last)].y(), line[size_t(a.last)].z()), piece) : at(t1);
+            cut(t0, previous, t1, end, 0);
+            if (i < parts) out.push_back(end);
+            previous = end;
+        }
+        k = size_t(a.last) - 1;                     // (the next vertex given is the curve's last one)
+    }
 }
 
 void View::drawHints(QPainter& painter)
@@ -6630,21 +6694,23 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
     double best = 8.0 * 8.0;
     bool found = false;
     const QMatrix4x4 M = camera.M();
-    auto inFront = [&](const QVector3D& p) {
-        return M.row(3).x() * p.x() + M.row(3).y() * p.y() + M.row(3).z() * p.z() + M.row(3).w() > 1e-6f;
-    };
     const QPointF c(pos);
+    std::vector<OutlinePoint> points;
     for (Shape* s : shapes)
     {
         if (!s->isEditable() || s->outlines().empty()) continue;
         int count = 0;
-        for (const auto& line : s->outlines())
+        for (size_t li = 0; li < s->outlines().size(); ++li)
         {
-            for (size_t i = 0; i + 1 < line.size(); ++i, ++count)
+            // (the same points the line is drawn through: on the arc of a round corner a press is looked for on the circle, not on the pieces the face is cut along)
+            points.clear();
+            outlineLine(s, li, count, points);
+            count += int(s->outlines()[li].size()) - 1;
+            for (size_t i = 0; i + 1 < points.size(); ++i)
             {
-                const QVector3D p0(line[i].x(), line[i].y(), line[i].z()), p1(line[i + 1].x(), line[i + 1].y(), line[i + 1].z());
-                if (!inFront(p0) || !inFront(p1)) continue;
-                const QPointF a = toScreen(p0), b = toScreen(p1);
+                const OutlinePoint &p0 = points[i], &p1 = points[i + 1];
+                if (!p0.front || !p1.front) continue;
+                const QPointF a = p0.screen, b = p1.screen;
                 const QPointF d = b - a;
                 const double l2 = d.x() * d.x() + d.y() * d.y();
                 double t = l2 > 1e-9 ? ((c.x() - a.x()) * d.x() + (c.y() - a.y()) * d.y()) / l2 : 0.0;
@@ -6655,8 +6721,8 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
                 {
                     best = dist;
                     shape = s;
-                    hit = p0 + (p1 - p0) * float(t);
-                    piece = count;
+                    hit = p0.world + (p1.world - p0.world) * float(t);
+                    piece = p0.piece;
                     found = true;
                 }
             }

@@ -77,6 +77,18 @@ std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& controls, bool
                                       std::vector<std::pair<int, double>>* owners = nullptr, int arcPieces = 8);
 
 /*
+ *  A stretch of the line that is a cubic Bezier curve: the spline after control `control`, from p[0] (the point itself, or where its arc ends) to p[3] (the next point, or where
+ *  its arc begins) with the handles p[1] and p[2] -- the curve `polyline` takes its vertices from (the vertices owned by `control` at 0 < along < 1).  They are in the order of
+ *  the line; a stretch between two corners is a straight piece and is not among them
+ */
+struct Curve
+{
+    int control = 0;
+    Eigen::Vector3d p[4] = {Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()};
+};
+std::vector<Curve> curves(const std::vector<Control>& controls, bool smoothDefault, bool closed);
+
+/*
  *  The plane through the first three points that are not on a line: frame = (origin, u, v), nine numbers, u and v unit vectors,
  *  u along the first edge.  False when there are fewer than three points or they are all on a line
  */

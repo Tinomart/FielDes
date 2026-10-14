@@ -157,6 +157,46 @@ std::vector<Eigen::Vector3d> tangents(const std::vector<Control>& c, bool smooth
     return tangent;
 }
 
+namespace {
+
+// The cubic from `a` to `b`, the ends of the stretch of a line between two controls: it leaves `a` in the tangent of the first control (along the chord when that one is a corner,
+// `tangentA` null) and arrives at `b` in the tangent of the second
+void cubicBetween(const Eigen::Vector3d& a, const Eigen::Vector3d& b, const Eigen::Vector3d* tangentA, const Eigen::Vector3d* tangentB, Eigen::Vector3d p[4])
+{
+    const Eigen::Vector3d chord = b - a;
+    p[0] = a;
+    p[1] = a + (tangentA ? *tangentA : chord) / 3.0;
+    p[2] = b - (tangentB ? *tangentB : chord) / 3.0;
+    p[3] = b;
+}
+
+}   // namespace
+
+std::vector<Curve> curves(const std::vector<Control>& c, bool smoothDefault, bool closed)
+{
+    std::vector<Curve> out;
+    const int n = int(c.size());
+    if (n < 2) return out;
+    auto smooth = [&](int i) { return c[size_t(i)].smooth < 0 ? smoothDefault : c[size_t(i)].smooth != 0; };
+    const std::vector<Eigen::Vector3d> P = positionsOf(c);
+    const std::vector<Eigen::Vector3d> tangent = tangents(c, smoothDefault, closed);
+    const std::vector<Fillet> arcs = fillets(c, smoothDefault, closed);
+    std::vector<const Fillet*> round(size_t(n), nullptr);
+    for (const auto& f : arcs) round[size_t(f.control)] = &f;
+    const int last = closed ? n : n - 1;
+    for (int i = 0; i < last; ++i)
+    {
+        const int j = (i + 1) % n;
+        if (!smooth(i) && !smooth(j)) continue;
+        Curve k;
+        k.control = i;
+        cubicBetween(round[size_t(i)] ? round[size_t(i)]->b : P[size_t(i)], round[size_t(j)] ? round[size_t(j)]->a : P[size_t(j)],
+                     smooth(i) ? &tangent[size_t(i)] : nullptr, smooth(j) ? &tangent[size_t(j)] : nullptr, k.p);
+        out.push_back(k);
+    }
+    return out;
+}
+
 std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& c, bool smoothDefault, bool closed, int pieces,
                                       std::vector<std::pair<int, double>>* owners, int arcPieces)
 {
@@ -212,13 +252,12 @@ std::vector<Eigen::Vector3d> polyline(const std::vector<Control>& c, bool smooth
         // (a curve between two controls starts where the arc of the first ends and ends where the arc of the second begins: along the same chord)
         const Eigen::Vector3d a = round[size_t(i)] ? round[size_t(i)]->b : P[size_t(i)];
         const Eigen::Vector3d b = round[size_t(j)] ? round[size_t(j)]->a : P[size_t(j)];
-        const Eigen::Vector3d chord = b - a;
-        const Eigen::Vector3d h1 = a + (smooth(i) ? tangent[size_t(i)] : chord) / 3.0;
-        const Eigen::Vector3d h2 = b - (smooth(j) ? tangent[size_t(j)] : chord) / 3.0;
+        Eigen::Vector3d h[4];
+        cubicBetween(a, b, smooth(i) ? &tangent[size_t(i)] : nullptr, smooth(j) ? &tangent[size_t(j)] : nullptr, h);
         for (int k = 1; k < pieces; ++k)
         {
             const double t = double(k) / double(pieces), m = 1 - t;
-            push(a * (m * m * m) + h1 * (3 * m * m * t) + h2 * (3 * m * t * t) + b * (t * t * t), i, t);
+            push(h[0] * (m * m * m) + h[1] * (3 * m * m * t) + h[2] * (3 * m * t * t) + h[3] * (t * t * t), i, t);
         }
     }
     if (!closed) place(n - 1);
