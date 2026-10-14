@@ -61,10 +61,22 @@ foreach ($need in 'include\eigen3\Eigen', 'tools\python3\python.exe', 'bin\Qt5Co
 
 # --- Configure and build -------------------------------------------------------
 # A build tree that builds FielDes.exe straight into a folder (FIELDES_OUTPUT_DIR) keeps an older copy of the exe and the DLLs in app\Release, and the portable
-# folder is a mirror of that: it would put the old files over the new ones.  Package from a build tree of its own (-BuildDir).
+# folder is a mirror of that: mirrored, it would put the old files over the new ones.  When that folder IS the portable folder (the one build tree of a developer, which
+# builds into dist\FielDes), the exe and the kernel's DLLs are already there, new: the first step of the package then copies only what is newer or missing, and mirrors
+# nothing.  A build tree that builds into some other folder cannot be packaged: its files are not the ones in the folder.
 $cache = Join-Path $BuildDir 'CMakeCache.txt'
-if ($Package -and (Test-Path $cache) -and (Select-String -Path $cache -Pattern '^FIELDES_OUTPUT_DIR:PATH=.+' -Quiet)) {
-    throw "$BuildDir builds into FIELDES_OUTPUT_DIR; give -Package a build tree without it (e.g. -BuildDir C:\dev\fieldes-build-release)."
+$intoPackage = $false
+if ($Package -and (Test-Path $cache)) {
+    $line = Select-String -Path $cache -Pattern '^FIELDES_OUTPUT_DIR:PATH=(.+)$' | Select-Object -First 1
+    if ($line) {
+        $dir = $line.Matches[0].Groups[1].Value
+        $same = (Resolve-Path -LiteralPath $dir -ErrorAction SilentlyContinue) -and (Resolve-Path -LiteralPath $PackageDir -ErrorAction SilentlyContinue) -and
+                ((Resolve-Path -LiteralPath $dir).Path.TrimEnd('\') -ieq (Resolve-Path -LiteralPath $PackageDir).Path.TrimEnd('\'))
+        if (-not $same) {
+            throw "$BuildDir builds into $dir, which is not the portable folder ($PackageDir); package from a build tree that builds into it, or without FIELDES_OUTPUT_DIR."
+        }
+        $intoPackage = $true
+    }
 }
 Run $cmake @('-S', $Source, '-B', $BuildDir, '-G', 'Visual Studio 17 2022', '-A', 'x64',
     "-DCMAKE_TOOLCHAIN_FILE=$Vcpkg\scripts\buildsystems\vcpkg.cmake",
@@ -87,7 +99,14 @@ if ($Package) {
     }
     # 1. FielDes.exe, the kernel's DLLs, Qt / Python / PNG runtime DLLs, Qt plugins
     #    (/MIR would remove the pieces below, so this one goes first)
-    Mirror $out $PackageDir @('/XF', '*.lib', '*.exp', '*.pdb', '/XD', 'vcpkg', 'python', 'runtime', 'examples')
+    if ($intoPackage) {
+        # (the build wrote the exe and the DLLs here already: only what is missing or newer comes over, and nothing is deleted)
+        robocopy $out $PackageDir /E /XO /NFL /NDL /NJH /NJS /NP /XF *.lib *.exp *.pdb /XD vcpkg python runtime examples | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "robocopy $out -> $PackageDir failed ($LASTEXITCODE)" }
+        $global:LASTEXITCODE = 0
+    } else {
+        Mirror $out $PackageDir @('/XF', '*.lib', '*.exp', '*.pdb', '/XD', 'vcpkg', 'python', 'runtime', 'examples')
+    }
     # 2. The Python runtime
     Mirror (Join-Path $Installed 'tools\python3') (Join-Path $PackageDir 'runtime\python3') `
         @('/XD', '__pycache__', 'test', 'idlelib', 'turtledemo', '/XF', '_freeze_module.exe')

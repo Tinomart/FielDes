@@ -491,6 +491,8 @@ images already is not given more. The images of a path extrude are drawn the way
 
 Because the symmetry is a model, it is easy to keep track of: it has a row in the tree, it can be hidden, locked or deleted, there can be **several** (select the one to use), and the script says which images belong to which.
 
+**What is in use, exactly.** *In use* is a state of the session, not of the file: a symmetry stays in use when you click away from it (its card and planes stay on the screen), until you stop it (the card's ✕, `Shift+S`) or select another; when a file is opened nothing is in use, the images in it still follow their models, and a symmetry has to be selected again to make more. **A hidden symmetry (its eye off) is not in use**, and neither is one that was deleted: what you make then has no images. **A line that you type in the script yourself is not given images**: they are written when a model is made from the viewport or the menus. Undoing the making of a model removes the model and its images in one step.
+
 **The card** (top right) changes the symmetry that is selected: **Planes** -- *Axis* (planes through one line), *Axis + across* (and the plane across it), *Cube*, or *Turns* (copies turned about the axis, no planes); **Count** -- how many planes round the
 axis (1 to 8), or, for *Turns*, **Copies** (1 to 8, or a number up to 24); **Axis** -- along
 x, y or z, the work plane's normal, up in the view (the first plane then splits the picture into left and right), or across the selected 2D shape; **Turn** -- how far the first plane is turned about the axis (not for *Turns*: copies turned about

@@ -9,6 +9,16 @@ analysis result and every design parameter is a *field* — a value at every poi
 **anything can drive anything**: a stress field sets the density of a lattice, a regression over test data
 sets a wall thickness, a temperature field thickens a fin, a point you drag moves a whole swelling of a plate.
 
+<p align="center">
+  <img src="docs/images/topology.png" width="440" alt="Topology optimisation: the stiffest bracket that uses half the material, coloured by density, with the script and the model tree beside it">
+  <img src="docs/images/flow_optimization.png" width="440" alt="Flow optimisation: a post in a stream reshaped for the least drag, the speed on the water and streamlines over it">
+  <br>
+  <img src="docs/images/conformal.png" width="440" alt="A conformal strut lattice filling the wall of a whole bracket, its cells following the faces, fillets and bores">
+  <img src="docs/images/lattice_gallery.png" height="330" alt="Twelve lattices seen from above: gyroids, strut lattices, a honeycomb, foams">
+  <br>
+  <sub>A bracket made stiffest in half the material &middot; water round a post, reshaped for the least drag &middot; a lattice that fills the walls of a whole part &middot; twelve lattices. Every one is a few lines of script.</sub>
+</p>
+
 Wherever a number goes in FielDes, **a field goes**: `offset(part, 1.0)` grows a part by a millimetre everywhere;
 `offset(part, ramp(distance_to_point(anchor), (0, 60), (4.0, 0.3)))` grows it by 4 mm near the anchor and 0.3 mm far from
 it. The two are written alike, and the field is evaluated exactly where it is needed — never sampled onto a grid.

@@ -55,6 +55,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Package
 
 builds and then mirrors everything into `dist\FielDes`:
 
+(A build tree that was configured with `-DFIELDES_OUTPUT_DIR=<...>\dist\FielDes` -- the tree a developer works in: the exe is linked straight into the folder -- is packaged as it is: the exe and the
+kernel's DLLs are there already, new, so the first step copies only what is newer or missing instead of mirroring `app\Release` over them, and nothing is deleted. A tree that builds into any other
+folder is refused, with the reason.)
+
 ```
 FielDes.exe, fieldes.dll, fieldes-stdlib.dll, manifold.dll, Qt5*.dll, plugins\, …
 runtime\python3\        the private Python runtime

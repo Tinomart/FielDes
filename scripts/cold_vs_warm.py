@@ -70,6 +70,7 @@ def comparable(lines):
         line = re.sub(r'ok in [\d.]+ s', 'ok in X s', line)
         line = re.sub(r'([,(] ?)\d+(\.\d+)? ?s\b', r'\1X s', line)
         line = re.sub(r'\b(took|in|after) \d+(\.\d+)? ?s\b', r'\1 X s', line)
+        line = re.sub(r'tessellat(?:ed in|ion kept) \d+(\.\d+)? ?s', 'tessellation X s', line)          # (what the program says about its own cache: made, or kept)
         out.append(line)
     return out
 
