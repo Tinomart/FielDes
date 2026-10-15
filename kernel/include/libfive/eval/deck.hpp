@@ -34,7 +34,9 @@ namespace libfive {
 class Deck
 {
 public:
-    Deck(const Tree& root);
+    /*  `registry`: the callees of the tree this one is a part of (a Deck that is made from a callee is made with the registry of the Deck
+     *  that holds that callee); none for a Deck that is made from a tree of its own, which then owns the registry its callees are in */
+    Deck(const Tree& root, CalleeRegistry* registry = nullptr);
 
     Deck(const Deck&)=delete;
     Deck& operator=(const Deck& other)=delete;
@@ -60,13 +62,17 @@ public:
      *  call site, and has a number of its own: site(clause id).  Evaluators
      *  use it to find the callee (calleeAt) and the tape that this site runs
      *  its callee on under a given tape (Tape::callTape). */
-    std::vector<std::unique_ptr<Callee>> callees;
+    std::vector<Callee*> callees;           // (not owned: the registry owns them)
     std::vector<uint32_t> site_callee;
     std::unordered_map<Clause::Id, uint32_t> site_of;
 
     uint32_t site(Clause::Id call) const { return site_of.at(call); }
     Callee& calleeAt(uint32_t site) const { return *callees[site_callee[site]]; }
     size_t sites() const { return site_callee.size(); }
+
+    /*  The registry of the callees of this Deck and of the Decks of its callees; owned by the Deck that was made from a tree of its own */
+    std::unique_ptr<CalleeRegistry> own_registry;
+    CalleeRegistry* registry = nullptr;
 
     /*  Stores the total number of clauses (including X/Y/Z, oracles,
      *  variables, and constants, which aren't explicitly in the tape).

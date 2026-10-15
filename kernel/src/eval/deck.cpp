@@ -16,7 +16,15 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 namespace libfive {
 
-Deck::Deck(const Tree& root_) {
+Deck::Deck(const Tree& root_, CalleeRegistry* registry_) {
+    // (a Deck of a tree of its own holds the callees of it; the Deck of a callee is told where they are)
+    if (registry_) {
+        registry = registry_;
+    } else {
+        own_registry = std::make_unique<CalleeRegistry>();
+        registry = own_registry.get();
+    }
+
     const auto root = root_.optimized();
     auto flat = root.walk();
 
@@ -52,7 +60,7 @@ Deck::Deck(const Tree& root_) {
                 if (found == callee_of.end()) {
                     found = callee_of.emplace(call.f.id(),
                                               static_cast<uint32_t>(callees.size())).first;
-                    callees.push_back(std::make_unique<Callee>(call.f));
+                    callees.push_back(registry->get(call.f));
                 }
                 site_of.emplace(id, static_cast<uint32_t>(site_callee.size()));
                 site_callee.push_back(found->second);

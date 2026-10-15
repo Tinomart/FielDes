@@ -8,14 +8,13 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/eval/callee.hpp"
 #include "libfive/eval/deck.hpp"
 #include "libfive/eval/eval_array.hpp"
-#include "libfive/eval/eval_deriv_array.hpp"
 #include "libfive/eval/eval_feature.hpp"
 #include "libfive/eval/eval_interval.hpp"
 
 namespace libfive {
 
-Callee::Callee(const Tree& f)
-    : deck(std::make_shared<Deck>(f))
+Callee::Callee(const Tree& f, CalleeRegistry* registry)
+    : deck(std::make_shared<Deck>(f, registry))
 {
     // Nothing to do here
 }
@@ -27,12 +26,6 @@ ArrayEvaluator& Callee::makeArray(const std::map<Tree::Id, float>& vars)
 {
     m_array = std::make_unique<ArrayEvaluator>(deck, vars);
     return *m_array;
-}
-
-DerivArrayEvaluator& Callee::makeDeriv(const std::map<Tree::Id, float>& vars)
-{
-    m_deriv = std::make_unique<DerivArrayEvaluator>(deck, vars);
-    return *m_deriv;
 }
 
 FeatureEvaluator& Callee::makeFeature(const std::map<Tree::Id, float>& vars)
@@ -50,9 +43,22 @@ IntervalEvaluator& Callee::makeInterval(const std::map<Tree::Id, float>& vars)
 void Callee::setVar(Tree::Id var, float value)
 {
     if (m_array)    m_array->setVar(var, value);
-    if (m_deriv)    m_deriv->setVar(var, value);
     if (m_feature)  m_feature->setVar(var, value);
     if (m_interval) m_interval->setVar(var, value);
+}
+
+Callee* CalleeRegistry::get(const Tree& f)
+{
+    const auto found = callees.find(f.id());
+    if (found != callees.end())
+    {
+        return found->second.get();
+    }
+    // (made before it is entered in the map: making it compiles its deck, which asks for the callees of that, and so enters them)
+    auto made = std::make_unique<Callee>(f, this);
+    Callee* out = made.get();
+    callees.emplace(f.id(), std::move(made));
+    return out;
 }
 
 }   // namespace libfive

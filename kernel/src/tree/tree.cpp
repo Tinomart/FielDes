@@ -832,6 +832,12 @@ static double optimizing_visits(const Tree& root, double* unique)
         } else if (auto d = std::get_if<TreeBinaryOp>(*itr)) {
             paths[d->lhs.get()] += here;
             paths[d->rhs.get()] += here;
+        } else if (auto d = std::get_if<TreeCall>(*itr)) {
+            // (the three arguments of a call are reached the same way: a field asked at a hundred places whose places share their expressions is
+            // a graph with as many ways through it as a hundred copies of it -- not counting them took the optimizer 1.9 s over 2432 nodes)
+            paths[d->x.get()] += here;
+            paths[d->y.get()] += here;
+            paths[d->z.get()] += here;
         }
         if (total > 1e12) break;
     }

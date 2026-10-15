@@ -8,6 +8,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #include "libfive/eval/eval_deriv_array.hpp"
+#include "libfive/eval/eval_feature.hpp"
 #include "libfive/eval/deck.hpp"
 #include "libfive/eval/tape.hpp"
 
@@ -74,7 +75,7 @@ DerivArrayEvaluator::getAmbiguousDerivs(size_t i, const Tape& tape)
             callDeriv(itr->id, itr->a, itr->b, itr->c, i);
             const Tape::Handle& shortened = tape.callTape(site);
             ambig.head(i) = ambig.head(i) ||
-                deck->calleeAt(site).deriv()->getAmbiguousDerivs(
+                deck->calleeAt(site).feature()->getAmbiguousDerivs(
                     i, shortened ? *shortened : *deck->calleeAt(site).deck->tape);
         }
         else if (itr->op == Opcode::OP_MIN || itr->op == Opcode::OP_MAX)
@@ -133,10 +134,11 @@ void DerivArrayEvaluator::callDeriv(Clause::Id id, Clause::Id a_, Clause::Id b_,
 {
     const auto site = deck->site(id);
     Callee& callee = deck->calleeAt(site);
-    DerivArrayEvaluator* e = callee.deriv();
+    // (the callee's feature evaluator is a derivative evaluator too: one heavy evaluator of the callee's tape serves both, not two)
+    DerivArrayEvaluator* e = callee.feature();
     if (!e)
     {
-        e = &callee.makeDeriv(varValues());
+        e = &callee.makeFeature(varValues());
     }
     for (size_t i = 0; i < n; ++i)
     {
