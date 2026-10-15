@@ -9,6 +9,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -394,6 +395,10 @@ public:
     // The box of the vertices: nothing outside it is inside the mesh
     Eigen::AlignedBox3d bounds;
 
+    // Per triangle: has the winding number agreed that the inside of its face is the inside of the solid?  0: not asked yet, 1: yes, 2: no.
+    // Asked once, the first time a point is found inside by that face (see faceAgrees), not for every such point
+    mutable std::unique_ptr<std::atomic<uint8_t>[]> faceChecked;
+
     struct Node
     {
         Eigen::AlignedBox3d box;
@@ -538,6 +543,29 @@ public:
         return w / (4 * PI);
     }
 
+    // Does the winding number agree, at a point just inside the middle of triangle `tri`, that the inside of its face is the inside of the
+    // solid?  The winding number is a sum over a tree of the whole mesh, and it was asked for every point that was found inside (millions
+    // of them, for a part drawn at a resolution of 2).  It is asked once for each face that is the closest feature of such a point.  A face
+    // that faces the wrong way -- a thin wedge folded back, a fin of two layers that cancel -- says no, and the points it claims are
+    // checked one by one, as they were.
+    bool faceAgrees(uint32_t tri) const
+    {
+        if (!faceChecked)
+        {
+            return false;
+        }
+        uint8_t s = faceChecked[tri].load(std::memory_order_relaxed);
+        if (s == 0)
+        {
+            const Tri& tr = t[tri];
+            const V3 c = (v[tr[0]] + v[tr[1]] + v[tr[2]]) / 3.0;
+            s = (faceNormal[tri].squaredNorm() > 0.25 &&
+                 winding(c - faceNormal[tri] * (1e-4 * scaleRef)) > 0.5) ? 1 : 2;
+            faceChecked[tri].store(s, std::memory_order_relaxed);
+        }
+        return s == 1;
+    }
+
     bool weakFeature(const Hit& h) const
     {
         if (h.feature == 0)
@@ -595,7 +623,16 @@ public:
         // decides: the mesh from a dual-contouring mesher has slivers folded back over their
         // neighbours along sharp edges, and there the sign of the pseudo-normal is noise.
         auto plainSign = [&]() {
-            double sign = weakFeature(h) ? (winding(p) > 0.5 ? -1.0 : 1.0)
+            // (the winding number at p, worked out at most once)
+            double wp = std::numeric_limits<double>::quiet_NaN();
+            auto windingHere = [&]() {
+                if (std::isnan(wp))
+                {
+                    wp = winding(p);
+                }
+                return wp;
+            };
+            double sign = weakFeature(h) ? (windingHere() > 0.5 ? -1.0 : 1.0)
                                          : ((p - h.cp).dot(pseudoNormal(h)) < 0 ? -1.0 : 1.0);
             if (sign > 0 && overlapping)
             {
@@ -611,7 +648,7 @@ public:
                 }
                 if (check)
                 {
-                    sign = winding(p) > 0.5 ? -1.0 : 1.0;
+                    sign = windingHere() > 0.5 ? -1.0 : 1.0;
                 }
             }
             // The pseudo-normal of the closest feature is the side of ONE patch of the surface.  Where that patch faces the wrong
@@ -626,7 +663,11 @@ public:
                 {
                     return 1.0;
                 }
-                if (dist > 1e-9 * scaleRef && winding(p) < 0.25)
+                // A point whose nearest feature is the inside of a face that the winding number has agreed with is inside: the straight
+                // way from it to the face crosses no surface, and just inside the face is the solid.  Only a face that faces the wrong
+                // way, or a point nearest to an edge or a corner, is checked against the whole mesh
+                const bool faceAgreed = h.feature == 0 && faceAgrees(h.tri);
+                if (!faceAgreed && dist > 1e-9 * scaleRef && windingHere() < 0.25)
                 {
                     return 1.0;
                 }
@@ -1386,6 +1427,7 @@ std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris
     }
 
     // Where signs need the winding number (see MeshData::signedDistance)
+    data->faceChecked.reset(new std::atomic<uint8_t>[n]());
     data->hasOpen = !info.watertight;
     data->openEdge.assign(3 * n, 0);
     data->openVertex.assign(v.size(), 0);
