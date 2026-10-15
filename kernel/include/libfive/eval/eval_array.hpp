@@ -90,6 +90,17 @@ protected:
     void operator()(Opcode::Opcode op, Clause::Id id,
                     Clause::Id a, Clause::Id b, Clause::Id c = 0);
 
+    /*  The same for exactly L slots (a multiple of the SIMD size): the compiler knows the sizes of the blocks then, and sets up none
+     *  of the loops of a size it does not know, which cost about as much as the clause itself at the 8 to 32 points of most passes.
+     *  L = Eigen::Dynamic is operator() (count_simd slots) */
+    template <int L>
+    void exec(Opcode::Opcode op, Clause::Id id,
+              Clause::Id a, Clause::Id b, Clause::Id c);
+
+    /*  Walks a tape with exec<L>  */
+    template <int L>
+    void walk(const Tape& tape);
+
     /*  A call clause: the callee's value at the points (a, b, c) of every slot
      *  in use.  The callee's evaluator is the callee's own, so the points are
      *  set in it one by one.  */

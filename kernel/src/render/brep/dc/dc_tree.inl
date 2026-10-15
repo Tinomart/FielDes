@@ -178,9 +178,28 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
     auto vs = eval->values(count, *tape);
 
     // We store ambiguity here, but clear it if the point is inside
-    // or outside (so after the loop below, ambig(i) is only set if
-    // pos[i] is both == 0 and ambiguous).
-    auto ambig = eval->getAmbiguous(count, *tape);
+    // or outside (so after the loop below, ambig[i] is only set if
+    // pos[i] is both == 0 and ambiguous).  The loop below only reads the
+    // ambiguity of a corner whose value is exactly 0, so the check (a costly
+    // one: every field that is called is run again, once for each call) is
+    // only made when there is such a corner.
+    std::array<bool, 1 << N> ambig;
+    ambig.fill(false);
+    {
+        bool anyZero = false;
+        for (uint8_t i = 0; i < count; ++i)
+        {
+            anyZero |= (vs(i) == 0);
+        }
+        if (anyZero)
+        {
+            auto a = eval->getAmbiguous(count, *tape);
+            for (uint8_t i = 0; i < count; ++i)
+            {
+                ambig[i] = a(i);
+            }
+        }
+    }
 
     // This is a count of how many points there are that == 0
     // but are unambiguous; unambig_remap[z] returns the index
@@ -195,14 +214,14 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
         if (vs(i) > 0 || std::isnan(vs(i)))
         {
             corners[corner_indices[i]] = Interval::EMPTY;
-            ambig(i) = false;
+            ambig[i] = false;
         }
         else if (vs(i) < 0)
         {
             corners[corner_indices[i]] = Interval::FILLED;
-            ambig(i) = false;
+            ambig[i] = false;
         }
-        else if (!ambig(i))
+        else if (!ambig[i])
         {
             unambig_remap[unambiguous_zeros] = i;
             unambiguous_zeros++;
@@ -231,7 +250,7 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
     // Phase 3: One last pass for handling ambiguous corners
     for (uint8_t i=0; i < count; ++i)
     {
-        if (ambig(i))
+        if (ambig[i])
         {
             corners[corner_indices[i]] =
                 eval->isInside(pos.col(i), tape)

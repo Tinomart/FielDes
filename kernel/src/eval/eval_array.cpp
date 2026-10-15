@@ -128,8 +128,20 @@ ArrayEvaluator::values(size_t count, const Tape& tape)
 
     tape_ = &tape;
     deck->bindOracles(tape);
-    for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
+    switch (count_simd)
+    {
+        case 8:   walk<8>(tape);   break;
+        case 16:  walk<16>(tape);  break;
+        case 24:  walk<24>(tape);  break;
+        case 32:  walk<32>(tape);  break;
+        case 40:  walk<40>(tape);  break;
+        case 48:  walk<48>(tape);  break;
+        case 56:  walk<56>(tape);  break;
+        case 64:  walk<64>(tape);  break;
+        case 96:  walk<96>(tape);  break;
+        case 128: walk<128>(tape); break;
+        case 192: walk<192>(tape); break;
+        default:  walk<Eigen::Dynamic>(tape); break;
     }
     deck->unbindOracles();
 
@@ -299,12 +311,39 @@ ArrayEvaluator::getAmbiguous(size_t i, const Tape& tape)
 
 ////////////////////////////////////////////////////////////////////////////////
 
+namespace {
+// A row of the values, as many slots of it as the pass has: L of them known to the compiler, or count of them (L = Dynamic)
+template <int L> struct Seg
+{
+    template <class M> static auto at(M& v, Eigen::Index row, size_t) { return v.template block<1, L>(row, 0); }
+};
+template <> struct Seg<Eigen::Dynamic>
+{
+    template <class M> static auto at(M& v, Eigen::Index row, size_t n) { return v.template block<1, Eigen::Dynamic>(row, 0, 1, n); }
+};
+}   // namespace
+
 void ArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
                                 Clause::Id a_, Clause::Id b_, Clause::Id c_)
 {
-#define out v.block<1, Eigen::Dynamic>(id, 0, 1, count_simd)
-#define a v.row(a_).head(count_simd)
-#define b v.row(b_).head(count_simd)
+    exec<Eigen::Dynamic>(op, id, a_, b_, c_);
+}
+
+template <int L>
+void ArrayEvaluator::walk(const Tape& tape)
+{
+    for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
+        exec<L>(itr->op, itr->id, itr->a, itr->b, itr->c);
+    }
+}
+
+template <int L>
+void ArrayEvaluator::exec(Opcode::Opcode op, Clause::Id id,
+                          Clause::Id a_, Clause::Id b_, Clause::Id c_)
+{
+#define out Seg<L>::at(v, id, count_simd)
+#define a Seg<L>::at(v, a_, count_simd)
+#define b Seg<L>::at(v, b_, count_simd)
     switch (op)
     {
         case Opcode::OP_ADD:
@@ -452,6 +491,20 @@ void ArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
 #undef a
 #undef b
 }
+
+template void ArrayEvaluator::walk<8>(const Tape&);
+template void ArrayEvaluator::walk<16>(const Tape&);
+template void ArrayEvaluator::walk<24>(const Tape&);
+template void ArrayEvaluator::walk<32>(const Tape&);
+template void ArrayEvaluator::walk<40>(const Tape&);
+template void ArrayEvaluator::walk<48>(const Tape&);
+template void ArrayEvaluator::walk<56>(const Tape&);
+template void ArrayEvaluator::walk<64>(const Tape&);
+template void ArrayEvaluator::walk<96>(const Tape&);
+template void ArrayEvaluator::walk<128>(const Tape&);
+template void ArrayEvaluator::walk<192>(const Tape&);
+template void ArrayEvaluator::walk<Eigen::Dynamic>(const Tape&);
+template void ArrayEvaluator::exec<Eigen::Dynamic>(Opcode::Opcode, Clause::Id, Clause::Id, Clause::Id, Clause::Id);
 
 }   // namespace libfive
 

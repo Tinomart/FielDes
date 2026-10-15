@@ -67,6 +67,14 @@ public:
     void operator()(Opcode::Opcode op, Clause::Id id,
                     Clause::Id a, Clause::Id b, Clause::Id c = 0);
 
+    /*  The same for exactly L points, and the walk of a tape with it (see ArrayEvaluator::exec: the compiler knows the sizes of the
+     *  blocks, and sets up no loops of a size it does not know).  L = Eigen::Dynamic is operator() */
+    template <int L>
+    void execDeriv(Opcode::Opcode op, Clause::Id id,
+                   Clause::Id a, Clause::Id b, Clause::Id c);
+    template <int L>
+    void walkDeriv(const Tape& tape);
+
     /*
      *  Returns a list of ambiguous items from indices 0 to i that
      *  have derivatives that vary.  This is similar to getAmbiguous

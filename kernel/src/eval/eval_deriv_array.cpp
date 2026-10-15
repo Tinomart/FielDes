@@ -119,8 +119,17 @@ DerivArrayEvaluator::derivs(size_t count, const Tape& tape)
     // Perform derivative evaluation, copying results into the out array
     tape_ = &tape;
     deck->bindOracles(tape);
-    for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
+    switch (count_simd)
+    {
+        case 8:   walkDeriv<8>(tape);   break;
+        case 16:  walkDeriv<16>(tape);  break;
+        case 24:  walkDeriv<24>(tape);  break;
+        case 32:  walkDeriv<32>(tape);  break;
+        case 40:  walkDeriv<40>(tape);  break;
+        case 48:  walkDeriv<48>(tape);  break;
+        case 56:  walkDeriv<56>(tape);  break;
+        case 64:  walkDeriv<64>(tape);  break;
+        default:  walkDeriv<Eigen::Dynamic>(tape); break;
     }
     deck->unbindOracles();
 
@@ -171,17 +180,49 @@ void DerivArrayEvaluator::callDeriv(Clause::Id id, Clause::Id a_, Clause::Id b_,
     d(id).leftCols(n) = r.topRows(3);
 }
 
+namespace {
+// The values of a clause (a row) and its derivatives (3 rows), as many points of them as the pass has: L of them known to the compiler,
+// or n of them (L = Dynamic)
+template <int L> struct DSeg
+{
+    template <class M> static auto row(M& v, Eigen::Index r, size_t) { return v.row(r).template head<L>(); }
+    template <class M> static auto cols(M& d, size_t) { return d.template leftCols<L>(); }
+    static auto zero(size_t) { return Eigen::Array<float, 1, L>::Zero().eval(); }
+};
+template <> struct DSeg<Eigen::Dynamic>
+{
+    template <class M> static auto row(M& v, Eigen::Index r, size_t n) { return v.row(r).head(n); }
+    template <class M> static auto cols(M& d, size_t n) { return d.leftCols(n); }
+    static auto zero(size_t n) { return Eigen::Array<float, 1, Eigen::Dynamic>::Zero(1, n).eval(); }
+};
+}   // namespace
+
 void DerivArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
                                      Clause::Id a_, Clause::Id b_, Clause::Id c_)
 {
-#define ov v.row(id).head(count_simd)
-#define od d(id).leftCols(count_simd)
+    execDeriv<Eigen::Dynamic>(op, id, a_, b_, c_);
+}
 
-#define av v.row(a_).head(count_simd)
-#define ad d(a_).leftCols(count_simd)
+template <int L>
+void DerivArrayEvaluator::walkDeriv(const Tape& tape)
+{
+    for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
+        execDeriv<L>(itr->op, itr->id, itr->a, itr->b, itr->c);
+    }
+}
 
-#define bv v.row(b_).head(count_simd)
-#define bd d(b_).leftCols(count_simd)
+template <int L>
+void DerivArrayEvaluator::execDeriv(Opcode::Opcode op, Clause::Id id,
+                                    Clause::Id a_, Clause::Id b_, Clause::Id c_)
+{
+#define ov DSeg<L>::row(v, id, count_simd)
+#define od DSeg<L>::cols(d(id), count_simd)
+
+#define av DSeg<L>::row(v, a_, count_simd)
+#define ad DSeg<L>::cols(d(a_), count_simd)
+
+#define bv DSeg<L>::row(v, b_, count_simd)
+#define bd DSeg<L>::cols(d(b_), count_simd)
 
     switch (op) {
         case Opcode::OP_ADD:
@@ -324,5 +365,16 @@ void DerivArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
 #undef bd
 
 }
+
+template void DerivArrayEvaluator::walkDeriv<8>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<16>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<24>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<32>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<40>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<48>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<56>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<64>(const Tape&);
+template void DerivArrayEvaluator::walkDeriv<Eigen::Dynamic>(const Tape&);
+template void DerivArrayEvaluator::execDeriv<Eigen::Dynamic>(Opcode::Opcode, Clause::Id, Clause::Id, Clause::Id, Clause::Id);
 
 }   // namespace libfive
