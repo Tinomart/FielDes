@@ -140,9 +140,9 @@ Tree placeTree(const Tree& t, const SolidInstance& inst, bool distance)
         if (c[r] != 0) q[r] = first ? Tree(float(c[r])) : q[r] + float(c[r]);
     }
     const double s = std::cbrt(std::abs(L.determinant()));
-    // remap() is lazy; flatten so the result prints as a plain tree (the
-    // import cache stores it that way) and B-spline leaves get moved
-    Tree out = t.remap(q[0], q[1], q[2]).flatten();
+    // The part is called at the placed point: the solid is not copied for each place it stands in (a part that stands in a hundred places
+    // is one field and a hundred calls), and its B-spline leaves are evaluated where they are, not moved
+    Tree out = t.call(q[0], q[1], q[2]);
     return (s == 1.0 || !distance) ? out : out * float(s);
 }
 

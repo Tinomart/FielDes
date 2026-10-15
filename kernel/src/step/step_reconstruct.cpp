@@ -2698,10 +2698,11 @@ std::vector<StepPart> importStepTreePartsReconstructed(
         if (copyOf[si] != size_t(-1)) {
             const Vec3 d = copyMove[si];
             const Tree x = Tree::X(), y = Tree::Y(), z = Tree::Z();
-            Tree t = built[copyOf[si]].tree.remap(x - float(d.x()), y - float(d.y()), z - float(d.z())).flatten();
+            // (a moved copy calls its original at the moved point: the solid is one field however many copies there are)
+            Tree t = built[copyOf[si]].tree.call(x - float(d.x()), y - float(d.y()), z - float(d.z()));
             Tree marker = markerOf(solids[copyOf[si]]);
             if (marker.is_valid()) {
-                marker = marker.remap(x - float(d.x()), y - float(d.y()), z - float(d.z())).flatten();
+                marker = marker.call(x - float(d.x()), y - float(d.y()), z - float(d.z()));
             }
             if (dbgDup) fprintf(stderr, "[duplicate] solid %zu = solid %zu moved by (%g, %g, %g)\n",
                                 si, copyOf[si], d.x(), d.y(), d.z());
