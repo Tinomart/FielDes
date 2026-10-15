@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Manufacturing: constraints, the check and the shell](#manufacturing-constraints-the-check-and-the-shell) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -3613,66 +3613,16 @@ apply         True writes the best numbers into the var()s of the text when the 
 Returns a ParametricResult: the analysis of the best design, `.values`, `.objective`, `.feasible`, `.history`.  When no design keeps the
 constraints it says so and is the one that breaks them least.
 
-## Manufacturing: constraints, the check and the shell
+## Manufacturing: the constraints
 
-Manufacturing: constraints a part has to keep to be made, a check of them, and a shell that changes the part until it keeps them.
+Manufacturing, the rules: what a part has to keep to be made, as constraints and the presets of a process (fff_constraint, cnc_constraint, molding_constraint).
 
-    from fieldes import *
-
-    printer = fff_constraint(nozzle=0.4)                         # what a printer with a 0.4 mm nozzle can make
-    report = manufacturing_analysis(part, constraints=[printer])   # where the part breaks them (coloured on the part), and how much
-    better = manufacturing_optimization(part, constraints=[printer])   # the part, changed until it keeps them, and what was changed
-
-A CONSTRAINT is an input, like a support or a load (the Engineering menu > Manufacturing makes them).  `manufacturing_constraint` has
-every rule, each optional -- only what is written is asked -- and `fff_constraint`, `cnc_constraint` and `molding_constraint` are
-presets of it with the numbers of a process:
-
-    overhang=45        the steepest a surface that faces down may be, in degrees from the vertical, without a support under it (off unless
-                       asked: supports are normal in printing; it is for what supports cannot reach -- channels, bores, cosmetic faces,
-                       lattices -- or a printer without them: scope it with region=)
-    min_wall=0.8       the thinnest wall (mm)
-    min_gap=0.4        the narrowest gap between walls, a hole or a slot (mm)
-    max_bridge=20      the longest flat span with nothing under it (mm)
-    min_radius=3       the smallest radius of an inside corner (mm): a milling cutter's radius
-    draft=1.0          the least slope of a wall away from the pull direction (degrees: a moulded part has to come out)
-    undercut_along=(0,0,1)   no feature that a tool or a mould half coming along this direction (either way) cannot reach
-    build_direction    the way up of a print (default z); None leaves it to be found, the way that needs the least
-    region=            a shape: the constraint holds only inside it (a part can have a constraint for each of its regions)
-
-The CHECK works on the part's own field and nothing else: the normals of the part by central differences, and what a ball of the
-size of the rule can reach from each point of the surface (a wall is thin where a ball of half its thickness does not fit inside
-it, a gap or an inside corner is too narrow where one does not fit in the air), by shifted copies of the field -- every rule is a
-FIELD on the part, drawn as colours on it, and nothing is meshed.  The numbers of the report (how much of the surface breaks a
-rule, where) are read on a few thousand points of the surface, found by projecting random points onto it: they are measurements,
-never drawn and never used to build anything.
-
-The SHELL changes the field with other means -- each remedy is a field made of shifted copies of the part's own: a gusset that
-makes an overhang stand at the angle asked (the body under it grown at that slope), a teardrop cut for a channel, an offset that
-follows how thin a wall is, a fill of the gap that is too narrow, a rounding of the inside corners (the part closed by a ball), a
-draft, a fill of an undercut.  They are all made from the part as it is -- shifted copies of shifted copies would multiply -- and
-united, what they add and then what they cut; what each changed is measured, and one that would change more than `max_change`
-of the part is not made.  Then the check is made again on what it made, and what it could not fix is said, with where.  A region
-that is excluded (exclude) or kept is never touched.  Give the result to the shell again for a second pass.
+This is the SPECIFICATION and nothing is measured here: the check (manufacturing_check.py) and the optimization (manufacturing.py) both read what is asked from these
+objects, and each does its own measuring.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
-
-### `ManufacturingAnalysis`
-
-The result of manufacturing_analysis(): where the part breaks the rules of its constraints.
-
-    fields        {rule: field}: for each rule, a field that is above 0 on the surface where the rule is broken and by how much (in the
-                  unit of the rule: mm, degrees), and `'all'`, the worst of them as a share of its limit -- what the part is coloured by;
-                  each is also an attribute: `result.min_wall`
-    report        {rule: {...}}: for each rule, `share` of the surface that breaks it, `worst`, the `regions` it is broken in
-                  (`at`, the number of `samples` and the `box` of each) and its `limit`
-    compliant     whether no rule is broken anywhere that was measured
-    samples       how many points of the surface were measured (a measurement: the numbers of `report`)
-    orientation   the way up the part was checked in, found when the constraint left it free
-
-Stated on its own the part is shown coloured by `all` (the card switches rule): blue where a rule is kept, red where it is broken.  It is a
-check of the part's own field, not a substitute for the check of the one who makes it.
 
 ### `ManufacturingConstraint`
 
@@ -3684,30 +3634,6 @@ the presets `fff_constraint`, `cnc_constraint` and `molding_constraint`; it is g
 ### `ManufacturingError`
 
 A manufacturing check or remedy cannot be made as asked
-
-### `ManufacturingResult`
-
-The part the shell made, and what it did.  It is a field like the part is -- wherever a body goes it goes (`offset(result, 1)`, `difference`,
-the part of an analysis, an export).  Stated on its own it is shown coloured by what changed: red where material was added, blue where it was
-cut, the part's colour where it is as it was.
-
-    part          the part as it was
-    changes       what each remedy did: {remedy, rule, added, removed (mm^3), kept, why}
-    added, removed   mm^3 of material added and cut in all (measured on points of space: about, to a few per cent)
-    share         the part's volume changed, as a share
-    before        the check of the part as it was (a ManufacturingAnalysis)
-    after         the check of what the shell made, when it was made (a ManufacturingAnalysis), or None
-    fail_states   what is still broken, where: {rule, where, share, why}
-    orientation   the way up of the print, when the constraint left it free (the part is not turned: oriented() is the part turned to stand that way)
-    change_map    the field the part is coloured by: 1 added, -1 cut, 0 as it was
-
-What it made is the part's field changed, not a mesh: run `manufacturing_analysis` on it (or `.after`) to see what the check says of it -- it is the
-shell's own check, with the rules it was asked.  Not a substitute for the check of the one who makes it.
-
-#### `ManufacturingResult.oriented(self, shape=None)`
-
-The part turned so that the way up it was made for is z: what a print of it is made of (the part in the model stays as it is).  Another shape -- the supports,
-a no-support region -- is turned the same way
 
 ### `cnc_constraint(tool_diameter=6.0, axis=(0, 0, 1), min_wall=0.8, region=None)`
 
@@ -3724,21 +3650,6 @@ wall: published guides give 0.8 to 1.2 mm for 0.4 mm, 1.2 and more for strength)
 prints closed), max_bridge 20 mm (guides give up to about 30 mm for a clean bridge, less with a soft material).  The overhang rule is off:
 a slicer puts supports where it is needed -- give overhang=45 to ask for none (a printer without supports, or a region they cannot reach
 -- scope it with region=).  Guides give 45 degrees as the limit; it depends on the material and the printer: calibrate with a test print.
-
-### `manufacturing_analysis(part, constraints, samples=5000)`
-
-Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
-(manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every
-rule a field on the part, drawn as colours on it, nothing meshed.  The numbers (how much of the surface breaks each rule, and where)
-are measured on `samples` points of the surface.
-
-    part         a body
-    constraints  manufacturing_constraint(...), fff_constraint(...), cnc_constraint(...), molding_constraint(...): one, or a list;
-                 a rule is broken where it is broken for any of them
-    samples      how many points of the surface are measured (default 5000)
-
-Returns a ManufacturingAnalysis: `.compliant`, `.report`, `.fields`.  It is a check of the part's own field and not a substitute for the check
-of the one who makes it.
 
 ### `manufacturing_constraint(overhang=None, min_wall=None, min_gap=None, max_bridge=None, min_radius=None, draft=None, undercut_along=None, build_direction=(0, 0, 1), pull_direction=(0, 0, 1), region=None, overhang_fix='fill', gap_fix='fill', support=None, support_gap=0.3, no_support=None, name='manufacturing_constraint')`
 
@@ -3767,6 +3678,133 @@ A constraint a part has to keep to be made, every rule optional (only what is wr
 The presets `fff_constraint`, `cnc_constraint` and `molding_constraint` write the numbers of a process.  Several constraints can be
 given together: a rule is kept when it is kept by each of them.
 
+### `molding_constraint(min_wall=1.0, draft=1.0, pull_direction=(0, 0, 1), region=None)`
+
+What an injection-moulded part needs: walls not thinner than min_wall (1 to 4 mm by the plastic, uniform), a draft of `draft` degrees
+(1 is the baseline, 2 and more for a texture or a tall wall) on every wall, no undercut along the way the mould opens, and inside corners
+of half the wall's thickness (the usual interior fillet).  Published guides, not a standard: ask your plastic's maker.
+
+## Manufacturing: the check
+
+Manufacturing, the check: where a part breaks the rules of its constraints (manufacturing_analysis).
+
+THE CHECK IS INDEPENDENT OF THE OPTIMIZATION (manufacturing_optimization, in manufacturing.py), so that it can verify it.  This file imports the rules
+(manufacturing_rules.py) and the tools that read a part's field (manufacturing_field.py), and nothing of the optimization: the remedies do not appear here, and what
+makes the remedies find a thin wall or a leaning face is not what finds it here.  The optimization calls `_analyse` (below) to be told what its result still breaks, and
+that is the only way it reaches into this file.  Where a rule is measured here, it is measured by a way of its own:
+
+    wall thickness, gap width   the thinnest straight line through the material (the air, for a gap) from the surface point, in the cone of 20 degrees round the normal
+                                (the optimization measures along the normal alone)
+    overhang, draft             the normals of the surface against the way up, and the pull direction
+    inside corner radius        whether a ball of the radius reaches into the corner (the optimization closes the part with the library's fillet)
+    undercut, bridge            lines along the direction from the surface point, against the part
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `ManufacturingAnalysis`
+
+The result of manufacturing_analysis(): where the part breaks the rules of its constraints.
+
+    fields        {rule: field}: for each rule, a field that is above 0 on the surface where the rule is broken and by how much (in the
+                  unit of the rule: mm, degrees), and `'all'`, the worst of them as a share of its limit -- what the part is coloured by;
+                  each is also an attribute: `result.min_wall`
+    report        {rule: {...}}: for each rule, `share` of the surface that breaks it, `worst`, the `regions` it is broken in
+                  (`at`, the number of `samples` and the `box` of each) and its `limit`
+    compliant     whether no rule is broken anywhere that was measured
+    samples       how many points of the surface were measured (a measurement: the numbers of `report`)
+    orientation   the way up the part was checked in, found when the constraint left it free
+
+Stated on its own the part is shown red where a rule is broken and in its own colour where they are kept (the card switches to one rule).  It is a check of
+the part's own field, not a substitute for the check of the one who makes it.  Nothing of the optimization is used to make it.
+
+### `manufacturing_analysis(part, constraints, samples=5000)`
+
+Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
+(manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every
+rule a field on the part, drawn as colours on it, nothing meshed.  The numbers (how much of the surface breaks each rule, and where)
+are measured on `samples` points of the surface.
+
+    part         a body
+    constraints  manufacturing_constraint(...), fff_constraint(...), cnc_constraint(...), molding_constraint(...): one, or a list;
+                 a rule is broken where it is broken for any of them
+    samples      how many points of the surface are measured (default 5000)
+
+Returns a ManufacturingAnalysis: `.compliant`, `.report`, `.fields`.  It is a check of the part's own field and not a substitute for the check
+of the one who makes it.
+
+## Manufacturing: the shell that changes the part
+
+Manufacturing: constraints a part has to keep to be made, a check of them, and a shell that changes the part until it keeps them.
+
+    from fieldes import *
+
+    printer = fff_constraint(nozzle=0.4)                         # what a printer with a 0.4 mm nozzle can make
+    report = manufacturing_analysis(part, constraints=[printer])   # where the part breaks them (coloured on the part), and how much
+    better = manufacturing_optimization(part, constraints=[printer])   # the part, changed until it keeps them, and what was changed
+
+The code is in four files, and the check does not share with the shell what finds a fault:
+
+    manufacturing_rules.py   the constraints and the presets: what is asked (nothing is measured)
+    manufacturing_field.py   how a part's field is read: moved lookups, normals, values at points (no rule)
+    manufacturing_check.py   manufacturing_analysis: finds where the rules are broken, with a measurement of its own for each rule
+    manufacturing.py         this file: manufacturing_optimization and its remedies, each finding what it fixes with code of its own, and its result
+
+The check never imports this file, and the remedies call nothing of the check but `_analyse`, to be told what their result still breaks -- so that the check
+of a result, made by `manufacturing_analysis`, is a verification of the remedies and not their own reading of themselves.
+
+A CONSTRAINT is an input, like a support or a load (the Engineering menu > Manufacturing makes them).  `manufacturing_constraint` has
+every rule, each optional -- only what is written is asked -- and `fff_constraint`, `cnc_constraint` and `molding_constraint` are
+presets of it with the numbers of a process:
+
+    overhang=45        the steepest a surface that faces down may be, in degrees from the vertical, without a support under it (off unless
+                       asked: supports are normal in printing; it is for what supports cannot reach -- channels, bores, cosmetic faces,
+                       lattices -- or a printer without them: scope it with region=)
+    min_wall=0.8       the thinnest wall (mm)
+    min_gap=0.4        the narrowest gap between walls, a hole or a slot (mm)
+    max_bridge=20      the longest flat span with nothing under it (mm)
+    min_radius=3       the smallest radius of an inside corner (mm): a milling cutter's radius
+    draft=1.0          the least slope of a wall away from the pull direction (degrees: a moulded part has to come out)
+    undercut_along=(0,0,1)   no feature that a tool or a mould half coming along this direction (either way) cannot reach
+    build_direction    the way up of a print (default z); None leaves it to be found, the way that needs the least
+    region=            a shape: the constraint holds only inside it (a part can have a constraint for each of its regions)
+
+The SHELL makes the field of the part changed by remedies, each a field made of shifted copies of the part's own: a gusset that makes an overhang stand
+at the angle asked (the body under it grown at that slope), a teardrop cut for a channel, an offset that follows how thin a wall is, a fill of the gap that is
+too narrow, a rounding of the inside corners (the library's fillet), a draft, a fill of an undercut.  They are all made from the part as it is -- shifted copies
+of shifted copies would multiply -- and united, what they add and then what they cut; what each changed is measured, and one that would change more than
+`max_change` of the part is not made.  Then the check (manufacturing_check.py) is made on what it made, and what it could not fix is said, with where.  A region
+that is excluded (exclude) or kept is never touched.  Give the result to the shell again for a second pass.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `ManufacturingResult`
+
+The part the shell made, and what it did.  It is a field like the part is -- wherever a body goes it goes (`offset(result, 1)`, `difference`,
+the part of an analysis, an export).  Stated on its own it is shown coloured by the geometry change: red where material was added, blue where it was
+removed, the part's colour where it is unchanged.
+
+    part          the part as it was
+    changes       what each remedy did: {remedy, rule, added, removed (mm^3), kept, why}
+    added, removed   mm^3 of material added and cut in all (measured on points of space: about, to a few per cent)
+    share         the part's volume changed, as a share
+    before        the check of the part as it was (a ManufacturingAnalysis)
+    after         the check of what the shell made, when it was made (a ManufacturingAnalysis), or None
+    fail_states   what is still broken, where: {rule, where, share, why}
+    orientation   the way up of the print, when the constraint left it free (the part is not turned: oriented() is the part turned to stand that way)
+    change_map    the field the part is coloured by: 1 added, -1 cut, 0 as it was
+
+What it made is the part's field changed, not a mesh: run `manufacturing_analysis` on it (or `.after`) to see what the check says of it -- it is the
+shell's own check, with the rules it was asked.  Not a substitute for the check of the one who makes it.
+
+#### `ManufacturingResult.oriented(self, shape=None)`
+
+The part turned so that the way up it was made for is z: what a print of it is made of (the part in the model stays as it is).  Another shape -- the supports,
+a no-support region -- is turned the same way
+
 ### `manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=True, samples=2500)`
 
 The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
@@ -3786,14 +3824,372 @@ or in `keep` is never touched.
                  manufacturing_analysis of the result (a big part is slow to check)
     samples      how many points of the surface it checks
 
-Returns a ManufacturingResult: a body that is the part changed, coloured by what changed, with `.changes`, `.added`, `.removed`, `.fail_states`.
+Returns a ManufacturingResult: a body that is the part changed, coloured by the geometry change, with `.changes`, `.added`, `.removed`, `.fail_states`.
 Run `manufacturing_analysis` on the result: the shell's own check is not a substitute for the maker's.
 
-### `molding_constraint(min_wall=1.0, draft=1.0, pull_direction=(0, 0, 1), region=None)`
+## Excluding regions from an analysis
 
-What an injection-moulded part needs: walls not thinner than min_wall (1 to 4 mm by the plastic, uniform), a draft of `draft` degrees
-(1 is the baseline, 2 and more for a texture or a tall wall) on every wall, no undercut along the way the mould opens, and inside corners
-of half the wall's thickness (the usual interior fillet).  Published guides, not a standard: ask your plastic's maker.
+exclude(): a region of a shape that stays exactly as it is
+
+    part = import_model('bracket.step')[0][0]
+    part = exclude(part, sphere(12, (0, 0, 6)))        # inside the sphere the part is locked
+    light = shell(part, 2)                              # ... and nothing done to it afterwards touches that
+
+exclude() cuts the shape into two fields that are always united again:
+
+    the free field    the shape outside the region (the shape with the region cut out of it): what every later
+                      operation reshapes
+    the locked field  the shape inside the region, put there once and never reshaped by anything done to the shape
+                      afterwards.  For a part imported from a STEP file it is the part's own exact surface, meshed
+                      straight from the file (not what the import fitted) and made into a field; for any other
+                      shape it is the shape itself inside the region.
+
+An operation on an excluded shape (offset, shell, smooth, a lattice, a union, a cut, an analysis ...) works on the
+whole shape, and then the locked field is put back: wherever the region is, the shape is the locked one, whatever the
+operation did there.  (smooth() works on the field the shape was made from instead of the united one, whose values are
+cut off at the distance to the region and would make the smoothed surface ripple round it.)  Moving, turning, scaling
+and mirroring carry both fields along together.  Operations that would
+tear the two apart -- copying the shape (arrays, symmetric_*, repeat, mirror_*) or deforming it (twist, bend, taper,
+attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisations (topology_optimization,
+thermal_topology_optimization, flow_topology_optimization) read the exclusions a shape carries as regions to keep: the
+locked field stays solid, as exact as it is, and the optimised shape is excluded the same way.  The tables below say, for every function of the
+library, what it does with an excluded shape; none is left out.
+
+The region is any shape (a field that is negative inside it), as it always was.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `ExcludedError`
+
+An operation that would separate an excluded shape's locked field from the rest of it
+
+### `carry_locks(out, *shapes)`
+
+`out`, made from `shapes` by something that cannot be guarded (an optimised body), is excluded the way they
+are: its locked regions are the optimisation's kept ones, so it is the shape there
+
+### `exclude(shape, *regions, source=None, quality=64, threshold=1.0)`
+
+`shape`, with the places inside `regions` locked: the shape there stays exactly as it is, whatever is done to
+the shape afterwards.  (See the top of this file for what that means; in the model tree's right-click menu it
+is Combining > exclude, with the shape first and the regions after it.)
+
+    part = import_model('bracket.step')[0][0]
+    part = exclude(part, sphere(12, (0, 0, 6)), box((0, 0, 0), (5, 5, 5)))
+    light = shell(part, 2)           # shelled everywhere but inside the sphere and the box
+
+A region is any shape -- a sphere, a box, a part, a part offset by some distance, a union of those: the
+places where its field is negative.  Several regions are one region, their union.
+
+For a part imported from a STEP file the locked part is the part's EXACT surface, meshed straight from the STEP
+file and made into a field (not the import's fit, which is only approximate where B-spline faces were fitted
+by simple surfaces -- the red places -- or where there are threads).  For any other shape the locked part is
+the shape itself, as it is now.  Either way it is a field of its own, united with the rest after every
+operation; an operation that would separate them (copying or deforming the shape) raises an ExcludedError.
+
+Without a region, a STEP part's poorly fitted places are the region (poor_fit_region), in every part that has
+any:
+
+    kitchen = import_model('step/kitchen.stp')
+    kitchen = exclude(kitchen)
+
+What you give it decides how much it works on.  The WHOLE IMPORT (what import_model returns): the region
+goes into every part it touches, and the same list comes back, the parts in the same places.  One entry of the
+import, kitchen[19], or one part, kitchen[19][0]: that part only.
+
+    kitchen[19] = exclude(kitchen[19], region)
+
+For a shape made from an imported part (cut, filled with a lattice ...) say which part its locked geometry
+comes from, and exclude last, to the finished shape:
+
+    final = exclude(light, region, source=part)
+
+The part may have been moved, rotated, scaled or mirrored with the fieldes.stdlib transforms since the
+import (the locked part follows).
+
+quality: points per full turn of a circle in the exact STEP mesh.
+threshold: for the default region, in percent of the face's size.
+
+### `install()`
+
+Puts the guards round the functions of the library (when the library is loaded): the functions the tables above
+name are replaced by versions that look at their arguments, in the package (what `from fieldes import *`
+brings into a script) and in the methods of Shape.  The library's own calls of one another, inside its modules,
+are not guarded: a difference is built from an inverse and an intersection, and only the difference is asked
+about the shape it is given.  A call that is given no excluded shape goes straight to the function.
+
+### `install_methods()`
+
+The methods of Shape that are functions of the library (shape.py binds them as it is loaded: union, offset, the
+transforms ...) guarded.  Done again, it changes nothing.
+
+### `keep_regions(*shapes)`
+
+What an optimisation must keep solid for these shapes: the locked field of every exclusion they carry (the shape
+inside its region, as it is) -- topology_optimization, thermal_topology_optimization and
+flow_topology_optimization add these to their `keep` by themselves, however many operations came between
+exclude() and the optimisation (the locks travel with the shape).
+
+### `locks_of(shape)`
+
+*(no description yet)*
+
+### `moved(prev, shape, args, kwargs)`
+
+The locked fields and regions of `shape`, moved the way `prev` (a space transform) has just moved the shape
+
+## Telling fields from numbers
+
+Numbers and fields in the same place.
+
+Anything the library takes as a number takes a FIELD as well (a Shape: a value at every point of space -- a distance, a ramp
+of one, a stress result, noise ...), as in nTop.  A function that can do arithmetic with what it is given needs nothing;
+the few places that must ask a question of a number (is it positive? is it zero?) use these.  A number stays a number, so
+nothing is slower for a plain value; a field is worked with as the tree it is.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `highest(*values)`
+
+The largest of numbers and fields: a number when all are numbers, else a field
+
+### `is_field(v)`
+
+Whether v is a field (a Shape) and not a plain number
+
+### `lowest(*values)`
+
+The smallest of numbers and fields: a number when all are numbers, else a field
+
+### `nonzero(v)`
+
+v itself when it is a field or a nonzero number, else None -- for a size that "0" turns off
+
+### `number_or_field(v, what='a value')`
+
+v as a float, or kept as the field it is; anything else is a TypeError that says what was expected
+
+### `positive(v)`
+
+A number above zero -- or a field, which is not known to be anything else
+
+### `present(v)`
+
+A value was given and it is not zero (a field is taken to be something)
+
+### `returns_body(fn)`
+
+A function that makes a body out of what it is given, which may be a field: what it returns is not of the kind
+'field' even when it was made from one (a wall round a sheet, a shell)
+
+### `returns_field(fn)`
+
+A function that makes a field (not a body): what it returns is of the kind 'field', which the model tree shows
+with a field's icon, and displayed it has an icon in the viewport that opens the field viewer (a plane coloured by it)
+
+### `returns_lattice(fn)`
+
+A function that makes a LATTICE (a body filled with cells): what it returns is of the kind 'lattice', which the model tree shows with
+a lattice's icon.  Used in another operation it is a body like any other (the kind is not kept by arithmetic on it)
+
+## The shape class
+
+Python library of FielDes, built on the libfive CAD kernel
+Copyright (C) 2021  Matt Keeter
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `Shape`
+
+*(no description yet)*
+
+#### `Shape.Shape(ptr)`
+
+*(no description yet)*
+
+#### `Shape.X()`
+
+*(no description yet)*
+
+#### `Shape.Y()`
+
+*(no description yet)*
+
+#### `Shape.Z()`
+
+*(no description yet)*
+
+#### `Shape.abs(self)`
+
+*(no description yet)*
+
+#### `Shape.acos(self)`
+
+*(no description yet)*
+
+#### `Shape.asin(self)`
+
+*(no description yet)*
+
+#### `Shape.atan(self)`
+
+*(no description yet)*
+
+#### `Shape.call(self, fn, *args, **kwargs)`
+
+Calls the given function with self as the first argument.
+This is convenient to chain transforms without deep call trees.
+
+#### `Shape.cos(self)`
+
+*(no description yet)*
+
+#### `Shape.exp(self)`
+
+*(no description yet)*
+
+#### `Shape.get_mesh(self, xyz_min=(-10, -10, -10), xyz_max=(10, 10, 10), resolution=10, algorithm='dc')`
+
+Converts this Shape into a mesh, and returns that mesh in
+    the form of a face-vertex mesh.
+
+Options are the same as in save_stl(). `algorithm` selects the
+meshing algorithm: 'dc' (dual contouring, default, fastest),
+'simplex', or 'hybrid'. The latter two are slower but more
+robust for STEP-imported oracle shapes, where dual contouring
+has been found to fragment meshes even when the underlying
+field is provably correct at every queried point.
+
+Returns:
+verts - List of (x, y, z) vertices
+tris - List of (a, b, c) indices into verts
+
+#### `Shape.lock(self)`
+
+*(no description yet)*
+
+#### `Shape.log(self)`
+
+*(no description yet)*
+
+#### `Shape.new(op, *args)`
+
+*(no description yet)*
+
+#### `Shape.optimized(self)`
+
+*(no description yet)*
+
+#### `Shape.remap(self, x_, y_, z_)`
+
+Performs the remapping f(x_, y_, z_)
+
+#### `Shape.save_stl(self, filename, xyz_min=(-10, -10, -10), xyz_max=(10, 10, 10), resolution=10, quality=8)`
+
+Converts this Shape into a mesh and saves it as an STL file.
+
+xyz_min/max are three-element lists of corner positions
+resolution is the reciprocal of minimum feature size
+    (larger values = higher resolution = slower)
+quality is the negative order of magnitude of maximum error
+
+#### `Shape.sin(self)`
+
+*(no description yet)*
+
+#### `Shape.sqrt(self)`
+
+*(no description yet)*
+
+#### `Shape.square(self)`
+
+*(no description yet)*
+
+#### `Shape.tan(self)`
+
+*(no description yet)*
+
+#### `Shape.var()`
+
+*(no description yet)*
+
+#### `Shape.with_constant_vars(self)`
+
+*(no description yet)*
+
+#### `Shape.wrap(t)`
+
+Ensures that the input argument is a Shape, converting constants
+
+### `field_shape(ptr)`
+
+A field a solver calculated (a stress, a temperature, a speed, a density ...), made from the tree `ptr`: a FIELD, not a body -- a value at
+every point of space, which is not drawn, is not a part, and has an icon (that opens the field viewer) when it is displayed
+
+### `shape(f)`
+
+Decorator which converts a target function into a Shape
+
+## Progress of a long step
+
+A script run's progress, for FielDes's progress bar (see run_progress.hpp).
+
+The runner (runner.py) says which top-level statement runs; the operations
+inside one count how far they are: FEA solves and optimisations (in C++),
+STEP imports (their own count), top-level loops (the runner counts their
+items), loading a cached import (its tree files), and progress() for your
+own long computations.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `begin(name, shown=None)`
+
+shown: the name the bar shows (default: name)
+
+### `counted(items, name='item')`
+
+Yields items, counting them as the progress of the current step (or
+of the operation it runs in); what runs for one item counts within
+that item's share.  Items with no len(): counted, but how far
+along isn't known.
+
+### `end()`
+
+*(no description yet)*
+
+### `end_to(depth)`
+
+Ends the operations begun deeper than depth (left open by a
+progress() call, or by an error)
+
+### `progress(fraction, text='')`
+
+Says how far a long computation of yours is, 0..1, for the progress
+bar (text: what it is doing).  Call it as often as you like, e.g.
+progress(i / n, 'smoothing') in a loop; it counts within whatever
+runs it (a loop's item, a step of the script).
+
+### `report(fraction, detail='')`
+
+*(no description yet)*
+
+### `span(a, b)`
+
+*(no description yet)*
+
+### `task(name)`
+
+with task('meshing'): ... report(f) ...  -- an operation that counts
+how far it is, 0..1 (report(f)); one begun inside it counts within the share
+span(a, b) gave it
 
 ## Caching
 

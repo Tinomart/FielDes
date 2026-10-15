@@ -60,6 +60,13 @@ The **numbers** of the report -- how much of the surface breaks a rule, how badl
 random points near it, each moved onto it by Newton steps along the gradient. They are worked out a second way -- plain arithmetic on the values of the field at points along the lines
 each rule looks along -- which is a check of the colours: the fields and the numbers are made two ways. The points are never drawn and never used to build anything.
 
+**The check does not share with the shell what finds a fault, so that it can verify it.** The code is in four files: `manufacturing_rules.py` (the constraints and the presets: what is asked;
+nothing is measured), `manufacturing_field.py` (how a part's field is read: moved lookups, normals, values at points; no rule), `manufacturing_check.py` (`manufacturing_analysis`) and
+`manufacturing.py` (`manufacturing_optimization` and its remedies). The check imports nothing of the optimization; the optimization calls one function of the check, `_analyse` (private), to be told what its
+result still breaks. So `manufacturing_analysis` on a result is a verification of the remedies and not their own reading of themselves. Where the report measures a wall or a gap it has a way of its own:
+the shortest of nine lines through the material (the air, for a gap) from the surface point -- the normal and eight leaning 20 degrees away from it -- where the remedies find a thin wall by the line
+along the normal alone; what one of them misses the other may find.
+
 ```text
 Manufacturing analysis: 5000 point(s) of the surface measured (0.5 s)
   rules are broken:
