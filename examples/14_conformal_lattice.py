@@ -13,7 +13,7 @@
 #
 from fieldes import *
 
-view.set_bounds((-35, -25, -20), (35, 25, 20), auto_scale=True)
+view.set_bounds((-45, -35, -30), (45, 35, 30), auto_scale=True)
 view.set_resolution(5)                     # samples per mm: a strut 1.2 mm thick wants three or four
 view.set_quality(8)
 

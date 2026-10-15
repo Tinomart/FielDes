@@ -38,7 +38,7 @@ left = move(rotate_z(bracket, math.radians(180)), (-1.3 * width, 0, 0))
 right = move(rotate_z(bracket, math.radians(180)), (1.3 * width, 0, 0))
 base = box((lo[0] - 1.3 * width - 20, lo[1] - 20, lo[2] - 12), (hi[0] + 1.3 * width + 20, hi[1] + 20, lo[2] - 2))
 
-view.set_bounds((lo[0] - 1.3 * width - 30, lo[1] - 30, lo[2] - 20), (hi[0] + 1.3 * width + 30, hi[1] + 30, hi[2] + 10), auto_scale=True)
+view.set_bounds((lo[0] - 1.3 * width - 30, lo[1] - 30, lo[2] - 20), (hi[0] + 1.3 * width + 30, hi[1] + 60, hi[2] + 10), auto_scale=True)
 view.set_resolution(2)
 view.set_quality(8)
 

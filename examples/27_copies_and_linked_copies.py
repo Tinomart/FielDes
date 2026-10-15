@@ -26,12 +26,12 @@ base
 lug = box((0, 10, 4), (14, 20, 24))
 lug
 lug_2 = box((60, 10, 4), (74, 20, 24))
-lug_2 = handles(lug_2, [var(60.0), var(74.0), var(10.0), var(26.0), var(4.0), var(24.0)])
+lug_2 = handles(lug_2, [var(67.0), var(7.0), var(18.0), var(8.0), var(14.0), var(10.0)])
 lug_2
 
 # One bolt, drawn with its numbers as handles, and three linked copies of it set out along the plate.
 bolt = cylinder(3, 12, (20, 30, 4))
-bolt = handles(bolt, [var(3.0), var(12.0), var(20.0), var(30.0), var(4.0)])
+bolt = handles(bolt, [var(20.0), var(30.0), var(3.0), var(4.0), var(16.0)])
 bolt
 bolt_2 = instance(bolt)  # shadow: bolt
 bolt_2 = gizmo(
