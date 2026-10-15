@@ -227,8 +227,15 @@ twisted
   `.pow`, `.sin`, `.cos`, `.tan`, `.asin`, `.acos`, `.atan`, `.atan2`, `.exp`, `.log`, `.nth_root`, `.nanfill` and `.compare`.
 - **`s.remap(x', y', z')`** gives the shape that, at `(x, y, z)`, has the value `s` has at `(x'(x, y, z), y'(...), z'(...))`.
   Every transform is a remap: `s.remap(x - 28, y, z)` is `s` moved 28 mm along x.
-- **A shape is a function and a tree you can look at**: `cube(10, 0, 0)` is a number (4.0), `print(cube)` the tree, `.optimized()` a
-  simplified copy, `Shape.var()` a free number (the numbers you can drag are `var(...)`).
+- **`s(x', y', z')`**, with shapes as the arguments, is the same shape as `s.remap(x', y', z')`, **evaluated in another way**. A remap is
+  a substitution: a copy of `s` with the new coordinates is made for every use, which is what you want when `s` is used once (every
+  transform). A call keeps `s` where it is, compiled once, and every call asks that one `s` at its point: use it where the same field
+  is asked at **many places** (a smoothing, a pattern of copies, probing a part at points along a line) or where `s` is large -- a hundred
+  remaps of a field of ten thousand nodes are a million nodes to build, optimise and hold, a hundred calls are one field. The values, the
+  derivatives (so dragging), the pruning of the renderer and the picture are the same; measured against the remap, 48 copies of a
+  300-sphere field draw 6 % faster and need a quarter of the memory.
+- **A shape is a function and a tree you can look at**: `cube(10, 0, 0)` with numbers is a number (4.0), `print(cube)` the tree,
+  `.optimized()` a simplified copy, `Shape.var()` a free number (the numbers you can drag are `var(...)`).
 - What comes out is an **ordinary body** (or a field, if you use it as one): `union`, `difference`, `move`, a lattice, an analysis take it
   as they take a box. A shape made from a `max` is not an exact distance, so the operations that expect a distance (`offset`,
   `shell_inside`) give a size that is about right, not exact.

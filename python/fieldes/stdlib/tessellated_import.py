@@ -199,7 +199,9 @@ def _placed(field, linear, offset, factor):
     x, y, z = Shape.X(), Shape.Y(), Shape.Z()
     px, py, pz = x - o[0], y - o[1], z - o[2]
     q = [inv[r][0] * px + inv[r][1] * py + inv[r][2] * pz for r in range(3)]
-    return field.remap(q[0], q[1], q[2]) * math.pow(abs(det), 1.0 / 3.0)
+    # (the part's field asked at the place its occurrence takes it from -- a call: a part that occurs twenty times in the assembly is one field and one mesh
+    # of its triangles, not twenty copies of them)
+    return field(q[0], q[1], q[2]) * math.pow(abs(det), 1.0 / 3.0)
 
 
 def _own_distance(shape):

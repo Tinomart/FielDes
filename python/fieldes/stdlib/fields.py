@@ -1087,16 +1087,17 @@ def smooth(shape, radius, steps=1):
     if n > _SMOOTH_MAX_STEPS:
         r *= math.sqrt(n / float(_SMOOTH_MAX_STEPS))
         n = _SMOOTH_MAX_STEPS
-    from fieldes.stdlib.transforms import move
     field = _dist(shape)
+    x, y, z = X(), Y(), Z()
     terms = []
     for index, ((i, j, k), w) in enumerate(sorted(_stencil(n).items())):
-        # Each copy sits a ten-thousandth of the radius off its whole-radius point, differently for every copy: a field
+        # Each lookup sits a ten-thousandth of the radius off its whole-radius point, differently for every one: a field
         # made of max() and min() (a box) ties with itself along its diagonals, and the mesher's grid of sample points
         # lands on those ties -- the very points it takes the slow way round.  (The weights are symmetric: the surface
         # does not move by more than that, a tenth of a micron for a radius of a millimetre.)
         jitter = [1e-4 * r * (((index + 1) * c) % 1.0 - 0.5) for c in (0.6180339887, 0.7548776662, 0.5698402910)]
-        moved = move(field, (i * r + jitter[0], j * r + jitter[1], k * r + jitter[2]))
+        # (the body's field asked at the point moved by the offset -- a call: it is one field however many points it is asked at)
+        moved = field(x - (i * r + jitter[0]), y - (j * r + jitter[1]), z - (k * r + jitter[2]))
         terms.append(moved * w)
     while len(terms) > 1:           # (a balanced sum: a shallow tree)
         terms = [terms[a] + terms[a + 1] if a + 1 < len(terms) else terms[a] for a in range(0, len(terms), 2)]

@@ -396,7 +396,9 @@ def symmetry_image(shape, symmetry, index=1):
         pre = tuple(_add(cn[i], _add(_add(_mul(mn[0][i], dn[0]), _mul(mn[1][i], dn[1])), _mul(mn[2][i], dn[2]))) for i in range(3))
     else:
         pre = tuple(_add(c[i], _add(_add(_mul(m[0][i], d[0]), _mul(m[1][i], d[1])), _mul(m[2][i], d[2]))) for i in range(3))
-    moved = shape.remap(*pre)
+    # (the shape asked at the place its image takes it from -- a call: the shape is kept once however many images ask it, where a remap was a copy of
+    # it for each image.  Numbers are made shapes: three numbers would be the shape's value at a point, not a shape)
+    moved = Shape.wrap(shape)(*[Shape.wrap(p) for p in pre])
     out = type(shape).__new__(type(shape))
     Shape.__init__(out, lib.libfive_tree_copy(moved.ptr))
     for name in _TAKEN:
