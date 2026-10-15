@@ -867,13 +867,25 @@ template <unsigned N>
 Intersection<N>* DCTree<N>::intersection(unsigned a, unsigned b) const
 {
     assert(MarchingTable<N>::e(a)[b] != -1);
+    if (MarchingTable<N>::e(a)[b] < 0)
+    {
+        return nullptr;
+    }
     return intersection(MarchingTable<N>::e(a)[b]);
 }
 
 template <unsigned N>
 Intersection<N>* DCTree<N>::intersection(unsigned edge) const
 {
-    assert(this->leaf != nullptr);
+    // A neighbour that was taken for all outside or all inside (it has no leaf) has no intersection on this edge to share, though this
+    // cell found a sign change on it: the two cells took the corner differently, as a field that is within the rounding of a float of 0
+    // there can do when the cells are worked on by several threads at once (with one thread the neighbour's corner is read, not found
+    // again).  The cell then finds the intersection itself, as it does where there is no neighbour.  (Found by a mesh part meshed on
+    // eight threads: it died here in eight runs of ten, with the old remap of a part as often as with a call.)
+    if (this->leaf == nullptr)
+    {
+        return nullptr;
+    }
     return this->leaf->intersections[edge];
 }
 
