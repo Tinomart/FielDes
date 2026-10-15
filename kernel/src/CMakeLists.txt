@@ -84,8 +84,6 @@ add_library(libfive SHARED
 
     oracle/oracle_clause.cpp
     oracle/oracle_memo.cpp
-    oracle/transformed_oracle.cpp
-    oracle/transformed_oracle_clause.cpp
 
     step/step_parser.cpp
     step/step_geometry.cpp

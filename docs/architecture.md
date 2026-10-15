@@ -29,7 +29,7 @@ C++-defined shapes). It descends from **libfive**, Matt Keeter's kernel for impl
 | Folder | Holds |
 |---|---|
 | `src/tree`, `include/libfive/tree` | The expression **tree**: immutable, hash-consed expressions of `x, y, z` and constants/variables; serialisation; the structural **content key** used by every cache; `expose` (the kernel call behind `handles()`: turns the numbers that place surfaces into variables) |
-| `src/eval` | Evaluators for trees: point, array (SIMD), interval, derivative, and feature-aware evaluation |
+| `src/eval` | Evaluators for trees: point, array (SIMD), interval, derivative, and feature-aware evaluation; a **call** runs the field it calls on evaluators of that field's own (`Callee`, one per distinct called field, shared by every call site of a deck) |
 | `src/render/brep` | The meshers: dual contouring, simplex and hybrid, with an octree/xtree that splits regions until a cell is 1/resolution. Where an oracle is on the tape (a mesh's distance costs about a microsecond a point) the dual contouring finds the surface along an edge by bisection (10 points) instead of 4 stages of 16 |
 | `src/render/discrete` | Heightmaps and voxels |
 | `src/oracle` | *Oracles*: nodes of a tree that are evaluated by code instead of by arithmetic (fitted surfaces, meshes, FEA results, data fields), with per-point memoisation |
@@ -40,6 +40,24 @@ C++-defined shapes). It descends from **libfive**, Matt Keeter's kernel for impl
 | `src/lattice` | Graph lattices (beams along a graph) |
 | `src/fea` | The finite-element solvers: voxel hexahedra, body-fitted **tetrahedral meshing** (isosurface stuffing), static, modal and thermal analysis, topology optimisation, multigrid and PCG |
 | `stdlib` | Shapes defined in C++ |
+
+### The call node: a field asked at a computed point
+
+`CALL` (opcode 33, `Tree::call`, `libfive_tree_call`, and `f(x', y', z')` in Python) is the value a field `f` has at the point `(x', y', z')`
+computed from `x, y, z`. It is what `remap` means, evaluated in another way. A **remap** is a substitution: `flatten` expands it into a copy
+of `f` for every place it is used, which is right when `f` is used once (every transform) and wrong for a field asked at a hundred places
+(a smoothing, the images of a symmetry, an assembly's repeated parts, a probe along a line: a hundred copies of a big field are a hundred
+times the nodes to build, optimise and hold). A **call** keeps `f` as it is: its `Deck` is compiled once into a `Callee` (shared through the
+`CalleeRegistry` of the top-level deck, so a field called from many sites, or from inside another called field, is one), and the evaluators of
+the caller run it on the arguments' values. `Tree::flatten(share, Calls::Inline)` expands calls like remaps (what the classic consumers get);
+`Calls::Keep`, which `walk()`, `optimized()` and the `Deck` use, keeps them and flattens the called field once on its own.
+
+Every evaluator knows it. The array evaluator runs the callee on the points; the derivative evaluator seeds the callee's x, y, z derivatives with
+the arguments' (the chain rule), also when the derivatives are those with respect to the `var()`s (so dragging a handle works through a call);
+the feature evaluator combines the callee's feature lists (sharp edges); the interval evaluator runs the callee over the box the arguments
+reach and **shortens the callee's tape for that box** (`Tape::calls`, one per call site), so the renderer's pruning goes into a called field.
+An oracle that is substituted (`flatten` of a remap over an oracle) is called, not rebuilt: there is no transformed oracle. `Tree::optimized()`
+counts the ways to reach a node, including through the arguments of a call, before it decides to optimise a graph.
 
 The C API is `kernel/include/libfive.h`; the Python library calls it through `ctypes`.
 
@@ -545,7 +563,7 @@ times) — and returns the kept `(Shape, printed text)`; `store` keeps a stateme
 holds the Shape itself; the disk layer holds `<key>.fdtree` (`libfive_tree_save`) and `<key>.fdfield` (JSON: the plain
 Python attributes of the Shape and the text it printed) and is written only when `libfive_tree_can_save` says every oracle
 in the tree installs a serializer (`OracleClause::install<T>(name)`; `libfive_tree_save` refuses an unsavable tree instead of
-writing a file that cannot be read). Oracles that serialize today: transformed oracles, `BeamLattice` (blend and beams).
+writing a file that cannot be read). Oracles that serialize today: `BeamLattice` (blend and beams); a call of one is saved as the call and the oracle it calls.
 A new oracle type gets persistence by installing its serializer — nothing else changes. The folder is `field-cache/` beside
 the render cache (`FIELDES_FIELD_CACHE_DIR`), 3 GB, oldest first.
 
@@ -585,7 +603,7 @@ watertight surface without a global weld.
   patch's own (`A = r |∮ (R v + r sin v) du|`), except at the apex of a spindle dome.
 - The tessellated import (`tessellate`, and `import_model` for the parts it tessellates) is made of this tessellation: `step::brepParts` tessellates every
   solid (a few at a time, each on all threads) and describes the placed occurrences; the Python side makes
-  the triangles a distance field (`libfive_mesh_from_arrays`), places it with `remap`, and keeps the tessellation
+  the triangles a distance field (`libfive_mesh_from_arrays`), places it with a call (a part that stands in many places is one field), and keeps the tessellation
   in `<file>.fieldes-tessellation` (keyed by the file, `quality` and `kTessellationVersion`).
 
 Verified against OpenCascade (gmsh) face by face and by volume, and against the main importer by inside/outside

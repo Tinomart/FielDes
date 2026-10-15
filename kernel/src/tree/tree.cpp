@@ -569,13 +569,15 @@ Tree Tree::flatten(bool share, Calls calls) const {
                 todo.push({Task::DOWN, t->rhs.ptr, k.m});
             } else if (std::get_if<TreeConstant>(k.t)) {
                 out.push(Tree(k.t));
-            } else if (auto t=std::get_if<TreeOracle>(k.t)) {
-                const Tree new_oracle(t->oracle->remap(Tree(k.t),
+            } else if (std::get_if<TreeOracle>(k.t)) {
+                // An oracle is evaluated where the substitution puts it, not rebuilt for the new coordinates: the oracle stays as it is
+                // and is called at the point the substitution gives (the leaf itself where it gives X, Y and Z)
+                const Tree here = Tree(k.t).call(
                             get(Tree::X().ptr),
                             get(Tree::Y().ptr),
-                            get(Tree::Z().ptr)));
-                out.push(new_oracle);
-                if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, new_oracle);
+                            get(Tree::Z().ptr));
+                out.push(here);
+                if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, here);
             } else if (auto t=std::get_if<TreeRemap>(k.t)) {
                 todo.push({Task::UP, k.t, k.m});
                 todo.push({Task::DOWN, t->z.ptr, k.m});

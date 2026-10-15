@@ -196,6 +196,7 @@ Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type type,
 
     // ... and the tapes the call sites run their callees on
     out->calls = std::move(new_calls);
+    out->calls_oracle = calls_oracle;
 
     return out;
 }

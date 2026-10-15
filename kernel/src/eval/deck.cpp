@@ -133,6 +133,16 @@ Deck::Deck(const Tree& root_, CalleeRegistry* registry_) {
     // ... and no shortened tape for any call site yet (a callee runs on its own)
     tape->calls.resize(site_callee.size());
 
+    // ... and whether an oracle is on the tape of a field that is called (a mesh that is placed by a call: the renderer spends fewer
+    // points where an oracle is on the tape, and must see it through the call)
+    for (const auto* c : callees)
+    {
+        if (c->deck->tape->hasOracle())
+        {
+            tape->calls_oracle = true;
+        }
+    }
+
     // Store the index of the tree's root
     assert(clauses.at(root.id()) == 1);
     tape->i = clauses.at(root.id());

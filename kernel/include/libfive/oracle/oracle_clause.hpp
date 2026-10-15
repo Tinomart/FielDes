@@ -121,18 +121,6 @@ public:
             const std::string& name, Deserializer& in);
 
     /*
-     *  Executes a coordinate transform on the underlying oracle.
-     *  The default implementation uses TransformedOracleClause, but subclasses
-     *  could specialize to take advantage of any unique structures.
-     *
-     *  self is a Tree that contains the OracleClause; it is passed in to
-     *  handle cases where the underlying OracleClause needs to be cloned,
-     *  as ownership is handled at the Tree level.
-     */
-    virtual std::unique_ptr<const OracleClause> remap(
-            Tree self, Tree X_, Tree Y_, Tree Z_) const;
-
-    /*
      * optimize() gives an OracleClause the opportunity to deduplicate
      * subtrees, balance commutative / affine expressions, and do whatever
      * other expensive operations it may want to run before being converted

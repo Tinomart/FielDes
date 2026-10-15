@@ -78,6 +78,8 @@ public:
      *  it where it can (see the edge search of the dual contouring)  */
     bool hasOracle() const
     {
+        // (an oracle in a field that a call calls is part of this tape too: the call evaluates it)
+        if (calls_oracle) return true;
         for (const auto& c : t)
         {
             if (c.op == Opcode::ORACLE) return true;
@@ -95,6 +97,9 @@ protected:
 
     /*  The tapes that the call sites run their callees on (see callTape); empty, or one for each site of the Deck  */
     std::vector<std::shared_ptr<Tape>> calls;
+
+    /*  Whether a field that a call site of this tape calls has an oracle on its tape (set by the Deck, kept by pushing)  */
+    bool calls_oracle = false;
 
     /*  Root clause of the tape  */
     Clause::Id i;

@@ -4,7 +4,6 @@
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
-#include "libfive/oracle/transformed_oracle_clause.hpp"
 
 namespace libfive {
 
@@ -15,7 +14,7 @@ std::string OracleClause::contentKey() const
     {
         return std::string();
     }
-    // (what it holds, by name and hash; and what it is made of: a moved copy of an oracle is its oracle and the three maps)
+    // (what it holds, by name and hash; and what it is made of: the trees it reads)
     std::string out = name() + "|" + own;
     for (const Tree& dep : dependencies())
     {
@@ -58,15 +57,6 @@ bool OracleClause::serialize(const std::string& name,
     {
         return (*itr).second.first(clause, out);
     }
-}
-
-std::unique_ptr<const OracleClause> OracleClause::remap(
-            Tree self, Tree X_, Tree Y_, Tree Z_) const
-{
-    assert(self->op() == Opcode::ORACLE);
-    assert(&self->oracle_clause() == this);
-
-    return std::make_unique<TransformedOracleClause>(self, X_, Y_, Z_);
 }
 
 }   // namespace libfive
