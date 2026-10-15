@@ -408,8 +408,91 @@ public:
         V3 normal = V3::Zero();     // sum of area-weighted normals
         double radius = 0;          // bounds every vertex around center
     };
-    std::vector<Node> nodes;
+    std::vector<Node> nodes;       // (while the tree is built; the queries read the packed copies below)
     std::vector<uint32_t> order;
+
+    // What the queries read: the tree above, repacked once it is built.  One query visits hundreds of nodes and dozens of triangles, nearly
+    // all of them cold in the cache, so what it reads of a node is a single 64-byte line, and the corners of the triangles of a leaf
+    // follow one another.  The nodes are in depth-first order: the first child of an internal node is the node after it.
+    struct alignas(64) BoxNode
+    {
+        double lo[3], hi[3];
+        int32_t right;      // an internal node: its second child; a leaf: -(its first position in `order`) - 1
+        uint32_t count;     // a leaf: the number of triangles
+    };
+    struct alignas(64) ClusterNode
+    {
+        double center[3], normal[3], radius;
+        int32_t right;      // as in BoxNode
+        uint32_t count;
+    };
+    std::vector<BoxNode> boxNodes;
+    std::vector<ClusterNode> clusterNodes;
+    std::vector<double> leafCorners;     // per position in `order`: the three corners of that triangle, nine numbers
+
+    void pack()
+    {
+        boxNodes.resize(nodes.size());
+        clusterNodes.resize(nodes.size());
+        for (size_t i=0; i < nodes.size(); ++i)
+        {
+            const Node& n = nodes[i];
+            BoxNode& b = boxNodes[i];
+            ClusterNode& c = clusterNodes[i];
+            for (int k=0; k < 3; ++k)
+            {
+                b.lo[k] = n.box.min()[k];
+                b.hi[k] = n.box.max()[k];
+                c.center[k] = n.center[k];
+                c.normal[k] = n.normal[k];
+            }
+            c.radius = n.radius;
+            if (n.left < 0)
+            {
+                b.right = c.right = -static_cast<int32_t>(n.start) - 1;
+                b.count = c.count = n.count;
+            }
+            else
+            {
+                b.right = c.right = n.right;
+                b.count = c.count = 0;
+            }
+        }
+        leafCorners.resize(9 * t.size());
+        for (size_t i=0; i < t.size(); ++i)
+        {
+            const Tri& tr = t[order[i]];
+            for (int k=0; k < 3; ++k)
+            {
+                for (int a=0; a < 3; ++a)
+                {
+                    leafCorners[9 * i + 3 * k + a] = v[tr[k]][a];
+                }
+            }
+        }
+        nodes.clear();
+        nodes.shrink_to_fit();
+    }
+
+    // The squared distance from p to the box of a node (0 inside)
+    static double boxDistance2(const BoxNode& b, const V3& p)
+    {
+        double d2 = 0;
+        for (int k=0; k < 3; ++k)
+        {
+            if (b.lo[k] > p[k])
+            {
+                const double a = b.lo[k] - p[k];
+                d2 += a * a;
+            }
+            else if (p[k] > b.hi[k])
+            {
+                const double a = p[k] - b.hi[k];
+                d2 += a * a;
+            }
+        }
+        return d2;
+    }
 
     void buildTree()
     {
@@ -428,6 +511,7 @@ public:
         build(0, static_cast<uint32_t>(t.size()));
         centroids.clear();
         centroids.shrink_to_fit();
+        pack();
     }
 
     struct Hit
@@ -466,22 +550,22 @@ public:
             {
                 continue;
             }
-            const Node& n = nodes[it.node];
-            if (n.left < 0 || sp + 2 > 128)
+            const BoxNode& n = boxNodes[it.node];
+            if (n.right < 0)
             {
-                // A leaf (or, if the stack is ever full, the whole subtree,
-                // whose triangles are contiguous in `order`)
-                for (uint32_t i=n.start; i < n.start + n.count; ++i)
+                // A leaf
+                const uint32_t first = static_cast<uint32_t>(-(n.right + 1));
+                for (uint32_t i=first; i < first + n.count; ++i)
                 {
-                    const uint32_t ti = order[i];
-                    const Tri& tr = t[ti];
+                    const double* c = &leafCorners[9 * i];
+                    const V3 ca(c[0], c[1], c[2]), cb(c[3], c[4], c[5]), cc(c[6], c[7], c[8]);
                     int f;
-                    const V3 cp = closestOnTriangle(p, v[tr[0]], v[tr[1]], v[tr[2]], f);
+                    const V3 cp = closestOnTriangle(p, ca, cb, cc, f);
                     const double d2 = (p - cp).squaredNorm();
                     if (d2 < best.d2)
                     {
                         best.d2 = d2;
-                        best.tri = ti;
+                        best.tri = order[i];
                         best.feature = f;
                         best.cp = cp;
                     }
@@ -489,55 +573,69 @@ public:
             }
             else
             {
-                const double dl = nodes[n.left].box.squaredExteriorDistance(p);
-                const double dr = nodes[n.right].box.squaredExteriorDistance(p);
+                // (the stack never fills: a tree that halves its triangles at every level is not 128 deep)
+                const uint32_t left = it.node + 1, right = static_cast<uint32_t>(n.right);
+                const double dl = boxDistance2(boxNodes[left], p);
+                const double dr = boxDistance2(boxNodes[right], p);
                 // The nearer child is searched first
                 if (dl < dr)
                 {
-                    if (dr < best.d2) stack[sp++] = {static_cast<uint32_t>(n.right), dr};
-                    if (dl < best.d2) stack[sp++] = {static_cast<uint32_t>(n.left), dl};
+                    if (dr < best.d2) stack[sp++] = {right, dr};
+                    if (dl < best.d2) stack[sp++] = {left, dl};
                 }
                 else
                 {
-                    if (dl < best.d2) stack[sp++] = {static_cast<uint32_t>(n.left), dl};
-                    if (dr < best.d2) stack[sp++] = {static_cast<uint32_t>(n.right), dr};
+                    if (dl < best.d2) stack[sp++] = {left, dl};
+                    if (dr < best.d2) stack[sp++] = {right, dr};
                 }
             }
         }
         return best;
     }
 
-    // Generalised winding number: ~1 inside, ~0 outside
-    double winding(const V3& p) const
+    // Generalised winding number: ~1 inside, ~0 outside.  A cluster of triangles farther from p than 3 times its radius is summed as one
+    // dipole.  `farLeaves`: the same for the leaves, which are otherwise summed triangle by triangle.  That is most of the cost of the
+    // number (at a point near the surface, hundreds of triangles), and the side of a point does not need it: the number is about 1 or
+    // about 0 there and only its side of 1/2 or 1/4 is asked.  The number that is the field near a hole keeps its exact leaves.
+    double winding(const V3& p, bool farLeaves = false) const
     {
-        const double beta = 3.0;
+        // (where only a side is asked, the clusters count as far from a smaller distance too: on the bracket of example 12 the field at
+        // 200,000 points, half of them within a few mm of the surface, did not change at all with a factor from 3 down to 1)
+        const double beta = farLeaves ? 2.0 : 3.0;
         double w = 0;
         uint32_t stack[128];
         int sp = 0;
         stack[sp++] = 0;
         while (sp)
         {
-            const Node& n = nodes[stack[--sp]];
-            const V3 d = n.center - p;
-            const double dist = d.norm();
-            if (n.left >= 0 && dist > beta * n.radius)
+            const uint32_t index = stack[--sp];
+            const ClusterNode& n = clusterNodes[index];
+            const double dx = n.center[0] - p.x(), dy = n.center[1] - p.y(), dz = n.center[2] - p.z();
+            const double dist2 = dx * dx + dy * dy + dz * dz;
+            const double reach = beta * n.radius;
+            const bool leaf = n.right < 0;
+            if ((!leaf || farLeaves) && dist2 > reach * reach)
             {
                 // Far away: the cluster acts like a dipole
-                w += d.dot(n.normal) / (dist * dist * dist);
+                w += (dx * n.normal[0] + dy * n.normal[1] + dz * n.normal[2]) / (dist2 * std::sqrt(dist2));
                 continue;
             }
-            if (n.left < 0 || sp + 2 > 128)
+            if (leaf)
             {
-                for (uint32_t i=n.start; i < n.start + n.count; ++i)
+                const uint32_t first = static_cast<uint32_t>(-(n.right + 1));
+                for (uint32_t i=first; i < first + n.count; ++i)
                 {
-                    const Tri& tr = t[order[i]];
-                    w += solidAngle(v[tr[0]] - p, v[tr[1]] - p, v[tr[2]] - p);
+                    const double* c = &leafCorners[9 * i];
+                    w += solidAngle(V3(c[0] - p.x(), c[1] - p.y(), c[2] - p.z()),
+                                    V3(c[3] - p.x(), c[4] - p.y(), c[5] - p.z()),
+                                    V3(c[6] - p.x(), c[7] - p.y(), c[8] - p.z()));
                 }
             }
             else
             {
-                stack[sp++] = n.left;
-                stack[sp++] = n.right;
+                // (the stack never fills, see closest)
+                stack[sp++] = index + 1;
+                stack[sp++] = static_cast<uint32_t>(n.right);
             }
         }
         return w / (4 * PI);
@@ -560,7 +658,7 @@ public:
             const Tri& tr = t[tri];
             const V3 c = (v[tr[0]] + v[tr[1]] + v[tr[2]]) / 3.0;
             s = (faceNormal[tri].squaredNorm() > 0.25 &&
-                 winding(c - faceNormal[tri] * (1e-4 * scaleRef)) > 0.5) ? 1 : 2;
+                 winding(c - faceNormal[tri] * (1e-4 * scaleRef), true) > 0.5) ? 1 : 2;
             faceChecked[tri].store(s, std::memory_order_relaxed);
         }
         return s == 1;
@@ -628,7 +726,7 @@ public:
             auto windingHere = [&]() {
                 if (std::isnan(wp))
                 {
-                    wp = winding(p);
+                    wp = winding(p, true);
                 }
                 return wp;
             };
@@ -1537,7 +1635,11 @@ std::shared_ptr<MeshData> buildMesh(std::vector<V3> verts, std::vector<Tri> tris
 class MeshOracle : public OracleStorage<>
 {
 public:
-    explicit MeshOracle(std::shared_ptr<const MeshData> m) : mesh(std::move(m)) {}
+    explicit MeshOracle(std::shared_ptr<const MeshData> m) : mesh(std::move(m))
+    {
+        // (near a hole the gradient costs six more winding numbers, which are not worked out for every point)
+        remembering = !mesh->hasOpen;
+    }
 
     void evalInterval(Interval& out) override
     {
@@ -1555,8 +1657,26 @@ public:
 
     void evalPoint(float& out, size_t index) override
     {
-        const V3 p = points.col(index).matrix().cast<double>();
-        out = static_cast<float>(mesh->signedDistance(p, nullptr, nullptr, &hint));
+        const Eigen::Vector3f q = points.col(index).matrix();
+        if (!remembering)
+        {
+            out = static_cast<float>(mesh->signedDistance(q.cast<double>(), nullptr, nullptr, &hint));
+            return;
+        }
+        Remembered& r = remembered[slot(q)];
+        if (r.valid && r.point == q)
+        {
+            out = r.value;
+            return;
+        }
+        // The gradient comes with the closest point, so it costs nothing, and the renderer asks for it at the points that its search
+        // for a crossing ended with, which it has just asked the value of
+        V3 g;
+        out = static_cast<float>(mesh->signedDistance(q.cast<double>(), &g, nullptr, &hint));
+        r.point = q;
+        r.value = out;
+        r.gradient = g.cast<float>();
+        r.valid = true;
     }
 
     void checkAmbiguous(
@@ -1568,7 +1688,17 @@ public:
 
     void evalFeatures(boost::container::small_vector<Feature, 4>& out) override
     {
-        const V3 p = points.col(0).matrix().cast<double>();
+        const Eigen::Vector3f q = points.col(0).matrix();
+        if (remembering)
+        {
+            const Remembered& r = remembered[slot(q)];
+            if (r.valid && r.point == q)
+            {
+                out.push_back(Feature(r.gradient));
+                return;
+            }
+        }
+        const V3 p = q.cast<double>();
         V3 g;
         mesh->signedDistance(p, &g, nullptr, &hint);
         const Eigen::Vector3f gf = g.cast<float>();
@@ -1579,6 +1709,29 @@ private:
     std::shared_ptr<const MeshData> mesh;
     // the triangle the last point was closest to (the cells of the renderer ask about points that lie together)
     uint32_t hint = std::numeric_limits<uint32_t>::max();
+
+    // The last points asked about, with their value and gradient (by the hash of the point; a newer point takes the place of an older one).
+    // The renderer asks about a corner of a cell for the cell, and again for each edge that ends in it; and about the two points a search
+    // for a crossing ends with, first their value and then their gradient.  Each of them is a search through the tree.
+    struct Remembered
+    {
+        Eigen::Vector3f point = Eigen::Vector3f::Zero();
+        float value = 0;
+        Eigen::Vector3f gradient = Eigen::Vector3f::Zero();
+        bool valid = false;
+    };
+    bool remembering = false;
+    std::array<Remembered, 256> remembered;
+
+    static size_t slot(const Eigen::Vector3f& q)
+    {
+        uint32_t a, b, c;
+        std::memcpy(&a, &q[0], 4);
+        std::memcpy(&b, &q[1], 4);
+        std::memcpy(&c, &q[2], 4);
+        const uint32_t h = a * 73856093u ^ b * 19349663u ^ c * 83492791u;
+        return (h ^ (h >> 15)) & 255u;
+    }
 };
 
 class MeshOracleClause : public OracleClause

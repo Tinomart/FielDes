@@ -355,21 +355,52 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
             static const bool noBisect = std::getenv("FIELDES_NO_BISECT") != nullptr;   // (a test: the search of 4 x 16 points)
             if (eval_count && tape->hasOracle() && !noBisect)
             {
-                constexpr int BISECT_STEPS = 10;
                 bisected = true;
+                // (isInside invalidates the evaluator's array of results, so it is only asked once the values are copied)
+                auto isOutside = [&](float v, const Vec& p) {
+                    return (v > 0) || (v == 0 && !eval->isInside<N>(p, this->region, tape));
+                };
+                // What a search ends with: an inside point and an outside point, 1/1024 of the edge apart
+                constexpr double END = 1.0 / 1024;
                 for (unsigned e=0; e < eval_count; ++e)
                 {
-                    Vec a = targets[e].first, b = targets[e].second;
-                    for (int s=0; s < BISECT_STEPS; ++s)
+                    const Vec a0 = targets[e].first;
+                    const Vec d0 = targets[e].second - targets[e].first;
+                    auto at = [&](double s) { return Vec(a0 + d0 * s); };
+                    double pa = 0, pb = 1;      // the inside and the outside end, as places along the edge
+
+                    // The values at the two ends say where a field that is a distance, or near to one, crosses zero (it is close to a
+                    // straight line there).  One point on each side of that place, 1/1024 of the edge apart, is then the whole search:
+                    // 4 points where 10 were halved.  Where they do not close in on the crossing, what is left is halved.
                     {
-                        const Vec m = (a + b) / 2;
+                        eval->set<N>(at(0), this->region, 0);
+                        eval->set<N>(at(1), this->region, 1);
+                        const auto ends = eval->values(2, *tape);
+                        const double f0 = ends(0), f1 = ends(1);
+                        double t = (f0 < 0 && f1 > 0) ? f0 / (f0 - f1) : 0.5;
+                        t = std::min(1.0 - 2 * END, std::max(2 * END, t));
+                        const double s1 = t - END / 2, s2 = t + END / 2;
+                        eval->set<N>(at(s1), this->region, 0);
+                        eval->set<N>(at(s2), this->region, 1);
+                        const auto around = eval->values(2, *tape);
+                        const float g1 = around(0), g2 = around(1);
+                        if (isOutside(g1, at(s1))) { pb = s1; } else { pa = s1; }
+                        if (isOutside(g2, at(s2))) { pb = std::min(pb, s2); } else { pa = std::max(pa, s2); }
+                        if (!(pa < pb))
+                        {
+                            pa = 0;     // (the two points disagree with each other: search the whole edge)
+                            pb = 1;
+                        }
+                    }
+                    while (pb - pa > END * (1 + 1e-9))
+                    {
+                        const double sm = (pa + pb) / 2;
+                        const Vec m = at(sm);
                         eval->set<N>(m, this->region, 0);
                         const float v = eval->values(1, *tape)(0);
-                        const bool outside = (v > 0) ||
-                            (v == 0 && !eval->isInside<N>(m, this->region, tape));
-                        if (outside) { b = m; } else { a = m; }
+                        if (isOutside(v, m)) { pb = sm; } else { pa = sm; }
                     }
-                    targets[e] = {a, b};
+                    targets[e] = {at(pa), at(pb)};
                 }
             }
 
