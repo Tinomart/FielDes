@@ -30,7 +30,8 @@ void Serializer::run(Archive& a)
 
 void Serializer::serializeTree(const Tree& t)
 {
-    const Tree flat = t.flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+    // (remaps are expanded; calls are kept: a field that is called is written once, before the calls, and they point at it)
+    const Tree flat = t.flatten(true, Tree::Calls::Keep);      // (kept: walk() of a tree with remaps points into a flattened copy)
     for (auto& n : flat.walk())
     {
         // Skip this id, as it has already been stored
@@ -45,6 +46,10 @@ void Serializer::serializeTree(const Tree& t)
                 serializeTree(d);
             }
         }
+        else if (n->op() == Opcode::CALL)
+        {
+            serializeTree(n->call().f);
+        }
         out.put(n->op());
         ids.insert({ n, (uint32_t)ids.size() });
 
@@ -54,6 +59,14 @@ void Serializer::serializeTree(const Tree& t)
         } else if (n->op ()== Opcode::ORACLE) {
             serializeString(n->oracle_clause().name());
             OracleClause::serialize(n->oracle_clause().name(), &n->oracle_clause(), *this);
+        } else if (n->op() == Opcode::CALL) {
+            // the field that is called, then z, y and x (the order the binary operations write theirs in, reversed)
+            const TreeCall& c = n->call();
+            serializeBytes(ids.at(c.f.get()));
+            serializeBytes(ids.at(c.z.get()));
+            serializeBytes(ids.at(c.y.get()));
+            serializeBytes(ids.at(c.x.get()));
+            continue;
         }
 
         switch (Opcode::args(n->op())) {

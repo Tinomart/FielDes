@@ -25,6 +25,9 @@ Deck::Deck(const Tree& root_) {
     std::unordered_map<Tree::Id, Clause::Id> clauses = {{nullptr, 0}};
     Clause::Id id = flat.size();
 
+    // The trees that the calls call: one callee for each, however many calls
+    std::unordered_map<Tree::Id, uint32_t> callee_of;
+
     // Write the flattened tree into the tape!
     // It's reversed in this pass, then flipped when writing to tape->t below
     std::vector<Clause> rev;
@@ -41,6 +44,24 @@ Deck::Deck(const Tree& root_) {
                     static_cast<unsigned int>(oracles.size()), 0});
                 oracles.push_back(m->build_oracle());
                 break;
+            case Opcode::CALL:
+            {
+                // (the arguments come before the call in the walk, so they have clauses already)
+                const TreeCall& call = m->call();
+                auto found = callee_of.find(call.f.id());
+                if (found == callee_of.end()) {
+                    found = callee_of.emplace(call.f.id(),
+                                              static_cast<uint32_t>(callees.size())).first;
+                    callees.push_back(std::make_unique<Callee>(call.f));
+                }
+                site_of.emplace(id, static_cast<uint32_t>(site_callee.size()));
+                site_callee.push_back(found->second);
+                rev.push_back({Opcode::CALL, id,
+                               clauses.at(call.x.id()),
+                               clauses.at(call.y.id()),
+                               clauses.at(call.z.id())});
+                break;
+            }
             case Opcode::VAR_X:  // fallthrough
             case Opcode::VAR_Y:  // fallthrough
             case Opcode::VAR_Z:
@@ -71,14 +92,27 @@ Deck::Deck(const Tree& root_) {
         }
     }
 
+    // The variables that the called fields read are this deck's variables
+    // too, with rows of their own that no clause of this tape reads: the
+    // evaluators set them (and give them to the callees), and differentiate
+    // with respect to them.
+    Clause::Id rows = clauses.size();
+    for (const auto& callee : callees) {
+        for (const auto& v : callee->deck->vars.right) {
+            if (vars.right.find(v.first) == vars.right.end()) {
+                vars.left.insert({rows++, v.first});
+            }
+        }
+    }
+
     // Store the total number of clauses
     // Remember, evaluators need to allocate one more than this
     // amount of space, as the clause with id = 0 is a placeholder
-    num_clauses = clauses.size() - 1;
+    num_clauses = rows - 1;
 
     // Allocate enough memory for all the clauses
-    disabled.resize(clauses.size());
-    remap.resize(clauses.size());
+    disabled.resize(rows);
+    remap.resize(rows);
 
     // Save X, Y, Z ids
     X = clauses.at(axes[0].id());
@@ -87,6 +121,9 @@ Deck::Deck(const Tree& root_) {
 
     // Add empty contexts for every oracle in the tape
     tape->contexts.resize(oracles.size());
+
+    // ... and no shortened tape for any call site yet (a callee runs on its own)
+    tape->calls.resize(site_callee.size());
 
     // Store the index of the tree's root
     assert(clauses.at(root.id()) == 1);

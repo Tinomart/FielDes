@@ -57,6 +57,9 @@ size_t Opcode::args(Opcode op)
         case OP_COMPARE:
             return 2;
 
+        case CALL:
+            return 3;
+
         case INVALID: // fallthrough
         case LAST_OP: return -1;
     }
@@ -174,6 +177,7 @@ std::string Opcode::toOpString(Opcode op)
         case INVALID: // fallthrough
         case CONSTANT:
         case ORACLE:
+        case CALL:
         case LAST_OP: return "";
     }
     assert(false);
@@ -190,6 +194,7 @@ bool Opcode::isCommutative(Opcode op)
         case VAR_Z:
         case VAR_FREE:
         case ORACLE:
+        case CALL:
         case OP_SQUARE:
         case OP_SQRT:
         case OP_NEG:
@@ -236,6 +241,7 @@ bool Opcode::isIdempotent(Opcode op)
         case VAR_Z:
         case VAR_FREE:
         case ORACLE:
+        case CALL:
         case OP_SQUARE:
         case OP_SQRT:
         case OP_NEG:

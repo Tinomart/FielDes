@@ -122,6 +122,9 @@ lib.libfive_tree_id.restype = ctypes.c_void_p
 lib.libfive_tree_remap.argtypes = [libfive_tree, libfive_tree, libfive_tree, libfive_tree]
 lib.libfive_tree_remap.restype = libfive_tree
 
+lib.libfive_tree_call.argtypes = [libfive_tree, libfive_tree, libfive_tree, libfive_tree]
+lib.libfive_tree_call.restype = libfive_tree
+
 lib.libfive_tree_print.argtypes = [libfive_tree]
 lib.libfive_tree_print.restype = ctypes.c_void_p # actually a c_char_p,
 # but we don't want Python to auto-convert into a bytestring

@@ -66,6 +66,11 @@ Tree::~Tree() {
                 todo.push(std::exchange(d->target.ptr, nullptr));
                 todo.push(std::exchange(d->value.ptr, nullptr));
                 todo.push(std::exchange(d->t.ptr, nullptr));
+            } else if (auto d = std::get_if<TreeCall>(t)) {
+                todo.push(std::exchange(d->x.ptr, nullptr));
+                todo.push(std::exchange(d->y.ptr, nullptr));
+                todo.push(std::exchange(d->z.ptr, nullptr));
+                todo.push(std::exchange(d->f.ptr, nullptr));
             }
             delete t;
         }
@@ -338,6 +343,17 @@ std::ostream& Tree::print_prefix(std::ostream& s) const {
                 todo.push(t->value.get());
                 todo.push(' ');
                 todo.push(t->t.get());
+            } else if (auto t = std::get_if<TreeCall>(*d)) {
+                s << "(call ";
+                todo.push(')');
+                ops.push(Opcode::INVALID); // dummy op for the call
+                todo.push(t->z.get());
+                todo.push(' ');
+                todo.push(t->y.get());
+                todo.push(' ');
+                todo.push(t->x.get());
+                todo.push(' ');
+                todo.push(t->f.get());
             } else {
                 throw TreeData::InvalidException();
             }
@@ -390,8 +406,34 @@ Tree Tree::apply(Tree var, Tree value) const {
     return Tree(new Data(TreeApply { var, value, *this }));
 }
 
-Tree Tree::flatten(bool share) const {
-    if (!(ptr->flags & TreeData::TREE_FLAG_HAS_REMAP)) {
+Tree Tree::call(Tree X, Tree Y, Tree Z) const {
+    // Calling at the coordinates themselves is this tree
+    if (X == Tree::X() && Y == Tree::Y() && Z == Tree::Z()) {
+        return Tree(*this);
+    }
+    // A coordinate is the argument it is called with
+    else if (ptr == Tree::X().ptr) {
+        return X;
+    } else if (ptr == Tree::Y().ptr) {
+        return Y;
+    } else if (ptr == Tree::Z().ptr) {
+        return Z;
+    }
+    // Only a tree that has coordinates (or an oracle, which reads them) is different at different points
+    else if (ptr->flags & (TreeData::TREE_FLAG_HAS_XYZ |
+                           TreeData::TREE_FLAG_HAS_ORACLE))
+    {
+        return Tree(new Data(TreeCall { X, Y, Z, *this }));
+    } else {
+        return *this;
+    }
+}
+
+Tree Tree::flatten(bool share, Calls calls) const {
+    const bool keep = (calls == Calls::Keep);
+    // (what there is to expand: a remap or an apply, and a call too unless calls are kept)
+    if (!(ptr->flags & (keep ? TreeData::TREE_FLAG_HAS_SUBST
+                             : TreeData::TREE_FLAG_HAS_REMAP))) {
         return *this;
     }
 
@@ -454,6 +496,40 @@ Tree Tree::flatten(bool share) const {
     std::unordered_map<MemoKey, Tree, MemoHash> memo;
     std::vector<MapPointer> alive;
 
+    /*  The fields that calls call, expanded (kept calls only): a field that many calls call is expanded once.  */
+    std::unordered_map<const Data*, Tree> callee_memo;
+    const auto callee = [&](const Tree& f, const MapPointer& m) {
+        // The field has coordinates of its own, so the replacements of X, Y and Z that are in force do not reach it; those of free
+        // variables (apply) do
+        std::vector<std::pair<const Data*, Tree>> vars;
+        if (m) {
+            for (const auto& e : *m) {
+                if (e.first != Tree::X().ptr && e.first != Tree::Y().ptr &&
+                    e.first != Tree::Z().ptr)
+                {
+                    vars.push_back(e);
+                }
+            }
+        }
+        if (vars.empty()) {
+            if (!(f->flags & TreeData::TREE_FLAG_HAS_SUBST)) {
+                return f;
+            }
+            const auto hit = callee_memo.find(f.ptr);
+            if (hit != callee_memo.end()) {
+                return hit->second;
+            }
+            const Tree out = f.flatten(true, Calls::Keep);
+            callee_memo.emplace(f.ptr, out);
+            return out;
+        }
+        Tree g = f;
+        for (const auto& e : vars) {
+            g = g.apply(Tree(e.first), e.second);
+        }
+        return g.flatten(share, Calls::Keep);
+    };
+
     todo.push({Task::DOWN, ptr, nullptr});
 
     while (todo.size()) {
@@ -508,6 +584,12 @@ Tree Tree::flatten(bool share) const {
             } else if (auto t=std::get_if<TreeApply>(k.t)) {
                 todo.push({Task::UP, k.t, k.m});
                 todo.push({Task::DOWN, t->value.ptr, k.m});
+            } else if (auto t=std::get_if<TreeCall>(k.t)) {
+                // (its arguments are expanded either way; the field it calls is expanded when the call is)
+                todo.push({Task::UP, k.t, k.m});
+                todo.push({Task::DOWN, t->z.ptr, k.m});
+                todo.push({Task::DOWN, t->y.ptr, k.m});
+                todo.push({Task::DOWN, t->x.ptr, k.m});
             }
         } else if (k.v == Task::UP) {
             if (auto t=std::get_if<TreeUnaryOp>(k.t)) {
@@ -554,6 +636,40 @@ Tree Tree::flatten(bool share) const {
                 alive.push_back(m);
                 todo.push({Task::STORE, k.t, k.m});
                 todo.push({Task::DOWN, t->t.ptr, m});
+            } else if (auto t=std::get_if<TreeCall>(k.t)) {
+                if (keep) {
+                    // The call stays: with its arguments as they are now and the field it calls expanded
+                    const Tree z = out.top();
+                    out.pop();
+                    const Tree y = out.top();
+                    out.pop();
+                    const Tree x = out.top();
+                    out.pop();
+                    const Tree f = callee(t->f, k.m);
+                    if (x.ptr != t->x.ptr || y.ptr != t->y.ptr ||
+                        z.ptr != t->z.ptr || f.ptr != t->f.ptr)
+                    {
+                        out.push(Tree(new Data(TreeCall { x, y, z, f })));
+                    } else {
+                        out.push(Tree(k.t));
+                    }
+                    if (share) memo.insert_or_assign(MemoKey{k.t, k.m.get()}, out.top());
+                } else {
+                    // Expanded: the field is that of a remap to the arguments
+                    auto m = std::make_shared<std::unordered_map<const Data*, Tree>>(
+                            k.m ? *(k.m) : std::unordered_map<const Data*, Tree>());
+
+                    m->insert_or_assign(Tree::Z().ptr, out.top());
+                    out.pop();
+                    m->insert_or_assign(Tree::Y().ptr, out.top());
+                    out.pop();
+                    m->insert_or_assign(Tree::X().ptr, out.top());
+                    out.pop();
+
+                    alive.push_back(m);
+                    todo.push({Task::STORE, k.t, k.m});
+                    todo.push({Task::DOWN, t->f.ptr, m});
+                }
             } else {
                 // We shouldn't ever get here, because Nonary, Constant,
                 // Oracles, Remap, and Apply shouldn't be pushed as Up nodes.
@@ -567,8 +683,8 @@ Tree Tree::flatten(bool share) const {
 }
 
 std::vector<const Tree::Data*> Tree::walk() const {
-    if (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) {
-        return flatten(true).walk();
+    if (ptr->flags & TreeData::TREE_FLAG_HAS_SUBST) {
+        return flatten(true, Calls::Keep).walk();
     }
     // Store how many times each tree (by id) is referenced
     std::unordered_map<Id, unsigned> count;
@@ -590,6 +706,13 @@ std::vector<const Tree::Data*> Tree::walk() const {
             }
             if (count[d->rhs.id()]++ == 0) {
                 todo.push(d->rhs.get());
+            }
+        } else if (auto d = std::get_if<TreeCall>(next)) {
+            // (the arguments are nodes of this tape; the field that is called is a tape of its own)
+            for (const Tree* a : {&d->x, &d->y, &d->z}) {
+                if (count[a->id()]++ == 0) {
+                    todo.push(a->get());
+                }
             }
         // These cases should never happen because of the check above
         } else if (std::get_if<TreeRemap>(next)) {
@@ -624,12 +747,55 @@ std::vector<const Tree::Data*> Tree::walk() const {
             if (--count.at(d->rhs.id()) == 0) {
                 todo.push(d->rhs.get());
             }
+        } else if (auto d = std::get_if<TreeCall>(next)) {
+            for (const Tree* a : {&d->x, &d->y, &d->z}) {
+                if (--count.at(a->id()) == 0) {
+                    todo.push(a->get());
+                }
+            }
         }
     }
     // Reverse the tree so that the walk is from leaves to root
     std::reverse(flat.begin(), flat.end());
 
     return flat;
+}
+
+std::vector<const Tree::Data*> Tree::walk_deep() const {
+    std::vector<const Data*> out;
+    std::unordered_set<const Data*> seen;
+    std::stack<const Data*> todo;
+    todo.push(get());
+    while (todo.size()) {
+        auto next = todo.top();
+        todo.pop();
+        if (!seen.insert(next).second) {
+            continue;
+        }
+        out.push_back(next);
+
+        if (auto d = std::get_if<TreeUnaryOp>(next)) {
+            todo.push(d->lhs.get());
+        } else if (auto d = std::get_if<TreeBinaryOp>(next)) {
+            todo.push(d->lhs.get());
+            todo.push(d->rhs.get());
+        } else if (auto d = std::get_if<TreeCall>(next)) {
+            todo.push(d->x.get());
+            todo.push(d->y.get());
+            todo.push(d->z.get());
+            todo.push(d->f.get());
+        } else if (auto d = std::get_if<TreeRemap>(next)) {
+            todo.push(d->x.get());
+            todo.push(d->y.get());
+            todo.push(d->z.get());
+            todo.push(d->t.get());
+        } else if (auto d = std::get_if<TreeApply>(next)) {
+            todo.push(d->target.get());
+            todo.push(d->value.get());
+            todo.push(d->t.get());
+        }
+    }
+    return out;
 }
 
 const Tree::Data* Tree::release() {
@@ -691,7 +857,7 @@ Tree Tree::optimized() const {
                       << " s (" << extra << ")" << std::endl;
         }
     };
-    const Tree flat = (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) ? flatten(true) : *this;
+    const Tree flat = (ptr->flags & TreeData::TREE_FLAG_HAS_SUBST) ? flatten(true, Calls::Keep) : *this;
     lap("flattened", 0);
     // A tree that is a graph with a great many ways through it is left as it is: the walk would take longer than anything is gained by it
     double unique = 0;
@@ -711,8 +877,8 @@ Tree Tree::optimized_helper(
 {
     if (flags & TREE_FLAG_IS_OPTIMIZED) {
         return *this;
-    } else if (ptr->flags & TreeData::TREE_FLAG_HAS_REMAP) {
-        return flatten(true).optimized_helper(canonical);
+    } else if (ptr->flags & TreeData::TREE_FLAG_HAS_SUBST) {
+        return flatten(true, Calls::Keep).optimized_helper(canonical);
     }
 
     using AffineMap = std::unordered_map<Tree, float>;
@@ -751,6 +917,9 @@ Tree Tree::optimized_helper(
     todo.push(Down { ptr, 1 });
 
     std::stack<Tree> out;
+
+    // The fields that calls call, optimized (by the node: a field that many calls call is optimized once)
+    std::unordered_map<const Data*, Tree> optimized_callees;
 
     // Deduplicator function, which returns a raw pointer
     auto uniq = [&canonical](const Tree t) {
@@ -849,6 +1018,11 @@ Tree Tree::optimized_helper(
                 } else if (auto t=std::get_if<TreeBinaryOp>(d->t)) {
                     todo.push(Down { t->lhs.ptr, 1.0f });
                     todo.push(Down { t->rhs.ptr, 1.0f });
+                } else if (auto t=std::get_if<TreeCall>(d->t)) {
+                    // (the field that is called is not walked: it is optimized when the Deck compiles it)
+                    todo.push(Down { t->x.ptr, 1.0f });
+                    todo.push(Down { t->y.ptr, 1.0f });
+                    todo.push(Down { t->z.ptr, 1.0f });
                 } else if (std::get_if<TreeRemap>(d->t)) {
                     // This should be caught above
                     assert(false);
@@ -879,6 +1053,28 @@ Tree Tree::optimized_helper(
                 out.pop();
                 if (lhs != t->lhs || rhs != t->rhs) {
                     new_self = uniq(Tree::binary(t->op, lhs, rhs));
+                }
+            } else if (auto t=std::get_if<TreeCall>(d->t)) {
+                auto x = out.top();
+                out.pop();
+                auto y = out.top();
+                out.pop();
+                auto z = out.top();
+                out.pop();
+                // The field that is called is optimized here, once however many calls it has, so that the Deck that compiles
+                // it finds it done
+                Tree f = t->f;
+                if (!(f.flags & TREE_FLAG_IS_OPTIMIZED)) {
+                    const auto done = optimized_callees.find(f.ptr);
+                    if (done != optimized_callees.end()) {
+                        f = done->second;
+                    } else {
+                        f = f.optimized();
+                        optimized_callees.emplace(t->f.ptr, f);
+                    }
+                }
+                if (x != t->x || y != t->y || z != t->z || f != t->f) {
+                    new_self = uniq(Tree(new Data(TreeCall { x, y, z, f })));
                 }
             } else if (auto t=std::get_if<TreeOracle>(d->t)) {
                 if (auto o = t->oracle->optimized(canonical)) {
@@ -1062,9 +1258,9 @@ Tree Tree::optimized_helper(
 
 Tree Tree::cooptimize(std::unordered_map<Data::Key, Tree>& canonical) const {
     Tree base = without_flags(TREE_FLAG_IS_OPTIMIZED);
-    if (!(base.flags & TREE_FLAG_BRANCHING) && (base.ptr->flags & TreeData::TREE_FLAG_HAS_REMAP)) {
+    if (!(base.flags & TREE_FLAG_BRANCHING) && (base.ptr->flags & TreeData::TREE_FLAG_HAS_SUBST)) {
         // (optimized_helper flattens a tree with shifted copies first: it is told here whether that makes a graph that it would walk for good)
-        const Tree flat = base.flatten(true);
+        const Tree flat = base.flatten(true, Calls::Keep);
         double unique = 0;
         if (too_branching(optimizing_visits(flat, &unique), unique)) {
             base = flat.with_flags(TREE_FLAG_BRANCHING);
@@ -1110,6 +1306,11 @@ size_t Tree::size() const {
             todo.push(d->target.get());
             todo.push(d->value.get());
             todo.push(d->t.get());
+        } else if (auto d = std::get_if<TreeCall>(next)) {
+            todo.push(d->x.get());
+            todo.push(d->y.get());
+            todo.push(d->z.get());
+            todo.push(d->f.get());
         }
     }
     return seen.size();

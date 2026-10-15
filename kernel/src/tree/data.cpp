@@ -29,9 +29,19 @@ Opcode::Opcode TreeData::op() const {
         return Opcode::INVALID;
     } else if (std::get_if<TreeApply>(this)) {
         return Opcode::INVALID;
+    } else if (std::get_if<TreeCall>(this)) {
+        return Opcode::CALL;
     } else {
         assert(false); // All variants should be covered above
         return Opcode::INVALID;
+    }
+}
+
+const TreeCall& TreeData::call() const {
+    if (auto i = std::get_if<TreeCall>(this)) {
+        return *i;
+    } else {
+        throw CallException();
     }
 }
 
@@ -108,6 +118,9 @@ TreeData::Key TreeData::key() const {
     } else if (auto d = std::get_if<TreeApply>(this)) {
         return Key(std::make_tuple(
                     d->target.get(), d->value.get(), d->t.get()));
+    } else if (auto d = std::get_if<TreeCall>(this)) {
+        return Key(std::make_tuple(Opcode::CALL, d->x.get(), d->y.get(),
+                                   d->z.get(), d->f.get()));
     } else {
         return Key(false);
     }
@@ -130,10 +143,15 @@ uint32_t TreeData::compute_flags() const {
         return TREE_FLAG_HAS_ORACLE;
     } else if (auto d = std::get_if<TreeRemap>(this)) {
         return d->x->flags | d->y->flags | d->z->flags |
-               d->t->flags | TREE_FLAG_HAS_REMAP;
+               d->t->flags | TREE_FLAG_HAS_REMAP | TREE_FLAG_HAS_SUBST;
     } else if (auto d = std::get_if<TreeApply>(this)) {
         return d->target->flags | d->value->flags |
-               d->t->flags | TREE_FLAG_HAS_REMAP;
+               d->t->flags | TREE_FLAG_HAS_REMAP | TREE_FLAG_HAS_SUBST;
+    } else if (auto d = std::get_if<TreeCall>(this)) {
+        // (what the field it calls is made of is its own: only what has to be expanded in it, and what it calls, counts here)
+        const uint32_t inner = TREE_FLAG_HAS_REMAP | TREE_FLAG_HAS_CALL | TREE_FLAG_HAS_SUBST;
+        return d->x->flags | d->y->flags | d->z->flags |
+               (d->f->flags & inner) | TREE_FLAG_HAS_REMAP | TREE_FLAG_HAS_CALL;
     } else {
         return 0;
     }

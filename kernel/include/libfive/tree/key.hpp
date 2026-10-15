@@ -36,6 +36,13 @@ using TreeApplyKey = std::tuple<
     const TreeData*,
     const TreeData*,
     const TreeData*>;
+// (the call has the arguments and the field it calls; the opcode in front tells it from a remap, whose key has the same pointers)
+using TreeCallKey = std::tuple<
+    Opcode::Opcode,
+    const TreeData*,
+    const TreeData*,
+    const TreeData*,
+    const TreeData*>;
 
 using TreeDataKeyVariant = std::variant<
     bool,               // Used for NaN (true) and invalid (false)
@@ -45,6 +52,7 @@ using TreeDataKeyVariant = std::variant<
     TreeBinaryKey,      // Binary operations
     TreeRemapKey,       // Remap operation
     TreeApplyKey,       // Apply operation
+    TreeCallKey,        // Call
     TreeOracleKey,      // Oracles, keyed by their unique_ptr
     TreeContentKey>;    // ... or by their content, when they have one
 

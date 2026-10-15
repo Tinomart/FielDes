@@ -63,6 +63,15 @@ public:
 
     Clause::Id root() const { return i; }
 
+    /*  The tape that call site `site` (Deck::site) runs the field it calls on, when this tape is the one being run: a tape of that
+     *  field shortened for the region that the call's arguments reach in this tape's region, as pushing shortens this one.  Null: the
+     *  field's own tape (nothing shortened it) */
+    const Handle& callTape(uint32_t site) const
+    {
+        static const Handle none;
+        return site < calls.size() ? calls[site] : none;
+    }
+
     /*  Whether an oracle is still part of this tape (a mesh's distance, a
      *  data field): evaluating one costs about a microsecond a point, which is
      *  more than the rest of the tape, so a renderer spends fewer points on
@@ -83,6 +92,9 @@ protected:
     /*  OracleContext handles used to speed up oracle evaluation
      *  by letting them push into the tree as well. */
     std::vector<std::shared_ptr<OracleContext>> contexts;
+
+    /*  The tapes that the call sites run their callees on (see callTape); empty, or one for each site of the Deck  */
+    std::vector<std::shared_ptr<Tape>> calls;
 
     /*  Root clause of the tape  */
     Clause::Id i;
@@ -110,7 +122,11 @@ public:
     using KeepFunction = std::function<Keep(Opcode::Opcode, Clause::Id,
                                             Clause::Id, Clause::Id)>;
     Handle push(Deck& deck, KeepFunction fn, Type t);
-    Handle push(Deck& deck, KeepFunction fn, Type t, const Region<3>& r);
+
+    /*  `call_tapes`, if given, holds the shortened tape for each call site (null for one that was not shortened): the tape this makes runs
+     *  those sites' callees on them (for the sites it keeps), and it is a different tape if one of them is a different tape. */
+    Handle push(Deck& deck, KeepFunction fn, Type t, const Region<3>& r,
+                const std::vector<Handle>* call_tapes = nullptr);
 
     /*
      *  Walks up the tape list until p is within the tape's region, then

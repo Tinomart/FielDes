@@ -108,6 +108,15 @@ Archive::Shape Deserializer::deserializeShape(char tag)
                 }
                 trees.insert({next, Tree(std::move(o))});
             }
+            else if (op == Opcode::CALL)
+            {
+                // (the field that is called, then z, y and x: see Serializer::serializeTree)
+                const auto f = deserializeBytes<uint32_t>();
+                const auto z = deserializeBytes<uint32_t>();
+                const auto y = deserializeBytes<uint32_t>();
+                const auto x = deserializeBytes<uint32_t>();
+                trees.insert({next, trees.at(f).call(trees.at(x), trees.at(y), trees.at(z))});
+            }
             else if (args == 2)
             {
                 auto rhs = deserializeBytes<uint32_t>();

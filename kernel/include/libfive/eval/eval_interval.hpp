@@ -38,12 +38,19 @@ public:
                   const Eigen::Vector3f& upper,
                   const std::shared_ptr<Tape>& tape);
 
+    /*  ... for intervals that may be NaN (an interval of a coordinate is what a call asks of the field it calls) */
+    Interval eval(const Interval& x, const Interval& y, const Interval& z,
+                  const std::shared_ptr<Tape>& tape);
+
     std::pair<Interval, std::shared_ptr<Tape>> intervalAndPush(
             const Eigen::Vector3f& lower,
             const Eigen::Vector3f& upper);
     std::pair<Interval, std::shared_ptr<Tape>> intervalAndPush(
             const Eigen::Vector3f& lower,
             const Eigen::Vector3f& upper,
+            const std::shared_ptr<Tape>& tape);
+    std::pair<Interval, std::shared_ptr<Tape>> intervalAndPush(
+            const Interval& x, const Interval& y, const Interval& z,
             const std::shared_ptr<Tape>& tape);
 
     /*
@@ -71,11 +78,33 @@ protected:
      /* Sets i[index] = f and maybe_nan[index] = std::isnan(f) */
      void store(float f, size_t index);
 
+    /*  The tape being walked.  The calls on it run their callees on tapes of
+     *  their own, which pushing shortened (Tape::callTape) */
+    const Tape* tape_ = nullptr;
+
+    /*  The numbers that the variables have here (what an evaluator of a
+     *  callee is made with) */
+    std::map<Tree::Id, float> varValues() const;
+
+    /*  Pushing shortens the tapes of the callees too: each call site's callee
+     *  is evaluated (in the box the arguments have) and pushed while the tape
+     *  is walked, if the walk is one that is pushed afterwards (intervalAndPush),
+     *  and the tapes it made wait here for push().  `pending_[site]` is null for
+     *  a site whose tape came out as it was.  After a plain eval() the calls
+     *  are run again, by push(). */
+    std::vector<std::shared_ptr<Tape>> pending_;
+    bool collecting_ = false;
+    bool pendingValid_ = false;
+
     /*
-     *  Per-clause evaluation, used in tape walking
+     *  Per-clause evaluation, used in tape walking.  c is the third
+     *  argument, that of a call only.
      */
     void operator()(Opcode::Opcode op, Clause::Id id,
-                    Clause::Id a, Clause::Id b);
+                    Clause::Id a, Clause::Id b, Clause::Id c = 0);
+
+    /*  A call clause: the callee over the box that the arguments have */
+    void call(Clause::Id id, Clause::Id a, Clause::Id b, Clause::Id c);
 };
 
 }   // namespace libfive

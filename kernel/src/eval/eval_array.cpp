@@ -126,13 +126,63 @@ ArrayEvaluator::values(size_t count, const Tape& tape)
 {
     setCount(count);
 
+    tape_ = &tape;
     deck->bindOracles(tape);
     for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b);
+        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
     }
     deck->unbindOracles();
 
     return v.block<1, Eigen::Dynamic>(tape.root(), 0, 1, count);
+}
+
+std::map<Tree::Id, float> ArrayEvaluator::varValues() const
+{
+    std::map<Tree::Id, float> out;
+    for (const auto& var : deck->vars.right)
+    {
+        out[var.first] = v(var.second, 0);
+    }
+    return out;
+}
+
+void ArrayEvaluator::call(Clause::Id id, Clause::Id a_, Clause::Id b_,
+                          Clause::Id c_)
+{
+    const auto site = deck->site(id);
+    Callee& callee = deck->calleeAt(site);
+    ArrayEvaluator* e = callee.array();
+    if (!e)
+    {
+        e = &callee.makeArray(varValues());
+    }
+    for (size_t i = 0; i < count_actual; ++i)
+    {
+        e->set(Eigen::Vector3f(v(a_, i), v(b_, i), v(c_, i)), i);
+    }
+    const Tape::Handle& shortened = tape_->callTape(site);
+    v.block<1, Eigen::Dynamic>(id, 0, 1, count_actual) =
+        e->values(count_actual, shortened ? *shortened : *callee.deck->tape);
+}
+
+void ArrayEvaluator::callAmbiguous(Clause::Id id, Clause::Id a_, Clause::Id b_,
+                                   Clause::Id c_, size_t count)
+{
+    const auto site = deck->site(id);
+    Callee& callee = deck->calleeAt(site);
+    ArrayEvaluator* e = callee.array();
+    if (!e)
+    {
+        e = &callee.makeArray(varValues());
+    }
+    for (size_t i = 0; i < count; ++i)
+    {
+        e->set(Eigen::Vector3f(v(a_, i), v(b_, i), v(c_, i)), i);
+    }
+    const Tape::Handle& shortened = tape_->callTape(site);
+    const Tape& use = shortened ? *shortened : *callee.deck->tape;
+    e->values(count, use);
+    ambig.head(count) = ambig.head(count) || e->getAmbiguous(count, use);
 }
 
 
@@ -195,6 +245,10 @@ bool ArrayEvaluator::setVar(Tree::Id var_, float value)
     {
         o->setVar(var_, value);
     }
+    for (auto& c : deck->callees)
+    {
+        c->setVar(var_, value);
+    }
     auto var = deck->vars.right.find(var_);
     if (var != deck->vars.right.end())
     {
@@ -222,10 +276,15 @@ ArrayEvaluator::getAmbiguous(size_t i, const Tape& tape)
     // Reset the ambiguous array to all false
     ambig = false;
 
+    tape_ = &tape;
     for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
         if (itr->op == Opcode::ORACLE)
         {
             deck->oracles[itr->a]->checkAmbiguous(ambig.head(i));
+        }
+        else if (itr->op == Opcode::CALL)
+        {
+            callAmbiguous(itr->id, itr->a, itr->b, itr->c, i);
         }
         else if (itr->op == Opcode::OP_MIN || itr->op == Opcode::OP_MAX)
         {
@@ -241,7 +300,7 @@ ArrayEvaluator::getAmbiguous(size_t i, const Tape& tape)
 ////////////////////////////////////////////////////////////////////////////////
 
 void ArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
-                                Clause::Id a_, Clause::Id b_)
+                                Clause::Id a_, Clause::Id b_, Clause::Id c_)
 {
 #define out v.block<1, Eigen::Dynamic>(id, 0, 1, count_simd)
 #define a v.row(a_).head(count_simd)
@@ -375,6 +434,10 @@ void ArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
         case Opcode::ORACLE:
             deck->oracles[a_]->evalArray(
                     v.block<1, Eigen::Dynamic>(id, 0, 1, count_actual));
+            break;
+
+        case Opcode::CALL:
+            call(id, a_, b_, c_);
             break;
 
         case Opcode::INVALID:

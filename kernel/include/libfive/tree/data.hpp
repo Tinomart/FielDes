@@ -47,6 +47,19 @@ struct TreeApply {
 
     Tree t;
 };
+/*  The field f evaluated at the point (x, y, z): a function application.
+ *
+ *  f is a tree of its own whose X, Y and Z are its arguments (they are not the X, Y and Z of the tree this node is in), so the point
+ *  can be anywhere and f is not copied for it -- a Deck (eval/deck.hpp) compiles f once and every call to it runs that one tape.  A
+ *  TreeRemap with the same arguments is the same field, written as a substitution: it is expanded into a copy of f for each use (and
+ *  that is what is wanted when f is small or used once, since an expanded copy is shortened by the renderer's pruning along with
+ *  the rest of the tape). */
+struct TreeCall {
+    Tree x;
+    Tree y;
+    Tree z;
+    Tree f;
+};
 struct TreeInvalid {
     // No members
 };
@@ -58,6 +71,7 @@ using TreeDataVariant = std::variant<
         TreeOracle,
         TreeRemap,
         TreeApply,
+        TreeCall,
         TreeInvalid>;
 
 /*  TreeData is a wrapper struct around the TreeDataVariant.
@@ -134,6 +148,14 @@ struct TreeData : public TreeDataVariant
         }
     };
 
+    /*  The call, if this is a TreeCall.  Throws a CallException otherwise. */
+    const TreeCall& call() const;
+    struct CallException : public std::exception {
+        const char* what() const throw () override {
+            return "Accessed the call of a Tree that is not a call";
+        }
+    };
+
     struct InvalidException : public std::exception {
         const char* what() const throw () override {
             return "Invalid tree";
@@ -151,10 +173,19 @@ struct TreeData : public TreeDataVariant
     // These flags are a pure function of the tree data, serving as
     // a cache; they could be computed by walking the tree, but it's
     // nice to have this information available with O(1).
+    //
+    // HAS_REMAP means "is not a plain tree of operations yet": it has a remap, an apply or a call in it, and flatten() makes it
+    // plain.  HAS_SUBST is the part of that which is substitution (a remap or an apply), HAS_CALL the part that is a call: the
+    // Deck keeps calls, so what it is made from has HAS_CALL but not HAS_SUBST.
+    //
+    // HAS_XYZ and HAS_ORACLE say that the value depends on the coordinates of the tree it is in.  A call depends on them through
+    // its arguments only: the field it calls has coordinates of its own.
     enum {
         TREE_FLAG_HAS_REMAP=(1<<0),
         TREE_FLAG_HAS_ORACLE=(1<<1),
         TREE_FLAG_HAS_XYZ=(1<<2),
+        TREE_FLAG_HAS_CALL=(1<<3),
+        TREE_FLAG_HAS_SUBST=(1<<4),
     };
     const uint32_t flags;
 

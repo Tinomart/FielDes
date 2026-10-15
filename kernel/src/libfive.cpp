@@ -196,8 +196,8 @@ void libfive_tree_delete(libfive_tree ptr)
 namespace {
 bool canKeep(const Tree& t)
 {
-    const Tree flat = t.flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
-    for (auto& n : flat.walk())
+    const Tree flat = t.flatten(true, Tree::Calls::Keep);      // (kept: walk() of a tree with remaps points into a flattened copy)
+    for (auto& n : flat.walk_deep())        // (and the fields that calls call)
     {
         if (n->op() != Opcode::ORACLE) continue;
         if (!OracleClause::canSerialize(n->oracle_clause().name())) return false;
@@ -216,7 +216,8 @@ bool libfive_tree_can_save(libfive_tree ptr)
 int libfive_tree_axes(libfive_tree ptr)
 {
     int mask = 0;
-    const Tree flat = Tree(ptr).flatten();      // (kept: walk() of a tree with remaps points into a flattened copy)
+    // (a call depends on the coordinates through its arguments only: the field that it calls has coordinates of its own, which are not walked)
+    const Tree flat = Tree(ptr).flatten(true, Tree::Calls::Keep);      // (kept: walk() of a tree with remaps points into a flattened copy)
     for (auto& n : flat.walk())
     {
         switch (n->op())
@@ -589,6 +590,11 @@ libfive_step_brep* libfive_step_brep_read_only(const char* filename, int turn_sa
 libfive_tree libfive_tree_remap(libfive_tree p, libfive_tree x, libfive_tree y, libfive_tree z)
 {
     return Tree(p).remap(Tree(x), Tree(y), Tree(z)).release();
+}
+
+libfive_tree libfive_tree_call(libfive_tree p, libfive_tree x, libfive_tree y, libfive_tree z)
+{
+    return Tree(p).call(Tree(x), Tree(y), Tree(z)).release();
 }
 
 libfive_tree libfive_tree_optimized(libfive_tree t) {

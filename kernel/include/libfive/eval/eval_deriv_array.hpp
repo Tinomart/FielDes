@@ -36,6 +36,14 @@ protected:
      * in this flag.  */
     bool clear_vars = false;
 
+    /*  A call clause, in the derivative pass: the derivatives of the callee
+     *  at the points (a, b, c) with respect to what the derivatives here are
+     *  with respect to.  The callee's X, Y and Z are the arguments, so the
+     *  derivatives of the arguments are what the callee starts from: carrying
+     *  them in is the chain rule.  The value pass has set the call's value. */
+    void callDeriv(Clause::Id id, Clause::Id a, Clause::Id b, Clause::Id c,
+                   size_t count);
+
 public:
     /*
      *  Multi-point evaluation (values must be stored with set)
@@ -53,10 +61,11 @@ public:
                           const Tape& tape);
 
     /*
-     *  Per-clause evaluation, used in tape walking
+     *  Per-clause evaluation, used in tape walking.  c is the third
+     *  argument, that of a call only.
      */
     void operator()(Opcode::Opcode op, Clause::Id id,
-                    Clause::Id a, Clause::Id b);
+                    Clause::Id a, Clause::Id b, Clause::Id c = 0);
 
     /*
      *  Returns a list of ambiguous items from indices 0 to i that

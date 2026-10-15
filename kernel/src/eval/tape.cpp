@@ -21,12 +21,22 @@ Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type t)
 }
 
 Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type type,
-                        const Region<3>& r)
+                        const Region<3>& r,
+                        const std::vector<Handle>* call_tapes)
 {
     // If this tape has no min/max clauses, then return it right away
     if (terminal)
     {
         return shared_from_this();
+    }
+
+    // The tapes that the call sites run their callees on in the tape this makes: those of this tape, but for the sites kept
+    // here, which take the shortened ones they were given
+    std::vector<Handle> new_calls;
+    if (deck.sites())
+    {
+        new_calls = calls;
+        new_calls.resize(deck.sites());
     }
 
     // Since we'll be figuring out which clauses are disabled and
@@ -68,6 +78,26 @@ Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type type,
             if (deck.remap[c.id])
             {
                 deck.disabled[c.id] = true;
+            }
+            // A call keeps its three arguments.  Whether its callee has a
+            // shorter tape here (the arguments reach a smaller region) is
+            // what call_tapes says; the tape this makes is not terminal until
+            // every callee's tape cannot be shortened either.
+            else if (c.op == Opcode::CALL)
+            {
+                deck.disabled[c.a] = false;
+                deck.disabled[c.b] = false;
+                deck.disabled[c.c] = false;
+
+                const auto site = deck.site(c.id);
+                if (call_tapes && site < call_tapes->size() &&
+                    (*call_tapes)[site] && (*call_tapes)[site] != new_calls[site])
+                {
+                    new_calls[site] = (*call_tapes)[site];
+                    changed = true;
+                }
+                terminal &= (new_calls[site].get() != nullptr) &&
+                             new_calls[site]->isTerminal();
             }
             // Oracle nodes are special-cased here.  They should always
             // return either KEEP_BOTH or KEEP_ALWAYS, but have no children
@@ -132,6 +162,14 @@ Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type type,
             {
                 out->t.push_back({c.op, c.id, c.a, c.b});
             }
+            else if (c.op == Opcode::CALL)
+            {
+                Clause::Id ra, rb, rc;
+                for (ra = c.a; deck.remap[ra]; ra = deck.remap[ra]);
+                for (rb = c.b; deck.remap[rb]; rb = deck.remap[rb]);
+                for (rc = c.c; deck.remap[rc]; rc = deck.remap[rc]);
+                out->t.push_back({c.op, c.id, ra, rb, rc});
+            }
             else
             {
                 Clause::Id ra, rb;
@@ -155,6 +193,9 @@ Tape::Handle Tape::push(Deck& deck, KeepFunction fn, Type type,
 
     // Store the Oracle contexts
     out->contexts = std::move(new_contexts);
+
+    // ... and the tapes the call sites run their callees on
+    out->calls = std::move(new_calls);
 
     return out;
 }

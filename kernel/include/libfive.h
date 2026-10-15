@@ -1068,6 +1068,14 @@ const char* libfive_import_mesh_last_message(void);
 libfive_tree libfive_tree_remap(libfive_tree p,
         libfive_tree x, libfive_tree y, libfive_tree z);
 
+/*  The field p evaluated at the point (x'(x, y, z), y'(x, y, z), z'(x, y, z)):
+ *  the same field as libfive_tree_remap, evaluated in another way.  A remap is
+ *  expanded into a copy of p for each use; a call keeps p where it is (it is
+ *  compiled once into a tape of its own and every call runs that tape), so a
+ *  field that is asked at many places is not copied for each.  */
+libfive_tree libfive_tree_call(libfive_tree p,
+        libfive_tree x, libfive_tree y, libfive_tree z);
+
 /*
  *  Returns an optimized version of the given tree
  */

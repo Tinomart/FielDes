@@ -78,11 +78,12 @@ bool FeatureEvaluator::isInside(const Eigen::Vector3f& p,
 
     // First, we evaluate and extract all of the features, saving
     // time by re-using the shortened tape from valueAndPush
+    tape_ = handle.second.get();
     for (auto itr = handle.second->rbegin();
          itr != handle.second->rend();
          ++itr)
     {
-        (*this)(itr->op, itr->id, itr->a, itr->b);
+        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
     }
     auto fs = f(handle.second->root());
 
@@ -130,9 +131,10 @@ const boost::container::small_vector<Feature, 4>&
     filled = 1;
 
     // Evaluate feature-wise
+    tape_ = handle.second.get();
     deck->bindOracles(*handle.second);
     for (auto itr = handle.second->rbegin(); itr != handle.second->rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b);
+        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
     }
     deck->unbindOracles();
 
@@ -168,8 +170,56 @@ std::list<Eigen::Vector3f> FeatureEvaluator::features(
     return out;
 }
 
+void FeatureEvaluator::callFeatures(Clause::Id id, Clause::Id a_, Clause::Id b_,
+                                    Clause::Id c_)
+{
+    const auto site = deck->site(id);
+    Callee& callee = deck->calleeAt(site);
+    FeatureEvaluator* e = callee.feature();
+    if (!e)
+    {
+        e = &callee.makeFeature(varValues());
+    }
+    auto& of = f(id);
+    of.clear();
+
+    // The features of the callee at the point the arguments give (copied: the
+    // next call of this callee, of another site, writes over them)
+    const Eigen::Vector3f q(v(a_, 0), v(b_, 0), v(c_, 0));
+    const Tape::Handle& shortened = tape_->callTape(site);
+    const boost::container::small_vector<Feature, 4> under =
+        e->features_(q, shortened ? shortened : callee.deck->tape);
+
+    // Every combination of a feature of each argument with every feature of the
+    // callee that is compatible with them is a feature of the call.  This
+    // loop should almost never have large lists, barring pathological cases.
+    for (const auto& f1 : f(a_))
+    {
+        for (const auto& f2 : f(b_))
+        {
+            if (!f1.check(f2)) continue;
+            const Feature f12({0.f, 0.f, 0.f}, f1, f2);
+            for (const auto& f3 : f(c_))
+            {
+                if (!f3.check(f12)) continue;
+                const Feature f123({0.f, 0.f, 0.f}, f12, f3);
+                Eigen::Matrix3f Jacobian;
+                Jacobian << f1.deriv, f2.deriv, f3.deriv;
+                for (const auto& f4 : under)
+                {
+                    const Feature transformed(f4, Jacobian);
+                    if (transformed.check(f123))
+                    {
+                        of.emplace_back(transformed.deriv, transformed, f123);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void FeatureEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
-                                  Clause::Id a, Clause::Id b)
+                                  Clause::Id a, Clause::Id b, Clause::Id c)
 {
 #define of f(id)
 
@@ -264,6 +314,8 @@ void FeatureEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
         }
     } else if (op == Opcode::ORACLE) {
         deck->oracles[a]->evalFeatures(f(id));
+    } else if (op == Opcode::CALL) {
+        callFeatures(id, a, b, c);
     } else if (Opcode::args(op) == 1) {
         unsigned count = 0;
         auto run = [&]() {

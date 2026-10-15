@@ -8,9 +8,12 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 */
 #pragma once
 
+#include <unordered_map>
+
 #include <boost/bimap.hpp>
 
 #include "libfive/tree/tree.hpp"
+#include "libfive/eval/callee.hpp"
 #include "libfive/eval/clause.hpp"
 #include "libfive/oracle/oracle.hpp"
 
@@ -51,6 +54,19 @@ public:
      *  stored in this flat list.  The ORACLE opcode takes an index into
      *  this list and an index into the results array. */
     std::vector<std::unique_ptr<Oracle>> oracles;
+
+    /*  The fields that the tape calls, one for each tree that a call in the
+     *  tree calls (calls of the same tree share it).  Each CALL clause is a
+     *  call site, and has a number of its own: site(clause id).  Evaluators
+     *  use it to find the callee (calleeAt) and the tape that this site runs
+     *  its callee on under a given tape (Tape::callTape). */
+    std::vector<std::unique_ptr<Callee>> callees;
+    std::vector<uint32_t> site_callee;
+    std::unordered_map<Clause::Id, uint32_t> site_of;
+
+    uint32_t site(Clause::Id call) const { return site_of.at(call); }
+    Callee& calleeAt(uint32_t site) const { return *callees[site_callee[site]]; }
+    size_t sites() const { return site_callee.size(); }
 
     /*  Stores the total number of clauses (including X/Y/Z, oracles,
      *  variables, and constants, which aren't explicitly in the tape).

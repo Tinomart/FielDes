@@ -136,7 +136,8 @@ public:
      *  (2*X + 3*Y) + 5*(X - Y) ==> 7*X - 2*Y
      *
      *  If the input tree contained remap operations, it will be flattened
-     *  before optimization */
+     *  before optimization.  Calls stay calls (the tree that one calls is
+     *  optimized when the Deck compiles it). */
     Tree optimized() const;
     Tree optimized_helper(
             std::unordered_map<TreeDataKey, Tree>& canonical) const;
@@ -148,14 +149,21 @@ public:
      *  them against the same canonical map, then compare their ids. */
     Tree cooptimize(std::unordered_map<TreeDataKey, Tree>& canonical) const;
 
+    /*  What flatten does with a call (see call() below).  Inline expands it like a remap: the tree it makes is a plain tree of operations, which
+     *  is what anything that looks at the nodes of a tree for what they are wants (the variables in it, the oracles in it).  Keep leaves it a
+     *  call -- its arguments are expanded and so is the field it calls, which stays a tree of its own -- and that is what a Deck is made from. */
+    enum class Calls { Inline, Keep };
+
     /*  Returns a tree with all remap operations expanded.
      *
      *  `share` false (the default) expands a node again every time it is reached, as flatten always did: the numbers of a tree that handles() makes
      *  draggable are counted in the tree this makes, and what a saved script says about them (the list of numbers under handles(...)) was counted so.
      *  `share` true remembers what a node comes to under a substitution and uses that every time it is reached: the same values, a graph with as many
      *  nodes as there are different ones, and the only way to expand a field made of shifted copies of fields made of shifted copies in a time that
-     *  does not grow with every level (what the optimizer and the evaluators are made from). */
-    Tree flatten(bool share = false) const;
+     *  does not grow with every level (what the optimizer and the evaluators are made from).
+     *
+     *  Calls are expanded too unless `calls` is Keep. */
+    Tree flatten(bool share = false, Calls calls = Calls::Inline) const;
 
     /*  Checks the number of unique nodes in the tree */
     size_t size() const;
@@ -166,6 +174,23 @@ public:
      *  to flatten() or optimized().
      */
     Tree remap(Tree X, Tree Y, Tree Z) const;
+
+    /*  This tree evaluated at the point (X, Y, Z), returning a new tree.
+     *
+     *  The value is the same as that of remap(X, Y, Z), and so are its derivatives, its intervals and its features; what differs is how
+     *  it is evaluated.  A remap is a substitution: it is expanded into a copy of this tree for each use.  A call keeps this tree where it
+     *  is -- the Deck compiles it once into a tape of its own -- and evaluates it at the point, so a field that is asked at a hundred
+     *  places is one tape, not a hundred copies of it (a hundred copies of a field with ten thousand nodes are a million nodes to build,
+     *  to optimize and to hold in every thread).  The renderer's pruning follows the call: the tape it calls is shortened for the
+     *  region that its arguments reach.
+     *
+     *  Like remap, this is a constant-time lazy operation. */
+    Tree call(Tree X, Tree Y, Tree Z) const;
+
+    /*  Every node of this tree, and of the trees its calls call (each once).  The tree must be one that flatten(share, Calls::Keep) made: this
+     *  does not expand remaps, it only looks at what is there.  walk() gives the nodes of this tree's own tape; this gives the nodes of all the
+     *  tapes a Deck made from it holds -- for finding the variables and the oracles in a field that calls others. */
+    std::vector<const Data*> walk_deep() const;
 
     /*  Substitutes a variable within a tree.
      *
@@ -190,7 +215,8 @@ public:
     /*  Performs a leaves-to-root traverse of the tree.
      *
      *  If the tree contains remap operations, it will be flattened
-     *  prior to walking. */
+     *  prior to walking.  A call is a node of the walk, after its three
+     *  arguments; the tree that it calls is not walked (see walk_deep). */
     std::vector<const Data*> walk() const;
 
     /*  Equivalent to shared_ptr::get */

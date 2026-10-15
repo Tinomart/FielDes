@@ -82,10 +82,18 @@ public:
 
 protected:
     /*
-     *  Per-clause evaluation, used in tape walking
+     *  Per-clause evaluation, used in tape walking.  c is the third
+     *  argument, that of a call only.
      */
     void operator()(Opcode::Opcode op, Clause::Id id,
-                    Clause::Id a, Clause::Id b);
+                    Clause::Id a, Clause::Id b, Clause::Id c = 0);
+
+    /*  A call clause: the features of the callee at the point (a, b, c), each
+     *  with the features of the arguments that its derivative is carried
+     *  through (the chain rule on every combination of them, as an oracle
+     *  that is moved does it) */
+    void callFeatures(Clause::Id id, Clause::Id a, Clause::Id b,
+                      Clause::Id c);
 
     /*  Raw feature data */
     Eigen::Array<boost::container::small_vector<Feature, 4>,

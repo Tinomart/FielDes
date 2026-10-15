@@ -100,6 +100,14 @@ int children(const TreeData* d, const TreeData* out[4])
         out[2] = a->t.get();
         return 3;
     }
+    if (auto c = std::get_if<TreeCall>(d))
+    {
+        out[0] = c->x.get();
+        out[1] = c->y.get();
+        out[2] = c->z.get();
+        out[3] = c->f.get();
+        return 4;
+    }
     return 0;
 }
 
@@ -220,6 +228,11 @@ Hash keyOf(const Tree& root, KeyMode& mode)
         else if (std::get_if<TreeApply>(d))
         {
             add(h, uint64_t(9));
+            for (int i = 0; i < n; ++i) add(h, memo.at(kid[i]));
+        }
+        else if (std::get_if<TreeCall>(d))
+        {
+            add(h, uint64_t(11));
             for (int i = 0; i < n; ++i) add(h, memo.at(kid[i]));
         }
         else

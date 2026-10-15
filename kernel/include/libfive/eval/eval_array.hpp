@@ -75,11 +75,30 @@ protected:
     /*  ambig(index) returns whether a particular slot is ambiguous */
     Eigen::Array<bool, 1, N> ambig;
 
+    /*  The tape being walked.  The calls on it run their callees on tapes of
+     *  their own, which pushing shortened (Tape::callTape) */
+    const Tape* tape_ = nullptr;
+
+    /*  The numbers that the variables have here: what an evaluator of a
+     *  callee is made with */
+    std::map<Tree::Id, float> varValues() const;
+
     /*
-     *  Per-clause evaluation, used in tape walking
+     *  Per-clause evaluation, used in tape walking.  c is the third
+     *  argument, that of a call only.
      */
     void operator()(Opcode::Opcode op, Clause::Id id,
-                    Clause::Id a, Clause::Id b);
+                    Clause::Id a, Clause::Id b, Clause::Id c = 0);
+
+    /*  A call clause: the callee's value at the points (a, b, c) of every slot
+     *  in use.  The callee's evaluator is the callee's own, so the points are
+     *  set in it one by one.  */
+    void call(Clause::Id id, Clause::Id a, Clause::Id b, Clause::Id c);
+
+    /*  The same, to find out where the callee is ambiguous (a min and a max
+     *  with equal sides): ORs those slots into ambig  */
+    void callAmbiguous(Clause::Id id, Clause::Id a, Clause::Id b,
+                       Clause::Id c, size_t count);
 
 public:
     /*

@@ -272,10 +272,19 @@ class Shape:
         return points.displayed(self)
 
     def __call__(self, x, y, z):
+        ''' The value of this field at a point.
+
+            With three numbers: the number it has there.  With shapes (fields of x, y, z, or numbers among them): the field
+            that has, at every point, the value this one has at the point they give -- f(x + 3, y, z) is f moved by 3.  This
+            is a call: this field is kept where it is and evaluated at the point, not copied for each place it is asked at
+            (remap is the same field written as a substitution, which is copied into every use).
+        '''
         if all([isinstance(c, numbers.Number) for c in [x, y, z]]):
             return lib.libfive_tree_eval_f(self.ptr, libfive_vec3_t(x, y, z))
-        else:
-            raise RuntimeError("x/y/z arguments must be numbers")
+        args = [Shape.wrap(c) for c in (x, y, z)]
+        out = Shape(lib.libfive_tree_call(self.ptr, args[0].ptr, args[1].ptr, args[2].ptr))
+        out._kind = self._kind if self._kind in ('field', 'const') else None
+        return out
 
     def call(self, fn, *args, **kwargs):
         ''' Calls the given function with self as the first argument.

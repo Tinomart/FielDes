@@ -22,8 +22,8 @@ struct Clause
     /*
      *  Clause constructor
      */
-    Clause(Opcode::Opcode op, Id id, Id a, Id b)
-        : op(op), id(id), a(a), b(b) {}
+    Clause(Opcode::Opcode op, Id id, Id a, Id b, Id c = 0)
+        : op(op), id(id), a(a), b(b), c(c) {}
 
     /*  Opcode for this clause  */
     const Opcode::Opcode op;
@@ -32,6 +32,10 @@ struct Clause
     Id const id;
     Id const a;
     Id const b;
+
+    /*  The third argument: only the call has one (the z it asks its field at;
+     *  a and b are the x and the y).  Zero everywhere else. */
+    Id const c;
 };
 
 }   // namespace libfive

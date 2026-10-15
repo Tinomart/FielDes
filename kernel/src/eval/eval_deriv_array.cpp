@@ -61,10 +61,21 @@ DerivArrayEvaluator::getAmbiguousDerivs(size_t i, const Tape& tape)
     // Reset the ambiguous array to all false
     ambig = false;
 
+    tape_ = &tape;
     for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
         if (itr->op == Opcode::ORACLE)
         {
             deck->oracles[itr->a]->checkAmbiguous(ambig.head(i));
+        }
+        else if (itr->op == Opcode::CALL)
+        {
+            // (the callee is run again at these points, with the derivatives of the arguments, and asked where it is ambiguous)
+            const auto site = deck->site(itr->id);
+            callDeriv(itr->id, itr->a, itr->b, itr->c, i);
+            const Tape::Handle& shortened = tape.callTape(site);
+            ambig.head(i) = ambig.head(i) ||
+                deck->calleeAt(site).deriv()->getAmbiguousDerivs(
+                    i, shortened ? *shortened : *deck->calleeAt(site).deck->tape);
         }
         else if (itr->op == Opcode::OP_MIN || itr->op == Opcode::OP_MAX)
         {
@@ -105,9 +116,10 @@ DerivArrayEvaluator::derivs(size_t count, const Tape& tape)
     out.row(3).head(count) = values(count, tape);
 
     // Perform derivative evaluation, copying results into the out array
+    tape_ = &tape;
     deck->bindOracles(tape);
     for (auto itr = tape.rbegin(); itr != tape.rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b);
+        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
     }
     deck->unbindOracles();
 
@@ -116,8 +128,49 @@ DerivArrayEvaluator::derivs(size_t count, const Tape& tape)
     return out.block<4, Eigen::Dynamic>(0, 0, 4, count);
 }
 
+void DerivArrayEvaluator::callDeriv(Clause::Id id, Clause::Id a_, Clause::Id b_,
+                                    Clause::Id c_, size_t n)
+{
+    const auto site = deck->site(id);
+    Callee& callee = deck->calleeAt(site);
+    DerivArrayEvaluator* e = callee.deriv();
+    if (!e)
+    {
+        e = &callee.makeDeriv(varValues());
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        e->set(Eigen::Vector3f(v(a_, i), v(b_, i), v(c_, i)), i);
+    }
+
+    // The callee's X, Y and Z are the arguments: they change as the arguments do
+    e->d(e->deck->X).leftCols(n) = d(a_).leftCols(n);
+    e->d(e->deck->Y).leftCols(n) = d(b_).leftCols(n);
+    e->d(e->deck->Z).leftCols(n) = d(c_).leftCols(n);
+
+    // ... and its variables are this deck's: when the derivatives are those with
+    // respect to the variables (clear_vars), a variable is 1 in its own lanes
+    e->clear_vars = clear_vars;
+    for (const auto& var : e->deck->vars.left)
+    {
+        const auto here = deck->vars.right.find(var.second);
+        if (clear_vars && here != deck->vars.right.end())
+        {
+            e->d(var.first).leftCols(n) = d(here->second).leftCols(n);
+        }
+        else
+        {
+            e->d(var.first).leftCols(n) = 0.0f;
+        }
+    }
+
+    const Tape::Handle& shortened = tape_->callTape(site);
+    auto r = e->derivs(n, shortened ? *shortened : *callee.deck->tape);
+    d(id).leftCols(n) = r.topRows(3);
+}
+
 void DerivArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
-                                     Clause::Id a_, Clause::Id b_)
+                                     Clause::Id a_, Clause::Id b_, Clause::Id c_)
 {
 #define ov v.row(id).head(count_simd)
 #define od d(id).leftCols(count_simd)
@@ -245,6 +298,10 @@ void DerivArrayEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
             } else {
                 deck->oracles[a_]->evalDerivArray(d(id).leftCols(count_actual));
             }
+            break;
+
+        case Opcode::CALL:
+            callDeriv(id, a_, b_, c_, count_actual);
             break;
 
         case Opcode::INVALID:

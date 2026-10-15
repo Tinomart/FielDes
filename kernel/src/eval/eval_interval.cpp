@@ -90,18 +90,35 @@ Interval IntervalEvaluator::eval(
     assert(!lower.array().isNaN().any()); // A region's bounds should
     assert(!upper.array().isNaN().any()); // never be NaN.
 
-    i[deck->X] = {lower.x(), upper.x()};
-    i[deck->Y] = {lower.y(), upper.y()};
-    i[deck->Z] = {lower.z(), upper.z()};
+    return eval(Interval(lower.x(), upper.x()),
+                Interval(lower.y(), upper.y()),
+                Interval(lower.z(), upper.z()), tape);
+}
 
+Interval IntervalEvaluator::eval(
+        const Interval& x, const Interval& y, const Interval& z,
+        const Tape::Handle& tape)
+{
+    i[deck->X] = x;
+    i[deck->Y] = y;
+    i[deck->Z] = z;
+
+    const Eigen::Vector3f lower(x.lower(), y.lower(), z.lower());
+    const Eigen::Vector3f upper(x.upper(), y.upper(), z.upper());
     for (auto& o : deck->oracles)
     {
         o->set(lower, upper);
     }
 
+    // (a plain evaluation leaves nothing for push() to take from the calls)
+    if (!collecting_)
+    {
+        pendingValid_ = false;
+    }
+    tape_ = tape.get();
     deck->bindOracles(*tape);
     for (auto itr = tape->rbegin(); itr != tape->rend(); ++itr) {
-        (*this)(itr->op, itr->id, itr->a, itr->b);
+        (*this)(itr->op, itr->id, itr->a, itr->b, itr->c);
     }
     deck->unbindOracles();
 
@@ -121,7 +138,28 @@ std::pair<Interval, Tape::Handle> IntervalEvaluator::intervalAndPush(
         const Eigen::Vector3f& upper,
         const Tape::Handle& tape)
 {
-    auto out = eval(lower, upper, tape);
+    assert(!lower.array().isNaN().any());
+    assert(!upper.array().isNaN().any());
+
+    return intervalAndPush(Interval(lower.x(), upper.x()),
+                           Interval(lower.y(), upper.y()),
+                           Interval(lower.z(), upper.z()), tape);
+}
+
+std::pair<Interval, Tape::Handle> IntervalEvaluator::intervalAndPush(
+        const Interval& x, const Interval& y, const Interval& z,
+        const Tape::Handle& tape)
+{
+    // The calls are pushed as they are evaluated, while their callees hold the
+    // intervals of this box
+    collecting_ = deck->sites() > 0;
+    if (collecting_)
+    {
+        pending_.assign(deck->sites(), nullptr);
+    }
+    auto out = eval(x, y, z, tape);
+    collecting_ = false;
+    pendingValid_ = deck->sites() > 0;
     return std::make_pair(out, push(tape));
 }
 
@@ -140,6 +178,30 @@ Tape::Handle IntervalEvaluator::push(const Tape::Handle& tape)
                       Eigen::Vector3d(i[deck->X].upper(),
                                       i[deck->Y].upper(),
                                       i[deck->Z].upper()));
+
+    // The callees' tapes, shortened for the boxes their arguments reach.  The
+    // walk that is pushed (intervalAndPush) has made them; after a plain eval()
+    // the calls on the tape are run once more, with pushing
+    const std::vector<Tape::Handle>* call_tapes = nullptr;
+    if (deck->sites())
+    {
+        if (!pendingValid_)
+        {
+            pending_.assign(deck->sites(), nullptr);
+            collecting_ = true;
+            tape_ = tape.get();
+            for (auto itr = tape->rbegin(); itr != tape->rend(); ++itr)
+            {
+                if (itr->op == Opcode::CALL)
+                {
+                    call(itr->id, itr->a, itr->b, itr->c);
+                }
+            }
+            collecting_ = false;
+        }
+        pendingValid_ = false;
+        call_tapes = &pending_;
+    }
     return tape->push(*deck,
         [&](Opcode::Opcode op, Clause::Id /* id */,
             Clause::Id a, Clause::Id b)
@@ -180,16 +242,58 @@ Tape::Handle IntervalEvaluator::push(const Tape::Handle& tape)
         }
         return Tape::KEEP_ALWAYS;
     },
-    Tape::INTERVAL, R);
+    Tape::INTERVAL, R, call_tapes);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+std::map<Tree::Id, float> IntervalEvaluator::varValues() const
+{
+    std::map<Tree::Id, float> out;
+    for (const auto& var : deck->vars.right)
+    {
+        out[var.first] = i[var.second].lower();
+    }
+    return out;
+}
+
+void IntervalEvaluator::call(Clause::Id id, Clause::Id a_, Clause::Id b_,
+                             Clause::Id c_)
+{
+    const auto site = deck->site(id);
+    Callee& callee = deck->calleeAt(site);
+    IntervalEvaluator* e = callee.interval();
+    if (!e)
+    {
+        e = &callee.makeInterval(varValues());
+    }
+    const Tape::Handle& shortened = tape_->callTape(site);
+    const Tape::Handle& use = shortened ? shortened : callee.deck->tape;
+    if (collecting_)
+    {
+        const auto r = e->intervalAndPush(i[a_], i[b_], i[c_], use);
+        i[id] = r.first;
+        // (a tape that came out as it was is no news)
+        if (r.second != use)
+        {
+            pending_[site] = r.second;
+        }
+    }
+    else
+    {
+        i[id] = e->eval(i[a_], i[b_], i[c_], use);
+    }
+}
 
 bool IntervalEvaluator::setVar(Tree::Id var, float value)
 {
     for (auto& o : deck->oracles)
     {
         o->setVar(var, value);
+    }
+    for (auto& c : deck->callees)
+    {
+        c->setVar(var, value);
     }
     auto v = deck->vars.right.find(var);
     if (v != deck->vars.right.end())
@@ -208,7 +312,7 @@ bool IntervalEvaluator::setVar(Tree::Id var, float value)
 ////////////////////////////////////////////////////////////////////////////////
 
 void IntervalEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
-                                   Clause::Id a_, Clause::Id b_)
+                                   Clause::Id a_, Clause::Id b_, Clause::Id c_)
 {
 #define out i[id]
 #define a i[a_]
@@ -298,6 +402,10 @@ void IntervalEvaluator::operator()(Opcode::Opcode op, Clause::Id id,
 
         case Opcode::ORACLE:
             deck->oracles[a_]->evalInterval(out);
+            break;
+
+        case Opcode::CALL:
+            call(id, a_, b_, c_);
             break;
 
         case Opcode::INVALID:

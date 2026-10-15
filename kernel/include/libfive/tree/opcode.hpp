@@ -58,6 +58,7 @@ namespace Opcode
     OPCODE(OP_COMPARE, 31)  \
                             \
     OPCODE(ORACLE, 32)      \
+    OPCODE(CALL, 33)        \
     /* end of opcodes */
 #else
 #define OPCODES \
@@ -98,14 +99,17 @@ namespace Opcode
     OPCODE(OP_COMPARE, 31)  \
                             \
     OPCODE(ORACLE, 32)      \
+    OPCODE(CALL, 33)        \
     /* end of opcodes */
 #endif
 
+// CALL is the one operation with three arguments: the coordinates (a, b, c) at which another field -- a tape of its own, which the
+// deck holds -- is evaluated.  It exists only on a tape; in a Tree it is a TreeCall (see data.hpp).
 enum Opcode {
 #define OPCODE(s, i) s=i,
     OPCODES
 #undef OPCODE
-    LAST_OP=33,
+    LAST_OP=34,
 };
 
 size_t args(Opcode op);
