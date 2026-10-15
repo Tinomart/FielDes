@@ -1,0 +1,206 @@
++ Primitives
+  + New 3D shape
+    + sphere
+    + box
+    + cylinder
+    + cone
+    + torus
+    + pyramid
+  + New 2D shape
+    + circle
+    + rectangle
+    + polygon
+    + triangle
+    + profile    [A 2D shape from points or from a surface.  With points selected: made from them, in the or]
+  + New 1D shape
+    + polyline    [A set of lines through points.  With points selected: made from them, in the order you sel]
+    + spline    [A smooth curve through points.  With points selected: made from them, in the order you sel]
+  + New point
+  + New surface
+    + plane
+    + sphere_surface
+    + cylinder_surface
+  + New field
+    + distance_to_point
+    + radial_field
+    + z_field
+    + noise_field
++ Parametric shapes
+  + New 3D shape
+    + rounded_box
+    + half_space
+    + low_level_body
+  + New 2D shape
+    + rounded_rectangle
+    + ring
+  + New surface
+  + New field
+    + wave
+    + low_level_field
+  + New custom block
+    + bracket    [An L-shaped bracket: a base plate and an upright, with a rounded inside corner]
++ Operations
+  + Offsets and walls
+    + offset    [With several models selected: the first is the one this is made for, the others are what i]
+    + shell    [With several models selected: the first is the one this is made for, the others are what i]
+    + thicken    [With several models selected: the first is the one this is made for, the others are what i]
+    + shell_inside    [With several models selected: the first is the one this is made for, the others are what i]
+    + shell_outside    [With several models selected: the first is the one this is made for, the others are what i]
+    + shell_centered    [With several models selected: the first is the one this is made for, the others are what i]
+    + offset_exact    [With several models selected: the first is the one this is made for, the others are what i]
+    + shell_exact    [With several models selected: the first is the one this is made for, the others are what i]
+  + Texturing
+    + texture    [With several models selected: the first is the one this is made for, the others are what i]
+  + Rounding
+    + smooth    [With several models selected: the first is the one this is made for, the others are what i]
+    + round_edges    [With several models selected: the first is the one this is made for, the others are what i]
+    + fillet    [With several models selected: the first is the one this is made for, the others are what i]
+  + Moving
+    + move
+    + rotate_z
+    + scale_xyz
+    + reflect_x
+    + symmetric_x
+    + symmetric_y
+    + symmetric_z
+  + Repeating
+    + instance
+    + array_x
+    + array_xy
+    + array_polar_z
+  + Combining
+    + union
+    + difference
+    + intersection
+    + exclude
+  + Surfaces
+    + surface_from_bodies    [With several models selected: the first is the one this is made for, the others are what i]
+  + Field math
+    + add_fields
+    + subtract_fields
+    + multiply_fields
+    + divide_fields
+    + power_field
+    + min_fields
+    + max_fields
+    + abs_field
+    + negate_field
+    + sqrt_field
+    + square_field
+    + field_from_body
+    + body_from_field
+  + Importing
+    + tessellate
+  + Custom blocks
+    + light_core    [A body hollowed to a wall, with a gyroid lattice filling its core]
+    + perforate    [Drills a grid of round holes right through a body, along z]
+    + rounded    [Smooths every edge and bump of a body that is smaller than the radius]
+  + Lattice
+    + lattice    [With a cell selected with the model: that cell.  Otherwise a first cell to change in the s]
+    + lattice_surface_conform    [With a cell selected with the model: that cell.  Otherwise a first cell to change in the s]
+    + random_points    [Points made in the model, drawn as dots: how far apart they are on average, how random, th]
+    - voronoi_lattice    [A foam: the edges of the Voronoi cells around the selected points, as beams, filling the m]
+    - delaunay_lattice    [A stochastic truss: beams along the Delaunay edges between the selected points, filling th]
+    ----
+    + Strut cells
+      + cubic    [A new cell: cell_cubic -- a lattice operation takes it as its cell]
+      + bcc    [A new cell: cell_bcc -- a lattice operation takes it as its cell]
+      + bccz    [A new cell: cell_bccz -- a lattice operation takes it as its cell]
+      + fcc    [A new cell: cell_fcc -- a lattice operation takes it as its cell]
+      + fccz    [A new cell: cell_fccz -- a lattice operation takes it as its cell]
+      + octet    [A new cell: cell_octet -- a lattice operation takes it as its cell]
+      + octahedron    [A new cell: cell_octahedron -- a lattice operation takes it as its cell]
+      + kelvin    [A new cell: cell_kelvin -- a lattice operation takes it as its cell]
+      + diamond_struts    [A new cell: cell_diamond_struts -- a lattice operation takes it as its cell]
+      + cross    [A new cell: cell_cross -- a lattice operation takes it as its cell]
+      + tesseract    [A new cell: cell_tesseract -- a lattice operation takes it as its cell]
+      + cuboctahedron    [A new cell: cell_cuboctahedron -- a lattice operation takes it as its cell]
+    + TPMS cells
+      + gyroid    [A new cell: cell_gyroid -- a lattice operation takes it as its cell]
+      + schwarz_p    [A new cell: cell_schwarz_p -- a lattice operation takes it as its cell]
+      + diamond    [A new cell: cell_diamond -- a lattice operation takes it as its cell]
+      + neovius    [A new cell: cell_neovius -- a lattice operation takes it as its cell]
+      + lidinoid    [A new cell: cell_lidinoid -- a lattice operation takes it as its cell]
+      + split_p    [A new cell: cell_split_p -- a lattice operation takes it as its cell]
+      + iwp    [A new cell: cell_iwp -- a lattice operation takes it as its cell]
+      + frd    [A new cell: cell_frd -- a lattice operation takes it as its cell]
+      + fischer_koch_s    [A new cell: cell_fischer_koch_s -- a lattice operation takes it as its cell]
+    + Planar cells
+      + hexagon    [A new cell: cell_hexagon -- a lattice operation takes it as its cell]
+      + triangle    [A new cell: cell_triangle -- a lattice operation takes it as its cell]
+      + square    [A new cell: cell_square -- a lattice operation takes it as its cell]
+      + kagome    [A new cell: cell_kagome -- a lattice operation takes it as its cell]
+    + Custom cells
+      + custom    [A new cell: cell_custom -- a lattice operation takes it as its cell]
+      + custom_truss    [A new cell: cell_custom_truss -- a lattice operation takes it as its cell]
+      + custom_tpms    [A new cell: cell_custom_tpms -- a lattice operation takes it as its cell]
++ Engineering
+  + Structural
+    + New support or load
+      - fixed    [Does not fit what is selected With several models selected: the first is the body, the oth]
+      - force    [Does not fit what is selected With several models selected: the first is the body, the oth]
+      + gravity
+      + thermal_expansion
+    ----
+    + static_analysis    [With several models selected: the first is the one this is made for, the others are what i]
+    + modal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
+    + topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  + Thermal
+    + thermal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
+    + thermal_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  + Fluid
+    + New fluid
+      + water
+      + air
+      + oil
+      + glycerol
+    ----
+    + fluid_analysis    [With several models selected: the first is the one this is made for, the others are what i]
+    + flow_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  + Manufacturing
+    + New manufacturing constraint
+      + manufacturing_constraint
+      + fff_constraint
+      + cnc_constraint
+      + molding_constraint
+    ----
+    + manufacturing_analysis    [With several models selected: the first is the one this is made for, the others are what i]
+    + manufacturing_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  ----
+  + New material
+    + steel
+    + stainless_steel
+    + aluminium
+    + titanium
+    + pla
+    + petg
+    + abs_plastic
+    + nylon
+    + material
+  ----
+  + parametric_optimization
+----
++ center    [The middle of the model's bounding box, as a point]
++ bounding_box    [The smallest box, aligned with the axes, that holds the model: a body of its own]
+----
++ Import model...    [A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellate]
+----
++ Custom resolution    [Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolut]
++ Export
+  + Mesh
+    + STL (.stl)
+    + OBJ (.obj)
+    + PLY (.ply)
+    + 3MF (.3mf)
+    + glTF binary (.glb)
+    + glTF (.gltf)
+    + FBX (.fbx)
+    + OFF (.off)
+    + DXF (.dxf)
+  + Results
+    - VTK mesh with every field (.vtu)    [Only for a static analysis: the others do not keep a mesh to write]
+    - CSV tables (.csv)    [Only for a static analysis: the others do not keep a mesh to write]
+    + Key numbers as text (.txt)
+- Select Surface    [The selection spreads from the place you click on the surface, so it is started by right-c]
+----
++ Delete
