@@ -1817,7 +1817,7 @@ void Shape::setResult(std::vector<FieldChannel> channels, int current,
         }
     }
     color_auto = false;
-    color_map = "turbo";
+    if (color_map.isEmpty() || color_map == "bc") color_map = "turbo";      // (a result the script gave a map of its own -- "share", "change" -- keeps it)
     const auto& c = m_channels[size_t(m_channel)];
     color_field = c.tree;
     color_lo = c.lo;
@@ -2575,6 +2575,7 @@ bool solvedAtNodes(const QString& name)
 QString Shape::valueNote() const
 {
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return QString();
+    if (m_hasValueNote) return m_valueNote;             // (the script says what the values are: they are no solver's)
     const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
     if (m_show_elements && hasElements()) return T("Element values");
     return solved ? T("Solver values at nodes") : T("Nodal average");
@@ -2583,6 +2584,7 @@ QString Shape::valueNote() const
 QString Shape::valueNoteHelp() const
 {
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return QString();
+    if (m_hasValueNote) return QString();
     const bool solved = solvedAtNodes(m_channels[size_t(m_channel)].name);
     if (m_show_elements && hasElements())
         return solved ? T("Each element's value at its centre, from its solved node values.")
@@ -2595,6 +2597,7 @@ QString Shape::valueNoteHelp() const
 QString Shape::probeLabel() const
 {
     if (!has_result || m_channel < 0 || size_t(m_channel) >= m_channels.size()) return color_label;
+    if (m_hasValueNote) return m_channels[size_t(m_channel)].label;
     if (m_show_elements && hasElements()) return color_label + " [element]";
     return solvedAtNodes(m_channels[size_t(m_channel)].name) ? color_label : color_label + " [nodal average]";
 }

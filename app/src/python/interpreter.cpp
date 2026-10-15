@@ -2324,6 +2324,13 @@ void Interpreter::recordShape(
                     Py_XDECREF(keys);
                     PyErr_Clear();
                 }
+                // What the shown values are, when the result is no solver's (a map of what a shell changed, of where a rule is broken): `_value_note`, '' for none
+                {
+                    PyObject* note = PyObject_GetAttrString(obj, "_value_note");
+                    if (note && PyUnicode_Check(note)) shape->setValueNote(QString::fromUtf8(PyUnicode_AsUTF8(note)));
+                    Py_XDECREF(note);
+                    PyErr_Clear();
+                }
             }
             Py_XDECREF(fptr);
             Py_XDECREF(field);

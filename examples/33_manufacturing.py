@@ -9,7 +9,7 @@
 #                                            output pane how much of the surface breaks each, how badly, and where
 #   manufacturing_optimization(part, constraints=[...])
 #                                            the SHELL: the part CHANGED until it keeps the rules -- the fin thickened, a gusset grown under the
-#                                            ledge at the angle asked -- coloured by what changed (red added, blue cut), with how much of the part
+#                                            ledge at the angle asked -- coloured by the geometry change (red: material added, blue: material removed), with how much of the part
 #                                            that was and what is still broken.  It is a body: wherever a body goes it goes
 #
 # Both read the part's own field: every rule is a field on the part, and nothing is meshed.  The numbers (how much of the surface, where) are measured

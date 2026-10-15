@@ -11,7 +11,7 @@ A part has to be made. FielDes has three blocks for what a process asks of it, i
 ```python
 printer = fff_constraint(nozzle=0.4)
 report = manufacturing_analysis(part, constraints=[printer])        # coloured where it breaks a rule
-better = manufacturing_optimization(part, constraints=[printer])    # the part changed, coloured by what changed
+better = manufacturing_optimization(part, constraints=[printer])    # the part changed, coloured by the geometry change
 ```
 
 - [Constraints and their rules](#constraints-and-their-rules)
@@ -77,24 +77,24 @@ seen end-on does not); the part's field should be about a distance (a part impor
 
 | Rule | Remedy |
 |---|---|
-| `min_wall` | the surface is offset outwards by what the wall lacks, half on each side (how thin the wall is comes from the depth of a ball along the normal, and the offset acts where the thickness along the normal agrees) |
-| `min_gap` | the gap is closed, or made as wide as asked |
-| `min_radius` | the part **closed by a ball** of that radius (the largest value of the field over the ball, less the radius): an inside corner a ball cannot reach into is filled to the radius, along the whole of it; an outside corner and a flat face are as they were |
+| `min_wall` | the surface is offset outwards by what the wall lacks, half on each side, and a margin of 5 % over it so that the check passes it: how thin the wall is is the length of the line along the normal, from the nearest point of the surface through the material to where it meets the surface again -- the thickness the check measures --, and the offset acts only where that line starts on the surface. The whole face is thickened, up to its edges and not past them (measured: a 0.6 fin asked for 0.8 comes out 0.800 over its whole face, and stands out 0.025 mm past its top) |
+| `min_gap` | the gap is closed, or made as wide as asked: each side grows by half the gap's width (the length of the line along the normal through the air, as the check measures it), up to the gap's mouth and not above it |
+| `min_radius` | the library's **`fillet`** of that radius: the part grown by a ball and taken back by it, each time by its true distance (the part is meshed twice: 2.4 s for an L of two walls, and remembered), so an inside corner is filled by the arc of a ball that rolls in it, along the whole of it, and an outside corner and a flat face are as they were. Measured on that L (two walls 3 thick, radius 6): the radius is 6.000 at every degree of the arc from 2 to 88, the slope turns a degree for a degree, and nothing is added past the ends of the walls. It works on any part -- an import, a lattice, a pocket -- and a slot narrower than the ball is filled, as the cutter leaves it |
 | `draft` | a wall that leans less than the draft is offset by what its slope lacks, in proportion to how far it is below the top of the part: a vertical wall comes out wider at the foot |
 | `undercut_along` | what lies both under and over part of the part, along the direction, is filled |
 | `overhang` | `'fill'`: a point is part of the part when a disc, as wide as the slope has run by the time it is up to the part, fits inside the part above it (how far above the point the part starts is found smoothly, so the slope is a slope and not a stair) -- a gusset under a ledge at the angle asked; `'cut'`: the same done to the air the other way up -- a teardrop above a channel (measured: the air above a hole of radius 5 follows the ideal 45 degree cap to within 0.1 mm). Nothing is grown or cut under the print plate, and the part's own bottom resting on it is not an overhang |
 
 They are all made from the part **as it is** (shifted copies of shifted copies would multiply the cost of a field at every step), united -- what they add, then what they cut -- and
-what they changed is **measured** (on points of space, to a few per cent): a remedy that would change more of the part than `max_change` (0.25) allows is **not made**, and says so (a
+what they changed is **measured** (on evenly spread points -- a Halton sequence -- of the shell round the surface for the remedies that change a thin layer -- walls, gaps, corners --, so that a layer a tenth of a millimetre thick has points in it, and on points over the whole box for the others: the volumes are measured, not worked out. Measured on an L of two walls with a fillet of radius 6, 154.5 mm^3 by hand, over 8 starts of the sequence: 153.5 mm^3 on average, 1.0 % between one measurement and the next, 2.2 % off at worst -- on as many random points it was 4.7 % and 8.3 %; the part's own volume 0.1 %, on random points 1.5 %): a remedy that would change more of the part than `max_change` (0.25) allows is **not made**, and says so (a
 wide overhang is filled down to a support, which this is not). A region that is excluded (`exclude`) or in `keep=` is never touched. Give the result to the shell again for a second pass.
 
-The result is a **body** that is the part changed, coloured by **what changed** (red added, blue cut), with `.changes`, `.added`, `.removed`, `.share`, `.fail_states` (what the shell's own check, made on what it made, still finds broken and
+The result is a **body** that is the part changed, shown as the **geometry change**: three bodies, each by its exact field -- the part where it is as it was (grey), the material added (red: in the result and outside the input part) and the material cut (blue: in the input part and outside the result). (Colouring the one mesh of the result by how far its vertices are from the input could not show a layer that lies flush with the faces of the part -- a slot that was closed: the vertices of its flat face are all on the old edges, where nothing has changed.) It has `.changes`, `.added`, `.removed`, `.share`, `.fail_states` (what the shell's own check, made on what it made, still finds broken and
 where) and `.before`, `.after` (the two checks). `.oriented()` is the part turned so that the way up of the print is z, and an export (`export_mesh(result, "part.3mf")`) writes it **turned**
--- the model in the tree stays as it is. **Run `manufacturing_analysis` on the result**: the shell's check is its own.
+-- the model in the tree stays as it is. **Run `manufacturing_analysis` on the result**: the shell's check is its own. A call that was made before -- the same part, constraints and numbers, as when a model is shown or hidden and the script runs again -- gives back what it made, in the same session, and does not measure and shape the part again.
 
 What it costs: the fields of the remedies are made of tens to hundreds of shifted copies of the part's field. A field made of fields made of fields used to cost a multiple of itself at every level (a kernel walk that
 went down a shared node once for every way to reach it); it is linear now, and a part with a thin fin is thickened and checked again in about 2 seconds, a ledge with a gusset in 6. A big imported part costs the copies times its own size: `verify=False`
-leaves the check of the result to you. Inside corners are rounded by what the remedy is made of, and are not measured again: after the closing the field is not a distance, and a ball cannot be measured against it.
+leaves the check of the result to you. The corner remedy meshes the part twice (see `fillet`), which a big imported part pays for once: the meshes are remembered by what the part is made of.
 
 ## Supports and the print file
 

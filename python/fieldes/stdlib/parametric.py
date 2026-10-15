@@ -545,9 +545,9 @@ class ParametricResult(FieldResult):
     def _display(self):
         out = self.result._display()
         try:
-            rows = [(_tr('best %s') % self.goal[1], _text(self.objective), '')]
+            rows = [(_tr('Optimum %s') % self.goal[1], _text(self.objective), '')]
             rows += [(v.name, _text(self.values[v.name]), '') for v in self._variables[:4]]
-            rows.append((_tr('designs tried'), '%d' % self.evaluations, ''))
+            rows.append((_tr('Designs evaluated'), '%d' % self.evaluations, ''))
             rows += list(getattr(out, '_key_results', None) or [])[:3]
             out._key_results = rows
         except Exception:
@@ -564,6 +564,10 @@ class ParametricResult(FieldResult):
         for v in self._variables:
             entry = _entry_of(host, v.shape)
             if entry is None:
+                continue
+            # (a number that the text has already, to within what the search can tell apart, is not written again: the script runs again when its text changes, starts from the
+            # number that was written, finds one a hair different and writes that -- for ever.  It writes only when the best is farther from the text than the search's tolerance)
+            if abs(self.values[v.name] - v.start) <= getattr(self, '_tolerance', 0.002) * (v.high - v.low):
                 continue
             line, end_line, col, end_col = entry[2]
             resync.append((line - 1, col, end_line - 1, end_col - 1, _float32_text(self.values[v.name])))
@@ -583,18 +587,18 @@ class ParametricResult(FieldResult):
 
     def __repr__(self):
         goal, what = self.goal
-        head = (_tr('Parametric optimization: minimize %s over %d variable(s), %d designs tried (%.1f s)') if goal == 'minimize' else
-                _tr('Parametric optimization: maximize %s over %d variable(s), %d designs tried (%.1f s)'))
+        head = (_tr('Parametric optimization: minimize %s over %d variable(s), %d designs evaluated (%.1f s)') if goal == 'minimize' else
+                _tr('Parametric optimization: maximize %s over %d variable(s), %d designs evaluated (%.1f s)'))
         lines = [head % (what, len(self._variables), self.evaluations, self.seconds)]
         best = ', '.join('%s = %s' % (v.name, _text(self.values[v.name])) for v in self._variables)
         if self.feasible:
-            lines.append(_tr('  best design: %s  ->  %s = %s') % (best, what, _text(self.objective)))
+            lines.append(_tr('  Optimum: %s  ->  %s = %s') % (best, what, _text(self.objective)))
         else:
-            lines.append(_tr('  NO design keeps every constraint; the one that breaks them least: %s  ->  %s = %s') % (best, what, _text(self.objective)))
+            lines.append(_tr('  NO FEASIBLE DESIGN: every design violates a constraint; least violation: %s  ->  %s = %s') % (best, what, _text(self.objective)))
         for c, v in zip(self._constraints, self._best_measures):
-            lines.append(_tr('    %s   (measured %s)') % (c.text, _text(v)))
+            lines.append(_tr('    %s   (value %s)') % (c.text, _text(v)))
         if not self._depends:
-            lines.append(_tr('  note: none of the numbers the search looked at changed with the variables -- is the analysis made of them?'))
+            lines.append(_tr('  Note: no value the search evaluated changed with the variables -- is the analysis built from them?'))
         lines.append(self.table())
         return '\n'.join(lines)
 
@@ -671,11 +675,11 @@ def parametric_optimization(analysis, variables, minimize=None, maximize=None, c
     from fieldes import run_progress
 
     def progress(done, total, rec):
-        run_progress.report(min(1.0, done / float(total)), _tr('design %d of %d') % (done, total))
+        run_progress.report(min(1.0, done / float(total)), _tr('Design %d of %d') % (done, total))
 
     search = _Search(vars_, evaluate, float(tolerance), budget, progress)
     try:
-        with run_progress.task(_tr('parametric optimization')):
+        with run_progress.task(_tr('Parametric optimization')):
             start = tuple((v.start - v.low) / (v.high - v.low) for v in vars_)
             best = search.run(start)
     except BaseException:
@@ -696,6 +700,7 @@ def parametric_optimization(analysis, variables, minimize=None, maximize=None, c
                            best['feasible'], depends)
     out._best_record = best
     out._best_measures = best['measures']
+    out._tolerance = float(tolerance)
     if apply:
         out.apply()
     return out

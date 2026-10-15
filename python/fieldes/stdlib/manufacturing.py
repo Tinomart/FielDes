@@ -42,6 +42,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
+import functools
 import math
 import os
 import random
@@ -51,8 +52,9 @@ from collections import OrderedDict
 
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
+from fieldes.stdlib.content_cache import cache_for, value_key, Uncacheable
 from fieldes.stdlib.fea import FieldResult, FeaError, colored, _register_slots, _given, _use_conditions, _with_conditions, _united
-from fieldes.stdlib.fields import _shape_bounds
+from fieldes.stdlib.fields import _shape_bounds, fillet as _fillet
 from fieldes.stdlib.excluded import keep_regions, locks_of
 
 __all__ = ['manufacturing_constraint', 'fff_constraint', 'cnc_constraint', 'molding_constraint',
@@ -88,13 +90,13 @@ RULES = ('overhang', 'min_wall', 'min_gap', 'max_bridge', 'min_radius', 'draft',
 
 # What each rule says, with its unit: (words, unit of what it is measured in)
 _RULE_TEXT = OrderedDict([
-    ('overhang', (_tr('overhang'), '°')),
-    ('min_wall', (_tr('thin wall'), 'mm')),
-    ('min_gap', (_tr('narrow gap'), 'mm')),
-    ('max_bridge', (_tr('long bridge'), 'mm')),
-    ('min_radius', (_tr('sharp inside corner'), 'mm')),
-    ('draft', (_tr('too little draft'), '°')),
-    ('undercut_along', (_tr('undercut'), '')),
+    ('overhang', (_tr('Overhang angle'), '°')),
+    ('min_wall', (_tr('Wall thickness'), 'mm')),
+    ('min_gap', (_tr('Gap width'), 'mm')),
+    ('max_bridge', (_tr('Bridge span'), 'mm')),
+    ('min_radius', (_tr('Inside corner radius'), 'mm')),
+    ('draft', (_tr('Draft angle'), '°')),
+    ('undercut_along', (_tr('Undercut'), '')),
 ])
 
 # What is measured of a rule is allowed to be this much short of its limit before it counts (a share of the limit): what the part's field and
@@ -269,14 +271,10 @@ def _xyz():
 
 
 def _at(f, dx, dy, dz):
-    ''' f(p + (dx, dy, dz)): the field moved by the vector the other way (numbers or fields) '''
+    ''' f(p + (dx, dy, dz)): the field asked at the point moved by the vector (numbers or fields).  A call: the part's field is kept where it is
+        and asked at the place, not copied for it -- the rules ask it at hundreds of places, which as copies were hundreds of copies of the part '''
     x, y, z = _xyz()
-    return f.remap(x + dx, y + dy, z + dz)
-
-
-def _circle(k, phase=0.0):
-    ''' k unit vectors in a circle about z, the first along x (an axis-aligned feature has one of them straight at it) '''
-    return [(math.cos(phase + 2.0 * math.pi * i / k), math.sin(phase + 2.0 * math.pi * i / k)) for i in range(k)]
+    return f(x + dx, y + dy, z + dz)
 
 
 def _frame(d):
@@ -350,6 +348,13 @@ def _within_reach(f, d, sign, reach, tie, count=16):
 
 
 _BIG = 1.0e3
+
+
+def _quantity(value, digits=3):
+    ''' A number for a report with `digits` significant digits and never an exponent -- 1005, not 1.01e+03; 175 %, not 1.7e+02 -- which the format %g makes of every number that
+        has more integer digits than the digits asked '''
+    value = float(value)
+    return '%.0f' % value if abs(value) >= 10 ** (digits - 1) else '%.*g' % (digits, value)
 # Of two limits of the same rule, the one that asks more
 _STRICTEST = {'overhang': min, 'max_bridge': min, 'min_wall': max, 'min_gap': max, 'min_radius': max, 'draft': max, 'undercut_along': lambda a, b: a}
 
@@ -424,13 +429,25 @@ def _chord(ctx, limit, inward):
     return _join('min', founds, ctx.tie).min(reach_)
 
 
-def _flatness(ctx, reach_):
-    ''' 1 where the surface is flat within `reach_` of a point and 0 where it turns -- an edge, a corner, a tight curve: the normal at four points round it (`reach_`
-        off along the surface) against its own, the least of the four, from 0.8 (0) to 0.9 (1) of a dot product.  The thickness along a normal means a wall's
-        thickness where the surface is flat, and not on the rounded edge of a thin wall, where the normal looks across the corner '''
-    n = ctx.normals
-    x, y, z = _xyz()
-    # (two directions along the surface, from a direction that is not often along a normal)
+def _on_surface(ctx, tol):
+    ''' 1 where the nearest point of the surface that the normal leads to -- the point p - f n -- is on the surface, and 0 where it is `tol` or more off it (the field there is no
+        distance's: over the mouth of a slot, over the top of a fin, the line along the normal comes down in the air between two edges, or past an end) '''
+    n, f = ctx.normals, ctx.field
+    foot = _at(f, -f * n.x, -f * n.y, -f * n.z)
+    return ((tol - foot.abs()) * (1.0 / tol)).max(0).min(1)
+
+
+def _on_face(ctx, tol):
+    ''' 1 where the line along the normal starts on a flat face: its foot is on the surface (_on_surface) and the slope of the field there is a distance's, 1 -- at an edge or a
+        corner the slope is the average of the two faces' and less, and a point round the corner leads to the corner, where a wall looks thinner across its diagonal than it is:
+        a remedy that went by that would grow a rounded cap past the end of the wall, a lip, where it has to stop at the edge '''
+    n, f = ctx.normals, ctx.field
+    slope = _at(n.magnitude, -f * n.x, -f * n.y, -f * n.z)
+    return _on_surface(ctx, tol) * ((slope - 0.9) * (1.0 / 0.05)).max(0).min(1)
+
+
+def _tangents(n):
+    ''' Two unit vectors along the surface at every point, as fields: with the normal a frame, from a direction that is not often along a normal '''
     ref = (0.30, 0.50, 0.81)
     cx = n.y * ref[2] - n.z * ref[1]
     cy = n.z * ref[0] - n.x * ref[2]
@@ -438,17 +455,27 @@ def _flatness(ctx, reach_):
     cm = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-3)
     t1 = (cx / cm, cy / cm, cz / cm)
     t2 = (n.y * t1[2] - n.z * t1[1], n.z * t1[0] - n.x * t1[2], n.x * t1[1] - n.y * t1[0])
+    return t1, t2
+
+
+def _flatness(ctx, reach_):
+    ''' 1 where the surface is flat within `reach_` of a point and 0 where it turns -- an edge, a corner, a tight curve: the normal at four points round it (`reach_`
+        off along the surface) against its own, the least of the four, from 0.8 (0) to 0.9 (1) of a dot product.  The thickness along a normal means a wall's
+        thickness where the surface is flat, and not on the rounded edge of a thin wall, where the normal looks across the corner '''
+    n = ctx.normals
+    x, y, z = _xyz()
+    t1, t2 = _tangents(n)
     least = None
     for t in (t1, t2):
         for sign in (1.0, -1.0):
             dx, dy, dz = t[0] * (sign * reach_), t[1] * (sign * reach_), t[2] * (sign * reach_)
-            nx, ny, nz = n.x.remap(x + dx, y + dy, z + dz), n.y.remap(x + dx, y + dy, z + dz), n.z.remap(x + dx, y + dy, z + dz)
+            nx, ny, nz = n.x(x + dx, y + dy, z + dz), n.y(x + dx, y + dy, z + dz), n.z(x + dx, y + dy, z + dz)
             dot = n.x * nx + n.y * ny + n.z * nz
             least = dot if least is None else least.min(dot)
     return ((least - 0.8) * (1.0 / 0.1)).max(0).min(1)
 
 
-def _rule_margins(ctx, constraints, direction, skip=()):
+def _rule_margins(ctx, constraints, direction):
     ''' {rule: (margin field, limit, unit)}: for each rule that some constraint asks, a field that is above 0 where the part's surface breaks it (and by how
         much, in the unit of the rule), and the limit it is measured against (the strictest asked).  Several constraints asking the same rule: it is
         broken where it is broken for any of them. '''
@@ -459,8 +486,6 @@ def _rule_margins(ctx, constraints, direction, skip=()):
     for c in constraints:
         d = direction if c.build_direction is None else c.build_direction
         for rule, value in c.rules.items():
-            if rule in skip:
-                continue
             if rule == 'overhang':
                 phi = (-_dot(n, d)).max(0).min(1).asin() * (180.0 / pi)        # (how far from vertical a face that looks down leans)
                 height = (Shape.X() * d[0] + Shape.Y() * d[1] + Shape.Z() * d[2]) - (min(
@@ -579,7 +604,7 @@ def _gradients(f, pts, h):
     return out
 
 
-def _surface_samples(ctx, count=5000, seed=7, rounds=6, batch_size=150000, seeds=None):
+def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seeds=None):
     ''' Points on the part's surface, the unit normal at each and the size of the field's gradient there: random points near the surface, each moved
         onto it by Newton steps along the gradient of the field (a surface found by evaluating the field: nothing is meshed).  Only where the part is
         on one side and air on the other (two faces that touch inside a part are a zero of the field the surface does not pass through).
@@ -624,12 +649,71 @@ def _surface_samples(ctx, count=5000, seed=7, rounds=6, batch_size=150000, seeds
                  [(p[0] - reach_ * n[0], p[1] - reach_ * n[1], p[2] - reach_ * n[2]) for p, n, _m, _v in candidates])
         vals = _values(f, probe)
         k = len(candidates)
-        for item, vo, vi in zip(candidates, vals[:k], vals[k:]):
-            if vo > 0 >= vi:
-                found.append(item)
+        kept = [item for item, vo, vi in zip(candidates, vals[:k], vals[k:]) if vo > 0 >= vi]
+        found.extend(_even_over_area(f, kept, band, [lo[i] - pad for i in range(3)], [hi[i] + pad for i in range(3)], rng))
         if len(found) >= count:
             break
     return found[:count]
+
+
+def _crossing(vals, ds, into_part):
+    ''' How far along a line of probes (values `vals` at the distances `ds`, from a point of the surface) the field changes sign: into the part (the values fall to 0 or below),
+        or out of it (they rise above 0), by the straight line between the two probes it falls between.  None when it does not within the line.  The first probe already
+        across gives its own distance '''
+    previous_s, previous_v = 0.0, None
+    for s, v in zip(ds, vals):
+        across = (v <= 0) if into_part else (v > 0)
+        if across:
+            if previous_v is None:
+                return s
+            a, b = previous_v, v
+            return previous_s + (s - previous_s) * (a / (a - b) if into_part else (-a) / (b - a))
+        previous_s, previous_v = s, v
+    return None
+
+
+def _even_over_area(f, items, band, box_lo, box_hi, rng):
+    ''' The samples of one round, thinned so that they are even over the SURFACE.  The points were drawn at random in a band round the surface and moved onto it, so a
+        face has as many samples as the band round it holds: a face in a thin wall has a band that stops at the other face, a face on a narrow gap likewise, a face at the
+        edge of the region meets the edge of it -- and has fewer samples per mm^2 than a face in the open, and a share counted on the samples (how much of the surface
+        breaks a rule) is too small for the thin and the narrow, which are what the rules are about.  The length of band each sample stands for -- along the normal into the
+        part (to the nearest other face, or the band's width) and into the air, and not past the region -- is found by eight probes each way, and a sample is kept with the
+        chance that makes them all stand for the same.  items: [(point, normal, gradient size, value)] '''
+    if not items:
+        return items
+    steps = 8
+    ds = [band * (k + 1) / float(steps) for k in range(steps)]
+    probes = []
+    for p, n, _m, _v in items:
+        for s in ds:
+            probes.append((p[0] + s * n[0], p[1] + s * n[1], p[2] + s * n[2]))
+        for s in ds:
+            probes.append((p[0] - s * n[0], p[1] - s * n[1], p[2] - s * n[2]))
+    vals = _values(f, probes)
+    weights = []
+    for i, (p, n, _m, _v) in enumerate(items):
+        out_vals = vals[2 * steps * i: 2 * steps * i + steps]
+        in_vals = vals[2 * steps * i + steps: 2 * steps * (i + 1)]
+        gap = _crossing(out_vals, ds, True)          # (the air is a gap: the part is across it)
+        thick = _crossing(in_vals, ds, False)        # (the part is a wall: the air is across it)
+        b_out = band if gap is None else min(band, 0.5 * gap)
+        b_in = band if thick is None else min(band, 0.5 * thick)
+        for sign, which in ((1.0, 'out'), (-1.0, 'in')):
+            reach = 1.0e9
+            for a in range(3):
+                d = sign * n[a]
+                if d > 1e-9:
+                    reach = min(reach, (box_hi[a] - p[a]) / d)
+                elif d < -1e-9:
+                    reach = min(reach, (box_lo[a] - p[a]) / d)
+            if which == 'out':
+                b_out = min(b_out, max(reach, 0.0))
+            else:
+                b_in = min(b_in, max(reach, 0.0))
+        weights.append(max(b_out + b_in, 1e-6))
+    ordered = sorted(weights)
+    w_ref = ordered[int(0.05 * (len(ordered) - 1))]
+    return [item for item, w in zip(items, weights) if rng.random() * w <= w_ref]
 
 
 def _clusters(points, cell):
@@ -770,7 +854,7 @@ def _num_flat(f, pts, normals, reach_, h):
     return out
 
 
-def _numeric_margins(ctx, constraints, direction, samples, skip=()):
+def _numeric_margins(ctx, constraints, direction, samples):
     ''' {rule: [margin at each sample]} -- what `_rule_margins` gives, as numbers on the sample points '''
     pts = [s[0] for s in samples]
     normals = [s[1] for s in samples]
@@ -782,8 +866,6 @@ def _numeric_margins(ctx, constraints, direction, samples, skip=()):
     for c in constraints:
         d = direction if c.build_direction is None else c.build_direction
         for rule, value in c.rules.items():
-            if rule in skip:
-                continue
             if rule == 'overhang':
                 plate = min(x * d[0] + y * d[1] + z * d[2] for x in (ctx.plate_box[0][0], ctx.plate_box[1][0]) for y in (ctx.plate_box[0][1], ctx.plate_box[1][1])
                             for z in (ctx.plate_box[0][2], ctx.plate_box[1][2]))
@@ -868,9 +950,9 @@ def _num_bridge(ctx, pts, normals, limit, d):
     return out
 
 
-def _report_numeric(ctx, constraints, direction, samples, skip=()):
+def _report_numeric(ctx, constraints, direction, samples):
     ''' The report of `samples` for the rules of the constraints: {rule: {limit, unit, broken, share, worst, regions, samples}} '''
-    margins, limits = _numeric_margins(ctx, constraints, direction, samples, skip)
+    margins, limits = _numeric_margins(ctx, constraints, direction, samples)
     points = [s[0] for s in samples]
     n = len(points)
     report = OrderedDict()
@@ -927,36 +1009,40 @@ class ManufacturingAnalysis(FieldResult):
 
     def _display(self):
         if self._shown is None:
-            out = colored(self.part, self._fields['all'], range=(0.0, 1.0), label=_tr('how far past its limit (share)'), colormap='turbo')
-            out._color_fields = [('all', _tr('every rule: share of its limit'), self._fields['all'], 0.0, 1.0)]
+            # (a rule check is red where a rule is broken and the part's own colour where it is kept -- two classes, no scale; what a rule measures is in its own unit, read by hovering)
+            broken = (self._fields['all'] * 200.0).max(0).min(1)
+            label = _tr('All rules (1 = broken)')
+            out = colored(self.part, broken, range=(0.0, 1.0), label=label, colormap='violation')
+            out._color_fields = [('all', label, broken, 0.0, 1.0)]
+            out._value_note = _tr('Red = a rule is broken here. Hover to see by how much.')
             for rule, field in self._fields.items():
                 if rule == 'all':
                     continue
                 limit = self.limits[rule]
-                out._color_fields.append((rule, '%s (%s)' % (_RULE_TEXT[rule][0], _RULE_TEXT[rule][1] or _tr('1 = broken')), field, 0.0,
-                                          limit[0] if limit[1] else 1.0))
+                scale = limit[0] if (limit[1] and rule != 'undercut_along') else 1.0
+                out._color_fields.append((rule, _EXCESS_TEXT[rule], field.max(0), 0.0, 0.005 * abs(scale)))
             out._color_field_name = 'all'
             rows = []
             for rule, r in self.report.items():
-                rows.append((_RULE_TEXT[rule][0], '%.3g %%' % (100.0 * r['share']), ''))
-            rows.insert(0, (_tr('every rule kept'), _tr('yes') if self.compliant else _tr('no'), ''))
-            out._key_results = rows[:6]
+                rows.append((_RULE_TEXT[rule][0], '%.3g %%' % (100.0 * r['share']), _tr('of surface area')))
+            rows.insert(0, (_tr('All rules satisfied'), _tr('yes') if self.compliant else _tr('no'), ''))
+            out._key_results = rows            # (a row for every rule asked: seven at most)
             self._shown = out
         return self._shown
 
     def __repr__(self):
-        lines = [_tr('Manufacturing analysis: %d point(s) of the surface measured (%.1f s)') % (self.samples, self.seconds)]
-        lines.append(_tr('  every rule is kept') if self.compliant else _tr('  rules are broken:'))
+        lines = [_tr('Manufacturing analysis: %d surface samples (%.1f s)') % (self.samples, self.seconds)]
+        lines.append(_tr('  All rules satisfied') if self.compliant else _tr('  Rule violations:'))
         for rule, r in self.report.items():
             word, unit = _RULE_TEXT[rule]
             limit = ('(%.3g, %.3g, %.3g)' % tuple(r['limit'])) if rule == 'undercut_along' else ('%.4g %s' % (r['limit'], unit))
             if r['broken'] == 0:
-                lines.append(_tr('    %s (%s): kept') % (word, limit))
+                lines.append(_tr('    %s (limit %s): satisfied') % (word, limit))
                 continue
-            lines.append(_tr('    %s (%s): %.2g %% of the surface, worst %.3g %s, in %d place(s)') % (word, limit, 100.0 * r['share'], r['worst'], unit, len(r['regions'])))
+            lines.append(_tr('    %s (limit %s): %.2g %% of surface area, max. deviation %.3g %s, %d region(s)') % (word, limit, 100.0 * r['share'], r['worst'], unit, len(r['regions'])))
             for g in r['regions'][:6]:
                 lines.append('        %s  %.2g %%' % (_where(g['at']), 100.0 * g['share']))
-        lines.append(_tr('  A check of the part\'s own field: not a substitute for the check of the one who makes it.'))
+        lines.append(_tr('  Evaluated on the part\'s own field; not a substitute for the manufacturer\'s own check.'))
         return '\n'.join(lines)
 
 
@@ -1002,7 +1088,32 @@ def _direction_of(constraints, ctx, samples):
     return best
 
 
+def _remembered(name, limit=6):
+    ''' A call that was made before -- the same part (its expression, and the numbers it has), the same constraints and settings: a script run again after a model was shown or
+        hidden, after a change to what comes after it -- gives back what it made, and does not measure and shape the part again (seconds to minutes).  Like every content
+        cache (content_cache.py) it keeps the very object a miss made, in this session.  A part, a constraint or a setting that has no content key is made every time. '''
+    def deco(fn):
+        cache = cache_for(name, limit)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                part = args[0] if args else kwargs.get('part')
+                key = (value_key(args), value_key(kwargs), value_key([tuple(x) for x in locks_of(part)]), value_key(getattr(part, '_free', None)))
+            except Uncacheable:
+                return fn(*args, **kwargs)
+            hit, value = cache.get(key)
+            if not hit:
+                value = fn(*args, **kwargs)
+                cache.put(key, value)
+            return value
+        wrapper.cache = cache
+        return wrapper
+    return deco
+
+
 @_with_conditions
+@_remembered('manufacturing_analysis')
 def manufacturing_analysis(part, constraints, samples=5000):
     ''' Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
         (manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every
@@ -1018,11 +1129,11 @@ def manufacturing_analysis(part, constraints, samples=5000):
         of the one who makes it. '''
     t0 = time.time()
     items = _constraints_given(constraints, 'manufacturing_analysis')
-    _progress(0.05, _tr('measuring the surface of the part'))
+    _progress(0.05, _tr('Measuring surface'))
     shape = Shape.wrap(part)
     ctx = _Context(shape)
     points = _surface_samples(ctx, int(samples))
-    _progress(0.4, _tr('checking the rules'))
+    _progress(0.4, _tr('Evaluating rules'))
     direction = _direction_of(items, ctx, points)
     margins = _rule_margins(ctx, items, direction)
     if not margins:
@@ -1042,66 +1153,67 @@ def manufacturing_analysis(part, constraints, samples=5000):
 REMEDIES = ('undercut', 'draft', 'gaps', 'corners', 'walls', 'overhang')
 
 _REMEDY_TEXT = OrderedDict([
-    ('undercut', _tr('undercuts filled')),
-    ('draft', _tr('draft added to the walls')),
-    ('gaps', _tr('narrow gaps closed or widened')),
-    ('corners', _tr('inside corners rounded')),
-    ('walls', _tr('thin walls thickened')),
-    ('overhang', _tr('overhangs made to stand')),
+    ('undercut', _tr('Undercut filled')),
+    ('draft', _tr('Draft applied to walls')),
+    ('gaps', _tr('Gap closed or widened')),
+    ('corners', _tr('Inside corners filleted')),
+    ('walls', _tr('Wall thickness increased')),
+    ('overhang', _tr('Overhang supported (gusset or teardrop)')),
 ])
+# What a rule's view shows on the card: how far the surface is past the limit, in the unit of the rule (0 where it is kept)
+_EXCESS_TEXT = {
+    'overhang': _tr('Overhang too steep by (degrees)'),
+    'min_wall': _tr('Wall too thin by (mm)'),
+    'min_gap': _tr('Gap too narrow by (mm)'),
+    'max_bridge': _tr('Bridge too long by (mm)'),
+    'min_radius': _tr('Inside corner too sharp: radius short by (mm)'),
+    'draft': _tr('Draft too small by (degrees)'),
+    'undercut_along': _tr('Undercut (above 0 = undercut)'),
+}
 _REMEDY_RULE = {'undercut': 'undercut_along', 'draft': 'draft', 'gaps': 'min_gap', 'corners': 'min_radius', 'walls': 'min_wall', 'overhang': 'overhang'}
-
-# What the fillet of a smoothing is: smooth(f, radius) rounds an inside corner of 90 degrees to about 1.14 times its radius; the smoothing has
-# a radius of this share of the radius asked
-_CORNER_SHARE = 1.0 / 1.14
-
 
 def _extent_along(ctx, d):
     return sum(abs(d[i]) * (ctx.hi[i] - ctx.lo[i]) for i in range(3)) + 1e-6
 
 
 def _remedy_walls(ctx, t):
-    ''' Where a wall is thinner than `t` the surface is offset outwards by what it lacks, half on each side: how thick the wall is at a point is found
-        from how deep a ball can sit inside it on the line along the normal from the nearest point of the surface (the middle of a wall of thickness T
-        is T/2 deep), and the offset is a field of its own -- the part's field minus it -- so a wall grows only where it is thin '''
-    n, f = ctx.normals, ctx.field
-    probes = []
-    for k in range(1, 7):
-        along = f + t * k / 6.0
-        probes.append(-_at(f, -along * n.x, -along * n.y, -along * n.z))
-    d = (_join('max', probes, ctx.tie) / n.scale).max(0)
-    gate = ((t * (1.0 - GRACE) - _chord(ctx, t, True)) * (1.0 / (0.05 * t))).max(0).min(1)        # (a ball sits badly in a corner of a thick body: act only where the line along the normal says the wall is thin too)
-    delta = ((t - 2.0 * d) * (0.5 * (1.0 + GRACE))).max(0).min(t / 2.0) * gate
-    return f - _near(delta, f, 1.5 * t, t / 2.0)
+    ''' Where a wall is thinner than `t` the surface is offset outwards by what it lacks, half on each side (and a margin of GRACE over it, so that the check
+        passes what was made): how thick the wall is at a point is the length of the line along the normal, from the nearest point of the surface through the material
+        to where it meets the surface again -- the thickness the check measures --, and the offset is a field of its own -- the part's field minus it --, so a wall
+        grows only where it is thin, over the whole of its face, up to its edge and not past it '''
+    f = ctx.field
+    chord = _chord(ctx, t, True)
+    # (the line along the normal from the nearest point of the surface says something only where that point is on the surface -- over the mouth of a slot the normal leads to the air
+    # between the two edges, and a gap would be taken for a wall; and where the slope of the field is not a distance's, on the middle of a gap, the normal is no face's)
+    sure = ((ctx.normals.magnitude - 0.8) * (1.0 / 0.1)).max(0).min(1) * _on_face(ctx, 0.02 * t)
+    gate = ((t * (1.0 - GRACE) - chord) * (1.0 / (0.05 * t))).max(0).min(1) * sure
+    delta = ((t - chord) * (0.5 * (1.0 + GRACE))).max(0).min(t / 2.0) * gate
+    return f - _near(delta, f, t, t / 2.0)
 
 
 def _remedy_gaps(ctx, g, mode):
-    ''' A gap narrower than `g` is closed ('fill': the surface of each side grows by half the gap, a little more) or made as wide as `g` ('widen':
-        each side goes back by half of what it lacks).  How wide the air is at a point is found the way a wall's thickness is: how big a ball fits in
-        the air on the line along the normal from the nearest point of the surface '''
-    n, f = ctx.normals, ctx.field
-    probes = []
-    for k in range(1, 7):
-        along = f - g * k / 6.0
-        probes.append(_at(f, -along * n.x, -along * n.y, -along * n.z))
-    d = (_join('max', probes, ctx.tie) / n.scale).max(0)
-    gate = ((g * (1.0 - GRACE) - _chord(ctx, g, False)) * (1.0 / (0.05 * g))).max(0).min(1)        # (the same: the air is narrow along the normal too)
+    ''' A gap narrower than `g` is closed ('fill': the surface of each side grows by half the gap, and a margin of GRACE over it) or made as wide as `g` ('widen': each
+        side goes back by half of what it lacks).  How wide the air is at a point is found the way a wall's thickness is: the length of the line along the normal, from
+        the nearest point of the surface through the air to where it meets the surface again -- the width the check measures -- and only where that point is on the surface
+        (not over the mouth of the gap, where the line comes down between two edges): the gap is closed up to its mouth and not above it '''
+    f = ctx.field
+    chord = _chord(ctx, g, False)
+    # (no gate on the slope of the field here: in a slot the slopes of its two sides cancel over the middle of it, which is what is to be filled, and the normal there still leads
+    # to the face that is nearest -- only where the foot of the line is off the surface does it say nothing)
+    gate = ((g * (1.0 - GRACE) - chord) * (1.0 / (0.05 * g))).max(0).min(1) * _on_face(ctx, 0.02 * g)        # (the same: the air is narrow along the normal too)
     if mode == 'widen':
-        return f + _near((g / 2.0 - d).max(0).min(g / 2.0) * gate, f, 1.5 * g, g / 2.0)
-    return f - _near((d * 1.1 * gate).min(g), f, 1.5 * g, g)
+        return f + _near(((g - chord) * (0.5 * (1.0 + GRACE))).max(0).min(g / 2.0) * gate, f, g, g / 2.0)
+    return f - _near((chord * (0.5 * (1.0 + GRACE))).min(g / 2.0) * gate, f, g, g / 2.0)
 
 
 def _remedy_corners(ctx, radius):
-    ''' The part closed by a ball of `radius`: grown by the ball (the field less the radius) and taken back by it (the largest value of that over the ball, at 42
-        points a radius away all round, and at the centre).  Taken together: the part united with the largest the field comes to within a radius of each point,
-        less the radius.  What a ball of that size reaches is as it was -- a flat face, a bump and an outside corner are not moved -- and an inside corner it cannot
-        reach into is filled to the radius of the ball, along the whole of the corner (not less near its ends: no filter of the field over the points round a point
-        is made).  It is what the check measures, so that what it fills it passes.  The field should be about a distance '''
-    f = ctx.field
-    probes = [f]
-    for u in _sphere(162):                       # (so many that about twenty are near any plane: fewer make the fillet a polygon of a few sides, and too big)
-        probes.append(_at(f, radius * u[0], radius * u[1], radius * u[2]))
-    return f.min(_join('max', probes, ctx.tie) - radius)
+    ''' The part with every inside corner rounded to `radius`: the library's `fillet` -- the part grown by a ball of that radius and taken back by it, each time by its true
+        distance -- so the corner is filled by the arc of a ball that rolls in it: a circle of that radius whose slope turns smoothly from one face to the other (measured in
+        the application on an L of two walls 3 thick, radius 6: the radius 6.000 at every degree of the arc from 2 to 88, and a degree of slope to a degree of angle).  A flat
+        face, a bump and an outside corner are as they were, and the ends of a corner are not touched.  It is made from the part's surface (the part is meshed twice: 2.4 s for
+        the L, and remembered by what the part is made of), and so it works on any part -- an import, a lattice, a pocket --, and a slot narrower than the ball is filled
+        as the cutter leaves it.  The part's own field is kept where nothing is added '''
+    return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)))
 
 
 def _remedy_undercut(ctx, a):
@@ -1223,7 +1335,7 @@ def _supports_field(ctx, result, constraints, direction, reach):
         plate = min(px * d[0] + py * d[1] + pz * d[2] for px in (ctx.lo[0], ctx.hi[0]) for py in (ctx.lo[1], ctx.hi[1]) for pz in (ctx.lo[2], ctx.hi[2]))
         above = (x * d[0] + y * d[1] + z * d[2]) - plate
         up = _entry(result, d, +1.0, reach)                       # (how far up the part starts)
-        there = margin.remap(x + up * d[0], y + up * d[1], z + up * d[2])
+        there = margin(x + up * d[0], y + up * d[1], z + up * d[2])
         s = (-there).max(c.support_gap - result).max(-above).max(up - 0.999 * reach)
         for blocked in c.no_support:
             s = s.max(-blocked)
@@ -1243,20 +1355,73 @@ def _weight(region, eps):
     return 1.0 - (region * (1.0 / eps)).max(0).min(1)
 
 
+_HALTON_UNIT = []
+
+
+def _halton(count, shift, start=0):
+    ''' `count` points of the unit cube, from the point `start` of the Halton sequence (bases 2, 3 and 5), each moved by `shift` (a point of the cube; round the cube's faces).  The points of a
+        volume measured on them -- the share of them that are in it, times the box -- are spread evenly whatever number of them there is: any run of the sequence is, so that a measurement
+        that stops early is still one.  The error of a volume measured on them is a few times smaller than on as many random points (a fillet of 154 mm^3 in a box of 21600, on 57000 points:
+        5 % on random points).  The shift moves the points together, so that a part with its faces on round numbers does not line up with them '''
+    end = start + count
+    while len(_HALTON_UNIT) < end:            # (the points are the same for every shift: made once, as far as anything has asked for)
+        i = len(_HALTON_UNIT) + 1
+        p = []
+        for base in (2, 3, 5):
+            f, r, n = 1.0, 0.0, i
+            while n > 0:
+                f /= base
+                r += f * (n % base)
+                n //= base
+            p.append(r)
+        _HALTON_UNIT.append(tuple(p))
+    s0, s1, s2 = shift
+    return [((u + s0) % 1.0, (v + s1) % 1.0, (w + s2) % 1.0) for u, v, w in _HALTON_UNIT[start:end]]
+
+
 def _volume_points(ctx, count, seed=11):
     rng = random.Random(seed)
     pad = 0.05 * ctx.size
     lo = [ctx.lo[i] - pad for i in range(3)]
     hi = [ctx.hi[i] + pad for i in range(3)]
-    pts = [(rng.uniform(lo[0], hi[0]), rng.uniform(lo[1], hi[1]), rng.uniform(lo[2], hi[2])) for _ in range(count)]
+    shift = (rng.random(), rng.random(), rng.random())
+    pts = [(lo[0] + u * (hi[0] - lo[0]), lo[1] + v * (hi[1] - lo[1]), lo[2] + w * (hi[2] - lo[2])) for u, v, w in _halton(count, shift)]
     box = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2])
     return pts, box
 
 
+def _shell_points(ctx, width, count=40000, seed=17, give_up=4.0):
+    ''' Points of the shell round the part's surface -- where its field is within `width` of 0 -- and the volume each stands for: (points, the part's field at them, volume),
+        or None when there are none.  A remedy made with that width changes nothing outside the shell, so what it changes is measured on points that are all in it: random
+        points over the whole box find a layer a tenth of a millimetre thick on a part of a hundred only a few times in a thousand, and a slot of 56 mm^3 in 175000 not at all.
+        The points are drawn evenly over the box (_halton) and the ones in the shell kept: each stands for the box's volume over the number drawn.  Stops at `count` points, or
+        after `give_up` seconds (a part whose field is slow to evaluate) '''
+    rng = random.Random(seed)
+    shift = (rng.random(), rng.random(), rng.random())
+    pad = max(0.05 * ctx.size, width)            # (the shell reaches `width` past the part: a box that stops short of it would leave out the outer part of what a remedy adds)
+    lo = [ctx.lo[i] - pad for i in range(3)]
+    hi = [ctx.hi[i] + pad for i in range(3)]
+    box = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2])
+    kept, values, drawn = [], [], 0
+    started = time.time()
+    batch = 30000
+    while len(kept) < count and drawn < 6000000 and (drawn == 0 or time.time() - started < give_up):
+        pts = [(lo[0] + u * (hi[0] - lo[0]), lo[1] + v * (hi[1] - lo[1]), lo[2] + w * (hi[2] - lo[2])) for u, v, w in _halton(batch, shift, drawn)]
+        vals = _values(ctx.field, pts)
+        for p, v in zip(pts, vals):
+            if abs(v) < width:
+                kept.append(p)
+                values.append(v)
+        drawn += batch
+    if not kept:
+        return None
+    return kept, values, box / float(drawn)
+
+
 class ManufacturingResult(FieldResult):
     ''' The part the shell made, and what it did.  It is a field like the part is -- wherever a body goes it goes (`offset(result, 1)`, `difference`,
-        the part of an analysis, an export).  Stated on its own it is shown coloured by what changed: red where material was added, blue where it was
-        cut, the part's colour where it is as it was.
+        the part of an analysis, an export).  Stated on its own it is shown coloured by the geometry change: red where material was added, blue where it was
+        removed, the part's colour where it is unchanged.
 
             part          the part as it was
             changes       what each remedy did: {remedy, rule, added, removed (mm^3), kept, why}
@@ -1310,45 +1475,79 @@ class ManufacturingResult(FieldResult):
             out = rotate_y(out, -theta)
         return out
 
+    def _bodies(self):
+        ''' What the shell changed, as bodies of their own: the part where it is as it was (grey), the material added (red: in the result and outside the input part) and the material
+            cut (blue: in the input part and outside the result), each by its exact field -- the result with the input part, and nothing else.  A colour read at the vertices of the
+            mesh of the result cannot show a layer that lies flush with the faces of the part (a slot that was closed, a pocket filled): the vertices of its flat face are all on the
+            edges of the old surface, where nothing has changed, and no vertex is inside it to be red '''
+        part, result = self.part, self._field
+        adds, cuts = getattr(self, '_adds', True), getattr(self, '_cuts', True)
+        tie = getattr(self, '_tie', 1e-4)
+        hair = getattr(self, '_hair', 1e-3)       # (what is added lies at least this far outside the part: where the result is the part's own, `max(result, -part)` is 0 on the whole surface,
+                                                  # and the mesher draws a skin of no thickness over every face that was not changed)
+        if cuts and adds:
+            kept = result.max(part - tie)         # (the result where it is the part's own, a few microns apart: equal values would be a tie, which the mesher is slow to settle)
+        elif cuts:
+            kept = result
+        else:
+            kept = part
+        bodies = [(kept, 0.0)]
+        if adds:
+            bodies.append((result.max(hair - part), 1.0))
+        if cuts:
+            bodies.append((part.max(hair - result), -1.0))
+        out = []
+        for shape, value in bodies:
+            box = getattr(result, '_bounds', None)
+            if box and getattr(shape, '_bounds', None) is None:
+                shape._bounds = box
+            out.append((colored(shape, Shape.wrap(value), range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change'), value))
+        return out
+
     def _display(self):
         if self._shown is None:
-            out = colored(self._field, self.change_map, range=(-1.0, 1.0), label=_tr('changed: +1 added, -1 cut'), colormap='turbo')
-            out._color_fields = [('change', _tr('what changed: +1 added, -1 cut'), self.change_map, -1.0, 1.0)]
-            out._color_field_name = 'change'
-            rows = [(_tr('material added'), '%.4g' % self.added, 'mm^3'), (_tr('material cut'), '%.4g' % self.removed, 'mm^3'),
-                    (_tr('of the part'), '%.3g %%' % (100.0 * self.share), ''), (_tr('still broken'), '%d' % len(self.fail_states), '')]
-            out._key_results = rows
+            bodies = self._bodies()
+            shown = bodies
+            note = _tr('Red and blue show what was added and removed compared with the input part.')
+            rows = [(_tr('Material added'), _quantity(self.added, 3), 'mm³'), (_tr('Material removed'), _quantity(self.removed, 3), 'mm³'),
+                    (_tr('Volume changed'), _quantity(100.0 * self.share, 3), _tr('% of the part')),
+                    (_tr('Places still breaking a rule'), '%d' % len(self.fail_states), '')]
+            shown = [body for body, _ in shown]
+            for body, value in zip(shown, [v for _, v in bodies]):            # (each body is the same result, with the one card: a body of its own colour with no card would have a bar of its own)
+                body._color_fields = [('change', _tr('Geometry change'), Shape.wrap(value), -1.0, 1.0)]
+                body._color_field_name = 'change'
+                body._value_note = note
+                body._key_results = rows
             if getattr(self, 'supports', None) is not None:
-                bodies = colored(self.supports, Shape.wrap(0.15), range=(-1.0, 1.0), label=_tr('supports'), colormap='turbo')
-                self._shown = [out, bodies]
-                return self._shown
-            self._shown = out
+                shown.append(colored(self.supports, Shape.wrap(0.15), range=(-1.0, 1.0), label=_tr('Supports'), colormap='turbo'))
+            self._shown = shown if len(shown) > 1 else shown[0]
         return self._shown
 
     def __repr__(self):
-        lines = [_tr('Manufacturing optimization: %.4g mm^3 added, %.4g mm^3 cut (%.2g %% of the part), %.1f s') % (
-            self.added, self.removed, 100.0 * self.share, self.seconds)]
+        lines = [_tr('Manufacturing optimization: %s mm³ added, %s mm³ removed (%s %% of part volume), %.1f s') % (
+            _quantity(self.added, 4), _quantity(self.removed, 4), _quantity(100.0 * self.share, 2), self.seconds)]
         for c in self.changes:
             word = _REMEDY_TEXT[c['remedy']]
             if c['kept']:
-                lines.append(_tr('    %s: +%.4g mm^3, -%.4g mm^3') % (word, c['added'], c['removed']))
+                lines.append(_tr('    %s: %s mm³ added, %s mm³ removed') % (word, _quantity(c['added'], 4), _quantity(c['removed'], 4)))
             else:
-                lines.append(_tr('    %s: not made -- %s') % (word, c['why']))
+                lines.append(_tr('    %s: not applied -- %s') % (word, c['why']))
         if self.orientation is not None:
-            lines.append(_tr('  way up of the print found: (%.3g, %.3g, %.3g)') % tuple(self.build_direction))
+            lines.append(_tr('  Build direction found: (%.3g, %.3g, %.3g)') % tuple(self.build_direction))
         if self.fail_states:
-            lines.append(_tr('  still broken:'))
+            lines.append(_tr('  Rule violations remaining:'))
             for s in self.fail_states[:10]:
-                lines.append(_tr('    %s: %s %.2g %% of the surface -- %s') % (_RULE_TEXT[s['rule']][0], _where(s['where']), 100.0 * s['share'], s['why']))
+                lines.append(_tr('    %s: %s, %.2g %% of surface area -- %s') % (_RULE_TEXT[s['rule']][0], _where(s['where']), 100.0 * s['share'], s['why']))
         elif self.after is not None:
-            lines.append(_tr('  the check of what was made finds every rule kept'))
+            lines.append(_tr('  Re-check of the result: all rules satisfied'))
         for note in self.notes:
             lines.append('  ' + note)
-        lines.append(_tr('  Run the analysis again on the result: this check is the shell\'s own, and not a substitute for the maker\'s.'))
+        lines.append(_tr('  The optimizer\'s own re-check, not a substitute for an independent one: run manufacturing_analysis on the result.'))
         return '\n'.join(lines)
 
 
 @_with_conditions
+@_remembered('manufacturing_optimization')
 def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=True, samples=2500):
     ''' The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
         region of its constraint: thin walls thickened (an offset that follows how thin the wall is), a narrow gap closed (`gap_fix='widen'` of the
@@ -1367,7 +1566,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
                          manufacturing_analysis of the result (a big part is slow to check)
             samples      how many points of the surface it checks
 
-        Returns a ManufacturingResult: a body that is the part changed, coloured by what changed, with `.changes`, `.added`, `.removed`, `.fail_states`.
+        Returns a ManufacturingResult: a body that is the part changed, coloured by the geometry change, with `.changes`, `.added`, `.removed`, `.fail_states`.
         Run `manufacturing_analysis` on the result: the shell's own check is not a substitute for the maker's. '''
     t0 = time.time()
     items = _constraints_given(constraints, 'manufacturing_optimization')
@@ -1380,9 +1579,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     _values(ctx.field, probe_pts)
     slow = (time.time() - started) > 0.25
     notes = []
-    _progress(0.02, _tr('reading the part'))
+    _progress(0.02, _tr('Reading part'))
     _log(t0, 'the part is read')
-    _progress(0.05, _tr('measuring the surface of the part'))
+    _progress(0.05, _tr('Measuring surface'))
     before_points = _surface_samples(ctx, int(samples))
     _log(t0, 'sampled the surface of the part: %d points' % len(before_points))
     direction = _direction_of(items, ctx, before_points)
@@ -1414,10 +1613,10 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     if not volume > 0:
         raise ManufacturingError('manufacturing_optimization: the part has no volume to measure (is it empty, or very thin?)')
     budget = max_change * volume
-    _progress(0.2, _tr('measuring the part\'s volume'))
+    _progress(0.2, _tr('Measuring part volume'))
     _log(t0, 'the volume of the part is measured')
 
-    candidates = []                  # (remedy, rule, field, adds)
+    candidates = []                  # (remedy, rule, field, adds, the width of the shell it changes -- or None when it can reach anywhere)
     for c in items:
         d = direction if c.build_direction is None else c.build_direction
         w_region = None if c.region is None else _weight(c.region, eps)
@@ -1431,31 +1630,43 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             return out
         for rule, value in c.rules.items():
             if rule == 'min_wall' and 'walls' in allowed:
-                candidates.append(('walls', rule, scoped(_remedy_walls(ctx, value)), True))
+                candidates.append(('walls', rule, scoped(_remedy_walls(ctx, value)), True, value))
             elif rule == 'min_gap' and 'gaps' in allowed:
-                candidates.append(('gaps', rule, scoped(_remedy_gaps(ctx, value, c.gap_fix)), c.gap_fix == 'fill'))
+                candidates.append(('gaps', rule, scoped(_remedy_gaps(ctx, value, c.gap_fix)), c.gap_fix == 'fill', value))
             elif rule == 'min_radius' and 'corners' in allowed:
-                candidates.append(('corners', rule, scoped(_remedy_corners(ctx, value)), True))
+                candidates.append(('corners', rule, scoped(_remedy_corners(ctx, value)), True, value))        # (a ball of the radius finds nothing to fill where the air is more than a radius from the part)
             elif rule == 'undercut_along' and 'undercut' in allowed:
-                candidates.append(('undercut', rule, scoped(_remedy_undercut(ctx, value)), True))
+                candidates.append(('undercut', rule, scoped(_remedy_undercut(ctx, value)), True, None))
             elif rule == 'draft' and 'draft' in allowed:
-                candidates.append(('draft', rule, scoped(_remedy_draft(ctx, value, c.pull_direction)), True))
+                candidates.append(('draft', rule, scoped(_remedy_draft(ctx, value, c.pull_direction)), True, None))
             elif rule == 'overhang' and 'overhang' in allowed:
-                candidates.append(('overhang', rule, scoped(_remedy_overhang(ctx, value, d, c.overhang_fix, reach)), c.overhang_fix == 'fill'))
+                candidates.append(('overhang', rule, scoped(_remedy_overhang(ctx, value, d, c.overhang_fix, reach)), c.overhang_fix == 'fill', None))
     changes = []
     adds, cuts = [], []
     spent = 0.0
-    for index, (remedy, rule, field, additive) in enumerate(candidates):
-        _progress(0.25 + 0.5 * index / max(1, len(candidates)), _tr('measuring what %s changes') % _REMEDY_TEXT[remedy])
-        vals = _values(field, pts)
-        added = box * sum(1 for a, b in zip(f0_vals, vals) if a > 0 >= b) / float(len(pts))
-        removed = box * sum(1 for a, b in zip(f0_vals, vals) if a <= 0 < b) / float(len(pts))
+    shells = {}
+    for index, (remedy, rule, field, additive, width) in enumerate(candidates):
+        _progress(0.25 + 0.5 * index / max(1, len(candidates)), _tr('Measuring effect: %s') % _REMEDY_TEXT[remedy])
+        # (what a remedy of a known width changes lies in the shell of that width round the surface: measured on points of the shell, so that a thin layer or a narrow gap has
+        # points in it; one that can reach anywhere on points over the whole box)
+        shell = None
+        if width is not None:
+            if width not in shells:
+                shells[width] = _shell_points(ctx, width)
+            shell = shells[width]
+        if shell is not None:
+            where, before_values, each = shell
+        else:
+            where, before_values, each = pts, f0_vals, box / float(len(pts))
+        vals = _values(field, where)
+        added = each * sum(1 for a, b in zip(before_values, vals) if a > 0 >= b)
+        removed = each * sum(1 for a, b in zip(before_values, vals) if a <= 0 < b)
         entry = {'remedy': remedy, 'rule': rule, 'added': added, 'removed': removed, 'kept': False, 'why': ''}
         _log(t0, 'remedy %s measured: +%.4g -%.4g mm^3' % (remedy, added, removed))
         if added + removed < 1e-4 * volume:
-            entry['why'] = _tr('nothing to change')
+            entry['why'] = _tr('no change required')
         elif spent + added + removed > budget:
-            entry['why'] = _tr('it would change %.2g %% of the part, and %.2g %% is allowed (max_change): a support, or a change of the design, is what it needs') % (
+            entry['why'] = _tr('would change %.2g %% of the part volume; max_change allows %.2g %%: add a support or change the design') % (
                 100.0 * (spent + added + removed) / volume, 100.0 * max_change)
         else:
             entry['kept'] = True
@@ -1479,7 +1690,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     supporting = [c for c in items if c.support and 'overhang' in c.rules]
     support_volume = 0.0
     if supporting:
-        _progress(0.78, _tr('making the supports'))
+        _progress(0.78, _tr('Generating supports'))
         supports = _supports_field(ctx, result, supporting, direction, _extent_along(ctx, direction))
         svals = _values(supports, pts)
         support_volume = box * sum(1 for v in svals if v <= 0) / float(len(pts))
@@ -1487,45 +1698,43 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             blockers += c.no_support
         _log(t0, 'supports made: %.4g mm^3' % support_volume)
     after, fails = None, []
-    # (an inside corner is rounded to the radius by what the remedy is made of -- the field after it is not a distance, so a ball cannot be measured against it)
-    skipped = ('min_radius',) if any(c['remedy'] == 'corners' and c['kept'] for c in changes) else ()
     _log(t0, 'the remedies are united')
     if verify and not slow and (adds or cuts):
-        _progress(0.8, _tr('checking what was made'))
+        _progress(0.8, _tr('Re-checking result'))
         rctx = _Context(result, result._bounds)
         rctx.plate_box = (ctx.lo, ctx.hi)
         pts_after = _surface_samples(rctx, int(samples), seed=13, rounds=1, batch_size=20000, seeds=[s[0] for s in before_points])
         if pts_after:
-            m2 = _rule_margins(rctx, items, direction, skip=skipped)
+            m2 = _rule_margins(rctx, items, direction)
             after_fields = OrderedDict((r, m[0]) for r, m in m2.items())
             after_fields['all'] = _all_field(m2)
-            after = ManufacturingAnalysis(result, items, after_fields, {r: (m[1], m[2]) for r, m in m2.items()}, _report_numeric(rctx, items, direction, pts_after, skipped),
+            after = ManufacturingAnalysis(result, items, after_fields, {r: (m[1], m[2]) for r, m in m2.items()}, _report_numeric(rctx, items, direction, pts_after),
                                           len(pts_after), direction, 0.0)
             for rule, r in after.report.items():
                 if rule == 'overhang' and supporting:
                     continue             # (an overhang that is left is held up by a support)
                 for g in r['regions'][:5]:
-                    fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': _tr('the check still finds it broken')})
+                    fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': _tr('still violated after the remedy')})
     elif verify and slow:
-        notes.append(_tr('the part is slow to evaluate, so it was not checked again: run manufacturing_analysis on the result'))
+        notes.append(_tr('The part is slow to evaluate, so the result was not re-checked: run manufacturing_analysis on it'))
     elif verify and not (adds or cuts):
         for rule, r in before.report.items():
             if rule == 'overhang' and supporting:
                 continue             # (an overhang that is left is held up by a support)
             for g in r['regions'][:5]:
-                fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': _tr('no remedy could be made for it')})
-    if skipped:
-        notes.append(_tr('inside corners are rounded to the radius by what the remedy is made of, and are not measured again'))
+                fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': _tr('no remedy available for it')})
     if keep_weight is not None or any(c.region is not None for c in items):
-        notes.append(_tr('what is outside a constraint\'s region, and what is kept, is as the part was'))
-    _progress(1.0, _tr('done'))
+        notes.append(_tr('Outside a constraint\'s region, and in kept regions, the part is unchanged'))
+    _progress(1.0, _tr('Done'))
     _log(t0, 'done')
     if supporting:
-        notes.append(_tr('the overhangs that were left are held up by block supports: %.4g mm^3, a separate body (result.supports)') % support_volume)
+        notes.append(_tr('Remaining overhangs are held by block supports: %s mm³, a separate body (result.supports)') % _quantity(support_volume, 4))
     out = ManufacturingResult(shape, result, change_map, changes, volume, before, after, fails, direction, free, notes, time.time() - t0)
     out.supports = supports
     out.support_volume = support_volume
     out.blockers = blockers
+    out.change_tolerance = tol          # (mm: the distance from the input surface at which the change map reaches +1 or -1)
+    out._adds, out._cuts, out._tie, out._hair = bool(adds), bool(cuts), ctx.tie, 1e-4 * ctx.size
     return out
 
 

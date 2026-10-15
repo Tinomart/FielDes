@@ -58,7 +58,10 @@ inline float sectionLevel(float v, float lo, float hi)
 
 /*  t in [0, 1] -> colour.  "turbo" (Google's rainbow, polynomial fit by
  *  Mikhailov), "viridis" (polynomial fit), "fit" (a part's own light grey
- *  turning red: shades where an import is approximate), "bc" (the nearest
+ *  turning red: shades where an import is approximate), "share", "change"
+ *  and "violation" (the part's grey through amber to red: how far a rule is
+ *  broken; blue, grey, red: what a shell cut and added; grey, red: where a
+ *  rule is kept and where it is broken), "bc" (the nearest
  *  of the categories of boundary conditions and selections), anything else
  *  grey.  */
 inline void colormapRGB(const QString& map, float t, float& r, float& g, float& b)
@@ -85,6 +88,42 @@ inline void colormapRGB(const QString& map, float t, float& r, float& g, float& 
     else if (map == "grey" || map == "gray")
     {
         r = g = b = 0.15f + 0.8f * t;
+    }
+    else if (map == "violation")
+    {
+        // a rule check: TWO classes and no scale -- the part's own light grey where the rule is kept, red where it is broken; the card draws them as two swatches
+        const bool broken = t >= 0.5f;
+        r = broken ? 0.80f : 0.80f;
+        g = broken ? 0.10f : 0.80f;
+        b = broken ? 0.10f : 0.77f;
+    }
+    else if (map == "share" || map == "change")
+    {
+        // "share": how far past its limit a rule is broken -- the part's own light grey where it is kept (0), through amber, to red where it is broken by as much as
+        // its limit (1).  A part that needs nothing looks as any part does, and not black, which is what the rainbow's end is.
+        // "change": the geometry change of a shell, THREE classes and no scale -- blue where material was removed (below a quarter), the part's own light grey where it is
+        // unchanged, red where material was added (above three quarters); the card draws them as three swatches
+        static const float grey[3] = {0.80f, 0.80f, 0.77f};
+        static const float amber[3] = {0.95f, 0.62f, 0.15f};
+        static const float red[3] = {0.80f, 0.10f, 0.10f};
+        static const float blue[3] = {0.13f, 0.40f, 0.80f};
+        const float* start;
+        const float* to;
+        float u = 0.f;
+        if (map == "share")
+        {
+            const bool low = t < 0.5f;
+            start = low ? grey : amber;
+            to = low ? amber : red;
+            u = low ? 2.f * t : 2.f * (t - 0.5f);
+        }
+        else
+        {
+            start = to = t < 0.25f ? blue : (t > 0.75f ? red : grey);
+        }
+        r = start[0] + u * (to[0] - start[0]);
+        g = start[1] + u * (to[1] - start[1]);
+        b = start[2] + u * (to[2] - start[2]);
     }
     else
     {

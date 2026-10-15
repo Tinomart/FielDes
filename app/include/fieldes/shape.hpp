@@ -599,6 +599,9 @@ public:
     /*  The key numbers of a result -- label, text, unit of each (fieldes.stdlib.exporting.key_results): the result card prints them  */
     void setKeyResults(const QList<QStringList>& rows) { m_keyResults = rows; }
     const QList<QStringList>& keyResults() const { return m_keyResults; }
+    /*  What the shown values are, said by the script (`_value_note` of the result's display; empty says nothing): for a result that is no solver's -- the card says
+     *  "nodal average" of the elements' values otherwise, which a map of what changed, or of where a rule is broken, is not  */
+    void setValueNote(const QString& note) { m_valueNote = note; m_hasValueNote = true; }
     bool hasResult() const { return has_result; }
     const std::vector<FieldChannel>& channels() const { return m_channels; }
     int channel() const { return m_channel; }
@@ -870,6 +873,8 @@ protected:
     bool force_low = false;
     QString m_exactKey;
     QList<QStringList> m_keyResults;
+    QString m_valueNote;
+    bool m_hasValueNote = false;
 
     libfive::Tree tree;                 // (what is meshed: the shown step's geometry, usually base_tree)
     libfive::Tree base_tree = libfive::Tree::invalid();     // the shape as the script made it (optimized)
