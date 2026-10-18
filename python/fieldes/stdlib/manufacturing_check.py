@@ -25,7 +25,7 @@ from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.fea import FieldResult, colored, _with_conditions
 from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _at, _dot, _extent_along, _frame, _join, _remembered, _sphere, _values, _where, _xyz)
-from fieldes.stdlib.manufacturing_rules import GRACE, SUPPORT_EDGE_STEPS, ManufacturingError, _RULE_TEXT, _STRICTEST, _constraints_given, _log, _progress
+from fieldes.stdlib.manufacturing_rules import GRACE, SUPPORT_EDGE_STEPS, ManufacturingError, _RULE_TEXT, _STRICTEST, _constraints_given, _log, _progress, _with_bar
 
 def _scoped(margin, constraint):
     ''' A rule holds only inside the constraint's region: elsewhere its margin is far below 0 '''
@@ -254,7 +254,7 @@ def _gradients(f, pts, h):
     return out
 
 
-def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seeds=None):
+def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seeds=None, bar=None):
     ''' Points on the part's surface, the unit normal at each and the size of the field's gradient there: random points near the surface, each moved
         onto it by Newton steps along the gradient of the field (a surface found by evaluating the field: nothing is meshed).  Only where the part is
         on one side and air on the other (two faces that touch inside a part are a zero of the field the surface does not pass through).
@@ -272,6 +272,8 @@ def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seed
     for round_ in range(rounds):              # (a round is a few evaluations of the field, each costly to set up and cheap by the point: many points to a round)
         # (a round works the points the samples still wanted need, and no more: each point worked costs seven evaluations of the field four times over -- the Newton steps and the look at the foot --, and a part that
         # fills its box has half of the box in the band: 76,000 points worked for 2,500 samples were 11.8 s of the 16 s of an optimization on a block with a hole.  A round that finds fewer than wanted is followed by one that draws more)
+        if bar:                          # (how far the bar is told this goes: a stretch of the check's own 0..1; a round or two, as many as it takes)
+            _progress(bar[0] + (bar[1] - bar[0]) * round_ / float(rounds), _tr('Measuring surface'))
         work = int(1.5 * max(1, count - len(found)) / keep) + 200
         draw = min(batch_size, 30000) if share is None else min(batch_size, int(work / max(share, 0.004)) + 1)
         batch = [(rng.uniform(lo[0] - pad, hi[0] + pad), rng.uniform(lo[1] - pad, hi[1] + pad), rng.uniform(lo[2] - pad, hi[2] + pad))
@@ -575,21 +577,24 @@ def _num_flat(f, pts, normals, reach_, h):
 _CHUNK = 3000            # (samples worked out at once: each is about a hundred probe points, and 30,000 of them at once used the memory of the machine on the result of an open box)
 
 
-def _numeric_margins(ctx, constraints, direction, samples, supports=None):
+def _numeric_margins(ctx, constraints, direction, samples, supports=None, bar=None):
     ''' {rule: [margin at each sample]} -- what `_rule_margins` gives, as numbers on the sample points.  The samples are worked out `_CHUNK` at a time, so that the memory used does not grow with
         how many are asked for; every rule is a measurement of each point on its own, so the answer is the same '''
     if len(samples) <= _CHUNK:
-        return _numeric_margins_chunk(ctx, constraints, direction, samples, supports)
+        return _numeric_margins_chunk(ctx, constraints, direction, samples, supports, bar)
     out, limits = OrderedDict(), None
-    for i in range(0, len(samples), _CHUNK):
-        part, limits_part = _numeric_margins_chunk(ctx, constraints, direction, samples[i:i + _CHUNK], supports)
+    starts = list(range(0, len(samples), _CHUNK))
+    for k, i in enumerate(starts):
+        # (the chunk's share of the stretch of the bar this has: every chunk goes through every rule)
+        share = None if not bar else (bar[0] + (bar[1] - bar[0]) * k / float(len(starts)), bar[0] + (bar[1] - bar[0]) * (k + 1) / float(len(starts)))
+        part, limits_part = _numeric_margins_chunk(ctx, constraints, direction, samples[i:i + _CHUNK], supports, share)
         for rule, vals in part.items():
             out.setdefault(rule, []).extend(vals)
         limits = limits_part if limits is None else limits
     return out, limits
 
 
-def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None):
+def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None, bar=None):
     ''' `_numeric_margins` for a few samples (see there) '''
     pts = [s[0] for s in samples]
     normals = [s[1] for s in samples]
@@ -598,9 +603,13 @@ def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None):
     f = ctx.field
     out = OrderedDict()
     limits = OrderedDict()
+    steps, done = max(1, sum(len(c.rules) for c in constraints)), 0
     for c in constraints:
         d = direction if c.build_direction is None else c.build_direction
         for rule, value in c.rules.items():
+            if bar:                      # (one step of the bar for each rule of each constraint)
+                _progress(bar[0] + (bar[1] - bar[0]) * done / float(steps), _tr('Evaluating rules') + ': ' + _RULE_TEXT[rule][0])
+                done += 1
             if rule == 'overhang':
                 plate = min(x * d[0] + y * d[1] + z * d[2] for x in (ctx.plate_box[0][0], ctx.plate_box[1][0]) for y in (ctx.plate_box[0][1], ctx.plate_box[1][1])
                             for z in (ctx.plate_box[0][2], ctx.plate_box[1][2]))
@@ -725,9 +734,9 @@ def _num_bridge(ctx, pts, normals, limit, d):
     return out
 
 
-def _report_numeric(ctx, constraints, direction, samples, supports=None):
+def _report_numeric(ctx, constraints, direction, samples, supports=None, bar=None):
     ''' The report of `samples` for the rules of the constraints: {rule: {limit, unit, broken, share, worst, regions, samples}} '''
-    margins, limits = _numeric_margins(ctx, constraints, direction, samples, supports)
+    margins, limits = _numeric_margins(ctx, constraints, direction, samples, supports, bar)
     points = [s[0] for s in samples]
     n = len(points)
     report = OrderedDict()
@@ -877,13 +886,13 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
     if plate_box is not None:
         ctx.plate_box = plate_box
     if progress:
-        _progress(0.05, _tr('Measuring surface'))
-    points = _surface_samples(ctx, int(samples), seed=seed, rounds=rounds, batch_size=batch_size, seeds=seeds)
+        _progress(0.0, _tr('Measuring surface'))
+    points = _surface_samples(ctx, int(samples), seed=seed, rounds=rounds, batch_size=batch_size, seeds=seeds, bar=(0.0, 0.3) if progress else None)
     _log(t0, 'check: surface sampled: %d points' % len(points))
     if not points:
         return None
     if progress:
-        _progress(0.4, _tr('Evaluating rules'))
+        _progress(0.3, _tr('Evaluating rules'))
     if direction is None:
         direction = _direction_of(items, ctx, points)
     _log(t0, 'check: way up found')
@@ -893,7 +902,7 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
     fields = OrderedDict((rule, m[0]) for rule, m in margins.items())
     fields['all'] = _all_field(margins)
     _log(t0, 'check: rule fields built')
-    report = _report_numeric(ctx, items, direction, points, supports)
+    report = _report_numeric(ctx, items, direction, points, supports, bar=(0.3, 1.0) if progress else None)
     _log(t0, 'check: rules measured on the samples')
     out = ManufacturingAnalysis(part if isinstance(part, Shape) else shape, items, fields, {r: (m[1], m[2]) for r, m in margins.items()}, report, len(points), direction, time.time() - t0)
     out.points = [p[0] for p in points]
@@ -902,6 +911,7 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
 
 @_with_conditions
 @_remembered('manufacturing_analysis')
+@_with_bar('manufacturing_analysis')
 def manufacturing_analysis(part, constraints, samples=5000):
     ''' Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
         (manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Manufacturing: the progress bar follows the tool
+- **`manufacturing_optimization` and `manufacturing_analysis` showed an empty bar for the minutes they take** (the bar read "0 %" with the text of the statement). They reported their phases, but the bar of the run takes a report only inside an open operation, and these two opened none, so every report was dropped. Each now runs as an operation of its own, and says what it does: Measuring surface, Evaluating rules (one step for each rule, and for each chunk of samples), Measuring part volume, Measuring effect for each remedy (three steps inside it), Re-checking result, Done. The check that runs inside the optimization reports within its own stretch of the bar (the part's check 5 to 19 %, the re-check 80 to 98 %), so the bar never jumps back. Looked at in a real window while the tool ran: the bar filled to 58 % and said "Measuring effect: Gap closed or widened". The seconds of the tool did not change (17.1 s before, 16.8 and 18.4 s after: the run-to-run difference of this machine).
+
 ### Manufacturing: the time of a result is the tool and the drawing, and both were measured
 Total time of a result = the seconds the tool takes + the seconds the viewer takes to draw it. Measured on this machine (a laptop processor; run-to-run differences of up to 15 %), at 3 cells to the millimetre:
 

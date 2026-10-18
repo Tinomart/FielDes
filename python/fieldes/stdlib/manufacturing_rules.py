@@ -12,19 +12,66 @@ import math
 import os
 import sys
 import time
+import contextlib
+import functools
 from collections import OrderedDict
 
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.fea import FeaError, _given, _register_slots
 
+_BAR = []            # (the stretch of the bar -- a (low, high) between 0 and 1 -- that the code running now reports within, innermost last; empty: no operation of the bar is open, and nothing is said)
+
+
 def _progress(fraction, text):
-    ''' What the bar of the run says (fraction 0 to 1, and what is being done) '''
+    ''' What the bar of the run says: how far the phase that runs is (fraction 0 to 1), mapped into the stretch of the bar that phase has (`_within`), and what is being done.  Dropped where no
+        operation of the bar is open (`_with_bar`): the bar takes a report only inside one '''
+    if not _BAR:
+        return
+    low, high = _BAR[-1]
     try:
         from fieldes import run_progress
-        run_progress.report(fraction, text)
+        run_progress.report(low + (high - low) * fraction, text)
     except Exception:
         pass
+
+
+@contextlib.contextmanager
+def _within(low, high):
+    ''' The code inside reports (`_progress`, 0 to 1) within the stretch low..high of the bar that is open, so that a check made inside the optimization says how far IT is, in the part of the
+        optimization's bar that the check has '''
+    if not _BAR:
+        yield
+        return
+    outer_low, outer_high = _BAR[-1]
+    _BAR.append((outer_low + (outer_high - outer_low) * low, outer_low + (outer_high - outer_low) * high))
+    depth = len(_BAR)
+    try:
+        yield
+    finally:
+        del _BAR[depth - 1:]
+
+
+def _with_bar(name):
+    ''' The tool runs as an operation of its own for the bar of the run.  What `_progress` says is taken only inside an open operation (run_progress.Task): outside one it is dropped,
+        and the bar sat at "nothing" for the minutes a tool takes, with the text of the statement and no phase.  Applied to the public function, below `_remembered`: a result that
+        is given back from memory does not open one '''
+    def wrap(fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            try:
+                from fieldes import run_progress
+            except Exception:
+                return fn(*args, **kwargs)
+            depth = len(_BAR)
+            try:
+                with run_progress.task(name):
+                    _BAR.append((0.0, 1.0))
+                    return fn(*args, **kwargs)
+            finally:
+                del _BAR[depth:]
+        return run
+    return wrap
 
 
 def _log(started, text):

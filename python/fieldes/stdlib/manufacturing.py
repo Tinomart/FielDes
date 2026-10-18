@@ -56,7 +56,7 @@ from fieldes.stdlib.excluded import locks_of
 from fieldes.stdlib.fields import fillet as _fillet
 from fieldes.stdlib.manufacturing_check import ManufacturingAnalysis, _analyse, manufacturing_analysis
 from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _Normals, _at, _dot, _extent_along, _frame, _join, _near, _remembered, _values, _where, _within_reach, _xyz)
-from fieldes.stdlib.manufacturing_rules import (GRACE, SUPPORT_EDGE_STEPS, ManufacturingConstraint,ManufacturingError, _RULE_TEXT, _constraints_given, _log, _progress, _quantity,
+from fieldes.stdlib.manufacturing_rules import (GRACE, SUPPORT_EDGE_STEPS, ManufacturingConstraint,ManufacturingError, _RULE_TEXT, _constraints_given, _log, _progress, _quantity, _with_bar, _within,
                                                  manufacturing_constraint, fff_constraint, cnc_constraint, molding_constraint)
 
 __all__ = ['manufacturing_constraint', 'fff_constraint', 'cnc_constraint', 'molding_constraint',
@@ -689,6 +689,7 @@ class ManufacturingResult(FieldResult):
 
 @_with_conditions
 @_remembered('manufacturing_optimization')
+@_with_bar('manufacturing_optimization')
 def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=True, samples=2500):
     ''' The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
         region of its constraint: thin walls thickened (an offset that follows how thin the wall is), a narrow gap closed (`gap_fix='widen'` of the
@@ -722,8 +723,8 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     notes = []
     _progress(0.02, _tr('Reading part'))
     _log(t0, 'the part is read')
-    _progress(0.05, _tr('Measuring surface'))
-    before = _analyse(shape, items, int(samples), what='manufacturing_optimization')           # (the check of the part as it is: its way up, its points, what breaks)
+    with _within(0.05, 0.19):                 # (the check of the part has this stretch of the bar, and says how far it is within it)
+        before = _analyse(shape, items, int(samples), what='manufacturing_optimization', progress=True)           # (the check of the part as it is: its way up, its points, what breaks)
     if before is None:
         raise ManufacturingError('manufacturing_optimization: the part has no surface to measure (is it empty?)')
     _log(t0, 'sampled the surface of the part: %d points' % len(before.points))
@@ -795,7 +796,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         if field is None:                    # (a remedy that was not made: the check finds nothing for it to do)
             changes.append({'remedy': remedy, 'rule': rule, 'added': 0.0, 'removed': 0.0, 'kept': False, 'why': _tr('no change required'), 'thin': False})
             continue
-        _progress(0.25 + 0.5 * index / max(1, len(candidates)), _tr('Measuring effect: %s') % _REMEDY_TEXT[remedy])
+        stretch = (0.25 + 0.5 * index / max(1, len(candidates)), 0.25 + 0.5 * (index + 1) / max(1, len(candidates)))          # (this remedy's part of the bar)
+        what = _tr('Measuring effect: %s') % _REMEDY_TEXT[remedy]
+        _progress(stretch[0], what)
         # (what a remedy of a known width changes lies in the shell of that width round the surface: measured on points of the shell, so that a thin layer or a narrow gap has
         # points in it; one that can reach anywhere on points over the whole box)
         shell = None
@@ -807,7 +810,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             where, before_values, each = shell
         else:
             where, before_values, each = pts, f0_vals, box / float(len(pts))
+        _progress(stretch[0] + 0.3 * (stretch[1] - stretch[0]), what)            # (the points it is measured on are made: the remedy's field is worked out on them next)
         vals = _values(field, where)
+        _progress(stretch[0] + 0.85 * (stretch[1] - stretch[0]), what)
         added = each * sum(1 for a, b in zip(before_values, vals) if a > 0 >= b)
         removed = each * sum(1 for a, b in zip(before_values, vals) if a <= 0 < b)
         if shell is None:
@@ -900,8 +905,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         # (the check made on the result is the check's own, manufacturing_check._analyse: nothing that made the result reads it, and an overhang with a support under it is held.  A part that
         # is left as it is and has supports under it is re-checked as well, with them: read from the check of the part alone, the overhang the support holds up was listed as broken --
         # a ledge held by a block, "1 place, 11 % of the surface" on the card)
-        after = _analyse(result, items, int(samples), bounds=result._bounds, plate_box=ctx.plate_box, direction=direction, seed=13, rounds=1, batch_size=20000,
-                        seeds=before.points, supports=supports)
+        with _within(0.8, 0.98):
+            after = _analyse(result, items, int(samples), bounds=result._bounds, plate_box=ctx.plate_box, direction=direction, seed=13, rounds=1, batch_size=20000,
+                             seeds=before.points, supports=supports, progress=True)
         if after is not None:
             why = _tr('still violated after the remedy') if changed else _tr('no remedy available for it')
             for rule, r in after.report.items():
