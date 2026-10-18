@@ -1044,7 +1044,7 @@ def _distance_getter(shape, bounds):
     def get():
         if not cell:
             from fieldes.stdlib.fields import exact_distance
-            cell.append(exact_distance(shape, bounds))
+            cell.append(exact_distance(shape, bounds=bounds))
         return cell[0]
     return get
 

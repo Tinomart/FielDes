@@ -1076,6 +1076,12 @@ libfive_tree libfive_tree_remap(libfive_tree p,
 libfive_tree libfive_tree_call(libfive_tree p,
         libfive_tree x, libfive_tree y, libfive_tree z);
 
+/*  The partial derivative of p with respect to x (axis 0), y (1) or z (2), as a tree of its own: the symbolic derivative, by the rules of
+ *  calculus (see libfive/tree/derivative.hpp).  A native field (an oracle) inside p has no formula: with oracle_step > 0 its partial is the
+ *  central difference over that step; with 0 the result is NULL.  NULL too for an axis that is not 0, 1 or 2, and for a tree whose calls are nested deeper than
+ *  max_call_depth (a derivative costs several times what the field does for every level of nesting; -1: no limit).  */
+libfive_tree libfive_tree_partial(libfive_tree p, int axis, float oracle_step, int max_call_depth);
+
 /*
  *  Returns an optimized version of the given tree
  */

@@ -27,7 +27,6 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | **The finished mesh of a shape you asked for** ([render cache](#the-render-cache)) | on disk, in FielDes's cache folder | the shape's expression with the numbers it is drawn with, its colours, the render region, resolution and quality |
 | **The model tree of a script** ([the model tree](#the-model-tree)) | on disk, in FielDes's cache folder (`scene-cache`) | the md5 of the script's text, and the program and library that made the tree |
 | **Analyses** (static, modal, thermal, flow, all optimisations — [the result cache](#the-result-cache)) | in memory, and on disk: the solved problem with its mesh, fields, modes, iterations and steps | the whole problem as asked: the part by its expression, every condition, the material, the fluid, the element size, every setting |
-| **`exact_distance`** (and so `offset_exact`, `shell_exact`, `round_edges`, `fillet`) | in memory | the shape's expression and the bounds/resolution |
 | **Mesh imports** | in memory | path, size, modification time, units |
 | **Graph lattices** (`voronoi_graph`, `surface_graph`, `points_graph`) | in memory | their inputs |
 | **`mass_properties` / `volume_of`** | in memory | the shape, bounds and resolution |
@@ -254,5 +253,6 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
    picture or STL.
 4. **Analyses: coarse `element_size` first**, then halve it once to check convergence.
 5. **Put expensive, rarely changed operations early** in the script, where caches keep them.
-6. **Use the exact operations sparingly**: `offset_exact`, `round_edges`, `fillet` mesh the shape at a
-   fine resolution. Use them on the finished shape, not inside a loop.
+6. **Use the exact operations sparingly**: `offset_exact`, `round_edges`, `fillet` read the distance from the
+   shape's own field with a few Newton steps, each a handful of calls of it (nothing is meshed), so a drawing
+   of one costs several times the shape's own. Use them on the finished shape, not inside a loop.

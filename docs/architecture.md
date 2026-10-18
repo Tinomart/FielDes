@@ -157,9 +157,9 @@ checkout, and the `fieldes` package by walking up from its own folder for `pytho
 ### Offsets, shells and thickening of an imported part
 
 The part's field (above) is not a distance, so `thicken`, `shell_inside`, `shell_outside`, `offset_by` and
-`offset` do not read it: `fields._dist()` replaces an imported part by its **exact distance**, the part meshed
-(`exact_distance()`: `libfive_tree_render_mesh`, then the mesh as a signed-distance oracle; cached by content) and
-the distance to that mesh. What it knows about the part is the attribute `_distance_of`, a function that makes the
+`offset` do not read it: `fields._dist()` replaces an imported part by its **exact distance**, read from the part's own
+field (`exact_distance()`: from each point a few Newton steps along the field's gradient to the surface, in
+`distance_field.py`; nothing is meshed). What it knows about the part is the attribute `_distance_of`, a function that makes the
 distance on the first call:
 
 - `reconstruct` (and `import_model`, for the parts it reconstructs) gives it to every part (`cad_import._distance_getter`; fresh or from the cache).

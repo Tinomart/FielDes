@@ -205,20 +205,31 @@ function of the library is in it.
 ## Exact distances
 
 Offsets, shells and fillets of a shape with only a *rough* field (booleans, blends, deformations) come
-out stretched at edges. The `_exact` versions mesh the shape and use the **true** distance to that
-surface:
+out stretched at edges. The `_exact` versions read the **true** distance to the surface from the shape's
+own field, and nothing is meshed: from each point they walk along the field's gradient to the surface (two Newton steps, each a
+handful of calls of the field) and the distance is the length of that walk. The gradient is the field's **symbolic derivative**
+(`Shape.partial(axis)`: the kernel derives the field's expression by the rules of calculus, so the renderer's bounds on it are the
+derivative's own); a field with a native field in it (a mesh's distance) has none, and its gradient is a difference of calls. It is exact for a
+field that is a distance already, for a sphere, a cylinder, a plane, and for the edge and the corner of a box; where faces meet at some
+other angle it is a little off (a few tenths of a per cent in the volume of a fillet or of a rounded box). It is made within `reach` of
+the surface and the shape's own field stands beyond it, so a mesher skips every cell outside that band. **Where the field is not a distance
+at a point it is left as it is** -- the test is that a walk along the gradient by the field's value ends on the surface: above the cut of
+`difference(box, cutter)` where the cutter reaches out beyond the box, the field is the distance to the cutter's walls carried up past the
+box, walls that are not there, and a ball "too wide for the slot" between them is not a ball too wide for the part's slot:
 
 | | |
 |---|---|
-| `exact_distance(shape, bounds, resolution, margin)` | the shape with an exact signed distance (cached) |
+| `exact_distance(shape, reach=None, bounds=None)` | the shape with an exact signed distance within `reach` of its surface (default a quarter of its size) |
 | `offset_exact(shape, distance)` | uniform offset along true normals, round at edges |
 | `shell_exact(shape, thickness, side='inside'\|'outside'\|'center')` | uniform hollow shell |
 | `round_edges(shape, radius)` | rounds every convex edge and corner |
 | `fillet(shape, radius)` | fills every concave edge and corner |
 | `smooth(shape, radius, steps=1)` | smooths the surface without thickening the body: features smaller than about `radius` go, flat faces stay; more `steps` smooth further. A field like any other (a weighted sum of the body's field moved by whole radii: 6 copies for one step, 19 for two, 44 for three, 85 for four), so nothing is measured or meshed in it |
 
-`resolution` (samples per mm; about 4 / radius or finer for `round_edges`) sets how finely the surface
-is followed. The expensive part (the mesh and its distance structure) is [cached](caching-and-performance.md).
+`round_edges` and `fillet` roll a ball of the radius in the material and in the air: the centres of the ball are where the field is
+`-radius` (or `radius`), and the surface of the result is a radius from them -- also read from the field, by the same walk. `reach` (mm)
+is how far from the surface the distance is made; an offset, a shell and a rounding ask for as much as they need. The old arguments
+`resolution` and `margin`, which belonged to the mesh, are gone.
 
 ## Measuring a part
 

@@ -207,12 +207,10 @@ def _remedy_gaps(ctx, g, mode):
 
 
 def _remedy_corners(ctx, radius):
-    ''' The part with every inside corner rounded to `radius`: the library's `fillet` -- the part grown by a ball of that radius and taken back by it, each time by its true
-        distance -- so the corner is filled by the arc of a ball that rolls in it: a circle of that radius whose slope turns smoothly from one face to the other (measured in
-        the application on an L of two walls 3 thick, radius 6: the radius 6.000 at every degree of the arc from 2 to 88, and a degree of slope to a degree of angle).  A flat
-        face, a bump and an outside corner are as they were, and the ends of a corner are not touched.  It is made from the part's surface (the part is meshed twice: 2.4 s for
-        the L, and remembered by what the part is made of), and so it works on any part -- an import, a lattice, a pocket --, and a slot narrower than the ball is filled
-        as the cutter leaves it.  The part's own field is kept where nothing is added '''
+    ''' The part with every inside corner rounded to `radius`: the library's `fillet` -- a ball of that radius rolled in the air along the part, found from the part's own field and
+        its derivative (distance_field.py: Newton steps along the gradient; nothing is meshed) -- so the corner is filled by the arc of a ball that rolls in it: a circle of that
+        radius whose slope turns smoothly from one face to the other.  A flat face, a bump and an outside corner are as they were, and the ends of a corner are not touched.  It works
+        on any part -- an import, a lattice, a pocket --, and a slot narrower than the ball is filled.  The part's own field is kept where nothing is added '''
     return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)))
 
 
@@ -771,10 +769,10 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             elif rule == 'min_gap' and 'gaps' in allowed:
                 candidates.append(('gaps', rule, scoped(_remedy_gaps(ctx, value, c.gap_fix)), c.gap_fix == 'fill', value))
             elif rule == 'min_radius' and 'corners' in allowed:
-                # (the library's fillet is the distance to a mesh, good to about a hundredth of a millimetre: over a smooth part that has no corner to round it is the part's own field to that much and adds
-                # specks that thick wherever the mesh falls short -- a torus came out with 3.9 mm^3 "added" and a few red dots, and a part with no inside corner paid for the two meshes of the fillet.  So the remedy
-                # is made where the check of the part finds a corner short of the radius at one of its samples, and not where it finds none; the other remedies are exact fields, which are the part's own
-                # where nothing is wrong, and are made as ever)
+                # (the library's fillet is read from the part's field by Newton steps along its gradient, good to a few tenths of a per cent: over a smooth part that has no corner to round it is the part's
+                # own field to that much and can add specks wherever the walk falls short -- with the mesh it replaced a torus came out with 3.9 mm^3 "added" and a few red dots --, and it is a fair
+                # part of the cost of the field.  So the remedy is made where the check of the part finds a corner short of the radius at one of its samples, and not where it finds none; the other
+                # remedies are exact fields, which are the part's own where nothing is wrong, and are made as ever)
                 if before.report.get(rule, {}).get('broken', 1) == 0:
                     candidates.append(('corners', rule, None, True, value))
                 else:

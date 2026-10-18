@@ -422,7 +422,7 @@ def _handle_distance(shape, out, values, get):
             pad = 0.15 * max(float(b[1][i]) - float(b[0][i]) for i in range(3))
             b = (tuple(float(v) - pad for v in b[0]), tuple(float(v) + pad for v in b[1]))
         from fieldes.stdlib.fields import exact_distance
-        base = exact_distance(ref, b)
+        base = exact_distance(ref, bounds=b)
     return base + (out - ref)
 
 

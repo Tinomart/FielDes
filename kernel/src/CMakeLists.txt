@@ -79,6 +79,7 @@ add_library(libfive SHARED
     tree/serializer.cpp
     tree/tree.cpp
     tree/content_key.cpp
+    tree/derivative.cpp
     tree/expose.cpp
     tree/operations.cpp
 

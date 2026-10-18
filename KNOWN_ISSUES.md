@@ -25,6 +25,14 @@ What each of these is, and the way round it, is in [docs/manufacturing.md](docs/
   a thin wall stands on a thick face, a notch is left (0.15 mm for a wall of 0.5 asked to be 0.8), and the check marks a few hundredths of a per cent of the surface there. Ask `min_radius` as well and the corners are rounded.
 - **The corner rule reads the field's value, which is a distance only where the field is one.** A part made by taking boxes out of a block with cutters that overshoot it, or imported from STEP, has only a lower bound of
   the distance inside its slots, and the check marks the walls under a slot's mouth although a cutter of that radius fits: read such a part through `exact_distance(part)` first.
+- **`fillet`, `round_edges` and `exact_distance` read the shape's own field (nothing is meshed), and are as good as the field is a distance.** Measured on parts with true distance fields: the distance to a
+  face, edge and corner of a box is exact to 0.003 mm, a box offset by 2 is 0.05 % off, the fillet of an L (radius 3) adds 15.51 mm^3 where the arc says 15.45, a rounded box 0.2 % over, a plate thinner than the ball is
+  removed whole, a slot narrower than the ball is filled, and an L draws in 1.9 s. They are less exact where the field is not a distance, which is the case of a part made by taking cutters that overshoot the block out of
+  it, or by overlapping pieces: a point where a walk along the gradient does not end on the surface is left as it is (the field there describes walls that are not the part's), which can leave a corner of such a part
+  rounded a little short (the pocket of 1.5 mm corners made 3 mm: 38 mm^3 added where the arcs say 69). Three known differences from the exact rolling ball: **a slot narrower than the ball is filled flush with its
+  mouth** (the ball resting on its two edges would leave a sag, 0.76 mm for a slot of 4 and a ball of 3), the material added at the end of a corner reaches up to 0.4 mm past the part's end face, and **reading the
+  result of `exact_distance(part)` of a part with many pockets with the manufacturing check draws a field of many nested calls that needs several GB and minutes** (`mfg_a3_pocket_corners` ran out of its 8 GB): check
+  the part itself, or draw at a lower resolution, until the walk is made lighter.
 - **A corner is marked only from about 17 % short of the radius asked** (under 2.5 mm for 3 mm), not from the 5 % of the other rules: the check reads how far the centre of the ball sits from the part, which in a corner of 90
   degrees grows by 0.29 mm for every mm of the corner's radius. Between that and the radius asked (2.5 to 2.85 mm for 3) the reading is within its noise and a corner may or may not be marked, in stripes along the arc. The shell rounds a
   corner to exactly the radius asked; a tight arc like that, read through a mesh, can show a few points short.

@@ -54,10 +54,10 @@ A rule counts as broken when it is more than 5 % short of its limit: what the pa
 ## The check
 
 `manufacturing_analysis` reads the part's own field and nothing else: **every rule is a field on the part**, drawn as colours on it (the result card switches rule; `result.min_wall`
-is the field), and nothing is meshed. The normals are central differences of the field; a thickness is found along the normal, by where the field crosses zero
+is the field), and nothing is meshed. The normals are read from the field's symbolic derivative (`Shape.partial`: the kernel derives the field's expression; each component is the mean of the derivative at two points a thousandth of the part's size apart, which is what a central difference is, with the derivative's own bounds); a thickness is found along the normal, by where the field crosses zero
 between fourteen places; a ball that does not fit into a corner is found by the field at probes along the normal and on the ball's sphere: how far from the part the centre of a ball that touches the point can be. In a corner of 90 degrees that
 clearance grows by 0.29 mm for every mm of the corner's radius, so a corner is marked from about 17 % short of the limit (under 2.5 mm for a limit of 3); between that and the limit (2.5 to 2.85 mm) the reading is
-within its own noise -- the normal is a central difference of the field, and a normal 5 degrees off at a radius of 3 moves the ball by 0.26 mm -- and a corner there may or may not be marked, in stripes along the arc where it is (seen on pockets with corners of 1.8 and 2.7 mm). A normal that is a degree or two off -- the normal of a field made
+within its own noise -- the normal is the field's slope averaged over a step, and a normal 5 degrees off at a radius of 3 moves the ball by 0.26 mm -- and a corner there may or may not be marked, in stripes along the arc where it is (seen on pockets with corners of 1.8 and 2.7 mm). A normal that is a degree or two off -- the normal of a field made
 from a mesh -- does not mark a corner that is right (at the radius asked or more).
 
 The **numbers** of the report -- how much of the surface breaks a rule, how badly, in which places -- are **measured**, on a few thousand points of the surface (`samples=`, 5000):
@@ -112,7 +112,7 @@ went down a shared node once for every way to reach it); it is linear now, and a
 gets no help from that at cells about the size of the wall. So the remedies are kept to the least that is exact where it matters (the wall remedy is the offset where a wall is thin and nothing else, see the limit above), and the scene of a test is small and fine rather than large and coarse:
 **the finer the picture, the more memory the mesher needs for any of them** (cubed: twice as fine is eight times), and a part with many features costs the copies times its own size. A picture too fine for the machine is the one thing that can stop the viewer; draw at the
 resolution the thinnest wall needs (4 cells across it is enough to see it) and no finer. Measured numbers are in the report (`tests/RELEASE_REPORT.md`). A big imported part costs the copies times its own size: `verify=False`
-leaves the check of the result to you. The corner remedy meshes the part twice (see `fillet`), which a big imported part pays for once: the meshes are remembered by what the part is made of.
+leaves the check of the result to you. The corner remedy rounds the corners with `fillet`, a ball rolled in the part's own field (see [fields](fields.md)): nothing is meshed for it.
 
 ## Supports and the print file
 

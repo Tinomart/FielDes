@@ -50,9 +50,15 @@ struct DcStats
     std::atomic<uint64_t> interval_cells{0}, interval_ns{0}, leaf_cells{0}, leaf_ns{0}, collect_cells{0}, collect_ns{0};
     std::atomic<uint64_t> leaf_clauses{0}, leaf_calls{0}, leaf_edges{0}, leaf_bisected{0}, interval_clauses{0};
     std::atomic<uint64_t> corner_ns{0}, search_ns{0}, deriv_ns{0}, surface_leaves{0}, plain_leaves{0}, plain_ns{0};
+    // (the part of deriv_ns that is the derivatives themselves, the check of which points are ambiguous -- a min, a max or an abs whose two sides are exactly equal --, and the search of the
+    // features at those points; and how many of the intersection points were ambiguous)
+    std::atomic<uint64_t> derivs_only_ns{0}, ambig_check_ns{0}, features_ns{0}, intersection_points{0}, ambiguous_points{0}, corner_ambig_checks{0};
     ~DcStats()
     {
         if (!std::getenv("FIELDES_TIMING") || !(interval_cells || leaf_cells)) return;
+        std::fprintf(stderr, "[dc] intersection points %.0f, of them ambiguous %.0f; derivatives %.1f s, ambiguity check %.1f s, features at the ambiguous ones %.1f s; corner ambiguity checks %.0f\n",
+                     double(intersection_points.load()), double(ambiguous_points.load()), derivs_only_ns.load() * 1e-9, ambig_check_ns.load() * 1e-9, features_ns.load() * 1e-9,
+                     double(corner_ambig_checks.load()));
         std::fprintf(stderr, "[dc] leaf parts: corners %.1f s, edge search %.1f s, derivatives and ambiguity %.1f s; %.0f leaves on the surface, %.0f leaves with nothing in them (%.3f ms each)\n",
                      corner_ns.load() * 1e-9, search_ns.load() * 1e-9, deriv_ns.load() * 1e-9, double(surface_leaves.load()), double(plain_leaves.load()),
                      plain_leaves.load() > 0 ? plain_ns.load() * 1e-6 / double(plain_leaves.load()) : 0.0);
@@ -279,6 +285,7 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
         }
         if (anyZero)
         {
+            dcAdd(dcStats().corner_ambig_checks, 1);
             auto a = eval->getAmbiguous(count, *tape);
             for (uint8_t i = 0; i < count; ++i)
             {
@@ -614,9 +621,39 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                 // Copy the results to a local array, to avoid invalidating
                 // the results array when we call features() below.
                 Eigen::Array<float, 4, ArrayEvaluator::N> ds;
+                const uint64_t tD0 = dcNowNs();
+                // A point is ambiguous where a min or a max has two sides of the same value and DIFFERENT derivatives (a crease: the features are searched there).  The derivative
+                // pass notes those as it goes (`trackTies`), calls included; the check of the values alone (getAmbiguous) marked every tie, also the ones of a clamp of a value that is
+                // exactly its bound (max(0, 0): the same derivative on both sides, nothing to choose), which in the fields of the manufacturing tool are 9 of 10 of the points
+                // of the surface -- and ran every field that is called again at the points to do it.  A tape with an oracle in it keeps the check of the values (an oracle is
+                // ambiguous by its own rules).
+                static const bool noTieAware = std::getenv("FIELDES_NO_TIE_AWARE") != nullptr;      // (a test: the check of the values)
+                const bool tieAware = !noTieAware && !tape->hasOracle();
+                eval->trackTies = tieAware;
                 ds.leftCols(2 * eval_count) = eval->derivs(
                         2 * eval_count, *tape);
-                auto ambig = eval->getAmbiguous(2 * eval_count, *tape);
+                eval->trackTies = false;
+                const uint64_t tD1 = dcNowNs();
+                Eigen::Array<bool, 1, ArrayEvaluator::N> ambig;
+                if (tieAware)
+                {
+                    ambig.head(2 * eval_count) = eval->tiedDerivs(2 * eval_count);
+                }
+                else
+                {
+                    ambig.head(2 * eval_count) = eval->getAmbiguous(2 * eval_count, *tape);
+                }
+                const uint64_t tD2 = dcNowNs();
+                dcAdd(dcStats().derivs_only_ns, tD1 - tD0);
+                dcAdd(dcStats().ambig_check_ns, tD2 - tD1);
+                dcAdd(dcStats().intersection_points, 2 * eval_count);
+                if (dcOn())
+                {
+                    for (unsigned i=0; i < 2 * eval_count; ++i)
+                    {
+                        if (ambig(i)) { dcAdd(dcStats().ambiguous_points, 1); }
+                    }
+                }
 
                 // Iterate over all inside-outside pairs, storing the number
                 // of intersections before each inside node (in prev_size),
@@ -645,8 +682,10 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                     // case to find all possible derivatives at this point.
                     else
                     {
+                        const uint64_t tF0 = dcNowNs();
                         const auto fs = eval->features(
                                 pos.template cast<float>(), tape);
+                        dcAdd(dcStats().features_ns, dcNowNs() - tF0);
 
                         for (auto& f : fs)
                         {

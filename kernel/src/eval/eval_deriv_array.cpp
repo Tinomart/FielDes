@@ -48,6 +48,8 @@ DerivArrayEvaluator::DerivArrayEvaluator(
     d(deck->X).row(0) = 1;
     d(deck->Y).row(1) = 1;
     d(deck->Z).row(2) = 1;
+
+    tied.setZero();
 }
 
 Eigen::Block<decltype(DerivArrayEvaluator::ambig), 1, Eigen::Dynamic>
@@ -118,6 +120,10 @@ DerivArrayEvaluator::derivs(size_t count, const Tape& tape)
 
     // Perform derivative evaluation, copying results into the out array
     tape_ = &tape;
+    if (trackTies)
+    {
+        tied.setZero();
+    }
     deck->bindOracles(tape);
     switch (count_simd)
     {
@@ -176,8 +182,15 @@ void DerivArrayEvaluator::callDeriv(Clause::Id id, Clause::Id a_, Clause::Id b_,
     }
 
     const Tape::Handle& shortened = tape_->callTape(site);
+    e->trackTies = trackTies;
     auto r = e->derivs(n, shortened ? *shortened : *callee.deck->tape);
     d(id).leftCols(n) = r.topRows(3);
+    if (trackTies)
+    {
+        // (a tie in the called field is a tie in this one: the pass over its tape has noted it for the same points)
+        tied.head(n) = tied.head(n) || e->tied.head(n);
+        e->trackTies = false;
+    }
 }
 
 namespace {
@@ -235,10 +248,21 @@ void DerivArrayEvaluator::execDeriv(Opcode::Opcode op, Clause::Id id,
         case Opcode::OP_MIN:
             for (Eigen::Index i=0; i < od.rows(); ++i)
                 od.row(i) = (av < bv).select(ad.row(i), bd.row(i));
+            if (trackTies)
+            {
+                // (two sides of the same value whose derivatives differ: a crease; if they are the same there is no choice to make)
+                tied.head(od.cols()) = tied.head(od.cols()) ||
+                    ((av == bv) && ((ad.row(0) != bd.row(0)) || (ad.row(1) != bd.row(1)) || (ad.row(2) != bd.row(2))));
+            }
             break;
         case Opcode::OP_MAX:
             for (Eigen::Index i=0; i < od.rows(); ++i)
                 od.row(i) = (av < bv).select(bd.row(i), ad.row(i));
+            if (trackTies)
+            {
+                tied.head(od.cols()) = tied.head(od.cols()) ||
+                    ((av == bv) && ((ad.row(0) != bd.row(0)) || (ad.row(1) != bd.row(1)) || (ad.row(2) != bd.row(2))));
+            }
             break;
         case Opcode::OP_SUB:
             od = ad - bd;

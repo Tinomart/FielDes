@@ -36,6 +36,13 @@ protected:
      * in this flag.  */
     bool clear_vars = false;
 
+    /*  The points at which a min or a max had two sides of the same value and DIFFERENT derivatives, in the last derivs() pass made with trackTies set -- the
+     *  points where the derivative is not one number, a crease -- and, through calls, the same for the fields that are called.  Where two sides tie and
+     *  have the same derivative (min(0, 0): a clamp of a value that is exactly its bound, in a field that is the same value over most of space) there is
+     *  nothing to choose between, and the point is not ambiguous.  getAmbiguous() asks the same question of the VALUES alone, which marks every such tie,
+     *  and runs every field that is called again to do so. */
+    Eigen::Array<bool, 1, N> tied;
+
     /*  A call clause, in the derivative pass: the derivatives of the callee
      *  at the points (a, b, c) with respect to what the derivatives here are
      *  with respect to.  The callee's X, Y and Z are the arguments, so the
@@ -45,6 +52,14 @@ protected:
                    size_t count);
 
 public:
+    /*  Set before derivs() to have the pass note where it met a tie with different derivatives (see `tied`); it costs a comparison at each min and max.  The
+     *  points it notes are read with tiedDerivs() after the pass.  Off by default. */
+    bool trackTies = false;
+    Eigen::Block<decltype(ambig), 1, Eigen::Dynamic> tiedDerivs(size_t count)
+    {
+        return tied.head(count);
+    }
+
     /*
      *  Multi-point evaluation (values must be stored with set)
      */

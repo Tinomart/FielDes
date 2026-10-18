@@ -50,6 +50,7 @@ import sys
 from fieldes.ffi import lib, libfive_vec3_t
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
+from fieldes.stdlib import distance_field as _distance_field
 from fieldes.stdlib.fieldargs import (is_field, present, positive, number_or_field, lowest, highest,
                                       returns_field, returns_body)
 
@@ -88,7 +89,7 @@ def _dist(v):
         from STEP is exact in sign but outside and inside it is only a lower bound of the distance to the part (the
         distance to the infinite surfaces its faces lie on, and the cells it is built from end in places where there
         is no face): an offset or a shell of it grows blocks and fins, and a thickening has stray walls inside. So an
-        imported part is replaced by its exact distance (exact_distance(): its mesh and the distance to it), which is
+        imported part is replaced by its exact distance (exact_distance(): the distance read from its own field, by walking along the gradient to the surface -- nothing is meshed), which is
         what these operations mean. A part that was moved, turned or scaled (gizmo(), transforms in the
         script) has the same placement on its distance; one whose faces are dragged (handles()) has the distance of
         its numbers when the script was run, and what dragging changes since. Set FIELDES_NO_EXACT_OFFSETS to use
@@ -907,58 +908,27 @@ def _shape_bounds(shape, bounds):
     return found
 
 
-def exact_distance(shape, bounds=None, resolution=None, margin=0.0):
-    ''' The exact signed distance field of a shape (mm): the shape is meshed
-        and the distance to that mesh is used.  Many shapes built with
-        booleans, blends or warps have fields that are only roughly a
-        distance (e.g. flat, square-cornered outside a box's edges); after
-        this, offsets and shells are uniform and depth_below() is a true
-        depth.  resolution: mesh samples per mm (default ~150 along the
-        longest side); margin: extra room around the bounds for offsets.
-        (A shape with var() numbers is meshed with the numbers they have in
-        the script, and the result is remembered by them.) '''
-    return _exact_distance(shape, bounds, resolution, margin, _vars_key())
-
-
-_EXACT_PAD = 0.03       # (the room exact_distance leaves round the bounds, as a share of their longest side)
-
-
-@content_cached('exact_distance', limit=8)
-def _exact_distance(shape, bounds=None, resolution=None, margin=0.0, script_vars=None):
-    ''' The exact signed distance field of a shape (mm): the shape is meshed
-        and the distance to that mesh is used.  Many shapes built with
-        booleans, blends or warps have fields that are only roughly a
-        distance (e.g. flat, square-cornered outside a box's edges); after
-        this, offsets and shells are uniform and depth_below() is a true
-        depth.  resolution: mesh samples per mm (default ~150 along the
-        longest side); margin: extra room around the bounds for offsets. '''
-    shape = _s(shape)
-    lo, hi = _shape_bounds(shape, bounds)
-    size = max(hi[i] - lo[i] for i in range(3))
-    pad = _EXACT_PAD * size + float(margin)
-    res = float(resolution) if resolution else 150.0 / size
-    from fieldes.ffi import libfive_region_t, libfive_interval_t, libfive_mesh_import_info_t
-    region = libfive_region_t(*[libfive_interval_t(a - pad, b + pad) for a, b in zip(lo, hi)])
-    mesh_p = render_mesh(shape, region, res)
-    if not mesh_p:
-        raise ValueError('exact_distance: the shape could not be meshed')
-    try:
-        mesh = mesh_p[0]
-        if mesh.tri_count == 0:
-            raise ValueError('exact_distance: the shape has no surface in its bounds')
-        verts = ctypes.cast(mesh.verts, ctypes.POINTER(ctypes.c_float))
-        tris = ctypes.cast(mesh.tris, ctypes.POINTER(ctypes.c_uint32))
-        info = libfive_mesh_import_info_t()
-        ptr = lib.libfive_mesh_from_arrays(verts, mesh.vert_count, tris, mesh.tri_count,
-                                           1.0, ctypes.byref(info))
-    finally:
-        lib.libfive_mesh_delete(mesh_p)
-    if not ptr:
-        raise ValueError('exact_distance: ' + lib.libfive_import_mesh_last_message().decode(
-            'utf-8', 'replace'))
-    out = Shape(ptr)
+def exact_distance(shape, reach=None, bounds=None):
+    ''' The signed distance field of a shape (mm: negative inside, 0 on the surface, the distance to the surface outside), read from the shape's own field: nothing is
+        meshed.  Many shapes built with booleans, blends, imports or warps have fields that are only roughly a distance (the field of a box is the largest of the distances to
+        its planes: boxy mitres outside its edges), and offsets, shells, rounded edges and the depth below a surface mean a true one.  From each point the surface is found
+        by walking along the field's gradient (a few Newton steps, each a handful of calls of the field), and the distance is the length of that walk -- see distance_field.py.
+        It is exact for a field that is a distance already, for a sphere, a cylinder, a plane, and for the edge and the corner of a box; at an edge where faces meet at another
+        angle it is a little off (the walk goes from face to face and ends beside the nearest point).
+        reach: how far from the surface the distance is made, mm (default a quarter of the shape's size): beyond it the shape's own field stands, so that the walk is not made
+        (and not drawn) over the whole of space; an offset, a shell or a thickness asks for as much as it needs.  bounds: the box round the shape, when it cannot be found --
+        only its size is used (the step of the gradient). '''
+    f = _s(shape)
+    lo, hi = _shape_bounds(f, bounds)
+    size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+    out = _distance_field.distance(f, size, _DISTANCE_REACH * size if reach is None else _positive_number(reach, 'the reach'))
     out._bounds = (tuple(lo), tuple(hi))
+    # (the surface is the shape's own, so near it the gradient is the shape's: a tool that reads normals from this field takes them from the shape's derivative -- see distance_field.partials)
+    out._partials_hint = _distance_field.partials(f)
     return out
+
+
+_DISTANCE_REACH = 0.25      # (how far from the surface exact_distance makes the distance when it is not told, as a share of the shape's size)
 
 
 def _reach(v, lo, hi):
@@ -969,34 +939,39 @@ def _reach(v, lo, hi):
     return field_range(v, lower=lo, upper=hi, n=16)
 
 
-def offset_exact(shape, distance, bounds=None, resolution=None):
+def _positive_number(v, what):
+    ''' `v` as a number above 0, or a ValueError that names what it is '''
+    if not isinstance(v, numbers.Real) or not v > 0:
+        raise ValueError('%s must be a number above 0 (mm)' % what)
+    return float(v)
+
+
+def offset_exact(shape, distance, bounds=None):
     ''' A uniform offset of any shape: grows it by `distance` mm everywhere
         (shrinks it for a negative distance), measured along true normals,
         so edges and corners get round, not stretched.  The distance is a number or a field (an offset that
-        is more here than there) '''
+        is more here than there).  The distance to the shape is read from its field (see exact_distance) as far out as the offset reaches. '''
     d = number_or_field(distance, 'the distance')
-    if is_field(d):
-        lo0, hi0 = _shape_bounds(_s(shape), bounds)
-        grow = max(_reach(d, lo0, hi0)[1], 0.0)
-    else:
-        grow = max(d, 0.0)
-    e = exact_distance(shape, bounds, resolution, margin=grow * 1.2)
+    f = _s(shape)
+    lo0, hi0 = _shape_bounds(f, bounds)
+    size = max(hi0[i] - lo0[i] for i in range(3)) or 1.0
+    least, most = _reach(d, lo0, hi0)
+    grow = max(most, 0.0)
+    e = exact_distance(f, reach=max(1.25 * max(abs(least), abs(most)), 0.01 * size), bounds=(lo0, hi0))
     out = e - d
-    lo, hi = e._bounds
-    out._bounds = (tuple(v - grow for v in lo), tuple(v + grow for v in hi))
+    out._bounds = (tuple(v - grow for v in lo0), tuple(v + grow for v in hi0))
     return out
 
 
-def shell_exact(shape, thickness, side='inside', bounds=None, resolution=None):
+def shell_exact(shape, thickness, side='inside', bounds=None):
     ''' A hollow shell of uniform thickness (true distance), side = 'inside',
         'outside' or 'center'.  The thickness is a number or a field. '''
     t = number_or_field(thickness, 'the thickness')
-    if is_field(t):
-        lo0, hi0 = _shape_bounds(_s(shape), bounds)
-        reach = max(_reach(t, lo0, hi0)[1], 0.0)
-    else:
-        reach = max(t, 0.0)
-    e = exact_distance(shape, bounds, resolution, margin=reach * 1.2 if side != 'inside' else 0.0)
+    f = _s(shape)
+    lo0, hi0 = _shape_bounds(f, bounds)
+    size = max(hi0[i] - lo0[i] for i in range(3)) or 1.0
+    reach = max(_reach(t, lo0, hi0)[1], 0.0)
+    e = exact_distance(f, reach=max(1.25 * reach, 0.01 * size), bounds=(lo0, hi0))
     if side == 'inside':
         out = e.max(-(e + t))
     elif side == 'outside':
@@ -1005,40 +980,42 @@ def shell_exact(shape, thickness, side='inside', bounds=None, resolution=None):
         out = abs(e) - t / 2
     else:
         raise ValueError("shell_exact: side is 'inside', 'outside' or 'center'")
-    out._bounds = e._bounds
+    out._bounds = (tuple(lo0), tuple(hi0))
     return out
 
 
-def round_edges(shape, radius, bounds=None, resolution=None):
+def round_edges(shape, radius, bounds=None):
     ''' Rounds every convex (outside) edge and corner of a shape with the
-        given radius (a number or a field): the shape is shrunk by the radius and grown back, with
-        exact distances both times.  resolution (samples per mm) sets how
-        finely the surfaces are followed; about 4 / radius or finer. '''
+        given radius (a number or a field), and removes what is thinner than the ball: a ball of that radius rolls in the material, and the shape is everything
+        it reaches.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
+        `-radius`, and the surface of the result is `radius` from them.  Exact for a box, a cylinder, a sphere (their edges and corners are made of faces at right
+        angles and curves), a little off where the faces meet at another angle. '''
     r = number_or_field(radius, 'the radius')
-    lo, hi = _shape_bounds(_s(shape), bounds)
-    size = max(hi[i] - lo[i] for i in range(3))
-    rmin = max(_reach(r, lo, hi)[0], size / 1000.0)         # (a field radius: the finest it asks for)
-    res = resolution or max(150.0 / size, 4.0 / rmin)
-    e0 = exact_distance(shape, (lo, hi), res)
-    e1 = exact_distance(e0 + r, (lo, hi), res)
-    out = e1 - r
+    f = _s(shape)
+    lo, hi = _shape_bounds(f, bounds)
+    size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+    rmax = _reach(r, lo, hi)[1]
+    if not rmax > 0:
+        raise ValueError('round_edges: the radius must be above 0 (mm)')
+    out = _distance_field.opening(f, r, size, rmax)
     out._bounds = (tuple(lo), tuple(hi))
     return out
 
 
-def fillet(shape, radius, bounds=None, resolution=None):
+def fillet(shape, radius, bounds=None):
     ''' Fills every concave (inside) edge and corner of a shape with a
-        fillet of the given radius (a number or a field): the shape is grown by the radius and
-        shrunk back, with exact distances both times '''
+        fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
+        shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
+        `radius`, and the surface of the result is `radius` from them.  Exact for the inside edge and corner of a box and for faces at right angles, a little off
+        where they meet at another angle. '''
     r = number_or_field(radius, 'the radius')
-    lo, hi = _shape_bounds(_s(shape), bounds)
-    size = max(hi[i] - lo[i] for i in range(3))
-    rmin, rmax = _reach(r, lo, hi)
-    rmin = max(rmin, size / 1000.0)
-    res = resolution or max(150.0 / size, 4.0 / rmin)
-    e0 = exact_distance(shape, (lo, hi), res, margin=1.3 * rmax)
-    e1 = exact_distance(e0 - r, (tuple(v - rmax for v in lo), tuple(v + rmax for v in hi)), res)
-    out = e1 + r
+    f = _s(shape)
+    lo, hi = _shape_bounds(f, bounds)
+    size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+    rmax = _reach(r, lo, hi)[1]
+    if not rmax > 0:
+        raise ValueError('fillet: the radius must be above 0 (mm)')
+    out = _distance_field.closing(f, r, size, rmax)
     out._bounds = (tuple(lo), tuple(hi))
     return out
 

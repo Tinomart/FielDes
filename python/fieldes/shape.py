@@ -286,6 +286,22 @@ class Shape:
         out._kind = self._kind if self._kind in ('field', 'const') else None
         return out
 
+    def partial(self, axis, oracle_step=0.0, max_call_depth=1):
+        ''' The partial derivative of this field with respect to x (axis 0), y (1) or z (2), as a field of its own: the symbolic derivative, by
+            the rules of calculus -- not a difference of two calls, whose intervals over a cell of the renderer's are as many times too wide as
+            the cell is wider than the step (a field built from such a gradient makes the renderer refine a whole band round the surface).
+            A native field inside (a mesh's distance, noise) has no formula: with `oracle_step` above 0 its partial is the central difference over
+            that step; without it, None is returned.  None too for a field whose calls are nested deeper than `max_call_depth` (default 1: calls of plain
+            fields): the derivative of a call is three calls of partials, and costs several times what the field does for every level of nesting -- a
+            field made from the gradient of another, a Newton walk, the result of a remedy that was made from remedies.  Its gradient is read by differences.
+        '''
+        ptr = lib.libfive_tree_partial(self.ptr, int(axis), float(oracle_step), int(max_call_depth))
+        if not ptr:
+            return None
+        out = Shape(ptr)
+        out._kind = 'field' if self._kind in ('field', 'const') else None
+        return out
+
     def call(self, fn, *args, **kwargs):
         ''' Calls the given function with self as the first argument.
             This is convenient to chain transforms without deep call trees.

@@ -1436,17 +1436,17 @@ The first field divided by the others: a / b / ... at every point (NaN where a d
 
 A field's value at a point, or a list of values at many points
 
-### `exact_distance(shape, bounds=None, resolution=None, margin=0.0)`
+### `exact_distance(shape, reach=None, bounds=None)`
 
-The exact signed distance field of a shape (mm): the shape is meshed
-and the distance to that mesh is used.  Many shapes built with
-booleans, blends or warps have fields that are only roughly a
-distance (e.g. flat, square-cornered outside a box's edges); after
-this, offsets and shells are uniform and depth_below() is a true
-depth.  resolution: mesh samples per mm (default ~150 along the
-longest side); margin: extra room around the bounds for offsets.
-(A shape with var() numbers is meshed with the numbers they have in
-the script, and the result is remembered by them.)
+The signed distance field of a shape (mm: negative inside, 0 on the surface, the distance to the surface outside), read from the shape's own field: nothing is
+meshed.  Many shapes built with booleans, blends, imports or warps have fields that are only roughly a distance (the field of a box is the largest of the distances to
+its planes: boxy mitres outside its edges), and offsets, shells, rounded edges and the depth below a surface mean a true one.  From each point the surface is found
+by walking along the field's gradient (a few Newton steps, each a handful of calls of the field), and the distance is the length of that walk -- see distance_field.py.
+It is exact for a field that is a distance already, for a sphere, a cylinder, a plane, and for the edge and the corner of a box; at an edge where faces meet at another
+angle it is a little off (the walk goes from face to face and ends beside the nearest point).
+reach: how far from the surface the distance is made, mm (default a quarter of the shape's size): beyond it the shape's own field stands, so that the walk is not made
+(and not drawn) over the whole of space; an offset, a shell or a thickness asks for as much as it needs.  bounds: the box round the shape, when it cannot be found --
+only its size is used (the step of the gradient).
 
 ### `field_from_body(body)`
 
@@ -1475,11 +1475,13 @@ samples.  points: [(x, y, z), ...] with values [v, ...], or
 (min, max) of a field, sampled on a grid over a box (and only inside
 `body` if given)
 
-### `fillet(shape, radius, bounds=None, resolution=None)`
+### `fillet(shape, radius, bounds=None)`
 
 Fills every concave (inside) edge and corner of a shape with a
-fillet of the given radius (a number or a field): the shape is grown by the radius and
-shrunk back, with exact distances both times
+fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
+shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
+`radius`, and the surface of the result is `radius` from them.  Exact for the inside edge and corner of a box and for faces at right angles, a little off
+where they meet at another angle.
 
 ### `find_extent(shape, budget=200000, resolution=2.0, half=1000000.0)`
 
@@ -1616,12 +1618,12 @@ Maps [lo, hi] to [0, 1] (clamped)
 Offsets a shape by a distance -- which may be a field, e.g. grow a
 part by 0.02 mm per MPa of stress: offset_by(part, 0.02 * stress)
 
-### `offset_exact(shape, distance, bounds=None, resolution=None)`
+### `offset_exact(shape, distance, bounds=None)`
 
 A uniform offset of any shape: grows it by `distance` mm everywhere
 (shrinks it for a negative distance), measured along true normals,
 so edges and corners get round, not stretched.  The distance is a number or a field (an offset that
-is more here than there)
+is more here than there).  The distance to the shape is read from its field (see exact_distance) as far out as the offset reaches.
 
 ### `overhang_angle(shape, build_direction=(0, 0, 1))`
 
@@ -1678,12 +1680,13 @@ inside one grid cell centred on `center`.
 Repeats a shape `count` times around the z axis; the shape should
 lie in the wedge around the +x direction
 
-### `round_edges(shape, radius, bounds=None, resolution=None)`
+### `round_edges(shape, radius, bounds=None)`
 
 Rounds every convex (outside) edge and corner of a shape with the
-given radius (a number or a field): the shape is shrunk by the radius and grown back, with
-exact distances both times.  resolution (samples per mm) sets how
-finely the surfaces are followed; about 4 / radius or finer.
+given radius (a number or a field), and removes what is thinner than the ball: a ball of that radius rolls in the material, and the shape is everything
+it reaches.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
+`-radius`, and the surface of the result is `radius` from them.  Exact for a box, a cylinder, a sphere (their edges and corners are made of faces at right
+angles and curves), a little off where the faces meet at another angle.
 
 ### `sample_grid(field, lower, upper, n=20)`
 
@@ -1694,7 +1697,7 @@ x fastest) together with the points
 
 A shell straddling the surface (half inside, half outside)
 
-### `shell_exact(shape, thickness, side='inside', bounds=None, resolution=None)`
+### `shell_exact(shape, thickness, side='inside', bounds=None)`
 
 A hollow shell of uniform thickness (true distance), side = 'inside',
 'outside' or 'center'.  The thickness is a number or a field.
@@ -3794,7 +3797,8 @@ removed, the part's colour where it is unchanged.
     share         the part's volume changed, as a share
     before        the check of the part as it was (a ManufacturingAnalysis)
     after         the check of what the shell made, when it was made (a ManufacturingAnalysis), or None
-    fail_states   what is still broken, where: {rule, where, share, why}
+    fail_states   what is still broken, where: {rule, where, share, why} -- the five biggest places of each rule
+    fail_totals   all the places the re-check found, of each rule: {rule: {places, share}} (what the card counts; the shares are shares of the surface)
     orientation   the way up of the print, when the constraint left it free (the part is not turned: oriented() is the part turned to stand that way)
     change_map    the field the part is coloured by: 1 added, -1 cut, 0 as it was
 
@@ -4086,6 +4090,16 @@ tris - List of (a, b, c) indices into verts
 #### `Shape.optimized(self)`
 
 *(no description yet)*
+
+#### `Shape.partial(self, axis, oracle_step=0.0, max_call_depth=1)`
+
+The partial derivative of this field with respect to x (axis 0), y (1) or z (2), as a field of its own: the symbolic derivative, by
+the rules of calculus -- not a difference of two calls, whose intervals over a cell of the renderer's are as many times too wide as
+the cell is wider than the step (a field built from such a gradient makes the renderer refine a whole band round the surface).
+A native field inside (a mesh's distance, noise) has no formula: with `oracle_step` above 0 its partial is the central difference over
+that step; without it, None is returned.  None too for a field whose calls are nested deeper than `max_call_depth` (default 1: calls of plain
+fields): the derivative of a call is three calls of partials, and costs several times what the field does for every level of nesting -- a
+field made from the gradient of another, a Newton walk, the result of a remedy that was made from remedies.  Its gradient is read by differences.
 
 #### `Shape.remap(self, x_, y_, z_)`
 

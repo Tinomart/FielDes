@@ -1,5 +1,5 @@
 '''
-Manufacturing, reading a part's field: lookups of the field at moved points, its normals by central differences, its values at many points, the box the part is in.
+Manufacturing, reading a part's field: lookups of the field at moved points, its normals from the field's symbolic derivative, its values at many points, the box the part is in.
 
 These are the tools both the check (manufacturing_check.py) and the remedies (manufacturing.py) read a part with; there is no rule in them, and nothing here says
 what is broken or how to fix it.
@@ -14,6 +14,7 @@ import random
 
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import cache_for, value_key, Uncacheable
+from fieldes.stdlib.distance_field import partials as _partials
 from fieldes.stdlib.excluded import locks_of
 from fieldes.stdlib.fields import _shape_bounds
 
@@ -53,30 +54,47 @@ def _sphere(k):
 
 
 class _Normals:
-    ''' The gradient of a field by central differences, and its unit vector, as fields: what faces which way, at every point '''
+    ''' The gradient of a field and its unit vector, as fields: what faces which way, at every point '''
 
     def __init__(self, f, step, kind='central', shift=None):
-        ''' `kind`: 'central' (the default), or 'forward' / 'backward': (f(p + h) - f(p)) / h and (f(p) - f(p - h)) / h.  On the middle of a slot between two faces a central difference
-            straddles the kink of the field there (the distance to the nearer face) and reads a slope from 0 (exactly on the middle: no normal) to 1 over a band of one step on either
-            side, and the one-sided differences do the same on one side of the middle each: within a step of the middle one of them leads to the wrong face.  Read with both, one of the
-            two always leads to a wall.  Where the surface is smooth they differ from the central one by what the curvature times the step makes: a few thousandths of a degree.
+        ''' The gradient is read from the field's symbolic derivative (`partials`: the kernel derives the field's expression, and its intervals over a cell are the derivative's own); for a
+            field with a native field in it, by central differences of calls over `step`.  `kind`: 'central' (the default), or 'forward' / 'backward'.
+            Central: each partial is the mean of the derivative asked at the two ends of the segment p +- h along its own axis -- what a central difference is, the mean slope over the segment --
+            and not asked at p itself, where on a surface or an edge the derivative is the mean of the rules' on both sides (half a face's).  On the middle of a slot between two faces the field
+            has a kink (the distance to the nearer face): a segment across it reads a slope from 0 (exactly on the middle: no normal) to 1 over a band of one step on either side, and the one-sided
+            readings -- the derivative asked half a step ahead, or behind, along each axis, the mean slope over (p, p + h) and (p - h, p) --  each take the slope on one side of the middle:
+            within a step of it one of them leads to the wrong face, and of the two one always leads to a wall.  Where the surface is smooth they differ from the central one by what the
+            curvature times the step makes: a few thousandths of a degree.
             `shift` (a vector of numbers or fields) reads the normals of the point moved by it, at that point: the normal of a point that is looked at from another one '''
         self.step = step
         h = step
         sx, sy, sz = (0.0, 0.0, 0.0) if shift is None else shift
-        here = f if shift is None else _at(f, sx, sy, sz)
-        if kind == 'forward':
-            gx = (_at(f, sx + h, sy, sz) - here) * (1.0 / h)
-            gy = (_at(f, sx, sy + h, sz) - here) * (1.0 / h)
-            gz = (_at(f, sx, sy, sz + h) - here) * (1.0 / h)
-        elif kind == 'backward':
-            gx = (here - _at(f, sx - h, sy, sz)) * (1.0 / h)
-            gy = (here - _at(f, sx, sy - h, sz)) * (1.0 / h)
-            gz = (here - _at(f, sx, sy, sz - h)) * (1.0 / h)
+        partials = _partials(f)
+        if partials is not None:
+            fx, fy, fz = partials
+            if kind == 'forward' or kind == 'backward':
+                ahead = 0.5 * h if kind == 'forward' else -0.5 * h
+                gx = _at(fx, sx + ahead, sy, sz)
+                gy = _at(fy, sx, sy + ahead, sz)
+                gz = _at(fz, sx, sy, sz + ahead)
+            else:
+                gx = (_at(fx, sx + h, sy, sz) + _at(fx, sx - h, sy, sz)) * 0.5
+                gy = (_at(fy, sx, sy + h, sz) + _at(fy, sx, sy - h, sz)) * 0.5
+                gz = (_at(fz, sx, sy, sz + h) + _at(fz, sx, sy, sz - h)) * 0.5
         else:
-            gx = (_at(f, sx + h, sy, sz) - _at(f, sx - h, sy, sz)) * (0.5 / h)
-            gy = (_at(f, sx, sy + h, sz) - _at(f, sx, sy - h, sz)) * (0.5 / h)
-            gz = (_at(f, sx, sy, sz + h) - _at(f, sx, sy, sz - h)) * (0.5 / h)
+            here = f if shift is None else _at(f, sx, sy, sz)
+            if kind == 'forward':
+                gx = (_at(f, sx + h, sy, sz) - here) * (1.0 / h)
+                gy = (_at(f, sx, sy + h, sz) - here) * (1.0 / h)
+                gz = (_at(f, sx, sy, sz + h) - here) * (1.0 / h)
+            elif kind == 'backward':
+                gx = (here - _at(f, sx - h, sy, sz)) * (1.0 / h)
+                gy = (here - _at(f, sx, sy - h, sz)) * (1.0 / h)
+                gz = (here - _at(f, sx, sy, sz - h)) * (1.0 / h)
+            else:
+                gx = (_at(f, sx + h, sy, sz) - _at(f, sx - h, sy, sz)) * (0.5 / h)
+                gy = (_at(f, sx, sy + h, sz) - _at(f, sx, sy - h, sz)) * (0.5 / h)
+                gz = (_at(f, sx, sy, sz + h) - _at(f, sx, sy, sz - h)) * (0.5 / h)
         self.magnitude = (gx * gx + gy * gy + gz * gz).sqrt()
         # (on the middle of a gap or a wall the slope is 0 and there is no normal: a fixed direction stands in for it there, and nowhere the slope is a few thousandths or more)
         bias = 1.0 - (self.magnitude * 1000.0).min(1)

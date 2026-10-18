@@ -27,6 +27,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/tree/tree.hpp"
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
+#include "libfive/tree/derivative.hpp"
 #include "libfive/tree/expose.hpp"
 #include "libfive/eval/default_vars.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
@@ -595,6 +596,16 @@ libfive_tree libfive_tree_remap(libfive_tree p, libfive_tree x, libfive_tree y, 
 libfive_tree libfive_tree_call(libfive_tree p, libfive_tree x, libfive_tree y, libfive_tree z)
 {
     return Tree(p).call(Tree(x), Tree(y), Tree(z)).release();
+}
+
+libfive_tree libfive_tree_partial(libfive_tree t, int axis, float oracle_step, int max_call_depth)
+{
+    const Tree out = libfive::partial_derivative(Tree(t), axis, oracle_step, max_call_depth);
+    if (!out.is_valid())
+    {
+        return nullptr;
+    }
+    return Tree(out).release();
 }
 
 libfive_tree libfive_tree_optimized(libfive_tree t) {
