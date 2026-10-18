@@ -31,7 +31,87 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "../xtree.inl"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <utility>
+#include <vector>
+
 namespace libfive {
+
+////////////////////////////////////////////////////////////////////////////////
+
+// (where the time of a draw goes: the cells that the interval pass visits, the leaves that are placed, the cells that are collected, with the time each took, summed over the
+// threads, and what a leaf costs -- the clauses and the calls on its tape, the edges it searched.  Printed when the process ends, when FIELDES_TIMING is set)
+struct DcStats
+{
+    std::atomic<uint64_t> interval_cells{0}, interval_ns{0}, leaf_cells{0}, leaf_ns{0}, collect_cells{0}, collect_ns{0};
+    std::atomic<uint64_t> leaf_clauses{0}, leaf_calls{0}, leaf_edges{0}, leaf_bisected{0}, interval_clauses{0};
+    std::atomic<uint64_t> corner_ns{0}, search_ns{0}, deriv_ns{0}, surface_leaves{0}, plain_leaves{0}, plain_ns{0};
+    ~DcStats()
+    {
+        if (!std::getenv("FIELDES_TIMING") || !(interval_cells || leaf_cells)) return;
+        std::fprintf(stderr, "[dc] leaf parts: corners %.1f s, edge search %.1f s, derivatives and ambiguity %.1f s; %.0f leaves on the surface, %.0f leaves with nothing in them (%.3f ms each)\n",
+                     corner_ns.load() * 1e-9, search_ns.load() * 1e-9, deriv_ns.load() * 1e-9, double(surface_leaves.load()), double(plain_leaves.load()),
+                     plain_leaves.load() > 0 ? plain_ns.load() * 1e-6 / double(plain_leaves.load()) : 0.0);
+        const double ic = double(interval_cells.load()), lc = double(leaf_cells.load()), cc = double(collect_cells.load());
+        std::fprintf(stderr, "[dc] interval pass: %.0f cells, %.1f s (%.3f ms a cell, %.0f clauses on the tape)\n", ic, interval_ns.load() * 1e-9,
+                     ic > 0 ? interval_ns.load() * 1e-6 / ic : 0.0, ic > 0 ? interval_clauses.load() / ic : 0.0);
+        std::fprintf(stderr, "[dc] leaves placed: %.0f cells, %.1f s (%.3f ms a cell; %.0f clauses and %.1f calls on the tape, %.1f edges, %.0f %% quick search)\n", lc,
+                     leaf_ns.load() * 1e-9, lc > 0 ? leaf_ns.load() * 1e-6 / lc : 0.0, lc > 0 ? leaf_clauses.load() / lc : 0.0, lc > 0 ? leaf_calls.load() / lc : 0.0,
+                     lc > 0 ? leaf_edges.load() / lc : 0.0, lc > 0 ? 100.0 * leaf_bisected.load() / lc : 0.0);
+        std::fprintf(stderr, "[dc] collected: %.0f cells, %.1f s\n", cc, collect_ns.load() * 1e-9);
+        std::fflush(stderr);
+    }
+};
+
+inline DcStats& dcStats()
+{
+    static DcStats stats;
+    return stats;
+}
+
+inline bool dcOn()
+{
+    static const bool on = std::getenv("FIELDES_TIMING") != nullptr;
+    return on;
+}
+
+// (nothing is counted, and no clock is read, unless FIELDES_TIMING is set)
+inline uint64_t dcNowNs()
+{
+    if (!dcOn()) return 0;
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+inline void dcAdd(std::atomic<uint64_t>& counter, uint64_t n)
+{
+    if (dcOn()) counter.fetch_add(n, std::memory_order_relaxed);
+}
+
+struct DcTimer
+{
+    explicit DcTimer(std::atomic<uint64_t>& acc) : acc(acc), t0(dcNowNs()) {}
+    ~DcTimer() { dcAdd(acc, dcNowNs() - t0); }
+    std::atomic<uint64_t>& acc;
+    uint64_t t0;
+};
+
+struct DcScope
+{
+    DcScope(std::atomic<uint64_t>& cells, std::atomic<uint64_t>& ns)
+        : cells(cells), ns(ns), t0(dcNowNs()) {}
+    ~DcScope()
+    {
+        dcAdd(cells, 1);
+        dcAdd(ns, dcNowNs() - t0);
+    }
+    std::atomic<uint64_t>& cells;
+    std::atomic<uint64_t>& ns;
+    uint64_t t0;
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -97,6 +177,9 @@ Tape::Handle DCTree<N>::evalInterval(Evaluator* eval,
                                      const Tape::Handle& tape,
                                      Pool& pool)
 {
+    DcScope timing(dcStats().interval_cells, dcStats().interval_ns);
+    dcAdd(dcStats().interval_clauses, tape->size());
+
     // Do a preliminary evaluation to prune the tree, storing the interval
     // result and an handle to the pushed tape (which we'll use when recursing)
     auto o = eval->intervalAndPush(
@@ -135,6 +218,9 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                         Pool& object_pool,
                         const DCNeighbors<N>& neighbors)
 {
+    DcScope timing(dcStats().leaf_cells, dcStats().leaf_ns);
+    const uint64_t tLeaf0 = dcNowNs();
+
     // Track how many corners have to be evaluated here
     // (if they can be looked up from a neighbor, they don't have
     //  to be evaluated here, which can save time)
@@ -273,14 +359,19 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                : all_full  ? Interval::FILLED : Interval::AMBIGUOUS;
 
     // Early exit if this leaf is unambiguous
+    const uint64_t tCorners1 = dcNowNs();
+    dcAdd(dcStats().corner_ns, tCorners1 - tLeaf0);
     if (this->type != Interval::AMBIGUOUS)
     {
+        dcAdd(dcStats().plain_leaves, 1);
+        dcAdd(dcStats().plain_ns, tCorners1 - tLeaf0);
         if (this->done()) {
             releaseTo(object_pool);
         }
         return;
     }
 
+    dcAdd(dcStats().surface_leaves, 1);
     assert(this->leaf == nullptr);
     this->leaf = object_pool.next().get();
     this->leaf->corner_mask = buildCornerMask(corners);
@@ -370,8 +461,24 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
             // imported part. A plain bisection finds the same crossing from
             // 10 points (to a 1024th of the cell, past what a float holds
             // at the coordinates of a part).
+            const uint64_t tSearch0 = dcNowNs();
             bool bisected = false;
             static const bool noBisect = std::getenv("FIELDES_NO_BISECT") != nullptr;   // (a test: the search of 4 x 16 points)
+            if (dcOn() && eval_count)
+            {
+                uint64_t calls = 0;
+                for (auto itr = tape->rbegin(); itr != tape->rend(); ++itr)
+                {
+                    if (itr->op == Opcode::CALL) { ++calls; }
+                }
+                dcAdd(dcStats().leaf_clauses, tape->size());
+                dcAdd(dcStats().leaf_calls, calls);
+                dcAdd(dcStats().leaf_edges, eval_count);
+                if (!noBisect && tape->hasOracle())
+                {
+                    dcAdd(dcStats().leaf_bisected, 1);
+                }
+            }
             if (eval_count && tape->hasOracle() && !noBisect)
             {
                 bisected = true;
@@ -494,8 +601,10 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
             // each intersection (which is associated with a specific edge).
             static_assert(_edges(N) * 2 <= ArrayEvaluator::N,
                           "Too many results");
+            dcAdd(dcStats().search_ns, dcNowNs() - tSearch0);
             if (eval_count)
             {
+                DcTimer derivTimer(dcStats().deriv_ns);
                 for (unsigned i=0; i < eval_count; ++i)
                 {
                     eval->set<N>(targets[i].first, this->region, 2*i);
@@ -669,6 +778,7 @@ bool DCTree<N>::collectChildren(Evaluator* eval,
     {
         return false;
     }
+    DcScope timing(dcStats().collect_cells, dcStats().collect_ns);
 
     // Load the children here, to avoid atomics
     std::array<DCTree<N>*, 1 << N> cs;

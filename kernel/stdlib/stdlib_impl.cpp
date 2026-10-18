@@ -243,8 +243,12 @@ Tree cylinder_z(TreeFloat r, TreeFloat h, TreeVec3 base) {
 
 Tree cone_ang_z(TreeFloat angle, TreeFloat height, TreeVec3 base) {
     LIBFIVE_DEFINE_XYZ();
+    // The lateral surface is the plane through the tip, which is `height` above the base: its normal makes `angle` with the horizontal... in the (r, z) half-plane the
+    // surface is  cos(angle) r + sin(angle) (z - height) = 0, so the base radius is height * tan(angle) and cone_z(radius, height) (angle = atan2(radius, height)) has
+    // the base radius and the height it is asked for.  (It used to be  cos(angle) r + sin(angle) z - height: a base radius of sqrt(radius^2 + height^2) and a tip at
+    // height / sin(angle), a cone 2.3 times the size asked for: found by the manufacturing tests, which built a shell on a cone.)
     return move(max(-z, cos(angle) * sqrt(square(x) + square(y))
-                      + sin(angle) * z - height),
+                      + sin(angle) * (z - height)),
                 base);
 }
 

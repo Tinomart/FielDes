@@ -64,6 +64,9 @@ program itself that point at what they talk about and let you try it. The [tutor
 | **Shapes from points** | Points are models of their own. A **profile** is the 2D shape a closed outline through points encloses (corners, or spline points with `smooth=True`); `extrude` pulls it into a solid and `path_extrude` sweeps it along a `spline` (the scale of a point is how thick the sweep is there). Press an edge and drag to pull a point out of it; double-click a point to switch it between a corner and a spline point. A **work plane** (`Shift+W`) is a grid to draw lines, splines and points on, in any plane. [Profiles](docs/profiles.md) |
 | **Copies and linked copies** | `Shift+D` copies a model. `Ctrl+D` **links** it: `bolt_2 = instance(bolt)` is the bolt itself, follows every change of it and can only be moved and rotated; the bolt is held by a shadow reference and keeps its own row. [Copies](docs/handles.md#copies-shiftd-and-ctrld) |
 | **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface; structural and thermal topology optimization; load cases; materials that vary through the part. **Fluid flow**: laminar flow through or around any shape, steady or in time (inlets, outlets, moving walls, symmetry planes), with the velocity field, the pressure, the wake, flows and wall forces as results, shown with streamlines and moving particles; flow topology optimization (a body in the stream reshaped for the least drag or the most lift under a volume bound). Every result is stated like a shape to show it, and the result card steps through it: the load, a mode's vibration, the flow in time, the iterations of an optimization. |
+| **Make it** | Say what a process asks of a part -- `fff_constraint(nozzle=0.4)`, `cnc_constraint(tool_diameter=6)`, `molding_constraint(min_wall=1.5)`, or the rules one by one -- and `manufacturing_analysis` shows **where the part breaks them**, as colours on it and in numbers; `manufacturing_optimization` **changes the part until it keeps them**: thin walls thickened, narrow gaps closed, inside corners rounded, a draft put on, undercuts filled, overhangs given a gusset, a teardrop or a block of support, shown as the geometry change (red added, blue cut), with the 3MF, DXF and SVG files of a print. The check shares nothing that finds a fault with the tool that changes the part, so it can verify it. [Manufacturing](docs/manufacturing.md) |
+| **Find the numbers** | `parametric_optimization` solves a model again with other `var()` numbers and keeps the ones that make a measure of an analysis as small (or as large) as it can be while limits hold: the lightest beam under 90 MPa that bends less than 0.5 mm. [Analysis](docs/analysis.md) |
+| **Texture, noise, symmetry** | `texture(body, 'grit' / 'stipple' / 'leather' / 'ribs' / 'dimples' / 'knurl', ...)` lays a pattern of small bumps and pits over a body, or over a region of it; five kinds of noise (perlin, billow, ridged, cellular, cracks) are fields that can drive anything; a symmetry is a model of the script, and whatever you make is made at its images too. |
 | **Drive design with results** | `colored(part, field)`, `ramp(result.von_mises, …)`, `fit(data)(depth_below(part))` — results and data are fields that feed lattices, offsets and thicknesses. |
 | **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, surface and graph lattices, custom unit cells and equations, conformal cell maps (struts or a periodic surface that follows the part); any size, thickness or density — and the cell size — can be a field. Lattices and their cells have **a section of their own in the right-click menus**, with every cell to choose from, and `random_points` gives a foam **full say over how random it is** (average spacing, regular to random, the nearest and the farthest two points may be). [Lattices](docs/lattices.md) |
 | **Inspect** | A section card that cuts the model and paints the field on the plane (distance, or an analysis result with its elements); wall thickness, overhang, curvature and depth fields; hover probing; legends. |
@@ -202,7 +205,7 @@ The last expression is what is shown; assign other shapes to names and they appe
 ## Examples
 
 **Every example runs as it is.** Examples 01–13 and 15 start from **the sample part that comes with FielDes**, the pivot-bearing support bracket
-(`examples/step/PivotBearingSupportBracket.STEP`, a GrabCAD download distributed at the maintainer's decision, see [NOTICE.md](NOTICE.md)); **examples 14 and 16–22 make their own geometry**. To try one on a STEP
+(`examples/step/PivotBearingSupportBracket.STEP`, a GrabCAD download distributed at the maintainer's decision, see [NOTICE.md](NOTICE.md)); **examples 14, 16–23 and 25–33 make their own geometry** (24 is an app: its form asks for a model file). To try one on a STEP
 file of your own, put it in `examples/step/` and change the path in the script (and the numbers that place the regions: see [`examples/step/README.md`](examples/step/README.md)). The first import of a file
 takes a few seconds and is cached next to it.
 
@@ -232,6 +235,15 @@ takes a few seconds and is cached next to it.
 | [`22_export_files.py`](examples/22_export_files.py) | Exporting: every mesh format, FEA decks, the results as VTK, CSV and text |
 | [`23_lattice_gallery.py`](examples/23_lattice_gallery.py) | One lattice of every kind in a simple body of its own: struts, TPMS, a honeycomb, foams around random points, a graded wall, a cell map, a conformal layer |
 | [`24_app_bracket_maker.py`](examples/24_app_bracket_maker.py) | A FielDes app: a form for someone who never opens the editor (a model file, a mode, a wall thickness, where to save), exported as one `.fieldesapp` |
+| [`25_app_beam_load_case.py`](examples/25_app_beam_load_case.py) | A FielDes app with a viewport: the person sets up a load by dragging, then runs the analysis |
+| [`26_profiles_and_sweeps.py`](examples/26_profiles_and_sweeps.py) | Shapes made of points: a profile, an extrusion, a line and a sweep |
+| [`27_copies_and_linked_copies.py`](examples/27_copies_and_linked_copies.py) | Two kinds of duplicate: a copy, and a linked copy that follows its original |
+| [`28_profile_on_a_plane.py`](examples/28_profile_on_a_plane.py) | A profile in a plane of its own: the work plane |
+| [`29_symmetry.py`](examples/29_symmetry.py) | A symmetry as a model of the script: a round table with three curved legs, one of them drawn |
+| [`30_noise_kinds.py`](examples/30_noise_kinds.py) | Noise, one of every kind, and what scale, octaves, stretch and warp do to it |
+| [`31_texture.py`](examples/31_texture.py) | A pattern of small bumps and pits laid over the surface of a body: grit, stipple, leather, ribs, dimples, knurl |
+| [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
+| [`33_manufacturing.py`](examples/33_manufacturing.py) | What a printer cannot make of a part, where, and the part changed so that it can |
 
 ## Documentation
 
@@ -249,6 +261,7 @@ takes a few seconds and is cached next to it.
 | [The symmetry](docs/interface.md#the-symmetry) | A symmetry is a model of the script -- mirror planes through a centre (`symmetry_planes`); select it and everything you make is made at its images too (`symmetry_images`: all the images of a model are one model), which follow both the model and the symmetry; `Shift+S` |
 | [Profiles, lines and extrusions](docs/profiles.md) | Shapes made of points: `profile`, `polyline`, `spline`, `extrude`, `path_extrude`; pull a point out of an edge, double-click a point for a spline, rotate and scale a point to shape the curve and the sweep |
 | [Analysis](docs/analysis.md) | Static, modal, thermal, thermal stress, topology optimization, fields in analyses; seeing the boundary conditions |
+| [Manufacturing](docs/manufacturing.md) | The rules of a process, the check, the shell that changes the part, supports and the files of a print, what it costs and what it does not do |
 | [Selecting surfaces](docs/selecting-surfaces.md) | Right-click a face: a flood-filled surface as a field, for supports, loads and lattices |
 | [Lattices](docs/lattices.md) | Every lattice type and parameter |
 | [Meshes](docs/meshes.md) | Mesh import, STL export |

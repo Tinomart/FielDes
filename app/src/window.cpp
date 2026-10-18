@@ -81,6 +81,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/fileassoc.hpp"
 #include "fieldes/i18n.hpp"
 #include "fieldes/window.hpp"
+#include <QPointer>
 #include "fieldes/automation.hpp"
 #include "fieldes/documentation.hpp"
 #include "fieldes/editor.hpp"
@@ -1411,37 +1412,46 @@ Window::Window(Arguments args)
             auto delay = new QTimer(this);
             delay->setSingleShot(true);
             delay->setInterval(1300);
+            // (the viewport, its model tree and the timer are held by guards: at exit the window's children are destroyed in the order they were made, the viewport and its tree before the editor, and the
+            // editor's document still sends changes of its text while its syntax highlighter lets go of it -- the lambdas below then told a viewport and a tree that were gone "no error": a write into freed
+            // memory, and a corrupted heap -- exit code 0xC0000374 -- every time the window was closed with an error in the script)
+            QPointer<View> viewGuard(view);
+            QPointer<ScenePanel> sceneGuard(scene);
+            QPointer<QTimer> delayGuard(delay);
             auto show = [=](bool on) {
+                if (!viewGuard || !sceneGuard) return;
                 error->shown = on;
-                view->setError(on ? error->text : QString(), on ? error->line : -1);
-                scene->setError(on ? error->text : QString(), on ? error->line : -1);
+                viewGuard->setError(on ? error->text : QString(), on ? error->line : -1);
+                sceneGuard->setError(on ? error->text : QString(), on ? error->line : -1);
             };
             connect(delay, &QTimer::timeout, this, [=] { if (!error->text.isEmpty()) show(true); });
             connect(editor, &Editor::scriptErrorChanged, this, [=](QString text, int line0) {
+                if (!viewGuard || !sceneGuard || !delayGuard) return;
                 error->text = text;
                 error->line = line0;
                 if (text.isEmpty())
                 {
-                    delay->stop();
+                    delayGuard->stop();
                     if (error->shown) show(false);
-                    else { view->setError(QString(), -1); scene->setError(QString(), -1); }
+                    else { viewGuard->setError(QString(), -1); sceneGuard->setError(QString(), -1); }
                 }
                 else if (error->shown) show(true);          // (it is there: the message follows the script)
-                else delay->start();
+                else delayGuard->start();
             });
             connect(editor->scriptWidget(), &QPlainTextEdit::textChanged, this, [=] {
+                if (!viewGuard || !sceneGuard || !delayGuard) return;
                 // (the error is about the text that was run: an edit makes it old -- it goes now, and what the run of the new text finds
                 // out comes after the moment of quiet.  Not kept on screen through a run that takes a minute)
                 if (error->shown || !error->text.isEmpty())
                 {
-                    delay->stop();
+                    delayGuard->stop();
                     error->text.clear();
                     error->line = -1;
                     if (error->shown)
                     {
                         error->shown = false;
-                        view->setError(QString(), -1);
-                        scene->setError(QString(), -1);
+                        viewGuard->setError(QString(), -1);
+                        sceneGuard->setError(QString(), -1);
                     }
                 }
             });
@@ -1652,6 +1662,23 @@ Window::Window(Arguments args)
         a->add("navigation", [=](const QString& what){
             const QString w = what.trimmed();
             view->setNavigationPreset(w == "blender" ? View::NAV_BLENDER : w == "touchpad" ? View::NAV_TOUCHPAD : View::NAV_DEFAULT);
+        });
+        // projection <perspective|orthographic>: the camera's projection (View > Projection), without writing the choice into the settings: a picture of a thin layer is read with no perspective
+        a->add("projection", [=](const QString& what){
+            if (what.trimmed().startsWith("ortho")) view->toOrthographic(); else view->toPerspective();
+        });
+        // stdview <front|rear|right|left|top|bottom|iso>: one of the standard views (View menu; the keys 1, 3, 7, 0 as shortcuts), set directly: a key sent to a window that is not the active
+        // one does not make a shortcut, and a picture of a test has to show the view it says
+        a->add("stdview", [=](const QString& what){
+            const QString w = what.trimmed().toLower();
+            int which = View::VIEW_ISO;
+            if (w == "front") which = View::VIEW_FRONT;
+            else if (w == "rear" || w == "back") which = View::VIEW_BACK;
+            else if (w == "right") which = View::VIEW_RIGHT;
+            else if (w == "left") which = View::VIEW_LEFT;
+            else if (w == "top") which = View::VIEW_TOP;
+            else if (w == "bottom") which = View::VIEW_BOTTOM;
+            view->standardView(which);
         });
         // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
         a->add("focusstate", [=](const QString&){

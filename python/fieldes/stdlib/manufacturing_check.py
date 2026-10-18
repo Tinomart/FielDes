@@ -25,7 +25,7 @@ from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
 from fieldes.stdlib.fea import FieldResult, colored, _with_conditions
 from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _at, _dot, _extent_along, _frame, _join, _remembered, _sphere, _values, _where, _xyz)
-from fieldes.stdlib.manufacturing_rules import GRACE, ManufacturingError, _RULE_TEXT, _STRICTEST, _constraints_given, _progress
+from fieldes.stdlib.manufacturing_rules import GRACE, SUPPORT_EDGE_STEPS, ManufacturingError, _RULE_TEXT, _STRICTEST, _constraints_given, _log, _progress
 
 def _scoped(margin, constraint):
     ''' A rule holds only inside the constraint's region: elsewhere its margin is far below 0 '''
@@ -38,7 +38,10 @@ def _reach(ctx, radius, sign):
     ''' What a ball of `radius` can reach from each point of the surface: sign -1 into the body (how deep a ball that touches the point can sit
         inside it), +1 into the air (how far from the part the centre of a ball that touches the point can be).  The most of the field,
         times the sign and over its slope, at probes along the normal and on the ball's sphere -- a number up to `radius` (the ball fits
-        whole) and less where a wall or a gap or a corner is too narrow for it.  The point's own value is added to the probes' (the surface has 0). '''
+        whole) and less where a wall or a gap or a corner is too narrow for it.  The point's own value is added to the probes' (the surface has 0).
+        It is the clearance of the centre of the ball, and not the radius of the largest ball that fits: in a corner of 90 degrees the clearance grows by 0.29 mm for every mm of the corner's radius,
+        so a corner is marked from about 17 % short of the limit (under 2.5 mm for a limit of 3) -- and a normal that is a degree or two off, as that of a field made from a mesh is, does not mark a corner that
+        is right.  (The radius of the largest ball was tried: it told a corner 9 % short, and marked every tight arc whose normal was off by more than three degrees, 1 % of the surface of a result.) '''
     n = ctx.normals
     f = ctx.field
     probes = []
@@ -89,6 +92,13 @@ def _tangents(n):
     return t1, t2
 
 
+def _edge_reach(ctx, limit):
+    ''' How far from a point along the surface the normal is looked at, to tell an EDGE (where it jumps) from a curve (where it turns smoothly): a tenth of the rule's own size, and not less than
+        three steps of the differences.  It was half the rule's size, and a round hole of radius 0.15 turns its normal by more than the test allows within 0.2 mm: the check never looked at
+        a narrow hole -- the commonest narrow gap there is -- and marked none of them (found by a hole of 0.3 mm among slots that were marked exactly) '''
+    return max(3.0 * ctx.step, 0.12 * limit)
+
+
 def _flatness(ctx, reach_):
     ''' 1 where the surface is flat within `reach_` of a point and 0 where it turns -- an edge, a corner, a tight curve: the normal at four points round it (`reach_`
         off along the surface) against its own, the least of the four, from 0.8 (0) to 0.9 (1) of a dot product.  The thickness along a normal means a wall's
@@ -125,9 +135,9 @@ def _rule_margins(ctx, constraints, direction):
                 # (the first layer, on the plate, rests on it; and a normal read within a few steps of an edge or a crease is a mix of the two faces, not the lean of either)
                 margin = phi - value - 1.0 - _BIG * (0.6 - height).max(0) - _BIG * (1.0 - _flatness(ctx, 3.0 * ctx.step))
             elif rule == 'min_wall':
-                margin = (value - _chord(ctx, value, True)) - GRACE * value - _BIG * (1.0 - _flatness(ctx, 0.5 * value))
+                margin = (value - _chord(ctx, value, True)) - GRACE * value - _BIG * (1.0 - _flatness(ctx, _edge_reach(ctx, value)))
             elif rule == 'min_gap':
-                margin = (value - _chord(ctx, value, False)) - GRACE * value - _BIG * (1.0 - _flatness(ctx, 0.5 * value))
+                margin = (value - _chord(ctx, value, False)) - GRACE * value - _BIG * (1.0 - _flatness(ctx, _edge_reach(ctx, value)))
             elif rule == 'min_radius':
                 margin = (value - _reach(ctx, value, +1)) - GRACE * value
             elif rule == 'draft':
@@ -173,10 +183,31 @@ def _undercut_margin(ctx, a):
     return (blocked[0].min(blocked[1]) - 0.75) * 4.0
 
 
+_BRIDGE_SAMPLES = 20        # (places along each ray of the bridge rule: far out they are 3.6 mm apart, so a wall 4 mm thick is not jumped over; ten of them were 6 mm apart and a wall between two was missed,
+                            # the shortest chord with it, and a longer one taken: an 18 mm roof marked at the places where that happened)
+
+
+def _refine_wall(f, d, eps, u, sign, first, reach_, tol, rounds=4):
+    ''' Where the wall is along a ray under a roof: `first` is the distance of the first of ten samples (see `_samples_along`) that is inside the part, which is up to four millimetres past the wall out
+        where the samples are wide apart -- an 18 mm roof was read as 23 mm and marked against a limit of 20.  The wall is between that sample and the one before it (the square of the root of
+        the first less one step of the roots: the samples are a square apart): bisected `rounds` times, a sixteenth of the gap.  Where no sample was inside (`first` is `far`) it stays as it is '''
+    root = math.sqrt(reach_) / float(_BRIDGE_SAMPLES)
+    hi = first
+    lo = (hi.max(0).sqrt() - root).max(0)
+    lo = lo * lo
+    for _ in range(rounds):
+        mid = (lo + hi) * 0.5
+        v = _at(f, -d[0] * eps + u[0] * sign * mid, -d[1] * eps + u[1] * sign * mid, -d[2] * eps + u[2] * sign * mid)
+        inside = (v * (-1.0 / tol)).max(0).min(1)
+        hi = hi + (mid - hi) * inside
+        lo = lo + (mid - lo) * (1.0 - inside)
+    return hi
+
+
 def _bridge_margin(ctx, limit, d):
     ''' How far past `limit` a flat roof is held at its two ends: the narrowest chord of the air under a surface that faces straight down, along eight
         directions across the way up, where a wall stops it at both ends (a ledge with an open end is an overhang, not a bridge).  The chord is read
-        at 10 places along each ray from just under the roof, the first one inside the part being where the wall is. '''
+        at 20 places along each ray from just under the roof, the first one inside the part being where the wall is, found more closely between it and the one before it (`_refine_wall`). '''
     n = ctx.normals
     f = ctx.field
     eps = max(0.01 * ctx.size, 4 * ctx.step)
@@ -191,11 +222,11 @@ def _bridge_margin(ctx, limit, d):
         sides = []
         for sign in (1.0, -1.0):
             first = None
-            for s in _samples_along(reach_, 10):
+            for s in _samples_along(reach_, _BRIDGE_SAMPLES):
                 v = _at(f, -d[0] * eps + u[0] * sign * s, -d[1] * eps + u[1] * sign * s, -d[2] * eps + u[2] * sign * s)
                 where = s + far * (1.0 - (v * (-1.0 / tol)).max(0).min(1))       # (s where the ray is inside the part, far where it is not)
                 first = where if first is None else first.min(where)
-            sides.append(first)
+            sides.append(_refine_wall(f, d, eps, u, sign, first, reach_, tol))
         chord = sides[0] + sides[1]
         span = chord if span is None else span.min(chord)
     held = 1.0 - ((span - 0.5 * far) * (2.0 / far)).max(0).min(1)       # (1 where both ends are walls)
@@ -236,10 +267,22 @@ def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seed
     pad = 0.03 * size
     band = max(0.04 * size, 4 * h)
     found = []
-    for _ in range(rounds):                   # (a round is a few evaluations of the field, each costly to set up and cheap by the point: many points to a round)
+    started = time.time()
+    share, keep = None, 0.8          # (the share of the points drawn that lie in the band, and the share of the points worked that stay as samples: a guess for the first round, then what the rounds found)
+    for round_ in range(rounds):              # (a round is a few evaluations of the field, each costly to set up and cheap by the point: many points to a round)
+        # (a round works the points the samples still wanted need, and no more: each point worked costs seven evaluations of the field four times over -- the Newton steps and the look at the foot --, and a part that
+        # fills its box has half of the box in the band: 76,000 points worked for 2,500 samples were 11.8 s of the 16 s of an optimization on a block with a hole.  A round that finds fewer than wanted is followed by one that draws more)
+        work = int(1.5 * max(1, count - len(found)) / keep) + 200
+        draw = min(batch_size, 30000) if share is None else min(batch_size, int(work / max(share, 0.004)) + 1)
         batch = [(rng.uniform(lo[0] - pad, hi[0] + pad), rng.uniform(lo[1] - pad, hi[1] + pad), rng.uniform(lo[2] - pad, hi[2] + pad))
-                 for _ in range(batch_size)]
+                 for _ in range(draw)]
         near = [p for p, v in zip(batch, _values(f, batch)) if abs(v) < band]
+        share = max(len(near), 1) / float(draw)
+        room = max(0, work - (len(seeds) if seeds else 0))          # (the points to start from that were given count as worked)
+        if len(near) > room:
+            near = rng.sample(near, room)
+        _log(started, 'check: round %d: %d points drawn, %d worked, %d samples so far' % (round_ + 1, draw, len(near), len(found)))
+        worked = len(near)
         if seeds:
             near = near + [tuple(s) for s in seeds]
             seeds = None
@@ -269,7 +312,10 @@ def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seed
         vals = _values(f, probe)
         k = len(candidates)
         kept = [item for item, vo, vi in zip(candidates, vals[:k], vals[k:]) if vo > 0 >= vi]
-        found.extend(_even_over_area(f, kept, band, [lo[i] - pad for i in range(3)], [hi[i] + pad for i in range(3)], rng))
+        thinned = _even_over_area(f, kept, band, [lo[i] - pad for i in range(3)], [hi[i] + pad for i in range(3)], rng)
+        found.extend(thinned)
+        keep = max(0.03, min(1.0, len(thinned) / float(max(1, worked))))
+        _log(started, 'check: round %d done: %d on the surface, %d samples kept' % (round_ + 1, len(kept), len(found)))
         if len(found) >= count:
             break
     return found[:count]
@@ -335,30 +381,60 @@ def _even_over_area(f, items, band, box_lo, box_hi, rng):
     return [item for item, w in zip(items, weights) if rng.random() * w <= w_ref]
 
 
-def _clusters(points, cell):
-    ''' The groups the points fall into: neighbouring cells of a grid of `cell` joined.  [[point, ...], ...], the biggest first '''
+def _link_distance(points, floor, ceiling):
+    ''' How far apart two flagged samples of one region may be: a few times the typical distance of a flagged sample to its nearest neighbour, so that the samples of one thin place are
+        one region and two places with air between them are two, whatever the size of the part or of the picture (a grid of a fixed share of the picture's size joined three plates
+        14 mm apart into one region, with a position in the air between them) -- at least `floor` (the rule's own size) and at most `ceiling` '''
+    n = len(points)
+    if n < 2:
+        return max(floor, 1e-6)
+    candidates = points[::max(1, n // 1500)]
+    nearest = []
+    for p in points[::max(1, n // 400)]:
+        best = None
+        for q in candidates:
+            d2 = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2
+            if d2 > 0.0 and (best is None or d2 < best):
+                best = d2
+        if best is not None:
+            nearest.append(math.sqrt(best))
+    nearest.sort()
+    typical = nearest[len(nearest) // 2] if nearest else floor
+    return min(max(4.0 * typical, floor, 1e-6), max(ceiling, floor, 1e-6))
+
+
+def _clusters(points, link):
+    ''' The groups the points fall into when every point is joined to each other point within `link` of it (single linkage, found with a grid of cells of `link`).
+        [[point, ...], ...], the biggest first '''
     cells = {}
-    for p in points:
-        cells.setdefault((int(math.floor(p[0] / cell)), int(math.floor(p[1] / cell)), int(math.floor(p[2] / cell))), []).append(p)
-    seen, groups = set(), []
-    for start in cells:
-        if start in seen:
-            continue
-        stack, group = [start], []
-        seen.add(start)
-        while stack:
-            c = stack.pop()
-            group.extend(cells[c])
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for dz in (-1, 0, 1):
-                        n = (c[0] + dx, c[1] + dy, c[2] + dz)
-                        if n in cells and n not in seen:
-                            seen.add(n)
-                            stack.append(n)
-        groups.append(group)
-    groups.sort(key=len, reverse=True)
-    return groups
+    for i, p in enumerate(points):
+        cells.setdefault((int(math.floor(p[0] / link)), int(math.floor(p[1] / link)), int(math.floor(p[2] / link))), []).append(i)
+    parent = list(range(len(points)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    link2 = link * link
+    for i, p in enumerate(points):
+        c = (int(math.floor(p[0] / link)), int(math.floor(p[1] / link)), int(math.floor(p[2] / link)))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for j in cells.get((c[0] + dx, c[1] + dy, c[2] + dz), ()):
+                        if j > i:
+                            q = points[j]
+                            if (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2 <= link2:
+                                a, b = find(i), find(j)
+                                if a != b:
+                                    parent[b] = a
+    groups = {}
+    for i, p in enumerate(points):
+        groups.setdefault(find(i), []).append(p)
+    out = list(groups.values())
+    out.sort(key=len, reverse=True)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -496,8 +572,25 @@ def _num_flat(f, pts, normals, reach_, h):
     return out
 
 
+_CHUNK = 3000            # (samples worked out at once: each is about a hundred probe points, and 30,000 of them at once used the memory of the machine on the result of an open box)
+
+
 def _numeric_margins(ctx, constraints, direction, samples, supports=None):
-    ''' {rule: [margin at each sample]} -- what `_rule_margins` gives, as numbers on the sample points '''
+    ''' {rule: [margin at each sample]} -- what `_rule_margins` gives, as numbers on the sample points.  The samples are worked out `_CHUNK` at a time, so that the memory used does not grow with
+        how many are asked for; every rule is a measurement of each point on its own, so the answer is the same '''
+    if len(samples) <= _CHUNK:
+        return _numeric_margins_chunk(ctx, constraints, direction, samples, supports)
+    out, limits = OrderedDict(), None
+    for i in range(0, len(samples), _CHUNK):
+        part, limits_part = _numeric_margins_chunk(ctx, constraints, direction, samples[i:i + _CHUNK], supports)
+        for rule, vals in part.items():
+            out.setdefault(rule, []).extend(vals)
+        limits = limits_part if limits is None else limits
+    return out, limits
+
+
+def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None):
+    ''' `_numeric_margins` for a few samples (see there) '''
     pts = [s[0] for s in samples]
     normals = [s[1] for s in samples]
     mags = [s[2] for s in samples]
@@ -518,15 +611,27 @@ def _numeric_margins(ctx, constraints, direction, samples, supports=None):
                     height = p[0] * d[0] + p[1] * d[1] + p[2] * d[2] - plate
                     m.append(phi - value - 1.0 - (_BIG * (0.6 - height) if height < 0.6 else 0.0) - (0.0 if fl else _BIG))
                 if supports is not None and c.support:
-                    # (a place that leans out and has a support under it is held: a point just inside the top of the support, straight under it -- the support is `support_gap` from the part)
-                    below = [(p[0] - d[0] * (c.support_gap + 2.0 * ctx.step), p[1] - d[1] * (c.support_gap + 2.0 * ctx.step), p[2] - d[2] * (c.support_gap + 2.0 * ctx.step)) for p in pts]
-                    held = [v <= 0 for v in _values(supports, below)]
+                    # (a place that leans out and has a support under it is held: a point just inside the top of the support, straight under it.  The support is `support_gap` from the part, measured along the
+                    # normal, so straight under a face that leans its top is gap / cos further down -- 0.30 mm at the crown of a roof, 0.39 at 39 degrees from it, 0.42 at 45 -- and a point `gap` under it read
+                    # a roof's leaning flanks as not held: "2 places, 3.2 % of the surface" listed on an arch the block holds up whole)
+                    # (and the last few steps of the edge of a support are held by it as well: the point is also looked for a little to each side, along the plate -- `SUPPORT_EDGE_STEPS` and two more steps)
+                    e1, e2 = _frame(d)
+                    side = (SUPPORT_EDGE_STEPS + 2.0) * ctx.step
+                    below = []
+                    for p, nn in zip(pts, normals):
+                        t_down = c.support_gap / max(0.5, -(nn[0] * d[0] + nn[1] * d[1] + nn[2] * d[2])) + 2.0 * ctx.step
+                        b = (p[0] - d[0] * t_down, p[1] - d[1] * t_down, p[2] - d[2] * t_down)
+                        below.append(b)
+                        for e, s in ((e1, side), (e1, -side), (e2, side), (e2, -side)):
+                            below.append((b[0] + e[0] * s, b[1] + e[1] * s, b[2] + e[2] * s))
+                    inside = [v <= 0 for v in _values(supports, below)]
+                    held = [any(inside[5 * i:5 * i + 5]) for i in range(len(pts))]
                     m = [(-_BIG if h else x) for x, h in zip(m, held)]
             elif rule == 'min_wall':
-                flat = _num_flat(f, pts, normals, 0.5 * value, ctx.step)
+                flat = _num_flat(f, pts, normals, _edge_reach(ctx, value), ctx.step)
                 m = [(value - ch - GRACE * value) if fl else -_BIG for ch, fl in zip(_num_thickness(f, pts, normals, offsets, value, True, ctx.step), flat)]
             elif rule == 'min_gap':
-                flat = _num_flat(f, pts, normals, 0.5 * value, ctx.step)
+                flat = _num_flat(f, pts, normals, _edge_reach(ctx, value), ctx.step)
                 m = [(value - ch - GRACE * value) if fl else -_BIG for ch, fl in zip(_num_thickness(f, pts, normals, offsets, value, False, ctx.step), flat)]
             elif rule == 'min_radius':
                 m = [value - r - GRACE * value for r in _num_reach(f, pts, normals, mags, value, +1)]
@@ -565,7 +670,7 @@ def _num_bridge(ctx, pts, normals, limit, d):
     if not roofs:
         return out
     base = [(pts[i][0] - d[0] * eps, pts[i][1] - d[1] * eps, pts[i][2] - d[2] * eps) for i in roofs]
-    steps = _samples_along(reach_, 10)
+    steps = _samples_along(reach_, _BRIDGE_SAMPLES)
     dirs = []
     for k in range(8):
         ang = math.pi * k / 8.0
@@ -579,19 +684,42 @@ def _num_bridge(ctx, pts, normals, limit, d):
     m = len(roofs)
     span = [1.0e9] * m
     block = 0
-    for _u in dirs:
-        ends = []
-        for _sign in range(2):
+    firsts, rays = [], []
+    for u in dirs:
+        for sign in (1.0, -1.0):
             first = [1.0e9] * m
             for s in steps:
                 for j in range(m):
                     if vals[block * m + j] < -tol and s < first[j]:
                         first[j] = s
                 block += 1
-            ends.append(first)
+            firsts.append(first)
+            rays.append((u, sign))
+    # (the wall is somewhere between the first sample inside the part and the one before it -- up to four millimetres apart out where the samples are wide: an 18 mm roof was read as 23 and marked against a limit of 20.
+    # The distance is bisected there, four times: a sixteenth of the gap)
+    root = math.sqrt(reach_) / float(_BRIDGE_SAMPLES)
+    his = [list(first) for first in firsts]
+    los = [[(max(0.0, math.sqrt(h) - root)) ** 2 if h < 1.0e8 else 0.0 for h in first] for first in firsts]
+    for _round in range(4):
+        flat, index = [], []
+        for e, (u, sign) in enumerate(rays):
+            for j in range(m):
+                if his[e][j] < 1.0e8:
+                    mid = 0.5 * (los[e][j] + his[e][j])
+                    q = base[j]
+                    flat.append((q[0] + sign * mid * u[0], q[1] + sign * mid * u[1], q[2] + sign * mid * u[2]))
+                    index.append((e, j, mid))
+        if not flat:
+            break
+        for (e, j, mid), v in zip(index, _values(f, flat)):
+            if v < -tol:
+                his[e][j] = mid
+            else:
+                los[e][j] = mid
+    for e in range(0, len(rays), 2):
         for j in range(m):
-            if ends[0][j] < 1.0e8 and ends[1][j] < 1.0e8:
-                span[j] = min(span[j], ends[0][j] + ends[1][j])
+            if his[e][j] < 1.0e8 and his[e + 1][j] < 1.0e8:
+                span[j] = min(span[j], his[e][j] + his[e + 1][j])
     for j, i in enumerate(roofs):
         out[i] = (min(span[j], cap) - limit - GRACE * limit) if span[j] < 1.0e8 else -3.0 * _BIG
     return out
@@ -606,11 +734,17 @@ def _report_numeric(ctx, constraints, direction, samples, supports=None):
     for rule, vals in margins.items():
         limit, unit = limits[rule]
         broken = [(p, v) for p, v in zip(points, vals) if v > 0]
-        cell = max(limit if unit == 'mm' else 0.0, ctx.size / 25.0)
+        broken_points = [p for p, _ in broken]
+        # (the size that regions are told apart by comes from the samples themselves -- the part's own extent -- and not from the box the part was given, which can be a picture's)
+        extent = max([max(p[a] for p in points) - min(p[a] for p in points) for a in range(3)] or [ctx.size]) if points else ctx.size
+        link = _link_distance(broken_points, limit if unit == 'mm' else 0.0, extent / 8.0)
         regions = []
-        for group in _clusters([p for p, _ in broken], cell)[:12]:
+        for group in _clusters(broken_points, link)[:12]:
             xs, ys, zs = [p[0] for p in group], [p[1] for p in group], [p[2] for p in group]
-            regions.append({'at': (sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs)), 'samples': len(group),
+            centre = (sum(xs) / len(xs), sum(ys) / len(ys), sum(zs) / len(zs))
+            # (where the region is: the flagged sample nearest to its middle, which is on the part's surface; the middle itself can be in the air, between two places or inside a ring)
+            at = min(group, key=lambda p: (p[0] - centre[0]) ** 2 + (p[1] - centre[1]) ** 2 + (p[2] - centre[2]) ** 2)
+            regions.append({'at': tuple(at), 'samples': len(group),
                             'share': len(group) / float(n) if n else 0.0, 'box': ((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs)))})
         report[rule] = {'limit': limit, 'unit': unit, 'broken': len(broken), 'share': len(broken) / float(n) if n else 0.0,
                         'worst': max(vals) if vals else 0.0, 'regions': regions, 'samples': n}
@@ -745,18 +879,22 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
     if progress:
         _progress(0.05, _tr('Measuring surface'))
     points = _surface_samples(ctx, int(samples), seed=seed, rounds=rounds, batch_size=batch_size, seeds=seeds)
+    _log(t0, 'check: surface sampled: %d points' % len(points))
     if not points:
         return None
     if progress:
         _progress(0.4, _tr('Evaluating rules'))
     if direction is None:
         direction = _direction_of(items, ctx, points)
+    _log(t0, 'check: way up found')
     margins = _rule_margins(ctx, items, direction)
     if not margins:
         raise ManufacturingError('%s: the constraints have no rule -- give one (min_wall=0.8, overhang=45 ...)' % what)
     fields = OrderedDict((rule, m[0]) for rule, m in margins.items())
     fields['all'] = _all_field(margins)
+    _log(t0, 'check: rule fields built')
     report = _report_numeric(ctx, items, direction, points, supports)
+    _log(t0, 'check: rules measured on the samples')
     out = ManufacturingAnalysis(part if isinstance(part, Shape) else shape, items, fields, {r: (m[1], m[2]) for r, m in margins.items()}, report, len(points), direction, time.time() - t0)
     out.points = [p[0] for p in points]
     return out

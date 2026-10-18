@@ -10,6 +10,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import functools
 import math
+import random
 
 from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import cache_for, value_key, Uncacheable
@@ -54,12 +55,28 @@ def _sphere(k):
 class _Normals:
     ''' The gradient of a field by central differences, and its unit vector, as fields: what faces which way, at every point '''
 
-    def __init__(self, f, step):
+    def __init__(self, f, step, kind='central', shift=None):
+        ''' `kind`: 'central' (the default), or 'forward' / 'backward': (f(p + h) - f(p)) / h and (f(p) - f(p - h)) / h.  On the middle of a slot between two faces a central difference
+            straddles the kink of the field there (the distance to the nearer face) and reads a slope from 0 (exactly on the middle: no normal) to 1 over a band of one step on either
+            side, and the one-sided differences do the same on one side of the middle each: within a step of the middle one of them leads to the wrong face.  Read with both, one of the
+            two always leads to a wall.  Where the surface is smooth they differ from the central one by what the curvature times the step makes: a few thousandths of a degree.
+            `shift` (a vector of numbers or fields) reads the normals of the point moved by it, at that point: the normal of a point that is looked at from another one '''
         self.step = step
         h = step
-        gx = (_at(f, h, 0, 0) - _at(f, -h, 0, 0)) * (0.5 / h)
-        gy = (_at(f, 0, h, 0) - _at(f, 0, -h, 0)) * (0.5 / h)
-        gz = (_at(f, 0, 0, h) - _at(f, 0, 0, -h)) * (0.5 / h)
+        sx, sy, sz = (0.0, 0.0, 0.0) if shift is None else shift
+        here = f if shift is None else _at(f, sx, sy, sz)
+        if kind == 'forward':
+            gx = (_at(f, sx + h, sy, sz) - here) * (1.0 / h)
+            gy = (_at(f, sx, sy + h, sz) - here) * (1.0 / h)
+            gz = (_at(f, sx, sy, sz + h) - here) * (1.0 / h)
+        elif kind == 'backward':
+            gx = (here - _at(f, sx - h, sy, sz)) * (1.0 / h)
+            gy = (here - _at(f, sx, sy - h, sz)) * (1.0 / h)
+            gz = (here - _at(f, sx, sy, sz - h)) * (1.0 / h)
+        else:
+            gx = (_at(f, sx + h, sy, sz) - _at(f, sx - h, sy, sz)) * (0.5 / h)
+            gy = (_at(f, sx, sy + h, sz) - _at(f, sx, sy - h, sz)) * (0.5 / h)
+            gz = (_at(f, sx, sy, sz + h) - _at(f, sx, sy, sz - h)) * (0.5 / h)
         self.magnitude = (gx * gx + gy * gy + gz * gz).sqrt()
         # (on the middle of a gap or a wall the slope is 0 and there is no normal: a fixed direction stands in for it there, and nowhere the slope is a few thousandths or more)
         bias = 1.0 - (self.magnitude * 1000.0).min(1)
@@ -71,6 +88,18 @@ class _Normals:
 
 def _dot(n, d):
     return n.x * d[0] + n.y * d[1] + n.z * d[2]
+
+
+def _tangents(n):
+    ''' Two unit vectors along the surface at every point, as fields: with the normal a frame, made from a direction that is seldom along a normal '''
+    ref = (0.30, 0.50, 0.81)
+    cx = n.y * ref[2] - n.z * ref[1]
+    cy = n.z * ref[0] - n.x * ref[2]
+    cz = n.x * ref[1] - n.y * ref[0]
+    cm = (cx * cx + cy * cy + cz * cz).sqrt().max(1e-3)
+    t1 = (cx / cm, cy / cm, cz / cm)
+    t2 = (n.y * t1[2] - n.z * t1[1], n.z * t1[0] - n.x * t1[2], n.x * t1[1] - n.y * t1[0])
+    return t1, t2
 
 
 def _join(op, values, tie):
@@ -108,19 +137,34 @@ class _Context:
 
     def __init__(self, part, bounds=None):
         self.field = Shape.wrap(part)
+        carried = getattr(self.field, '_plate_box', None)       # (a result of the shell: the plate of the part it was made from; read before the field is rescaled below)
         lo, hi = _shape_bounds(self.field, bounds)
         self.lo, self.hi = tuple(float(c) for c in lo), tuple(float(c) for c in hi)
         self.size = max(self.hi[i] - self.lo[i] for i in range(3)) or 1.0
+        # (the rules and the remedies are read in millimetres off the field's own value -- how far a point is from the surface, how far to move along its normal --, which is true of a field
+        # that is a distance and not of one that is a distance times something: a part that was scaled, a body made by a formula.  The typical slope of the field at its surface is read, and a
+        # field whose slope is not 1 is divided by it, once, here: the same surface, a field that is a distance to a few per cent)
+        self.slope = _typical_slope(self.field, self.lo, self.hi, self.size)
+        if abs(self.slope - 1.0) > 0.05 and 0.02 < self.slope < 50.0:
+            self.field = self.field * (1.0 / self.slope)
         self.step = max(1e-3 * self.size, 0.004)
         self.tie = max(5e-7 * self.size, 2e-6)         # (how far apart the lookups that are combined are kept in value: see _join)
-        self.plate_box = (self.lo, self.hi)           # (where the print plate is, from the part: a check of what was made keeps the part's, not the made part's padded box)
+        # (where the print plate is, from the part: a check of what was made keeps the part's, not the made part's padded box -- which the result carries, for a check a user runs on it)
+        self.plate_box = (tuple(float(c) for c in carried[0]), tuple(float(c) for c in carried[1])) if carried else (self.lo, self.hi)
         self._normals = None
+        self._one_sided = {}
 
     @property
     def normals(self):
         if self._normals is None:
             self._normals = _Normals(self.field, self.step)
         return self._normals
+
+    def one_sided_normals(self, kind):
+        ''' the normals by forward or backward differences ('forward' / 'backward'): see _Normals (what the middle of a gap is read with) '''
+        if kind not in self._one_sided:
+            self._one_sided[kind] = _Normals(self.field, self.step, kind)
+        return self._one_sided[kind]
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +177,27 @@ def _values(field, points):
     if not points:
         return []
     return _eval_at(field, [c for p in points for c in p], len(points))
+
+
+def _typical_slope(field, lo, hi, size, count=500, seed=11):
+    ''' The slope of the field (the length of its gradient) at its surface, as the middle of what is found at the points of 500 thrown at random that lie within 3 % of the part's size of the
+        surface (60 of them are read by central differences): 1 for a distance, 2 for a distance times 2, 0.5 for a part that was scaled up by 2.  1 where too few lie near the surface to say '''
+    rng = random.Random(seed)
+    cloud = [tuple(rng.uniform(lo[i], hi[i]) for i in range(3)) for _ in range(count)]
+    near = [p for p, v in zip(cloud, _values(field, cloud)) if abs(v) <= 0.03 * size][:60]
+    if len(near) < 12:
+        return 1.0
+    h = max(1e-3 * size, 0.004)
+    probes = []
+    for p in near:
+        probes.extend(((p[0] + h, p[1], p[2]), (p[0] - h, p[1], p[2]), (p[0], p[1] + h, p[2]), (p[0], p[1] - h, p[2]), (p[0], p[1], p[2] + h), (p[0], p[1], p[2] - h)))
+    v = _values(field, probes)
+    slopes = []
+    for i in range(len(near)):
+        gx, gy, gz = (v[6 * i] - v[6 * i + 1]) / (2 * h), (v[6 * i + 2] - v[6 * i + 3]) / (2 * h), (v[6 * i + 4] - v[6 * i + 5]) / (2 * h)
+        slopes.append(math.sqrt(gx * gx + gy * gy + gz * gz))
+    slopes.sort()
+    return slopes[len(slopes) // 2]
 
 
 def _where(p):

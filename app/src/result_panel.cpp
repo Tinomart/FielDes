@@ -10,6 +10,7 @@ of the License, or (at your option) any later version.
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -51,23 +52,22 @@ void ColorBar::paintEvent(QPaintEvent*)
     const QRect bar(4, fm.height() / 2 + 2, 14, height() - fm.height() - 4);
     if (m_map == "change" || m_map == "violation")
     {
-        // (the geometry change of a shell is three classes, and a rule check two: not a scale, but swatches, each with what it is)
-        const bool check = m_map == "violation";
-        const int count = check ? 2 : 3;
+        // (the geometry change of a shell is three classes, and a rule check two: not a scale, but swatches, each with what it is.  The words are T() calls written out, so that the
+        // translation tool finds them)
+        std::vector<std::pair<float, QString>> classes;
+        if (m_map == "violation") classes = {{1.f, T("broken")}, {0.f, T("kept")}};
+        else classes = {{1.f, T("added")}, {0.5f, T("unchanged")}, {0.f, T("removed")}};
+        const int count = int(classes.size());
         const int h = bar.height() / count;
-        const struct { float t; const char* text; } shell[3] = {{1.f, "added"}, {0.5f, "unchanged"}, {0.f, "removed"}};
-        const struct { float t; const char* text; } rule[2] = {{1.f, "broken"}, {0.f, "kept"}};
-        const auto cls = [&](int i) { return check ? std::make_pair(rule[i].t, rule[i].text) : std::make_pair(shell[i].t, shell[i].text); };
         for (int i = 0; i < count; i++)
         {
             const QRect swatch(bar.left(), bar.top() + i * h + (i ? 1 : 0), bar.width(), h - (i ? 1 : 0));
             p.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
-            const auto c = cls(i);
-            p.setBrush(colormapColor(m_map, c.first));
+            p.setBrush(colormapColor(m_map, classes[size_t(i)].first));
             p.drawRect(swatch);
             p.setPen(QColor(0xee, 0xe8, 0xd5));
             p.drawText(QRect(bar.right() + 8, swatch.center().y() - fm.height() / 2, width() - bar.right() - 8, fm.height()),
-                       Qt::AlignLeft | Qt::AlignVCenter, T(c.second));
+                       Qt::AlignLeft | Qt::AlignVCenter, classes[size_t(i)].second);
         }
         return;
     }

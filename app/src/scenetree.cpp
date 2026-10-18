@@ -4005,12 +4005,13 @@ void ScenePanel::toggleLock(const QJsonObject& target)
 QString ScenePanel::headerText() const
 {
     return QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Model tree") +
-           (m_errorText.isEmpty() ? QString() : QString("   ") + QChar(0x26a0) + " " + T("error"));
+           (m_errorText.isEmpty() ? QString() : QString("   !  ") + T("error"));
 }
 
 QString ScenePanel::errorNote() const
 {
-    return QString(QChar(0x26a0)) + " " + (m_errorLine >= 0 ? T("Line %1: ").arg(m_errorLine + 1) : QString()) + m_errorText;
+    // (no warning sign character: U+26A0 in the interface font corrupted the heap at exit, see View::drawErrorBanner; the card is red, and it says what it is)
+    return (m_errorLine >= 0 ? T("Line %1: ").arg(m_errorLine + 1) : QString()) + m_errorText;
 }
 
 void ScenePanel::setErrorStyle(QWidget* w, bool on)

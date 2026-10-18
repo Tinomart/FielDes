@@ -60,6 +60,11 @@ _RULE_TEXT = OrderedDict([
 # a few probes of it can tell is not exact, and a wall that is 0.78 thick for 0.8 asked is not what the check is for
 GRACE = 0.05
 
+# A block of support stops this many steps of the field inside the edge of the surface it holds up (the normal that decides whether the surface leans is read with a stencil of one step, which straddles the
+# part's own edge within a step of it), and a place that is within this many steps and two more of the edge of a support is held by it: nobody supports the last half millimetre of an edge, and a card that
+# listed that rim as still broken said "3 places" of a ledge that was held whole (s3)
+SUPPORT_EDGE_STEPS = 4.0
+
 
 def _unit(v, what):
     try:

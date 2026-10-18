@@ -82,7 +82,8 @@ A 2D ring with the given outer/inner radii and optional center
 
 ### `rounded_box(a, b, r)`
 
-Rounded box with the given bounds and radius (as a 0-1 fraction)
+Rounded box with the given bounds.  The radius `r` is a fraction, 0 to 1, of half the shortest side of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the
+shortest side a half circle)
 
 ### `rounded_rectangle(a, b, r)`
 

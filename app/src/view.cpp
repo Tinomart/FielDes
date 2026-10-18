@@ -1555,6 +1555,28 @@ void View::drawLegends(QPainter& painter)
     }
     for (const auto& b : bars)
     {
+        if (b.map == "support")
+        {
+            // (the supports of a print: ONE class and no scale -- its swatch and its name on one line, with the close button; a bar from -1 to 1 for a body of one colour said nothing)
+            const int boxW = fm.horizontalAdvance(b.label) + 28 + 28;
+            const int boxH = fm.height() + 16;
+            const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(22, 76, 94, 200));
+            painter.drawRoundedRect(box, 6, 6);
+            painter.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
+            painter.setBrush(colormapColor(b.map, 1.f));
+            painter.drawRect(QRect(box.left() + 10, box.top() + 8, 12, fm.height() - 2));
+            painter.setPen(QColor(0xee, 0xe8, 0xd5));
+            painter.drawText(QRect(box.left() + 28, box.top() + 6, boxW - 28 - 24, fm.height()), Qt::AlignLeft | Qt::AlignVCenter, b.label);
+            bottom_items.push_back(QRectF(box));
+            const QRect close(box.right() - 18, box.top() + 4, 14, 14);
+            painter.setPen(QColor(0xee, 0xe8, 0xd5, 170));
+            painter.drawText(close, Qt::AlignCenter, QString(QChar(0x00d7)));
+            legend_close.push_back({close, b.label});
+            right = box.left() - 8;
+            continue;
+        }
         auto num = [](float v) { return QString::number(v, 'g', 4); };
         const int ticks = 5;
         int textW = fm.horizontalAdvance(b.label) + 16;   // (+ the close button)
@@ -4637,7 +4659,8 @@ void View::checkHoverTarget(QPoint pos)
     // the probing; an analysis result has its own card and is always probed)
     const bool legend_on = target && (target->hasResult() ||
                                       (show_legends && !hidden_legends.contains(target->colorLabel())));
-    probe_valid = target && target->hasColorField() && target->colorMap() != "bc" && target->colorMap() != "fit" && legend_on &&
+    // (the supports of a print are one class and carry no number to read: their card says what they are)
+    probe_valid = target && target->hasColorField() && target->colorMap() != "bc" && target->colorMap() != "fit" && target->colorMap() != "support" && legend_on &&
                   target->probe(cursor_pos, probe_value);
     if (probe_valid)
     {
@@ -4712,7 +4735,10 @@ void View::drawErrorBanner(QPainter& painter)
     const QString hint = T("The picture shows what ran before the error, or the last one that worked.  Click to go to the error.");
     const int maxWidth = std::max(260, std::min(width() - 40, 640));
     const QString message = fmBody.elidedText(m_errorText, Qt::ElideRight, maxWidth - 28);
-    const int w = std::max({fmHead.horizontalAdvance(title), fmBody.horizontalAdvance(message), fmHint.horizontalAdvance(hint)}) + 28;
+    // (the warning sign is painted, not written: the character U+26A0, in the interface font, falls back to a colour emoji font through DirectWrite on Windows, and a window that had shown it ended with a
+    // corrupted heap -- exit code 0xC0000374 -- every time a script had an error; the model tree's error note had the same character)
+    const int icon = fmHead.height() + 8;
+    const int w = std::max({fmHead.horizontalAdvance(title) + icon, fmBody.horizontalAdvance(message), fmHint.horizontalAdvance(hint)}) + 28;
     const int h = fmHead.height() + fmBody.height() + fmHint.height() + 22;
     // (centred, but not under the model tree card on the left)
     int x = (width() - w) / 2;
@@ -4725,7 +4751,18 @@ void View::drawErrorBanner(QPainter& painter)
     int y = m_errorRect.top() + 7;
     painter.setPen(QColor(255, 96, 96));
     painter.setFont(head);
-    painter.drawText(QRect(x + 14, y, w - 28, fmHead.height()), Qt::AlignLeft | Qt::AlignVCenter, QString(QChar(0x26a0)) + "  " + title);
+    {
+        const double th = fmHead.height();
+        QPolygonF triangle;
+        triangle << QPointF(x + 14 + th / 2.0, y + 2.0) << QPointF(x + 14, y + th - 1.0) << QPointF(x + 14 + th, y + th - 1.0);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 96, 96));
+        painter.drawPolygon(triangle);
+        painter.setPen(QColor(92, 24, 24));
+        painter.drawText(QRectF(x + 14, y + 4.0, th, th - 4.0), Qt::AlignHCenter | Qt::AlignVCenter, QStringLiteral("!"));
+        painter.setPen(QColor(255, 96, 96));
+        painter.drawText(QRect(x + 14 + int(icon), y, w - 28 - int(icon), fmHead.height()), Qt::AlignLeft | Qt::AlignVCenter, title);
+    }
     y += fmHead.height();
     painter.setPen(QColor(0xee, 0xe8, 0xd5));
     painter.setFont(body);

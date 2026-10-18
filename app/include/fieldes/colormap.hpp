@@ -61,7 +61,8 @@ inline float sectionLevel(float v, float lo, float hi)
  *  turning red: shades where an import is approximate), "share", "change"
  *  and "violation" (the part's grey through amber to red: how far a rule is
  *  broken; blue, grey, red: what a shell cut and added; grey, red: where a
- *  rule is kept and where it is broken), "bc" (the nearest
+ *  rule is kept and where it is broken), "support" (amber: the supports of
+ *  a print, one class), "bc" (the nearest
  *  of the categories of boundary conditions and selections), anything else
  *  grey.  */
 inline void colormapRGB(const QString& map, float t, float& r, float& g, float& b)
@@ -88,6 +89,13 @@ inline void colormapRGB(const QString& map, float t, float& r, float& g, float& 
     else if (map == "grey" || map == "gray")
     {
         r = g = b = 0.15f + 0.8f * t;
+    }
+    else if (map == "support")
+    {
+        // the supports of a print: ONE class and no scale -- amber, which no other class of a manufacturing result is (grey, red and blue are the change, grey and red the rule); the card draws one swatch
+        r = 0.95f;
+        g = 0.70f;
+        b = 0.20f;
     }
     else if (map == "violation")
     {
