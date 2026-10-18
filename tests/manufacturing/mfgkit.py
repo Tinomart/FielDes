@@ -126,6 +126,9 @@ def generic_checks(t, part, res, constraints, lo, hi, added=None, removed=None, 
             listed = {}
             for s in res.fail_states:
                 listed[s['rule']] = listed.get(s['rule'], 0.0) + s['share']
+            # (`fail_states` lists the five biggest places of each rule: what the tool's re-check found in all is `fail_totals`, and that is what the independent check is compared with)
+            if getattr(res, 'fail_totals', None):
+                listed = {k: v['share'] for k, v in res.fail_totals.items()}
             ok = all(share <= 1.5 * listed.get(k, 0.0) + 0.005 for k, share in found.items())
             t.check('%s: what the independent check still finds is what the tool lists as broken (tool %s; check %s)' % (name, {k: round(v, 4) for k, v in listed.items()} or 'nothing', {k: round(v, 4) for k, v in found.items()} or 'nothing'),
                     ok, {k: round(v, 4) for k, v in found.items()}, 'each rule at most 1.5 x the tool\'s share + 0.5 %')
