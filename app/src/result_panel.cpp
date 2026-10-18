@@ -41,6 +41,13 @@ void ColorBar::setRange(float lo, float hi, const QString& map)
     update();
 }
 
+void ColorBar::setSupports(bool on)
+{
+    if (m_supports == on) return;
+    m_supports = on;
+    update();
+}
+
 void ColorBar::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
@@ -55,15 +62,24 @@ void ColorBar::paintEvent(QPaintEvent*)
         // (the geometry change of a shell is three classes, and a rule check two: not a scale, but swatches, each with what it is.  The words are T() calls written out, so that the
         // translation tool finds them)
         std::vector<std::pair<float, QString>> classes;
+        bool supports = false;      // (the last class is the supports of a print, in the amber of their own map: a body of the scene, and a line of this legend and not a card of its own)
         if (m_map == "violation") classes = {{1.f, T("broken")}, {0.f, T("kept")}};
-        else classes = {{1.f, T("added")}, {0.5f, T("unchanged")}, {0.f, T("removed")}};
+        else
+        {
+            classes = {{1.f, T("added")}, {0.5f, T("unchanged")}, {0.f, T("removed")}};
+            if (m_supports && m_map == "change")
+            {
+                classes.push_back({1.f, T("print supports")});          // ("supports" alone is a support of an analysis: a fixed face)
+                supports = true;
+            }
+        }
         const int count = int(classes.size());
         const int h = bar.height() / count;
         for (int i = 0; i < count; i++)
         {
             const QRect swatch(bar.left(), bar.top() + i * h + (i ? 1 : 0), bar.width(), h - (i ? 1 : 0));
             p.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
-            p.setBrush(colormapColor(m_map, classes[size_t(i)].first));
+            p.setBrush(colormapColor((supports && i == count - 1) ? QString("support") : m_map, classes[size_t(i)].first));
             p.drawRect(swatch);
             p.setPen(QColor(0xee, 0xe8, 0xd5));
             p.drawText(QRect(bar.right() + 8, swatch.center().y() - fm.height() / 2, width() - bar.right() - 8, fm.height()),
@@ -352,6 +368,7 @@ void ResultPanel::setState(const State& s)
         m_fields->addItems(s.labels);
     }
     m_fields->setCurrentIndex(s.current);
+    m_bar->setSupports(s.supports);
     m_bar->setRange(s.lo, s.hi, s.map);
     m_deformRow->setVisible(s.hasDeform);
     m_deform->setValue(sliderFor(s.scale, s.autoScale));

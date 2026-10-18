@@ -533,7 +533,8 @@ class ManufacturingResult(FieldResult):
             share         the part's volume changed, as a share
             before        the check of the part as it was (a ManufacturingAnalysis)
             after         the check of what the shell made, when it was made (a ManufacturingAnalysis), or None
-            fail_states   what is still broken, where: {rule, where, share, why}
+            fail_states   what is still broken, where: {rule, where, share, why} -- the five biggest places of each rule
+            fail_totals   all the places the re-check found, of each rule: {rule: {places, share}} (what the card counts; the shares are shares of the surface)
             orientation   the way up of the print, when the constraint left it free (the part is not turned: oriented() is the part turned to stand that way)
             change_map    the field the part is coloured by: 1 added, -1 cut, 0 as it was
 
@@ -608,14 +609,28 @@ class ManufacturingResult(FieldResult):
             out.append((colored(shape, Shape.wrap(value), range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change'), value))
         return out
 
+    def _places(self):
+        ''' how many places the re-check found in all (`fail_states` lists the five biggest of each rule) '''
+        totals = getattr(self, 'fail_totals', None)
+        return sum(t['places'] for t in totals.values()) if totals else len(self.fail_states)
+
+    def _places_share(self):
+        ''' the share of the surface they are, all of them '''
+        totals = getattr(self, 'fail_totals', None)
+        return sum(t['share'] for t in totals.values()) if totals else sum(s['share'] for s in self.fail_states)
+
     def _display(self):
         if self._shown is None:
             note = _tr('Red and blue show what was added and removed compared with the input part.')
             rows = [(_tr('Material added'), _quantity(self.added, 3), 'mm³'), (_tr('Material removed'), _quantity(self.removed, 3), 'mm³'),
                     (_tr('Volume changed'), _quantity(100.0 * self.share, 3), _tr('% of the part')),
-                    # (how much of the surface the places are, beside their number: four places of 0.08 % each read very differently from four places of a tenth of the part)
-                    (_tr('Places still breaking a rule'), '%d' % len(self.fail_states),
-                     ('(%s %s)' % (_quantity(100.0 * sum(s['share'] for s in self.fail_states), 2), _tr('% of the surface'))) if self.fail_states else '')]
+                    # (how much of the surface the places are, beside their number: four places of 0.08 % each read very differently from four places of a tenth of the part.  All the places the re-check
+                    # found, and not only the five biggest of each rule that are listed: the card said 1.9 % of the surface where it found 6.9 %)
+                    (_tr('Places still breaking a rule'), '%d' % self._places(),
+                     ('(%s %s)' % (_quantity(100.0 * self._places_share(), 2), _tr('% of the surface'))) if self.fail_states else '')]
+            if self.orientation is not None:
+                # (the way up of the print was left free, and the tool found it: it is on the card, and `.oriented()` is the part turned to stand that way)
+                rows.append((_tr('Way up of the print'), '(%.2g, %.2g, %.2g)' % tuple(self.build_direction), ''))
             if getattr(self, '_thin', False):
                 # (a thin layer -- a wall thickened by a tenth of a millimetre, a gap made wider -- is thinner than a cell of the picture, and three bodies of which two are such skins
                 # are drawn as stripes and missing patches.  The result is drawn as ONE body, whole and at the scene's resolution, coloured by the change at each point of its surface:
@@ -658,6 +673,12 @@ class ManufacturingResult(FieldResult):
             lines.append(_tr('  Rule violations remaining:'))
             for s in self.fail_states[:10]:
                 lines.append(_tr('    %s: %s, %.2g %% of surface area -- %s') % (_RULE_TEXT[s['rule']][0], _where(s['where']), 100.0 * s['share'], s['why']))
+            # (the places a rule has beyond the five listed: how many, and how much of the surface -- the list is what is biggest, not all there is)
+            for rule, t in (getattr(self, 'fail_totals', None) or {}).items():
+                listed = [s for s in self.fail_states if s['rule'] == rule]
+                more, share = t['places'] - len(listed), t['share'] - sum(s['share'] for s in listed)
+                if more > 0 and share > 1e-6:
+                    lines.append(_tr('    %s: %d more places, %.2g %% of surface area, not listed above') % (_RULE_TEXT[rule][0], more, 100.0 * share))
         elif self.after is not None:
             lines.append(_tr('  Re-check of the result: all rules satisfied'))
         for note in self.notes:
@@ -871,6 +892,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             blockers += c.no_support
         _log(t0, 'supports made: %.4g mm^3' % support_volume)
     after, fails = None, []
+    fail_totals = OrderedDict()            # (rule -> {places, share}: ALL the places the re-check found, of which `fails` lists the five biggest of each rule)
     _log(t0, 'the remedies are united')
     changed = bool(adds or cuts)
     if verify and not slow and (changed or supports is not None):
@@ -883,12 +905,14 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         if after is not None:
             why = _tr('still violated after the remedy') if changed else _tr('no remedy available for it')
             for rule, r in after.report.items():
+                fail_totals[rule] = {'places': len(r['regions']), 'share': r['share']}
                 for g in r['regions'][:5]:
                     fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': why})
     elif verify and slow:
         notes.append(_tr('The part is slow to evaluate, so the result was not re-checked: run manufacturing_analysis on it'))
     elif verify and not changed:
         for rule, r in before.report.items():
+            fail_totals[rule] = {'places': len(r['regions']), 'share': r['share']}
             for g in r['regions'][:5]:
                 fails.append({'rule': rule, 'where': g['at'], 'share': g['share'], 'why': _tr('no remedy available for it')})
     if keep_weight is not None or any(c.region is not None for c in items):
@@ -901,6 +925,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     if union_added is not None:
         out.added = union_added
         out.share = (out.added + out.removed) / volume if volume > 0 else 0.0
+    out.fail_totals = fail_totals
     out.supports = supports
     out.support_volume = support_volume
     out.blockers = blockers

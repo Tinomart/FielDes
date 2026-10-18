@@ -32,11 +32,14 @@ class ColorBar : public QWidget
 public:
     ColorBar(QWidget* parent=nullptr);
     void setRange(float lo, float hi, const QString& map);
+    // The geometry change of a shell has the supports of a print as one more class (amber), when the scene has them
+    void setSupports(bool on);
     QSize sizeHint() const override { return QSize(150, 150); }
 protected:
     void paintEvent(QPaintEvent* e) override;
     float m_lo = 0, m_hi = 1;
     QString m_map = "turbo";
+    bool m_supports = false;
 };
 
 class ResultPanel : public QFrame
@@ -68,6 +71,7 @@ public:
         bool showFlow = true;        // ...drawn over it
         float opacity = 1;           // how opaque the flow is drawn (a lower one shows the body in it)
         QList<QStringList> keyResults;   // the key numbers of the result: label, text, unit of each
+        bool supports = false;           // the scene has the supports of a print (a body of its own, amber): one more class of the legend, and no card of its own
     };
     void setState(const State& s);
     // The width the name of the field shown needs, so that a long one (in another language) is not cut off at the card's usual width

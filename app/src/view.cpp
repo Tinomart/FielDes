@@ -1486,8 +1486,8 @@ void View::drawLegends(QPainter& painter)
     for (auto s : shapes)
     {
         // (analysis results have their own card; the shading of a fit that is off -- an imported part lit up from grey to red -- is its
-        // colour alone: no bar of percentages, and nothing read under the cursor)
-        if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc" || s->colorMap() == "fit") continue;
+        // colour alone: no bar of percentages, and nothing read under the cursor; the supports of a print are amber, and a line of the legend of the result: see ResultPanel)
+        if (!s->hasColorField() || !s->hasMesh() || s->hasResult() || s->colorMap() == "bc" || s->colorMap() == "fit" || s->colorMap() == "support") continue;
         Bar b{s->colorLabel(), s->colorMap(), s->colorLo(), s->colorHi()};
         bool dup = false;
         for (auto& o : bars)
@@ -1555,28 +1555,6 @@ void View::drawLegends(QPainter& painter)
     }
     for (const auto& b : bars)
     {
-        if (b.map == "support")
-        {
-            // (the supports of a print: ONE class and no scale -- its swatch and its name on one line, with the close button; a bar from -1 to 1 for a body of one colour said nothing)
-            const int boxW = fm.horizontalAdvance(b.label) + 28 + 28;
-            const int boxH = fm.height() + 16;
-            const QRect box(right - boxW, height() - boxH - 12, boxW, boxH);
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(22, 76, 94, 200));
-            painter.drawRoundedRect(box, 6, 6);
-            painter.setPen(QPen(QColor(0x93, 0xa1, 0xa1), 1));
-            painter.setBrush(colormapColor(b.map, 1.f));
-            painter.drawRect(QRect(box.left() + 10, box.top() + 8, 12, fm.height() - 2));
-            painter.setPen(QColor(0xee, 0xe8, 0xd5));
-            painter.drawText(QRect(box.left() + 28, box.top() + 6, boxW - 28 - 24, fm.height()), Qt::AlignLeft | Qt::AlignVCenter, b.label);
-            bottom_items.push_back(QRectF(box));
-            const QRect close(box.right() - 18, box.top() + 4, 14, 14);
-            painter.setPen(QColor(0xee, 0xe8, 0xd5, 170));
-            painter.drawText(close, Qt::AlignCenter, QString(QChar(0x00d7)));
-            legend_close.push_back({close, b.label});
-            right = box.left() - 8;
-            continue;
-        }
         auto num = [](float v) { return QString::number(v, 'g', 4); };
         const int ticks = 5;
         int textW = fm.horizontalAdvance(b.label) + 16;   // (+ the close button)
@@ -1699,6 +1677,9 @@ void View::updateResultPanel()
     st.showFlow = r->showFlowLines();
     st.opacity = r->opacityValue();
     st.keyResults = r->keyResults();
+    // (the supports of a print are a body of the scene in amber: one more line of the legend of the geometry change, and no card of their own)
+    // (its mesh, and not hasMesh(): that is true once the mesh is on the graphics card, at the next paint, and this runs when the mesh arrives)
+    for (auto s : shapes) if (s->hasColorField() && s->getMesh() && s->colorMap() == "support") st.supports = true;
     bool flowing = false;
     for (auto s : shapes) if (s->showsFlowLines()) flowing = true;
     if (flowing && !m_flowTimer.isActive()) m_flowTimer.start();
