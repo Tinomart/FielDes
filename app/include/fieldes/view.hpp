@@ -602,6 +602,9 @@ protected:
     /*  The lattice section of a menu: the operations that fill a model with a lattice (and make points for it), then a menu for each family of
      *  cells -- struts, TPMS, planar patterns, non-periodic, custom -- each entry making that cell at once (no model is needed)  */
     void fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line);
+    /*  The Python menu: the most basic features of the language -- a variable, if, loops, a function, a class ... -- as blocks of plain code written at the insertion point of the
+     *  model tree (the catalog's `python` list; no model is made of them)  */
+    void fillPythonMenu(QMenu* menu, const QVector3D& point, double scale, int line);
     /*  The entry that makes a body from the field of the model at `line` (-1: the selected field the viewer shows)  */
     void addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale);
     /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of the Engineering

@@ -52,6 +52,7 @@ QHash<QString, Kind>& kinds()
         {"operation",  {"Operation",    QColor("#b9c4d0")}},
         {"engineering", {"Engineering", QColor("#b9c4d0")}},
         {"shapes",     {"Parametric shape", QColor("#7aa2f0")}},
+        {"python",     {"Python",       QColor("#6c71c4")}},
     };
     return k;
 }
@@ -383,6 +384,19 @@ void drawKind(QPainter& p, const QString& type, const QColor& c, const QString& 
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(c.lighter(150), 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         p.drawPath(f);
+    }
+    else if (type == "python")
+    {
+        // plain code: a tile with the letters of the language
+        p.setPen(QPen(c, 1.5));
+        p.setBrush(alpha(c, 70));
+        p.drawRoundedRect(QRectF(1.8, 2.8, 12.4, 10.4), 2.4, 2.4);
+        QFont f = p.font();
+        f.setPixelSize(8);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(c.lighter(150));
+        p.drawText(QRectF(1.8, 2.8, 12.4, 10.4), Qt::AlignCenter, QStringLiteral("py"));
     }
     else
     {

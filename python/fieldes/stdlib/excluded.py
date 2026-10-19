@@ -208,7 +208,7 @@ THROUGH = {
 NO_BODY_MODULES = ['text', 'importing', 'tessellated_import', 'mesh_import', 'regression', 'surfaces']
 NO_BODY = {
     'shapes': ['circle', 'ring', 'polygon', 'rectangle', 'rounded_rectangle', 'triangle', 'box', 'rounded_box', 'sphere', 'half_space',
-               'cylinder', 'cone', 'pyramid', 'torus', 'emptiness'],
+               'cylinder', 'cone', 'pyramid', 'prism', 'torus', 'emptiness'],
     'cad_import': ['step_length_unit_mm',
                    'exact_field'],
     'excluded': ['locks_of', 'moved', 'install', 'install_methods', 'keep_regions', 'carry_locks'],

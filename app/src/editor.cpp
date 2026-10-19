@@ -371,6 +371,7 @@ Editor::Editor(Language::Type language)
     // viewport's menu for it); the other tabs (files that are only read) keep the text menu
     script->setObjectMenu(true);
     connect(script, &Script::objectMenuRequested, this, &Editor::objectMenuRequested);
+    connect(script, &Script::userCursorMoved, this, &Editor::userCursorMoved);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(2);
     setLayout(layout);
@@ -1429,6 +1430,19 @@ void Editor::goToLine(int line0)
 {
     showScriptTab();
     script->goToLine(line0);
+}
+
+void Editor::placeCursor(int line0, bool atEnd)
+{
+    showScriptTab();
+    if (atEnd)
+    {
+        script->moveCursor(QTextCursor::End);
+        script->ensureCursorVisible();
+    }
+    else
+        script->goToLine(line0);
+    script->setFocus();
 }
 
 void Editor::goToPlaceholder(int line0, int col0)

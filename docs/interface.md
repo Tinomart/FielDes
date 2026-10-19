@@ -133,6 +133,7 @@ offending line underlined in the editor. The error's text is red, everything els
 | **`I`** (viewport or model tree focused) | **Isolate** the selected models: only they are shown, every other model hidden (script edits, undoable); `I` again shows what was shown before. Select another model while isolated and press `I` to isolate that one instead |
 | **`D`** (viewport or model tree focused) | **Delete** the selected models from the script: their definitions and the lines that show, hide, edit and lock them go, as one undoable step. If the rest of the script still uses their names it asks once first. Also in the right-click menu of a model (**Delete**; with several models selected and the one you right-click among them, it deletes all of them) |
 | **`Shift+D`** (viewport or model tree focused) | **Copy** the selected models: their statements are written again under them with free names, as one undoable step (a copy that is its own model, changed independently) |
+| **`Ctrl+E`** (viewport or model tree focused) | **Extrude** the selected 2D shape (a circle, a rectangle, a triangle, a polygon, a profile): `extrude(shape, 0, size)` is written under it -- *Operation → Extruding → extrude* on the selection -- with the size a round number of the shape's own size. The two faces of the solid are then draggable, and the 2D shape underneath keeps priority where they overlap. A selection that is not a 2D shape gets a word of why not |
 | **`Ctrl+D`** (viewport or model tree focused) | **Link** the selected models: under each, `copy = instance(model)` -- a block that **is** the model and follows every change of it, and can only be **moved and rotated** (its gizmo has no scale and its surfaces cannot be dragged). The model is held by reference (`# shadow: model`), always, locked or not, so it keeps its own row and the copy shows a shadow of it. Also *Operation → Repeating → instance*. In the editor `Ctrl+D` is still the next occurrence |
 | **Hover a model** | Highlights it; shows the point under the cursor at the bottom left |
 
@@ -155,11 +156,15 @@ on a **line of the script** that defines a model, and on its **row in the model 
 model had been right-clicked in the viewport:
 
 - **Three parts: Primitives, Parametric shapes and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*,
-  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid; a circle, a rectangle, a triangle, a polygon, a profile; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
+  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid, a prism; a circle, a rectangle, a triangle, a polygon, a profile; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
   surface; a distance, a radial, a z and a noise field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
   a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- by kind in the same way. **Operations** are what is done to a model: the operation groups (*Offsets and walls*,
   *Rounding*, *Moving* ...), and **Lattice**; **Engineering** is a menu of its own. What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them; the quick operations *center*
   and *bounding_box* are below the three.)
+- **Python** is a menu of its own, next to Engineering: the most basic features of the language as blocks of plain code -- *variable*, *if*, *if / else*, *for loop (a count)*, *for loop (a list)*,
+  *while loop*, *function (def)*, *class*, *list*, *list from a loop*, *dictionary*, *try / except*, *with (a file)*, *import*, *print* -- written **as code, at the insertion point of the tree**
+  (see [The insertion point](#the-insertion-point)): no `name =` in front, no line that shows it, because it is no model. The code is edited in the code editor; the model tree shows the block and what is in it
+  ([Python in the tree](#python-in-the-tree)).
 - **The menu is made of what is valid, and the same wherever it is opened.** A **category** (a submenu, at any depth: *Operations*, *Extruding* inside it, *Lattice*, *Primitives → New 2D shape* ...) is in the menu
   **when there is at least one valid entry in it, and is not in it when there is none** -- it is not greyed out, it is left out -- and that is worked out from the entries themselves, by asking whether
   what is selected is something the entry takes, not from a list of categories. So a **surface** selected shows *New 2D shape* with *profile* (the outline of that surface) whether you right-click it in the
@@ -399,6 +404,32 @@ the edit -- without waiting for the script to run, however long that takes. Clic
 button changes its icon at once, and the lines it writes are known when the run is done. Details and limits:
 [Caching and performance](caching-and-performance.md#the-model-tree).
 
+### Python in the tree
+
+The tree is a picture of the script, and the script is Python: **an `if`, a loop (`for`, `while`), `with`, `try`, a function (`def`), a class and a `match` at the top level are rows of their own**, a violet tile with the kind in two
+letters (*if*, *fo*, *wh*, *wi*, *tr*, *df*, *cl*, *ma*), between the model rows in the order of the script (and inside a section, if they stand in one). What is **in** a block stands under it:
+
+| Row | Is |
+|---|---|
+| full violet dot | a variable the block assigns (`b = ...`), a loop's variable, a parameter of a function |
+| hollow dot, dim | a name the header only reads (`if size > 5` shows `size`) |
+| a line, then a name | a branch: `else`, `except ...`, `finally`, `case ...`; its statements are under it |
+| a tile and a header | a block inside the block (`elif`, a loop in a loop, a method in a class), down to eight levels |
+| a statement | any other statement, shortened (`return cylinder(r, h, ...)`, `print(error)`, `self.size = 4`) |
+
+**Everything under a block is locked here**: it cannot be dragged, renamed or dropped on, and editing Python is done in the **code editor**, never in the tree (the tree is the interaction suite of FielDes blocks). A **click**
+on a name selects it in the code, ready to be replaced by typing; a click on a statement or a branch selects it; a click on the block goes to it. A block **at the top level** can be dragged above or below any other row
+of the top level -- a model, a section's row, another block -- and its lines move in the script (with the comment lines right above it and the blank lines under it), as one undoable step, to structure the code; it is
+refused with the reason where it would end inside another block or inside a model. Models made inside a block are variables of the block, not model rows ([Known issues](../KNOWN_ISSUES.md)).
+
+### The insertion point
+
+What is added from the tree -- a new shape, a condition, a simulation, a block from the **Python** menu, a paste -- goes to the **insertion point**. The line between two top-level rows, where the **+** that starts a section shows,
+is clickable: **a press on the line itself** (a few pixels each side of it, away from the circle) puts the point there -- a **cyan line with a small arrow** is drawn along the gap, faint while it is only the default (the end of the
+script), solid once it is set -- and puts the **text cursor of the code editor** on that line, with the keyboard in the editor. The two are one: **the cursor you move in the editor moves the point** (inside a statement the point is after
+the statement, on the first column of its first line before it, between statements above the next one), and what is added is written above the row the point is above, with the cursor going under it, so the next thing added lands
+under the last. Operations still go under the model they work on. Where no point has been set (a script just opened) things go to the end of the script, as they always did.
+
 ## The section card
 
 `Shift+X` (or **View → Section view**; the key acts while the viewport -- or the model tree -- has the keyboard, so it never types over the editor) opens a card at the top right of the viewport. The section view is a viewer **you switch
@@ -594,7 +625,7 @@ progress of the operation in it.
 
 ## Exporting
 
-- **File → Export mesh…** (`Ctrl+E`, `F7`): the shapes in the viewport as one mesh, in the format of the file you name -- **STL, OBJ, PLY, 3MF, glTF (`.glb`, `.gltf`), FBX, OFF, DXF**.
+- **File → Export mesh…** (`F7`, `Ctrl+Alt+E`): the shapes in the viewport as one mesh, in the format of the file you name -- **STL, OBJ, PLY, 3MF, glTF (`.glb`, `.gltf`), FBX, OFF, DXF**.
 - **Right-click a model (in the viewport or on its row) → Export:**
   - a **body**: **Mesh** in any of those formats (the surface at the scene's resolution);
   - a **field**: **Field on a grid** (VTK image data `.vti`, or a CSV table) -- the field sampled on a regular grid for other programs;
@@ -654,7 +685,8 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 |---|---|
 | New / Open / Save / Save as | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Import model | `Ctrl+I` |
-| Export STL | `Ctrl+E`, `F7` |
+| Export STL | `F7`, `Ctrl+Alt+E` |
+| Extrude the selected 2D shape (viewport or tree focused) | `Ctrl+E` |
 | Export / copy screenshot | `Ctrl+Shift+E` / `Ctrl+Alt+C` |
 | Quit | `Ctrl+Q` |
 

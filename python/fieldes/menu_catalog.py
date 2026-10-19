@@ -171,6 +171,7 @@ PRIMITIVES = [
     ('cone', '3D', 'cone({h}, {s}, ({x}, {y}, {zm}))'),
     ('torus', '3D', 'torus({h}, {q}, ({x}, {y}, {z}))'),
     ('pyramid', '3D', 'pyramid(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
+    ('prism', '3D', 'prism(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}), {zm}, {zp})'),
     ('half_space', '3D', 'half_space((0, 0, 1), ({x}, {y}, {z}))'),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
@@ -214,12 +215,12 @@ PRIMITIVES = [
     ('molding_constraint', 'Manufacturing constraints', 'molding_constraint()'),
 ] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
-# The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus and a pyramid for 3D; a circle, a rectangle, a triangle,
+# The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus, a pyramid and a prism for 3D; a circle, a rectangle, a triangle,
 # a polygon and a profile for 2D; a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial, a z and a noise field.  The menus show these under
 # Primitives, apart.  Everything else the library can make with no argument -- a rounded box, a ring, a wave, noise, your own low-level logic, a custom block -- is not a primitive, however
 # little it needs: it is a Parametric shape
 BASIC = frozenset((
-    'sphere', 'box', 'cylinder', 'cone', 'torus', 'pyramid',
+    'sphere', 'box', 'cylinder', 'cone', 'torus', 'pyramid', 'prism',
     'circle', 'rectangle', 'triangle', 'polygon', 'profile',
     'polyline', 'spline',
     'point',
@@ -419,6 +420,27 @@ OPERATIONS = [
 # (operations that are in the first menu of a body, not under a group: used all the time)
 QUICK = ('center', 'bounding_box', 'distance_to_point')
 
+# The "Python" menu: the most basic features of the language as blocks of plain code, written at the top level of the script, at the insertion point of the model tree (not
+# made into a model: no `name = ...`, no display line).  The code is edited in the code editor; the tree shows the blocks and what is in them.  A body of `pass` is where the
+# code of the block goes.  (name, label, what it is, the code)
+PYTHON = [
+    ('variable', 'variable', tr('A name for a number, a text or any value: it is used by its name further down'), 'value = 10'),
+    ('if', 'if', tr('Runs the code under it only when the condition is true'), 'if value > 5:\n    pass'),
+    ('if_else', 'if / else', tr('One code when the condition is true, another when it is not'), 'if value > 5:\n    pass\nelse:\n    pass'),
+    ('for_range', 'for loop (a count)', tr('Runs the code under it once for each number 0, 1, 2 ... up to the count'), 'for i in range(5):\n    pass'),
+    ('for_each', 'for loop (a list)', tr('Runs the code under it once for each item of a list'), 'for item in [1, 2, 3]:\n    pass'),
+    ('while', 'while loop', tr('Runs the code under it again and again while the condition is true'), 'count = 0\nwhile count < 5:\n    count += 1'),
+    ('function', 'function (def)', tr('Code with a name that takes values and gives one back: it is called by its name'), 'def my_function(x):\n    return x'),
+    ('class', 'class', tr('A kind of object of your own, with functions of its own'), 'class MyClass:\n    def __init__(self):\n        pass'),
+    ('list', 'list', tr('Several values under one name: values[0] is the first'), 'values = [1, 2, 3]'),
+    ('list_comprehension', 'list from a loop', tr('A list made by a loop, in one line'), 'squares = [i * i for i in range(5)]'),
+    ('dictionary', 'dictionary', tr('Values found by a name: settings["size"]'), 'settings = {"size": 10}'),
+    ('try', 'try / except', tr('Runs the code, and another code when it fails'), 'try:\n    pass\nexcept Exception as error:\n    print(error)'),
+    ('with', 'with (a file)', tr('Opens a file for the code under it, and closes it after'), 'with open("file.txt") as f:\n    text = f.read()'),
+    ('import', 'import', tr('Brings in a module of Python: math, random ...'), 'import math'),
+    ('print', 'print', tr('Writes a value to the message pane of the script'), 'print("hello")'),
+]
+
 
 def _blocks():
     ''' The custom blocks the menus offer (see fieldes.blocks): [{name, doc, operation, primitive}] '''
@@ -456,6 +478,7 @@ def catalog():
                        for n, g, _, o in OPERATIONS]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'other': False, 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['operation']],
+        'python': [{'name': n, 'label': l, 'doc': d} for n, l, d, _code in PYTHON],
     })
 
 
@@ -980,6 +1003,12 @@ def call(request):
         {kind: 'primitive' | 'operation', name, x, y, z (the place), scale (mm spanned by about a hundred pixels there), body, other (names
         or expressions of the models), var (the name the model will get), indent (how far the statement is indented) } '''
     r = json.loads(request) if isinstance(request, str) else request
+    if r.get('kind') == 'python':
+        # (a block of plain Python: its code as it is -- no model is made of it)
+        for n, _label, _doc, code in PYTHON:
+            if n == r['name']:
+                return code
+        raise ValueError(tr('the Python menu has no block called %s') % r['name'])
     text = _call(r)
     head, marker, expression = text.rpartition(PRELUDE)
     from fieldes import completion

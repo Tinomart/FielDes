@@ -588,6 +588,183 @@ def _sections_of(lines):
     return out
 
 
+# --- The plain Python of a script.  The tree is a picture of the code: the statements at the top level that make no model -- an if, a loop, a function, a class --
+# are rows of their own ("python": movable among the top-level rows, to structure the code), with what is in them under them (locked: the code is edited in the
+# code editor, not in the tree).  A name in a header or assigned in a body is a row that a click selects in the code, ready to be replaced
+_PY_BLOCKS = {ast.If: 'if', ast.For: 'for', ast.AsyncFor: 'for', ast.While: 'while', ast.With: 'with', ast.AsyncWith: 'with', ast.Try: 'try',
+              ast.FunctionDef: 'def', ast.AsyncFunctionDef: 'def', ast.ClassDef: 'class'}
+if hasattr(ast, 'Match'):
+    _PY_BLOCKS[ast.Match] = 'match'
+if hasattr(ast, 'TryStar'):
+    _PY_BLOCKS[ast.TryStar] = 'try'
+_PY_MAX_CHILDREN = 80           # (per level: a loop of two hundred statements is not two hundred rows)
+_PY_MAX_DEPTH = 8
+_LIB_NAMES = []
+
+
+def _library_names():
+    ''' The names that are the language's or the library's (a name in a condition that is one of them is not a variable of the script) '''
+    if not _LIB_NAMES:
+        import builtins
+        names = set(dir(builtins))
+        try:
+            import fieldes
+            names |= {k for k in vars(fieldes) if not k.startswith('_')}
+        except Exception:
+            pass
+        _LIB_NAMES.append(names)
+    return _LIB_NAMES[0]
+
+
+def _py_span_of(first, last):
+    a, b = A._span(first), A._span(last)
+    return [a[0], a[1], b[2], b[3]]
+
+
+def _py_label(stmt, src):
+    seg = lambda n, k=50: A._short(src.segment(n), k)
+    if isinstance(stmt, ast.If):
+        return 'if ' + seg(stmt.test)
+    if isinstance(stmt, (ast.For, ast.AsyncFor)):
+        return 'for ' + seg(stmt.target, 24) + ' in ' + seg(stmt.iter, 40)
+    if isinstance(stmt, ast.While):
+        return 'while ' + seg(stmt.test)
+    if isinstance(stmt, (ast.With, ast.AsyncWith)):
+        return 'with ' + ', '.join(seg(i.context_expr, 30) for i in stmt.items)
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = stmt.args
+        names = [x.arg for x in list(getattr(a, 'posonlyargs', [])) + list(a.args)]
+        if a.vararg:
+            names.append('*' + a.vararg.arg)
+        names += [x.arg for x in a.kwonlyargs]
+        if a.kwarg:
+            names.append('**' + a.kwarg.arg)
+        return 'def %s(%s)' % (stmt.name, A._short(', '.join(names), 40))
+    if isinstance(stmt, ast.ClassDef):
+        return 'class ' + stmt.name
+    if hasattr(ast, 'Match') and isinstance(stmt, ast.Match):
+        return 'match ' + seg(stmt.subject)
+    return 'try'
+
+
+def _py_header_children(stmt, src):
+    ''' The names a block's header holds: what a condition or a loop reads (dim: it is used there), the variable of a loop, the parameters of a function '''
+    out, seen = [], set()
+    lib = _library_names()
+
+    def add(node, kind, filtered=True):
+        if node is None:
+            return
+        for n in sorted((x for x in ast.walk(node) if isinstance(x, ast.Name)), key=lambda x: (x.lineno, x.col_offset)):
+            if n.id in seen or (filtered and n.id in lib):
+                continue
+            seen.add(n.id)
+            out.append({'kind': kind, 'label': n.id, 'span': A._span(n), 'line': n.lineno, 'end_line': n.end_lineno,
+                        'text': A._short(src.segment(node), 80)})
+
+    if isinstance(stmt, (ast.If, ast.While)):
+        add(stmt.test, 'uses')
+    elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+        add(stmt.target, 'loopvar', False)
+        add(stmt.iter, 'uses')
+    elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+        for item in stmt.items:
+            add(item.context_expr, 'uses')
+            add(item.optional_vars, 'var', False)
+    elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = stmt.args
+        params = list(getattr(a, 'posonlyargs', [])) + list(a.args) + list(a.kwonlyargs)
+        if a.vararg:
+            params.append(a.vararg)
+        if a.kwarg:
+            params.append(a.kwarg)
+        for p in params:
+            out.append({'kind': 'param', 'label': p.arg, 'span': A._span(p), 'line': p.lineno, 'end_line': p.end_lineno,
+                        'text': 'parameter ' + p.arg})
+    elif isinstance(stmt, ast.ClassDef):
+        for b in stmt.bases:
+            add(b, 'uses')
+    elif hasattr(ast, 'Match') and isinstance(stmt, ast.Match):
+        add(stmt.subject, 'uses')
+    return out
+
+
+def _py_branch(label, stmts, src, depth):
+    ''' An else, an except, a finally, a case: a row of its own holding its statements '''
+    return {'kind': 'branch', 'label': label, 'span': _py_span_of(stmts[0], stmts[-1]), 'line': stmts[0].lineno, 'end_line': stmts[-1].end_lineno,
+            'text': label, 'children': _py_children(stmts, src, depth)}
+
+
+def _assigned_names(target):
+    ''' The names an assignment target makes: a name, or the names of a tuple or a list that is unpacked -- `self.size = 4` or `a[0] = 1` makes no name (it changes something that is there) '''
+    if isinstance(target, ast.Name):
+        return [target]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [n for e in target.elts for n in _assigned_names(e)]
+    if isinstance(target, ast.Starred):
+        return _assigned_names(target.value)
+    return []
+
+
+def _py_children(stmts, src, depth):
+    out = []
+    for s in stmts:
+        if len(out) >= _PY_MAX_CHILDREN:
+            out.append({'kind': 'more', 'label': '... %d more' % (len(stmts) - _PY_MAX_CHILDREN), 'span': _py_span_of(s, stmts[-1]),
+                        'line': s.lineno, 'end_line': stmts[-1].end_lineno, 'text': 'more statements'})
+            break
+        if type(s) in _PY_BLOCKS:
+            out.append(_py_block(s, src, depth + 1))
+            continue
+        names = []
+        if isinstance(s, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = s.targets if isinstance(s, ast.Assign) else [s.target]
+            for t in targets:
+                names += _assigned_names(t)
+        if names:
+            for n in names:
+                out.append({'kind': 'var', 'label': n.id, 'span': A._span(n), 'line': s.lineno, 'end_line': s.end_lineno,
+                            'text': A._short(src.segment(s), 90)})
+        else:
+            out.append({'kind': 'stmt', 'label': A._short(src.segment(s), 50), 'span': A._span(s), 'line': s.lineno, 'end_line': s.end_lineno,
+                        'text': A._short(src.segment(s), 90)})
+    return out
+
+
+def _py_block(stmt, src, depth=0, label=None):
+    start = min([stmt.lineno] + [d.lineno for d in getattr(stmt, 'decorator_list', [])])
+    out = {'kind': 'block' if depth else 'python', 'type': _PY_BLOCKS[type(stmt)], 'label': label or _py_label(stmt, src),
+           'line': start, 'end_line': stmt.end_lineno, 'span': A._span(stmt), 'text': A._short(src.segment(stmt), 120)}
+    kids = _py_header_children(stmt, src)
+    if depth < _PY_MAX_DEPTH:
+        kids += _py_children(stmt.body if not (hasattr(ast, 'Match') and isinstance(stmt, ast.Match)) else [], src, depth)
+        orelse = getattr(stmt, 'orelse', None)
+        if isinstance(stmt, ast.If) and len(orelse) == 1 and isinstance(orelse[0], ast.If):
+            kids.append(_py_block(orelse[0], src, depth + 1, 'elif ' + A._short(src.segment(orelse[0].test), 50)))
+        elif orelse:
+            kids.append(_py_branch('else', orelse, src, depth))
+        for h in getattr(stmt, 'handlers', []):
+            kids.append(_py_branch('except' + (' ' + A._short(src.segment(h.type), 40) if h.type is not None else ''), h.body, src, depth))
+        if getattr(stmt, 'finalbody', None):
+            kids.append(_py_branch('finally', stmt.finalbody, src, depth))
+        for case in getattr(stmt, 'cases', []):
+            kids.append(_py_branch('case ' + A._short(src.segment(case.pattern), 40), case.body, src, depth))
+    out['children'] = kids
+    return out
+
+
+def _python_blocks(tree, src):
+    ''' The blocks of plain Python at the top level of a script: [{kind: 'python', type, label, line, end_line, children: [...]}] '''
+    out = []
+    for stmt in tree.body:
+        if type(stmt) in _PY_BLOCKS:
+            try:
+                out.append(_py_block(stmt, src))
+            except Exception:
+                pass            # (a statement the tree cannot describe stays code in the editor)
+    return out
+
+
 def outline_json(arg):
     ''' The model tree of a script's text, as JSON: {items, settings, kinds, ...}.  `arg` is JSON {source, run_done}: run_done says that
         the run of this text has just ended (what waits for the imports it made, and for the menus it changes, goes on) '''
@@ -1033,7 +1210,7 @@ def outline_json(arg):
             settings.setdefault(k, {})['value'] = v
 
     return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(), 'domains': describe_domains(), 'truncated': truncated,
-                       'sections': sections,
+                       'sections': sections, 'python': _python_blocks(tree, src),
                        'errored': bool(error), 'run_done': bool(req.get('run_done')),
                        'done_line': tree.body[-1].end_lineno if tree.body else 0, 'source_md5': md5,
                        'has_roi': 'roi' in ns, 'has_roi_resolution': 'roi_resolution' in ns}, default=str)

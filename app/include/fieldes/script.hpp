@@ -183,6 +183,10 @@ signals:
      *  setObjectMenu)  */
     void objectMenuRequested(int line0, QPoint globalPos);
 
+    /*  The text cursor moved while the script has the keyboard focus (a click in the text, the keys, typing -- not the tree placing it): the (0-based) line and
+     *  column it is on.  The insertion point of the model tree follows it (see ScenePanel::setEditorCursor)  */
+    void userCursorMoved(int line0, int col0);
+
 public:
     /*  Whether a right-click on a line opens the menu of the viewport for the model that line defines (the script that is
      *  rendered has it; a right-click on selected text still opens the text menu: cut, copy, paste)  */
@@ -191,6 +195,7 @@ public:
 protected:
     void contextMenuEvent(QContextMenuEvent* e) override;
     bool m_objectMenu = false;
+    int m_programmatic = 0;             // (the program itself is moving the text cursor -- the tree took a row to its line, a value is selected: that is not the user's: see userCursorMoved)
     void keyPressEvent(QKeyEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
     void paintEvent(QPaintEvent* e) override;

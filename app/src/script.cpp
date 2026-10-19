@@ -146,6 +146,9 @@ Script::Script(QWidget* parent)
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
         if (!m_holes.isEmpty() && (textCursor().blockNumber() < m_holeFirst || textCursor().blockNumber() > m_holeLast)) m_holes.clear();
     });
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        if (hasFocus() && m_programmatic == 0) emit(userCursorMoved(textCursor().blockNumber(), textCursor().positionInBlock()));
+    });
     connect(document(), &QTextDocument::contentsChange,
             this, &Script::onContentsChange);
     updateGutterWidth();
@@ -1103,8 +1106,19 @@ void Script::highlightBrackets()
 ////////////////////////////////////////////////////////////////////////////////
 // Navigation helpers
 
+namespace {
+// While the program itself moves the text cursor (the tree took a row to its line, a value is selected), it is not the user who moved it: userCursorMoved is not sent
+struct QuietCursor
+{
+    int& n;
+    explicit QuietCursor(int& count) : n(count) { ++n; }
+    ~QuietCursor() { --n; }
+};
+}   // namespace
+
 void Script::goToLine(int line, bool flash)
 {
+    QuietCursor quiet(m_programmatic);
     QTextBlock b = document()->findBlockByNumber(std::max(0, line));
     if (!b.isValid())
     {
@@ -1131,6 +1145,7 @@ void Script::goToLine(int line, bool flash)
 
 void Script::scrollToLine(int line)
 {
+    QuietCursor quiet(m_programmatic);
     QTextBlock b = document()->findBlockByNumber(std::max(0, line));
     if (!b.isValid()) return;
     ensureBlockVisible(b);                  // (opens a fold that hides it)
@@ -1161,6 +1176,7 @@ void Script::revealLine(int line)
 
 void Script::selectRange(int line0, int col0, int line1, int col1)
 {
+    QuietCursor quiet(m_programmatic);
     QTextBlock b0 = document()->findBlockByNumber(line0);
     QTextBlock b1 = document()->findBlockByNumber(line1);
     if (!b0.isValid() || !b1.isValid())
@@ -2298,6 +2314,7 @@ bool Script::reformatCall(bool join)
 
 void Script::selectRange(int line0, int col0, int length)
 {
+    QuietCursor quiet(m_programmatic);
     const QTextBlock b = document()->findBlockByNumber(line0);
     if (!b.isValid()) return;
     QTextCursor c(document());

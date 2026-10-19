@@ -9,6 +9,7 @@ of the License, or (at your option) any later version.
 */
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <iostream>
 #include <QElapsedTimer>
 #include <cstdio>
@@ -735,6 +736,56 @@ QIcon sectionIcon()
     return icon;
 }
 
+// The icon of a row of plain Python: the kind of block in two letters on a violet tile; inside a block a name is a dot (full: it is assigned, a parameter, a loop's variable;
+// hollow: it is only read there), a branch (else, except ...) a short line
+QIcon pythonIcon(const QString& kind)
+{
+    static QHash<QString, QIcon> cache;
+    if (cache.contains(kind)) return cache.value(kind);
+    const qreal dpr = 2.0;
+    QPixmap pm(int(16 * dpr), int(16 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QColor violet(0x6c, 0x71, 0xc4);
+    static const QHash<QString, QString> letters = {{"if", "if"}, {"for", "fo"}, {"while", "wh"}, {"with", "wi"}, {"try", "tr"},
+                                                    {"def", "df"}, {"class", "cl"}, {"match", "ma"}};
+    if (letters.contains(kind))
+    {
+        p.setPen(QPen(violet, 1.3));
+        p.setBrush(QColor(violet.red(), violet.green(), violet.blue(), 50));
+        p.drawRoundedRect(QRectF(1.2, 2.2, 13.6, 11.6), 2.5, 2.5);
+        QFont f = p.font();
+        f.setPixelSize(8);
+        f.setBold(true);
+        p.setFont(f);
+        p.setPen(violet.lighter(150));
+        p.drawText(QRectF(1.2, 2.2, 13.6, 11.6), Qt::AlignCenter, letters.value(kind));
+    }
+    else if (kind == "uses")
+    {
+        p.setPen(QPen(violet, 1.4));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QPointF(8, 8), 2.6, 2.6);
+    }
+    else if (kind == "branch")
+    {
+        p.setPen(QPen(violet, 1.7, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(3.5, 8), QPointF(12.5, 8));
+    }
+    else
+    {
+        p.setPen(Qt::NoPen);
+        p.setBrush(violet);
+        p.drawEllipse(QPointF(8, 8), 2.6, 2.6);
+    }
+    p.end();
+    QIcon icon(pm);
+    cache.insert(kind, icon);
+    return icon;
+}
+
 // The icon of a shadow: the icon of the model it stands for, half transparent
 QIcon fadedIcon(const QIcon& icon)
 {
@@ -934,6 +985,11 @@ public:
     // the gap after the last row (the end of the tree) is a place for a section too
     std::function<bool()> gapAtEnd;
     std::function<void()> gapEndClicked;
+    // the INSERTION POINT: a press on the line of a gap (not on its circle) puts the point there -- above this row, or at the end of the tree --, and the point is drawn: the row it is above
+    // (`end`: the end of the tree) and whether it was set (drawn faint while it is only the default, the end of the script)
+    std::function<void(QTreeWidgetItem*)> gapPlaced;
+    std::function<void()> gapEndPlaced;
+    std::function<QTreeWidgetItem*(bool* end, bool* active)> markRow;
     // the hovered row whose model has properties (a result: its fields and numbers): the panel shows its tab for it; the row that is hovered
     // changes (null: none)
     std::function<bool(QTreeWidgetItem*)> hasProperties;
@@ -1001,6 +1057,22 @@ protected:
                 viewport()->update();
                 e->accept();
                 gapClicked(below);
+                return;
+            }
+            // A press on the line of the gap itself, a few pixels each side of it and away from the circle, puts the insertion point there (the rest of the row is the row's)
+            if (m_gapEnd && gapEndPlaced && std::abs(e->pos().y() - lastRowBottom()) <= 3)
+            {
+                e->accept();
+                gapEndPlaced();
+                viewport()->update();
+                return;
+            }
+            if (m_gap && gapPlaced && std::abs(e->pos().y() - visualItemRect(m_gap).top()) <= 3)
+            {
+                QTreeWidgetItem* below = m_gap;
+                e->accept();
+                gapPlaced(below);
+                viewport()->update();
                 return;
             }
         }
@@ -1201,6 +1273,7 @@ protected:
     {
         QTreeWidget::paintEvent(e);
         if ((m_gap || m_gapEnd) && !m_dragging) paintGap();
+        if (!m_dragging) paintMark();
         if (!m_dragging) return;
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
@@ -1342,6 +1415,38 @@ private:
         if (hot) viewport()->setCursor(Qt::PointingHandCursor);
         else viewport()->unsetCursor();
         viewport()->update();
+    }
+    // The insertion point: a line along the gap it is on, with a small arrow at the left end -- what is added from the tree is written there.  Solid when it was set (a click on a gap,
+    // the text cursor of the editor), faint while it is only the default: the end of the script
+    void paintMark()
+    {
+        if (!markRow) return;
+        bool end = true, active = false;
+        QTreeWidgetItem* row = markRow(&end, &active);
+        int y = 0;
+        if (end)
+        {
+            y = lastRowBottom();
+            if (y <= 0) return;
+        }
+        else
+        {
+            if (!row) return;
+            const QRect r = visualItemRect(row);
+            if (r.height() <= 0) return;                        // (a row that is not shown: inside a section that is closed)
+            y = r.top();
+        }
+        QPainter p(viewport());
+        p.setRenderHint(QPainter::Antialiasing);
+        const QColor cyan(0x2a, 0xa1, 0x98);
+        const int alpha = active ? 235 : 80;
+        p.setPen(QPen(QColor(cyan.red(), cyan.green(), cyan.blue(), alpha), active ? 2.0 : 1.2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(10, y), QPointF(viewport()->width() - 6, y));
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(cyan.red(), cyan.green(), cyan.blue(), alpha));
+        QPolygonF arrow;
+        arrow << QPointF(2, y - 4) << QPointF(9, y) << QPointF(2, y + 4);
+        p.drawPolygon(arrow);
     }
     void paintGap()
     {
@@ -1574,13 +1679,16 @@ ScenePanel::ScenePanel(QWidget* parent)
         tree->gapAbove = [this](QTreeWidgetItem* row) {
             if (m_dragging || m_textUnreadable || !m_source) return false;
             const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
-            if (type != "item" && type != "section") return false;
+            if (type != "item" && type != "section" && type != "python") return false;
             auto parent = row->parent();
             return !parent || parent->data(COL_NAME, ROLE_TYPE).toString() == "section";
         };
         tree->gapClicked = [this](QTreeWidgetItem* row) { createSectionBefore(row); };
         tree->gapAtEnd = [this] { return !m_dragging && !m_textUnreadable && m_source; };
         tree->gapEndClicked = [this] { createSectionAtEnd(); };
+        tree->gapPlaced = [this](QTreeWidgetItem* row) { placeInsertion(gapKey(row), false); };
+        tree->gapEndPlaced = [this] { placeInsertion(QString(), true); };
+        tree->markRow = [this](bool* end, bool* active) { return insertionRow(end, active); };
         tree->hasProperties = [this](QTreeWidgetItem* row) {
             return row->data(COL_NAME, ROLE_TYPE).toString() == "item" &&
                    !row->data(COL_NAME, ROLE_ITEM).toJsonObject()["properties"].toArray().isEmpty() && !m_dragging;
@@ -2720,6 +2828,50 @@ void ScenePanel::rebuild()
         if (anyUses || !mine.isEmpty()) expandedByDefault[row] = true;
     }
     phase("items");
+    // The plain Python of the script (outline.py `python`): an if, a loop, a function, a class at the top level is a row of its own -- the tree is a picture of the code --, movable among the
+    // rows of the top level to structure the script; what is in it stands under it, LOCKED (it cannot be moved, dragged to or edited here: the code is edited in the code editor).  A click on
+    // the name of a variable inside selects it in the code, ready to be replaced
+    QList<QTreeWidgetItem*> pythonRows;
+    {
+        std::function<void(QTreeWidgetItem*, const QJsonArray&, const QString&)> addKids = [&](QTreeWidgetItem* parent, const QJsonArray& kids, const QString& path) {
+            for (int k = 0; k < kids.size(); ++k)
+            {
+                const QJsonObject c = kids[k].toObject();
+                if (!c.contains("line")) continue;
+                const QString kind = c["kind"].toString();
+                const QString ckey = path + ">" + QString::number(k);
+                auto row = makeRow(parent, c["label"].toString(), pythonIcon(kind == "block" ? c["type"].toString() : kind), "pychild", c, ckey);
+                row->setFlags(row->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsEditable));
+                if (kind == "uses" || kind == "more") row->setForeground(COL_NAME, kDim);
+                else if (kind == "stmt") row->setForeground(COL_NAME, QColor(0xb4, 0xc0, 0xc0));
+                else row->setForeground(COL_NAME, QColor(0xa8, 0xab, 0xe0));
+                const bool name = kind == "var" || kind == "loopvar" || kind == "param" || kind == "uses";
+                row->setToolTip(COL_NAME, T("Locked here: Python is edited in the code editor, not in the tree.") + "\n" +
+                                          (name ? T("Click: select it in the code, ready to be replaced by typing.") : T("Click: select it in the code.")) + "\n" + c["text"].toString());
+                if (c.contains("children")) addKids(row, c["children"].toArray(), ckey);
+            }
+        };
+        for (const auto v : m_scene["python"].toArray())
+        {
+            const QJsonObject pb = v.toObject();
+            if (!pb.contains("line")) continue;
+            const QString pkey = "python@" + QString::number(pb["line"].toInt());
+            auto row = makeRow(nullptr, pb["label"].toString(), pythonIcon(pb["type"].toString()), "python", pb, pkey);
+            row->setFlags((row->flags() | Qt::ItemIsDragEnabled) & ~(Qt::ItemIsDropEnabled | Qt::ItemIsEditable));
+            row->setForeground(COL_NAME, QColor(0xa8, 0xab, 0xe0));
+            row->setToolTip(COL_NAME, T("Python code of the script: an if, a loop, a function or a class.  The tree shows what is in it; it is edited in the code editor.\n"
+                                      "Drag it among the top-level rows to move it.  Click: go to it in the code.") + "\n" + pb["text"].toString());
+            pythonRows << row;
+            addKids(row, pb["children"].toArray(), pkey);
+        }
+        // (the rows of the models and of the blocks stand in the order of the script)
+        if (!pythonRows.isEmpty())
+        {
+            std::stable_sort(topRows.begin(), topRows.end(), [](QTreeWidgetItem* a, QTreeWidgetItem* b) {
+                return a->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt() < b->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt();
+            });
+        }
+    }
     // The nesting: each owned model's row goes under its owner's.  Under a statement the rows of the models it is given stand
     // in the order of its arguments (the owned ones and the shadows alike), then what it uses otherwise
     QHash<QTreeWidgetItem*, QList<QTreeWidgetItem*>> owning;
@@ -2998,6 +3150,15 @@ void ScenePanel::rebuild()
     for (auto row : sectionRows)
     {
         if (row->childCount() > 0) row->setExpanded(m_expandState.value(row->data(COL_NAME, ROLE_KEY).toString(), true));
+    }
+    {
+        // (a block of Python is open when what it holds is short; what the user chose is kept, by the row's key)
+        std::function<void(QTreeWidgetItem*)> openPython = [&](QTreeWidgetItem* r) {
+            if (r->childCount() == 0) return;
+            r->setExpanded(m_expandState.value(r->data(COL_NAME, ROLE_KEY).toString(), r->childCount() <= 8));
+            for (int k = 0; k < r->childCount(); ++k) openPython(r->child(k));
+        };
+        for (auto row : pythonRows) openPython(row);
     }
     // Where the user has to write -- a placeholder -- nothing is closed: every row that holds one is open (what was chosen about it is forgotten,
     // so that it does not close again once the placeholder is filled in)
@@ -4560,6 +4721,31 @@ void ScenePanel::deleteItem(const QJsonObject& it)
     deleteItems({it});
 }
 
+void ScenePanel::extrudeSelected()
+{
+    // The Extruding > extrude entry of the menus on the selected models.  What it does not take (a body, a curve, a material ...) is refused as the menu greys it: with a word of why
+    if (!entryAllowed("operation", "extrude", -1))
+    {
+        notify(T("Extrude pulls a 2D shape into a solid: select a circle, a rectangle, a triangle, a polygon or a profile first."));
+        return;
+    }
+    // (how far it is pulled: about the size of the shape, a round number -- the menu makes it of the scale it was opened at)
+    double scale = 10.0;
+    const QList<Model> operands = operandsFor(-1);
+    if (!operands.isEmpty())
+    {
+        const QJsonArray box = operands[0].item["bounds"].toArray();
+        if (box.size() == 2)
+        {
+            const QJsonArray lo = box[0].toArray(), hi = box[1].toArray();
+            double extent = 0.0;
+            for (int k = 0; k < 3 && k < lo.size() && k < hi.size(); ++k) extent = std::max(extent, hi[k].toDouble() - lo[k].toDouble());
+            if (extent > 1e-6) scale = extent;
+        }
+    }
+    createFromMenu("operation", "extrude", QVector3D(0, 0, 0), scale, -1, m_generation);
+}
+
 void ScenePanel::deleteSelected()
 {
     QList<QJsonObject> items;
@@ -4843,6 +5029,7 @@ void ScenePanel::pasteModels()
     static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
     const QString star = starImport.match(src).hasMatch() ? QString() : QString("from fieldes import *\n\n");
     QList<TextEdit> edits;
+    int cursorAfter = -1;               // (pasted at the insertion point: the text cursor goes under what was pasted)
     if (!after.isEmpty() && after.contains("end_line"))
     {
         const int at = groupEnd(after);
@@ -4850,6 +5037,14 @@ void ScenePanel::pasteModels()
         else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()),
                                "\n" + text};
         if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+    }
+    else if (const int point = insertionLine(lines); point >= 0)
+    {
+        // (nothing selected, and the insertion point is somewhere in the script: the copies go there, above the row it is above)
+        edits << TextEdit{point, 0, point, 0, (point == 0 ? star : QString()) + text + "\n\n"};
+        if (point > 0 && !star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+        shiftInsertKey(int((text + "\n\n").count('\n')) + (star.isEmpty() ? 0 : int(star.count('\n'))));
+        cursorAfter = point + int((text + "\n\n").count('\n')) + (star.isEmpty() ? 0 : int(star.count('\n')));
     }
     else
     {
@@ -4869,6 +5064,7 @@ void ScenePanel::pasteModels()
     m_selectNew = renames.last().second;
     m_selectNewTries = 0;
     emit(editScript(edits, "Paste " + renames.last().second));
+    if (cursorAfter >= 0) emit(insertionChosen(cursorAfter, false));
 }
 
 void ScenePanel::deleteReferences(const QList<QPair<QJsonObject, QString>>& refs)
@@ -5519,6 +5715,27 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
         // (the conditions of a simulation: the code shows the simulation's call; nothing is carried to the view)
         emit(goToLine(it["line"].toInt() - 1));
         emit(highlightLines(linesOf(it)));
+        return;
+    }
+    if (type == "python")
+    {
+        // (plain Python: the code editor shows it; nothing is carried to the view)
+        emit(goToLine(it["line"].toInt() - 1));
+        emit(highlightLines({}));
+        return;
+    }
+    if (type == "pychild")
+    {
+        // (a name, a statement or a branch inside a block: selected in the code, ready to be replaced by typing -- the tree cannot change it)
+        const auto span = it["span"].toArray();
+        if (span.size() >= 4)
+        {
+            emit(spanRequested(span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt()));
+            emit(highlightLines({}));
+            return;
+        }
+        emit(goToLine(it["line"].toInt() - 1));
+        emit(highlightLines({}));
         return;
     }
     if (type == "hole")
@@ -6955,6 +7172,44 @@ static bool canInsertAfter(const QStringList& lines, int line0)
     return depth <= 0;
 }
 
+// Whether a statement can START on this (0-based) line without cutting anything in two: the line is not inside a block (it is not indented, and the first line with something on it
+// from here on is not either), the line above does not open a block or continue (`:`, `\`, `,`), and no bracket is open above it.  (What canInsertAfter asks of the line ABOVE is
+// that it is not indented: the last line of a function's body is, and a statement may well start right under it.)
+static bool canStartStatementAt(const QStringList& lines, int at)
+{
+    if (at <= 0 || at >= lines.size()) return true;
+    for (int j = at; j < lines.size(); ++j)
+    {
+        if (lines[j].trimmed().isEmpty()) continue;
+        if (lines[j][0].isSpace()) return false;
+        break;
+    }
+    const QString trimmed = lines[at - 1].trimmed();
+    if (trimmed.endsWith(':') || trimmed.endsWith('\\') || trimmed.endsWith(',')) return false;
+    int depth = 0;
+    QChar quote;
+    for (int i = 0; i < at; ++i)
+    {
+        const QString& s = lines[i];
+        for (int k = 0; k < s.size(); ++k)
+        {
+            const QChar c = s[k];
+            if (!quote.isNull())
+            {
+                if (c == '\\') ++k;
+                else if (c == quote) quote = QChar();
+                continue;
+            }
+            if (c == '#') break;
+            if (c == '"' || c == '\'') quote = c;
+            else if (c == '(' || c == '[' || c == '{') ++depth;
+            else if (c == ')' || c == ']' || c == '}') --depth;
+        }
+        quote = QChar();
+    }
+    return depth <= 0;
+}
+
 void ScenePanel::setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step)
 {
     m_workPlaneActive = active;
@@ -7305,7 +7560,10 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         static const QString preludeMark = "\n#@@#\n";
         const int cut = call.indexOf(preludeMark);
         const QString prelude = cut >= 0 ? call.left(cut) : QString();
-        QString statement = (cut >= 0 ? prelude + "\n" : QString()) + var + " = " + (cut >= 0 ? call.mid(cut + preludeMark.size()) : call);
+        // (a block of plain Python -- the Python menu -- is written as its code is: no name, no line that shows it; it is no model)
+        const bool plain = kind == "python";
+        QString statement = plain ? call : (cut >= 0 ? prelude + "\n" : QString()) + var + " = " + (cut >= 0 ? call.mid(cut + preludeMark.size()) : call);
+        const QString tail = plain ? QString() : "\n" + var + images;
         // (a locked model the call is made of is held by reference: `# shadow: name` on the statement's last line, so it stays where it is
         // and is not made part of the call)
         for (const QString& locked : lockedNames)
@@ -7317,9 +7575,10 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
 
         // The library's functions are in scope with `from fieldes import *`
         static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
-        const QString star = starImport.match(src).hasMatch() ? QString() : QString("from fieldes import *\n\n");
+        const QString star = (plain || starImport.match(src).hasMatch()) ? QString() : QString("from fieldes import *\n\n");
 
         QList<TextEdit> edits;
+        int cursorAfter = -1;               // (written at the insertion point: the text cursor of the editor goes under what was written, as it does in any editor, so that the next thing lands under it)
         if ((kind == "operation" || withBodies) && !bare)
         {
             // Under the definition of the model, with a line showing the result
@@ -7335,8 +7594,19 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         {
             // (a menu of the text editor opened on a line that is no model: what it makes goes under that line)
             const QString at = src.split('\n')[line0];
-            edits << TextEdit{line0, int(at.size()), line0, int(at.size()), "\n" + statement + "\n" + var + images};
+            edits << TextEdit{line0, int(at.size()), line0, int(at.size()), "\n" + statement + tail};
             if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+        }
+        else if (const int at = insertionLine(src.split('\n')); at >= 0)
+        {
+            // At the insertion point (a gap of the tree that was clicked, or where the text cursor of the editor is): above the row the point is above, so that what is added next lands under
+            // this -- the point stays above the same row
+            QString text = statement + tail + "\n\n";
+            if (at == 0 && !star.isEmpty()) text = star + text;
+            edits << TextEdit{at, 0, at, 0, text};
+            if (at > 0 && !star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
+            shiftInsertKey(int(text.count('\n')) + (at > 0 && !star.isEmpty() ? int(star.count('\n')) : 0));
+            cursorAfter = at + int(text.count('\n')) + (at > 0 && !star.isEmpty() ? int(star.count('\n')) : 0);
         }
         else
         {
@@ -7346,11 +7616,11 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
             while (last >= 0 && lines[last].trimmed().isEmpty()) --last;
             if (last < 0) edits << TextEdit{0, 0, lines.isEmpty() ? 0 : int(lines.size()) - 1,
                                             lines.isEmpty() ? 0 : int(lines.last().size()),
-                                            star + statement + "\n" + var + images + "\n"};
+                                            star + statement + tail + "\n"};
             else
             {
                 edits << TextEdit{last, int(lines[last].size()), last, int(lines[last].size()),
-                                  "\n\n" + statement + "\n" + var + images};
+                                  "\n\n" + statement + tail};
                 if (!star.isEmpty()) edits << TextEdit{0, 0, 0, 0, star};
             }
         }
@@ -7373,9 +7643,10 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
                 }
             }
         }
-        m_selectNew = var;
+        m_selectNew = plain ? QString() : var;
         m_selectNewTries = 0;
-        emit(editScript(edits, (kind == "primitive" ? "New " : "Add ") + name));
+        emit(editScript(edits, (plain ? "Add Python " : kind == "primitive" ? "New " : "Add ") + name));
+        if (cursorAfter >= 0) emit(insertionChosen(cursorAfter, false));
     };
     // (nothing is asked: the call is written with every argument in it -- what it needs as a placeholder, the rest with its defaults -- and
     // changed in the code editor)
@@ -7475,6 +7746,8 @@ QString ScenePanel::dumpRows() const
         else if (type == "hole") out += "  [placeholder]";
         else if (type == "arg") out += "  [argument]";
         else if (type == "section") out += "  [section]";
+        else if (type == "python") out += "  [python block]";
+        else if (type == "pychild") out += "  [python, locked]";
         else if (type == "bcgroup")
             out += QString("  [conditions of %1, eye %2]").arg(it["var"].toString(), r->icon(COL_EYE).isNull() ? "none" : r->data(COL_EYE, Qt::UserRole).toBool() ? "on" : "off");
         if (r->childCount() > 0 && !r->isExpanded()) out += "  {closed}";
@@ -8190,6 +8463,19 @@ ScenePanel::OnPlan ScenePanel::planReplace(const QList<QJsonObject>& models, con
 bool ScenePanel::canDrop(QTreeWidgetItem* over, int at, bool copy, QString* why) const
 {
     auto refuse = [&](const QString& text) { if (why) *why = text; return false; };
+    if (m_dragging && !m_dragPython.isEmpty())
+    {
+        // A block of plain Python goes above or below a row of the top level (a model, a section's row, another block), never into one: what is inside is locked
+        if (!over) return false;
+        const QString overType = over->data(COL_NAME, ROLE_TYPE).toString();
+        auto parentRow = over->parent();
+        // (any row inside a model or a block -- an argument, a name, a statement, a branch -- is locked: said in words, not by the forbidden cursor alone)
+        if (parentRow && parentRow->data(COL_NAME, ROLE_TYPE).toString() != "section")
+            return refuse(T("Python code is moved among the rows of the top level.  What is inside a model or a block is locked here: edit it in the code editor."));
+        if (at == DropOn) return false;
+        if (overType != "item" && overType != "section" && overType != "python") return false;
+        return !(overType == "python" && over->data(COL_NAME, ROLE_ITEM).toJsonObject()["line"].toInt() == m_dragPython["line"].toInt());
+    }
     const QList<QJsonObject> models = m_dragging ? m_dragModels : draggedModels();
     if (models.isEmpty()) return false;
     bool anyLocked = false;
@@ -8756,8 +9042,78 @@ void ScenePanel::predictScene(int oldCount, const QStringList& after, const QVec
     installPrediction(scene);
 }
 
+void ScenePanel::movePythonBlock(const QJsonObject& block, QTreeWidgetItem* over, int at)
+{
+    if (!m_source || !over) return;
+    // (the rows must be of the text that is in the editor: the lines come from them)
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh)
+    {
+        refuseOutOfDate();
+        return;
+    }
+    const QStringList lines = m_source().split('\n');
+    int first = block["line"].toInt() - 1, last = block["end_line"].toInt() - 1;
+    if (first < 0 || last >= lines.size() || last < first) return;
+    // (the comment lines right above it are about it, and the blank lines under it keep it apart from what follows: both go with it -- but not the heading of a section)
+    static const QRegularExpression heading(R"(^#\s*(SECTION\b|%%))");
+    static const QRegularExpression hidden(R"(^\s*#\s*hidden:)");
+    while (first > 0)
+    {
+        const QString t = lines[first - 1].trimmed();
+        if (t.startsWith('#') && !heading.match(t).hasMatch() && !hidden.match(t).hasMatch()) --first;
+        else break;
+    }
+    while (last + 1 < lines.size() && lines[last + 1].trimmed().isEmpty()) ++last;
+    // Where it goes: above the row, or under what the row holds
+    const QString type = over->data(COL_NAME, ROLE_TYPE).toString();
+    const QJsonObject o = over->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    int dest;
+    if (at == DropAbove) dest = gapLine(over);
+    else if (type == "section") dest = o["line"].toInt();                  // (the line after the heading: first in that section)
+    else if (type == "python") dest = o["end_line"].toInt();
+    else dest = groupEnd(o);
+    dest = std::max(0, std::min(dest, int(lines.size())));
+    if (dest >= first && dest <= last + 1) return;                         // (it stays where it is)
+    // (a block is written between two statements of the top level, not into a block of code or between the lines of a statement)
+    if (!canStartStatementAt(lines, dest))
+    {
+        notify(T("The block cannot go there: it is inside a block of code."));
+        return;
+    }
+    QStringList moved = lines.mid(first, last - first + 1);
+    // (apart from the next statement by a blank line when it stands against it)
+    if (dest < lines.size() && !lines[dest].trimmed().isEmpty() && !moved.last().trimmed().isEmpty()) moved << QString();
+    // (and from what stands above it, when it comes down against that)
+    if (dest > 0 && !lines[dest - 1].trimmed().isEmpty() && !moved.first().trimmed().isEmpty()) moved.prepend(QString());
+    QStringList after = lines;
+    for (int k = first; k <= last; ++k) after.removeAt(first);
+    const int into = dest > last ? dest - (last - first + 1) : dest;
+    for (int k = 0; k < moved.size(); ++k) after.insert(into + k, moved[k]);
+    // One edit over the lines between the two places (the rest is as it was)
+    const int lo = std::min(first, dest), hi = std::max(last + 1, dest);
+    const int extra = int(after.size() - lines.size());
+    const QStringList region = after.mid(lo, hi - lo + extra);
+    emit(editScript(QList<TextEdit>{TextEdit{lo, 0, hi - 1, int(lines[hi - 1].size()), region.join("\n")}}, T("Move %1").arg(block["label"].toString())));
+}
+
+void ScenePanel::shiftInsertKey(int lines)
+{
+    if (m_insertKey.startsWith("python@")) m_insertKey = "python@" + QString::number(m_insertKey.mid(7).toInt() + lines);
+}
+
 void ScenePanel::onDrop(QTreeWidgetItem* over, int at, const QPoint& global, bool copy)
 {
+    if (!m_dragPython.isEmpty())
+    {
+        // (a block of Python was dropped: its lines are moved; nothing else is made of a drop)
+        const QJsonObject block = m_dragPython;
+        m_dragPython = QJsonObject();
+        m_dragModels.clear();
+        if (over && at != DropOn) movePythonBlock(block, over, at);
+        return;
+    }
     // (at once: the mouse was let go, and the script is edited and the tree changed before anything else happens)
     m_dropModels = m_dragModels;
     m_dropShadow = m_dragShadow;
@@ -8770,8 +9126,21 @@ bool ScenePanel::beginDrag(QTreeWidgetItem* row, QString* text, QIcon* icon, boo
 {
     m_dragSourceLine.clear();
     m_dragShadow = false;
+    m_dragPython = QJsonObject();
     QList<QJsonObject> models;
     const QString type = row->data(COL_NAME, ROLE_TYPE).toString();
+    if (type == "python")
+    {
+        // A block of plain Python is carried on its own: it moves among the top-level rows (its lines are moved), nothing else goes with it
+        m_dragPython = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        *text = row->text(COL_NAME);
+        *icon = row->icon(COL_NAME);
+        m_prepareTimer.stop();
+        m_dragModels.clear();
+        m_dragging = true;
+        m_dropEdited = false;
+        return true;
+    }
     if (type == "dep")
     {
         // A shadow: the reference of a statement to a model that another statement owns.  It is dragged on its own: the
@@ -10223,24 +10592,8 @@ void ScenePanel::createSectionBefore(QTreeWidgetItem* below)
         refuseOutOfDate();
         return;
     }
-    const QJsonObject it = below->data(COL_NAME, ROLE_ITEM).toJsonObject();
-    const bool sectionRow = below->data(COL_NAME, ROLE_TYPE).toString() == "section";
     const QStringList lines = m_source().split('\n');
-    int at = sectionRow ? it["line"].toInt() - 1 : groupStart(it);
-    if (!sectionRow)
-    {
-        // (the models a row holds are defined above it: the section starts above them too)
-        std::function<void(QTreeWidgetItem*)> earliest = [&](QTreeWidgetItem* r) {
-            for (int k = 0; k < r->childCount(); ++k)
-            {
-                auto c = r->child(k);
-                if (c->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
-                at = std::min(at, groupStart(c->data(COL_NAME, ROLE_ITEM).toJsonObject()));
-                earliest(c);
-            }
-        };
-        earliest(below);
-    }
+    int at = gapLine(below);
     at = std::max(0, std::min(at, int(lines.size())));
     QSet<QString> names;
     for (const auto v : m_scene["sections"].toArray()) names << v.toObject()["name"].toString();
@@ -10299,6 +10652,130 @@ void ScenePanel::createSectionAtEnd()
     m_startSectionRename = header;          // (typed in as soon as the row of the new section is there)
     m_startSectionTries = 0;
     editFollowed(QList<TextEdit>{edit}, "Add section " + name, [](QJsonObject&, const QVector<int>&) {});
+}
+
+int ScenePanel::gapLine(QTreeWidgetItem* below) const
+{
+    const QJsonObject it = below->data(COL_NAME, ROLE_ITEM).toJsonObject();
+    // (a section's heading and a block of Python start where the text says; a model's row starts above what it is made of)
+    const bool sectionRow = below->data(COL_NAME, ROLE_TYPE).toString() == "section" || below->data(COL_NAME, ROLE_TYPE).toString() == "python";
+    int at = sectionRow ? it["line"].toInt() - 1 : groupStart(it);
+    if (!sectionRow)
+    {
+        // (the models a row holds are defined above it: the gap starts above them too)
+        std::function<void(QTreeWidgetItem*)> earliest = [&](QTreeWidgetItem* r) {
+            for (int k = 0; k < r->childCount(); ++k)
+            {
+                auto c = r->child(k);
+                if (c->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
+                at = std::min(at, groupStart(c->data(COL_NAME, ROLE_ITEM).toJsonObject()));
+                earliest(c);
+            }
+        };
+        earliest(below);
+    }
+    return std::max(0, at);
+}
+
+QString ScenePanel::gapKey(QTreeWidgetItem* row) const
+{
+    if (row->data(COL_NAME, ROLE_TYPE).toString() == "section")
+        return "section:" + row->data(COL_NAME, ROLE_ITEM).toJsonObject()["name"].toString();
+    return row->data(COL_NAME, ROLE_KEY).toString();
+}
+
+QTreeWidgetItem* ScenePanel::insertionRow(bool* end, bool* active) const
+{
+    *end = true;
+    *active = m_insertSet;
+    if (!m_insertSet || m_insertKey.isEmpty() || !m_source || m_textUnreadable) return nullptr;
+    auto tree = static_cast<SceneTree*>(m_tree);
+    if (!tree->gapAbove) return nullptr;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (!tree->gapAbove(row)) continue;
+        if (gapKey(row) == m_insertKey)
+        {
+            *end = false;
+            return row;
+        }
+    }
+    return nullptr;             // (the row it was above is gone: the point is at the end)
+}
+
+int ScenePanel::insertionLine(const QStringList& lines) const
+{
+    bool end = true, active = false;
+    QTreeWidgetItem* row = insertionRow(&end, &active);
+    if (!row || end || !m_source) return -1;
+    // (the rows must be of the text that is in the editor: the line comes from them)
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh) return -1;
+    const int at = gapLine(row);
+    if (at >= lines.size()) return -1;
+    // (a statement cannot be written inside a block of code, or between the lines of another statement)
+    if (!canStartStatementAt(lines, at)) return -1;
+    return at;
+}
+
+void ScenePanel::placeInsertion(const QString& key, bool atEnd)
+{
+    if (!m_source) return;
+    m_insertSet = true;
+    m_insertKey = key;
+    int line = 0;
+    if (!atEnd)
+    {
+        bool end = true, active = false;
+        QTreeWidgetItem* row = insertionRow(&end, &active);
+        if (row) line = gapLine(row);
+        else atEnd = true;
+    }
+    m_tree->viewport()->update();
+    emit(insertionChosen(line, atEnd));
+}
+
+void ScenePanel::setEditorCursor(int line0, int col0)
+{
+    if (!m_source || m_textUnreadable || m_dragging) return;
+    // (the rows must be of the text the cursor is in)
+    const QString current = md5Hex(m_source());
+    const bool fresh = m_predicted ? m_predictedMd5 == current : m_scene["source_md5"].toString() == current;
+    if (!fresh) return;
+    auto tree = static_cast<SceneTree*>(m_tree);
+    if (!tree->gapAbove) return;
+    struct Gap { int at, stop; QString key; };
+    QList<Gap> gaps;
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        if (!tree->gapAbove(row)) continue;
+        const QString rowType = row->data(COL_NAME, ROLE_TYPE).toString();
+        const QJsonObject rowItem = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+        const int at = gapLine(row);
+        // (a section is its heading: what is written under it belongs to the rows below; a block of Python is its own lines)
+        gaps.append(Gap{at, rowType == "section" ? at + 1 : rowType == "python" ? rowItem["end_line"].toInt() : groupEnd(rowItem), gapKey(row)});
+    }
+    // Inside a statement -- anywhere but the first column of its first line -- the point is after it; on that column it is before it; between statements it is above the next one
+    int from = line0;
+    for (const Gap& g : gaps)
+        if (line0 >= g.at && line0 < g.stop && !(line0 == g.at && col0 == 0)) from = std::max(from, g.stop);
+    QString key;
+    int best = std::numeric_limits<int>::max();
+    for (const Gap& g : gaps)
+    {
+        if (g.at >= from && g.at < best)
+        {
+            best = g.at;
+            key = g.key;
+        }
+    }
+    if (m_insertSet && key == m_insertKey) return;
+    m_insertSet = true;
+    m_insertKey = key;
+    m_tree->viewport()->update();
 }
 
 void ScenePanel::openProperties(QTreeWidgetItem* row, const QPoint& global)

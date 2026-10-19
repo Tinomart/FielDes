@@ -160,6 +160,9 @@ public slots:
 
     /*  Scrolls to (and flashes) a 0-based line  */
     void goToLine(int line0);
+    /*  The text cursor goes to the start of a (0-based) line -- or to the very end of the script -- and the script takes the keyboard focus: a gap of the model
+     *  tree was clicked, and the code that is added from the tree goes where the cursor is  */
+    void placeCursor(int line0, bool atEnd);
     /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over  */
     void goToPlaceholder(int line0, int col0);
     /*  Selects a value in the code (an argument row of the model tree was clicked), marked to be replaced as a placeholder is  */
@@ -197,6 +200,8 @@ public slots:
     void onDragEnd();
 
 signals:
+    /*  The user moved the text cursor in the script (see Script::userCursorMoved)  */
+    void userCursorMoved(int line0, int col0);
     void languageChanged();
     void scriptChanged(QString s);
     void modificationChanged(bool m);

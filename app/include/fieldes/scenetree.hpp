@@ -238,6 +238,17 @@ public slots:
      *  lock them), as one undoable step; it asks once if the rest of the script still uses their names  */
     void deleteSelected();
 
+    /*  Ctrl+E: the selected 2D shape is pulled into a solid -- the Extruding > extrude entry of the menus, written under it (`extrude(shape, 0, size)`, the size a round number of the
+     *  shape's own size) -- or a word of why not (the selection is not something a 2D shape was meant)  */
+    void extrudeSelected();
+
+    /*  The INSERTION POINT: what is added from the tree (a new shape, a condition, a simulation) is written at the point, not always at the end of the script.  It is a gap between
+     *  two rows of the top level -- the line the gap is drawn on in the tree, above the row it stands for --, set by a click on that gap (the text cursor of the editor goes to
+     *  the line) or by the text cursor of the editor, which the user moves (this is called with its line and column: inside a statement the point is after it, on its first
+     *  column before it, between statements above the next one).  Known by the row below it, so that it stays where it is however the script is edited; written code goes above
+     *  that row, so the next thing added lands under it.  Not set (a script just opened): the end of the script, as it always was  */
+    void setEditorCursor(int line0, int col0);
+
     /*  Shift+D: a copy of each selected model under it; Ctrl+C: the selected models (their statements) are kept, and
      *  Ctrl+V puts copies of them under the selected model, or at the end of the script -- with names that are free, and
      *  the copies referring to each other's copies.  Written like every other edit of the tree: one undoable step  */
@@ -302,6 +313,8 @@ signals:
     void activeSymmetryChanged(QList<int> lines0, bool chosen, QString name);
     /*  Scroll the editor to a (0-based) line and flash it  */
     void goToLine(int line0);
+    /*  A gap of the tree was clicked: the insertion point is there, and the editor's text cursor goes to the start of this (0-based) line -- or to the end of the script when the gap is the last one  */
+    void insertionChosen(int line0, bool atEnd);
     /*  Select the placeholder (...) at a (0-based) place of the script, ready to be written over: the note under the tree and the rows of
      *  the placeholders point at the code editor, where they are filled in  */
     void placeholderRequested(int line0, int col0);
@@ -812,6 +825,24 @@ protected:
      *  in the row; a double click renames one (the comment is rewritten as it is typed)  */
     void createSectionBefore(QTreeWidgetItem* below);
     void createSectionAtEnd();                  // (the gap after the last row: a section at the end of the script)
+    /*  The line (0-based) of the script a gap above this row is on: the first line of the statements the row holds (what it is made of is defined above it), or of a section's heading  */
+    int gapLine(QTreeWidgetItem* below) const;
+    /*  What a gap is known by: the row below it -- a model by its key, a section by its name  */
+    QString gapKey(QTreeWidgetItem* row) const;
+    /*  The row the insertion point is above (`end`: it is at the end of the tree, no row), and whether it was set (it is drawn faint while it is only the default, the end)  */
+    QTreeWidgetItem* insertionRow(bool* end, bool* active) const;
+    /*  The (0-based) line what the tree adds is written before; -1: at the end of the script (not set, at the end, the row is gone, the rows are not of the text in the editor, or
+     *  the line is inside a block of code that cannot take a statement)  */
+    int insertionLine(const QStringList& lines) const;
+    void placeInsertion(const QString& key, bool atEnd);
+    /*  Lines were written above the row the point is above: a block of Python is known by the line it starts on, so its key moves down with them (a model's does not change)  */
+    void shiftInsertKey(int lines);
+    /*  A block of plain Python (a row of kind `python`) is dragged on its own: it is moved among the rows of the top level, its lines moved in the script (one undoable edit).
+     *  Dropped above or below `over` (`at`: DropAbove / DropBelow); what is inside a block, or inside a model, is locked: nothing is dropped there  */
+    void movePythonBlock(const QJsonObject& block, QTreeWidgetItem* over, int at);
+    QJsonObject m_dragPython;                   // (the block being dragged; empty: the drag is of models)
+    bool m_insertSet = false;
+    QString m_insertKey;                        // (the key of the row the point is above; empty: the end)
 
     /*  The property arrow (the end of a row that is hovered, when the model has properties: the fields and numbers of a result) opens a
      *  drawer that lists them; one that is clicked is written as a new model of its own, under the statement: `stress_1 = result.von_mises`  */

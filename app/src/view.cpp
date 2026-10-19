@@ -791,12 +791,21 @@ void View::redrawPicker()
         }
         ++color;                // (a point is not painted, nor picked: the numbers of the others stay what they were)
     }
+    const int pickPixels = camera.size.width() * camera.size.height();
+    if (pick_depth.size() != pickPixels)
     {
-        // (the 2D shapes are picked before the 3D ones, as they are drawn over them: the depth they leave is their own)
+        pick_depth.resize(pickPixels);
+    }
+    bool depthRead = false;
+    {
+        // The 2D shapes are picked after the 3D ones, as they are drawn over them: where one covers a pixel, it is what is there.  The depth of the BODIES is read first -- a press on a body that no
+        // 2D shape covers is at the depth of the body, not at the far plane that the buffer holds once it is cleared for the 2D shapes (that put the press of a surface of a body far away from it,
+        // wherever a 2D shape was shown: a pulled face of an extrusion changed its radius to 119) -- and the depth of a 2D shape takes its place only where the shape was drawn
         bool any = false;
         for (auto& s : shapes) any = any || (s->is2D() && !s->noPaint());
         if (any)
         {
+            glReadPixels(0, 0, camera.size.width(), camera.size.height(), GL_DEPTH_COMPONENT, GL_FLOAT, pick_depth.data());
             glClear(GL_DEPTH_BUFFER_BIT);
             color = 1;
             for (auto& s : shapes)
@@ -804,6 +813,13 @@ void View::redrawPicker()
                 if (!s->noPaint() && s->is2D()) s->drawMonochrome(m, color);
                 ++color;
             }
+            QVector<float> flat(pickPixels);
+            glReadPixels(0, 0, camera.size.width(), camera.size.height(), GL_DEPTH_COMPONENT, GL_FLOAT, flat.data());
+            for (int i = 0; i < pickPixels; ++i)
+            {
+                if (flat[i] < 1.0f) pick_depth[i] = flat[i];
+            }
+            depthRead = true;
         }
     }
     if (clipping)
@@ -815,12 +831,11 @@ void View::redrawPicker()
 
     // There's no utility function to get the depth buffer, so we manually
     // read it with glReadPixels here.
-    if (pick_depth.size() != camera.size.width() * camera.size.height())
+    if (!depthRead)
     {
-        pick_depth.resize(camera.size.width() * camera.size.height());
+        glReadPixels(0, 0, camera.size.width(), camera.size.height(),
+                     GL_DEPTH_COMPONENT, GL_FLOAT, pick_depth.data());
     }
-    glReadPixels(0, 0, camera.size.width(), camera.size.height(),
-                 GL_DEPTH_COMPONENT, GL_FLOAT, pick_depth.data());
 
     glDisable(GL_DEPTH_TEST);
     pick_fbo->release();
@@ -1962,9 +1977,14 @@ void View::mouseMoveEvent(QMouseEvent* event)
             changed |= s->updateVars(sol.second);
         }
         if (timing)
-            std::fprintf(stderr, "[at %lld ms] [drag] surface moved: %.1f ms in all (solving %.1f, writing the numbers %.1f, region %.1f, shapes given them %.1f)\n",
+        {
+            std::fprintf(stderr, "[at %lld ms] [drag] surface moved: %.1f ms in all (solving %.1f, writing the numbers %.1f, region %.1f, shapes given them %.1f); target (%.3f, %.3f, %.3f), residual %.2g, numbers:",
                          static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000), double(clock.nsecsElapsed()) / 1e6,
-                         double(tSolved) / 1e6, double(tWritten - tSolved) / 1e6, double(tGrown - tWritten) / 1e6, double(clock.nsecsElapsed() - tGrown) / 1e6);
+                         double(tSolved) / 1e6, double(tWritten - tSolved) / 1e6, double(tGrown - tWritten) / 1e6, double(clock.nsecsElapsed() - tGrown) / 1e6,
+                         double(cursor_pos.x()), double(cursor_pos.y()), double(cursor_pos.z()), double(sol.first));
+            for (const auto& kv : sol.second) std::fprintf(stderr, " %.4g", double(kv.second));
+            std::fprintf(stderr, "\n");
+        }
         if (changed)
         {
             busy.show();
@@ -2347,9 +2367,10 @@ void View::mousePressEvent(QMouseEvent* event)
 
                 mouse.state = mouse.DRAG_EVAL;
                 if (timing)
-                    std::fprintf(stderr, "[at %lld ms] [drag] surface pressed: %.1f ms in all (dragStart %.1f, field and evaluator %.1f, weights %.1f, direction %.1f)\n",
+                    std::fprintf(stderr, "[at %lld ms] [drag] surface pressed: %.1f ms in all (dragStart %.1f, field and evaluator %.1f, weights %.1f, direction %.1f); at (%.3f, %.3f, %.3f), direction (%.3f, %.3f, %.3f)\n",
                                  static_cast<long long>(QDateTime::currentMSecsSinceEpoch() % 100000000), double(clock.nsecsElapsed()) / 1e6,
-                                 double(tStart) / 1e6, double(tFrom - tStart) / 1e6, double(tWeights - tFrom) / 1e6, double(clock.nsecsElapsed() - tWeights) / 1e6);
+                                 double(tStart) / 1e6, double(tFrom - tStart) / 1e6, double(tWeights - tFrom) / 1e6, double(clock.nsecsElapsed() - tWeights) / 1e6,
+                                 double(drag_start.x()), double(drag_start.y()), double(drag_start.z()), double(drag_dir.x()), double(drag_dir.y()), double(drag_dir.z()));
             }
             else
             {
@@ -3743,6 +3764,20 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
     }
 }
 
+void View::fillPythonMenu(QMenu* menu, const QVector3D& point, double scale, int line)
+{
+    const QJsonArray blocks = m_catalog["python"].toArray();
+    if (blocks.isEmpty()) menu->addAction(T("(not loaded yet: run the script first)"))->setEnabled(false);
+    for (const auto v : blocks)
+    {
+        const auto b = v.toObject();
+        const QString name = b["name"].toString();
+        auto action = menu->addAction(TypeIcons::icon("python"), b["label"].toString(name), this,
+                                      [=]{ emit(createRequested("python", name, point, scale, line, -1)); });
+        action->setToolTip(b["doc"].toString() + "\n" + T("Plain Python, written at the insertion point of the tree; edit it in the code editor."));
+    }
+}
+
 void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations, const QString& domain)
 {
     QJsonArray ops;
@@ -3967,6 +4002,9 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto engineering = menu->addMenu(TypeIcons::icon("engineering"), T("Engineering"));
     engineering->setToolTipsVisible(true);
     fillEngineeringMenu(engineering, -1, point, scale, atLine);
+    auto python = menu->addMenu(TypeIcons::icon("python"), T("Python"));
+    python->setToolTipsVisible(true);
+    fillPythonMenu(python, point, scale, atLine);
     menu->addSeparator();
     addImportEntry(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
@@ -4114,6 +4152,9 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     auto engineering = menu->addMenu(TypeIcons::icon("engineering"), T("Engineering"));
     engineering->setToolTipsVisible(true);
     fillEngineeringMenu(engineering, line, point, scale, -1);
+    auto python = menu->addMenu(TypeIcons::icon("python"), T("Python"));
+    python->setToolTipsVisible(true);
+    fillPythonMenu(python, point, scale, -1);
     menu->addSeparator();
     addQuickOperations(menu, line, point, scale);
     menu->addSeparator();

@@ -6,6 +6,7 @@
     + cone
     + torus
     + pyramid
+    + prism
   + New 2D shape
     + circle
     + rectangle
@@ -179,8 +180,24 @@
     + material
   ----
   + parametric_optimization
++ Python
+  + variable    [A name for a number, a text or any value: it is used by its name further down Plain Python]
+  + if    [Runs the code under it only when the condition is true Plain Python, written at the insert]
+  + if / else    [One code when the condition is true, another when it is not Plain Python, written at the i]
+  + for loop (a count)    [Runs the code under it once for each number 0, 1, 2 ... up to the count Plain Python, writ]
+  + for loop (a list)    [Runs the code under it once for each item of a list Plain Python, written at the insertion]
+  + while loop    [Runs the code under it again and again while the condition is true Plain Python, written a]
+  + function (def)    [Code with a name that takes values and gives one back: it is called by its name Plain Pyth]
+  + class    [A kind of object of your own, with functions of its own Plain Python, written at the inser]
+  + list    [Several values under one name: values[0] is the first Plain Python, written at the inserti]
+  + list from a loop    [A list made by a loop, in one line Plain Python, written at the insertion point of the tre]
+  + dictionary    [Values found by a name: settings["size"] Plain Python, written at the insertion point of t]
+  + try / except    [Runs the code, and another code when it fails Plain Python, written at the insertion point]
+  + with (a file)    [Opens a file for the code under it, and closes it after Plain Python, written at the inser]
+  + import    [Brings in a module of Python: math, random ... Plain Python, written at the insertion poin]
+  + print    [Writes a value to the message pane of the script Plain Python, written at the insertion po]
 ----
-+ center    [The middle of the model's bounding box, as a point]
++ center   [The middle of the model's bounding box, as a point]
 + bounding_box    [The smallest box, aligned with the axes, that holds the model: a body of its own]
 ----
 + Import model...    [A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellate]

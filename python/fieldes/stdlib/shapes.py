@@ -87,9 +87,35 @@ def ring(ro, ri, center=(0, 0)):
 
 stdlib.polygon.argtypes = [tfloat, ctypes.c_int, tvec2]
 stdlib.polygon.restype = libfive_tree
+def _polygon_sides(r, n, center):
+    ''' The unit normals and the offsets of the n sides of the regular polygon with center-to-corner distance r round `center` -- an odd polygon has a corner straight below the
+        centre, an even one a side, as the kernel's has -- the side k being the line n . (x, y) = c between the corners k and k + 1 '''
+    first = -math.pi / 2 + (math.pi / n if n % 2 == 0 else 0.0)
+    apothem = r * math.cos(math.pi / n)
+    normals, offsets = [], []
+    for k in range(n):
+        t = first + (k + 0.5) * 2 * math.pi / n
+        nx, ny = math.cos(t), math.sin(t)
+        normals.append((nx, ny))
+        offsets.append(nx * center[0] + ny * center[1] + apothem)
+    return normals, offsets
+
+
+def _rebuilt_polygon(normals, offsets):
+    out = _own(_triangle_planes(normals, offsets))
+    _ringed(out, lambda: _triangle_corners(normals, offsets))
+    return _parametric(out, offsets, lambda v: _rebuilt_polygon(normals, v), lambda v: _triangle_centre(normals, v))
+
+
 def polygon(r, n, center=(0, 0)):
-    """ A polygon with center-to-vertex distance r and n sides
+    """ A polygon with center-to-vertex distance r and n sides.  Its handles pull a side each -- a side moves parallel to itself, the others stay -- and the gizmo stays at the middle of the polygon
     """
+    if _number(r) and r > 0 and isinstance(n, int) and n >= 3 and len(center) == 2 and all(_number(c) for c in center):
+        normals, offsets = _polygon_sides(r, n, center)
+        out = _own(_triangle_planes(normals, offsets))
+        _bounded(out, (center[0] - r, center[1] - r, 0), (center[0] + r, center[1] + r, 0))     # (the corners are within r of the centre: a box that holds it)
+        _ringed(out, lambda: _triangle_corners(normals, offsets))
+        return _parametric(out, offsets, lambda v: _rebuilt_polygon(normals, v), lambda v: _triangle_centre(normals, v))
     args = [Shape.wrap(r), n, list([Shape.wrap(i) for i in center])]
     out = Shape(stdlib.polygon(
         args[0].ptr,
@@ -203,10 +229,10 @@ def _triangle_planes(normals, offsets):
 
 
 def _triangle_corners(normals, offsets):
-    ''' The three corners of the triangle as expressions of the three offsets: a corner is where two sides meet (the normals are numbers, so each corner is a linear
-        combination of two offsets) '''
+    ''' The corners of the triangle (or of a convex polygon, its sides in turn) as expressions of the offsets: a corner is where two sides meet (the normals are numbers, so each
+        corner is a linear combination of two offsets) '''
     corners = []
-    for i in range(3):
+    for i in range(len(normals)):
         (ax, ay), (bx, by) = normals[i - 1], normals[i]
         det = ax * by - ay * bx
         # the corner between side i-1 and side i: n_{i-1} . p = c_{i-1}, n_i . p = c_i
@@ -216,12 +242,34 @@ def _triangle_corners(normals, offsets):
 
 
 def _triangle_centre(normals, offsets):
-    ''' The middle of the box of the triangle as an expression of the three offsets '''
+    ''' The middle of the box of the triangle (or of a polygon of as many sides as the normals) as an expression of the offsets '''
     corners = _triangle_corners(normals, offsets)
-    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
-    lo_x, hi_x = xs[0].min(xs[1]).min(xs[2]), xs[0].max(xs[1]).max(xs[2])
-    lo_y, hi_y = ys[0].min(ys[1]).min(ys[2]), ys[0].max(ys[1]).max(ys[2])
+    lo_x = hi_x = Shape.wrap(corners[0][0])
+    lo_y = hi_y = Shape.wrap(corners[0][1])
+    for x, y in corners[1:]:
+        lo_x, hi_x = lo_x.min(x), hi_x.max(x)
+        lo_y, hi_y = lo_y.min(y), hi_y.max(y)
     return ((lo_x + hi_x) * 0.5, (lo_y + hi_y) * 0.5, 0.0)
+
+
+def _triangle_sides(corners):
+    ''' The unit normals (out of the triangle) and the offsets of the three sides of the triangle of three corners that are plain numbers -- the side i is the line n . (x, y) = c --, or None
+        when the corners are on one line '''
+    area = sum(corners[i][0] * corners[(i + 1) % 3][1] - corners[(i + 1) % 3][0] * corners[i][1] for i in range(3))
+    if abs(area) <= 1e-12:
+        return None
+    sign = 1.0 if area > 0 else -1.0
+    normals, offsets = [], []
+    for i in range(3):
+        (px, py), (qx, qy) = corners[i], corners[(i + 1) % 3]
+        ex, ey = qx - px, qy - py
+        length = math.hypot(ex, ey)
+        if length < 1e-12:
+            return None
+        nx, ny = sign * ey / length, -sign * ex / length            # (out of the triangle)
+        normals.append((nx, ny))
+        offsets.append(nx * px + ny * py)
+    return normals, offsets
 
 
 def triangle(a, b, c):
@@ -229,24 +277,13 @@ def triangle(a, b, c):
     """
     corners = [tuple(a), tuple(b), tuple(c)]
     if all(len(p) == 2 and all(_number(v) for v in p) for p in corners):
-        area = sum(corners[i][0] * corners[(i + 1) % 3][1] - corners[(i + 1) % 3][0] * corners[i][1] for i in range(3))
-        if abs(area) > 1e-12:
-            sign = 1.0 if area > 0 else -1.0
-            normals, offsets = [], []
-            for i in range(3):
-                (px, py), (qx, qy) = corners[i], corners[(i + 1) % 3]
-                ex, ey = qx - px, qy - py
-                length = math.hypot(ex, ey)
-                if length < 1e-12:
-                    break
-                nx, ny = sign * ey / length, -sign * ex / length            # (out of the triangle)
-                normals.append((nx, ny))
-                offsets.append(nx * px + ny * py)
-            if len(normals) == 3:
-                out = _own(_triangle_planes(normals, offsets))
-                _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
-                _ringed(out, lambda: _triangle_corners(normals, offsets))
-                return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
+        sides = _triangle_sides(corners)
+        if sides is not None:
+            normals, offsets = sides
+            out = _own(_triangle_planes(normals, offsets))
+            _bounded(out, (min(a[0], b[0], c[0]), min(a[1], b[1], c[1]), 0), (max(a[0], b[0], c[0]), max(a[1], b[1], c[1]), 0))
+            _ringed(out, lambda: _triangle_corners(normals, offsets))
+            return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), list([Shape.wrap(i) for i in c])]
     out = Shape(stdlib.triangle(
         tvec2(*[a.ptr for a in args[0]]),
@@ -264,6 +301,39 @@ def _rebuilt_triangle(normals, offsets):
     _ringed(out, lambda: _triangle_corners(normals, offsets))
     return _parametric(out, offsets, lambda v: _rebuilt_triangle(normals, v), lambda v: _triangle_centre(normals, v))
 
+
+def _prism_planes(normals, offsets, z0, z1):
+    ''' The triangular prism: the greatest of the distances to the three side planes of the triangle (`_triangle_planes`) and to the two end planes z0 - z and z - z1.  Every face has a number of its own,
+        so a face that is pulled moves along its normal, parallel to itself, and no other face moves '''
+    return _triangle_planes(normals, offsets).max(Shape.wrap(z0) - Shape.Z()).max(Shape.Z() - Shape.wrap(z1))
+
+
+def _prism_centre(normals, v):
+    ''' The middle of the box of the prism as expressions of its five numbers '''
+    cx, cy, _ = _triangle_centre(normals, v[0:3])
+    return (cx, cy, (Shape.wrap(v[3]) + Shape.wrap(v[4])) * 0.5)
+
+
+def _rebuilt_prism(normals, v):
+    out = _own(_prism_planes(normals, v[0:3], v[3], v[4]))
+    return _parametric(out, v, lambda w: _rebuilt_prism(normals, w), lambda w: _prism_centre(normals, w))
+
+
+def prism(a, b, c, z0, z1):
+    """ A triangular prism: the triangle of the three corners a, b, c (x, y) between the heights z0 and z1.  Its handles pull a face each -- the three sides and the two ends -- parallel to itself,
+        and the gizmo stays at the middle of the prism
+    """
+    corners = [tuple(a), tuple(b), tuple(c)]
+    if all(len(p) == 2 and all(_number(v) for v in p) for p in corners) and _number(z0) and _number(z1):
+        sides = _triangle_sides(corners)
+        if sides is not None:
+            normals, offsets = sides
+            out = _own(_prism_planes(normals, offsets, z0, z1))
+            _bounded(out, (min(p[0] for p in corners), min(p[1] for p in corners), min(z0, z1)), (max(p[0] for p in corners), max(p[1] for p in corners), max(z0, z1)))
+            return _parametric(out, list(offsets) + [z0, z1], lambda v: _rebuilt_prism(normals, v), lambda v: _prism_centre(normals, v))
+    # (corners that are not plain numbers, or on one line: the triangle of them, pulled between the heights)
+    return _own(triangle(a, b, c).max(Shape.wrap(z0) - Shape.Z()).max(Shape.Z() - Shape.wrap(z1)))
+
 # ---------------------------------------------------------------------------------------------------------------------------------------- 3D
 
 stdlib.box_exact.argtypes = [tvec3, tvec3]
@@ -279,12 +349,45 @@ def box(a, b):
         _bounded(out, a, b)
     return out
 
+def _box_distance(a, b, r=None):
+    ''' The signed distance to the box between the corners a (the low one) and b (the high one), exact (a true distance outside, negative inside), made of the six numbers each
+        standing for ONE side -- so a side that is pulled moves that side and no other -- and, with `r`, of the edges and corners rounded by r: the box of the corners drawn in by r,
+        grown by r again.  (The kernel's rounded box is a box of centre and half sizes drawn in and grown by one radius: its numbers tie a side to the opposite one and to the radius.) '''
+    X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
+    dx = (Shape.wrap(a[0]) - X).max(X - Shape.wrap(b[0]))
+    dy = (Shape.wrap(a[1]) - Y).max(Y - Shape.wrap(b[1]))
+    dz = (Shape.wrap(a[2]) - Z).max(Z - Shape.wrap(b[2]))
+    if r is not None:
+        r = Shape.wrap(r)
+        dx, dy, dz = dx + r, dy + r, dz + r
+    inside = dx.max(dy).max(dz).min(0)
+    # (a hair under the square root, as in the rectangle's: a side that a press landed on exactly can be pulled)
+    outside = (dx.max(0).square() + dy.max(0).square() + dz.max(0).square() + 1e-12).sqrt()
+    return inside + outside if r is None else inside + outside - r
+
+
+def _rounded_box_radius(a, b, r):
+    ''' The radius of the rounding in length: the fraction r of half the shortest side, as an expression of the six sides '''
+    sides = [Shape.wrap(b[i]) - Shape.wrap(a[i]) for i in range(3)]
+    return Shape.wrap(r) * sides[0].min(sides[1]).min(sides[2]) * 0.5
+
+
+def _rebuilt_rounded_box(v):
+    out = _own(_box_distance(v[0:3], v[3:6], _rounded_box_radius(v[0:3], v[3:6], v[6])))
+    return _parametric(out, v, _rebuilt_rounded_box, lambda w: ((w[0] + w[3]) * 0.5, (w[1] + w[4]) * 0.5, (w[2] + w[5]) * 0.5))
+
+
 stdlib.rounded_box.argtypes = [tvec3, tvec3, tfloat]
 stdlib.rounded_box.restype = libfive_tree
 def rounded_box(a, b, r):
     """ Rounded box with the given bounds.  The radius `r` is a fraction, 0 to 1, of half the shortest side of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the
-        shortest side a half circle)
+        shortest side a half circle).  Its handles pull a side each -- a side moves, the others and the rounding stay -- and the gizmo stays at the middle of the box
     """
+    if len(a) == 3 and len(b) == 3:
+        out = _own(_box_distance(a, b, _rounded_box_radius(a, b, r)))
+        if all(_number(v) for v in list(a) + list(b)):
+            _bounded(out, a, b)
+        return _parametric(out, list(a) + list(b) + [r], _rebuilt_rounded_box, lambda w: ((w[0] + w[3]) * 0.5, (w[1] + w[4]) * 0.5, (w[2] + w[5]) * 0.5))
     args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(r)]
     out = Shape(stdlib.rounded_box(
         tvec3(*[a.ptr for a in args[0]]),
@@ -332,34 +435,102 @@ def cylinder(r, h, base=(0, 0, 0)):
         _bounded(out, (base[0] - r, base[1] - r, base[2]), (base[0] + r, base[1] + r, base[2] + h))
     return out
 
-stdlib.cone_z.argtypes = [tfloat, tfloat, tvec3]
-stdlib.cone_z.restype = libfive_tree
-def cone(radius, height, base=(0, 0, 0)):
-    """ A cone with the given base radius and height, standing along z on the (optional) base position
-    """
-    args = [Shape.wrap(radius), Shape.wrap(height), list([Shape.wrap(i) for i in base])]
-    out = Shape(stdlib.cone_z(
-        args[0].ptr,
-        args[1].ptr,
-        tvec3(*[a.ptr for a in args[2]])))
-    if _number(radius) and _number(height) and len(base) == 3 and all(_number(c) for c in base):
-        _bounded(out, (base[0] - radius, base[1] - radius, base[2]), (base[0] + radius, base[1] + radius, base[2] + height))
-    return out
+def _cone_planes(slope, axis, offsets):
+    ''' The cone as two surfaces: the base plane z = zb and the side, a cone of a FIXED slope (the unit normal of its profile (nr, nz) in (r, z)) at an offset e of its own: the side is
+        nr r + nz z - e = 0.  Each has ONE number and neither depends on the other's -- the side is measured from the ground, not from the base --, so a face that is pulled moves along
+        its normal (the side: the cone grows or shrinks at its slope, round its base) and nothing else changes.  `axis` is where the cone stands (the gizmo moves it: it is no handle);
+        `offsets` are e, zb.  A hair under the root of r^2, so that the field has a gradient ON the axis '''
+    nr, nz = slope
+    e, zb = (Shape.wrap(v) for v in offsets)
+    X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
+    rad = ((X - axis[0]).square() + (Y - axis[1]).square() + 1e-12).sqrt()
+    return (zb - Z).max(rad * nr + Z * nz - e)
 
-stdlib.pyramid_z.argtypes = [tvec2, tvec2, tfloat, tfloat]
-stdlib.pyramid_z.restype = libfive_tree
-def pyramid(a, b, zmin, height):
-    """ A pyramid defined by its base rectangle, lower Z value, and height
+
+def _cone_centre(slope, axis, v):
+    ''' The middle of the box of the cone as an expression of its numbers: on the axis, half the height up from the base (the apex is where the side meets the axis: (e / nz)) '''
+    nz = slope[1]
+    return (Shape.wrap(axis[0]), Shape.wrap(axis[1]), (Shape.wrap(v[1]) + Shape.wrap(v[0]) * (1.0 / nz)) * 0.5)
+
+
+def _rebuilt_cone(slope, axis, v):
+    out = _own(_cone_planes(slope, axis, v))
+    return _parametric(out, v, lambda w: _rebuilt_cone(slope, axis, w), lambda w: _cone_centre(slope, axis, w))
+
+
+def cone(radius, height, base=(0, 0, 0)):
+    """ A cone with the given base radius and height, standing along z on the (optional) base position: the base is a disc of that radius at the base height and the apex stands
+        `height` above its centre.  It has two faces, the base and the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round
+        its base), and the axis stays where it is
     """
-    args = [list([Shape.wrap(i) for i in a]), list([Shape.wrap(i) for i in b]), Shape.wrap(zmin), Shape.wrap(height)]
-    out = Shape(stdlib.pyramid_z(
-        tvec2(*[a.ptr for a in args[0]]),
-        tvec2(*[a.ptr for a in args[1]]),
-        args[2].ptr,
-        args[3].ptr))
-    if len(a) == 2 and len(b) == 2 and _number(zmin) and _number(height):
+    if _number(radius) and _number(height) and len(base) == 3 and all(_number(c) for c in base) and radius > 0 and height > 0:
+        length = math.hypot(radius, height)
+        slope = (height / length, radius / length)                  # (the unit normal of the side in the plane of (r, z))
+        axis = (base[0], base[1])
+        offsets = [radius * height / length + slope[1] * base[2], base[2]]             # (the side's own number, measured from the ground; the base's)
+        out = _own(_cone_planes(slope, axis, offsets))
+        _bounded(out, (base[0] - radius, base[1] - radius, base[2]), (base[0] + radius, base[1] + radius, base[2] + height))
+        return _parametric(out, offsets, lambda v: _rebuilt_cone(slope, axis, v), lambda v: _cone_centre(slope, axis, v))
+    # (a size or a place that is not a plain number -- a var(), a field -- or a cone of no size: the plane through the rim and the apex, made of the numbers themselves)
+    R, H = Shape.wrap(radius), Shape.wrap(height)
+    cx, cy, cz = (Shape.wrap(c) for c in base)
+    X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
+    rad = ((X - cx).square() + (Y - cy).square() + 1e-12).sqrt()
+    side = (H * rad + R * (Z - cz) - R * H) / (R.square() + H.square()).sqrt()
+    return _own((cz - Z).max(side))
+
+def _pyramid_field(a0, a1, b0, b1, zmin, height):
+    ''' The pyramid on the base rectangle (a0, a1) - (b0, b1) from the height zmin up, its tip `height` above the middle of the base: the greatest of the distances to its five planes, the four
+        slanted ones the planes through a base edge and the tip (the plane through the edge x = b0 and the tip: (height (x - cx) + dx (z - zmin) - dx height) / sqrt(dx^2 + height^2), cx the
+        middle of the base and dx half its width).  Made of the six numbers themselves -- the kernel's pyramid folded its slopes into constants that are no one's number, so a press on
+        a face could only move the pyramid as a whole '''
+    X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
+    a0, a1, b0, b1, zmin, h = (Shape.wrap(v) for v in (a0, a1, b0, b1, zmin, height))
+    cx, cy = (a0 + b0) * 0.5, (a1 + b1) * 0.5
+    dx, dy = (b0 - a0) * 0.5, (b1 - a1) * 0.5
+    hx, hy = (dx.square() + h.square()).sqrt(), (dy.square() + h.square()).sqrt()
+    up_x, up_y = dx * (Z - zmin) - dx * h, dy * (Z - zmin) - dy * h
+    return ((zmin - Z).max((h * (X - cx) + up_x) / hx).max((h * (cx - X) + up_x) / hx)
+                      .max((h * (Y - cy) + up_y) / hy).max((h * (cy - Y) + up_y) / hy))
+
+
+def _pyramid_planes(slopes, offsets):
+    ''' The pyramid as five planes, each with a number of its own: the base z = zmin and four slanted faces of a FIXED slope -- the face on the +x side is qx x + sx z = c, the one on the -x side
+        sx z - qx x = c, and the same in y -- with an offset c each.  A face that is pulled moves along its normal, parallel to itself, and no other face moves (the tip is where they
+        meet: it stays over the middle of the base while the four are as they were made, and follows the faces when they are not) '''
+    qx, sx, qy, sy = slopes
+    cxp, cxm, cyp, cym, zmin = (Shape.wrap(v) for v in offsets)
+    X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
+    return ((zmin - Z).max(X * qx + Z * sx - cxp).max(Z * sx - X * qx - cxm)
+                      .max(Y * qy + Z * sy - cyp).max(Z * sy - Y * qy - cym))
+
+
+def _pyramid_centre(slopes, height, v):
+    ''' The middle of the box of the pyramid as expressions of its five numbers: the middle of the base (where the faces meet the base plane), half the height it was made with up '''
+    qx, _sx, qy, _sy = slopes
+    return ((Shape.wrap(v[0]) - Shape.wrap(v[1])) * (0.5 / qx), (Shape.wrap(v[2]) - Shape.wrap(v[3])) * (0.5 / qy), Shape.wrap(v[4]) + 0.5 * height)
+
+
+def _rebuilt_pyramid(slopes, height, v):
+    out = _own(_pyramid_planes(slopes, v))
+    return _parametric(out, v, lambda w: _rebuilt_pyramid(slopes, height, w), lambda w: _pyramid_centre(slopes, height, w))
+
+
+def pyramid(a, b, zmin, height):
+    """ A pyramid defined by its base rectangle (the corners a and b), lower Z value, and height: its tip stands above the middle of the base.  It has five faces -- the base and four
+        slanted ones -- and its handles pull one each, parallel to itself (the slopes stay what they were made with)
+    """
+    if len(a) == 2 and len(b) == 2 and all(_number(v) for v in (a[0], a[1], b[0], b[1], zmin, height)) and b[0] > a[0] and b[1] > a[1] and height > 0:
+        dx, dy = (b[0] - a[0]) / 2.0, (b[1] - a[1]) / 2.0
+        hx, hy = math.hypot(dx, height), math.hypot(dy, height)
+        slopes = (height / hx, dx / hx, height / hy, dy / hy)        # (qx, sx, qy, sy: the unit normals of the slanted faces)
+        qx, sx, qy, sy = slopes
+        offsets = [qx * b[0] + sx * zmin, sx * zmin - qx * a[0], qy * b[1] + sy * zmin, sy * zmin - qy * a[1], zmin]
+        out = _own(_pyramid_planes(slopes, offsets))
         _bounded(out, (a[0], a[1], zmin), (b[0], b[1], zmin + height))
-    return out
+        return _parametric(out, offsets, lambda v: _rebuilt_pyramid(slopes, height, v), lambda v: _pyramid_centre(slopes, height, v))
+    # (a corner or a height that is not a plain number -- a var(), a field -- or a pyramid of no size: the planes through the edges of the base and the tip, made of the numbers themselves)
+    return _own(_pyramid_field(a[0], a[1], b[0], b[1], zmin, height))
 
 stdlib.torus_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.torus_z.restype = libfive_tree

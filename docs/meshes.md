@@ -51,7 +51,7 @@ makes the script re-read a file that changed on disk.
 
 ## Exporting and importing meshes
 
-- **File → Export mesh…** (`Ctrl+E`, `F7`) writes the shapes shown in the viewport as one mesh, in the format of the file's extension.
+- **File → Export mesh…** (`F7`, `Ctrl+Alt+E`) writes the shapes shown in the viewport as one mesh, in the format of the file's extension.
 - **Right-click a model → Export → Mesh** writes that one model (the file is asked for, and written in the background).
 - From a script:
 

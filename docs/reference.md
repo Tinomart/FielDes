@@ -48,7 +48,9 @@ A 2D circle with the given radius and optional center
 
 ### `cone(radius, height, base=(0, 0, 0))`
 
-A cone with the given base radius and height, standing along z on the (optional) base position
+A cone with the given base radius and height, standing along z on the (optional) base position: the base is a disc of that radius at the base height and the apex stands
+`height` above its centre.  It has two faces, the base and the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round
+its base), and the axis stays where it is
 
 ### `cylinder(r, h, base=(0, 0, 0))`
 
@@ -65,11 +67,17 @@ normal and a single point on the plane
 
 ### `polygon(r, n, center=(0, 0))`
 
-A polygon with center-to-vertex distance r and n sides
+A polygon with center-to-vertex distance r and n sides.  Its handles pull a side each -- a side moves parallel to itself, the others stay -- and the gizmo stays at the middle of the polygon
+
+### `prism(a, b, c, z0, z1)`
+
+A triangular prism: the triangle of the three corners a, b, c (x, y) between the heights z0 and z1.  Its handles pull a face each -- the three sides and the two ends -- parallel to itself,
+and the gizmo stays at the middle of the prism
 
 ### `pyramid(a, b, zmin, height)`
 
-A pyramid defined by its base rectangle, lower Z value, and height
+A pyramid defined by its base rectangle (the corners a and b), lower Z value, and height: its tip stands above the middle of the base.  It has five faces -- the base and four
+slanted ones -- and its handles pull one each, parallel to itself (the slopes stay what they were made with)
 
 ### `rectangle(a, b)`
 
@@ -83,7 +91,7 @@ A 2D ring with the given outer/inner radii and optional center
 ### `rounded_box(a, b, r)`
 
 Rounded box with the given bounds.  The radius `r` is a fraction, 0 to 1, of half the shortest side of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the
-shortest side a half circle)
+shortest side a half circle).  Its handles pull a side each -- a side moves, the others and the rounding stay -- and the gizmo stays at the middle of the box
 
 ### `rounded_rectangle(a, b, r)`
 
@@ -3810,7 +3818,7 @@ shell's own check, with the rules it was asked.  Not a substitute for the check 
 The part turned so that the way up it was made for is z: what a print of it is made of (the part in the model stays as it is).  Another shape -- the supports,
 a no-support region -- is turned the same way
 
-### `manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=False, samples=2500)`
+### `manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=False, samples=2500, show_turned=True)`
 
 The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
 region of its constraint: thin walls thickened (an offset that follows how thin the wall is), a narrow gap closed (`gap_fix='widen'` of the
@@ -3830,6 +3838,9 @@ or in `keep` is never touched.
                  rule"); that is the whole of the check run again on the result, and a part whose field is slow to evaluate pays for it many times over
                  (on a topology-optimized bracket it was ten of the thirteen minutes)
     samples      how many points of the surface it checks
+    show_turned  True (the default): when the constraint left the way up of the print free and the tool found it, the result is DRAWN standing that way (z up) -- the
+                 part turns on the screen, the card says "Way up of the print ... part shown turned"; False: it is drawn where it is.  The model is not turned either
+                 way: `.oriented()` is the part turned to stand that way, for a print
 
 Returns a ManufacturingResult: a body that is the part changed, coloured by the geometry change, with `.changes`, `.added`, `.removed`, `.fail_states`.
 Run `manufacturing_analysis` on the result: the shell's own check is not a substitute for the maker's.

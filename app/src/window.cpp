@@ -501,8 +501,9 @@ Window::Window(Arguments args)
     file_menu->addSeparator();
 
     auto export_action = file_menu->addAction(T("Export mesh..."));
+    // (Ctrl+E is the shortcut of extruding a 2D shape: see view.extrude)
     Shortcuts::add(export_action, "file.export-stl",
-                   {QKeySequence(Qt::CTRL | Qt::Key_E), QKeySequence(Qt::Key_F7)});
+                   {QKeySequence(Qt::Key_F7), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_E)});
     connect(export_action, &QAction::triggered, this, &Window::onExport);
 
     auto export_app_action = file_menu->addAction(T("Export as app..."));
@@ -1150,6 +1151,15 @@ Window::Window(Arguments args)
         connect(del, &QAction::triggered, scene, &ScenePanel::deleteSelected);
     }
 
+    {   // Ctrl+E: the selected 2D shape is pulled into a solid (the menus' Extruding > extrude).  A key of the viewport and the model tree only, so it never eats typing in the editor
+        auto extrude = view_menu->addAction(T("Extrude the selected 2D shape"));
+        Shortcuts::add(extrude, "view.extrude", {QKeySequence(Qt::CTRL | Qt::Key_E)});
+        extrude->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(extrude);
+        auto scene = view->scenePanel();
+        connect(extrude, &QAction::triggered, scene, &ScenePanel::extrudeSelected);
+    }
+
     {   // Shift+D: a copy of each selected model, its statements written again under it with free names (Ctrl+D is the LINKED copy, `instance`).  A key of the
         // viewport and the model tree only, so it never eats typing in the editor
         auto dup = view_menu->addAction(T("Copy the selected models under themselves"));
@@ -1458,6 +1468,9 @@ Window::Window(Arguments args)
             connect(view, &View::errorClicked, this, [=](int line0) { if (line0 >= 0) editor->goToLine(line0); });
         }
         connect(scene, &ScenePanel::goToLine, editor, &Editor::goToLine);
+        // The insertion point of the tree and the text cursor of the editor are one: a click on a gap puts the cursor there, and the cursor the user moves puts the point
+        connect(scene, &ScenePanel::insertionChosen, editor, &Editor::placeCursor);
+        connect(editor, &Editor::userCursorMoved, scene, &ScenePanel::setEditorCursor);
         connect(scene, &ScenePanel::placeholderRequested, editor, &Editor::goToPlaceholder);
         connect(scene, &ScenePanel::spanRequested, editor, &Editor::goToSpan);
         connect(scene, &ScenePanel::exportRequested, this, &Window::exportModel);
@@ -2711,6 +2724,20 @@ Window::Window(Arguments args)
         a->add("redo", [=](const QString&){ editor->scriptWidget()->redo(); });
         // delete: the D key of the viewport (the selected models are deleted)
         a->add("delete", [=](const QString&){ view->scenePanel()->deleteSelected(); });
+        // key <sequence>: the action that has this shortcut (Ctrl+E, F7 ...) is triggered, as the key does it, when exactly one action owns the sequence and it is enabled; the log says which actions
+        // own it (two would make the key ambiguous: neither would run)
+        a->add("key", [=](const QString& args){
+            const QKeySequence seq(args.trimmed(), QKeySequence::PortableText);
+            QList<QAction*> owners;
+            for (QAction* act : findChildren<QAction*>())
+                if (act->shortcuts().contains(seq) && !owners.contains(act)) owners << act;
+            for (QAction* act : view->actions())
+                if (act->shortcuts().contains(seq) && !owners.contains(act)) owners << act;
+            std::cerr << "automation: key " << args.trimmed().toStdString() << " is owned by " << owners.size() << " action(s):";
+            for (QAction* act : owners) std::cerr << " '" << act->text().toStdString() << "'" << (act->isEnabled() ? "" : " (disabled)");
+            std::cerr << std::endl;
+            if (owners.size() == 1 && owners[0]->isEnabled()) owners[0]->trigger();
+        });
         a->add("new", [=](const QString&){
             editor->setScript(QString());
             editor->setModified(false);
