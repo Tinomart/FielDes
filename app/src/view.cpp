@@ -271,6 +271,7 @@ View::~View()
     {
         kv.second->plane.tex.reset();
         kv.second->plane.colorTex.reset();
+        kv.second->plane.lutTex.reset();
         if (kv.second->plane.vao.isCreated()) kv.second->plane.vao.destroy();
         if (kv.second->plane.vbo.isCreated()) kv.second->plane.vbo.destroy();
     }
@@ -278,6 +279,7 @@ View::~View()
     {
         plane->tex.reset();
         plane->colorTex.reset();
+        plane->lutTex.reset();
         if (plane->vao.isCreated()) plane->vao.destroy();
         if (plane->vbo.isCreated()) plane->vbo.destroy();
     }
@@ -4803,6 +4805,7 @@ void View::retireViewer(FieldViewer* v)
         makeCurrent();
         v->plane.tex.reset();
         v->plane.colorTex.reset();
+        v->plane.lutTex.reset();
         if (v->plane.vao.isCreated()) v->plane.vao.destroy();
         if (v->plane.vbo.isCreated()) v->plane.vbo.destroy();
         doneCurrent();
@@ -5263,13 +5266,30 @@ void View::drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettin
         plane.tex->setMagnificationFilter(QOpenGLTexture::Linear);
         plane.tex->setWrapMode(QOpenGLTexture::ClampToEdge);
         plane.colorTex.reset();
+        plane.lutTex.reset();
         if (plane.slice.hasColor && plane.slice.color.size() == plane.slice.values.size())
         {
+            // the colours of the model's own map as a table: the plane shows what the surface shows (the change map's three classes, a rule's two),
+            // not a second copy of the maps in the shader, which painted every map it did not know in the rainbow
+            constexpr int kLut = 1024;
+            QImage lut(kLut, 1, QImage::Format_RGBA8888);
+            for (int i = 0; i < kLut; ++i) lut.setPixelColor(i, 0, colormapColor(plane.slice.colorMap, float(i) / float(kLut - 1)));
+            plane.lutTex.reset(new QOpenGLTexture(lut, QOpenGLTexture::DontGenerateMipMaps));
+            plane.lutTex->setMinificationFilter(QOpenGLTexture::Nearest);
+            plane.lutTex->setMagnificationFilter(QOpenGLTexture::Nearest);
+            plane.lutTex->setWrapMode(QOpenGLTexture::ClampToEdge);
             plane.colorTex.reset(new QOpenGLTexture(QOpenGLTexture::Target2D));
             plane.colorTex->setFormat(QOpenGLTexture::R32F);
             plane.colorTex->setSize(plane.slice.w, plane.slice.h);
             plane.colorTex->allocateStorage(QOpenGLTexture::Red, QOpenGLTexture::Float32);
-            plane.colorTex->setData(QOpenGLTexture::Red, QOpenGLTexture::Float32, plane.slice.color.constData());
+            // (nothing to colour there -- another model is nearer, or outside -- is a very large number and not NaN: the shader cannot be relied on to see a NaN, and on this GPU it read one as the
+            // lowest colour of the map, so that the copy of a part beside a result was cut in the near-black of the rainbow, the blue of "removed" since)
+            QVector<float> colours = plane.slice.color;
+            for (auto& c : colours)
+            {
+                if (!std::isfinite(c)) c = 1e30f;
+            }
+            plane.colorTex->setData(QOpenGLTexture::Red, QOpenGLTexture::Float32, colours.constData());
             // nearest: NaN (outside) must not bleed into its neighbours -- except for a field of the field viewer, whose lines are drawn from
             // its values and need them smooth
             const auto filter = plane.slice.colorMap == "section" ? QOpenGLTexture::Linear : QOpenGLTexture::Nearest;
@@ -5392,10 +5412,11 @@ void View::drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettin
     int colorMode = 0;
     if (plane.colorTex)
     {
-        colorMode = plane.slice.colorMap == "section" ? 4 : plane.slice.colorMap == "viridis" ? 2
-                    : (plane.slice.colorMap == "grey" || plane.slice.colorMap == "gray") ? 3 : 1;
+        colorMode = plane.slice.colorMap == "section" ? 4 : 1;
         plane.colorTex->bind(1);
         glUniform1i(Shader::slice->uniformLocation("color_field"), 1);
+        if (plane.lutTex) plane.lutTex->bind(2);
+        glUniform1i(Shader::slice->uniformLocation("color_lut"), 2);
         glUniform1f(Shader::slice->uniformLocation("color_lo"), plane.slice.colorLo);
         glUniform1f(Shader::slice->uniformLocation("color_hi"), plane.slice.colorHi);
     }
@@ -5403,6 +5424,7 @@ void View::drawSlicePlane(const QMatrix4x4& m, Plane& plane, const SectionSettin
     if (deformed) glDrawArrays(GL_TRIANGLES, 0, plane.gridVerts);
     else glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     if (plane.colorTex) plane.colorTex->release(1);
+    if (plane.lutTex) plane.lutTex->release(2);
     glActiveTexture(GL_TEXTURE0);
     plane.tex->release(0);
     Shader::slice->release();

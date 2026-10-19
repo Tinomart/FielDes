@@ -2764,8 +2764,11 @@ void Shape::buildDeps() const
             if (!t.is_valid()) return;
             // (walk() of a tree that has remaps gives pointers into a flattened copy that is gone when it returns: it is flattened
             // here and kept while its nodes are looked at -- a tree moved by a gizmo has remaps, and this read freed memory)
-            const libfive::Tree flat = t.flatten();
-            for (const auto* d : flat.walk())
+            // (shared, with the calls kept, and the nodes of the fields that calls call walked too: the same variables and oracles as the inline expansion finds, in a time that does not grow with every
+            // call.  The unshared inline expansion of the formula of a manufacturing result -- the part called dozens of times, each call of a field made of calls -- ran the window to 8 GB when the
+            // mouse first rested on the thin red layer of a moulding result, the shape whose tree is that formula)
+            const libfive::Tree flat = t.flatten(true, libfive::Tree::Calls::Keep);
+            for (const auto* d : flat.walk_deep())
             {
                 if (d->op() == libfive::Opcode::VAR_FREE) m_deps.insert(d);
                 else if (d->op() == libfive::Opcode::ORACLE)

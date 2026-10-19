@@ -625,10 +625,11 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
                 // A point is ambiguous where a min or a max has two sides of the same value and DIFFERENT derivatives (a crease: the features are searched there).  The derivative
                 // pass notes those as it goes (`trackTies`), calls included; the check of the values alone (getAmbiguous) marked every tie, also the ones of a clamp of a value that is
                 // exactly its bound (max(0, 0): the same derivative on both sides, nothing to choose), which in the fields of the manufacturing tool are 9 of 10 of the points
-                // of the surface -- and ran every field that is called again at the points to do it.  A tape with an oracle in it keeps the check of the values (an oracle is
-                // ambiguous by its own rules).
+                // of the surface -- and ran every field that is called again at the points to do it.  A tape with an oracle in it is checked the same way: the derivative pass
+                // asks the oracle where it is ambiguous by its own rules as well (see the ORACLE clause of DerivArrayEvaluator): on the topology-optimized bracket every one of the
+                // points of the surface was ambiguous by the check of the values, and the derivatives, the check and the search for features of them were 37 % of the drawing.
                 static const bool noTieAware = std::getenv("FIELDES_NO_TIE_AWARE") != nullptr;      // (a test: the check of the values)
-                const bool tieAware = !noTieAware && !tape->hasOracle();
+                const bool tieAware = !noTieAware;
                 eval->trackTies = tieAware;
                 ds.leftCols(2 * eval_count) = eval->derivs(
                         2 * eval_count, *tape);

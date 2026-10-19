@@ -364,6 +364,12 @@ void DerivArrayEvaluator::execDeriv(Opcode::Opcode op, Clause::Id id,
                 od = 0.0;
             } else {
                 deck->oracles[a_]->evalDerivArray(d(id).leftCols(count_actual));
+                if (trackTies)
+                {
+                    // (an oracle says by its own rules where it is ambiguous -- after its values and derivatives are evaluated, as getAmbiguousDerivs asks it --: those
+                    // points count as ties, as the creases of the min and the max do.  A tape with an oracle in it is then checked as any other is)
+                    deck->oracles[a_]->checkAmbiguous(tied.head(count_actual));
+                }
             }
             break;
 

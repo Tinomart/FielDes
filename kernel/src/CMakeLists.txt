@@ -105,6 +105,7 @@ add_library(libfive SHARED
     fields/field_oracles.cpp
     fields/point_shapes.cpp
     fields/data_fields.cpp
+    fields/lattice_field.cpp
 
     fea/fea.cpp
     fea/thermal.cpp

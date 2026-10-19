@@ -826,6 +826,12 @@ libfive_tree libfive_field_noise(float scale, int octaves, unsigned seed, float 
 /*  Cellular (Worley) noise at one scale: mode 0 the distance to the nearest point of a jittered grid, 1 the distance from a wall between cells (F2 - F1), 2 the
  *  distance to the second nearest point; about -1 .. 1.  jitter 0 .. 1: 0 is a regular grid  */
 libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float jitter);
+/*  The gusset under the overhangs of a part, as a field of its own (see fields/lattice_field.cpp and libfive::fields::overhangLattice): `frame` 12 numbers (the origin of
+ *  the lattice, then three unit vectors, the last the build direction), `dims` the nodes along each axis, `vars` / `values` (nvars of them) the numbers the part's variables
+ *  stand for.  `stats`: 8 numbers (status 0 = made, the gusset's volume, ...).  Null when it cannot be made.  */
+libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tree* vars, const float* values, int nvars,
+                                            const double* frame, const int* dims, double pitch, double tan_slope, double reach,
+                                            double min_z, int negate, double force_lo, double force_hi, double* stats);
 
 /*  Debug: print the native stack of the first access violation (Windows)  */
 void libfive_debug_crash_handler(void);

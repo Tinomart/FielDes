@@ -840,6 +840,7 @@ protected:
         bool dirty = false;                // the texture needs re-upload
         QScopedPointer<QOpenGLTexture> tex;
         QScopedPointer<QOpenGLTexture> colorTex;
+        QScopedPointer<QOpenGLTexture> lutTex;   // the colours of the model's own colour map, a table of 1024 made from colormapColor (the plane shows what the surface shows)
         QOpenGLBuffer vbo;
         QOpenGLVertexArrayObject vao;
         // (the plane as a deformed vertex grid, for a model drawn deformed)

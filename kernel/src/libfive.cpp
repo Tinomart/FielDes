@@ -2880,6 +2880,29 @@ libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float 
     return libfive::fields::cellularField(scale, seed, mode, jitter).release();
 }
 
+libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tree* vars, const float* values, int nvars,
+                                            const double* frame, const int* dims, double pitch, double tan_slope, double reach,
+                                            double min_z, int negate, double force_lo, double force_hi, double* stats)
+{
+    if (!part || !frame || !dims) return nullptr;
+    libfive::fields::OverhangLatticeParams p;
+    for (int i = 0; i < 3; ++i) p.origin[i] = frame[i];
+    for (int i = 0; i < 9; ++i) p.axes[i] = frame[3 + i];
+    for (int i = 0; i < 3; ++i) p.n[i] = dims[i];
+    p.pitch = pitch;
+    p.tanSlope = tan_slope;
+    p.reach = reach;
+    p.minZ = min_z;
+    p.negate = negate != 0;
+    p.forceLo = force_lo;
+    p.forceHi = force_hi;
+    std::map<Tree::Id, float> m;
+    for (int i = 0; i < nvars; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
+    Tree out = libfive::fields::overhangLattice(Tree(part), m, p, stats);
+    if (!out.is_valid()) return nullptr;
+    return out.release();
+}
+
 libfive_tree libfive_field_curvature(libfive_tree t, float h)
 {
     return libfive::fields::curvatureField(Tree(t), h).release();
