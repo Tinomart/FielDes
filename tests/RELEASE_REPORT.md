@@ -3,7 +3,7 @@
 First written on the night of 2026-10-16, rewritten on 2026-10-19 by Claude, for the maintainer. Nothing here has been pushed, tagged or published.
 The release candidate is labelled **0.10.0** in the file names only: the version in `CMakeLists.txt` is still 0.6.1 (you bump it), and the packages were built with a temporary 0.10.0 that was put back afterwards.
 
-The last pushed state is `origin/main` d59e380 (the 0.9.0 beta, 2026-10-14). This tree is [[PENDING: N]] local commits ahead of it: 22 from before the night shift of 10-16, three from that night (the evaluator; manufacturing with the reference and the translations; the examples, the proofs and the changelog), the report of 10-16, the manufacturing test round (two commits: the fixes and the speed work, and the 98 test files), the result card (two commits: the card and the tests) and this report.
+The last pushed state is `origin/main` d59e380 (the 0.9.0 beta, 2026-10-14). This tree is 40 local commits ahead of it: 22 from before the night shift of 10-16, three from that night (the evaluator; manufacturing with the reference and the translations; the examples, the proofs and the changelog), the report of 10-16, the manufacturing test round (two commits: the fixes and the speed work, and the 98 test files), the result card (two commits: the card and the tests) and this report.
 The packages in section 5 were built from `885a73e` (the last of those commits before this report) with the temporary version number.
 
 ## 0. How to read the evidence: what was run, on which build, and what was not
