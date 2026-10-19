@@ -28,7 +28,7 @@ lo, hi = (-3, -3, -3), (33, 103, 43)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=2)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_support_height=25, max_change=0.01)
+res = manufacturing_optimization(part, constraints=[rule], max_support_height=25, max_change=0.01, verify=True)
 print(res)
 pts = points_in((5, -2, -2), (32, 102, 22), 300000, seed=13)
 vals = evaluate(res.supports, pts)

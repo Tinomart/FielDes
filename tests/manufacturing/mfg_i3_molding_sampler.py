@@ -30,13 +30,29 @@ part = union(union(union(union(union(plate, fin), block_a), block_b), ell), boss
 rule = molding_constraint(min_wall=1.5, draft=2.0)
 print(rule)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_change=1.0)
+res = manufacturing_optimization(part, constraints=[rule], max_change=1.0, verify=True)
 print(res)
 lo, hi = (-3, -3, -3), (73, 43, 22)
 # (the view of the window: the box round the part, and how finely it is drawn)
-frame(lo, hi, res=2)                   # (2 cells to the millimetre: a layer thinner than a cell is counted by the card and not drawn in red)
+frame(lo, hi, res=2)                   # (2 cells to the millimetre: the draft is a skin thinner than a cell, so the result is drawn as ONE body coloured by the change: red on every wall that was widened)
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 generic_checks(t, part, res, [rule], lo, hi, added='any', removed='any', name='molding sampler', keep_rules='listed')
+# THE ANSWERS BY HAND (a draft of 2 degrees: a wall that is vertical comes out wider at its foot by tan(2 degrees) x its depth below the top of the part, which is the parting plane at z = 17):
+#   the end face of block_a (y = 20, away from the other pieces) at z = 7 has moved outwards by (17 - 7) x 0.0349 = 0.349 mm, at z = 9 by 0.279 mm; at z = 5.3 (the plate's top is 5) it is inside the quarter circle
+#   that the inside corner takes (0.75 mm), so it is not read there.  Outside that distance the air is untouched.
+def _hand(label, solid, air):
+    vs = evaluate(res, solid + air)
+    ok_solid = all(v <= 0 for v in vs[:len(solid)])
+    ok_air = all(v > 0 for v in vs[len(solid):])
+    t.check(label, ok_solid and ok_air, 'solid %s / air %s' % ([round(v, 3) for v in vs[:len(solid)]], [round(v, 3) for v in vs[len(solid):]]), 'solid <= 0 / air > 0')
+_hand('draft: the end face of block_a stands 0.349 mm out at z = 7 and 0.279 mm out at z = 9 (solid inside, air a tenth of a millimetre beyond)',
+      [(14.0, 20.30, 7.0), (14.0, 20.23, 9.0)], [(14.0, 20.45, 7.0), (14.0, 20.38, 9.0)])
+_hand('draft: the top of the part is the parting plane: block_a (13 high) has moved out only 0.14 mm at its top, nothing 0.3 mm out at z = 12.5', [(14.0, 20.08, 12.5)], [(14.0, 20.30, 12.5)])
+
+import math
+_ring = lambda r, z: [(55.0 + r * math.cos(math.radians(a)), 28.0 + r * math.sin(math.radians(a)), z) for a in range(0, 360, 45)]
+_hand('draft on the boss (a cylinder of radius 5, axis (55, 28)): its wall becomes a cone, the same all the way round -- 0.349 mm out at z = 7 and 0.210 mm out at z = 11 at eight angles (solid 0.05 inside that, air 0.05 beyond)',
+      _ring(5.30, 7.0) + _ring(5.16, 11.0), _ring(5.40, 7.0) + _ring(5.26, 11.0))
 
 t.summary()
 result = res

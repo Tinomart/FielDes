@@ -45,7 +45,7 @@ a2, r2, _ = changed_volumes(part, only_gaps, lo, hi, n_coarse=200000, n_dense=20
 t.near('what the wall remedy added: 0.2 x 12 x 10 = 24 mm3', a1, 24.0, 5.0, ' mm3')
 t.near('what the gap remedy added: 0.2 x 12 x 10 = 24 mm3', a2, 24.0, 5.0, ' mm3')
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-unasked = manufacturing_optimization(part, constraints=rules, remedies=['corners'], max_change=3.0)
+unasked = manufacturing_optimization(part, constraints=rules, remedies=['corners'], max_change=3.0, verify=True)
 t.check('remedies=[corners], which no rule asks for: nothing is made (%s)' % [c['remedy'] for c in unasked.changes], not unasked.changes and unasked.added == 0 and unasked.removed == 0, '%d remedies, +%.3g' % (len(unasked.changes), unasked.added), 'none')
 t.check('and the tool lists the wall and the gap as broken, with the reason', {s['rule'] for s in unasked.fail_states} >= {'min_wall', 'min_gap'} and all(s['why'] for s in unasked.fail_states), [(s['rule'], s['why']) for s in unasked.fail_states][:3], 'min_wall and min_gap, each with a why')
 message = ''

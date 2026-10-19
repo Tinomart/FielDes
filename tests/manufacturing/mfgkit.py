@@ -211,7 +211,7 @@ def arc_checks(t, res, centre, radius, a0=10, a1=80, step=10, z=10.0, towards=(-
 
 def control(t, part, lo, hi, name, res_=3, rules=None):
     rule = rules or manufacturing_constraint(min_wall=0.8, min_gap=0.4, min_radius=1.0, max_bridge=20.0)
-    res = manufacturing_optimization(part, constraints=[rule], max_change=0.5)
+    res = manufacturing_optimization(part, constraints=[rule], max_change=0.5, verify=True)
     frame(lo, hi, res=res_)
     a, r, _ = changed_volumes(part, res, lo, hi)
     t.check('%s: nothing added' % name, a < 1.5, '%.3g mm3' % a, 0)
@@ -373,7 +373,7 @@ def sweep_one(t, number, seed, offset=(0.0, 0.0)):
     lo, hi = (ox - 3, oy - 3, -3), (ox + W + 3, oy + D + 3, H + 3)
     started = time.time()
     try:
-        res = manufacturing_optimization(part, constraints=[constraint], max_change=1.0)
+        res = manufacturing_optimization(part, constraints=[constraint], max_change=1.0, verify=True)
     except Exception as e:
         t.check('%s: the tool runs without an error' % name, False, '%s: %s' % (type(e).__name__, str(e)[:120]), 'no error')
         return None, part
@@ -451,7 +451,7 @@ def complicated_checks(t, part, res, constraint, lo, hi, name, n=30000):
     for rule, rb in before.report.items():
         ra = after.report[rule]
         t.check('%s: the share of the surface breaking %s did not grow (%.3g before, %.3g after)' % (name, rule, rb['share'], ra['share']), ra['share'] <= rb['share'] + 0.002, '%.4g' % ra['share'], '<= %.4g' % (rb['share'] + 0.002))
-    t.check('%s: the tool\'s list of what is still broken agrees with the independent check (%s)' % (name, broken), (not broken) or bool(res.fail_states), '%d listed' % len(res.fail_states), 'something listed')
+    t.check('%s: the tool\'s list of what is still broken agrees with the independent check (%s)' % (name, broken), (not broken) or bool(res.fail_states) or res.after is None, '%d listed%s' % (len(res.fail_states), '' if res.after is not None else ' (the tool did not re-check: verify=False)'), 'something listed, or not asked')
     return after
 
 
@@ -525,7 +525,8 @@ def curved_shells(t, defs, shifts, bounds):
             print(after)
         regions = after.report['min_wall']['regions']
         # (an open rim and a tip are EDGES: the faces of the wall are thickened up to them and not past them, so a notch of the growth is left along them -- the documented limit of docs/manufacturing.md.
-        # A cone 25 mm high with a base of radius 12 has a rim of 75 mm and the check marks 2.2 % of its surface there: every region it lists lies within 0.4 mm of the base plane or at the tip)
+        # A cone 25 mm high with a base of radius 12 has a rim of 75 mm and the check marks 2.2 % of its surface there.  The notch itself is under 0.5 mm high -- the wall of the result is 0.800 from 0.55 mm over the rim up, 0.69 at 0.3 and 0.57 at 0.15 --
+        # and the regions the check lists are the means of the places it marks that lie less than two lengths of the rule apart, so each lies within one wall thickness of the base plane (0.8 mm) or at the tip)
         on_rim = bool(regions) and rim_ok is not None and all(rim_ok(g['at'][2]) for g in regions)
         t.check('%s: the independent check finds at most 2 %% of the surface still thin%s' % (name, ', or every place it lists is on the rim or at the tip (the edge notch of docs/manufacturing.md)' if rim_ok else ''),
                 after.report['min_wall']['share'] <= 0.02 or on_rim, '%.3g%s' % (after.report['min_wall']['share'], (' (regions at z %s)' % ', '.join('%.2f' % g['at'][2] for g in regions)) if regions else ''), '<= 0.02' + (' or all on the rim / the tip' if rim_ok else ''))
@@ -955,7 +956,7 @@ def job_table(t, label, part, res, lo, hi, rules, count=2500, spare=0.005):
                 after[k] <= before[k] + 0.004, '%.3f -> %.3f' % (before[k], after[k]), 'after <= before')
         left = after[k] > spare
         t.check('%s: %s -- what is left (%.1f %%) is under %.1f %% of the surface or is listed by the tool (%s)' % (label, k, 100.0 * after[k], 100.0 * spare, 'listed' if _JUDGED[k] in listed else 'not listed'),
-                (not left) or (_JUDGED[k] in listed), '%.3f, %s' % (after[k], 'listed' if _JUDGED[k] in listed else 'not listed'), '< %.3f or listed' % spare)
+                (not left) or (_JUDGED[k] in listed) or res.after is None, '%.3f, %s' % (after[k], 'listed' if _JUDGED[k] in listed else 'not listed'), '< %.3f or listed (or the tool was not asked to re-check)' % spare)
     return before, after
 
 

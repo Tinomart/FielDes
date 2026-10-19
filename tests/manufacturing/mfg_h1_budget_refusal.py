@@ -20,7 +20,7 @@ fin = box((0, 0, 0), (0.6, 16, 24))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(min_wall=0.8)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(fin, constraints=[rule], max_change=0.05)
+res = manufacturing_optimization(fin, constraints=[rule], max_change=0.05, verify=True)
 lo, hi = (-3, -3, -3), (6, 19, 27)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=4)

@@ -24,7 +24,7 @@ part = union(union(pocket, along), ledge)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(undercut_along=(0, 0, 1))
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_change=3.0)
+res = manufacturing_optimization(part, constraints=[rule], max_change=3.0, verify=True)
 lo, hi = (-3, -3, -3), (63, 19, 19)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=3)

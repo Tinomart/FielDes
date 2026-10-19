@@ -20,7 +20,7 @@ part = union(union(box((0, 0, 0), (5, 10, 20)), box((35, 0, 0), (40, 10, 20))), 
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(max_bridge=20.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_change=0.5)
+res = manufacturing_optimization(part, constraints=[rule], max_change=0.5, verify=True)
 lo, hi = (-3, -3, -3), (43, 13, 26)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=3)

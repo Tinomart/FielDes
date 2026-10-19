@@ -26,7 +26,7 @@ lo, hi = (-3, -3, -3), (33, 23, 33)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=4)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_support_height=12, max_change=0.004)
+res = manufacturing_optimization(part, constraints=[rule], max_support_height=12, max_change=0.004, verify=True)
 print(res)
 ov = [c for c in res.changes if c['remedy'] == 'overhang']
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them

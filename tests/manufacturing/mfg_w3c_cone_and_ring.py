@@ -18,7 +18,7 @@ t = Table('w3c_cone_and_ring: a thin cone and a thin ring (torus) of 0.5 mm, a w
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 cone_slope = 12.0 / 25.0
 cone_in = 0.5 * math.sqrt(1.0 + cone_slope ** 2)               # (the cone's wall is 0.5 along its normal: the inner cone is that much lower, measured straight in)
-defs = [('cone', cone(12.0, 25.0, (0, 0, 0)), cone(12.0 - cone_in * 1.0, 25.0 - cone_in * 25.0 / 12.0, (0, 0, 0)), (7.2, 0.0, 10.0), 14, lambda z: z < 0.4 or z > 24.0),
+defs = [('cone', cone(12.0, 25.0, (0, 0, 0)), cone(12.0 - cone_in * 1.0, 25.0 - cone_in * 25.0 / 12.0, (0, 0, 0)), (7.2, 0.0, 10.0), 14, lambda z: z < 0.8 or z > 24.0),      # (the rim: within one wall thickness asked of the base plane -- the wall of the result is 0.8 from 0.55 mm over the rim up, measured 10-19 -- or the tip)
         ('ring (torus)', torus(12.0, 4.0, (0, 0, 4)), torus(12.0, 3.5, (0, 0, 4)), (16.0, 0.0, 4.0), 18)]
 
 result, original = curved_shells(t, defs, [(0, 0), (40, 0)], ([-16, -18, -3], [62, 18, 30]))

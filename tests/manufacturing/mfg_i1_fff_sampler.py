@@ -29,7 +29,7 @@ part = union(union(union(union(union(plate, fin), block_a), block_b), ell), boss
 rule = fff_constraint(nozzle=0.4)
 print(rule)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_change=1.0)
+res = manufacturing_optimization(part, constraints=[rule], max_change=1.0, verify=True)
 print(res)
 lo, hi = (-3, -3, -3), (73, 43, 22)
 # (drawn at 2 cells to the millimetre, for speed: the layers added -- 0.15 mm on the fin, 0.3 mm in the slot -- are thinner than a cell and are NOT drawn in red, although the card counts them;
@@ -39,6 +39,18 @@ frame(lo, hi, res=2)
 # NO ANSWER BY HAND for a part like this: what is checked is that nothing floats beside the part, that the tool's numbers are the measured ones and that the independent check of the result finds only what the tool lists.  JUDGE THE PICTURE.
 # THE CHECKS: the numbers typed into these calls are the answers by hand (the sum is in the title or the call); the tool never sees them
 generic_checks(t, part, res, [rule], lo, hi, added='any', removed='any', name='fff sampler', keep_rules='listed')
+# THE ANSWERS BY HAND (a nozzle of 0.4: walls of 0.8 and gaps of 0.4):
+#   the fin is 0.5 thick (x 5 .. 5.5): a thin wall is thickened half on each side, 0.15 mm each, so it stands from x = 4.85 to 5.65 (solid inside that, air 0.1 mm beyond it)
+#   the gap between block_a and block_b is 0.3 wide (x 18 .. 18.3), under 0.4: it is filled (one slab), from the plate to the top of the blocks (z 5 .. 13) and not above them
+#   the hole of 5 mm is wider than a gap of 0.4: it stays open (a printer prints a hole; only a cutter cannot cut one)
+def _hand(label, solid, air):
+    vs = evaluate(res, solid + air)
+    ok_solid = all(v <= 0 for v in vs[:len(solid)])
+    ok_air = all(v > 0 for v in vs[len(solid):])
+    t.check(label, ok_solid and ok_air, 'solid %s / air %s' % ([round(v, 3) for v in vs[:len(solid)]], [round(v, 3) for v in vs[len(solid):]]), 'solid <= 0 / air > 0')
+_hand('the fin is thickened by 0.15 mm on each side: x = 4.85 .. 5.65 at mid-height', [(4.88, 12.0, 10.0), (5.62, 12.0, 10.0)], [(4.78, 12.0, 10.0), (5.72, 12.0, 10.0)])
+_hand('the gap of 0.3 between the two blocks is filled from the plate to their top and not above it', [(18.15, 12.0, 6.0), (18.15, 12.0, 12.5)], [(18.15, 12.0, 13.4)])
+_hand('the hole of 5 mm stays open', [], [(62.0, 8.0, 2.5), (62.0, 8.0, 4.5)])
 
 t.summary()
 result = res

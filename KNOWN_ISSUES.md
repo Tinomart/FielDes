@@ -30,8 +30,18 @@ What each of these is, and the way round it, is in [docs/manufacturing.md](docs/
   removed whole, a slot narrower than the ball is filled, and an L draws in 1.9 s. They are less exact where the field is not a distance, which is the case of a part made by taking cutters that overshoot the block out of
   it, or by overlapping pieces: a point where a walk along the gradient does not end on the surface is left as it is (the field there describes walls that are not the part's), which can leave a corner of such a part
   rounded a little short (the pocket of 1.5 mm corners made 3 mm: 38 mm^3 added where the arcs say 69). Three known differences from the exact rolling ball: **a slot narrower than the ball is filled flush with its
-  mouth** (the ball resting on its two edges would leave a sag, 0.76 mm for a slot of 4 and a ball of 3), the material added at the end of a corner reaches up to 0.4 mm past the part's end face, and the check marks
-  two small regions (0.4 % of the surface) along the top and bottom rim of a pocket whose corner is exactly at the radius asked (`mfg_a3_pocket_corners`: the mesh version marked none).
+  mouth** (the ball resting on its two edges would leave a sag, 0.76 mm for a slot of 4 and a ball of 3; a slot narrower than the ball by less than 2 % of its radius counts as fitting; over the shoulder of a lower block beside
+  a wall the top of the fill follows the exact closing to about a millimetre -- the CNC sampler's gap between its fin and its block: 13.5 against 12.8; and where a pocket was cut by a cutter that overshoots the block, the
+  corner of a CURVE tighter than the ball -- a pocket of corner radius 1.5 asked to be 3 -- is rounded exactly over the middle of its height and not at all within 1 to 2 mm of the pocket's mouth, where the field
+  carries the cutter's own end cap, which is not part of the part: a flat corner reaches the end faces), the material added at the end of a corner reaches up to 0.4 mm past the part's end face, and the check marks
+  small regions (0.4 % of the surface in `mfg_a3_pocket_corners`) along the top and bottom rim of the pockets, even where the corner is at the radius asked or rounder (the mesh version marked none). The
+  cause is the cutter that overshoots the block: within about 1.3 mm of the open end of a through pocket the part's own field is the distance to the cutter's end cap, which is not part of the part, so
+  the distance at the centre of the ball reads 1.9 mm at 0.2 mm from the rim and 2.8 mm at 1.2 mm (3.0 from 2 mm on, which is right) and the check finds that the ball does not fit. A walk along the
+  gradient cannot get past a face that is not there (it ends where the foot test says the face is not real); the cure is a part whose cutters stop at the block or a field that is a distance.
+  **What the six corner proofs show on the final code (10-19 21:25):** `mfg_a3_pocket_corners` marks the too-tight pockets (12 % of the surface) and one more region of 0.011 % at the outer end wall of the block, an outside corner
+  (1 of 7 checks fails: found 2 regions where at least 3 were expected, one of them outside every pocket); `mfg_c2_corner_angles` leaves one floating point of material at (73.4, 13.0, 10.1) and the independent check marks 20 % of the surface
+  after the remedy (1.9 % before), at the creases where the arcs meet the faces; `mfg_c3` and `mfg_c4` mark 15 % and 14 % after (4.5 % and 14 % before), `mfg_c1` and `mfg_c5` 1.5 % and 0.7 %. None of these was understood to the end: the marks
+  are the independent check reading the result through `exact_distance`, whose walk is not exact at a crease.
 - **A part held as `exact_distance(...)` is slow through the manufacturing tool and in the drawing of its results.** The distance is a walk of about 32 calls of the part's field at every point, and the tool asks
   the part 20 to 120 times at every point of its result: measured on a small part (plate, fin, post, wall, ledge; printer rules), the plain part takes 6.7 s in the tool and draws in 8.5 s, held as
   `exact_distance` the same tool takes 295 s and the drawing of its result does not end in 20 minutes (example 33's part: tool 282 s, the drawing was at 4 % after 35 minutes). The result is the same (483.3 mm^3
@@ -49,8 +59,10 @@ What each of these is, and the way round it, is in [docs/manufacturing.md](docs/
   can miss a shelf thinner than a sixteenth of the part's length. Draw a small part in a scene of its own.
 - **A free build direction takes the plate at the lowest corner of the part's box**, so a face laid on it at an angle is not taken to rest there and the search prefers the three axes. To print a tilted part on its flat face,
   turn the part until that face is level and name the axis.
-- **A layer thinner than one cell of the picture is counted but not drawn.** The card says how much material was added to a fin thickened by 0.15 mm, and at 2 cells to the millimetre (cells of 0.5 mm) the red layer is not to be
-  seen: the mesher cannot draw a sheet thinner than its cell. Draw such a part with at least two cells across the layer, or look at a section.
+- **A layer thinner than one cell of the picture is counted but only drawn where the result is one coloured body.** A result whose changes are mostly thin layers (walls thickened, gaps widened, the draft) is drawn as one body coloured by the change, and the layer
+  shows as red wherever the surface moved. A result that mixes them with thick ones (a gap closed, a corner filled) is drawn as three bodies, and there the card says how much material was added to a fin thickened by 0.15 mm while at 2 cells to the millimetre (cells of 0.5 mm) the red
+  layer is not to be seen: the mesher cannot draw a sheet thinner than its cell. Draw such a part with at least two cells across the layer, or look at a section. **The one coloured body costs more to draw than three:** it draws the whole surface of the
+  result from the result's formula, where the three bodies draw only the thin bands that changed (the moulding sampler at 2 cells to the millimetre: 72.9 s as one body, 44.2 s as three; the tool itself 10 s either way).
 - **A picture finer than the walls need can run the viewer out of memory**: the remedies are fields of many shifted copies of the part's, and the mesher needs memory in proportion to the cube of the resolution. Draw at four
   cells across the thinnest wall and no finer.
 - **A result with several remedies is slow to draw at a fine resolution.** At 3 cells to the millimetre a ledge with its gusset takes about 40 s to draw (the tool: 1.5 s), a block with a round hole and its teardrop about 33 s, and example 33 (a thin fin, a post and a ledge) 45 to 55 s

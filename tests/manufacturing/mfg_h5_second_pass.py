@@ -20,9 +20,9 @@ part = union(box((0, 0, 0), (10, 40, 40)), box((10, 0, 20), (30, 40, 25)))
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 rule = manufacturing_constraint(overhang=45)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-first = manufacturing_optimization(part, constraints=[rule], max_support_height=25, max_change=0.6)
+first = manufacturing_optimization(part, constraints=[rule], max_support_height=25, max_change=0.6, verify=True)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-second = manufacturing_optimization(first, constraints=[rule], max_support_height=25, max_change=0.6)
+second = manufacturing_optimization(first, constraints=[rule], max_support_height=25, max_change=0.6, verify=True)
 lo, hi = (-3, -3, -3), (33, 43, 43)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=2)

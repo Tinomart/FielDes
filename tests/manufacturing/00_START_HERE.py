@@ -5,7 +5,8 @@
 # This folder holds one file for each thing that can happen, so that you can SEE it.
 #
 # HOW TO USE IT.  This file does nothing but list the others.  Open one of them (File > Open, or drag it onto the window): it builds a part, runs the tool on it, draws the
-# result (grey as it was, red material added, blue material cut) beside the part as it was, and prints one PASS or FAIL line per check in the output pane.
+# result (grey as it was, red material added, blue material cut; a result that is mostly thin layers -- walls, a draft -- is one body coloured by the change, and the card says what each
+# remedy added) beside the part as it was, and prints one PASS or FAIL line per check in the output pane.
 # Every file is written to be read from the top: the part, the constraint, the call of the tool, the answers worked out by hand, the checks.  Its title says what it tries to break.
 #
 # WHAT TO TRUST.  Look at the picture first.  The numbers are an aid: the checks were written beside the code they test.  Turn the part (Shift + left drag), zoom in, use

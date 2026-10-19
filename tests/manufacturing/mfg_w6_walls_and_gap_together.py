@@ -28,7 +28,7 @@ lo, hi = (-2, -2, -1.5), (3.3, 8, 5)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=14)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res = manufacturing_optimization(part, constraints=[rule], max_change=3.0)
+res = manufacturing_optimization(part, constraints=[rule], max_change=3.0, verify=True)
 print(res)
 # THE ANSWER BY HAND: the walls are thin (0.5 < 0.8) and the gap is narrow (0.3 < 0.4): closing the gap makes one slab 1.3 mm thick, and thickening the outer faces by 0.15 makes it 1.6;
 # whatever the tool does, no air narrower than 0.38 and no wall under 0.76 may be left in the middle of the walls (z = 2, y = 3)

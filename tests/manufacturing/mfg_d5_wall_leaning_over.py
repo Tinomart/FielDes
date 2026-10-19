@@ -30,7 +30,7 @@ lo, hi = (-14, -3, -6), (42, 13, 23)
 # WHAT IS ASKED: the rules the part has to keep (the only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone)
 only_draft = manufacturing_constraint(draft=1.0)
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res1 = manufacturing_optimization(part, constraints=[only_draft], max_change=3.0)
+res1 = manufacturing_optimization(part, constraints=[only_draft], max_change=3.0, verify=True)
 # (the view of the window: the box round the part, and how finely it is drawn)
 frame(lo, hi, res=4)
 # (measured round the leaning face only, x from -4 to 4, z from 0.2 to 20.2, y from 0.5 to 9.5: the part has other vertical faces -- the left face of the wall at x = -12, the sides of the base, the end faces of the
@@ -43,7 +43,7 @@ print(res1)
 t.check('with a draft rule alone the leaning-over face is left as it is (+%.2f -%.2f mm3 changed)' % (a1, r1), a1 < 3.0 and r1 < 3.0, '+%.2f -%.2f' % (a1, r1), '< 3')
 both = [manufacturing_constraint(draft=1.0), manufacturing_constraint(undercut_along=(0, 0, 1))]
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res2 = manufacturing_optimization(part, constraints=both, max_change=3.0)
+res2 = manufacturing_optimization(part, constraints=both, max_change=3.0, verify=True)
 print(res2)
 a2, r2, _ = changed_volumes(part, res2, lo_m, hi_m)
 t.near('with the undercut asked too the material added, the triangle under the lean (10.5 mm2 over the 9 mm of length measured: by hand 94.5 mm3)', a2, 94.5, 20.0, ' mm3')
@@ -57,7 +57,7 @@ marks = {k: round(v['share'], 4) for k, v in after.report.items() if v['broken']
 listed = sorted(set(s['rule'] for s in res2.fail_states))
 t.check('after one pass the new vertical face has no draft yet: the independent check finds %s and the tool lists %s' % (marks, listed), after.compliant or bool(listed), '%s, listed %s' % (marks, listed), 'listed')
 # THE TOOL RUNS HERE: it reads the part's field and makes the remedies (see the list in the header); nothing it is given says what the answer is
-res3 = manufacturing_optimization(res2, constraints=both, max_change=3.0)
+res3 = manufacturing_optimization(res2, constraints=both, max_change=3.0, verify=True)
 print(res3)
 after3 = manufacturing_analysis(res3, constraints=both, samples=6000)
 if not after3.compliant:

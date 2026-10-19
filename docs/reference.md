@@ -1480,8 +1480,8 @@ samples.  points: [(x, y, z), ...] with values [v, ...], or
 Fills every concave (inside) edge and corner of a shape with a
 fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
 shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
-`radius`, and the surface of the result is `radius` from them.  Exact for the inside edge and corner of a box and for faces at right angles, a little off
-where they meet at another angle.
+`radius`, and the surface of the result is `radius` from them.  Exact for the inside edge of two flat faces at any angle and for the corner of three
+(the ball's centre is where the planes of the faces meet); a slot narrower than the ball is filled flush with its mouth, not left with the sag of the ball resting on its two edges.
 
 ### `find_extent(shape, budget=200000, resolution=2.0, half=1000000.0)`
 
@@ -1685,8 +1685,8 @@ lie in the wedge around the +x direction
 Rounds every convex (outside) edge and corner of a shape with the
 given radius (a number or a field), and removes what is thinner than the ball: a ball of that radius rolls in the material, and the shape is everything
 it reaches.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
-`-radius`, and the surface of the result is `radius` from them.  Exact for a box, a cylinder, a sphere (their edges and corners are made of faces at right
-angles and curves), a little off where the faces meet at another angle.
+`-radius`, and the surface of the result is `radius` from them.  Exact for the outside edge of two flat faces at any angle and for the corner of three
+(the ball's centre is where the planes of the faces meet), for a cylinder and a sphere.
 
 ### `sample_grid(field, lower, upper, n=20)`
 
@@ -3810,7 +3810,7 @@ shell's own check, with the rules it was asked.  Not a substitute for the check 
 The part turned so that the way up it was made for is z: what a print of it is made of (the part in the model stays as it is).  Another shape -- the supports,
 a no-support region -- is turned the same way
 
-### `manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=True, samples=2500)`
+### `manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=False, samples=2500)`
 
 The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
 region of its constraint: thin walls thickened (an offset that follows how thin the wall is), a narrow gap closed (`gap_fix='widen'` of the
@@ -3825,8 +3825,10 @@ or in `keep` is never touched.
     remedies     which remedies may be made, a list of 'undercut', 'draft', 'gaps', 'corners', 'walls', 'overhang' (default: those the rules ask for)
     max_change   the most of the part's volume that the shell may change, as a share (default 0.25); a remedy that would go past it is not made
     max_support_height  how deep a gusset under an overhang may be, mm (default a fifth of the part's size)
-    verify       the shell checks what it made, with the same rules, and says what is still broken and where (`fail_states`); False leaves it to
-                 manufacturing_analysis of the result (a big part is slow to check)
+    verify       False (the default): the shell does not check what it made -- run manufacturing_analysis on the result, which is the check.  True: the shell
+                 checks its result with the same rules and says what is still broken and where (`fail_states`, and the card's "places still breaking a
+                 rule"); that is the whole of the check run again on the result, and a part whose field is slow to evaluate pays for it many times over
+                 (on a topology-optimized bracket it was ten of the thirteen minutes)
     samples      how many points of the surface it checks
 
 Returns a ManufacturingResult: a body that is the part changed, coloured by the geometry change, with `.changes`, `.added`, `.removed`, `.fail_states`.
