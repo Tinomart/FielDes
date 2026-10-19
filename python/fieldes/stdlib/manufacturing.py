@@ -63,6 +63,14 @@ __all__ = ['manufacturing_constraint', 'fff_constraint', 'cnc_constraint', 'mold
            'manufacturing_analysis', 'manufacturing_optimization', 'ManufacturingConstraint', 'ManufacturingAnalysis', 'ManufacturingResult']
 
 
+def _note_lattice(info):
+    ''' One line in the log (FIELDES_MFG_TIMING) for a lattice that a remedy made: the nodes, the nodes the part was looked at in, and the seconds -- where the tool's own seconds go '''
+    import sys
+    name = sys._getframe(1).f_code.co_name
+    _log(time.time(), '%s: %d x %d x %d nodes (%.3g mm apart), the part looked at in %d of them: %.1f s sampling, %.1f s in all' % (
+        name, info['dims'][0], info['dims'][1], info['dims'][2], info['pitch'], info['looked_at'], info['sampling_seconds'], info['seconds']))
+
+
 def _clip(v, reach, on=True):
     ''' `v` held between -reach and reach.  The offsets of the calls that the remedies make into the part are held to the longest one that is ever read (see _chord): the box of the call is then
         the cell and a margin, whatever the part's interval is in the cell, and the tape of the part that is called can be shortened for it, as the part's own is.  Only for a part whose field is expensive per point
@@ -154,6 +162,60 @@ _REMEDY_TEXT = OrderedDict([
     ('overhang', _tr('Overhang supported (gusset or teardrop)')),
 ])
 _REMEDY_RULE = {'undercut': 'undercut_along', 'draft': 'draft', 'gaps': 'min_gap', 'corners': 'min_radius', 'walls': 'min_wall', 'overhang': 'overhang'}
+_RULE_REMEDY = {rule: remedy for remedy, rule in _REMEDY_RULE.items()}
+
+
+def _walls_lattice(ctx, t):
+    ''' The wall remedy as a field of the kernel (`libfive_field_overhang_lattice` in mode 3: kernel/src/fields/lattice_field.cpp): the formula of `_remedy_walls` -- a wall thinner than `t` is offset outwards by half of what it
+        lacks, to `t / 2` at most, where the thickness is the length of the line along the normal from the nearest point of the surface through the material -- worked out on a lattice laid over the part, the part looked
+        at in a band round its surface, outside as far as the growth reaches and inside as far as the thickness is looked for; the normal and the thickness are read off the lattice.  The part united with it; None when the
+        library has no lattice field, the limit is smaller than three and a half nodes (the lattice cannot hold a layer of that), or the lattice could not be made (the formula does it then).  The lattice is a 400th of
+        the part's size, coarser for a part that would need more than thirty million nodes '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+        return None
+    f = ctx.field
+    unit = (0.0, 0.0, 1.0)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    pitch = max(ctx.size / 400.0, 1e-3)
+    for _ in range(4):
+        pad = 1.1 * t + 8.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(ctx.size / 400.0, (volume / 3.0e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    if t < 3.4 * pitch:
+        return None
+    band = 0.6 * t + 3.0 * pitch
+    pad = 1.1 * t + 8.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(t), 3, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = ctx.base.min(Shape(ptr))
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
 
 
 def _remedy_walls(ctx, t):
@@ -166,6 +228,15 @@ def _remedy_walls(ctx, t):
         of another wall taking the growth of the face beside it, a wedge in the inside corner -- were made and measured: they cost three to ten times the offset to draw, left faint ridges and
         slivers 1.2 mm from the edges of walls that were thick enough, and made the field one the viewer could not mesh within the memory of the machine (8 GB at 14 cells to the millimetre
         on an open box; the same box without them: 0.84 GB).  The corner rule (`min_radius`) rounds such corners '''
+    # (a part that is expensive to read gets the walls from a lattice, as it gets the draft, the undercut, the corners and the overhang: the formula below asks the part about ten times at every point the mesher
+    # samples near the surface, and it was the last of those formulas in the mould's drawing of the bracket.  A limit smaller than three and a half nodes of the lattice cannot be held by one: the formula does it
+    # then.  FIELDES_WALLS_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
+    import os
+    mode = os.environ.get('FIELDES_WALLS_LATTICE', '')
+    if mode == '1' or (mode != '0' and getattr(ctx, 'clamp_calls', False)):
+        made = _walls_lattice(ctx, t)
+        if made is not None:
+            return made
     f, n = ctx.field, ctx.normals
     chord = _chord(ctx, t, True)
     # (the line along the normal from the nearest point of the surface says something only where that point is on the surface -- over the mouth of a slot the normal leads to the air
@@ -226,7 +297,236 @@ def _remedy_corners(ctx, radius):
         its derivative (distance_field.py: Newton steps along the gradient; nothing is meshed) -- so the corner is filled by the arc of a ball that rolls in it: a circle of that
         radius whose slope turns smoothly from one face to the other.  A flat face, a bump and an outside corner are as they were, and the ends of a corner are not touched.  It works
         on any part -- an import, a lattice, a pocket --, and a slot narrower than the ball is filled.  The part's own field is kept where nothing is added '''
+    # (A part that is expensive to read -- the optimized bracket -- gets the corners from a lattice the kernel works out once instead of the walk below, which asks the part about 32 times at every point the mesher
+    # samples: the corners alone took 145 s of the coarse level of the mould's drawing of the bracket.  The default for such a part is the ball itself read from a lattice (`_corner_maxfilter`, any radius).
+    # The switches, for the proofs and for comparing: FIELDES_CORNERS_BALL=1 forces that fill on any part; FIELDES_CORNERS_LATTICE=1 forces the older closing by distance transforms (a ball of three and a half
+    # nodes or more), 0 forbids every lattice and asks the formula; FIELDES_CORNERS_ZONE=1 asks the formula only inside a zone found on a lattice -- tried twice on the bracket and slower both times, so off.)
+    import os
+    mode = os.environ.get('FIELDES_CORNERS_LATTICE', '')
+    expensive = getattr(ctx, 'clamp_calls', False)
+    if os.environ.get('FIELDES_CORNERS_BALL') == '1' or (mode not in ('0', '1') and expensive):
+        made = _corner_maxfilter(ctx, radius)
+        if made is not None:
+            return made
+    if mode == '1' or (mode != '0' and expensive):
+        made = _closing_lattice(ctx, radius)
+        if made is not None:
+            return made
+        if mode != '1':
+            zone = _corner_zone(ctx, radius) if os.environ.get('FIELDES_CORNERS_ZONE') == '1' else None
+            if zone is not None:
+                return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)).max(zone))
+            ctx.corners_left = radius          # (no lattice could be made: the corners are left as they are and the tool says so)
+            return ctx.field
     return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)))
+
+
+def _corner_maxfilter(ctx, radius):
+    ''' The inside corners rounded to `radius`, as a field of the kernel with no walk (`libfive_field_overhang_lattice` in mode 5: kernel/src/fields/lattice_field.cpp).  A point of the air is filled when no ball of the
+        radius that lies in the air covers it: the largest value of the part's field on the ball round the point falls short of what open air gives (the value plus the radius), by a deficit that is how deep the
+        fill is there, and the surface of the rounded part is where the value less the deficit is 0 -- the rolling ball's own arc (the apex in a corner of 90 degrees at 0.293 r from both walls).  The largest value
+        is read from a lattice of the part's field sampled once, at 96 directions, so there is no walk of the part at every point: the formula (`fillet`) asks the part about 32 times at every point the mesher
+        samples, and on the bracket that took 145 s of the coarse level of the drawing for 62 mm^3.  The part united with it.  None when the library has no lattice field or the lattice could not be made.  The lattice
+        is a 400th of the part's size, coarser for a part that would need more than thirty million nodes; a distance read by trilinear interpolation is good to a small part of a node, so it holds a ball smaller
+        than the lattice's pitch '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+        return None
+    f = ctx.field
+    unit = (0.0, 0.0, 1.0)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    pitch = max(ctx.size / 400.0, 1e-3)
+    for _ in range(4):
+        pad = 2.0 * radius + 8.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(ctx.size / 400.0, (volume / 3.0e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    band = 1.0 * radius + 3.0 * pitch
+    pad = 2.0 * radius + 8.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 5, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = ctx.base.min(Shape(ptr))
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
+
+
+def _corner_zone(ctx, radius):
+    ''' Where the corner formula has to be asked, for a ball too small for `_closing_lattice`: a field of the kernel (`libfive_field_overhang_lattice` in mode 4: kernel/src/fields/lattice_field.cpp) that is -1000 in the zone
+        and +1000 outside it.  The zone is a radius and a half round the creases of the part's field in the air within 1.2 radii of the part (an inside corner, or a concave place tighter than the ball, is a crease of the
+        distance: its slope read across it is under 0.9).  `ctx.field.min(fillet.max(zone))` is the formula's result where the zone is and the part elsewhere, and the mesher drops the formula outside the zone.  None when
+        the library has no lattice field or the lattice could not be made.  The lattice is a 400th of the part's size, coarser for a part that would need more than thirty million nodes: the creases are found within a
+        node or two, which the zone's margin of a node and a half more than covers '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+        return None
+    f = ctx.field
+    unit = (0.0, 0.0, 1.0)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    pitch = max(ctx.size / 400.0, 1e-3)
+    for _ in range(4):
+        pad = 1.5 * radius + 8.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(ctx.size / 400.0, (volume / 3.0e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    band = 1.2 * radius + 3.0 * pitch
+    pad = 1.5 * radius + 8.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 4, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = Shape(ptr)
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
+
+
+def _closing_lattice(ctx, radius):
+    ''' The part with a ball of `radius` rolled in the air round it, as a field of the kernel (`libfive_field_overhang_lattice` with a slope of -2: kernel/src/fields/lattice_field.cpp): the part is sampled at the nodes
+        of a lattice (a pitch of a 400th of the part's size, finer for a small ball, coarser for a part that would need more than fifty million nodes), the part grown by the ball and shrunk by it again by two distance transforms, and the
+        nodes of the air that lie well inside the result kept as the fill.  The part united with it; None when the library has no lattice field, the ball is smaller than three and a half nodes (the formula does it then), or the lattice
+        could not be made.  The surface of the fill is within a node of the exact ball's '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+        return None
+    f = ctx.field
+    unit = (0.0, 0.0, 1.0)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    # (a ball of three and a half nodes at the least: the fill is the air that lies more than three quarters of a node inside the closing, and in a corner of 90 degrees the closing is only 0.41 of the radius deep, so a ball
+    # of two nodes fills next to nothing -- the mould's 0.75 mm corners on the bracket: 15 mm^3 where the formula finds 66.  A small radius asks a pitch finer than a 400th of the part, as far as the nodes allow)
+    fine = max(min(ctx.size / 400.0, radius / 3.5), 1e-3)
+    pitch = fine
+    for _ in range(4):
+        pad = radius + 3.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(fine, (volume / 5.0e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    if radius < 3.4 * pitch:
+        return None
+    pad = radius + 3.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, -2.0, float(radius), -1.0e30, 0, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = ctx.base.min(Shape(ptr))
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
+
+
+def _undercut_lattice(ctx, a):
+    ''' The undercut fill as a field of the kernel (`libfive_field_overhang_lattice` with a negative slope: kernel/src/fields/lattice_field.cpp): a lattice laid over the part along `a`, the part sampled at the nodes
+        with the mesher's pruning, and in every column the air between the first and the last node of the part filled.  The part united with it; None when the library has no lattice field or the lattice could not
+        be made (the formula then does it).  The lattice is a pitch of a 250th of the part's size (coarser for a part that would need more than twelve million nodes): the fill's faces along `a` are the part's own,
+        its side walls are within half a node of the edge of what lies over the cavity '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+        return None
+    f = ctx.field
+    norm = math.sqrt(sum(float(c) ** 2 for c in a)) or 1.0
+    unit = tuple(float(c) / norm for c in a)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    pitch = max(ctx.size / 250.0, 1e-3)
+    for _ in range(4):
+        pad = 3.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(ctx.size / 250.0, (volume / 1.2e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    pad = 3.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, -1.0, 3.0 * pitch, -1.0e30, 0, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = ctx.base.min(Shape(ptr))
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
 
 
 def _remedy_undercut(ctx, a):
@@ -235,6 +535,14 @@ def _remedy_undercut(ctx, a):
         not counted from each point: counted from the point, a sliver of material thinner than the spacing -- the tip of a lip, a thin shelf -- is hit by the points whose count happens to land
         in it, and the fill's edge comes out as a staircase as high as the spacing times the slope of the face (0.4 mm on a 20-degree dovetail); at fixed heights the whole sliver is hit
         or missed together, and the edge of the fill is one straight wall.  A shelf thinner than the spacing (the part's length along `a` over 16) may still lie between two heights '''
+    # (a part that is expensive to read -- the optimized bracket: tens of microseconds a point -- gets the same fill from a lattice the kernel works out once, like the overhang's: the formula below asks the part
+    # 17 times at every point the mesher samples, and the mill's drawing of the bracket did not end in seven minutes.  FIELDES_UNDERCUT_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
+    import os
+    mode = os.environ.get('FIELDES_UNDERCUT_LATTICE', '')
+    if mode == '1' or (mode != '0' and getattr(ctx, 'clamp_calls', False)):
+        made = _undercut_lattice(ctx, a)
+        if made is not None:
+            return made
     f = ctx.field
     here = Shape.X() * a[0] + Shape.Y() * a[1] + Shape.Z() * a[2]
     ends = [x * a[0] + y * a[1] + z * a[2] for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
@@ -250,10 +558,71 @@ def _remedy_undercut(ctx, a):
     return f.min(_join('min', ups, ctx.tie).max(_join('min', downs, ctx.tie)))
 
 
+def _draft_lattice(ctx, degrees, d):
+    ''' The draft as a field of the kernel (`libfive_field_overhang_lattice` in mode 2: kernel/src/fields/lattice_field.cpp): the formula of `_remedy_draft` -- the growth of a wall by the height below the top times what its slope
+        lacks -- worked out on a lattice laid over the part along the pull direction `d`, the part looked at in a band round its surface as wide as the draft can move it, the normals read off the lattice.  The part united with
+        it; None when the library has no lattice field, the angle is 0, or the lattice could not be made (the formula then does it).  The lattice is a pitch of a 400th of the part's size (coarser for a part that would need more
+        than thirty million nodes): the surface of the grown part is placed between nodes by the part's own value, within a few hundredths of a node of the formula's '''
+    import ctypes
+    from fieldes.ffi import lib
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None or degrees <= 0:
+        return None
+    f = ctx.field
+    norm = math.sqrt(sum(float(c) ** 2 for c in d)) or 1.0
+    unit = tuple(float(c) / norm for c in d)
+    e1, e2 = _frame(unit)
+    axes = (e1, e2, unit)
+    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
+    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
+    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
+    grow, _width = _draft_reach(ctx, degrees, unit)
+    pitch = max(ctx.size / 400.0, 1e-3)
+    for _ in range(4):
+        pad = grow + 7.0 * pitch
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
+        wider = max(ctx.size / 400.0, (volume / 3.0e7) ** (1.0 / 3.0))
+        if abs(wider - pitch) < 1e-9:
+            break
+        pitch = wider
+    band = grow + 4.0 * pitch                                   # (the part is looked at out to here: the growth is never more than `grow`, and the normal at a node needs its neighbours)
+    pad = band + 3.0 * pitch
+    mins = [lo_f[i] - pad for i in range(3)]
+    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
+    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
+    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
+    cdims = (ctypes.c_int * 3)(*dims)
+    stats = (ctypes.c_double * 8)()
+    top = max(proj[2]) - mins[2]                                # (the top of the part up the third axis of the lattice: the height above the first node)
+    known = None
+    try:
+        from fieldes.app_support import _var_values
+        known = _var_values()
+    except Exception:
+        known = None
+    names, values, count = known if known is not None else (None, None, 0)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, math.tan(math.radians(degrees)), float(band), float(top), 2, 1.0e30, -1.0e30, stats)
+    if not ptr:
+        return None
+    out = ctx.base.min(Shape(ptr))
+    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
+    return out
+
+
 def _remedy_draft(ctx, degrees, d):
     ''' A wall that leans less than `degrees` from the pull direction is offset outwards by what its slope lacks, growing in proportion to how far it is
         below the top of the part: a wall that is vertical comes out wider at the foot, by the tangent of the draft times its height.  Faces that are
         not wall-like (a floor, a top) are not moved '''
+    # (a part that is expensive to read -- the optimized bracket -- gets the draft from a lattice the kernel works out once, as the overhang and the undercut get theirs: the formula below asks the part seven times at
+    # every point the mesher samples near its surface, and the mould's drawing of the bracket did not end in seven minutes.  FIELDES_DRAFT_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
+    import os
+    mode = os.environ.get('FIELDES_DRAFT_LATTICE', '')
+    if mode == '1' or (mode != '0' and getattr(ctx, 'clamp_calls', False)):
+        made = _draft_lattice(ctx, degrees, d)
+        if made is not None:
+            return made
     n, f = ctx.normals, ctx.field
     nd = _dot(n, d)
     wall = (1.0 - nd * nd).max(1e-6).sqrt()
@@ -385,8 +754,9 @@ def _remedy_overhang(ctx, degrees, d, fix, reach):
     if not ptr:
         raise ManufacturingError('manufacturing_optimization: the overhang fix could not be made (lattice of %d x %d x %d nodes, status %d)' % (dims[0], dims[1], dims[2], int(stats[0])))
     field = Shape(ptr)
-    out = f.max(-field) if cut else f.min(field)
+    out = ctx.base.max(-field) if cut else ctx.base.min(field)
     out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
+    _note_lattice(out._lattice)
     return out
 
 
@@ -609,6 +979,35 @@ class ManufacturingResult(FieldResult):
             out = rotate_y(out, -theta)
         return out
 
+    _show_turned = True
+
+    def _turning(self):
+        ''' Whether the part is DRAWN standing the way the print is made: the tool found that way (the constraint left it free) and the script did not ask for the part as it was
+            (`show_turned=False`).  The part in the model, `.part`, is not turned either way; `.oriented()` is the turned part '''
+        return self._show_turned and self.orientation is not None
+
+    def _turn(self, shape):
+        ''' What is drawn of a field of the part -- the part, the change, the supports -- turned as `oriented()` turns the part, when it is drawn turned '''
+        return self.oriented(shape) if self._turning() else shape
+
+    def _turned_box(self, box):
+        ''' The box of a shape (low corner, high corner) as it is once turned: the box of its eight corners turned the way `oriented()` turns the part (about z by -phi, then about y by -theta) '''
+        if not box or not self._turning():
+            return box
+        d = self.build_direction
+        phi = math.atan2(d[1], d[0]) if (abs(d[0]) > 1e-12 or abs(d[1]) > 1e-12) else 0.0
+        theta = math.acos(max(-1.0, min(1.0, d[2])))
+        cz, sz = math.cos(-phi), math.sin(-phi)
+        cy, sy = math.cos(-theta), math.sin(-theta)
+        lo, hi = box
+        corners = []
+        for x in (lo[0], hi[0]):
+            for y in (lo[1], hi[1]):
+                for z in (lo[2], hi[2]):
+                    x1, y1 = cz * x - sz * y, sz * x + cz * y
+                    corners.append((cy * x1 + sy * z, y1, -sy * x1 + cy * z))
+        return (tuple(min(c[i] for c in corners) for i in range(3)), tuple(max(c[i] for c in corners) for i in range(3)))
+
     def _bodies(self):
         ''' What the shell changed, as bodies of their own: the part where it is as it was (grey), the material added (red: in the result and outside the input part) and the material
             cut (blue: in the input part and outside the result), each by its exact field -- the result with the input part, and nothing else.  A colour read at the vertices of the
@@ -632,7 +1031,8 @@ class ManufacturingResult(FieldResult):
             bodies.append((part.max(hair - result), -1.0))
         out = []
         for shape, value in bodies:
-            box = getattr(result, '_bounds', None)
+            shape = self._turn(shape)
+            box = self._turned_box(getattr(result, '_bounds', None))
             if box and getattr(shape, '_bounds', None) is None:
                 shape._bounds = box
             out.append((colored(shape, Shape.wrap(value), range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change'), value))
@@ -661,7 +1061,7 @@ class ManufacturingResult(FieldResult):
             rows[3:3] = [(_REMEDY_TEXT[c['remedy']], _quantity(c['added'] + c['removed'], 3), 'mm³') for c in self.changes if c['kept']]
             if self.orientation is not None:
                 # (the way up of the print was left free, and the tool found it: it is on the card, and `.oriented()` is the part turned to stand that way)
-                rows.append((_tr('Way up of the print'), '(%.2g, %.2g, %.2g)' % tuple(self.build_direction), ''))
+                rows.append((_tr('Way up of the print'), '(%.2g, %.2g, %.2g)' % tuple(self.build_direction), _tr('part shown turned') if self._turning() else ''))
             if getattr(self, '_thin', False):
                 # (a thin layer -- a wall thickened by a tenth of a millimetre, a gap made wider -- is thinner than a cell of the picture, and three bodies of which two are such skins
                 # are drawn as stripes and missing patches.  The result is drawn as ONE body, whole and at the scene's resolution, coloured by the change at each point of its surface:
@@ -673,12 +1073,13 @@ class ManufacturingResult(FieldResult):
                     change = change.max(0)
                 if not getattr(self, '_adds', True):
                     change = change.min(0)
-                body = colored(self._field, change, range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change')
+                change = self._turn(change)             # (drawn standing the way the print is made, when the way up was left free: the colours turn with the part)
+                body = colored(self._turn(self._field), change, range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change')
                 body._color_fields = [('change', _tr('Geometry change'), change, -1.0, 1.0)]
                 body._color_field_name = 'change'
                 body._value_note = note
                 body._key_results = rows
-                box = getattr(self._field, '_bounds', None)
+                box = self._turned_box(getattr(self._field, '_bounds', None))
                 if box and getattr(body, '_bounds', None) is None:
                     body._bounds = box
                 shown = [body]
@@ -692,7 +1093,11 @@ class ManufacturingResult(FieldResult):
                     body._key_results = rows
             if getattr(self, 'supports', None) is not None:
                 # (ONE class, amber, and a card with one swatch that says what it is: a scale from -1 to 1 for a body of one colour said nothing)
-                shown.append(colored(self.supports, Shape.wrap(1.0), range=(-1.0, 1.0), label=_tr('Supports'), colormap='support'))
+                supports = colored(self._turn(self.supports), Shape.wrap(1.0), range=(-1.0, 1.0), label=_tr('Supports'), colormap='support')
+                sbox = self._turned_box(getattr(self.supports, '_bounds', None))
+                if sbox and getattr(supports, '_bounds', None) is None:
+                    supports._bounds = sbox
+                shown.append(supports)
             self._shown = shown if len(shown) > 1 else shown[0]
         return self._shown
 
@@ -728,7 +1133,7 @@ class ManufacturingResult(FieldResult):
 @_with_conditions
 @_remembered('manufacturing_optimization')
 @_with_bar('manufacturing_optimization')
-def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=False, samples=2500):
+def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_change=0.25, max_support_height=None, verify=False, samples=2500, show_turned=True):
     ''' The part, changed until it keeps the rules of its constraints, and what was changed.  Each remedy is a field made from the part's own, in the
         region of its constraint: thin walls thickened (an offset that follows how thin the wall is), a narrow gap closed (`gap_fix='widen'` of the
         constraint: made as wide as asked), an inside corner rounded to the radius, a draft put on the walls, an undercut filled, an overhang made to stand
@@ -747,6 +1152,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
                          rule"); that is the whole of the check run again on the result, and a part whose field is slow to evaluate pays for it many times over
                          (on a topology-optimized bracket it was ten of the thirteen minutes)
             samples      how many points of the surface it checks
+            show_turned  True (the default): when the constraint left the way up of the print free and the tool found it, the result is DRAWN standing that way (z up) -- the
+                         part turns on the screen, the card says "Way up of the print ... part shown turned"; False: it is drawn where it is.  The model is not turned either
+                         way: `.oriented()` is the part turned to stand that way, for a print
 
         Returns a ManufacturingResult: a body that is the part changed, coloured by the geometry change, with `.changes`, `.added`, `.removed`, `.fail_states`.
         Run `manufacturing_analysis` on the result: the shell's own check is not a substitute for the maker's. '''
@@ -794,6 +1202,8 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     _log(t0, 'the volume of the part is measured')
 
     candidates = []                  # (remedy, rule, field, adds, the width of the shell it changes -- or None when it can reach anywhere)
+    total_rules = max(1, sum(len(c.rules) for c in items))
+    built = 0
     for c in items:
         d = direction if c.build_direction is None else c.build_direction
         w_region = None if c.region is None else _weight(c.region, eps)
@@ -801,11 +1211,15 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         def scoped(new, w_region=w_region):
             out = new
             if w_region is not None:
-                out = ctx.field + w_region * (out - ctx.field)
+                out = ctx.base + w_region * (out - ctx.base)
             if keep_weight is not None:
-                out = out + keep_weight * (ctx.field - out)
+                out = out + keep_weight * (ctx.base - out)
             return out
         for rule, value in c.rules.items():
+            # (making a remedy -- the lattices sample the part -- is most of the tool's seconds: the bar moves one step for each, with the text of the remedy, and the measuring that follows has the rest of it)
+            if rule in _RULE_REMEDY:
+                _progress(0.19 + 0.31 * built / total_rules, _tr('Measuring effect: %s') % _REMEDY_TEXT[_RULE_REMEDY[rule]])
+                built += 1
             if rule == 'min_wall' and 'walls' in allowed:
                 candidates.append(('walls', rule, scoped(_remedy_walls(ctx, value)), True, value))
             elif rule == 'min_gap' and 'gaps' in allowed:
@@ -840,7 +1254,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         if field is None:                    # (a remedy that was not made: the check finds nothing for it to do)
             changes.append({'remedy': remedy, 'rule': rule, 'added': 0.0, 'removed': 0.0, 'kept': False, 'why': _tr('no change required'), 'thin': False})
             continue
-        stretch = (0.25 + 0.5 * index / max(1, len(candidates)), 0.25 + 0.5 * (index + 1) / max(1, len(candidates)))          # (this remedy's part of the bar)
+        stretch = (0.5 + 0.25 * index / max(1, len(candidates)), 0.5 + 0.25 * (index + 1) / max(1, len(candidates)))          # (this remedy's part of the bar: the making of the remedies had 0.19 to 0.5)
         what = _tr('Measuring effect: %s') % _REMEDY_TEXT[remedy]
         _progress(stretch[0], what)
         # (what a remedy of a known width changes lies in the shell of that width round the surface: measured on points of the shell, so that a thin layer or a narrow gap has
@@ -868,6 +1282,8 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         _log(t0, 'remedy %s measured: +%.4g -%.4g mm^3' % (remedy, added, removed))
         if added + removed < 1e-4 * volume:
             entry['why'] = _tr('no change required')
+            if remedy == 'corners' and getattr(ctx, 'corners_left', None) is not None:
+                entry['why'] = _tr('not rounded: a ball of %.2g mm is smaller than this part\'s lattice resolves') % ctx.corners_left
         elif spent + added + removed > budget:
             entry['why'] = _tr('would change %.2g %% of the part volume; max_change allows %.2g %%: add a support or change the design') % (
                 100.0 * (spent + added + removed) / volume, 100.0 * max_change)
@@ -903,7 +1319,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
                         marginal = refined[0]
             union_added += marginal
             earlier = field if earlier is None else earlier.min(field)
-    result = ctx.field
+    result = ctx.base
     # (a remedy is the part's own field where it does nothing: the same value as the part, over most of space -- a tie -- so each is kept a few microns apart; see _join)
     for i, a in enumerate(adds):
         result = result.min(a + ctx.tie * (i + 1))
@@ -982,6 +1398,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         out.added = union_added
         out.share = (out.added + out.removed) / volume if volume > 0 else 0.0
     out.fail_totals = fail_totals
+    out._show_turned = bool(show_turned)
     out.supports = supports
     out.support_volume = support_volume
     out.blockers = blockers

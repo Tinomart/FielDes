@@ -64,6 +64,7 @@ struct OverhangLatticeParams
     double minZ;
     bool negate;
     double forceLo, forceHi;
+    int mode = 0;          // (0: the gusset / undercut fill / closing by the sign of `tanSlope`; 2: the DRAFT -- `tanSlope` the tangent of the angle, `reach` the width of the band round the part that is looked at, `minZ` the top of the part up the third axis)
 };
 Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars,
                      const OverhangLatticeParams& params, double* stats);

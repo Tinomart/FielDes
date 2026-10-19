@@ -310,6 +310,8 @@ struct Sampler
     std::vector<float>& F;
     Evaluator& ev;
     std::atomic<uint64_t>& looked;
+    double band = 0.0;          // (the draft needs the part's value in the air out to this far from its surface: a block is "outside" only when the interval says it is more than this away)
+    double bandIn = 0.0;        // (the walls need it inside the part as well, out to as far as the thickness is looked for: a block is "inside" only when the interval says it is more than this deep)
 
     Eigen::Vector3f world(double x, double y, double z) const
     {
@@ -349,11 +351,11 @@ struct Sampler
         }
         auto o = ev.intervalAndPush(wl, wu, tape);
         const Tape::Handle& used = o.first.isSafe() ? o.second : tape;
-        if (o.first.isSafe() && o.first.upper() < 0)
+        if (o.first.isSafe() && o.first.upper() < -bandIn)
         {
             fill(lo, hi, -kBound);
         }
-        else if (o.first.isSafe() && o.first.lower() > 0)
+        else if (o.first.isSafe() && o.first.lower() > band)
         {
             fill(lo, hi, kBound);
         }
@@ -545,6 +547,111 @@ void sliceDistance(const float* F, int nx, int ny, float h, float limit, SliceWo
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// The squared distance transform of Felzenszwalb and Huttenlocher, in place, of one line of `n` values (0 at a source, a large value elsewhere), in index units
+static void dt1(float* f, int n, std::vector<int>& v, std::vector<double>& z, std::vector<double>& out)
+{
+    if (n <= 1) return;
+    v.assign(size_t(n), 0);
+    z.assign(size_t(n) + 1, 0.0);
+    out.assign(size_t(n), 0.0);
+    int k = 0;
+    v[0] = 0;
+    z[0] = -1.0e30;
+    z[1] = 1.0e30;
+    auto cross = [&](int q, int p) { return ((double(f[q]) + double(q) * q) - (double(f[p]) + double(p) * p)) / (2.0 * q - 2.0 * p); };
+    for (int q = 1; q < n; ++q)
+    {
+        double s = cross(q, v[size_t(k)]);
+        while (s <= z[size_t(k)])            // (z[0] is -1e30: k stops at 0 at the latest)
+        {
+            --k;
+            s = cross(q, v[size_t(k)]);
+        }
+        ++k;
+        v[size_t(k)] = q;
+        z[size_t(k)] = s;
+        z[size_t(k) + 1] = 1.0e30;
+    }
+    k = 0;
+    for (int q = 0; q < n; ++q)
+    {
+        while (z[size_t(k) + 1] < q) ++k;
+        const double dq = double(q - v[size_t(k)]);
+        out[size_t(q)] = dq * dq + double(f[v[size_t(k)]]);
+    }
+    for (int q = 0; q < n; ++q) f[q] = float(std::min(out[size_t(q)], 1.0e18));
+}
+
+// The squared distance (in index units) from every node to the nearest source (a node holding 0; the others hold a large value), over the three axes
+static void edt3(std::vector<float>& D, int nx, int ny, int nz)
+{
+    parallelFor(size_t(ny) * nz, [&](size_t line) {
+        std::vector<int> v;
+        std::vector<double> z, out;
+        dt1(&D[line * size_t(nx)], nx, v, z, out);
+    });
+    parallelFor(size_t(nz) * nx, [&](size_t id) {
+        const size_t k = id / size_t(nx), i = id % size_t(nx);
+        std::vector<int> v;
+        std::vector<double> z, out;
+        std::vector<float> col(static_cast<size_t>(ny));          // (not `col(size_t(ny))`: that reads as a function)
+        for (int j = 0; j < ny; ++j) col[size_t(j)] = D[(k * ny + j) * nx + i];
+        dt1(col.data(), ny, v, z, out);
+        for (int j = 0; j < ny; ++j) D[(k * ny + j) * nx + i] = col[size_t(j)];
+    });
+    parallelFor(size_t(ny) * nx, [&](size_t id) {
+        const size_t j = id / size_t(nx), i = id % size_t(nx);
+        std::vector<int> v;
+        std::vector<double> z, out;
+        std::vector<float> col(static_cast<size_t>(nz));
+        for (int k = 0; k < nz; ++k) col[size_t(k)] = D[(size_t(k) * ny + j) * nx + i];
+        dt1(col.data(), nz, v, z, out);
+        for (int k = 0; k < nz; ++k) D[(size_t(k) * ny + j) * nx + i] = col[size_t(k)];
+    });
+}
+
+// The finished lattice as a field
+static Tree finishLattice(const OverhangLatticeParams& P, std::vector<float>&& values, float cap, const char* tag, double* stats, double volume, double nodes,
+                          double looked, double tSample, double tTotal, double partNodes)
+{
+    auto data = std::make_shared<LatticeData>();
+    for (int a = 0; a < 3; ++a)
+    {
+        data->n[a] = P.n[a];
+        data->o[a] = P.origin[a];
+        for (int c = 0; c < 3; ++c) data->e[a][c] = P.axes[3 * a + c];
+    }
+    data->h = P.pitch;
+    data->cap = cap;
+    data->g = std::move(values);
+    {
+        uint64_t hash = 1469598103934665603ull;
+        const unsigned char* bytes = reinterpret_cast<const unsigned char*>(data->g.data());
+        const size_t total = data->g.size() * sizeof(float);
+        for (size_t i = 0; i < total; ++i)
+        {
+            hash ^= bytes[i];
+            hash *= 1099511628211ull;
+        }
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%s#%016llx#%d#%d#%d#%.9g", tag, (unsigned long long)hash, P.n[0], P.n[1], P.n[2], P.pitch);
+        data->key = buf;
+    }
+    data->buildPyramid();
+    if (stats)
+    {
+        stats[0] = 0.0;
+        stats[1] = volume;
+        stats[2] = nodes;
+        stats[3] = looked;
+        stats[4] = tSample;
+        stats[5] = tTotal;
+        stats[6] = partNodes;
+        stats[7] = nodes * sizeof(float) * 1.15 / (1024.0 * 1024.0) * 2.0;
+    }
+    return Tree(std::make_unique<LatticeClause>(data));
+}
+
 Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, const OverhangLatticeParams& P, double* stats)
 {
     const auto t0 = std::chrono::steady_clock::now();
@@ -555,13 +662,16 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     };
     const int nx = P.n[0], ny = P.n[1], nz = P.n[2];
     const double h = P.pitch;
-    if (nx < 3 || ny < 3 || nz < 3 || !(h > 0) || !(P.tanSlope > 0) || !(P.reach > 0)) return fail(1);
+    // (a NEGATIVE slope is the mode of the undercut fill: no gusset, but in every column the air between the first and the last node of the part)
+    if (nx < 3 || ny < 3 || nz < 3 || !(h > 0) || P.tanSlope == 0.0 || !(P.reach > 0)) return fail(1);
     const size_t nodes = size_t(nx) * ny * nz;
     if (nodes > size_t(160) * 1000 * 1000) return fail(2);          // (a lattice of more than 160 million nodes: a coarser pitch is asked for)
 
     // 1. The part at the nodes
     std::vector<float> F(nodes, kBound);
     std::atomic<uint64_t> looked(0);
+    const double bandD = (P.mode == 2 || P.mode == 3 || P.mode == 4 || P.mode == 5) ? P.reach : 0.0;
+    const double bandInD = (P.mode == 3) ? 1.1 * P.minZ + 4.0 * h : ((P.mode == 5) ? P.minZ + 4.0 * h : 0.0);
     {
         // tiles of 16 nodes, each worked through by one thread with an evaluator of its own
         const int T = 16;
@@ -578,6 +688,8 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
                     Evaluator ev(part, vars);
                     const Tape::Handle root = ev.getDeck()->tape;
                     Sampler S{P, {nx, ny, nz}, h, F, ev, looked};
+                    S.band = bandD;
+                    S.bandIn = bandInD;
                     for (;;)
                     {
                         const size_t q = next.fetch_add(1);
@@ -599,6 +711,281 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     }
     const double tSample = secondsSince(t0);
 
+    // The DRAFT (mode 2): the formula of `_remedy_draft` -- a wall that leans less than the angle from the pull direction (the lattice's third axis) is offset outwards by (the height below the top) x (the
+    // tangent of the angle less the wall's tilt) x (the wall factor of its normal) -- worked out once on the lattice.  The part was looked at in a band of `reach` round its surface (the sampler's
+    // `band`), so that every node of the air that the draft can move the surface over holds the part's own value, and the normal is the central difference of those values over the lattice.  The field
+    // holds `F - growth` at the nodes of the air that have a growth, the same at the nodes of the part next to them (the growth of the neighbour of the air: the surface is placed between a node of the air
+    // and one of the part by the same formula), and `reach` everywhere else (above 0, and above what the part's own value is next to the part: the zero of the field, where nothing grows, is inside the part,
+    // so that the part united with the field is the part there)
+    // The WALLS (mode 3) go through the same block: where a wall is thinner than `minZ` (the limit), the surface is offset outwards by half of what the wall lacks, to half the limit at most (the formula of
+    // `_remedy_walls`).  How thick the wall is at a point of the air is the length of the line along the normal, from the nearest point of the surface (the foot, p - F n) through the material to where it meets
+    // the air again, found at 24 places up to a tenth more than the limit and between them by where the part's value crosses 0 -- read off the lattice by trilinear interpolation, so the part was looked at
+    // inside as well as outside (`bandIn`).  The same gates as the formula: the foot must be on the surface, the slope a distance's (0.9), a chord of nothing (an edge) counts for nothing, and the growth is
+    // eased out to nothing at the limit over 5 % of it (GRACE)
+    // The CORNERS by the ball itself (mode 5; `minZ` is the radius): no walk.  A point p of the air is inside the closing of the part -- the part with every inside corner rounded by a ball of radius r rolled in
+    // the air -- when no ball of that radius that lies in the air covers it, that is when M(p), the largest value of the part's field F on the ball of radius r round p, is short of what open air gives, F(p) + r
+    // times the slope (a distance gains one for one as the ball's centre moves away from the part; in a corner it gains less, because the walls close in).  The shortfall D(p) is how deep the fill is, and the
+    // closing's surface is where F - D = 0 (checked by hand for a corner of 90 degrees: the apex of the arc comes out at 0.293 r from both walls, the rolling ball's own).  M is found by trilinear reads of the
+    // lattice at 96 directions round p, the way the gradient points, and p itself; a tolerance of 3 % of r keeps a flat face and a convex edge exactly as they are.  The part's value was looked at in the air
+    // out to a radius and inside to a radius (the sampler's `band` and `bandIn`).  Written as the walls are: F - D at the nodes of the air that are next to the part, the part's own value elsewhere
+    if (P.mode == 2 || P.mode == 3 || P.mode == 5)
+    {
+        const double tanT = P.tanSlope, top = P.minZ;
+        const double tWall = P.minZ;
+        const int wallSteps = 24;
+        const float capD = float(P.reach);
+        const size_t plane = size_t(nx) * ny;
+        const float bad = 0.5f * kBound;
+        std::vector<float> Dl(nodes, -1.0f);
+        if (P.mode == 5)
+        {
+            // (the part's field is renormalised to a distance by its own slope before any ball is rolled: the ball's test -- the value gains the radius, one for one, as the centre moves away -- holds for a
+            // distance and not for a field whose slope wanders by a tenth or more, like the topology bracket's: there every node was a little "short" of open air and the fill came out as a skin of shards, 1,490 mm^3
+            // where the formula says 62.  The slope at a node is the steepest change of the value towards any of the 26 neighbours -- one for one for a distance, on either side of a crease, where a central
+            // difference dips -- and the value is divided by it, held between 0.6 and 1.6)
+            std::vector<float> S(nodes, 1.0f);
+            parallelFor(size_t(nz), [&](size_t k) {
+                if (k < 1 || k + 1 >= size_t(nz)) return;
+                for (int j = 1; j + 1 < ny; ++j)
+                    for (int i = 1; i + 1 < nx; ++i)
+                    {
+                        const size_t at = (k * ny + j) * nx + i;
+                        const float f0 = F[at];
+                        if (std::fabs(f0) >= bad) continue;
+                        double s = 0.0;
+                        for (int dk = -1; dk <= 1; ++dk)
+                            for (int dj = -1; dj <= 1; ++dj)
+                                for (int di = -1; di <= 1; ++di)
+                                {
+                                    if (di == 0 && dj == 0 && dk == 0) continue;
+                                    const float vq = F[((size_t(k) + dk) * ny + (j + dj)) * nx + (i + di)];
+                                    if (std::fabs(vq) >= bad) continue;
+                                    s = std::max(s, std::fabs(double(vq) - double(f0)) / (h * std::sqrt(double(di * di + dj * dj + dk * dk))));
+                                }
+                        if (s > 0.3) S[at] = float(std::max(0.6, std::min(1.6, s)));
+                    }
+            });
+            parallelFor(size_t(nz), [&](size_t k) {
+                for (size_t q = 0; q < plane; ++q)
+                {
+                    const size_t at = k * plane + q;
+                    if (std::fabs(F[at]) < bad) F[at] = F[at] / S[at];
+                }
+            });
+        }
+        auto cornerValue = [&](size_t idx) -> double {
+            const float v = F[idx];
+            if (std::fabs(v) >= bad) return v < 0.0f ? -3.0 * tWall : 3.0 * tWall;
+            return double(v);
+        };
+        auto sampleF = [&](double x, double y, double z) -> double {
+            const double u[3] = {x / h, y / h, z / h};
+            const int dim[3] = {nx, ny, nz};
+            int c[3];
+            double tt[3];
+            for (int a = 0; a < 3; ++a)
+            {
+                if (!(u[a] >= 0.0 && u[a] <= double(dim[a] - 1))) return 3.0 * tWall;
+                c[a] = std::min(int(std::floor(u[a])), dim[a] - 2);
+                tt[a] = u[a] - c[a];
+            }
+            auto at3 = [&](int i, int j, int k) { return cornerValue((size_t(k) * ny + j) * nx + i); };
+            const double v000 = at3(c[0], c[1], c[2]), v100 = at3(c[0] + 1, c[1], c[2]);
+            const double v010 = at3(c[0], c[1] + 1, c[2]), v110 = at3(c[0] + 1, c[1] + 1, c[2]);
+            const double v001 = at3(c[0], c[1], c[2] + 1), v101 = at3(c[0] + 1, c[1], c[2] + 1);
+            const double v011 = at3(c[0], c[1] + 1, c[2] + 1), v111 = at3(c[0] + 1, c[1] + 1, c[2] + 1);
+            const double x00 = v000 + tt[0] * (v100 - v000), x10 = v010 + tt[0] * (v110 - v010);
+            const double x01 = v001 + tt[0] * (v101 - v001), x11 = v011 + tt[0] * (v111 - v011);
+            const double y0 = x00 + tt[1] * (x10 - x00), y1 = x01 + tt[1] * (x11 - x01);
+            return y0 + tt[2] * (y1 - y0);
+        };
+        auto wallGrowth = [&](double px, double py, double pz, double f0, double ux, double uy, double uz) -> double {
+            const double sMax = 1.1 * tWall;
+            const double qx = px - f0 * ux, qy = py - f0 * uy, qz = pz - f0 * uz;          // (the foot: the nearest point of the surface)
+            const double tolFoot = 0.1 * tWall;
+            const double on = std::max(0.0, std::min(1.0, (tolFoot - std::fabs(sampleF(qx, qy, qz))) / tolFoot));
+            if (on <= 0.0) return 0.0;
+            double prev = -1.0e-3 * tWall, chord = sMax;
+            for (int s = 1; s <= wallSteps; ++s)
+            {
+                const double d = sMax * double(s) / wallSteps;
+                const double v = sampleF(qx - d * ux, qy - d * uy, qz - d * uz);
+                if (v >= 0.0 && prev < 0.0)
+                {
+                    const double d0 = sMax * double(s - 1) / wallSteps;
+                    chord = d0 + (d - d0) * (-prev) / (v - prev + 1.0e-12);
+                    break;
+                }
+                prev = v;
+            }
+            const double valid = std::max(0.0, std::min(1.0, (chord - 0.08 * tWall) / (0.04 * tWall)));
+            const double gate = std::max(0.0, std::min(1.0, (tWall - chord) / (0.05 * tWall)));
+            return std::min(0.5 * tWall, std::max(0.0, 0.5 * (tWall - chord))) * gate * valid * on;
+        };
+        const int sphereCount = 96;
+        std::vector<double> dirs(size_t(3 * sphereCount));
+        for (int s = 0; s < sphereCount; ++s)
+        {
+            const double zc = 1.0 - 2.0 * (s + 0.5) / sphereCount;
+            const double rr = std::sqrt(std::max(0.0, 1.0 - zc * zc));
+            const double phi = 2.399963229728653 * s;          // (the golden angle: a Fibonacci spiral over the sphere)
+            dirs[size_t(3 * s)] = rr * std::cos(phi);
+            dirs[size_t(3 * s + 1)] = rr * std::sin(phi);
+            dirs[size_t(3 * s + 2)] = zc;
+        }
+        auto cornerDeficit = [&](double px, double py, double pz, double f0, double ux, double uy, double uz, double slope) -> double {
+            const double r = tWall;
+            double best = std::max(f0, sampleF(px + r * ux, py + r * uy, pz + r * uz));
+            for (int s = 0; s < sphereCount; ++s)
+                best = std::max(best, sampleF(px + r * dirs[size_t(3 * s)], py + r * dirs[size_t(3 * s + 1)], pz + r * dirs[size_t(3 * s + 2)]));
+            return std::max(0.0, f0 + slope * r - best - 0.08 * r);          // (8 % of the radius of tolerance: the 26 directions can read the slope up to 7.5 % short, so a flat face, a convex edge and the slope error left after the renormalisation fill nothing; the deficit of a corner of 90 degrees, 29 % of r, keeps 21 %)
+        };
+        std::atomic<uint64_t> grownNodes(0);
+        parallelFor(size_t(nz), [&](size_t k) {
+            uint64_t grown = 0;
+            if (k >= 1 && k + 1 < size_t(nz))
+            {
+                for (int j = 1; j + 1 < ny; ++j)
+                    for (int i = 1; i + 1 < nx; ++i)
+                    {
+                        const size_t at = (k * ny + j) * nx + i;
+                        const float f0 = F[at];
+                        if (!(f0 > 0.0f && f0 < capD)) continue;
+                        const float xm = F[at - 1], xp = F[at + 1], ym = F[at - nx], yp = F[at + nx], zm = F[at - plane], zp = F[at + plane];
+                        if (std::fabs(xm) >= bad || std::fabs(xp) >= bad || std::fabs(ym) >= bad || std::fabs(yp) >= bad || std::fabs(zm) >= bad || std::fabs(zp) >= bad) continue;
+                        const double gx = (double(xp) - double(xm)) / (2.0 * h), gy = (double(yp) - double(ym)) / (2.0 * h), gz = (double(zp) - double(zm)) / (2.0 * h);
+                        const double mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+                        double delta = 0.0;
+                        if (P.mode == 2)
+                        {
+                            if (mag < 0.3) { Dl[at] = 0.0f; continue; }          // (no normal here: nothing grows, and the node keeps the part's own value)
+                            const double nd = gz / mag;
+                            const double wall = std::sqrt(std::max(1.0 - nd * nd, 1.0e-6));
+                            const double lack = std::max(0.0, tanT - std::fabs(nd) / wall);
+                            delta = std::max(0.0, top - double(k) * h) * lack * wall;
+                        }
+                        else if (P.mode == 3)
+                        {
+                            if (mag < 0.9) { Dl[at] = 0.0f; continue; }          // (the slope of a distance: the formula's gate)
+                            delta = wallGrowth(double(i) * h, double(j) * h, double(k) * h, double(f0), gx / mag, gy / mag, gz / mag);
+                        }
+                        else
+                        {
+                            if (mag < 0.3) { Dl[at] = 0.0f; continue; }          // (no normal here: no ball to roll on)
+                            // (the field is a distance here after the renormalisation above: open air gives the value plus the radius, slope 1)
+                            delta = cornerDeficit(double(i) * h, double(j) * h, double(k) * h, double(f0), gx / mag, gy / mag, gz / mag, 1.0);
+                        }
+                        Dl[at] = float(delta);                              // (0 where nothing grows: the node holds the part's own value, not a large one -- a cell between a node that grows and one that does not would otherwise cut the growth short)
+                        if (double(f0) < delta) ++grown;
+                    }
+            }
+            grownNodes += grown;
+        });
+        std::vector<float> V(nodes, capD);
+        std::atomic<uint64_t> partCount(0);
+        parallelFor(size_t(nz), [&](size_t k) {
+            uint64_t parts = 0;
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i)
+                {
+                    const size_t at = (k * ny + j) * nx + i;
+                    const float f0 = F[at];
+                    if (f0 > 0.0f)
+                    {
+                        if (Dl[at] >= 0.0f) V[at] = std::min(capD, f0 - Dl[at]);
+                        continue;
+                    }
+                    ++parts;
+                    float best = 0.0f;
+                    for (int dk = -1; dk <= 1; ++dk)
+                    {
+                        const long kk = long(k) + dk;
+                        if (kk < 0 || kk >= nz) continue;
+                        for (int dj = -1; dj <= 1; ++dj)
+                        {
+                            const int jj = j + dj;
+                            if (jj < 0 || jj >= ny) continue;
+                            for (int di = -1; di <= 1; ++di)
+                            {
+                                const int ii = i + di;
+                                if (ii < 0 || ii >= nx) continue;
+                                best = std::max(best, Dl[(size_t(kk) * ny + jj) * nx + ii]);
+                            }
+                        }
+                    }
+                    const float own = f0 <= -bad ? -capD : std::max(f0, -capD);
+                    V[at] = own - best;
+                }
+            partCount += parts;
+        });
+        return finishLattice(P, std::move(V), capD, (P.mode == 3 ? "walls-lattice" : (P.mode == 5 ? "corners-ball-lattice" : "draft-lattice")), stats, double(grownNodes.load()) * h * h * h, double(nodes), double(looked.load()), tSample, secondsSince(t0),
+                             double(partCount.load()));
+    }
+
+    // The CORNER ZONE (mode 4): where the corner formula has to be asked at all, for a ball too small for the lattice to hold (`minZ` is its radius).  The part's value was looked at in the air out to
+    // 1.2 radii and more (the sampler's `band`).  An inside corner, or any concave place tighter than the ball, is a CREASE of that value -- the distance to the nearer of two faces has a kink on their
+    // bisector, and the slope read across it by a central difference over the lattice is well under a distance's, 1 -- and the ball's fill lies within about a radius and a half of it.  So the nodes of the
+    // air within 1.2 radii of the part whose slope is under 0.9 are the creases, and the zone is every node within 1.5 radii (and two nodes) of one, by a distance transform.  The field holds -1000 in the
+    // zone and +1000 everywhere else: united by a `max` with the formula it lets the mesher drop the formula wherever the zone's range is above that of the formula, which is everywhere but at the corners
+    if (P.mode == 4)
+    {
+        const double r = P.minZ;
+        const float capZ = 1000.0f;
+        const size_t plane = size_t(nx) * ny;
+        const float bad = 0.5f * kBound;
+        const float airLimit = float(1.2 * r);
+        const double jumpLimit = std::max(0.2, std::min(1.0, h / (1.3 * r)));          // (over one node a concave arc of radius R turns the gradient by h / R: flagged where R is under 1.3 radii)
+        std::vector<float> E(nodes, 1.0e18f);
+        std::atomic<uint64_t> creases(0);
+        parallelFor(size_t(nz), [&](size_t k) {
+            uint64_t cnt = 0;
+            if (k >= 1 && k + 1 < size_t(nz))
+            {
+                for (int j = 1; j + 1 < ny; ++j)
+                    for (int i = 1; i + 1 < nx; ++i)
+                    {
+                        const size_t at = (k * ny + j) * nx + i;
+                        const float f0 = F[at];
+                        if (!(f0 > 0.0f && f0 < airLimit)) continue;
+                        const float xm = F[at - 1], xp = F[at + 1], ym = F[at - nx], yp = F[at + nx], zm = F[at - plane], zp = F[at + plane];
+                        if (std::fabs(xm) >= bad || std::fabs(xp) >= bad || std::fabs(ym) >= bad || std::fabs(yp) >= bad || std::fabs(zm) >= bad || std::fabs(zp) >= bad) continue;
+                        const double gx = (double(xp) - double(xm)) / (2.0 * h), gy = (double(yp) - double(ym)) / (2.0 * h), gz = (double(zp) - double(zm)) / (2.0 * h);
+                        // (a crease is where the gradient read forward and the gradient read backward JUMP -- by more than the arc of a ball a third bigger than the radius turns them over one node -- whatever the
+                        // length of the slope is, which wanders by a tenth or more in a field that is only roughly a distance: with the length under 0.9 as the test the zone covered most of the bracket's surface)
+                        const double fx = (double(xp) - double(f0)) / h, fy = (double(yp) - double(f0)) / h, fz = (double(zp) - double(f0)) / h;
+                        const double bx = (double(f0) - double(xm)) / h, by = (double(f0) - double(ym)) / h, bz = (double(f0) - double(zm)) / h;
+                        const double jump = std::sqrt((fx - bx) * (fx - bx) + (fy - by) * (fy - by) + (fz - bz) * (fz - bz));
+                        if (jump > jumpLimit)
+                        {
+                            E[at] = 0.0f;
+                            ++cnt;
+                        }
+                    }
+            }
+            creases += cnt;
+        });
+        edt3(E, nx, ny, nz);
+        const double reachNodes = (1.5 * r + 2.0 * h) / h;
+        const double limit2 = reachNodes * reachNodes;
+        std::vector<float> V(nodes, capZ);
+        std::atomic<uint64_t> zoneNodes(0);
+        parallelFor(size_t(nz), [&](size_t k) {
+            uint64_t cnt = 0;
+            for (size_t q = 0; q < plane; ++q)
+            {
+                const size_t at = k * plane + q;
+                if (double(E[at]) <= limit2)
+                {
+                    V[at] = -capZ;
+                    ++cnt;
+                }
+            }
+            zoneNodes += cnt;
+        });
+        return finishLattice(P, std::move(V), capZ, "corner-zone-lattice", stats, double(zoneNodes.load()) * h * h * h, double(nodes), double(looked.load()), tSample, secondsSince(t0),
+                             double(creases.load()));
+    }
+
     // (the lattice's own business: the complement for a cut, and what is held outside it)
     parallelFor(size_t(nz), [&](size_t k) {
         const double z = double(k) * h;
@@ -611,6 +998,160 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
             slice[q] = v;
         }
     });
+
+    // The UNDERCUT FILL (a negative slope): what lies both under part of the part and over part of it along the lattice's up axis is filled -- in every column, the air between the first and the last
+    // node of the part (the formula `_remedy_undercut` is a minimum of the part's field over the places above and over the places below a point: part above AND part below).  The field holds
+    // -h at the nodes of such a column from its first to its last node of the part (the part's own nodes there too, so that the part united with the field has no skin of interpolation) and
+    // `cap` everywhere else: the surface of the fill is the part's own faces at the two ends of each cavity, and, at the side, a wall between the columns that have a cavity and those that have none,
+    // within half a node of the edge of what lies over it.  One read of the part and one of the field at a point.
+    // The CLOSING (a slope of -2 or less; `reach` is the radius of the ball): the part with a ball of that radius rolled in the air round it -- every inside corner rounded to the radius, every slot or hole
+    // narrower than the ball filled -- worked out on the lattice by two distance transforms: the nodes within a radius of the part (the part grown by the ball), then the nodes that are a radius or
+    // more inside what is left of the air beyond it (the grown part shrunk by the ball again).  Only the nodes of the AIR that lie well inside that closing (more than three quarters of a node) are the fill;
+    // the nodes round them hold the true value (so that the surface of the fill is placed between nodes), every other node `cap`: where the closing is the part itself -- a flat face, a convex edge --
+    // the field is `cap` and the part united with it is the part, with no skin of the staircase of a distance transform on a lattice
+    if (P.tanSlope <= -1.5)
+    {
+        const double r = P.reach;
+        const float INF = 1.0e18f;
+        std::vector<float> D(nodes);
+        parallelFor(size_t(nz), [&](size_t k) {
+            for (size_t q = 0; q < size_t(nx) * ny; ++q) D[k * size_t(nx) * ny + q] = F[k * size_t(nx) * ny + q] <= 0.0f ? 0.0f : INF;
+        });
+        edt3(D, nx, ny, nz);
+        // (the part grown by the ball: a node is in it when its distance to the nearest node of the part, less half a node -- the face lies between nodes -- is within the radius)
+        std::vector<float> E(nodes);
+        parallelFor(size_t(nz), [&](size_t k) {
+            for (size_t q = 0; q < size_t(nx) * ny; ++q)
+            {
+                const double d = std::sqrt(double(D[k * size_t(nx) * ny + q])) * h;
+                E[k * size_t(nx) * ny + q] = (F[k * size_t(nx) * ny + q] <= 0.0f || d - 0.5 * h <= r) ? INF : 0.0f;
+            }
+        });
+        edt3(E, nx, ny, nz);
+        const float capR = float(r + 0.5 * h);
+        const float delta = float(0.75 * h);
+        std::vector<float> G(nodes);
+        std::vector<uint8_t> core(nodes, 0);
+        std::atomic<uint64_t> filledNodes(0), partCount(0);
+        parallelFor(size_t(nz), [&](size_t k) {
+            uint64_t cnt = 0, parts = 0;
+            for (size_t q = 0; q < size_t(nx) * ny; ++q)
+            {
+                const size_t at = k * size_t(nx) * ny + q;
+                const double e = std::sqrt(double(E[at])) * h;
+                const float g = float(r - (e - 0.5 * h));
+                G[at] = g;
+                if (F[at] <= 0.0f) ++parts;
+                else if (g <= -delta) { core[at] = 1; ++cnt; }
+            }
+            filledNodes += cnt;
+            partCount += parts;
+        });
+        std::vector<float> V(nodes, capR);
+        parallelFor(size_t(nz), [&](size_t k) {
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i)
+                {
+                    const size_t at = (k * ny + j) * nx + i;
+                    if (core[at]) { V[at] = G[at]; continue; }
+                    bool next = false;
+                    for (int dk = -1; dk <= 1 && !next; ++dk)
+                    {
+                        const long kk = long(k) + dk;
+                        if (kk < 0 || kk >= nz) continue;
+                        for (int dj = -1; dj <= 1 && !next; ++dj)
+                        {
+                            const int jj = j + dj;
+                            if (jj < 0 || jj >= ny) continue;
+                            for (int di = -1; di <= 1; ++di)
+                            {
+                                const int ii = i + di;
+                                if (ii < 0 || ii >= nx) continue;
+                                if (core[(size_t(kk) * ny + jj) * nx + ii]) { next = true; break; }
+                            }
+                        }
+                    }
+                    if (next) V[at] = std::min(G[at], capR);
+                }
+        });
+        return finishLattice(P, std::move(V), capR, "closing-lattice", stats, double(filledNodes.load()) * h * h * h, double(nodes), double(looked.load()), tSample, secondsSince(t0),
+                             double(partCount.load()));
+    }
+    if (P.tanSlope < 0.0)
+    {
+        const size_t columns = size_t(nx) * ny;
+        const float capU = float(2.0 * P.reach);
+        std::atomic<uint64_t> filled(0), partNodes(0);
+        parallelFor(columns, [&](size_t c) {
+            int first = -1, last = -1;
+            for (int k = 0; k < nz; ++k)
+            {
+                if (F[size_t(k) * columns + c] <= 0.0f)
+                {
+                    if (first < 0) first = k;
+                    last = k;
+                }
+            }
+            bool cavity = false;
+            if (first >= 0)
+                for (int k = first + 1; k < last && !cavity; ++k)
+                    if (F[size_t(k) * columns + c] > 0.0f) cavity = true;
+            uint64_t added = 0, nodesOfPart = 0;
+            for (int k = 0; k < nz; ++k)
+            {
+                float& v = F[size_t(k) * columns + c];
+                const bool isPart = v <= 0.0f;
+                if (isPart) ++nodesOfPart;
+                if (cavity && k >= first && k <= last)
+                {
+                    if (!isPart) ++added;
+                    v = -float(h);
+                }
+                else
+                {
+                    v = capU;
+                }
+            }
+            filled += added;
+            partNodes += nodesOfPart;
+        });
+        auto data = std::make_shared<LatticeData>();
+        for (int a = 0; a < 3; ++a)
+        {
+            data->n[a] = P.n[a];
+            data->o[a] = P.origin[a];
+            for (int c = 0; c < 3; ++c) data->e[a][c] = P.axes[3 * a + c];
+        }
+        data->h = h;
+        data->cap = capU;
+        data->g = std::move(F);
+        {
+            uint64_t hash = 1469598103934665603ull;
+            const unsigned char* bytes = reinterpret_cast<const unsigned char*>(data->g.data());
+            const size_t total = data->g.size() * sizeof(float);
+            for (size_t i = 0; i < total; ++i)
+            {
+                hash ^= bytes[i];
+                hash *= 1099511628211ull;
+            }
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "undercut-lattice#%016llx#%d#%d#%d#%.9g", (unsigned long long)hash, nx, ny, nz, h);
+            data->key = buf;
+        }
+        data->buildPyramid();
+        if (stats)
+        {
+            stats[0] = 0.0;
+            stats[1] = double(filled.load()) * h * h * h;          // (mm^3 of air in a cavity, counted on the nodes)
+            stats[2] = double(nodes);
+            stats[3] = double(looked.load());
+            stats[4] = tSample;
+            stats[5] = secondsSince(t0);
+            stats[6] = double(partNodes.load());
+            stats[7] = double(nodes) * sizeof(float) * 1.15 / (1024.0 * 1024.0) * 2.0;
+        }
+        return Tree(std::make_unique<LatticeClause>(data));
+    }
 
     // 2. In each slice, the distance from the part to the air, kept as W = z - D / slope for the nodes of the part (and infinity for the air)
     const float slope = float(P.tanSlope);

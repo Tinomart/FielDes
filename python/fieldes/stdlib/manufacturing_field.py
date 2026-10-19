@@ -157,8 +157,14 @@ class _Context:
         # that is a distance and not of one that is a distance times something: a part that was scaled, a body made by a formula.  The typical slope of the field at its surface is read, and a
         # field whose slope is not 1 is divided by it, once, here: the same surface, a field that is a distance to a few per cent)
         self.slope = _typical_slope(self.field, self.lo, self.hi, self.size)
+        # (a part held as `exact_distance` carries the plain field it was made from, which has the same surface: `base` is what a RESULT is built on and united with.  The walk costs about 32 calls of the part at every
+        # point it is read, and a result that held it in every term carried that cost into every cell of its drawing -- the result of such a part did not finish drawing in twenty minutes.  The remedies still READ
+        # the part through `field`, the walk, for its distances; only the field they are united with is plain.  For any other part, and for one that was rescaled below, `base` is `field` itself)
+        shown = getattr(self.field, '_display_field', None)
         if abs(self.slope - 1.0) > 0.05 and 0.02 < self.slope < 50.0:
             self.field = self.field * (1.0 / self.slope)
+            shown = None
+        self.base = Shape.wrap(shown) if shown is not None else self.field
         # (the step of the normals, a thousandth of the part, and NOT a round number: the normal is the mean of the derivative asked at p - h and p + h, and a plane of the part's surface that p - h or p + h
         # lies on exactly is where the derivative is the mean of the rules' on both sides, half a face's -- a sheet of nothing in the field, at the distance h from every face.  Anything that samples the field
         # in steps that divide h (a tape every 0.0005 mm, a grid of round numbers) hits it: a wall of 0.30 measured 0.344 where h was 0.023.  h that is no multiple of a round number is never on it)

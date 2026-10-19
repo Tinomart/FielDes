@@ -2893,7 +2893,8 @@ libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tre
     p.tanSlope = tan_slope;
     p.reach = reach;
     p.minZ = min_z;
-    p.negate = negate != 0;
+    p.mode = negate;                 // (1: the air is read the other way round, for a cut; 2: the draft)
+    p.negate = negate == 1;
     p.forceLo = force_lo;
     p.forceHi = force_hi;
     std::map<Tree::Id, float> m;
