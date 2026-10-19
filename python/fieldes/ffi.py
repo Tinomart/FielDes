@@ -907,3 +907,13 @@ try:
     lib.libfive_field_cellular.restype = libfive_tree
 except AttributeError:
     pass
+
+# The gusset under the overhangs of a part (newer libraries; optional)
+try:
+    lib.libfive_field_overhang_lattice.argtypes = [libfive_tree, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+                                                   ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.c_double, ctypes.c_double,
+                                                   ctypes.c_double, ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double,
+                                                   ctypes.POINTER(ctypes.c_double)]
+    lib.libfive_field_overhang_lattice.restype = libfive_tree
+except AttributeError:
+    pass

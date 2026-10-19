@@ -10,6 +10,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import functools
 import math
+import time
+import os
 import random
 
 from fieldes.shape import Shape
@@ -138,15 +140,6 @@ def _near(delta, f, width, top):
     return delta.min((width - f.abs()) * (10.0 * top / width)).max(0)
 
 
-def _within_reach(f, d, sign, reach, tie, count=16):
-    ''' Above 0 where the part (where `f` is 0 or less) is not met within `reach` along `sign` times `d`, and 0 or less where it may be: the part found at `count` places along the
-        line, less the most the field can change between two of them.  What a remedy that only matters where there is part that way is limited by, so that the mesher can
-        tell a cell where there is none at once '''
-    step = reach / float(count)
-    values = [_at(f, sign * d[0] * step * j, sign * d[1] * step * j, sign * d[2] * step * j) for j in range(1, count + 1)]
-    return _join('min', values, tie) - step
-
-
 _BIG = 1.0e3
 _ODD_STEP = 1.01731         # (the factor that makes the normals' step no round number: see _Context)
 
@@ -175,6 +168,31 @@ class _Context:
         self.plate_box = (tuple(float(c) for c in carried[0]), tuple(float(c) for c in carried[1])) if carried else (self.lo, self.hi)
         self._normals = None
         self._one_sided = {}
+        self.clamp_calls = self._expensive_part()
+
+    def _expensive_part(self):
+        ''' Is a point of the part's field expensive (more than 15 microseconds)?  The remedies make calls of the part at points built from its own value and normal; where the part's interval is loose in a cell (a topology-optimized part
+            held in a mesh) the box of such a call is as wide as that, and holding the offsets (manufacturing._clip) lets the mesher shorten the part for the call.  For a part of boxes and cylinders, whose interval is tight, the held offsets
+            only add clauses -- and the drawing of the CNC sampler's plate went from 55 s and 1 GB to out of memory.  FIELDES_CLIP=1 / FIELDES_NO_CLIP=1 force it, for tests '''
+        self.point_us = 0.0
+        if os.environ.get('FIELDES_NO_CLIP'):
+            return False
+        if os.environ.get('FIELDES_CLIP'):
+            return True
+        # (the cost that matters is a point near the surface, where the mesher works -- a random point of the box is mostly far from it, where an oracle is cheap: the topology bracket costs 27 us a point
+        # over its box and 100 to 200 near its surface.  3000 points thrown at random; those within 3 % of the part's size of the surface are timed again, when there are 80 of them or more)
+        rng = random.Random(5)
+        pts = [tuple(rng.uniform(self.lo[i], self.hi[i]) for i in range(3)) for _ in range(3000)]
+        _values(self.field, pts[:50])
+        started = time.time()
+        vals = _values(self.field, pts)
+        self.point_us = 1e6 * (time.time() - started) / len(pts)
+        near = [p for p, v in zip(pts, vals) if abs(v) <= 0.03 * self.size]
+        if len(near) >= 80:
+            started = time.time()
+            _values(self.field, near)
+            self.point_us = 1e6 * (time.time() - started) / len(near)
+        return self.point_us > 15.0         # (measured the same way: the plate of the CNC sampler 1.0 us, the topology bracket 27 to 30 us)
 
     @property
     def normals(self):

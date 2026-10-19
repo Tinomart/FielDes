@@ -20,8 +20,9 @@ is the distance.  Nothing else is asked of the field: the whole is 7 calls at on
 The three constructions made of it:  `distance` (the signed distance to the surface), `closing` (a rolling ball of radius r in the air: it rounds the inside
 edges and corners, fills what is narrower than the ball) and `opening` (the same ball in the material: it rounds the outside edges and corners, removes what is
 thinner than the ball).  A ball's centre lies where the field is r from the surface; the closing is everything the ball cannot reach from the air side, so its
-surface is the points that are a ball's radius from the set of centres.  A walk that turns back on itself (the second step runs against the first: the two faces
-face each other, a slot or a wall narrower than two radii) finds no centre: the ball does not fit, and says so.
+surface is the points that are a ball's radius from the set of centres.  The walk to the centres ends at the point on the planes of the walls it met (up to three) that
+is the nearest to where it began (`_ball_walk`); where it ends short of the ball's radius from the surface -- a slot or a wall narrower than two radii: the planes of its two faces
+meet nowhere a ball could be -- the ball does not fit, and says so.
 
 Each is made in a band round the surface -- `reach` -- and is the shape's own field outside it: there the walk is not made, and a mesher that asks the field
 over a cell outside the band skips the walk (the same limit by min and max as the remedies of manufacturing.py use).
@@ -124,18 +125,15 @@ def _trusted(f, parts, qx, qy, qz, value, t, h, cap):
     return 1.0 - size * (1.0 - _foot_real(f, parts, qx, qy, qz, value, h, cap))
 
 
-def _against(cosine, t, scale):
-    ''' 1 where a step ran against the one before it (the cosine between them under -0.5) and was a step of some size: the walk crossed a gap or a wall between two faces that face each other '''
-    against = ((-cosine - 0.5) * 2.0).max(0).min(1)
-    size = (t * t + 1e-18).sqrt() / (0.05 * scale + 1e-9)
-    return against * size.min(1)
+def _slope_gates(g1, g2):
+    low, high = _SLOPE
+    return ((g1 - low) / (high - low)).max(0).min(1) * ((g2 - low) / (high - low)).max(0).min(1)
 
 
-def _walk(f, parts, level, h, cap, hair, radius=None):
-    ''' From every point towards where `f` equals `level`, in three steps: (the length of the walk, 1 where it turned back on itself, how far the field has a slope to walk by and is a distance
-        there -- 1 where it has, 0 where it has none).  A step is a Newton step along the gradient to where the field is `level`.  The walk ends on the surface of the faces that are near: on one face
-        after one step (a plane, a cylinder, a sphere), on the edge of two after two, at the corner of three after three.  `radius` (the ball's, when there is one) is what a step is measured against to
-        tell a step of some size: a step that runs against the one before it, across a gap or a wall between two faces that face each other, finds no place for a ball -- the walk "turned back" '''
+def _walk(f, parts, level, h, cap, hair):
+    ''' From every point towards where `f` equals `level`, in three steps: (the length of the walk, how far the field has a slope to walk by and is a distance there -- 1 where it has, 0 where it has
+        none).  A step is a Newton step along the gradient to where the field is `level`.  The walk ends on the surface of the faces that are near: on one face after one step (a plane, a cylinder, a
+        sphere), on the edge of two after two, at the corner of three after three '''
     x, y, z = _coordinates()
     n1x, n1y, n1z, t1, g1 = _step(f, parts, x, y, z, f, level, h, cap)
     q1x, q1y, q1z = x + t1 * n1x, y + t1 * n1y, z + t1 * n1z
@@ -170,13 +168,86 @@ def _walk(f, parts, level, h, cap, hair, radius=None):
     trust = (_trusted(f, parts, x, y, z, f, t1, h, cap) * _trusted(f, parts, q1x, q1y, q1z, f1, t2, h, cap) *
              _trusted(f, parts, q2x, q2y, q2z, f2, t3, h, cap))
     has_slope = gate1 * gate2 * trust
-    turned = 0.0
-    if radius is not None:
-        turned = _against(c12, t2, radius).max(_against(c23, t3, radius))
-    return length, turned, has_slope
+    return length, has_slope
 
 
-_STEP = 0.1               # (the step of the differences, in units of the reach: see _scales)
+def _ball_walk(f, parts, level, h, cap, hair, radius, side):
+    ''' From every point to the centres of a ball of `radius` that rolls on the side of the surface where `f` is `side` times positive (+1: in the air, the closing; -1: in the material, the opening): the
+        centres are where `f` is `level` (`side` times `radius`) or farther from the surface.  (the distance to the nearest centre, how far no ball fits near the point -- 0 where one does, up to 1 where one
+        does not --, how far the field has a slope to walk by and is a distance there).
+        The walk is the one of `_walk` -- a Newton step along the gradient to where the field is `level`, and two more -- but the point it ends at is not the last of the three steps: each step defines
+        the plane the surface of the centres has where it ended (the plane through that point, square to the step), and the walk ends at the point on all of the planes that is the nearest to where it
+        began, found plane by plane (each plane adds a move square to the ones before it, of the length that puts the point on it, and so the planes already reached stay reached).  For two flat faces that
+        is the nearest point of the line where the ball's centres meet two walls (what `_walk` calls the edge), for three it is the point `radius` from all three (a corner), whatever the angles.  The
+        three steps of Newton only bounce between the walls, one after the other, and where the faces are at an angle (a ball over the shoulder of a block beside a wall, a gap that narrows) they were
+        nowhere near a centre after the third step, and the ball was said not to fit where it does.  (Where the three steps themselves have arrived at the level set the walk is that chain; the point on the
+        planes replaces it only as far as they have not: see below.)  A ball does NOT fit near a point when the walk ends where the field is still short of `level` -- the
+        walls it reached are not walls of one ball, but the two sides of a slot, which no plane through the two meets at a place the ball could be -- and the share of the radius that it is short by tells
+        (a ramp from 2 % to 6 % of the radius: a slot or a wall that much narrower than the ball is the ball's size to a tool) '''
+    x, y, z = _coordinates()
+    n1x, n1y, n1z, t1, g1 = _step(f, parts, x, y, z, f, level, h, cap)
+    q1x, q1y, q1z = x + t1 * n1x, y + t1 * n1y, z + t1 * n1z
+    f1 = f(q1x, q1y, q1z)
+    n2x, n2y, n2z, t2, g2 = _step(f, parts, q1x, q1y, q1z, f1, level, h, cap)
+    q2x, q2y, q2z = q1x + t2 * n2x, q1y + t2 * n2y, q1z + t2 * n2z
+    f2 = f(q2x, q2y, q2z)
+    n3x, n3y, n3z, t3, g3 = _step(f, parts, q2x, q2y, q2z, f2, level, h, cap)
+    # (every step is believed as far as the face it leads to is there: see _trusted.  A step that is not -- the cutter that overshoots the part carries its walls on past the part's ends, walls that are not
+    # there -- leaves out its plane: the walk ends at the planes of the faces that are, and it is not switched off altogether)
+    tr1 = _trusted(f, parts, x, y, z, f, t1, h, cap)
+    tr2 = _trusted(f, parts, q1x, q1y, q1z, f1, t2, h, cap)
+    tr3 = _trusted(f, parts, q2x, q2y, q2z, f2, t3, h, cap)
+    # (the second plane: the part of its normal that is not along the first, m2, and how much of it there is, m2sq = sin^2 of the angle between the two.  Below 10 degrees the faces are one smooth surface
+    # and the walk stays the path of the two steps; from 20 it ends at the plane's point, mixed between)
+    c12 = n1x * n2x + n1y * n2y + n1z * n2z
+    m2x, m2y, m2z = n2x - c12 * n1x, n2y - c12 * n1y, n2z - c12 * n1z
+    m2sq = 1.0 - c12 * c12
+    w2 = ((m2sq - 0.03) * (1.0 / 0.10)).max(0).min(1) * tr2
+    inv2 = 1.0 / m2sq.max(0.0625)
+    pax, pay, paz = t1 * n1x + tr2 * t2 * n2x, t1 * n1y + tr2 * t2 * n2y, t1 * n1z + tr2 * t2 * n2z
+    d2x = pax + w2 * (t1 * n1x + t2 * m2x * inv2 - pax)
+    d2y = pay + w2 * (t1 * n1y + t2 * m2y * inv2 - pay)
+    d2z = paz + w2 * (t1 * n1z + t2 * m2z * inv2 - paz)
+    # (the third plane: its normal's part square to the first two, m3; the move along it puts the point on the plane through the second step's end and leaves the first two as they are)
+    s2 = m2sq.max(0.0625).sqrt()
+    e2x, e2y, e2z = m2x / s2, m2y / s2, m2z / s2
+    a31 = n3x * n1x + n3y * n1y + n3z * n1z
+    a32 = n3x * e2x + n3y * e2y + n3z * e2z
+    m3x, m3y, m3z = n3x - a31 * n1x - a32 * e2x, n3y - a31 * n1y - a32 * e2y, n3z - a31 * n1z - a32 * e2z
+    m3sq = 1.0 - a31 * a31 - a32 * a32
+    v3 = n3x * (q2x - x - d2x) + n3y * (q2y - y - d2y) + n3z * (q2z - z - d2z) + t3
+    w3 = ((m3sq - 0.03) * (1.0 / 0.10)).max(0).min(1) * tr3
+    k3 = w3 * v3 * (1.0 / m3sq.max(0.0625))
+    d3x, d3y, d3z = d2x + k3 * m3x, d2y + k3 * m3y, d2z + k3 * m3z
+    # (where the chain of the three steps itself has arrived at the level set -- the field there is `level` to 3 % of the radius -- the walk is that chain: the planes of a step that ran along the radius of a
+    # concave arc tighter than the ball, through its focus, are not planes of the centres, and the point on them is not where the ball is.  Where the chain has not arrived, which is where the steps bounce
+    # from wall to wall at an angle, the point on the planes is)
+    q3x, q3y, q3z = q2x + t3 * n3x, q2y + t3 * n3y, q2z + t3 * n3z
+    # (and only a chain whose steps were all believed: one that went round a wall that is not there is not a chain to the centres.  And only where the point on the planes is NOT on the level set: where it is, it is
+    # the nearest point of the centres, and a chain that arrived on one face of them -- the corner of two walls at an obtuse angle: the second step lands on the level set short of the corner -- is farther)
+    planes_on_level = (1.0 - (f(x + d3x, y + d3y, z + d3z) - level).abs() * (1.0 / (0.06 * radius))).max(0).min(1)
+    arrived = (1.0 - (f(q3x, q3y, q3z) - level).abs() * (1.0 / (0.005 * radius))).max(0).min(1) * tr2 * tr3 * (1.0 - planes_on_level)
+    cx, cy, cz = q3x - x, q3y - y, q3z - z
+    d3x, d3y, d3z = cx + (1.0 - arrived) * (d3x - cx), cy + (1.0 - arrived) * (d3y - cy), cz + (1.0 - arrived) * (d3z - cz)
+    length = (d3x * d3x + d3y * d3y + d3z * d3z + hair * hair).sqrt() - hair
+    # (where the walk ended: short of `level` by this much, in the direction the ball rolls on.  It is only a verdict where the point it ended at is a place whose field is a distance -- beside a wall that
+    # is not there the field is short of `level` whatever the ball does -- and where the walls it met face one another: a slot.  A construction is kept where it verifies itself -- the end point is on the
+    # level set to 6 % of the radius, or the field there proves nothing, or the walls face one another -- and is otherwise left out, the part's own field standing: the planes of a step that crossed a
+    # focus, beside a wall that is not there, are not planes of the centres, and what they would fill is not the ball's)
+    ex, ey, ez = x + d3x, y + d3y, z + d3z
+    fe = f(ex, ey, ez)
+    believable = _foot_real(f, parts, ex, ey, ez, fe, h, cap)
+    short = (side * (level - fe)).max(0)
+    c23 = n2x * n3x + n2y * n3y + n2z * n3z
+    c13 = n1x * n3x + n1y * n3y + n1z * n3z
+    # (walls that face one another: any two of the three steps against each other -- in a gap beside the floor it is the first and the third, the floor's between them)
+    facing = ((-c12 - 0.5) * 2.0).max(0).min(1).max(((-c23 - 0.5) * 2.0).max(0).min(1)).max(((-c13 - 0.5) * 2.0).max(0).min(1))
+    no_fit = ((short / radius - 0.02) * (1.0 / 0.04)).max(0).min(1) * believable * facing
+    on_level = (1.0 - (fe - level).abs() * (1.0 / (0.06 * radius))).max(0).min(1).max(1.0 - believable)
+    return length, no_fit, _slope_gates(g1, g2) * tr1 * on_level.max(facing)
+
+
+_STEP = 0.1              # (the step of the differences, in units of the reach: see _scales)
 
 
 def _scales(size, reach, exact=True):
@@ -192,7 +263,7 @@ def _scales(size, reach, exact=True):
     return h, max(1e-4 * size, 1e-10), max(1e-6 * size, 1e-12), max(1e3, 1e3 * size)
 
 
-def _gate(f, scale):
+def _gate(f, scale, oblique=False):
     ''' How much of the construction is needed at each point: 0 where the surface is flat for as far as `scale` reaches, up to 1 where it is not.  The second difference of the field at that
         scale along an axis, f(p + s e) + f(p - s e) - 2 f(p), is exactly 0 where f is linear along it (the distance to a plane is, on either side of it), and is not where a kink -- the edge of a
         box, the bisector of a wedge -- or a curve tighter than the scale lies within the scale: it is the three of them added, over the scale.  It is made of six calls with the scale for a step, not
@@ -200,8 +271,15 @@ def _gate(f, scale):
         which the mesher can tell without working it through: only the tubes round the edges are refined, and not the whole band round the surface '''
     x, y, z = _coordinates()
     total = None
+    # (the three axes.  For the ball (`oblique`) the two steps along an axis are not the same length, 1 and 0.71 of the scale, and the second difference is the one of unequal steps, (f(p + a e) - f(p)) / a +
+    # (f(p - b e) - f(p)) / b, times (a + b) / 2: it is the symmetric one when the steps are equal.  With equal steps two kinks can cancel exactly on a plane of the part whose field along the axis is a wave of
+    # tents -- a fin 1 mm from its face and a block 4 mm from it: 1.5 + 0.5 - 2 x 1.0 = 0 on the plane x = 6.5 between them, at every step up to 3.5 mm, since the function is odd about that point --, and the
+    # gate was shut there and a sheet of air was left in the middle of a filled gap.  With unequal steps an odd function does not cancel)
+    a, b = (scale, 0.71 * scale) if oblique else (scale, scale)
     for ex, ey, ez in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
-        second = (f(x + ex * scale, y + ey * scale, z + ez * scale) + f(x - ex * scale, y - ey * scale, z - ez * scale) - 2.0 * f).abs()
+        ahead = f(x + ex * a, y + ey * a, z + ez * a) - f
+        behind = f(x - ex * b, y - ey * b, z - ez * b) - f
+        second = (ahead * (1.0 / a) + behind * (1.0 / b)).abs() * (0.5 * (a + b))
         total = second if total is None else total + second
     return ((total * (1.0 / scale) - 0.05) * (1.0 / 0.25)).max(0).min(1)
 
@@ -218,7 +296,7 @@ def distance(f, size, reach):
     ''' The signed distance from every point to the surface of `f` (negative inside), where the surface is within `reach`; `f` itself beyond.  `size` is the part's size (mm) '''
     parts = partials(f)
     h, eps, hair, _ = _scales(size, reach, parts is not None)
-    length, _turned, has_slope = _walk(f, parts, 0.0, h, _TOP * reach, hair)
+    length, has_slope = _walk(f, parts, 0.0, h, _TOP * reach, hair)
     return _band(f, f + has_slope * (length * _sign(f, eps) - f), reach, _TOP * reach, _gate(f, reach))
 
 
@@ -229,9 +307,9 @@ def closing(f, radius, size, reach):
         not fit), and is material '''
     parts = partials(f)
     h, eps, hair, big = _scales(size, reach, parts is not None)
-    length, turned, has_slope = _walk(f, parts, radius, h, _TOP * reach, hair, radius)
-    out = radius + length * _sign(f - radius, eps) - big * turned
-    return _band(f, f + has_slope * (out - f), 1.05 * reach, _TOP * reach, _gate(f, reach))
+    length, no_fit, has_slope = _ball_walk(f, parts, radius, h, _TOP * reach, hair, radius, 1.0)
+    out = radius + length * _sign(f - radius, eps) - big * no_fit
+    return _band(f, f + has_slope * (out - f), 1.05 * reach, _TOP * reach, _gate(f, reach, True))
 
 
 def opening(f, radius, size, reach):
@@ -239,6 +317,6 @@ def opening(f, radius, size, reach):
         (a fin, a thin wall) is removed.  The mirror of `closing`: the centres are where `f` is `-radius` or less '''
     parts = partials(f)
     h, eps, hair, big = _scales(size, reach, parts is not None)
-    length, turned, has_slope = _walk(f, parts, -radius, h, _TOP * reach, hair, radius)
-    out = length * _sign(f + radius, eps) - radius + big * turned
-    return _band(f, f + has_slope * (out - f), 1.05 * reach, _TOP * reach, _gate(f, reach))
+    length, no_fit, has_slope = _ball_walk(f, parts, -radius, h, _TOP * reach, hair, radius, -1.0)
+    out = length * _sign(f + radius, eps) - radius + big * no_fit
+    return _band(f, f + has_slope * (out - f), 1.05 * reach, _TOP * reach, _gate(f, reach, True))

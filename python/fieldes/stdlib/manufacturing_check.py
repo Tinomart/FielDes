@@ -143,7 +143,7 @@ def _rule_margins(ctx, constraints, direction):
             elif rule == 'draft':
                 dd = c.pull_direction
                 delta = _dot(n, dd).abs().min(1).asin() * (180.0 / pi)
-                margin = (value - delta) - GRACE * value
+                margin = (value - delta) - GRACE * value - _BIG * (1.0 - _flatness(ctx, 3.0 * ctx.step))
             elif rule == 'undercut_along':
                 margin = _undercut_margin(ctx, value)
             elif rule == 'max_bridge':
@@ -646,7 +646,10 @@ def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None, 
                 m = [value - r - GRACE * value for r in _num_reach(f, pts, normals, mags, value, +1)]
             elif rule == 'draft':
                 dd = c.pull_direction
-                m = [value - math.degrees(math.asin(min(1.0, abs(nn[0] * dd[0] + nn[1] * dd[1] + nn[2] * dd[2])))) - GRACE * value for nn in normals]
+                # (a normal read within a few steps of an edge or a crease is a mix of the two faces, not the draft of either: as for the overhang)
+                flat = _num_flat(f, pts, normals, 3.0 * ctx.step, ctx.step)
+                m = [value - math.degrees(math.asin(min(1.0, abs(nn[0] * dd[0] + nn[1] * dd[1] + nn[2] * dd[2])))) - GRACE * value - (0.0 if fl else _BIG)
+                     for nn, fl in zip(normals, flat)]
             elif rule == 'undercut_along':
                 blocked = _num_undercut(f, pts, value, _extent_along(ctx, value), 0.002 * ctx.size)
                 m = [(b - 0.75) * 4.0 for b in blocked]
@@ -746,7 +749,9 @@ def _report_numeric(ctx, constraints, direction, samples, supports=None, bar=Non
         broken_points = [p for p, _ in broken]
         # (the size that regions are told apart by comes from the samples themselves -- the part's own extent -- and not from the box the part was given, which can be a picture's)
         extent = max([max(p[a] for p in points) - min(p[a] for p in points) for a in range(3)] or [ctx.size]) if points else ctx.size
-        link = _link_distance(broken_points, limit if unit == 'mm' else 0.0, extent / 8.0)
+        # (two flagged places closer than two lengths of the rule are one place to whoever makes the part -- and the samples of a feature as small as the rule are sparse where the sampler thins them, a hole of 0.3 mm
+        # for a gap rule of 0.4 had one sample of its wall 0.41 mm from the others: two regions where there is one hole)
+        link = _link_distance(broken_points, 2.0 * limit if unit == 'mm' else 0.0, extent / 8.0)
         regions = []
         for group in _clusters(broken_points, link)[:12]:
             xs, ys, zs = [p[0] for p in group], [p[1] for p in group], [p[2] for p in group]

@@ -993,8 +993,8 @@ def round_edges(shape, radius, bounds=None):
     ''' Rounds every convex (outside) edge and corner of a shape with the
         given radius (a number or a field), and removes what is thinner than the ball: a ball of that radius rolls in the material, and the shape is everything
         it reaches.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
-        `-radius`, and the surface of the result is `radius` from them.  Exact for a box, a cylinder, a sphere (their edges and corners are made of faces at right
-        angles and curves), a little off where the faces meet at another angle. '''
+        `-radius`, and the surface of the result is `radius` from them.  Exact for the outside edge of two flat faces at any angle and for the corner of three
+        (the ball's centre is where the planes of the faces meet), for a cylinder and a sphere. '''
     r = number_or_field(radius, 'the radius')
     f = _s(shape)
     lo, hi = _shape_bounds(f, bounds)
@@ -1011,8 +1011,8 @@ def fillet(shape, radius, bounds=None):
     ''' Fills every concave (inside) edge and corner of a shape with a
         fillet of the given radius (a number or a field), and fills what is narrower than the ball: a ball of that radius rolls in the air, and the
         shape is everything it cannot reach.  It is made from the shape's own field (see exact_distance and distance_field.py): the centres of the ball are where the field is
-        `radius`, and the surface of the result is `radius` from them.  Exact for the inside edge and corner of a box and for faces at right angles, a little off
-        where they meet at another angle. '''
+        `radius`, and the surface of the result is `radius` from them.  Exact for the inside edge of two flat faces at any angle and for the corner of three
+        (the ball's centre is where the planes of the faces meet); a slot narrower than the ball is filled flush with its mouth, not left with the sag of the ball resting on its two edges. '''
     r = number_or_field(radius, 'the radius')
     f = _s(shape)
     lo, hi = _shape_bounds(f, bounds)
