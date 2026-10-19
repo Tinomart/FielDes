@@ -136,9 +136,17 @@ if ("${GIT_REV}" STREQUAL "")
     set(GIT_TAG "N/A")
     set(GIT_BRANCH "N/A")
 else()
-    execute_process(COMMAND bash -c "git diff --quiet --exit-code || echo +"
-                    OUTPUT_VARIABLE GIT_DIFF
+    # (a "+" after the revision means the tree has changes that are not committed.  Asked of git itself: through `bash -c` on a machine with WSL, bash is the one of WSL, whose git
+    # sees every file of a checkout on the Windows disk as changed, and every build said "+")
+    execute_process(COMMAND git diff --quiet --exit-code
+                    RESULT_VARIABLE GIT_DIFF_RESULT
+                    OUTPUT_QUIET ERROR_QUIET
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    if (GIT_DIFF_RESULT EQUAL 0)
+        set(GIT_DIFF "")
+    else()
+        set(GIT_DIFF "+")
+    endif()
     execute_process(COMMAND git describe --exact-match --tags
                     OUTPUT_VARIABLE GIT_TAG
                     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

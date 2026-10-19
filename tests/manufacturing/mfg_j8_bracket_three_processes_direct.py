@@ -12,7 +12,16 @@
 #   the checks       helpers in mfgkit.py / mfgtest.py: the judge counts, on points of the surface, how much of it breaks each rule before and after; the faces that carry the load must be untouched
 # Output pane: one PASS or FAIL line per check.  Viewport: the result (grey as it was, red material added, blue material cut) beside the part as it was.
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
-# Time: about 8 minutes (the optimization about a minute, the tool a minute or two for each process, the judge, the first drawing).
+# Time: about 5 minutes of the case itself (the optimization 62 s, the tool 20 s for the printer, 62 s for the mill, 67 s for the mould, the judge) and a few more for the window and the pictures.
+#
+# THE RESULT OF THE LAST RUN (2026-10-20, a real window, the final build, from empty caches): 20 of 24 checks pass, 4 FAIL.  The printer job passes all 8 (the overhang share of the surface 5.7 % -> 4.8 %, the wall and
+# the gap shares unchanged, the load-carrying plates and lugs untouched).  The mill and the mould change what they were asked to change, and the judge finds four things WORSE after than before:
+#   CNC mill   undercut  8.3 % -> 9.2 %   (a rise of 0.9 points on about 1,100 judged points: inside the noise of such a count, one standard error is about 0.9 points)
+#   CNC mill   inside radius  19.8 % -> 23.5 %
+#   mould      wall  0.3 % -> 1.5 %
+#   mould      undercut  8.3 % -> 13.5 %          (while the draft share falls from 85.4 % to 36.3 %)
+# These FAIL lines are the finding of this file, not a defect of the file, and they are not hidden by a wider tolerance.  Why the new surface of the fills and of the draft breaks the rules of its own process was not
+# found out; the draft is measured from the top of the whole part and the corner fill adds about three times what the formula adds (KNOWN_ISSUES.md, tests/RELEASE_REPORT.md, item 38): those are the places to look.
 
 from mfgkit import *
 

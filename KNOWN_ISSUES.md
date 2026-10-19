@@ -31,6 +31,14 @@ What does not work as it should yet, so that you do not lose time on it. The lim
 
 What each of these is, and the way round it, is in [docs/manufacturing.md](docs/manufacturing.md); the measured numbers are in `tests/RELEASE_REPORT.md`.
 
+- **On the topology-optimized bracket the tool's work for a mill and for a mould is only partly good, as the kit's independent judge measures it** (`tests/manufacturing/mfg_j8_bracket_three_processes_direct.py`, 10-20, real window, the part handed to the tool as the optimizer made it, 24 checks, 4 fail).
+  For the 3D printer the whole job is clean (overhang 5.7 % of the surface before, 4.8 % after, wall and gap unchanged). For the mill the undercut fill (4,369 mm^3) and the inside-corner fill (1,608 mm^3) leave the
+  surface that breaks the undercut rule at 9.2 % where it was 8.3 % (inside the noise of the count) and the surface that breaks the inside-radius rule at 23.5 % where it was 19.8 %. For the mould the draft share falls
+  from 85.4 % to 36.3 % (and the tool does not list the rest), but the wall rule is broken on 1.5 % of the surface where it was 0.3 % and the undercut rule on 13.5 % where it was 8.3 %. The new surface that the fills
+  and the draft make breaks the rules of its own process in places. Why was not found out; the draft is measured from the top of the whole part (a question that is the maintainer's, put in item 30 of `tests/RELEASE_REPORT.md`), and the corner fill adds about three
+  times what the formula adds. A result of the tool on a real part should be read with `manufacturing_analysis`, which is independent of the tool, and not taken as clean because the tool listed nothing: the tool's own
+  re-check is off unless asked for.
+
 - **A notch the size of the growth is left where thin walls meet.** The shell thickens the faces of a thin wall, up to their edges: along an edge where two thin walls meet (the corner of a thin box) and in the inside corner where
   a thin wall stands on a thick face, a notch is left (0.15 mm for a wall of 0.5 asked to be 0.8), and the check marks a few hundredths of a per cent of the surface there. Ask `min_radius` as well and the corners are rounded.
 - **The corner rule reads the field's value, which is a distance only where the field is one.** A part made by taking boxes out of a block with cutters that overshoot it, or imported from STEP, has only a lower bound of

@@ -250,7 +250,9 @@
 #                                                    side), made ready for the same three processes, judged in the same way: nothing the first bracket showed is a property
 #                                                    of that one part.
 #   mfg_j8_bracket_three_processes_direct.py         J8: j1 with the part handed to the tool as the optimizer made it (opt.shape(), no exact_distance), which is how a person hands
-#                                                    it over: the same three processes, the same judge, the same checks, in the time a test should take (see the file for how long).
+#                                                    it over: the same three processes, the same judge, the same checks, about 5 minutes. Last run (2026-10-20, final build): 20 of 24 checks pass; the printer job
+#                                                    passes all 8, and the mill and the mould leave four things worse than before (the mill's undercut and inside radius, the mould's wall and undercut):
+#                                                    those four FAIL lines are the finding, and the header of the file says what is known of them.
 #
 # PARTS THE CODE HAS NEVER SEEN.  Each of these generates six parts at random from the seeds in its name (change a seed in the file and run it: other parts) and gives each a
 # random constraint; criteria fixed beforehand are checked on every one (nothing floats beside a part, the independent check of the result, the tool's own counts).
