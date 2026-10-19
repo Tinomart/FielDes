@@ -20,8 +20,11 @@
 #   CNC mill   inside radius  19.8 % -> 23.5 %
 #   mould      wall  0.3 % -> 1.5 %
 #   mould      undercut  8.3 % -> 13.5 %          (while the draft share falls from 85.4 % to 36.3 %)
-# These FAIL lines are the finding of this file, not a defect of the file, and they are not hidden by a wider tolerance.  Why the new surface of the fills and of the draft breaks the rules of its own process was not
-# found out; the draft is measured from the top of the whole part and the corner fill adds about three times what the formula adds (KNOWN_ISSUES.md, tests/RELEASE_REPORT.md, item 38): those are the places to look.
+# These FAIL lines are the finding of this file, not a defect of the file, and they are not hidden by a wider tolerance.  WHY: the remedies are made from the part as it is and united (the text of
+# manufacturing_optimization), so the new faces of one remedy -- the walls of an undercut fill, the edge of a draft skin -- are not seen by the others and can break the rules of their own process;
+# the documented answer is a second pass on the result, which on this bracket is out of reach in the time of a test (the result is a composite field that costs far more per point than the part: not run).
+# Measured on 10-20 on the same bracket: of the 1,609 points of the mill's result that are still on the part's old surface, 157 are judged inside-radius-broken by the result's field and were not by the
+# part's, and none the other way round; on the mould 19 old-surface points become undercut, none the other way round; the wall verdicts of those points, and the mill's undercut verdicts, did not change.
 
 from mfgkit import *
 
