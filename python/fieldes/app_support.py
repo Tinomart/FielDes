@@ -1481,8 +1481,9 @@ def exact_view_tree(key):
         if exact is None:
             from fieldes.stdlib.fields import _dist
             exact = _dist(shape)
-            if exact is shape:
+            if exact is shape and getattr(shape, '_display_field', None) is None:
                 return ''
+            # (a distance field the viewport meshes from its own, plainer field: the distance the viewers show is the shape's itself)
             _view_exact[key] = exact
         return str(int(exact.ptr))
     except Exception:

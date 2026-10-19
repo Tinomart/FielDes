@@ -28,6 +28,24 @@ bool isConstant(const Tree& t)
     return std::get_if<TreeConstant>(t.get()) != nullptr;
 }
 
+/*
+ *  The plain tree that a tree with remaps and calls makes, for finding the numbers in it -- the expansion that the numbers of a saved script were counted in, one copy for every way a node
+ *  is reached.  For a field built from calls that take calls (a Newton walk, a field made from the gradient of another) that is billions of steps and gigabytes: the model tree asks it of
+ *  every row after every run.  Beyond kExpandBudget steps the tree is left as it is, its remaps and calls leaves of the walk below: it has no numbers to drag (none are counted for it,
+ *  so the count and the numbers agree, which is what a script's list of them relies on).
+ */
+constexpr size_t kExpandBudget = 2000000;
+
+Tree plainTree(const Tree& t)
+{
+    if (!(t.get()->flags & TreeData::TREE_FLAG_HAS_REMAP))
+    {
+        return t;
+    }
+    const Tree plain = t.flatten(false, Tree::Calls::Inline, kExpandBudget);
+    return plain.is_valid() ? plain : t;
+}
+
 // A constant that places a surface (not a "nothing here" sentinel of a union)
 bool isGeometry(const Tree& t)
 {
@@ -99,8 +117,8 @@ Info infoOf(const TreeData* d, const std::unordered_map<const TreeData*, Info>& 
  */
 Tree walk(const Tree& root0, bool rebuild, const std::function<Tree(const Tree&)>& place)
 {
-    // (a tree with remaps is taken as the plain tree they make)
-    const Tree root = (root0.get()->flags & TreeData::TREE_FLAG_HAS_REMAP) ? root0.flatten() : root0;
+    // (a tree with remaps is taken as the plain tree they make -- unless that is too large to make: see plainTree)
+    const Tree root = plainTree(root0);
     std::unordered_map<const TreeData*, Tree> memo;
     std::unordered_map<const TreeData*, Info> info;
     std::vector<std::pair<Tree, bool>> stack;
@@ -228,7 +246,7 @@ std::map<Tree::Id, float> dragWeights(const Tree& t0)
 {
     std::map<Tree::Id, float> out;
     if (!t0.get()) return out;
-    const Tree root = (t0.get()->flags & TreeData::TREE_FLAG_HAS_REMAP) ? t0.flatten() : t0;
+    const Tree root = plainTree(t0);
     const auto isVar = [](const Tree& n) {
         const auto v = std::get_if<TreeNonaryOp>(n.get());          // (a free variable is a leaf: Tree::var())
         return v && v->op == Opcode::VAR_FREE;

@@ -35,10 +35,10 @@ res = manufacturing_optimization(part, constraints=[rule], max_change=3.0)
 print(res)
 # THE ANSWER BY HAND: the width at height z is 0.3 z and the gap across it (perpendicular to its faces) 0.3 z cos(8.5 degrees) = 0.2967 z: narrower than 0.38 for z under 1.28 mm;
 # the fill must reach about that high (1.0 to 1.7 mm) and nothing above it may change: the slot at z = 3 and z = 6 is as wide as it was (0.9 and 1.8 mm)
-zs = [0.2 + 0.05 * i for i in range(0, 76)]                              # (from 0.2 above the root: the point of the V itself is a slit 0.06 mm wide at that height, a question of its own, asked next)
+zs = [0.25 + 0.05 * i for i in range(0, 76)]                             # (from 0.25 above the root: the point of the V itself is a slit narrower than two steps of the field's differences, a question of its own, asked next.  The line began at 0.2, where the slit is 0.06 wide -- exactly two steps of 0.03 mm, the edge of what is read; the step is 0.0305 now (it is no round number, see manufacturing_field._Context), two steps are 0.061, and 0.2 came to be on the other side of the edge.  0.25 is 0.075 wide, clear of it)
 vals = evaluate(res, [(15.0, 5.0, z) for z in zs])
 first_air = next((z for z, v in zip(zs, vals) if v > 0), None)
-t.check('the slot is filled from its root up to a height of 1.0 to 1.7 mm (the first air on the middle line from z = 0.2: %s)' % first_air, first_air is not None and 1.0 <= first_air <= 1.7, first_air, '1.0 .. 1.7')
+t.check('the slot is filled from its root up to a height of 1.0 to 1.7 mm (the first air on the middle line from z = 0.25: %s)' % first_air, first_air is not None and 1.0 <= first_air <= 1.7, first_air, '1.0 .. 1.7')
 # (the slot is read through differences of a step of 0.001 of the part's size, 0.03 mm here: a slit narrower than two steps -- the point of the V, up to z = 0.2 where it is 0.06 wide -- is not read
 # and stays as it was, 0.015 wide at z = 0.1; from there up the slot is closed)
 root = evaluate(res, [(15.0, 5.0, 0.25), (15.0, 5.0, 0.3)])

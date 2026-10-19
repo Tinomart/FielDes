@@ -25,8 +25,25 @@
   floor corners: 30.95 to 32.85 (32.62); a plate thinner than the ball under `round_edges`: 0.0000 left. About 1.3 µs a point, and the fillet of an L draws in 1.9 s: the version that read the gradient by
   differences did not draw it in 8 minutes and ran out of 8 GB, which is what the derivative above cured.
 - **Not as exact as the rolling ball, and said so (KNOWN_ISSUES.md):** where the field is not a distance (a part made with cutters that overshoot it, or of overlapping pieces) a corner is rounded a little short;
-  a slot narrower than the ball is filled flush with its mouth instead of with the sag of the ball resting on its two edges; the material of a corner reaches up to 0.4 mm past the end face of the part; and the check of
-  `exact_distance(part)` of a part with many pockets draws a field of many nested calls that needs several GB (`mfg_a3_pocket_corners` ran out of 8 GB).
+  a slot narrower than the ball is filled flush with its mouth instead of with the sag of the ball resting on its two edges; the material of a corner reaches up to 0.4 mm past the end face of the part; and the check marks two
+  small regions (0.4 % of the surface) along the rim of a pocket whose corner is exactly at the radius asked (the mesh version marked none).
+- **The walk is not drawn: the viewport meshes the field the distance was made from.** The walk has the sign of the field everywhere (its value is the field plus a correction that stays on the field's side
+  of zero), so its surface IS the field's, but meshing it costs a dozen calls of the field at every point of the drawing: `exact_distance(block)` of six pockets took the mesher 309 s at its second finest level,
+  and the check's display of it 334 s (the mesh version drew the whole case in 110-147 s). A shape made by `exact_distance` now says which field it is drawn from (`_display_field`, carried by `move`, `rotate`,
+  `scale`, `reflect` and `colored`; read in `interpreter.cpp recordShape`) and what a tool, a field viewer (`app_support.exact_view_tree`) or an offset reads is still the walk, with its distances. The same
+  `exact_distance(block)` draws in 0.4 s at the finest level, the check's display of it in 10.6 s, and the whole of case a3 runs in 145 s with less than 1 GB in the window. A distance that is used for
+  something else than showing it (an offset, a shell, a lookup of a tool) is still a walk at every point, about 32 calls of the field: **a part held as `exact_distance` is slow through the manufacturing tool
+  and in the drawing of what it makes** (a small printer-rules scene: the plain part 6.7 s in the tool and 8.5 s to draw, held as `exact_distance` 295 s and not drawn in 20 minutes; see KNOWN_ISSUES.md).
+
+### The model tree no longer expands what it cannot count
+- **A field made of calls that take calls took 8 GB after the script had finished.** After every run the model tree (and the handles) counted the draggable numbers of each row with `Tree::flatten()`, which
+  expands a node again every time it is reached; a field built from calls whose arguments are calls (the walk of `exact_distance` kept in a variable) is exponential that way: 8.2 GB within 19 s of the end of the
+  script. `Tree::flatten(share, calls, budget)` takes a budget of steps (the model tree gives it two million) and hands back `Tree::invalid()` when it is over, and the row is then a plain row (`expose.cpp`,
+  `plainTree`). The same script now stays at 300 MB.
+
+### The step of a gradient is not a round number
+- A step of exactly a thousandth of the part's size put the samples of the tape (`p - h`) on the singular plane of every face at a distance `h` from it (the plane where a derivative of the walk is a tie), so
+  thin walls and slits grew by one step only (cases w1, w4, h2). The step is multiplied by 1.01731 (`manufacturing_field._Context.step`, `distance_field._scales`).
 
 ### Manufacturing: the progress bar follows the tool
 - **`manufacturing_optimization` and `manufacturing_analysis` showed an empty bar for the minutes they take** (the bar read "0 %" with the text of the statement). They reported their phases, but the bar of the run takes a report only inside an open operation, and these two opened none, so every report was dropped. Each now runs as an operation of its own, and says what it does: Measuring surface, Evaluating rules (one step for each rule, and for each chunk of samples), Measuring part volume, Measuring effect for each remedy (three steps inside it), Re-checking result, Done. The check that runs inside the optimization reports within its own stretch of the bar (the part's check 5 to 19 %, the re-check 80 to 98 %), so the bar never jumps back. Looked at in a real window while the tool ran: the bar filled to 58 % and said "Measuring effect: Gap closed or widened". The seconds of the tool did not change (17.1 s before, 16.8 and 18.4 s after: the run-to-run difference of this machine).

@@ -30,9 +30,13 @@ What each of these is, and the way round it, is in [docs/manufacturing.md](docs/
   removed whole, a slot narrower than the ball is filled, and an L draws in 1.9 s. They are less exact where the field is not a distance, which is the case of a part made by taking cutters that overshoot the block out of
   it, or by overlapping pieces: a point where a walk along the gradient does not end on the surface is left as it is (the field there describes walls that are not the part's), which can leave a corner of such a part
   rounded a little short (the pocket of 1.5 mm corners made 3 mm: 38 mm^3 added where the arcs say 69). Three known differences from the exact rolling ball: **a slot narrower than the ball is filled flush with its
-  mouth** (the ball resting on its two edges would leave a sag, 0.76 mm for a slot of 4 and a ball of 3), the material added at the end of a corner reaches up to 0.4 mm past the part's end face, and **reading the
-  result of `exact_distance(part)` of a part with many pockets with the manufacturing check draws a field of many nested calls that needs several GB and minutes** (`mfg_a3_pocket_corners` ran out of its 8 GB): check
-  the part itself, or draw at a lower resolution, until the walk is made lighter.
+  mouth** (the ball resting on its two edges would leave a sag, 0.76 mm for a slot of 4 and a ball of 3), the material added at the end of a corner reaches up to 0.4 mm past the part's end face, and the check marks
+  two small regions (0.4 % of the surface) along the top and bottom rim of a pocket whose corner is exactly at the radius asked (`mfg_a3_pocket_corners`: the mesh version marked none).
+- **A part held as `exact_distance(...)` is slow through the manufacturing tool and in the drawing of its results.** The distance is a walk of about 32 calls of the part's field at every point, and the tool asks
+  the part 20 to 120 times at every point of its result: measured on a small part (plate, fin, post, wall, ledge; printer rules), the plain part takes 6.7 s in the tool and draws in 8.5 s, held as
+  `exact_distance` the same tool takes 295 s and the drawing of its result does not end in 20 minutes (example 33's part: tool 282 s, the drawing was at 4 % after 35 minutes). The result is the same (483.3 mm^3
+  added both ways); drawing the distance itself is not slow (`exact_distance(part)` shown on its own draws as the part does: the viewport meshes the part's own field, which has the same surface). Hand the tool the
+  part's own field when you can; use `exact_distance` where a rule reads distances (the inside corner radius) or an offset, a shell or a fillet is asked.
 - **A corner is marked only from about 17 % short of the radius asked** (under 2.5 mm for 3 mm), not from the 5 % of the other rules: the check reads how far the centre of the ball sits from the part, which in a corner of 90
   degrees grows by 0.29 mm for every mm of the corner's radius. Between that and the radius asked (2.5 to 2.85 mm for 3) the reading is within its noise and a corner may or may not be marked, in stripes along the arc. The shell rounds a
   corner to exactly the radius asked; a tight arc like that, read through a mesh, can show a few points short.

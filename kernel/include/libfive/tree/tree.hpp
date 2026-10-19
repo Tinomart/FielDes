@@ -162,8 +162,12 @@ public:
      *  nodes as there are different ones, and the only way to expand a field made of shifted copies of fields made of shifted copies in a time that
      *  does not grow with every level (what the optimizer and the evaluators are made from).
      *
-     *  Calls are expanded too unless `calls` is Keep. */
-    Tree flatten(bool share = false, Calls calls = Calls::Inline) const;
+     *  Calls are expanded too unless `calls` is Keep.
+     *
+     *  `budget` (the number of steps the expansion may take; 0 is no limit) is for the callers that cannot say beforehand how large the tree they ask for is: an unshared
+     *  expansion goes down a node once for every way it can be reached, so that a field built from calls that take calls (a Newton walk, a field made from the gradient of
+     *  another) comes to billions of steps.  When it runs over, the result is Tree::invalid(). */
+    Tree flatten(bool share = false, Calls calls = Calls::Inline, size_t budget = 0) const;
 
     /*  Checks the number of unique nodes in the tree */
     size_t size() const;

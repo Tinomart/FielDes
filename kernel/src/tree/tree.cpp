@@ -429,7 +429,7 @@ Tree Tree::call(Tree X, Tree Y, Tree Z) const {
     }
 }
 
-Tree Tree::flatten(bool share, Calls calls) const {
+Tree Tree::flatten(bool share, Calls calls, size_t budget) const {
     const bool keep = (calls == Calls::Keep);
     // (what there is to expand: a remap or an apply, and a call too unless calls are kept)
     if (!(ptr->flags & (keep ? TreeData::TREE_FLAG_HAS_SUBST
@@ -532,9 +532,13 @@ Tree Tree::flatten(bool share, Calls calls) const {
 
     todo.push({Task::DOWN, ptr, nullptr});
 
+    size_t steps = 0;
     while (todo.size()) {
         auto k = todo.top();
         todo.pop();
+        if (budget && ++steps > budget) {
+            return Tree::invalid();
+        }
 
         auto get = [&](const Data* t) {
             if (k.m) {

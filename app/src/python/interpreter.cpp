@@ -1347,7 +1347,22 @@ void Interpreter::recordShape(
         const auto ptr_obj = PyObject_GetAttrString(obj, "ptr");
         const auto ptr = PyLong_AsVoidPtr(ptr_obj);
         const auto tree = static_cast<libfive_tree>(ptr);
-        const auto shape = new Shape(libfive::Tree(tree), vars);
+        // A distance field is drawn from the field it was made from (fieldes.stdlib.fields.exact_distance): the surface is the same, and the viewport
+        // meshes one evaluation of the plain field at each point, not the walk to the surface (a dozen calls of it)
+        libfive::Tree drawn(tree);
+        {
+            PyObject* alias = PyObject_GetAttrString(obj, "_display_field");
+            if (alias && alias != Py_None && PyObject_IsInstance(alias, m_shapeClass))
+            {
+                PyObject* ap = PyObject_GetAttrString(alias, "ptr");
+                if (ap && PyLong_Check(ap))
+                    drawn = libfive::Tree(static_cast<libfive_tree>(PyLong_AsVoidPtr(ap)));
+                Py_XDECREF(ap);
+            }
+            Py_XDECREF(alias);
+            PyErr_Clear();
+        }
+        const auto shape = new Shape(drawn, vars);
         shape->setSourceLine(line);
         {
             // (an imported part, moved or edited or not, has an exact distance of its own: the field viewers ask for it by this key)

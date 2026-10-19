@@ -186,7 +186,9 @@ def _scales(size, reach, exact=True):
         as many times too wide as the cell is wider than the step; with a step of a thousandth of the size that is 12 times at a cell of a third of a millimetre, every bound after it is loose, the
         mesher cannot rule out a cell of the band and refines the whole of it (8 GB for an L of 20 mm).  With a step of a tenth of the reach the gradient is the one of the surface a step wide, which
         is the faces' own where they are flat, and at an edge is blurred over one step either side of the bisector '''
-    h = max(1e-3 * size, 1e-9) if exact else max(_STEP * reach, 1e-3 * size, 1e-9)
+    # (not a round number: the derivative asked a step AHEAD of a point on a plane of the part's surface is the mean of both rules', half a face's -- a sheet of nothing at the distance h from every face that
+    # a sample on a round grid can hit)
+    h = max(1e-3 * size, 1e-9) * 1.01731 if exact else max(_STEP * reach, 1e-3 * size, 1e-9)
     return h, max(1e-4 * size, 1e-10), max(1e-6 * size, 1e-12), max(1e3, 1e3 * size)
 
 

@@ -925,10 +925,15 @@ def exact_distance(shape, reach=None, bounds=None):
     out._bounds = (tuple(lo), tuple(hi))
     # (the surface is the shape's own, so near it the gradient is the shape's: a tool that reads normals from this field takes them from the shape's derivative -- see distance_field.partials)
     out._partials_hint = _distance_field.partials(f)
+    # (what the viewport draws is the surface, and the surface of the distance is the shape's own: the walk has the sign of the field everywhere, so it is zero where the field is and nowhere else.
+    # The viewport meshes the shape's own field, which is one evaluation per point instead of a dozen calls of it at every point of the drawing -- minutes of drawing for a part that draws in seconds;
+    # the distances themselves -- what a tool or a field viewer reads -- are the walk's, as they always were: `_distance_of` is the walk itself, see app_support.exact_view_tree)
+    out._display_field = f
+    out._distance_of = lambda: out
     return out
 
 
-_DISTANCE_REACH = 0.25      # (how far from the surface exact_distance makes the distance when it is not told, as a share of the shape's size)
+_DISTANCE_REACH = 0.25     # (how far from the surface exact_distance makes the distance when it is not told, as a share of the shape's size)
 
 
 def _reach(v, lo, hi):

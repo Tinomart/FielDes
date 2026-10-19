@@ -1309,10 +1309,12 @@ def colored(shape, field, range=None, label=None, colormap='turbo'):
     if b:
         out._bounds = b
     # (the same geometry: a part drawn from its own triangles, or meshed at its own resolution, is drawn so coloured too)
-    for name in ('_display_mesh', '_render_hint'):
+    for name in ('_display_mesh', '_render_hint', '_display_field'):
         v = getattr(shape, name, None)
         if v is not None:
             setattr(out, name, v)
+    if getattr(shape, '_display_field', None) is not None:
+        out._distance_of = lambda: shape          # (what is meshed is the shape's own field; the distance a field viewer shows is the shape's)
     return out
 
 

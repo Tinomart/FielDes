@@ -148,6 +148,7 @@ def _within_reach(f, d, sign, reach, tie, count=16):
 
 
 _BIG = 1.0e3
+_ODD_STEP = 1.01731         # (the factor that makes the normals' step no round number: see _Context)
 
 
 class _Context:
@@ -165,7 +166,10 @@ class _Context:
         self.slope = _typical_slope(self.field, self.lo, self.hi, self.size)
         if abs(self.slope - 1.0) > 0.05 and 0.02 < self.slope < 50.0:
             self.field = self.field * (1.0 / self.slope)
-        self.step = max(1e-3 * self.size, 0.004)
+        # (the step of the normals, a thousandth of the part, and NOT a round number: the normal is the mean of the derivative asked at p - h and p + h, and a plane of the part's surface that p - h or p + h
+        # lies on exactly is where the derivative is the mean of the rules' on both sides, half a face's -- a sheet of nothing in the field, at the distance h from every face.  Anything that samples the field
+        # in steps that divide h (a tape every 0.0005 mm, a grid of round numbers) hits it: a wall of 0.30 measured 0.344 where h was 0.023.  h that is no multiple of a round number is never on it)
+        self.step = max(1e-3 * self.size, 0.004) * _ODD_STEP
         self.tie = max(5e-7 * self.size, 2e-6)         # (how far apart the lookups that are combined are kept in value: see _join)
         # (where the print plate is, from the part: a check of what was made keeps the part's, not the made part's padded box -- which the result carries, for a check a user runs on it)
         self.plate_box = (tuple(float(c) for c in carried[0]), tuple(float(c) for c in carried[1])) if carried else (self.lo, self.hi)

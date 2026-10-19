@@ -585,6 +585,10 @@ def _exact_follows(name):
         get = getattr(t, '_distance_of', None)
         if get is not None:
             out._distance_of = _lazy_once(lambda: prev(get(), *args, **kwargs))
+        # (a distance field is drawn from its own field, which has the same surface -- see exact_distance: that one is placed the way the distance is)
+        shown = getattr(t, '_display_field', None)
+        if shown is not None:
+            out._display_field = prev(shown, *args, **kwargs)
         # (a tessellated part is drawn from its own triangles: they are placed the way the field is)
         display = getattr(t, '_display_mesh', None)
         if display is not None:
