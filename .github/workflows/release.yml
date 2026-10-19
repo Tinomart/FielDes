@@ -4,7 +4,7 @@
 # that opens on the most systems.  The package carries Qt, Python and every other library with it, so it opens with nothing installed -- the last step
 # starts it in a bare Ubuntu with only a virtual display to prove it.
 #
-# It runs when started by hand (Actions -> Release builds -> Run workflow) and when a tag such as v0.6.1 is pushed; each package is an artifact of the run.
+# It runs when started by hand (Actions -> Release builds -> Run workflow) and when a tag such as v1.0.0 is pushed; each package is an artifact of the run.
 name: Release builds
 
 on:

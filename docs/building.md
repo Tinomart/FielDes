@@ -123,7 +123,7 @@ the system's. The installer was tried under WSL (install, upgrade over it, refus
 **The one thing a package cannot bring is the C library.** A program asks for a glibc as new as the one it was built with, so a package built on Fedora 44
 (glibc 2.43) opens only on a system that new. The script says at its end which glibc the package asks for; to open on nearly everything **build on an old
 system** -- Ubuntu 22.04 (glibc 2.35) is what `.github/workflows/release.yml` uses: run it on GitHub (Actions → Release builds → Run workflow, or push a tag
-such as `v0.6.1`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. Install once:
+such as `v1.0.0`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. Install once:
 
 ```
 # Fedora

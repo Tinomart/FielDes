@@ -228,10 +228,12 @@
 #   mfg_j0_the_judge_on_known_parts.py               The judge of the job tests tried on parts whose answer is known -- a slab 0.6 mm thick, a block, a ledge with a flat
 #                                                    underside, a wall that is vertical and a cone that is not, a block with a side groove, an inside corner -- before it
 #                                                    is trusted to judge a job.
-#   THE THREE JOB CASES BELOW THAT HOLD THE PART AS exact_distance (j1, j2, j7) HAVE NOT FINISHED IN A RUN OF THIS RELEASE: the tool alone takes minutes (the walk of exact_distance
-#   is about 32 calls of the part's field at every point) and the drawing of their results far longer; the runner of the tests gave up after 2 minutes each, with no picture and no
-#   check lines.  What was measured on the bracket handed to the tool directly is in tests/RELEASE_REPORT.md and KNOWN_ISSUES.md.  Open them for the numbers by hand and the checks, and
-#   give them a quarter of an hour when you run them.
+#   THE THREE JOB CASES BELOW THAT HOLD THE PART AS exact_distance (j1, j2, j7) GIVE NO VERDICT IN THE TIME A TEST SHOULD TAKE: the walk of exact_distance is about 32 calls of the part's
+#   field at every point, and the tool asks the part at every point of its lattices.  Measured on 2026-10-20 (j1, a real window, from empty caches, on the final code): the topology
+#   optimization 62 s, and the first of the three processes (the FFF printer) was still in "Measuring effect: Overhang supported" at 9 minutes; the run was stopped at 12 minutes, with
+#   no picture and no check line.  The same bracket handed to the tool directly (`opt.shape()`, no exact_distance) is quick -- the mould job: the tool 91 s, the first complete drawing 12 s
+#   after it; see item 32 of tests/RELEASE_REPORT.md -- and KNOWN_ISSUES.md says what a part held as exact_distance costs.  Open these three files for the numbers by hand and the
+#   checks; if you run them, give each of them half an hour.
 #   mfg_j1_bracket_three_processes.py                J1, J3, J4: the topology-optimized bracket (the optimizer shaped it for a point load, half the material) made ready
 #                                                    for THREE processes -- a 0.4 mm FFF printer, a 3-axis mill with a 6 mm cutter, an injection mould (ABS) -- each judged
 #                                                    by the kit's own judge against the published rules of that process: how much of the surface breaks each rule before
