@@ -1075,7 +1075,7 @@
  "Export %1": "导出 %1",
  "Exporting %1...": "正在导出 %1...",
  "Could not export": "无法导出",
- "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1 (beta)<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; 场驱动设计<br><br>版本 %1（测试版）<br>基于 Matt Keeter 的 <a href=\"https://github.com/libfive/libfive\">libfive</a> 内核构建<br><br>",
+ "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; 场驱动设计<br><br>版本 %1<br>基于 Matt Keeter 的 <a href=\"https://github.com/libfive/libfive\">libfive</a> 内核构建<br><br>",
  "Kernel revision: <code>%1</code><br>": "内核版本：<code>%1</code><br>",
  "Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)": "许可证：GPL 2 或更高版本（应用程序），MPL 2.0（内核和 Python 库）",
  "About FielDes": "关于 FielDes",

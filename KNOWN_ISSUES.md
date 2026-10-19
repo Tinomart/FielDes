@@ -89,5 +89,5 @@ What each of these is, and the way round it, is in [docs/manufacturing.md](docs/
 
 - **Windows** is the main platform. The setup program and the zip are not signed: Windows SmartScreen may say *unknown publisher* the first time; *More info ▸ Run anyway*
   opens it (the source is public, and the setup is built from it by the script in `scripts/`).
-- **Linux** packages (a folder, a `.run` installer, a `.deb`) are built on Ubuntu 22.04 so that they open on older systems; they were tried under WSL2 on Fedora, not on every distribution.
+- **Linux** packages (a folder, a `.run` installer, a `.deb`) are meant to be built on Ubuntu 22.04 (the release workflow does) so that they open on older systems; they were tried under WSL2 on Fedora, not on every distribution. **The Linux packages made on the maintainer's machine for 1.0.0 were built on Fedora 44 and ask for glibc 2.43 or newer**: they open on a current Fedora and not on Ubuntu 22.04 or Debian 12, which have an older C library. Packages made by the release workflow do not have this limit.
 - There is **no macOS** build.

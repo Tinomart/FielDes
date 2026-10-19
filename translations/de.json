@@ -1075,7 +1075,7 @@
  "Export %1": "%1 exportieren",
  "Exporting %1...": "%1 wird exportiert...",
  "Could not export": "Export nicht möglich",
- "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1 (beta)<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; feldbasiertes Design<br><br>Version %1 (Beta)<br>Basiert auf dem Kernel von <a href=\"https://github.com/libfive/libfive\">libfive</a> von Matt Keeter<br><br>",
+ "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; feldbasiertes Design<br><br>Version %1<br>Basiert auf dem Kernel von <a href=\"https://github.com/libfive/libfive\">libfive</a> von Matt Keeter<br><br>",
  "Kernel revision: <code>%1</code><br>": "Kernel-Revision: <code>%1</code><br>",
  "Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)": "Lizenz: GPL 2 oder neuer (Anwendung), MPL 2.0 (Kernel und Python-Bibliothek)",
  "About FielDes": "Über FielDes",

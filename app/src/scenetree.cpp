@@ -10308,7 +10308,7 @@ void ScenePanel::insertSettingLine(const QString& call, const QString& fn, bool 
     const QStringList lines = (m_source ? m_source() : QString()).split('\n');
     int after = -1;
     const auto settings = m_scene["settings"].toObject();
-    for (const QString& fn : {"set_bounds", "set_resolution", "set_quality"})
+    for (const QString fn : {"set_bounds", "set_resolution", "set_quality"})
     {
         if (settings.contains(fn) && settings[fn].toObject().contains("end_line"))
             after = std::max(after, settings[fn].toObject()["end_line"].toInt() - 1);

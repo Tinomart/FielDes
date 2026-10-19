@@ -249,6 +249,8 @@
 #   mfg_j7_second_bracket.py                         J7: the same job on a second shape: the bracket the optimizer makes for a different load (the load turned to the
 #                                                    side), made ready for the same three processes, judged in the same way: nothing the first bracket showed is a property
 #                                                    of that one part.
+#   mfg_j8_bracket_three_processes_direct.py         J8: j1 with the part handed to the tool as the optimizer made it (opt.shape(), no exact_distance), which is how a person hands
+#                                                    it over: the same three processes, the same judge, the same checks, in the time a test should take (see the file for how long).
 #
 # PARTS THE CODE HAS NEVER SEEN.  Each of these generates six parts at random from the seeds in its name (change a seed in the file and run it: other parts) and gives each a
 # random constraint; criteria fixed beforehand are checked on every one (nothing floats beside a part, the independent check of the result, the tool's own counts).

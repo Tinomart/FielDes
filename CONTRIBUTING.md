@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. FielDes is a first beta, so reports of what does not work are as valuable as patches.
+Thanks for looking. FielDes is a young program, so reports of what does not work are as valuable as patches.
 
 ## Reporting a problem
 

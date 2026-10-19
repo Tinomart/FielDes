@@ -1671,6 +1671,8 @@ Window::Window(Arguments args)
         });
         // reportbug: Help > Report a bug (the dialog opens once this command is over, so that the commands after it run while it is open; a scripted run opens no browser)
         a->add("reportbug", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onReportBug(); }); });
+        // about: Help > About (the dialog opens once this command is over, so that the commands after it -- a picture of it with grabpopups -- run while it is open)
+        a->add("about", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onAbout(); }); });
         // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
         a->add("navigation", [=](const QString& what){
             const QString w = what.trimmed();
@@ -3894,7 +3896,7 @@ void Window::exportModelTo(const QString& var, const QString& kind, const QStrin
 void Window::onAbout(bool)
 {
     QString info = T("<b>FielDes</b> &mdash; field-driven design<br><br>"
-                   "Version %1 (beta)<br>"
+                   "Version %1<br>"
                    "Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> "
                    "by Matt Keeter<br><br>").arg(QCoreApplication::applicationVersion());
     const QString revision = libfive_git_revision();

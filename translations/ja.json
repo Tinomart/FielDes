@@ -1075,7 +1075,7 @@
  "Export %1": "%1 をエクスポート",
  "Exporting %1...": "%1 をエクスポート中...",
  "Could not export": "エクスポートできませんでした",
- "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1 (beta)<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; フィールド駆動デザイン<br><br>バージョン %1（ベータ）<br>Matt Keeter 氏の <a href=\"https://github.com/libfive/libfive\">libfive</a> のカーネルをベースにしています<br><br>",
+ "<b>FielDes</b> &mdash; field-driven design<br><br>Version %1<br>Built on the kernel of <a href=\"https://github.com/libfive/libfive\">libfive</a> by Matt Keeter<br><br>": "<b>FielDes</b> &mdash; フィールド駆動デザイン<br><br>バージョン %1<br>Matt Keeter 氏の <a href=\"https://github.com/libfive/libfive\">libfive</a> のカーネルをベースにしています<br><br>",
  "Kernel revision: <code>%1</code><br>": "カーネルのリビジョン: <code>%1</code><br>",
  "Licence: GPL 2 or later (application), MPL 2.0 (kernel and Python library)": "ライセンス: GPL 2 以降（アプリケーション）、MPL 2.0（カーネルと Python ライブラリ）",
  "About FielDes": "FielDes について",
