@@ -115,6 +115,7 @@ inline void colormapRGB(const QString& map, float t, float& r, float& g, float& 
         static const float amber[3] = {0.95f, 0.62f, 0.15f};
         static const float red[3] = {0.80f, 0.10f, 0.10f};
         static const float blue[3] = {0.13f, 0.40f, 0.80f};
+        float mixed[3] = {0.f, 0.f, 0.f};
         const float* start;
         const float* to;
         float u = 0.f;
@@ -127,7 +128,16 @@ inline void colormapRGB(const QString& map, float t, float& r, float& g, float& 
         }
         else
         {
-            start = to = t < 0.25f ? blue : (t > 0.75f ? red : grey);
+            // (a soft edge between the classes, not a hard one: the colour is read at the vertices of a mesh and blended across its triangles, and a hard edge between two classes follows the edges of
+            // the triangles -- a zigzag, where a thickened lattice meets the flat face it was cut from.  The value runs from 0 (cut) through 0.5 (as it was) to 1 (added); each class is full from
+            // a third of the way, and the blend is a smooth step, so the edge between two colours is a curve and not a staircase of triangles)
+            const auto smooth = [](float a, float b, float x) {
+                const float u = std::max(0.f, std::min(1.f, (x - a) / (b - a)));
+                return u * u * (3.f - 2.f * u);
+            };
+            const float toRed = smooth(0.58f, 0.86f, t), toBlue = smooth(0.42f, 0.14f, t);
+            for (int a = 0; a < 3; ++a) mixed[a] = grey[a] + toRed * (red[a] - grey[a]) + toBlue * (blue[a] - grey[a]);
+            start = to = mixed;
         }
         r = start[0] + u * (to[0] - start[0]);
         g = start[1] + u * (to[1] - start[1]);

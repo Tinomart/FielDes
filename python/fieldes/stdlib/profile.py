@@ -244,6 +244,37 @@ def extrude(shape, a, b):
         out._prism_a = Shape.wrap(a)
         out._prism_b = Shape.wrap(b)
         out._prism_guard = []
+    # The handles of the extrusion of a shape that lies in a plane of its own (a profile of points) are its two ENDS -- a and b, the faces parallel to the shape: pulled, they are how long the
+    # extrusion is -- and nothing else: what the tree of constants of such a field happens to hold (the numbers of its polygon, a plane through the origin) are not numbers anyone pulls.  Its
+    # walls are the sides of the profile: pulled, they move the two points they are between (the viewport does that, from the points' own numbers), and the extrusion is made again of the
+    # profile it was made of -- still the profile's, so it follows the points, and stays a prism that is drawn from their numbers while a or b is dragged
+    if plane is not None and getattr(shape, '_ctrl_pos', None):
+        try:
+            from fieldes.stdlib.handles import _var_numbers
+            ends = _var_numbers([a, b])
+        except Exception:
+            ends = None
+        if ends is not None:
+            out._handle_params = [float(x) for x in ends]
+            out._handle_rebuild = lambda v: extrude(shape, v[0], v[1])
+    # A 2D shape that is made of numbers of its own (a rectangle's four sides, a circle's centre and radius, a polygon's sides) hands them on: the handles of its extrusion are those numbers, and then a and
+    # b -- the sides of the 2D shape pulled as they are on the shape itself, and the two end faces for the length --, whatever the shape is, and the extrusion is made again of the shape made again of them
+    # (what the kernel found to expose in the extrusion's tree was most of them for most shapes and none of them for a rectangle)
+    params = getattr(shape, '_handle_params', None)
+    rebuild = getattr(shape, '_handle_rebuild', None)
+    if plane is None and params is not None and rebuild is not None and getattr(out, '_handle_params', None) is None:
+        try:
+            from fieldes.stdlib.handles import _var_numbers
+            ends = _var_numbers([a, b])
+        except Exception:
+            ends = None
+        if ends is not None:
+            count = len(params)
+            out._handle_params = [float(x) for x in params] + [float(x) for x in ends]
+            out._handle_rebuild = lambda v: extrude(rebuild(list(v[:count])), v[count], v[count + 1])
+            centre = getattr(shape, '_handle_centre', None)
+            if centre is not None:
+                out._handle_centre = lambda v: tuple(list(centre(list(v[:count])))[:2]) + ((v[count] + v[count + 1]) * 0.5,)
     return out
 
 

@@ -23,12 +23,21 @@ does; *Clear list* empties it; a file that is gone is left out). Then the menus:
 | Menu | Holds |
 |---|---|
 | **File** | New, Open, Open recent, **Open example file** (the small scripts of the `examples` folder next to the program, one for each family of features: open one, run it, change it), Import model, Open as viewer, Load the default script, Revert to saved, Save, Save As, Export mesh, **Export as app** and **Preview as app** (a script that people who never open the editor can run: see [Apps](apps.md)), Export / copy screenshot, Quit |
+| **Primitives** | The primitives, each under its kind (New 3D shape, New 2D shape, New point ...), and the primitives of your own; **Manage primitives...** chooses which shapes are primitives and adds your own (see [Your own primitives](#your-own-primitives)) |
 | **Edit** | Undo and redo, Find and replace, Go to (definition, line, the editor's tabs), Lines, Breakpoints, Folding, Autocomplete |
 | **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, Model tree, Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
 | **Settings** | **Keyboard shortcuts…**, **Blocks folder…** and **Show the blocks folder** (your [custom blocks](blocks.md)), editor text bigger / smaller, Automatically reload changes, Rotation mode, Rotation sensitivity, Zoom center |
 | **Help** | The guide, About, **Report a bug** (a new GitHub issue in your browser with the version and your system filled in; your script only if you choose to copy it; known problems are in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)), **Guided tour** (cards over the program that walk through the basics, offered the first time it starts; see also the [tutorial](tutorial.md)), Shape reference |
 
 Everything else is in the viewport: the model tree, the section card, the legends and the result card.
+
+### Your own primitives
+
+*Primitives ▸ Manage primitives...* is where the list of primitives is yours. Select a model in the model tree and the dialog lists, for its kind (3D shapes, 2D shapes, lines, points, surfaces, fields), every shape the menus have, built in or your own:
+a tick makes it a primitive (it is shown under *Primitives*), no tick puts it with the *Parametric shapes* -- a built-in primitive can be taken out of *Primitives* this way too. **Add selection** makes the selected model a primitive of your own, under the name you give it:
+everything of the script that the model is made of -- the models it uses, the functions and the variables it needs -- is kept with it, and picking it from any *Primitives* menu writes it into the script as a model of its own, with names the script does not have yet (a `size` that is
+already there becomes `size_2`: nothing in your script is overwritten). What you chose is kept in **one file of yours**, `primitives.json` in your data folder (`%APPDATA%\FielDes` on Windows, `~/.local/share/FielDes` on Linux), so your primitives are there in every script you open,
+whether or not the script you made them in still exists. A profile (a shape made of points) is a *Parametric shape*, not a primitive.
 
 ## The editor
 
@@ -133,7 +142,7 @@ offending line underlined in the editor. The error's text is red, everything els
 | **`I`** (viewport or model tree focused) | **Isolate** the selected models: only they are shown, every other model hidden (script edits, undoable); `I` again shows what was shown before. Select another model while isolated and press `I` to isolate that one instead |
 | **`D`** (viewport or model tree focused) | **Delete** the selected models from the script: their definitions and the lines that show, hide, edit and lock them go, as one undoable step. If the rest of the script still uses their names it asks once first. Also in the right-click menu of a model (**Delete**; with several models selected and the one you right-click among them, it deletes all of them) |
 | **`Shift+D`** (viewport or model tree focused) | **Copy** the selected models: their statements are written again under them with free names, as one undoable step (a copy that is its own model, changed independently) |
-| **`Ctrl+E`** (viewport or model tree focused) | **Extrude** the selected 2D shape (a circle, a rectangle, a triangle, a polygon, a profile): `extrude(shape, 0, size)` is written under it -- *Operation → Extruding → extrude* on the selection -- with the size a round number of the shape's own size. The two faces of the solid are then draggable, and the 2D shape underneath keeps priority where they overlap. A selection that is not a 2D shape gets a word of why not |
+| **`Ctrl+E`** (viewport or model tree focused) | **Extrude** the selected 2D shape (a circle, a rectangle, a triangle, a polygon, a profile): `extrude(shape, 0, size)` is written under it -- *Operation → Extruding → extrude* on the selection -- with the size a round number of the shape's own size. The two end faces of the solid -- the ones parallel to the shape -- are then draggable (the length of the extrusion: pull the far end, or the end the shape stands on, from where the shape is drawn over it, away from its edge), and so are its walls; the 2D shape underneath keeps priority at its edge. **A 2D shape and a path (a curve) selected together** write `path_extrude(shape, path)`: the shape swept along the path. A selection that is neither gets a word of why not |
 | **`Ctrl+D`** (viewport or model tree focused) | **Link** the selected models: under each, `copy = instance(model)` -- a block that **is** the model and follows every change of it, and can only be **moved and rotated** (its gizmo has no scale and its surfaces cannot be dragged). The model is held by reference (`# shadow: model`), always, locked or not, so it keeps its own row and the copy shows a shadow of it. Also *Operation → Repeating → instance*. In the editor `Ctrl+D` is still the next occurrence |
 | **Hover a model** | Highlights it; shows the point under the cursor at the bottom left |
 
@@ -156,7 +165,7 @@ on a **line of the script** that defines a model, and on its **row in the model 
 model had been right-clicked in the viewport:
 
 - **Three parts: Primitives, Parametric shapes and Operations.** **Primitives** hold the most basic, low-level representation of each kind of thing, each under its kind (*New 3D shape*, *New 2D shape*, *New 1D shape*,
-  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid, a prism; a circle, a rectangle, a triangle, a polygon, a profile; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
+  *New point*, *New surface*, *New field*): a sphere, a box, a cylinder, a cone, a torus, a pyramid, a prism; a circle, a rectangle, a triangle, a polygon; a polyline, a spline; a point; a plane, a sphere surface, a cylinder
   surface; a distance, a radial, a z and a noise field. **Parametric shapes** hold the more complicated ones -- shapes made with parameters that are not the most basic of their kind, though they need no model to be made: a rounded box,
   a ring, a wave, noise, your own low-level logic (*low_level_body*, *low_level_field*), a custom block -- by kind in the same way. **Operations** are what is done to a model: the operation groups (*Offsets and walls*,
   *Rounding*, *Moving* ...), and **Lattice**; **Engineering** is a menu of its own. What makes a primitive is being the most basic form of its kind, not how few arguments it needs. (`menu_catalog.BASIC` lists them; the quick operations *center*
@@ -257,9 +266,13 @@ Hover a row: the first line of its tooltip says what it is.
 
 **Nesting is the structure of the calls.** The models an operation is made of are its **children**: `thick = offset(plate, 1)`
 shows `plate` under `thick`, and `plate = difference(base, hole)` shows `base` and `hole` under `plate`, **in the order the call is
-written**. A model that is used by several statements has its row under the *first* one; under each of the others it has a
-**shadow**: a half-transparent row with the same icon and name, which is that statement's own reference to the model. What nobody
-uses is at the top. Rows are open by default; the arrow closes one. Because the tree is the structure of the calls, **every
+written**. A model has its row under the statement that uses it **only when it stands directly above it**: every row between the two
+must be one of that statement's own inputs. Any other row between them -- another model, a variable, a line that makes nothing, a loop or a
+function -- separates them: the model keeps its own row where it is made, and the statement shows a **shadow** of it. A model that is used by
+several statements stands in one place, and each of the other statements has a **shadow**: a half-transparent row with the same icon and name, which is that
+statement's own reference to the model. A loop, an `if`, a `with` or a `try` is a user as a statement is (the models directly above it that it
+reads are inside its row); a `def` or a class is not a user but separates the rows. The rows of the tree therefore follow the order of the
+script. What nobody uses is at the top. Rows are open by default; the arrow closes one. Because the tree is the structure of the calls, **every
 nesting, renesting and denesting is an edit of the arguments of a call**, written into the script, never only a move in the tree:
 
 | You | The script |
@@ -289,7 +302,7 @@ on one placeholder only its own kind is taken, and another kind is refused, with
 
 **A shadow never stands by itself at the top level.** A model that statements only *reference* (a Ctrl+drag put it there: their line says `# shadow: name`) keeps its own row at the top level, with a shadow in each of them. If such a statement is dragged **above** the model's row, or the model's row **below** the statement, the reference would be the first use, so a message asks: the fix (the default) makes the reference inside the statement the real model. Its definition goes directly above that statement, the comment goes, and the separate top-level row is gone; other statements that use it keep a shadow. *Do not show this message again* always does that (Settings → Show hidden messages again brings the message back); Cancel leaves everything as it is.
 
-**A shadow cannot be put above its original.** The tree gives a model its row under the **first statement that uses it** (the first one after its definition, in the script): that is the original; every later use is a shadow. So a shadow can only go into a statement *below* the original. Ctrl+drag a model into a statement that is *above* it, or move a shadow there, and a message explains it: the new use would come first, so it would become the original and the old place would only show a shadow — and the model has to be defined above any use for the script to run. The same happens **indirectly**: a statement that holds a shadow can be dragged above the original, or the original dragged below it. The program works out the tree the edit would give, before it writes anything, and if any shadow would then come first it asks **once**, listing every model it is about (three shadows in one statement are one message, not three). The message offers the easy fix, which is its default: **the first use becomes the original place** (for a copy (Ctrl+drag), the model's definition goes directly above that statement, when nothing in between uses it) **and a reference stays where the original was**. *Do not show this message again* makes it always do that, without asking (**Settings → Show hidden messages again** brings the message back); Cancel leaves everything as it is; one `Ctrl+Z` undoes it. It is the same kind of rule as taking a model out of an operation that cannot do without it: the script is never left broken.
+**A shadow cannot be put above its original.** The tree gives a model its row under the **first statement that uses it** when it stands directly above it (otherwise it keeps its own row where it is made, and every use shows a shadow): that row is the original; every later use is a shadow. So a shadow can only go into a statement *below* the original. Ctrl+drag a model into a statement that is *above* it, or move a shadow there, and a message explains it: the new use would come first, so it would become the original and the old place would only show a shadow — and the model has to be defined above any use for the script to run. The same happens **indirectly**: a statement that holds a shadow can be dragged above the original, or the original dragged below it. The program works out the tree the edit would give, before it writes anything, and if any shadow would then come first it asks **once**, listing every model it is about (three shadows in one statement are one message, not three). The message offers the easy fix, which is its default: **the first use becomes the original place** (for a copy (Ctrl+drag), the model's definition goes directly above that statement, when nothing in between uses it) **and a reference stays where the original was**. *Do not show this message again* makes it always do that, without asking (**Settings → Show hidden messages again** brings the message back); Cancel leaves everything as it is; one `Ctrl+Z` undoes it. It is the same kind of rule as taking a model out of an operation that cannot do without it: the script is never left broken.
 
 **Taking a model out of a list.** A model that is one of the things in a **list** a call is given -- `loads=[force_1, force_2]`,
 `topology_optimization(part, supports, [[push], [pull]])`, `union_all([a, b, c])` -- is taken out of the list, and the call keeps the rest:
@@ -422,10 +435,16 @@ on a name selects it in the code, ready to be replaced by typing; a click on a s
 of the top level -- a model, a section's row, another block -- and its lines move in the script (with the comment lines right above it and the blank lines under it), as one undoable step, to structure the code; it is
 refused with the reason where it would end inside another block or inside a model. Models made inside a block are variables of the block, not model rows ([Known issues](../KNOWN_ISSUES.md)).
 
+**A move cannot break the script.** The library reads the script and knows what every statement of the top level makes and what it needs (what a function needs is counted where it is called, not where it is
+defined). A drop that would make a statement read a name before it is made -- a call above its `def`, a loop above the variable it counts to -- or read it from another line shows the question **"This would break the script"**
+with the easy fix: the statements it goes with -- those that use what it makes, or what it uses -- are moved **along** with it, in the order they have, as one undo step. Cancel leaves everything as it is. ("Do not show this message again" always moves them along.)
+A drop whose fix would put everything back where it was -- a `def` dropped below the very statement that calls it -- is no move at all: it is refused, with a note in the tree that says which statements it has to stay in the order of.
+
 ### The insertion point
 
 What is added from the tree -- a new shape, a condition, a simulation, a block from the **Python** menu, a paste -- goes to the **insertion point**. The line between two top-level rows, where the **+** that starts a section shows,
-is clickable: **a press on the line itself** (a few pixels each side of it, away from the circle) puts the point there -- a **cyan line with a small arrow** is drawn along the gap, faint while it is only the default (the end of the
+is clickable: **a press on the line itself** (a few pixels each side of it, away from the circle) puts the point there -- a **white line** lights up along the gap as soon as the cursor is on it (under the **+**, never over it), and
+a **cyan line with a small arrow** marks the point: faint while it is only the default (the end of the
 script), solid once it is set -- and puts the **text cursor of the code editor** on that line, with the keyboard in the editor. The two are one: **the cursor you move in the editor moves the point** (inside a statement the point is after
 the statement, on the first column of its first line before it, between statements above the next one), and what is added is written above the row the point is above, with the cursor going under it, so the next thing added lands
 under the last. Operations still go under the model they work on. Where no point has been set (a script just opened) things go to the end of the script, as they always did.
@@ -686,7 +705,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | New / Open / Save / Save as | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Import model | `Ctrl+I` |
 | Export STL | `F7`, `Ctrl+Alt+E` |
-| Extrude the selected 2D shape (viewport or tree focused) | `Ctrl+E` |
+| Extrude the selected 2D shape (viewport or tree focused); a 2D shape and a curve selected together make a `path_extrude` of the shape along the curve | `Ctrl+E` |
 | Export / copy screenshot | `Ctrl+Shift+E` / `Ctrl+Alt+C` |
 | Quit | `Ctrl+Q` |
 

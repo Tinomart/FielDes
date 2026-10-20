@@ -45,6 +45,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import math
+import os
 import random
 import time
 from collections import OrderedDict
@@ -54,8 +55,9 @@ from fieldes.shape import Shape
 from fieldes.stdlib.fea import FieldResult, colored, _with_conditions
 from fieldes.stdlib.excluded import locks_of
 from fieldes.stdlib.fields import fillet as _fillet
+from fieldes.stdlib.shapes import box as _box
 from fieldes.stdlib.manufacturing_check import ManufacturingAnalysis, _analyse, manufacturing_analysis
-from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _Normals, _at, _dot, _extent_along, _frame, _join, _near, _remembered, _values, _where, _xyz)
+from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _Normals, _at, _dot, _extent_along, _frame, _join, _near, _remembered, _tangents, _us_per_point, _values, _where, _xyz)
 from fieldes.stdlib.manufacturing_rules import (GRACE, SUPPORT_EDGE_STEPS, ManufacturingConstraint,ManufacturingError, _RULE_TEXT, _constraints_given, _log, _progress, _quantity, _with_bar, _within,
                                                  manufacturing_constraint, fff_constraint, cnc_constraint, molding_constraint)
 
@@ -80,7 +82,34 @@ def _clip(v, reach, on=True):
     return v.max(-reach).min(reach)
 
 
-def _on_face(ctx, tol, normals=None):
+def _edge_room(ctx, limit, d):
+    ''' 1 where the face that a point's normal leads to goes on, from the foot of the normal, for `d` or more in every direction along the surface; less, down to 0 at the edge, as an edge is nearer:
+        the foot -- the nearest point of the surface, by a Newton step with the field's own slope -- is looked at `d` on along the two tangents, both ways, and where the surface is not there the
+        field's value is how far short the face falls (up to `d`).  A growth that is multiplied by it runs out over the last `d` of a face in a straight taper, and is a crease for the mesher
+        to draw as a clean edge: the gates that it replaces -- the slope of the field at the foot, which drops within a step of an edge --, switched the growth off in a strip a few hundredths of a
+        millimetre wide, narrower than a cell of the picture, whose edge the mesher drew as spikes and flakes '''
+    # (no taper for a part whose field is a distance: the slope is 1 on every face, the gate of `_on_face` ends the growth at the edge in one straight strip, and a taper of the last 0.17 mm of a fin that is
+    # 0.6 thick leaves a strip along its free edges where the wall is under the limit -- 0.65 % of the surface of n7, the independent check's nine lines reading across it out to 0.3 mm --, and measured
+    # without it 0.02 %.  The taper is for a field whose slope wanders -- a lattice's --, where the gate switched on and off in patches within a step of the rim)
+    if ctx.slope_spread <= 0.02 and not ctx.clamp_calls:
+        return Shape.wrap(1.0)
+    n, f = ctx.normals, ctx.field
+    mag = n.magnitude.max(0.7).min(1.4)
+    reach = 1.8 * limit + d
+    on = ctx.clamp_calls
+    k = f / mag
+    px, py, pz = -k * n.x, -k * n.y, -k * n.z
+    t1, t2 = _tangents(n)
+    room = None
+    for t in (t1, t2):
+        for s in (d, -d):
+            r = _at(f, _clip(px + s * t[0], reach, on), _clip(py + s * t[1], reach, on), _clip(pz + s * t[2], reach, on))
+            short = d - r.abs().min(d)
+            room = short if room is None else room.min(short)
+    return room * (1.0 / d)
+
+
+def _on_face(ctx, tol, normals=None, newton=False, slope_gate=True, shift=None, fshift=None):
     ''' 1 where the line along the normal starts on a flat face: its foot -- the nearest point of the surface that the normal leads to, p - f n -- is on the surface (not `tol` or more
         off it: over the mouth of a slot, over the top of a fin, the line comes down in the air between two edges, or past an end) and the slope of the field there is a distance's, 1:
         at an edge or a corner the slope is the average of the two faces' and less, and a point round the corner leads to the corner, where a wall looks thinner across its diagonal
@@ -89,14 +118,21 @@ def _on_face(ctx, tol, normals=None):
     n, f = (ctx.normals if normals is None else normals), ctx.field
     reach = 60.0 * tol                                          # (tol is a fiftieth of the limit: the longest offset read is a limit and a fifth)
     on = ctx.clamp_calls
-    px, py, pz = _clip(-f * n.x, reach, on), _clip(-f * n.y, reach, on), _clip(-f * n.z, reach, on)
-    foot = _at(f, px, py, pz)
-    slope = _Normals(f, ctx.step, shift=(px, py, pz)).magnitude
-    on = ((tol - foot.abs()) * (1.0 / tol)).max(0).min(1)
-    return on * ((slope - 0.9) * (1.0 / 0.05)).max(0).min(1)
+    # (`shift` and `fshift`: the point moved by the vector `shift`, the part's field there, and the normal `normals` of that point: the same question of the foot of the line from there)
+    dx, dy, dz = (0.0, 0.0, 0.0) if shift is None else shift
+    here = f if fshift is None else fshift
+    # (`newton`: the step to the foot is the field's value over its slope -- the field of a lattice is a distance to a few per cent, and a step by the value alone ends off the surface by that much of the step)
+    k = here / n.magnitude.max(0.7).min(1.4) if newton else here
+    px, py, pz = _clip(-k * n.x, reach, on), _clip(-k * n.y, reach, on), _clip(-k * n.z, reach, on)
+    foot = _at(f, dx + px, dy + py, dz + pz)
+    near = ((tol - foot.abs()) * (1.0 / tol)).max(0).min(1)
+    if not slope_gate:
+        return near
+    slope = _Normals(f, ctx.step, shift=(dx + px, dy + py, dz + pz)).magnitude
+    return near * ((slope - 0.9) * (1.0 / 0.05)).max(0).min(1)
 
 
-def _chord(ctx, limit, inward, normals=None, shift=None, fshift=None, count=8):
+def _chord(ctx, limit, inward, normals=None, shift=None, fshift=None, count=8, newton=False):
     ''' How thick the part is along the normal at each point of its surface -- through the material (`inward`) or through the air -- as the distance from the surface to where the
         line along the normal meets the surface again, found at `count` places along the line (up to a tenth more than `limit`) and between them by where the field crosses 0:
         `limit` times 1.1 where it does not within that.  From the nearest point of the surface, so that it is the same for a point off it.  This is how the REMEDIES find a thin
@@ -114,6 +150,9 @@ def _chord(ctx, limit, inward, normals=None, shift=None, fshift=None, count=8):
     flip = 1.0 if inward else -1.0
     dx, dy, dz = (0.0, 0.0, 0.0) if shift is None else shift
     here = f if fshift is None else fshift
+    if newton:
+        # (the line starts at the nearest point of the surface, which is f / slope away -- by a Newton step -- for a field whose slope is not 1: a lattice's, a bracket's)
+        here = here / n.magnitude.max(0.3).min(2.0)
     previous = Shape.wrap(-1e-3 * limit)
     founds = [Shape.wrap(1.0e5)]
     for k in range(1, count + 1):
@@ -131,7 +170,7 @@ def _chord(ctx, limit, inward, normals=None, shift=None, fshift=None, count=8):
 
 def _leaning_margin(ctx, limit, d, creases=False):
     ''' Above 0 where the surface faces down and leans out more than `limit` degrees from the vertical, `d` being the way up -- where a support is wanted --: the angle of the normal
-        from the way up, less the limit and a degree.  Not on the first layer, which rests on the plate.  `creases=False` (what the supports are placed by): a crease, where the normal is a
+        from the way up, less the limit and the grace of every rule (5 % of it).  Not on the first layer, which rests on the plate.  `creases=False` (what the supports are placed by): a crease, where the normal is a
         mix of two faces, is read as it is, a continuous angle -- a support under it does no harm, and a gate that shut it out put the edge of the support where the stencil of the normal
         met the part's edge, a place that moved with every height; `creases=True` leaves out where the slope of the field is less than a distance's.  The supports are placed by this, and
         not by the check of the part (manufacturing_check), which they are to be checked by '''
@@ -140,7 +179,7 @@ def _leaning_margin(ctx, limit, d, creases=False):
                 for z in (ctx.plate_box[0][2], ctx.plate_box[1][2]))
     height = (_xyz()[0] * d[0] + _xyz()[1] * d[1] + _xyz()[2] * d[2]) - plate
     lean = (-_dot(n, d)).max(0).min(1).asin() * (180.0 / math.pi)
-    margin = lean - limit - 1.0 - _BIG * (0.6 - height).max(0)
+    margin = lean - limit * (1.0 + GRACE) - _BIG * (0.6 - height).max(0)
     if creases:
         margin = margin - _BIG * (1.0 - ((n.magnitude - 0.8) * (1.0 / 0.1)).max(0).min(1))
     return margin
@@ -152,6 +191,8 @@ def _leaning_margin(ctx, limit, d, creases=False):
 # and what they cut, taken off that.  Giving the result to the shell again is the next pass.
 
 REMEDIES = ('undercut', 'draft', 'gaps', 'corners', 'walls', 'overhang')
+# (the order a part that is expensive to read is made in, each remedy from the result of the ones before it: what makes new faces first, what judges faces last)
+_CHAIN_ORDER = ('gaps', 'draft', 'undercut', 'overhang', 'walls', 'corners')
 
 _REMEDY_TEXT = OrderedDict([
     ('undercut', _tr('Undercut filled')),
@@ -160,12 +201,13 @@ _REMEDY_TEXT = OrderedDict([
     ('corners', _tr('Inside corners filleted')),
     ('walls', _tr('Wall thickness increased')),
     ('overhang', _tr('Overhang supported (gusset or teardrop)')),
+    ('access', _tr('Undercut filled, inside corners rounded')),          # (the two as one operator on a part that is expensive to read: see _remedy_access)
 ])
 _REMEDY_RULE = {'undercut': 'undercut_along', 'draft': 'draft', 'gaps': 'min_gap', 'corners': 'min_radius', 'walls': 'min_wall', 'overhang': 'overhang'}
 _RULE_REMEDY = {rule: remedy for remedy, rule in _REMEDY_RULE.items()}
 
 
-def _walls_lattice(ctx, t):
+def _walls_lattice(ctx, t, threshold=None):
     ''' The wall remedy as a field of the kernel (`libfive_field_overhang_lattice` in mode 3: kernel/src/fields/lattice_field.cpp): the formula of `_remedy_walls` -- a wall thinner than `t` is offset outwards by half of what it
         lacks, to `t / 2` at most, where the thickness is the length of the line along the normal from the nearest point of the surface through the material -- worked out on a lattice laid over the part, the part looked
         at in a band round its surface, outside as far as the growth reaches and inside as far as the thickness is looked for; the normal and the thickness are read off the lattice.  The part united with it; None when the
@@ -193,7 +235,15 @@ def _walls_lattice(ctx, t):
             break
         pitch = wider
     if t < 3.4 * pitch:
-        return None
+        # (a lattice of this pitch cannot hold a layer of that.  Where a formula would be asked instead it is the chain's cost -- every remedy after it reads the formula through everything before it, and the mould's
+        # walls on the optimized bracket made the corners' sampling 18 times dearer -- so a finer pitch is tried, to three and a half nodes, as far as forty-five million nodes go)
+        finer = t / 3.5
+        volume = 1.0
+        for i in range(3):
+            volume *= hi_f[i] - lo_f[i] + 2.0 * (1.1 * t + 8.0 * finer)
+        if volume / finer ** 3 > 4.5e7:
+            return None
+        pitch = finer
     band = 0.6 * t + 3.0 * pitch
     pad = 1.1 * t + 8.0 * pitch
     mins = [lo_f[i] - pad for i in range(3)]
@@ -209,7 +259,9 @@ def _walls_lattice(ctx, t):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(t), 3, 1.0e30, -1.0e30, stats)
+    # (`slope` carries the share of the target thickness `t` below which a wall is thin -- the rule's limit over the target, which has a margin on it -- see _remedy_walls)
+    ratio = min(1.0, max(0.5, float(threshold) / float(t))) if threshold else 1.0
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, ratio, float(band), float(t), 3, 1.0e30, -1.0e30, stats)
     if not ptr:
         return None
     out = ctx.base.min(Shape(ptr))
@@ -218,8 +270,8 @@ def _walls_lattice(ctx, t):
     return out
 
 
-def _remedy_walls(ctx, t):
-    ''' Where a wall is thinner than `t` the surface is offset outwards by what it lacks, half on each side, to `t` and no more: how thick the wall is at a point is the length
+def _remedy_walls(ctx, t, threshold=None, growth=False):
+    ''' Where a wall is thinner than `threshold` (the rule's limit; `t` when it is not given) the surface is offset outwards by what it lacks of `t` (the target: the limit and a margin), half on each side, and no more: how thick the wall is at a point is the length
         of the line along the normal, from the nearest point of the surface through the material to where it meets the surface again, and the offset is a field of its own
         -- the part's field minus it --, so a wall grows only where it is thin, over the whole of its face, up to its edge and not past it.
 
@@ -228,20 +280,27 @@ def _remedy_walls(ctx, t):
         of another wall taking the growth of the face beside it, a wedge in the inside corner -- were made and measured: they cost three to ten times the offset to draw, left faint ridges and
         slivers 1.2 mm from the edges of walls that were thick enough, and made the field one the viewer could not mesh within the memory of the machine (8 GB at 14 cells to the millimetre
         on an open box; the same box without them: 0.84 GB).  The corner rule (`min_radius`) rounds such corners '''
-    # (a part that is expensive to read gets the walls from a lattice, as it gets the draft, the undercut, the corners and the overhang: the formula below asks the part about ten times at every point the mesher
-    # samples near the surface, and it was the last of those formulas in the mould's drawing of the bracket.  A limit smaller than three and a half nodes of the lattice cannot be held by one: the formula does it
-    # then.  FIELDES_WALLS_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
+    # (a part that is expensive to read, or whose field is not a distance (a lattice's, a bracket's: the slope of the field at its surface is not 1), gets the walls from a lattice, as it gets the draft, the undercut, the
+    # corners and the overhang: the formula below asks the part about ten times at every point the mesher samples near the surface -- it was the last of those formulas in the mould's drawing of the bracket, and a
+    # gyroid drew in 46 s as a formula and in 3 s as a lattice --, and a field whose slope wanders makes its growth ragged along the rim where a lattice meets the face it was cut from.  A part whose field is a distance
+    # (boxes, cylinders, anything of exact planes and arcs) keeps the formula, which is exact at its edges where the lattice, at a 400th of the part, rounds the end of a small plate.  A limit smaller than three and
+    # a half nodes of the lattice cannot be held by one: the formula does it then.  FIELDES_WALLS_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
     import os
     mode = os.environ.get('FIELDES_WALLS_LATTICE', '')
-    if mode == '1' or (mode != '0' and getattr(ctx, 'clamp_calls', False)):
-        made = _walls_lattice(ctx, t)
+    if mode == '1' or (mode != '0' and (getattr(ctx, 'clamp_calls', False) or getattr(ctx, 'slope_spread', 0.0) > 0.02)):
+        made = _walls_lattice(ctx, t, threshold)
         if made is not None:
             return made
+    t0 = t if not threshold else float(threshold)          # (a wall counts as thin below `t0`: a wall the rule tolerates is not made thicker for the margin that the target has)
     f, n = ctx.field, ctx.normals
-    chord = _chord(ctx, t, True)
+    chord = _chord(ctx, t, True, newton=True)
     # (the line along the normal from the nearest point of the surface says something only where that point is on the surface -- over the mouth of a slot the normal leads to the air
-    # between the two edges, and a gap would be taken for a wall; and where the slope of the field is not a distance's, on the middle of a gap, the normal is no face's)
-    sure = ((n.magnitude - 0.8) * (1.0 / 0.1)).max(0).min(1) * _on_face(ctx, 0.02 * t)
+    # between the two edges, and a gap would be taken for a wall; and where the slope of the field is not a distance's, on the middle of a gap, the normal is no face's.
+    # The foot is found with the field's own slope (a lattice's field is a distance to a few per cent only: a step by its value alone ends off the surface, and the growth was switched
+    # off where it did, in patches), and the end of a face is not a step of the gate but a taper: the growth runs out over the last part of the face, `_edge_room`)
+    # (the slope of the field is no test here: a lattice's field, a bracket's is a distance only roughly -- 0.6 in one place, 1.3 in another -- and a gate on it left the wall ungrown over large patches, white
+    # streaks over a gyroid.  Where the foot of the line is on the surface and not at the edge of its face, the normal is the face's; a place with no slope at all, a plateau, has none)
+    sure = ((n.magnitude - 0.3) * (1.0 / 0.1)).max(0).min(1) * _on_face(ctx, 0.02 * t, newton=True, slope_gate=False) * _edge_room(ctx, t, 0.2 * t)
     # (a wall the rule tolerates -- under the limit by the grace at most -- is not made thicker, but one that is under that is made the full thickness, and between the two the growth is
     # eased out, to nothing at the limit: the wall that comes out is then always more than the grace above what the check marks.  It used to be eased out BELOW the line the check marks at,
     # so that a wall of 0.76 to 0.78 came out as thick as it was, and the check, which reads a wall along lines a few degrees off the normal, marked it, with a few hundredths of a
@@ -250,14 +309,33 @@ def _remedy_walls(ctx, t):
     # nothing: taken for one it grew the layer by half of the limit round the rim of a disc, a razor-thin flange 0.15 mm wide past its radius at the height of each face, and a lip above the
     # rim of an open box.  Counted for nothing below 0.064 of a 0.8 mm limit and in full from 0.096)
     valid = ((chord - 0.08 * t) * (1.0 / (0.04 * t))).max(0).min(1)
-    gate = ((t - chord) * (1.0 / (GRACE * t))).max(0).min(1) * sure * valid
-    main = ((t - chord) * 0.5).max(0).min(t / 2.0) * gate
+    # (a wall is two faces facing each other: the face that the line ends on has to face back at where it began, its normal within about 37 degrees of the way the line goes on, as the check of the
+    # result reads a wall.  Without it a flat face that a sheet meets at a glancing angle -- the cut face of a lattice -- had the wedge behind it taken for a thin wall, and was pushed out past the
+    # block it was cut from, a thin lip beyond every cut face.  Same as the lattice's, kernel/src/fields/lattice_field.cpp)
+    here = n.magnitude.max(0.3).min(2.0)
+    far = 1.8 * t
+    end = (_clip(-(f / here + chord) * n.x, far, ctx.clamp_calls), _clip(-(f / here + chord) * n.y, far, ctx.clamp_calls), _clip(-(f / here + chord) * n.z, far, ctx.clamp_calls))
+    ne = _Normals(f, ctx.step, shift=end)
+    facing = ((-(ne.x * n.x + ne.y * n.y + ne.z * n.z) - 0.7) * 10.0).max(0).min(1)
+    eased = ((t0 - chord) * (1.0 / (GRACE * t0))).max(0).min(1)
+    gate = eased * eased * sure * valid * facing          # (eased out by the square: a wall the rule tolerates is left as it is, to a few thousandths of a millimetre)
+    # (the field is a distance only roughly, not exactly: the surface of f - s is about s / slope from the part's, so the shift is made as long again as the slope is -- the slope MIDWAY between the
+    # point and its foot on the old surface, which is what a field whose slope falls away from the surface gains on average along the way: the slope at the point alone moved a gyroid's surface only
+    # four fifths of the way)
+    reach = 1.2 * t
+    foot = (_clip(-(f / here) * n.x, reach, ctx.clamp_calls), _clip(-(f / here) * n.y, reach, ctx.clamp_calls), _clip(-(f / here) * n.z, reach, ctx.clamp_calls))
+    slope = (here + _Normals(f, ctx.step, shift=foot).magnitude.max(0.3).min(2.0)) * 0.5
+    main = ((t - chord) * 0.5).max(0).min(t / 2.0) * gate * slope
     # (the surface moves by at most half the wall, and only where it is within that of the part's: the remedy is the part's own field beyond 0.6 of a wall thickness, which is what lets the
     # mesher skip every cell farther off without working through it)
+    # (`growth`: how far the surface moves out at a point, with the width of the band it lies in and the most it can be -- for the optimizer to add to the growth of the other remedies that move the
+    # same surface, so that the faces one of them makes are moved by the others)
+    if growth:
+        return main, 0.6 * t, t / 2.0
     return f - _near(main, f, 0.6 * t, t / 2.0)
 
 
-def _remedy_gaps(ctx, g, mode):
+def _remedy_gaps(ctx, g, mode, growth=False):
     ''' A gap narrower than `g` is closed ('fill': the surface of each side grows by half the gap) or made as wide as `g` ('widen': each side goes back by half of what it lacks).
         How wide the air is at a point is found the way a wall's thickness is: the length of the line along the normal, from the nearest point of the surface through the air
         to where it meets the surface again, and only where that point is on the surface (not over the mouth of the gap, where the line comes down between two edges): the
@@ -286,49 +364,63 @@ def _remedy_gaps(ctx, g, mode):
     # the slot was filled but on a thin plane there, which the mesher, with a grid plane on it, drew as a seam: two pieces, open edges in the export.  Of the two one-sided ones,
     # one always leads to a wall, and the other, wrong, grows less and never more.  The two are combined as how far each side goes, not as two fields: two fields that are the part's
     # own wherever nothing is closed are equal over all of space, and a minimum of equal values is a tie that the mesher settles by trying every way)
+    def lifted(kind, rank):
+        ''' how far the surface goes where a point of the air is nearer a face than the sides of the gap it lies in -- the point just above the floor of a slot --, read from the point 0.5 `g` above that face, along its normal.
+            The line along the normal of such a point goes up out of the gap into the open, so `grows` finds no gap there, and the sides of the slot, which grow where THEY are the nearest face, left a sheet of air over
+            the floor, as thick as the slot is wide in the middle (0.34 mm of a slot of 0.7 under a gap rule of 1.0) and closed in by them from above.  Half the limit above the face, the point is nearer a side than the floor
+            in any gap that is narrower than the limit, and the question is asked there in the way it is asked of a side (line along its normal, foot on a face); where the gap is, the point under it is part of the result
+            (its growth is its own distance and 2 % of the limit).  For a gap shallower than half the limit the lifted point is out in the open and nothing is added -- the V it leaves is open at the top, not closed in '''
+        n0 = ctx.normals
+        lam = (0.5 * g - f).max(0).min(0.5 * g)
+        reach = 0.5 * g
+        sh = (_clip(n0.x * lam, reach, ctx.clamp_calls), _clip(n0.y * lam, reach, ctx.clamp_calls), _clip(n0.z * lam, reach, ctx.clamp_calls))
+        fl = _at(f, sh[0], sh[1], sh[2])
+        nl = _Normals(f, ctx.step, kind, shift=sh)
+        chord = _chord(ctx, g, False, nl, shift=sh, fshift=fl, count=6)
+        onface = _on_face(ctx, 0.02 * g, nl, shift=sh, fshift=fl)
+        gate = ((g * (1.0 - GRACE) - chord) * (1.0 / (0.005 * g))).max(0).min(1) * ((onface - 0.5) * 5.0).max(0).min(1)
+        aired = (fl * (1.0 / (0.02 * g))).max(0).min(1)                 # (the lifted point is in the air, not in the other side of a gap narrower than the lift)
+        close = ((0.49 * g - f) * (1.0 / (0.01 * g))).max(0).min(1)       # (a point in a gap narrower than the limit less its grace is nearer a face than 0.475 of the limit)
+        step = gate * aired * close * (f.max(0) + 0.02 * g)
+        return step - 1.0e3 * rank * (1.0 - (step * (1.0 / (0.001 * g))).max(0).min(1))
     step = grows(ctx.one_sided_normals('forward'), 1.0).max(grows(ctx.one_sided_normals('backward'), 2.0)).max(0)
+    if mode != 'widen':
+        step = step.max(lifted('forward', 3.0)).max(lifted('backward', 4.0)).max(0)
     if mode == 'widen':
         return f + _near(step, f, 0.6 * g, g / 2.0)
+    if growth:
+        return step, 0.6 * g, g / 2.0
     return f - _near(step, f, 0.6 * g, g / 2.0)
 
 
 def _remedy_corners(ctx, radius):
-    ''' The part with every inside corner rounded to `radius`: the library's `fillet` -- a ball of that radius rolled in the air along the part, found from the part's own field and
-        its derivative (distance_field.py: Newton steps along the gradient; nothing is meshed) -- so the corner is filled by the arc of a ball that rolls in it: a circle of that
-        radius whose slope turns smoothly from one face to the other.  A flat face, a bump and an outside corner are as they were, and the ends of a corner are not touched.  It works
-        on any part -- an import, a lattice, a pocket --, and a slot narrower than the ball is filled.  The part's own field is kept where nothing is added '''
-    # (A part that is expensive to read -- the optimized bracket -- gets the corners from a lattice the kernel works out once instead of the walk below, which asks the part about 32 times at every point the mesher
-    # samples: the corners alone took 145 s of the coarse level of the mould's drawing of the bracket.  The default for such a part is the ball itself read from a lattice (`_corner_maxfilter`, any radius).
-    # The switches, for the proofs and for comparing: FIELDES_CORNERS_BALL=1 forces that fill on any part; FIELDES_CORNERS_LATTICE=1 forces the older closing by distance transforms (a ball of three and a half
-    # nodes or more), 0 forbids every lattice and asks the formula; FIELDES_CORNERS_ZONE=1 asks the formula only inside a zone found on a lattice -- tried twice on the bracket and slower both times, so off.)
-    import os
-    mode = os.environ.get('FIELDES_CORNERS_LATTICE', '')
-    expensive = getattr(ctx, 'clamp_calls', False)
-    if os.environ.get('FIELDES_CORNERS_BALL') == '1' or (mode not in ('0', '1') and expensive):
-        made = _corner_maxfilter(ctx, radius)
-        if made is not None:
-            return made
-    if mode == '1' or (mode != '0' and expensive):
-        made = _closing_lattice(ctx, radius)
-        if made is not None:
-            return made
-        if mode != '1':
-            zone = _corner_zone(ctx, radius) if os.environ.get('FIELDES_CORNERS_ZONE') == '1' else None
-            if zone is not None:
-                return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)).max(zone))
-            ctx.corners_left = radius          # (no lattice could be made: the corners are left as they are and the tool says so)
-            return ctx.field
-    return ctx.field.min(_fillet(ctx.field, radius, bounds=(ctx.lo, ctx.hi)))
+    ''' The part with every inside corner rounded to `radius`: a ball of that radius rolled in the air along the part.  The corner is filled by the arc of the ball that rolls in it -- a circle of that radius whose slope
+        turns smoothly from one face to the other --, a gap or a slot narrower than the ball is filled up to the arc the ball rests on (the sag between its two edges), and a flat face, a bump and an outside corner are as
+        they were.  It is the kernel's ball (`_corner_maxfilter`), for every part: an import, a lattice, a pocket, a small block and the topology-optimized bracket alike, a field that is made once and costs next to
+        nothing to read again.  The library's `fillet` -- the same ball walked in the part's own field, a few dozen calls of it at every point the mesher samples -- was the rounding of a small part and drew slowly;
+        it rounded the corners right and filled a gap narrower than the ball wrongly (a plateau 0.8 mm above its mouth with a sharp corner where it meets the wall, and a void in the bottom of a narrow deep slot).
+        It stays the fall-back of a small part when no lattice can be made; a part that is expensive to read is then left as it is, and the card says so '''
+    made = _corner_maxfilter(ctx, radius)
+    if made is not None:
+        return made
+    if getattr(ctx, 'clamp_calls', False):
+        ctx.corners_left = radius          # (no lattice could be made: the corners are left as they are and the tool says so)
+        return ctx.field
+    # (what a ball adds -- the closing of the part -- never lies beyond the part's convex hull, so beyond its box: the fill is held to it)
+    return ctx.field.min(_fillet(ctx.walk, radius, bounds=(ctx.lo, ctx.hi)).max(_box(ctx.lo, ctx.hi)))
 
 
 def _corner_maxfilter(ctx, radius):
     ''' The inside corners rounded to `radius`, as a field of the kernel with no walk (`libfive_field_overhang_lattice` in mode 5: kernel/src/fields/lattice_field.cpp).  A point of the air is filled when no ball of the
         radius that lies in the air covers it: the largest value of the part's field on the ball round the point falls short of what open air gives (the value plus the radius), by a deficit that is how deep the
-        fill is there, and the surface of the rounded part is where the value less the deficit is 0 -- the rolling ball's own arc (the apex in a corner of 90 degrees at 0.293 r from both walls).  The largest value
-        is read from a lattice of the part's field sampled once, at 96 directions, so there is no walk of the part at every point: the formula (`fillet`) asks the part about 32 times at every point the mesher
-        samples, and on the bracket that took 145 s of the coarse level of the drawing for 62 mm^3.  The part united with it.  None when the library has no lattice field or the lattice could not be made.  The lattice
-        is a 400th of the part's size, coarser for a part that would need more than thirty million nodes; a distance read by trilinear interpolation is good to a small part of a node, so it holds a ball smaller
-        than the lattice's pitch '''
+        fill is there, and the surface of the rounded part is where the value less the deficit is 0 -- the rolling ball's own arc (the apex in a corner of 90 degrees at 0.293 r from both walls).  The part's field is
+        sampled once on a lattice, and the kernel makes of it a TRUE distance (the field of a union of boxes is the largest of the distances to the planes of each box, more than the distance beyond an edge, and a ball
+        rolled on that was a fifth short in volume): the nodes that straddle the surface are sources, each with the foot of the perpendicular from it to the surface, a distance transform finds the nearest source
+        of every node, and the distance is to that source's foot.  The largest value on the ball is then found at 96 directions and refined round the best of them, to a few hundredths of a millimetre; a tolerance of
+        a part of a node keeps a flat face and a convex edge exactly as they are; and the value of the ball's field is divided by its own slope near the surface, so that it is a distance to the first order like the part's.
+        There is no walk of the part at every point: the formula (`fillet`) asks the part about 32 times at every point the mesher samples, and on the bracket that took 145 s of the coarse level of the drawing for 62 mm^3.
+        The part united with it.  None when the library has no lattice field or the lattice could not be made.  The lattice is a 400th of the part's size, coarser for a part that would need more than thirty million
+        nodes; a distance read by trilinear interpolation is good to a small part of a node, so it holds a ball smaller than the lattice's pitch '''
     import ctypes
     from fieldes.ffi import lib
     if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
@@ -350,6 +442,7 @@ def _corner_maxfilter(ctx, radius):
         if abs(wider - pitch) < 1e-9:
             break
         pitch = wider
+    # (the ball is the radius asked and no more: the kernel reads a true distance now, so there is no half node to add -- it moved the bisector of a corner of 60 degrees by 0.17 mm, twice the half node)
     band = 1.0 * radius + 3.0 * pitch
     pad = 2.0 * radius + 8.0 * pitch
     mins = [lo_f[i] - pad for i in range(3)]
@@ -368,24 +461,32 @@ def _corner_maxfilter(ctx, radius):
     ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 5, 1.0e30, -1.0e30, stats)
     if not ptr:
         return None
-    out = ctx.base.min(Shape(ptr))
+    # (the lattice holds the exact distance to the surface of the result, as far out as its band.  Outside the original part that is the field of the result; the part's plain field stands only inside the original part, where
+    # it keeps a feature thinner than a node of the lattice that the lattice did not see, and is the distance it is there.  United as they were -- the part's field with the ball's -- the part's plain field
+    # stood in the air wherever it was smaller than the true distance: a union of a box and a cylinder is the largest of their distances, 2.5 at the axis of a hole in a plate where the rim is 3.0 away, and the
+    # ball resting on the rim of a hole read 2.5 and was marked.  A closing never lies beyond the convex hull of the part, so beyond its box)
+    inside = ctx.base + 1.0e3 * (ctx.base.max(0) * 1.0e6).min(1)
+    out = Shape(ptr).max(_box(ctx.lo, ctx.hi)).min(inside)
+    out._full = True          # (this is the result's own field, the part's included: the shell does not unite it with the part's plain field again)
     out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
     _note_lattice(out._lattice)
     return out
 
 
-def _corner_zone(ctx, radius):
-    ''' Where the corner formula has to be asked, for a ball too small for `_closing_lattice`: a field of the kernel (`libfive_field_overhang_lattice` in mode 4: kernel/src/fields/lattice_field.cpp) that is -1000 in the zone
-        and +1000 outside it.  The zone is a radius and a half round the creases of the part's field in the air within 1.2 radii of the part (an inside corner, or a concave place tighter than the ball, is a crease of the
-        distance: its slope read across it is under 0.9).  `ctx.field.min(fillet.max(zone))` is the formula's result where the zone is and the part elsewhere, and the mesher drops the formula outside the zone.  None when
-        the library has no lattice field or the lattice could not be made.  The lattice is a 400th of the part's size, coarser for a part that would need more than thirty million nodes: the creases are found within a
-        node or two, which the zone's margin of a node and a half more than covers '''
+def _remedy_access(ctx, axis, radius, taper=0.0, both=True):
+    ''' The undercut fill and the rounding of the inside corners as ONE operator, a field of the kernel (`libfive_field_overhang_lattice` in mode 7, or 6; kernel/src/fields/lattice_field.cpp): the part with all
+        the air filled that a ball-end tool of `radius` cannot touch when it comes along `axis` (from either end, or from the top of the axis only), its shaft as wide as the ball and widening by `taper` (the tangent
+        of a draft) for every unit it goes on out.  Done one after another, the fill's vertical walls are sharp inside corners that the rounding must then round, and the fillets' webs cap columns of air that the fill
+        had left open; a second pass of each undid some of the last, and the shares of the surface that broke a rule did not go down (undercut 1.3 to 3 %, radius 5 to 10 %, over five rounds).  Here what is left of the
+        air is the union of the balls that fit and can go on out, so every point of the surface of the result has a ball resting on it and a line along the axis that meets no material, and a second pass changes
+        nothing.  The lattice is a 400th of the part's size (coarser for a part that would need more than twenty-five million nodes); the part's field is made a true distance on it first.  The part united with
+        the result as the corners' ball is (the part itself where it is material).  None when the library has no lattice field or the lattice could not be made '''
     import ctypes
     from fieldes.ffi import lib
-    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
+    if getattr(lib, 'libfive_field_overhang_lattice', None) is None or not radius > 0:
         return None
-    f = ctx.field
-    unit = (0.0, 0.0, 1.0)
+    norm = math.sqrt(sum(float(c) ** 2 for c in axis)) or 1.0
+    unit = tuple(float(c) / norm for c in axis)
     e1, e2 = _frame(unit)
     axes = (e1, e2, unit)
     corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
@@ -393,16 +494,16 @@ def _corner_zone(ctx, radius):
     lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
     pitch = max(ctx.size / 400.0, 1e-3)
     for _ in range(4):
-        pad = 1.5 * radius + 8.0 * pitch
+        pad = 2.0 * radius + 8.0 * pitch
         volume = 1.0
         for i in range(3):
             volume *= hi_f[i] - lo_f[i] + 2.0 * pad
-        wider = max(ctx.size / 400.0, (volume / 3.0e7) ** (1.0 / 3.0))
+        wider = max(ctx.size / 400.0, (volume / 2.5e7) ** (1.0 / 3.0))
         if abs(wider - pitch) < 1e-9:
             break
         pitch = wider
-    band = 1.2 * radius + 3.0 * pitch
-    pad = 1.5 * radius + 8.0 * pitch
+    band = radius + 4.0 * pitch
+    pad = 2.0 * radius + 8.0 * pitch
     mins = [lo_f[i] - pad for i in range(3)]
     dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
     origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
@@ -416,64 +517,12 @@ def _corner_zone(ctx, radius):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 4, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(ctx.field.ptr, names, values, count, frame, cdims, pitch, max(float(taper), 1.0e-6), float(band), float(radius), 7 if both else 6, 1.0e30, -1.0e30, stats)
     if not ptr:
         return None
-    out = Shape(ptr)
-    out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
-    _note_lattice(out._lattice)
-    return out
-
-
-def _closing_lattice(ctx, radius):
-    ''' The part with a ball of `radius` rolled in the air round it, as a field of the kernel (`libfive_field_overhang_lattice` with a slope of -2: kernel/src/fields/lattice_field.cpp): the part is sampled at the nodes
-        of a lattice (a pitch of a 400th of the part's size, finer for a small ball, coarser for a part that would need more than fifty million nodes), the part grown by the ball and shrunk by it again by two distance transforms, and the
-        nodes of the air that lie well inside the result kept as the fill.  The part united with it; None when the library has no lattice field, the ball is smaller than three and a half nodes (the formula does it then), or the lattice
-        could not be made.  The surface of the fill is within a node of the exact ball's '''
-    import ctypes
-    from fieldes.ffi import lib
-    if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
-        return None
-    f = ctx.field
-    unit = (0.0, 0.0, 1.0)
-    e1, e2 = _frame(unit)
-    axes = (e1, e2, unit)
-    corners = [(x, y, z) for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2])]
-    proj = [[sum(c[i] * ax[i] for i in range(3)) for c in corners] for ax in axes]
-    lo_f, hi_f = [min(p) for p in proj], [max(p) for p in proj]
-    # (a ball of three and a half nodes at the least: the fill is the air that lies more than three quarters of a node inside the closing, and in a corner of 90 degrees the closing is only 0.41 of the radius deep, so a ball
-    # of two nodes fills next to nothing -- the mould's 0.75 mm corners on the bracket: 15 mm^3 where the formula finds 66.  A small radius asks a pitch finer than a 400th of the part, as far as the nodes allow)
-    fine = max(min(ctx.size / 400.0, radius / 3.5), 1e-3)
-    pitch = fine
-    for _ in range(4):
-        pad = radius + 3.0 * pitch
-        volume = 1.0
-        for i in range(3):
-            volume *= hi_f[i] - lo_f[i] + 2.0 * pad
-        wider = max(fine, (volume / 5.0e7) ** (1.0 / 3.0))
-        if abs(wider - pitch) < 1e-9:
-            break
-        pitch = wider
-    if radius < 3.4 * pitch:
-        return None
-    pad = radius + 3.0 * pitch
-    mins = [lo_f[i] - pad for i in range(3)]
-    dims = [int(math.ceil((hi_f[i] + pad - mins[i]) / pitch)) + 1 for i in range(3)]
-    origin = [sum(mins[i] * axes[i][c] for i in range(3)) for c in range(3)]
-    frame = (ctypes.c_double * 12)(*(origin + list(e1) + list(e2) + list(unit)))
-    cdims = (ctypes.c_int * 3)(*dims)
-    stats = (ctypes.c_double * 8)()
-    known = None
-    try:
-        from fieldes.app_support import _var_values
-        known = _var_values()
-    except Exception:
-        known = None
-    names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, -2.0, float(radius), -1.0e30, 0, 1.0e30, -1.0e30, stats)
-    if not ptr:
-        return None
-    out = ctx.base.min(Shape(ptr))
+    inside = ctx.base + 1.0e3 * (ctx.base.max(0) * 1.0e6).min(1)
+    out = Shape(ptr).max(_box(ctx.lo, ctx.hi)).min(inside)
+    out._full = True          # (this is the result's own field, the part's included: the shell does not unite it with the part's plain field again)
     out._lattice = {'pitch': pitch, 'nodes': int(stats[2]), 'looked_at': int(stats[3]), 'volume': stats[1], 'seconds': stats[5], 'sampling_seconds': stats[4], 'dims': tuple(dims)}
     _note_lattice(out._lattice)
     return out
@@ -535,8 +584,9 @@ def _remedy_undercut(ctx, a):
         not counted from each point: counted from the point, a sliver of material thinner than the spacing -- the tip of a lip, a thin shelf -- is hit by the points whose count happens to land
         in it, and the fill's edge comes out as a staircase as high as the spacing times the slope of the face (0.4 mm on a 20-degree dovetail); at fixed heights the whole sliver is hit
         or missed together, and the edge of the fill is one straight wall.  A shelf thinner than the spacing (the part's length along `a` over 16) may still lie between two heights '''
-    # (a part that is expensive to read -- the optimized bracket: tens of microseconds a point -- gets the same fill from a lattice the kernel works out once, like the overhang's: the formula below asks the part
-    # 17 times at every point the mesher samples, and the mill's drawing of the bracket did not end in seven minutes.  FIELDES_UNDERCUT_LATTICE=1 forces the lattice for any part (the proofs), 0 forbids it)
+    # (a part that is expensive to read gets the fill from a lattice the kernel works out once, like the overhang's: the formula below asks the part 17 times at every point the mesher samples -- the mill's drawing of
+    # the optimized bracket did not end in seven minutes.  A part whose field is exact keeps the formula, which is exact at any resolution: the lattice, at a 250th of the part, left 2.4 % of a groove's
+    # surface undercut and changed material outside it.  The formula stays for a lattice that cannot be made.  FIELDES_UNDERCUT_LATTICE=1 forces the lattice for any part, 0 forbids it (the proofs))
     import os
     mode = os.environ.get('FIELDES_UNDERCUT_LATTICE', '')
     if mode == '1' or (mode != '0' and getattr(ctx, 'clamp_calls', False)):
@@ -611,7 +661,7 @@ def _draft_lattice(ctx, degrees, d):
     return out
 
 
-def _remedy_draft(ctx, degrees, d):
+def _remedy_draft(ctx, degrees, d, growth=False):
     ''' A wall that leans less than `degrees` from the pull direction is offset outwards by what its slope lacks, growing in proportion to how far it is
         below the top of the part: a wall that is vertical comes out wider at the foot, by the tangent of the draft times its height.  Faces that are
         not wall-like (a floor, a top) are not moved '''
@@ -623,17 +673,34 @@ def _remedy_draft(ctx, degrees, d):
         made = _draft_lattice(ctx, degrees, d)
         if made is not None:
             return made
-    n, f = ctx.normals, ctx.field
-    nd = _dot(n, d)
-    wall = (1.0 - nd * nd).max(1e-6).sqrt()
-    tilt = nd.abs() / wall                                  # (the slope the wall has: 0 for a vertical one)
-    lack = (math.tan(math.radians(degrees)) - tilt).max(0)
+    f = ctx.field
     height = Shape.X() * d[0] + Shape.Y() * d[1] + Shape.Z() * d[2]
     top = max(x * d[0] + y * d[1] + z * d[2] for x in (ctx.lo[0], ctx.hi[0]) for y in (ctx.lo[1], ctx.hi[1]) for z in (ctx.lo[2], ctx.hi[2]))
-    delta = (top - height).max(0) * lack * wall
+    grow, width = _draft_reach(ctx, degrees, d)
+
+    def grows(n):
+        ''' how far the surface moves out at each point, read with the normals `n` '''
+        nd = _dot(n, d)
+        wall = (1.0 - nd * nd).max(1e-6).sqrt()
+        tilt = nd.abs() / wall                                  # (the slope the wall has: 0 for a vertical one)
+        lack = (math.tan(math.radians(degrees)) - tilt).max(0)
+        return (top - height).max(0) * lack * wall
+    n0 = ctx.normals
+    delta = grows(n0)
+    # (on the middle plane of a slot narrower than the draft makes it the slopes of its two faces cancel, a central difference across it reads no normal there and the growth was 0 in a band a step wide -- a seam
+    # of air 0.15 mm wide down the middle of a slot of 0.3 between two moulded blocks, shut in by the faces that had grown into it.  There, and only there (where the gradient is under 0.6 of a distance's: the
+    # one-sided readings differ from the central one by a few per cent of the draft's own slope elsewhere, and the check read a face of a block at 1.87 degrees that is at 2), the normals are read by forward
+    # and by backward differences and the larger growth is taken, as the gap remedy does: of the two one always leads to a face, and the other leads to the other face of the slot or to the same one)
+    kink = ((0.6 - n0.magnitude) * (1.0 / 0.3)).max(0).min(1)
+    delta = delta.max(grows(ctx.one_sided_normals('forward')).max(grows(ctx.one_sided_normals('backward'))) - 1.0e3 * (1.0 - kink)).max(0)
+    # (away from the surface of a RESULT of this tool the field is not a distance: the band of the pass that made it ends in a ramp that rises seven times as fast as a distance, a few tenths of a millimetre off the face
+    # it grew, and there the field has no slope along the pull at all -- the lean the face was given is gone from it --, so a second pass read the ramp as a wall with no draft and grew a skin there: a sliver 0.1 mm
+    # thick standing off the face with 0.05 mm of air between (d5's third pass).  Where the gradient is more than a fifth over a distance's the field is not a distance and tells nothing of any face: no growth)
+    delta = delta * ((1.5 - n0.magnitude) * (1.0 / 0.3)).max(0).min(1)
     # (the surface moves by at most the part's height along the pull times the tangent of the draft: the remedy is the part's own field farther from the surface than that, and the mesher is told so
     # at once, as it is for the walls and the gaps.  Without the band the normals -- six lookups of the part -- were worked through in every cell of the picture)
-    grow, width = _draft_reach(ctx, degrees, d)
+    if growth:
+        return delta, width, grow
     return f - _near(delta, f, width, grow)
 
 
@@ -643,6 +710,27 @@ def _draft_reach(ctx, degrees, d):
     norm = math.sqrt(sum(float(x) ** 2 for x in d)) or 1.0
     grow = _extent_along(ctx, [float(x) / norm for x in d]) * math.tan(math.radians(degrees))
     return grow, 1.25 * grow + 2.0 * ctx.step
+
+
+def _close_feet(ctx, result, d, lift):
+    ''' The feet of the grown walls, closed.  A wall that is grown -- thickened, given a draft -- moves out at the points it is the NEAREST face of.  A point just above the floor the wall stands on, between
+        the floor and the plane at 45 degrees through the corner, is nearer to the floor than to the wall; the floor does not grow, and nothing grows there: under the grown wall lies a wedge of air as deep as the
+        growth (0.4 mm at the foot of a wall 12 high with a draft of 2 degrees), open to the side -- a ledge for the two halves of a mould to miss, at the foot of every wall the draft was given to.  Such a point
+        is asked once more from `lift` (the most the surface moves) farther along the pull, away from the floor: there the wall is the nearest face and the result says whether it is inside the grown skin of the wall.
+        If it is, the point is part of the result too: the wall's own lean goes on down to the floor, as the walls are grown, with no vertical stripe in place of it.  Asked only of a point whose nearest face is a floor
+        (its normal along the pull), of a place that lies in the skin that was grown (outside the part, inside the result) and beside a wall (its normal across the pull): a gap between a floor and a ledge in the
+        part, the underside of a thickened ledge and a roof are not it.  The same under a roof, the other way up.  Where the gates are 0 the lookup is held far out and the mesher drops it '''
+    norm = math.sqrt(sum(float(x) ** 2 for x in d)) or 1.0
+    u = tuple(float(x) / norm for x in d)
+    nd = _dot(ctx.normals, u)
+    out = result
+    for sign in (1.0, -1.0):
+        move = tuple(sign * lift * c for c in u)
+        floor = ((sign * nd - 0.5) * 4.0).max(0).min(1)                                            # (the nearest face of the point faces away from the floor: 1 above a floor, 0 elsewhere)
+        skin = (_at(ctx.field, *move) * (1.0 / ctx.step)).max(0).min(1)                              # (the lifted place is outside the part)
+        beside = ((0.5 - _dot(_Normals(ctx.field, ctx.step, shift=move), u).abs()) * 4.0).max(0).min(1)    # (and its nearest face is a wall)
+        out = out.min(_at(result, *move) + _BIG * (1.0 - floor * skin * beside))
+    return out
 
 
 def _entry(f, d, sign, total, count=48, with_shadow=False):
@@ -708,7 +796,11 @@ def _remedy_overhang(ctx, degrees, d, fix, reach):
     if getattr(lib, 'libfive_field_overhang_lattice', None) is None:
         raise ManufacturingError('manufacturing_optimization: this FielDes library is too old for the overhang fix (it has no lattice field)')
     f = ctx.field
-    tan = 0.98 * math.tan(math.radians(degrees))        # (the faces of the gusset lean a little less than the slope asked: the side that stands)
+    # (the faces of the gusset lean a little less than the slope asked: the side that stands, 5 % under it, 43.5 degrees for 45.  The margin is a window: the flank of a teardrop, a cone that meets a cylinder, keeps the
+    # rule on its whole surface at 5 % (0.00 % marked by the independent check; 0.30 % at 2 %), and the fill acts on every face that leans more than the flank does, so a plate at 44 degrees, which keeps the rule
+    # (it holds up to the limit and 5 % over it, 47.25), is given a sliver of 0.8 mm^3 under it.  A gate that left the faces that keep the rule alone, decided from the cone at the slope that breaks the rule,
+    # was tried in the kernel and taken out: a threshold of a node cuts off the slivers a node thin where a flank runs tangent to a bore, and the teardrop was marked on 0.44 % of its surface)
+    tan = 0.95 * math.tan(math.radians(degrees))
     norm = math.sqrt(sum(float(c) ** 2 for c in d)) or 1.0
     unit = tuple(float(c) / norm for c in d)
     cut = fix != 'fill'
@@ -800,6 +892,20 @@ def _weight(region, eps):
     return 1.0 - (region * (1.0 / eps)).max(0).min(1)
 
 
+def _as_offset(cx, made, w_region, keep_weight, scoped, together):
+    ''' What a remedy made, as (its field, its growth).  A remedy that moves the surface along its normal -- the walls, the draft, a gap filled -- hands over (how far it moves out at a point, the width of the band it lies
+        in, the most it can be) when asked for `growth`: the field is the part's less that, scoped to the constraint's region and to what is kept, and the growth is returned as well when the optimizer adds the growths of
+        these remedies (`together`).  A remedy that made a field -- a lattice of the kernel -- is that field, and has no growth '''
+    if not isinstance(made, tuple):
+        return scoped(made), None
+    grow, width, most = made
+    if w_region is not None:
+        grow = grow * w_region
+    if keep_weight is not None:
+        grow = grow * (1.0 - keep_weight)
+    return cx.field - _near(grow, cx.field, width, most), ((grow, width, most) if together else None)
+
+
 _HALTON_UNIT = []
 
 
@@ -835,12 +941,13 @@ def _volume_points(ctx, count, seed=11):
     return pts, box
 
 
-def _shell_points(ctx, width, count=40000, seed=17, give_up=4.0):
+def _shell_points(ctx, width, count=40000, seed=17, batches=None):
     ''' Points of the shell round the part's surface -- where its field is within `width` of 0 -- and the volume each stands for: (points, the part's field at them, volume),
         or None when there are none.  A remedy made with that width changes nothing outside the shell, so what it changes is measured on points that are all in it: random
         points over the whole box find a layer a tenth of a millimetre thick on a part of a hundred only a few times in a thousand, and a slot of 56 mm^3 in 175000 not at all.
         The points are drawn evenly over the box (_halton) and the ones in the shell kept: each stands for the box's volume over the number drawn.  Stops at `count` points, or
-        after `give_up` seconds (a part whose field is slow to evaluate) '''
+        after `batches` batches of 30000 (a part whose field is slow to evaluate: three for a part, one for a result of the tool, which costs far more a point; given by what the part is and not by a clock, so
+        that the same part is sampled by the same points on a quiet machine and on a busy one) '''
     rng = random.Random(seed)
     shift = (rng.random(), rng.random(), rng.random())
     pad = max(0.05 * ctx.size, width)            # (the shell reaches `width` past the part: a box that stops short of it would leave out the outer part of what a remedy adds)
@@ -848,9 +955,10 @@ def _shell_points(ctx, width, count=40000, seed=17, give_up=4.0):
     hi = [ctx.hi[i] + pad for i in range(3)]
     box = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2])
     kept, values, drawn = [], [], 0
-    started = time.time()
     batch = 30000
-    while len(kept) < count and drawn < 6000000 and (drawn == 0 or time.time() - started < give_up):
+    if batches is None and ctx.clamp_calls:
+        batches = 1 if getattr(ctx, '_from_result', False) else 3
+    while len(kept) < count and drawn < 6000000 and (drawn == 0 or batches is None or drawn < batches * batch):
         pts = [(lo[0] + u * (hi[0] - lo[0]), lo[1] + v * (hi[1] - lo[1]), lo[2] + w * (hi[2] - lo[2])) for u, v, w in _halton(batch, shift, drawn)]
         vals = _values(ctx.field, pts)
         for p, v in zip(pts, vals):
@@ -863,6 +971,92 @@ def _shell_points(ctx, width, count=40000, seed=17, give_up=4.0):
     return kept, values, box / float(drawn)
 
 
+def _cover_boxes(points, cell, radius, cap):
+    ''' Boxes that together cover the cells of a grid (`cell` wide) that hold one of `points`, and the cells within `radius` cells of those: the cells are swept in order and each box is a run along x, grown
+        along y while every cell of the run has the same neighbour, and along z while every cell of that rectangle has.  The walls of a part make thin shells; a box for each connected group of points would be one
+        box for the whole of a part whose walls meet.  At most `cap` boxes: the cells are made twice as wide until the sweep needs few enough '''
+    while True:
+        held = set()
+        for p in points:
+            held.add((int(math.floor(p[0] / cell)), int(math.floor(p[1] / cell)), int(math.floor(p[2] / cell))))
+        if radius > 0:
+            grown = set()
+            for (i, j, k) in held:
+                for di in range(-radius, radius + 1):
+                    for dj in range(-radius, radius + 1):
+                        for dk in range(-radius, radius + 1):
+                            grown.add((i + di, j + dj, k + dk))
+            held = grown
+        used = set()
+        boxes = []
+        for (i, j, k) in sorted(held):
+            if (i, j, k) in used:
+                continue
+            i1 = i
+            while (i1 + 1, j, k) in held and (i1 + 1, j, k) not in used:
+                i1 += 1
+            j1 = j
+            while all((a, j1 + 1, k) in held and (a, j1 + 1, k) not in used for a in range(i, i1 + 1)):
+                j1 += 1
+            k1 = k
+            while all((a, b, k1 + 1) in held and (a, b, k1 + 1) not in used for a in range(i, i1 + 1) for b in range(j, j1 + 1)):
+                k1 += 1
+            for a in range(i, i1 + 1):
+                for b in range(j, j1 + 1):
+                    for c in range(k, k1 + 1):
+                        used.add((a, b, c))
+            boxes.append(((i * cell, j * cell, k * cell), ((i1 + 1) * cell, (j1 + 1) * cell, (k1 + 1) * cell)))
+        if len(boxes) <= cap:
+            return boxes
+        cell *= 2.0
+
+
+def _scope_field(ctx, groups, before, reach=0.0):
+    ''' A field above 0 inside boxes round the places where the remedies that move the surface (the walls, a gap filled, the draft) do anything, and below 0 everywhere else; None where the boxes would hold
+        so much of the part that nothing is gained.  The places are those of the points that each remedy was measured on, where it moved the surface at all (`groups`: the points, the spacing of
+        them, the most the remedy moves it), and the boxes of the places where the independent check of the part found a wall or a gap broken.  Outside them the remedy is 0 -- its gate finds no thin wall,
+        no narrow gap, nothing that leans too little -- and the field says so to the mesher in a way it can use: a formula that finds a thin wall by a walk along the normal (the foot of the line moves with the
+        cell, the walk with it) has no interval that is 0 near any face, so every cell within the band of the remedy round the whole surface was worked through to the finest level; a plate of 70 mm drew for
+        eleven minutes where its thin fin and its narrow slot were 5 % of it.  A box is grown by a spacing and a half of the points that found it, and by the most that the remedy moves the surface '''
+    boxes = []
+    for points, spacing, most, width in groups:
+        if points:
+            # (the growth is a field of its own on both sides of a face: it is not 0 inside the material either, out to the band of the sum of the remedies (`reach`: the ramp of `_near` ends there), and a box that
+            # stopped short of that left the part's value there changed by a hundredth of a millimetre where the box ended -- nothing that is drawn or measured, but not the same field.  So the boxes are grown by the band)
+            cell = 1.5 * spacing
+            boxes.extend(_cover_boxes(points, cell, max(1, int(math.ceil((max(reach, width, 0.6 * most) + 2.0 * ctx.step) / cell))), 96))
+    for rule in ('min_wall', 'min_gap'):
+        r = before.report.get(rule)
+        if r:
+            pad = 1.2 * float(r['limit'])
+            for g in r['regions']:
+                lo, hi = g['box']
+                boxes.append((tuple(c - pad for c in lo), tuple(c + pad for c in hi)))
+    if not boxes:
+        return None
+    whole = 1.0
+    for a in range(3):
+        whole *= max(ctx.hi[a] - ctx.lo[a], 1e-9)
+    held = 0.0
+    for lo, hi in boxes:
+        v = 1.0
+        for a in range(3):
+            v *= max(0.0, min(hi[a], ctx.hi[a]) - max(lo[a], ctx.lo[a]))
+        held += v
+    if held > 0.4 * whole:
+        return None
+    x, y, z = _xyz()
+    union = None
+    for lo, hi in boxes:
+        b = (lo[0] - x).max(x - hi[0]).max(lo[1] - y).max(y - hi[1]).max(lo[2] - z).max(z - hi[2])          # (above 0 outside the box, a max of six planes: no square root, intervals that are tight)
+        union = b if union is None else union.min(b)
+    out = union * -100.0
+    out._boxes = len(boxes)
+    out._box_list = boxes
+    return out
+
+
+_SCOPE = os.environ.get('FIELDES_SCOPE', '') != '0'          # (0: the remedies are not scoped to the places they act in -- for comparing: see _scope_field)
 _LAZY_UNION = True            # (False: the union of the remedies works the earlier ones out at every point of a later shell -- the way it was; for comparing)
 
 
@@ -1008,36 +1202,6 @@ class ManufacturingResult(FieldResult):
                     corners.append((cy * x1 + sy * z, y1, -sy * x1 + cy * z))
         return (tuple(min(c[i] for c in corners) for i in range(3)), tuple(max(c[i] for c in corners) for i in range(3)))
 
-    def _bodies(self):
-        ''' What the shell changed, as bodies of their own: the part where it is as it was (grey), the material added (red: in the result and outside the input part) and the material
-            cut (blue: in the input part and outside the result), each by its exact field -- the result with the input part, and nothing else.  A colour read at the vertices of the
-            mesh of the result cannot show a layer that lies flush with the faces of the part (a slot that was closed, a pocket filled): the vertices of its flat face are all on the
-            edges of the old surface, where nothing has changed, and no vertex is inside it to be red '''
-        part, result = self.part, self._field
-        adds, cuts = getattr(self, '_adds', True), getattr(self, '_cuts', True)
-        tie = getattr(self, '_tie', 1e-4)
-        hair = getattr(self, '_hair', 1e-3)       # (what is added lies at least this far outside the part: where the result is the part's own, `max(result, -part)` is 0 on the whole surface,
-                                                  # and the mesher draws a skin of no thickness over every face that was not changed)
-        if cuts and adds:
-            kept = result.max(part - tie)         # (the result where it is the part's own, a few microns apart: equal values would be a tie, which the mesher is slow to settle)
-        elif cuts:
-            kept = result
-        else:
-            kept = part
-        bodies = [(kept, 0.0)]
-        if adds:
-            bodies.append((result.max(hair - part), 1.0))
-        if cuts:
-            bodies.append((part.max(hair - result), -1.0))
-        out = []
-        for shape, value in bodies:
-            shape = self._turn(shape)
-            box = self._turned_box(getattr(result, '_bounds', None))
-            if box and getattr(shape, '_bounds', None) is None:
-                shape._bounds = box
-            out.append((colored(shape, Shape.wrap(value), range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change'), value))
-        return out
-
     def _places(self):
         ''' how many places the re-check found in all (`fail_states` lists the five biggest of each rule) '''
         totals = getattr(self, 'fail_totals', None)
@@ -1050,7 +1214,11 @@ class ManufacturingResult(FieldResult):
 
     def _display(self):
         if self._shown is None:
-            note = _tr('Red and blue show what was added and removed compared with the input part.')
+            note = (_tr('Red and blue show what was added and removed since the first part. The numbers are those of this pass.') if getattr(self, '_chained', False)
+                    else _tr('Red and blue show what was added and removed compared with the input part.'))
+            if any(c['kept'] and c['remedy'] in ('corners', 'access') and c['added'] > 0 for c in self.changes):
+                # (a hole or a slot that the ball cannot enter is closed by the rounding, as a gap is: said on the card, with what to do about it -- a hole is the design, and the user's to protect)
+                note += ' ' + _tr("A hole or a slot narrower than the cutter's ball is filled up to the arc the ball rests on. To leave one as it is, exclude it: exclude(part, region), or give the region to keep=.")
             rows = [(_tr('Material added'), _quantity(self.added, 3), 'mm³'), (_tr('Material removed'), _quantity(self.removed, 3), 'mm³'),
                     (_tr('Volume changed'), _quantity(100.0 * self.share, 3), _tr('% of the part')),
                     # (how much of the surface the places are, beside their number: four places of 0.08 % each read very differently from four places of a tenth of the part.  All the places the re-check
@@ -1062,35 +1230,27 @@ class ManufacturingResult(FieldResult):
             if self.orientation is not None:
                 # (the way up of the print was left free, and the tool found it: it is on the card, and `.oriented()` is the part turned to stand that way)
                 rows.append((_tr('Way up of the print'), '(%.2g, %.2g, %.2g)' % tuple(self.build_direction), _tr('part shown turned') if self._turning() else ''))
-            if getattr(self, '_thin', False):
-                # (a thin layer -- a wall thickened by a tenth of a millimetre, a gap made wider -- is thinner than a cell of the picture, and three bodies of which two are such skins
-                # are drawn as stripes and missing patches.  The result is drawn as ONE body, whole and at the scene's resolution, coloured by the change at each point of its surface:
-                # red where it lies outside the input part, blue where inside it, the part's colour on the old surface.)
-                # (what the tool did bounds what can be shown: a result that only added material has cut nothing, whatever a vertex a fraction of a cell off the surface reads -- on the rough surface of an optimization
-                # a layer of a tenth of a millimetre drawn in cells of a millimetre had specks of blue over all of it, beside a card that said 0 mm3 removed -- and one that only cut has added nothing)
-                change = self.change_map
-                if not getattr(self, '_cuts', True):
-                    change = change.max(0)
-                if not getattr(self, '_adds', True):
-                    change = change.min(0)
-                change = self._turn(change)             # (drawn standing the way the print is made, when the way up was left free: the colours turn with the part)
-                body = colored(self._turn(self._field), change, range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change')
-                body._color_fields = [('change', _tr('Geometry change'), change, -1.0, 1.0)]
-                body._color_field_name = 'change'
-                body._value_note = note
-                body._key_results = rows
-                box = self._turned_box(getattr(self._field, '_bounds', None))
-                if box and getattr(body, '_bounds', None) is None:
-                    body._bounds = box
-                shown = [body]
-            else:
-                bodies = self._bodies()
-                shown = [body for body, _ in bodies]
-                for body, value in zip(shown, [v for _, v in bodies]):            # (each body is the same result, with the one card: a body of its own colour with no card would have a bar of its own)
-                    body._color_fields = [('change', _tr('Geometry change'), Shape.wrap(value), -1.0, 1.0)]
-                    body._color_field_name = 'change'
-                    body._value_note = note
-                    body._key_results = rows
+            # (the result is drawn as ONE body, the surface of the result, coloured by the change at each point of it: red where it lies outside the input part, blue where inside it, the part's colour on the old surface.
+            # It used to be three bodies -- the part where it is as it was, the material added in red, the material cut in blue -- and the red body of a fillet or a gusset is a sliver that thins to nothing along
+            # its edges, which the mesher cannot hold under one cell: saw teeth along both edges of the ring round a boss; and a second pass over a result had its first pass's material "as it was", grey.
+            # The colour is a class read as the difference of two fields, and the viewer cuts the triangles where it changes, so that the edge of the red is as fine as the smallest triangles)
+            # (what the tool did bounds what can be shown: a result that only added material has cut nothing, whatever a vertex a fraction of a cell off the surface reads -- on the rough surface of an optimization
+            # a layer of a tenth of a millimetre drawn in cells of a millimetre had specks of blue over all of it, beside a card that said 0 mm3 removed -- and one that only cut has added nothing)
+            change = self.change_map
+            if not getattr(self, '_cuts', True):
+                change = change.max(0)
+            if not getattr(self, '_adds', True):
+                change = change.min(0)
+            change = self._turn(change)             # (drawn standing the way the print is made, when the way up was left free: the colours turn with the part)
+            body = colored(self._turn(self._field), change, range=(-1.0, 1.0), label=_tr('Geometry change'), colormap='change')
+            body._color_fields = [('change', _tr('Geometry change'), change, -1.0, 1.0)]
+            body._color_field_name = 'change'
+            body._value_note = note
+            body._key_results = rows
+            box = self._turned_box(getattr(self._field, '_bounds', None))
+            if box and getattr(body, '_bounds', None) is None:
+                body._bounds = box
+            shown = [body]
             if getattr(self, 'supports', None) is not None:
                 # (ONE class, amber, and a card with one swatch that says what it is: a scale from -1 to 1 for a body of one colour said nothing)
                 supports = colored(self._turn(self.supports), Shape.wrap(1.0), range=(-1.0, 1.0), label=_tr('Supports'), colormap='support')
@@ -1165,14 +1325,19 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     # (a part that is slow to evaluate is not checked again by the shell)
     probe_pts = [(ctx.lo[0] + (ctx.hi[0] - ctx.lo[0]) * (i + 0.5) / 100.0, ctx.lo[1] + 0.3 * (ctx.hi[1] - ctx.lo[1]), ctx.lo[2] + 0.5 * (ctx.hi[2] - ctx.lo[2]))
                  for i in range(100)]
-    started = time.time()
-    _values(ctx.field, probe_pts)
-    slow = (time.time() - started) > 0.25
+    slow = _us_per_point(ctx.field, probe_pts, 3)[0] * len(probe_pts) > 0.25e6          # (100 points take more than a quarter of a second; the fastest of three runs, not a single one)
     notes = []
     _progress(0.02, _tr('Reading part'))
-    _log(t0, 'the part is read: a point of its field costs %.1f us, so the offsets of the calls into it are %s' % (ctx.point_us, 'held (it is expensive)' if ctx.clamp_calls else 'left as they are'))
+    if getattr(ctx, '_from_result', False):
+        _log(t0, 'the part is a result of the tool, so the offsets of the calls into it are held')
+    else:
+        _log(t0, 'the part is read: a point of its field costs %.1f us, so the offsets of the calls into it are %s' % (ctx.point_us, 'held (it is expensive)' if ctx.clamp_calls else 'left as they are'))
+    keeps = [r for r in (list(keep) if isinstance(keep, (list, tuple)) else ([keep] if keep is not None else []))]
+    for _, region in locks_of(shape):
+        keeps.append(region)
     with _within(0.05, 0.19):                 # (the check of the part has this stretch of the bar, and says how far it is within it)
-        before = _analyse(shape, items, int(samples), what='manufacturing_optimization', progress=True)           # (the check of the part as it is: its way up, its points, what breaks)
+        # (the check of the part as it is: its way up, its points, what breaks -- outside the regions that are kept: nothing may be changed there, so what they break is no business of the remedies)
+        before = _analyse(shape, items, int(samples), what='manufacturing_optimization', progress=True, kept=keeps)
     if before is None:
         raise ManufacturingError('manufacturing_optimization: the part has no surface to measure (is it empty?)')
     _log(t0, 'sampled the surface of the part: %d points' % len(before.points))
@@ -1183,13 +1348,17 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     if unknown:
         raise ManufacturingError('manufacturing_optimization: no remedy %s -- the remedies are %s' % (', '.join(sorted(unknown)), ', '.join(REMEDIES)))
     eps = _feather(ctx)
-    keeps = [r for r in (list(keep) if isinstance(keep, (list, tuple)) else ([keep] if keep is not None else []))]
-    for _, region in locks_of(shape):
-        keeps.append(region)
     keep_weight = None
     for r in keeps:
         w = _weight(Shape.wrap(r), eps)            # (1 inside: the part stays as it is there)
         keep_weight = w if keep_weight is None else keep_weight.max(w)
+    # (what a kept region does to material that is ADDED -- a gusset, a fill -- is cut at its surface, eased over a tenth of a millimetre and not over the feather above, which is a hundredth of the part: 2.5 mm on the bracket.
+    # That feather reaches that far OUT of the region, and a gusset under a kept plate lost everything within 2.5 mm of it, so that the rest stood off the plate with a gap of air between: four pieces of
+    # added material floating at the height of the plates' underside, 62 to 12 triangles each, on the printer's result of the topology bracket.  Material added next to a kept part changes nothing of the part)
+    keep_fill = None
+    for r in keeps:
+        w = _weight(Shape.wrap(r), 0.4 * ctx.step)
+        keep_fill = w if keep_fill is None else keep_fill.max(w)
     reach = float(max_support_height) if max_support_height else 0.2 * ctx.size
     pts, box = _volume_points(ctx, 12000)
     f0_vals = _values(ctx.field, pts)
@@ -1201,64 +1370,145 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     _progress(0.2, _tr('Measuring part volume'))
     _log(t0, 'the volume of the part is measured')
 
-    candidates = []                  # (remedy, rule, field, adds, the width of the shell it changes -- or None when it can reach anywhere)
-    total_rules = max(1, sum(len(c.rules) for c in items))
-    built = 0
+    # The remedies, in the order they are made.  A part that is expensive to read has the lattices of the kernel for its remedies: native fields, made once, that cost next to nothing to read again.  Each is then
+    # made from the RESULT of the ones before it, so that the new faces one makes -- the walls of an undercut fill, the edge of a draft skin, the flank of a gusset, a web left between two fills -- are seen by the
+    # ones that judge faces after it (the corners are rounded last, so the inside corners that the fills made are rounded too; the walls after the fills, so a sliver they left is thickened).  A small part keeps
+    # the formulas, which are exact and cost a multiple of themselves at every step of a chain: each remedy is made from the part as it is, and they are united
+    chained = bool(ctx.clamp_calls)
+    inexact = chained or ctx.slope_spread > 0.02          # (a part that is expensive to read, or whose field is not a distance: what the check reads of it is good to a few per cent, and the draft and the corners are made that much over what was asked)
+    steps = []                       # (remedy, rule, value, constraint, the way up, the weight of the constraint's region)
     for c in items:
         d = direction if c.build_direction is None else c.build_direction
         w_region = None if c.region is None else _weight(c.region, eps)
-
-        def scoped(new, w_region=w_region):
-            out = new
-            if w_region is not None:
-                out = ctx.base + w_region * (out - ctx.base)
-            if keep_weight is not None:
-                out = out + keep_weight * (ctx.base - out)
-            return out
         for rule, value in c.rules.items():
-            # (making a remedy -- the lattices sample the part -- is most of the tool's seconds: the bar moves one step for each, with the text of the remedy, and the measuring that follows has the rest of it)
-            if rule in _RULE_REMEDY:
-                _progress(0.19 + 0.31 * built / total_rules, _tr('Measuring effect: %s') % _REMEDY_TEXT[_RULE_REMEDY[rule]])
-                built += 1
-            if rule == 'min_wall' and 'walls' in allowed:
-                candidates.append(('walls', rule, scoped(_remedy_walls(ctx, value)), True, value))
-            elif rule == 'min_gap' and 'gaps' in allowed:
-                candidates.append(('gaps', rule, scoped(_remedy_gaps(ctx, value, c.gap_fix)), c.gap_fix == 'fill', value))
-            elif rule == 'min_radius' and 'corners' in allowed:
-                # (the library's fillet is read from the part's field by Newton steps along its gradient, good to a few tenths of a per cent: over a smooth part that has no corner to round it is the part's
-                # own field to that much and can add specks wherever the walk falls short -- with the mesh it replaced a torus came out with 3.9 mm^3 "added" and a few red dots --, and it is a fair
-                # part of the cost of the field.  So the remedy is made where the check of the part finds a corner short of the radius at one of its samples, and not where it finds none; the other
-                # remedies are exact fields, which are the part's own where nothing is wrong, and are made as ever)
-                if before.report.get(rule, {}).get('broken', 1) == 0:
-                    candidates.append(('corners', rule, None, True, value))
-                else:
-                    candidates.append(('corners', rule, scoped(_remedy_corners(ctx, value)), True, value))        # (a ball of the radius finds nothing to fill where the air is more than a radius from the part)
-            elif rule == 'undercut_along' and 'undercut' in allowed:
-                candidates.append(('undercut', rule, scoped(_remedy_undercut(ctx, value)), True, None))
-            elif rule == 'draft' and 'draft' in allowed:
-                # (the growth is at most the part's height along the pull times the tangent of the draft, and lies in a band that wide round the surface: measured on points of that shell, like the layers of
-                # the walls and the gaps.  Measured on twelve thousand points over the whole box it was read to 5 %, and the card said 1,321 mm^3 of a change of 1,180 on the moulding sampler)
-                candidates.append(('draft', rule, scoped(_remedy_draft(ctx, value, c.pull_direction)), True, _draft_reach(ctx, value, c.pull_direction)[1]))
-            elif rule == 'overhang' and 'overhang' in allowed:
-                made = _remedy_overhang(ctx, value, d, c.overhang_fix, reach)
-                info = made._lattice
-                _log(t0, 'overhang field made on a lattice of %d x %d x %d nodes (%.3g mm apart) in %.1f s, %.1f s of it sampling the part at %d nodes: %.4g mm^3' % (
-                    info['dims'][0], info['dims'][1], info['dims'][2], info['pitch'], info['seconds'], info['sampling_seconds'], info['looked_at'], info['volume']))
-                candidates.append(('overhang', rule, scoped(made), c.overhang_fix == 'fill', None))
+            remedy = _RULE_REMEDY.get(rule)
+            if remedy is not None and remedy in allowed:
+                steps.append((remedy, rule, value, c, d, w_region))
+    # (a gap that the rounding of the inside corners closes is not closed a second time: a ball of radius r cannot enter a gap narrower than 2 r, and the rounding -- a ball rolled along the part -- fills it up to
+    # the arc that the ball rests on.  A fill of the gap on top of that, made from the part as it was and united, rises flat to the top of the walls with a hair to spare -- 2 % of the limit, 0.12 mm of a gap of 6 --
+    # and stands past their ends and above their tops with new inside corners, sharp ones, that nothing rounds.  A milling cutter's rules are such a pair: its radius is half its diameter, which is the gap)
+    covered = []
+    for s in list(steps):
+        if s[0] == 'gaps' and s[3].gap_fix == 'fill' and 'corners' in allowed:
+            radius = s[3].rules.get('min_radius')
+            if radius and float(radius) >= 0.5 * float(s[2]) * (1.0 - GRACE) and before.report.get('min_radius', {}).get('broken', 1) > 0:
+                steps.remove(s)
+                covered.append(s)
+    again_from = None                # (the index of the first undercut fill that is a repeat: see below)
+    if chained:
+        steps.sort(key=lambda s: _CHAIN_ORDER.index(s[0]))
+        # (an undercut rule and a rule for the radius of the inside corners, asked together, are ONE remedy on such a part: the air that a ball-end tool of that radius cannot touch along the axis is filled -- see
+        # _remedy_access --, and it goes last, after the walls, because what it leaves is what the tool reaches.  Made one after the other the two undid each other: the fill's walls are sharp corners, the fillets'
+        # webs cap columns of air)
+        under = [s for s in steps if s[0] == 'undercut']
+        rounds = [s for s in steps if s[0] == 'corners']
+        if under and rounds:
+            u, r = under[0], rounds[0]
+            steps.remove(u)
+            steps.remove(r)
+            steps.append(('access', u[1], (u[2], r[2], 0.0), u[3], u[4], u[5]))
+            # (and the draft goes after it, last: the fill's walls are vertical and the draft is theirs to give.  Asked of the operator itself, as the taper of the tool's shaft, the draft was missing on 57 % of
+            # the walls of the bracket's mould, where the draft remedy leaves it on 19 %: a lean of one degree over a wall of 10 mm is a skin of 0.19 mm, under half a node of the lattice, and the noise of the
+            # distances on it -- a few hundredths of a millimetre -- is the lean.  The draft remedy works it out from the part's smooth normals, exact on a lattice of that size)
+            drafts = [s for s in steps if s[0] == 'draft']
+            for dr in drafts:
+                steps.remove(dr)
+            steps.extend(drafts)
+        # (what the remedies after the undercut fill add -- the fillets of the corners, a wall thickened, a gusset -- can cap a column of air that the fill saw open: a fillet in a crevice with a lid over it, and the
+        # column has material above and below again.  The fill is made once more, last, from the result, when something was kept after the first; its entry is merged into the first one's)
+        fills = [s for s in steps if s[0] == 'undercut']
+        if fills and steps[-1][0] != 'undercut':
+            again_from = len(steps)
+            steps.extend(fills)
+    first_fill = next((i for i, s in enumerate(steps) if s[0] == 'undercut'), None)
+    kept_since_fill = 0
     changes = []
+    for s in covered:
+        changes.append({'remedy': 'gaps', 'rule': s[1], 'added': 0.0, 'removed': 0.0, 'kept': False,
+                        'why': _tr('closed by the rounding of the inside corners: a ball of %.2g mm radius cannot enter a gap narrower than %.2g mm') % (float(s[3].rules['min_radius']), 2.0 * float(s[3].rules['min_radius']))})
     adds, cuts = [], []
+    offsets, unions = [], []         # (the remedies that move the surface -- walls, draft, a gap filled -- are ADDED to each other as growths: (growth, band width, most) each; the others are united: `unions`)
+    acting = []                      # (for each of those: the points it was measured on where it moves the surface, the spacing of them, the most it moves it -- the places it acts in, see `_scope_field`)
+    feet = []                        # (the pull directions of the drafts that were kept: the feet of the walls that grew are closed along them, see `_close_feet`)
     measured = []                    # (entry, field, the points it was measured on, the part's values there, the volume of a point, a shell?, the remedy's own values there) of each kept additive remedy
     spent = 0.0
     shells = {}
-    for index, (remedy, rule, field, additive, width) in enumerate(candidates):
-        if field is None:                    # (a remedy that was not made: the check finds nothing for it to do)
-            changes.append({'remedy': remedy, 'rule': rule, 'added': 0.0, 'removed': 0.0, 'kept': False, 'why': _tr('no change required'), 'thin': False})
-            continue
-        stretch = (0.5 + 0.25 * index / max(1, len(candidates)), 0.5 + 0.25 * (index + 1) / max(1, len(candidates)))          # (this remedy's part of the bar: the making of the remedies had 0.19 to 0.5)
+    current, cx = None, ctx          # (chained: the result so far, and the context it is read in; None: the part itself)
+    current_vals = f0_vals
+    for index, (remedy, rule, value, c, d, w_region) in enumerate(steps):
+        if again_from is not None and index >= again_from and not kept_since_fill:
+            continue                 # (the fill made again has nothing new to look at: no remedy kept anything since the first)
+        stretch = (0.19 + 0.56 * index / max(1, len(steps)), 0.19 + 0.56 * (index + 1) / max(1, len(steps)))          # (this remedy's part of the bar)
         what = _tr('Measuring effect: %s') % _REMEDY_TEXT[remedy]
         _progress(stretch[0], what)
+
+        # (a kept region is cut out of what a remedy makes, and how far out depends on what the remedy makes: material that FILLS -- a gusset, the rounding of a corner, an undercut filled -- is cut at the surface of
+        # the region, eased over a tenth of a millimetre (`keep_fill`), so that it reaches the kept part and does not float beside it; a SKIN grown off a face -- the draft, a wall made thicker, a gap closed -- is
+        # eased out over the feather round the region (`keep_weight`, a hundredth of the part), because the skin of a kept face reaches out of the region by up to the most the remedy moves it.  Cut sharp at
+        # the surface of a kept box that is a millimetre wider than the plate in it, the draft's skin stood off the plate as a sheet of 0.6 mm with air between: 26 thin walls of 581 on the mould of the bracket)
+        def scoped(new, w_region=w_region, cx=cx, skin=remedy in ('walls', 'gaps', 'draft')):
+            out = new
+            if w_region is not None:
+                out = cx.base + w_region * (out - cx.base)
+            keep_here = keep_weight if skin else keep_fill
+            if keep_here is not None:
+                out = out + keep_here * (cx.base - out)
+            return out
+        field, additive, width, offset = None, True, None, None
+        if remedy == 'walls':
+            # (grown to the limit and 4 % over it: the check reads a wall also along lines leaning 20 degrees off its normal, which on a sheet that curves tightly -- a gyroid's, a radius of 2 mm to a wall of 1.6 --
+            # read a few per cent less than the wall along the normal, and a wall grown to exactly the limit was marked there; the wall that comes out is at most 6 % over what was asked)
+            field, offset = _as_offset(cx, _remedy_walls(cx, value * 1.04, threshold=value, growth=True), w_region, keep_weight, scoped, not chained)
+            width = value
+        elif remedy == 'gaps':
+            field, offset = _as_offset(cx, _remedy_gaps(cx, value, c.gap_fix, growth=True), w_region, keep_weight, scoped, not chained)
+            additive, width = c.gap_fix == 'fill', value
+        elif remedy == 'corners':
+            # (the library's fillet is read from the part's field by Newton steps along its gradient, good to a few tenths of a per cent: over a smooth part that has no corner to round it is the part's
+            # own field to that much and can add specks where the walk falls short -- with the mesh it replaced a torus came out with 3.9 mm^3 "added" and a few red dots --, and it is a fair
+            # part of the cost of the field.  So the remedy is made where the check of the part finds a corner short of the radius at one of its samples, and not where it finds none -- or where an
+            # earlier remedy has made new faces, which the check of the part did not see; the other remedies are exact fields, which are the part's own where nothing is wrong, and are made as ever)
+            width = value
+            if before.report.get(rule, {}).get('broken', 1) == 0 and current is None:
+                field = None
+            else:
+                # (a ball of the radius finds nothing to fill where the air is more than a radius from the part.  The corners are rounded to the radius and 8 % over it: what the check reads of a corner is the clearance of a
+                # ball's centre from probes along the normal and on a sphere, good to a few per cent, and a surface made to exactly the limit is marked at one sample in two by that noise -- as the walls are grown 4 % past
+                # theirs and the overhang's slope is held 5 % inside)
+                field = scoped(_remedy_corners(cx, value * (1.08 if inexact else 1.0)))
+        elif remedy == 'access':
+            axis_, radius_, taper_ = value
+            # (made when the check of the part finds an undercut, a corner short of the radius or a wall short of the draft; the radius is the one asked, and 8 % over it for a part whose field the check reads to a few per cent)
+            if (before.report.get('undercut_along', {}).get('broken', 1) == 0 and before.report.get('min_radius', {}).get('broken', 1) == 0
+                    and (not taper_ or before.report.get('draft', {}).get('broken', 1) == 0) and current is None):
+                field = None
+            else:
+                made = _remedy_access(cx, axis_, float(radius_) * (1.08 if inexact else 1.0), taper_, True)
+                field = scoped(made) if made is not None else None
+            width = None
+        elif remedy == 'undercut':
+            field = scoped(_remedy_undercut(cx, value))
+        elif remedy == 'draft':
+            # (the growth is at most the part's height along the pull times the tangent of the draft, and lies in a band that wide round the surface: measured on points of that shell, like the layers of
+            # the walls and the gaps.  Measured on twelve thousand points over the whole box it was read to 5 %, and the card said 1,321 mm^3 of a change of 1,180 on the moulding sampler)
+            # (the walls lean the draft and 8 % more: the check reads a lean from normals good to a degree or so, and a wall made to exactly the draft asked is marked at one sample in two by that noise)
+            # (and 3 % over for a part with exact fields, as the walls are grown 4 % over: the independent check reads the lean of a face from the gradient at a sample that lies a few hundredths of a millimetre
+            # off it, and reads a face of 1.08 degrees as 0.86 there -- a draft made to exactly the angle asked sits on the edge of its tolerance, 0.95, and d5's third pass was marked on 0.45 % of the surface)
+            lean = value * (1.08 if inexact else 1.03)
+            field, offset = _as_offset(cx, _remedy_draft(cx, lean, c.pull_direction, growth=True), w_region, keep_weight, scoped, not chained)
+            width = _draft_reach(cx, lean, c.pull_direction)[1]
+        elif remedy == 'overhang':
+            made = _remedy_overhang(cx, value, d, c.overhang_fix, reach)
+            info = made._lattice
+            _log(t0, 'overhang field made on a lattice of %d x %d x %d nodes (%.3g mm apart) in %.1f s, %.1f s of it sampling the part at %d nodes: %.4g mm^3' % (
+                info['dims'][0], info['dims'][1], info['dims'][2], info['pitch'], info['seconds'], info['sampling_seconds'], info['looked_at'], info['volume']))
+            field, additive = scoped(made), c.overhang_fix == 'fill'
+        if field is None:                    # (a remedy that was not made: the check finds nothing for it to do)
+            changes.append({'remedy': remedy, 'rule': rule, 'added': 0.0, 'removed': 0.0, 'kept': False, 'why': _tr('no change required')})
+            continue
+        _progress(stretch[0] + 0.5 * (stretch[1] - stretch[0]), what)
         # (what a remedy of a known width changes lies in the shell of that width round the surface: measured on points of the shell, so that a thin layer or a narrow gap has
-        # points in it; one that can reach anywhere on points over the whole box)
+        # points in it; one that can reach anywhere on points over the whole box.  What it changes is measured against the result so far)
         shell = None
         if width is not None:
             if width not in shells:
@@ -1266,39 +1516,74 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             shell = shells[width]
         if shell is not None:
             where, before_values, each = shell
+            if current is not None:
+                before_values = _values(current, where)
         else:
-            where, before_values, each = pts, f0_vals, box / float(len(pts))
-        _progress(stretch[0] + 0.3 * (stretch[1] - stretch[0]), what)            # (the points it is measured on are made: the remedy's field is worked out on them next)
+            where, before_values, each = pts, current_vals, box / float(len(pts))
+        _progress(stretch[0] + 0.7 * (stretch[1] - stretch[0]), what)            # (the points it is measured on are made: the remedy's field is worked out on them next)
         vals = _values(field, where)
-        _progress(stretch[0] + 0.85 * (stretch[1] - stretch[0]), what)
+        _progress(stretch[0] + 0.95 * (stretch[1] - stretch[0]), what)
         added = each * sum(1 for a, b in zip(before_values, vals) if a > 0 >= b)
         removed = each * sum(1 for a, b in zip(before_values, vals) if a <= 0 < b)
         if shell is None:
-            refined = _refined_change(ctx, field, where, before_values, vals, each)
+            refined = _refined_change(cx, field, where, before_values, vals, each)
             if refined is not None:
                 added, removed = refined
-        entry = {'remedy': remedy, 'rule': rule, 'added': added, 'removed': removed, 'kept': False, 'why': '',
-                 'thin': remedy in ('walls', 'draft') or (remedy == 'gaps' and not additive)}       # (a layer a tenth of a millimetre thick, or a skin that tapers to nothing at the top of its wall -- the draft: see ManufacturingResult._display)
+        entry = {'remedy': remedy, 'rule': rule, 'added': added, 'removed': removed, 'kept': False, 'why': ''}
         _log(t0, 'remedy %s measured: +%.4g -%.4g mm^3' % (remedy, added, removed))
         if added + removed < 1e-4 * volume:
             entry['why'] = _tr('no change required')
-            if remedy == 'corners' and getattr(ctx, 'corners_left', None) is not None:
-                entry['why'] = _tr('not rounded: a ball of %.2g mm is smaller than this part\'s lattice resolves') % ctx.corners_left
+            if remedy == 'corners' and getattr(cx, 'corners_left', None) is not None:
+                entry['why'] = _tr('not rounded: a ball of %.2g mm is smaller than this part\'s lattice resolves') % cx.corners_left
         elif spent + added + removed > budget:
             entry['why'] = _tr('would change %.2g %% of the part volume; max_change allows %.2g %%: add a support or change the design') % (
                 100.0 * (spent + added + removed) / volume, 100.0 * max_change)
         else:
             entry['kept'] = True
+            if first_fill is not None and first_fill < index and (again_from is None or index < again_from):
+                kept_since_fill += 1
             spent += added + removed
             (adds if additive else cuts).append(field)
+            if additive and offset is not None:
+                offsets.append(offset)
+                if shell is not None:
+                    moved = 1e-7 * ctx.size
+                    acting.append(([p for p, a_, b_ in zip(where, before_values, vals) if a_ - b_ > moved], each ** (1.0 / 3.0), float(offset[2]), float(offset[1])))
+                if remedy == 'draft':
+                    feet.append(c.pull_direction)
+            elif additive:
+                unions.append(field)
             if additive:
                 measured.append((entry, field, where, before_values, each, shell is not None, vals))
+            if chained:
+                # (the next remedy is made from what this one made: the field is the part united with what the remedies so far made -- every remedy's field is the field it was made in, changed)
+                current = field
+                current._bounds = (tuple(ctx.lo[i] - 0.05 * ctx.size for i in range(3)), tuple(ctx.hi[i] + 0.05 * ctx.size for i in range(3)))
+                current._plate_box = ctx.plate_box
+                current_vals = _values(current, pts)
+                cx = _Context(current)
+                # (a chain is only made of a part that is expensive to read, and what the next remedy reads is the part united with lattices that are cheap: measured again it would look cheap, and the next remedy would be
+                # asked as a formula of the whole chain -- the mould's corners on the optimized bracket did not end in eight minutes.  The chain is as expensive as its part was)
+                cx.clamp_calls = True
         changes.append(entry)
+    if again_from is not None:
+        # (the fill made again is one row with the first: what the two added is what the undercut rule cost)
+        merged, seen = [], {}
+        for e in changes:
+            first = seen.get((e['remedy'], e['rule']))
+            if first is None:
+                seen[(e['remedy'], e['rule'])] = e
+                merged.append(e)
+            elif e['kept']:
+                first['added'] += e['added']
+                first['removed'] += e['removed']
+                first['kept'], first['why'] = True, ''
+        changes = merged
     # (what the result adds is the volume of the UNION of what the kept additive remedies add, not the sum of what each adds alone: where two overlap -- a draft wedge and an undercut fill on one wall, a
     # fillet at the root of a thickened wall -- the sum counts the place twice, and the card said 1516 mm3 of a change of 1180.  Each remedy after the first is measured for what it adds that the ones before it
     # did not, on the points it was measured on)
     union_added = None
-    if len(measured) > 1:
+    if len(measured) > 1 and not chained:
         union_added, earlier = 0.0, None
         for entry, field, where, before_values, each, is_shell, own in measured:
             if earlier is None:
@@ -1320,10 +1605,40 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             union_added += marginal
             earlier = field if earlier is None else earlier.min(field)
     result = ctx.base
-    # (a remedy is the part's own field where it does nothing: the same value as the part, over most of space -- a tie -- so each is kept a few microns apart; see _join)
-    for i, a in enumerate(adds):
-        result = result.min(a + ctx.tie * (i + 1))
-    for i, c in enumerate(cuts):
+    # (a remedy is the part's own field where it does nothing: the same value as the part, over most of space -- a tie -- so each is kept a few microns apart; see _join.  A chain has no ties: each field
+    # is the one before it, changed, and the last is the result)
+    if chained and current is not None:
+        result = current
+    if offsets and not chained:
+        # (the remedies that move the surface along its normal -- the walls thickened, the draft, a gap filled -- are one offset: the growths are added, so that a face one of them makes -- the thickened fin's -- is
+        # moved by the others -- given its draft --, where united they were each made from the part as it was and the faces of one were not seen by the others)
+        total, widest, most = offsets[0][0], offsets[0][1], offsets[0][2]
+        for g_, w_, m_ in offsets[1:]:
+            total = total + g_
+            widest = max(widest, w_)
+            most = most + m_
+        # (the band that holds the sum is as wide as the sum needs: the ramp of `_near` rises from 0 at the edge of the band by `10 most / width` for every unit toward the surface, and must stay above the growth
+        # at the surface, which is as much as `most` -- a fin thickened by 0.53 and given 0.42 of draft has a growth of 0.95 at its foot, where the band of the walls alone, 0.936, left a ramp of 0.72 that cut the
+        # growth: the surface followed the part's own level set there, plumb, and the draft was 0.6 degrees where the geometry asked 2)
+        widest = max(widest, 1.2 * most + 2.0 * ctx.step)
+        # (and the places they act in: outside the boxes round them the growth is 0, and the mesher is told so, see `_scope_field`)
+        scope = _scope_field(ctx, acting, before, widest) if _SCOPE and len(acting) == len(offsets) else None
+        if scope is not None:
+            _log(t0, 'the remedies that move the surface are scoped to %d boxes round the places they act in' % scope._boxes)
+        result = ctx.field - _near(total, ctx.field, widest, most, scope)
+        if feet:
+            result = _close_feet(ctx, result, feet[0], most)
+    # (a remedy whose field is the exact distance of its own result -- the corners' lattice, `_full` -- is the result where nothing else moves the surface: united with the part's own field, as the others are, the part's
+    # plain field came back wherever it was smaller than the true distance -- 2.5 at the axis of a hole where the rim is 3.0 away -- and the check read a ball that fits as 17 % short.  A remedy that is not whole
+    # (or one that was scoped to a region, which is blended with the part) is united with it as ever)
+    order = sorted(range(len(unions)), key=lambda i: 0 if getattr(unions[i], '_full', False) else 1) if not chained else []
+    for i in order:
+        a = unions[i]
+        if result is ctx.base and not offsets and getattr(a, '_full', False):
+            result = a + ctx.tie * (i + 1)
+        else:
+            result = result.min(a + ctx.tie * (i + 1))
+    for i, c in enumerate(cuts if not chained else []):
         # (a cut remedy is the whole part with something cut away, and what it cuts is the part where it is positive: the difference takes away that region only.  Intersecting the
         # result with the cut remedy as a whole would cut away everything that the additive remedies built outside the part)
         # (the part's field less a skin of `step`: the cut then reaches a hair outside the part's old surface, where the remedy says "air" as well.  Cut exactly to that surface, the
@@ -1334,7 +1649,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     # (the whole result grown by a hair, 5 ties -- under a tenth of a micron: where the part's faces lie exactly on the grid the picture is drawn on (integer coordinates, as scripts have
     # them), a surface that is the part's own gives exactly 0 at the grid points on it, and where a remedy's surface meets it at an edge there are several surfaces through the
     # same grid point, which the mesher settled with edges of more than two triangles and triangles of no area.  Grown by a hair no grid point is exactly on a surface)
-    result = result - 5.0 * ctx.tie
+    # (not inside a kept region: there the result is the part's own field and nothing else, exactly -- a kept plate's surface moved by the hair, 0.0006 mm on the bracket)
+    hair = 5.0 * ctx.tie
+    result = result - (hair * (1.0 - keep_fill) if keep_fill is not None else hair)
     result._bounds = (tuple(ctx.lo[i] - 0.05 * ctx.size for i in range(3)), tuple(ctx.hi[i] + 0.05 * ctx.size for i in range(3)))
     # (the plate the print stands on is the part's box, not the result's padded one: a check or a second pass made on the result reads it from here, and the bottom face of the part, resting on
     # the plate, is no overhang -- read from the padded box it stood 5 % of the part's size above the plate and was a flat roof: 6 % to 15 % of the surface of the result "overhanging")
@@ -1343,14 +1660,24 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         v = getattr(shape, name, None)
         if v is not None:
             setattr(result, name, v)
-    tol = max(0.05, 2.0 * ctx.step)
-    # (the part's own field, at the point carried onto the result's surface -- the point less the result's value there along the result's normal: a vertex of the drawn mesh is a fraction
-    # of a cell off the true surface, and on a layer a tenth of a millimetre thick that is the other side of the old surface -- blue where nothing was cut, seen on the walls of the holes
-    # of a perforated plate.  On the surface itself the carry is nothing.  The carry runs along the PART's normal, not the result's: the remedies offset along it, and the result's own normals
-    # are six more copies of the whole result inside the field the part is coloured by -- the viewer builds evaluators for that field when the mouse rests on the result, memory in proportion
-    # to its size: 8 GB and a window that stopped answering on an open box)
-    carry = ctx.normals
-    change_map = (_at(ctx.field, -result * carry.x, -result * carry.y, -result * carry.z) * (1.0 / tol)).max(-1).min(1)
+    # (the colour is a CLASS -- added, as it was, cut -- and not an amount: a step from 0 to 1 over `eps` of the distance the result's surface stands out of the part's, or in.  It is the difference of the
+    # two fields at the point, the part's less the result's: where the result is the part's own, the two are the same value at any point near the face, and the difference is nothing wherever the vertex of
+    # the drawn mesh lies -- and a vertex of a mesh lies up to a half cell off the true surface, and at an edge (the rim of a hole, the corner of a block) it is off along the diagonal.  Where a layer of
+    # thickness t was added, the result is the part's less t at every point across it, and the difference is t.  The colour used to be the part's field at the vertex carried along the part's normal
+    # onto the result's surface: at the rim of a hole that normal is the top face's, the carried point lands in the hole, and an untouched rim read 1.0 -- the pale red that ran across the flat face from every
+    # rim vertex, in the picture of the mould.  A ramp of 0.15 mm besides made a tail of a fillet, thinner than that over a millimetre of its length, a fading pink on the flat beyond it)
+    eps = max(0.02, 3e-4 * ctx.size)
+    delta = ctx.field - result
+    change_map = ((delta - eps).max(0).min(eps) - (-delta - eps).max(0).min(eps)) * (1.0 / eps)
+    tol = 2.0 * eps
+    # (a result handed to the tool again is coloured by everything made since the FIRST part: the red of the earlier passes stays and what this pass adds or cuts is added to it -- a cut of material an earlier pass
+    # added is back to grey.  Coloured by this pass alone, the second pass over a ledge's gusset, which changes nothing, showed the whole of the gusset grey.  The numbers on the card stay those of this pass)
+    # (the decorators of the tool hand it the FIELD of a result given as the part, not the result: `_with_conditions` replaces the first argument by `_field_of(it)`, so that the colour of the earlier passes travels on
+    # the field, as the plate of the print does (`_plate_box`): a test that the part "is a ManufacturingResult" was never true inside this function, and the second pass over a ledge's gusset came out grey)
+    earlier = getattr(part, '_change_map', None)
+    if earlier is not None:
+        change_map = (change_map + earlier).max(-1).min(1)
+    result._change_map = change_map
     supports, blockers = None, []
     supporting = [c for c in items if c.support and 'overhang' in c.rules]
     support_volume = 0.0
@@ -1373,7 +1700,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
         # a ledge held by a block, "1 place, 11 % of the surface" on the card)
         with _within(0.8, 0.98):
             after = _analyse(result, items, int(samples), bounds=result._bounds, plate_box=ctx.plate_box, direction=direction, seed=13, rounds=1, batch_size=20000,
-                             seeds=before.points, supports=supports, progress=True)
+                             seeds=before.points, supports=supports, progress=True, kept=keeps)
         if after is not None:
             why = _tr('still violated after the remedy') if changed else _tr('no remedy available for it')
             for rule, r in after.report.items():
@@ -1394,6 +1721,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     if supporting:
         notes.append(_tr('Remaining overhangs are held by block supports: %s mm³, a separate body (result.supports)') % _quantity(support_volume, 4))
     out = ManufacturingResult(shape, result, change_map, changes, volume, before, after, fails, direction, free, notes, time.time() - t0)
+    out._chained = earlier is not None          # (coloured by everything since the first part: the card says so)
     if union_added is not None:
         out.added = union_added
         out.share = (out.added + out.removed) / volume if volume > 0 else 0.0
@@ -1402,15 +1730,9 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     out.supports = supports
     out.support_volume = support_volume
     out.blockers = blockers
-    out.change_tolerance = tol          # (mm: the distance from the input surface at which the change map reaches +1 or -1)
-    out._adds, out._cuts, out._tie, out._hair = bool(adds), bool(cuts), ctx.tie, 1e-4 * ctx.size
-    # (drawn as ONE body, coloured at each vertex, only when the thin layers are at least half of what was changed: a vertex of the mesh is a fraction of a cell off the surface, and on the rough surface of an optimization
-    # that colours specks of the whole of it red where nothing was added -- the topology bracket: 31 mm3 of walls beside 2301 mm3 of gussets.  There the gussets and the layer are bodies of their own, which a layer thinner than
-    # a cell draws as stripes, as little of the picture as it is of the change)
-    kept_changes = [c for c in changes if c['kept']]
-    thin_change = sum(c['added'] + c['removed'] for c in kept_changes if c.get('thin'))
-    all_change = sum(c['added'] + c['removed'] for c in kept_changes)
-    out._thin = thin_change > 0 and thin_change >= 0.5 * all_change
+    out.change_tolerance = tol          # (mm: how far the result's surface stands out of the input surface, or in, where the change map reaches +1 or -1; it is 0 below half of that)
+    # (what the tool did bounds what can be shown -- see `_display` --, and a pass over a result also shows what the passes before it did: a second pass that changes nothing still shows the first one's gusset in red)
+    out._adds, out._cuts = bool(adds) or earlier is not None, bool(cuts) or earlier is not None
     return out
 
 

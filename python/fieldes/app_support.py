@@ -1533,6 +1533,19 @@ def outline_json(arg):
     return out
 
 
+def primitives_manage(arg):
+    ''' The Primitives menu of the menu bar: which shapes the Primitives menus offer, and the primitives of the user's own (see user_primitives.py): JSON {op, ...} -> JSON '''
+    from fieldes import user_primitives
+    return user_primitives.manage(arg)
+
+
+def move_check(arg):
+    ''' Would moving lines of the script break it (a name read above the statement that makes it, a function called above its def)?  JSON {source, moved, dest}
+        -> JSON, see outline.move_check: what it would break, and the statements that have to go along to keep the script as it is '''
+    from fieldes import outline
+    return outline.move_check(arg)
+
+
 def seed_known(arg):
     ''' A tree kept from an earlier session tells what its statements made, until a run says it again (see outline.seed) '''
     from fieldes import outline

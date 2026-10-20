@@ -170,7 +170,8 @@ public:
      *  them (fieldes.menu_catalog); asked once, when a script has run, so a right-click never waits for Python  */
     void setMenuCatalogSource(std::function<QString()> f) { m_catalogSource = f; }
     void loadMenuCatalog();
-
+    /*  The menus are made again from the library's catalog (the primitives of the Primitives menu have changed)  */
+    void reloadMenuCatalog() { m_catalog = QJsonObject(); loadMenuCatalog(); }
     bool sectionHandlePoints(QPointF& knob, QPointF& tip) const
     {
         float len;
@@ -531,6 +532,7 @@ protected:
     Shape* m_faceShape = nullptr;
     bool m_faceActive = false;
     QVector3D m_faceNormal, m_faceStart;
+    QVector3D m_faceWallDir;                    // (a wall of a prism pulled by its two points: the direction in the plane that it moves along; null for the face of a profile, which moves every point as the mouse does)
     QPoint m_facePressPos;
     /*  A press on the dot of a point that has its numbers (its gizmo) begins its drag at once, with no selection and no gizmo needed.  Until the mouse has moved a few pixels
         it is still a click, which selects the point  */
@@ -735,6 +737,10 @@ protected:
     QTimer pick_timer;
     QImage pick_img;
     QVector<float> pick_depth;
+    // (the same without the 2D shapes, which are drawn over the bodies: what is under a 2D shape where a press is not at its edge, and how deep -- the end face of an extrusion at its base, under the shape it was made of.
+    // Empty when no 2D shape is shown)
+    QImage pick_img_bodies;
+    QVector<float> pick_depth_bodies;
 
     /*  Data to handle direct modification of shapes */
     QVector3D drag_start;

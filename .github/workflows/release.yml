@@ -33,7 +33,7 @@ jobs:
             set -e
             apt-get update -qq
             apt-get install -y -qq xvfb libgl1-mesa-dri libglx-mesa0 libegl1 fontconfig >/dev/null
-            mkdir /t && tar -xzf /dist/FielDes-linux-x64.tar.gz -C /t
+            mkdir /t && tar -xzf /dist/FielDes-*-linux-x64.tar.gz -C /t
             cd /t/FielDes-linux
             printf "wait 3000\nquit\n" > /tmp/auto.txt
             FIELDES_AUTOMATION=/tmp/auto.txt timeout 180 xvfb-run -a -s "-screen 0 1280x800x24" ./FielDes 2>&1 | tee /tmp/out.txt
@@ -53,6 +53,6 @@ jobs:
         with:
           name: FielDes-linux-x64
           path: |
-            dist/FielDes-linux-x64.tar.gz
+            dist/FielDes-*-linux-x64.tar.gz
             dist/FielDes-*-linux-x64-installer.run
             dist/FielDes_*_amd64.deb

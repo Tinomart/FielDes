@@ -199,8 +199,8 @@ static QString guideHtml()
     h += "<h2>" + T("Model tree") + "</h2><ul>";
     h += li(T("<b>Click</b> a row to select it and see its code. <b>Eye</b>: show or hide."));
     h += li(T("<b>Nesting is the structure of the calls</b>: the models an operation is made of are its children, in the "
-              "order of its arguments. A model that several statements use has its row under the first, and a <b>shadow</b> "
-              "(half transparent) under each other one: that statement's own reference. Every nest, renest and denest is an edit "
+              "order of its arguments. A model that several statements use stands where it is defined, and a statement that uses it without holding it shows a <b>shadow</b> "
+              "(half transparent): its own reference. Every nest, renest and denest is an edit "
               "of the arguments: <b>drag a row onto an operation</b> to make it one of its inputs (added to a <code>union</code> and the "
               "like; never a menu); drag it out of a call to take it out; drop it "
               "<b>between the children</b> of an operation to put it at that place among the arguments. Dragging a shadow moves "
@@ -213,6 +213,10 @@ static QString guideHtml()
               "of, when that is defined later). Taking a model out of an operation that cannot do without it (fixed inputs) "
               "<b>deletes that operation</b>, after a question (default: Delete; it can be hidden). The bin button and "
               "%1 work on a shadow too: its reference is taken out. All of it is one undoable step.").arg(keys("view.delete")));
+    h += li(T("A model sits under the statement that uses it only when it stands <b>directly above</b> it: any other row between them "
+              "(another model, a variable, a loop, a function) separates them, so the tree always follows the order of the script, and the statement "
+              "shows a shadow of the model. A loop, an <code>if</code> or a <code>with</code> is a user too: the models directly above it that it "
+              "reads are inside its row."));
     h += li(T("<b>Several rows</b>: Ctrl+click adds one or takes it out, Shift+click selects from the last one clicked, "
               "as in a file list. In the viewport Ctrl+click does the same, and dragging draws a rectangle that selects "
               "every body lying wholly inside it (with Ctrl too: added to the selection). A click on empty space "
@@ -1301,6 +1305,14 @@ Window::Window(Arguments args)
         for (const auto& l : i18n::languages()) add(l.code, l.name);
     }
 
+    // Primitives menu: which shapes the Primitives menus offer, and the primitives of the user's own (kept in a file of theirs, there in every script)
+    {
+        auto primitives_menu = menuBar()->addMenu(T("&Primitives"));
+        auto manage_action = primitives_menu->addAction(T("Manage primitives..."));
+        manage_action->setToolTip(T("Choose which shapes are primitives, and add the selected model to them"));
+        connect(manage_action, &QAction::triggered, this, [this] { openPrimitivesDialog(); });
+    }
+
     menuBar()->addMenu(settings_menu);
 
     // Help menu
@@ -1673,6 +1685,44 @@ Window::Window(Arguments args)
         a->add("reportbug", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onReportBug(); }); });
         // about: Help > About (the dialog opens once this command is over, so that the commands after it -- a picture of it with grabpopups -- run while it is open)
         a->add("about", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onAbout(); }); });
+        // dialog <text|grab <file>|accept|cancel>: the question that is open (a message box of the program, asked while the drop of a drag or any other action waits for the answer: run with
+        // FIELDES_SHOW_DIALOGS=1 so that it is asked), read, photographed, or answered as a hand does -- `accept` presses its default button, `cancel` its Cancel
+        a->add("dialog", [=](const QString& args){
+            auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            const QString verb = args.section(' ', 0, 0).trimmed(), rest = args.section(' ', 1).trimmed();
+            if (!box) { std::cerr << "automation: no question is open" << std::endl; return; }
+            if (verb == "text")
+            {
+                std::cerr << "automation: question '" << box->windowTitle().toStdString() << "': " << box->text().toStdString() << "\nautomation: " << box->informativeText().toStdString() << std::endl;
+                return;
+            }
+            if (verb == "grab") { box->grab().save(rest); return; }
+            if (verb == "accept") { if (auto b = box->defaultButton()) b->click(); else box->accept(); return; }
+            if (verb == "cancel") { if (auto b = box->button(QMessageBox::Cancel)) b->click(); else box->reject(); return; }
+            std::cerr << "automation: dialog <text|grab|accept|cancel>" << std::endl;
+        });
+        // primitives <open|kind <solid|profile|curve|point|surface|field>|add <name>|remove <name>|rows|close>: the Primitives > Manage primitives window, opened and driven as a hand does (a picture of it with
+        // grabpopups); `rows` writes what the list has, one `name|on|built-in` per line, to the log
+        a->add("primitives", [=](const QString& args){
+            const QString verb = args.section(' ', 0, 0).trimmed(), rest = args.section(' ', 1).trimmed();
+            PrimitivesDialog* d = openPrimitivesDialog();
+            if (verb == "open") return;
+            if (verb == "close") { d->close(); return; }
+            if (verb == "kind")
+            {
+                if (auto box = d->findChild<QComboBox*>()) box->setCurrentIndex(std::max(0, box->findData(rest)));
+                return;
+            }
+            if (verb == "add") { std::cerr << "automation: primitives add " << rest.toStdString() << ": " << (d->addSelection(rest) ? "done" : "refused") << std::endl; return; }
+            if (verb == "remove") { std::cerr << "automation: primitives remove " << rest.toStdString() << ": " << (d->removeEntry(rest) ? "done" : "refused") << std::endl; return; }
+            if (verb == "rows")
+            {
+                std::cerr << "automation: primitives kind " << d->kind().toStdString() << ":" << std::endl;
+                for (const QString& row : d->rows()) std::cerr << "automation:   " << row.toStdString() << std::endl;
+                return;
+            }
+            std::cerr << "automation: primitives <open|kind|add|remove|rows|close>" << std::endl;
+        });
         // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
         a->add("navigation", [=](const QString& what){
             const QString w = what.trimmed();
@@ -2839,16 +2889,18 @@ Window::Window(Arguments args)
             tree->scrollToItem(src);
             QApplication::processEvents();
             const QPoint from(60, tree->visualItemRect(src).center().y());
+            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
             QPoint to(8, vp->height() - 2);
             if (dst)
             {
+                // (the press is made first, on the row as it is; a target that is further off is scrolled to while the button is down, as the tree scrolls when the mouse is held at its edge --
+                // scrolling before the press moved the rows, and the press fell on another one)
                 tree->scrollToItem(dst);
                 QApplication::processEvents();
                 const QRect r = tree->visualItemRect(dst);
                 to = QPoint(60, where == "above" ? r.top() + r.height() / 8 : where == "below" ? r.bottom() - r.height() / 8
                                                                                               : r.center().y());
             }
-            send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
             for (int i = 1; i <= 8; ++i)
                 send(QEvent::MouseMove, from + (to - from) * i / 8, Qt::NoButton, Qt::LeftButton);
             std::cerr << "automation: dragging " << (scene->dragging() ? "yes" : "no") << " at " << where.toStdString() << "\n";
@@ -2870,8 +2922,7 @@ Window::Window(Arguments args)
             send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
         });
         // blocksfolder <path>: Settings > Blocks folder, chosen (empty: the default one)
-        a->add("blocksfolder", [=](const QString& path){ setBlocksFolder(path.trimmed()); });
-        a->add("open", [=](const QString& path){
+        a->add("blocksfolder", [=](const QString& path){ setBlocksFolder(path.trimmed()); });        a->add("open", [=](const QString& path){
             if (loadFile(path)) setFilename(path);
         });
         // setting <set_bounds|set_resolution|set_quality> <index> <text> [esc]: type into one field of the render settings in the
@@ -3892,6 +3943,24 @@ void Window::exportModelTo(const QString& var, const QString& kind, const QStrin
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+PrimitivesDialog* Window::openPrimitivesDialog()
+{
+    if (m_primitivesDialog)
+    {
+        m_primitivesDialog->raise();
+        m_primitivesDialog->activateWindow();
+        return m_primitivesDialog;
+    }
+    PrimitivesDialog::Hooks hooks;
+    hooks.manage = [this](const QString& request) { return editor->callSupport("primitives_manage", request, nullptr); };
+    hooks.selection = [this]() { return view->scenePanel()->selectedModelFacts(); };
+    hooks.source = [this]() { return editor->getScript(); };
+    hooks.changed = [this]() { view->reloadMenuCatalog(); };
+    m_primitivesDialog = new PrimitivesDialog(hooks, this);
+    m_primitivesDialog->show();
+    return m_primitivesDialog;
+}
 
 void Window::onAbout(bool)
 {

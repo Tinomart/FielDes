@@ -20,10 +20,14 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QOpenGLBuffer>
+#include <QOpenGLShaderProgram>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLFunctions>
 
 namespace FielDes {
+
+// The backdrop of the viewport: a quad over the whole of it, dark teal to a lighter teal.  It is drawn with a shader of its own that has no uniforms and no state of the shapes' to depend on:
+// drawn with the shapes' shader (the clip planes, the section's colour, the patch mode that it reads) it came out BLACK under Mesa's software renderer (WSLg), where the shapes themselves were fine
 class Background : public QOpenGLFunctions
 {
 public:
@@ -33,5 +37,7 @@ public:
 protected:
     QOpenGLBuffer vbo;
     QOpenGLVertexArrayObject vao;
+    QOpenGLShaderProgram program;
+    bool ready = false;
 };
 } // namespace FielDes

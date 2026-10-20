@@ -1064,7 +1064,8 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
                 x2[r] = x[r] / dsc[r];
             }
         }, 1024);
-        Eigen::Map<const SpRow> Ar(long(N), long(N), long(16 * nb), outer.data(), inner.data(), val2.data());
+        const long rows = static_cast<long>(N), nonzeros = static_cast<long>(16 * nb);        // (not `Ar(long(N), long(N), ...)`: a declaration of a function, to GCC)
+        Eigen::Map<const SpRow> Ar(rows, rows, nonzeros, outer.data(), inner.data(), val2.data());
         Eigen::Map<const Eigen::VectorXd> b(rhs2.data(), long(N));
         Eigen::Map<const Eigen::VectorXd> x0(x2.data(), long(N));
         auto unscale = [&](const Eigen::VectorXd& sol) {

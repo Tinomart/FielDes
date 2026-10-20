@@ -1272,8 +1272,9 @@ protected:
     void paintEvent(QPaintEvent* e) override
     {
         QTreeWidget::paintEvent(e);
-        if ((m_gap || m_gapEnd) && !m_dragging) paintGap();
+        // (the insertion point first and the gap's own marks over it: the plus is on the top layer)
         if (!m_dragging) paintMark();
+        if ((m_gap || m_gapEnd) && !m_dragging) paintGap();
         if (!m_dragging) return;
         QPainter p(viewport());
         p.setRenderHint(QPainter::Antialiasing);
@@ -1408,11 +1409,19 @@ private:
             if (gap && gapCircleFor(gap).contains(pos)) hot = true;
             if (end && gapCircleFor(nullptr).contains(pos)) hot = true;
         }
-        if (gap == m_gap && end == m_gapEnd && hot == m_gapHot) return;
+        // (the mouse on the line of the gap, not on its circle: a press there puts the insertion point -- the band the press uses)
+        bool line = false;
+        if (!hot && (gap || end))
+        {
+            const int gapY = end ? lastRowBottom() : visualItemRect(gap).top();
+            line = std::abs(pos.y() - gapY) <= 3;
+        }
+        if (gap == m_gap && end == m_gapEnd && hot == m_gapHot && line == m_gapLine) return;
         m_gap = gap;
         m_gapEnd = end;
         m_gapHot = hot;
-        if (hot) viewport()->setCursor(Qt::PointingHandCursor);
+        m_gapLine = line;
+        if (hot || line) viewport()->setCursor(Qt::PointingHandCursor);
         else viewport()->unsetCursor();
         viewport()->update();
     }
@@ -1454,10 +1463,19 @@ private:
         p.setRenderHint(QPainter::Antialiasing);
         const QColor blue(0x26, 0x8b, 0xd2);
         const QRect c = gapCircleFor(m_gapEnd ? nullptr : m_gap);
-        // (a faint line along the gap, so that it is clear which gap the circle is for)
+        // (a faint line along the gap, so that it is clear which gap the circle is for -- and a WHITE one while the mouse is on the line itself, where a press puts the insertion point:
+        // it says that the place can be clicked)
         const int y = c.center().y();
-        p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 90), 1.2, Qt::SolidLine, Qt::RoundCap));
-        p.drawLine(QPointF(6, y), QPointF(viewport()->width() - 6, y));
+        if (m_gapLine && !m_gapHot)
+        {
+            p.setPen(QPen(QColor(255, 255, 255, 245), 2.4, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(QPointF(6, y), QPointF(viewport()->width() - 6, y));
+        }
+        else
+        {
+            p.setPen(QPen(QColor(blue.red(), blue.green(), blue.blue(), 90), 1.2, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(QPointF(6, y), QPointF(viewport()->width() - 6, y));
+        }
         p.setPen(QPen(blue, m_gapHot ? 2.0 : 1.6));
         p.setBrush(m_gapHot ? blue : QColor(0x0b, 0x32, 0x40));
         p.drawEllipse(QRectF(c).adjusted(1, 1, -1, -1));
@@ -1467,6 +1485,7 @@ private:
         p.drawLine(QPointF(m.x(), m.y() - 4), QPointF(m.x(), m.y() + 4));
     }
     bool m_gapHot = false;                  // (the mouse is on the circle of the gap that shows)
+    bool m_gapLine = false;                 // (the mouse is on the line of the gap that shows, a few pixels each side: a press puts the insertion point there)
     bool m_gapEnd = false;                  // (the gap that shows is the one at the end of the tree: after the last row)
     QTreeWidgetItem* m_gap = nullptr;       // (the row the lit gap is above)
     QTreeWidgetItem* m_propRow = nullptr;   // (the hovered row that has properties: its arrow is drawn)
@@ -2839,6 +2858,8 @@ void ScenePanel::rebuild()
                 const QJsonObject c = kids[k].toObject();
                 if (!c.contains("line")) continue;
                 const QString kind = c["kind"].toString();
+                // (a model that the block holds as a child is not listed again as a name it uses)
+                if (kind == "uses" && owned.value(path).contains(c["label"].toString())) continue;
                 const QString ckey = path + ">" + QString::number(k);
                 auto row = makeRow(parent, c["label"].toString(), pythonIcon(kind == "block" ? c["type"].toString() : kind), "pychild", c, ckey);
                 row->setFlags(row->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsEditable));
@@ -2862,6 +2883,7 @@ void ScenePanel::rebuild()
             row->setToolTip(COL_NAME, T("Python code of the script: an if, a loop, a function or a class.  The tree shows what is in it; it is edited in the code editor.\n"
                                       "Drag it among the top-level rows to move it.  Click: go to it in the code.") + "\n" + pb["text"].toString());
             pythonRows << row;
+            rowOfKey[pkey] = row;          // (a loop, an if or a with is a user of the models it reads: the models directly above it that it reads are its children -- `owner` is "python@line")
             addKids(row, pb["children"].toArray(), pkey);
         }
         // (the rows of the models and of the blocks stand in the order of the script)
@@ -2994,8 +3016,17 @@ void ScenePanel::rebuild()
                 rows.insert(std::min(at, int(rows.size())), g);
             }
         }
-        for (auto c : others) parent->addChild(c);
-        for (auto c : rows) parent->addChild(c);
+        // (the models that a block of Python holds stand above what is in it, as they stand above it in the script)
+        if (parent->data(COL_NAME, ROLE_TYPE).toString() == "python")
+        {
+            for (auto c : rows) parent->addChild(c);
+            for (auto c : others) parent->addChild(c);
+        }
+        else
+        {
+            for (auto c : others) parent->addChild(c);
+            for (auto c : rows) parent->addChild(c);
+        }
     }
     QList<QTreeWidgetItem*> sectionRows;
     {
@@ -4721,12 +4752,51 @@ void ScenePanel::deleteItem(const QJsonObject& it)
     deleteItems({it});
 }
 
+QJsonObject ScenePanel::selectedModelFacts() const
+{
+    for (const Model& m : selectedModels())
+    {
+        const QJsonObject it = m.item;
+        if (!it.contains("var") || !it.contains("line") || !it.contains("end_line")) continue;
+        return QJsonObject{{"name", it["var"].toString()}, {"type", it["type"].toString()}, {"line", it["line"].toInt()}, {"end_line", it["end_line"].toInt()}};
+    }
+    return QJsonObject();
+}
+
 void ScenePanel::extrudeSelected()
 {
-    // The Extruding > extrude entry of the menus on the selected models.  What it does not take (a body, a curve, a material ...) is refused as the menu greys it: with a word of why
+    // The Extruding > extrude entry of the menus on the selected models.  A 2D shape and a path (a curve) selected together are a path_extrude: the shape swept along the path.
+    // What neither takes (a body, a material ...) is refused as the menu greys it: with a word of why
+    {
+        bool shape2d = false, path = false;
+        for (const Model& m : operandsFor(-1))
+        {
+            const QString type = m.item["type"].toString();
+            shape2d = shape2d || type == "profile";
+            path = path || type == "curve";
+        }
+        if (shape2d && path && entryAllowed("operation", "path_extrude", -1))
+        {
+            double reach = 10.0;
+            const QList<Model> operands = operandsFor(-1);
+            if (!operands.isEmpty())
+            {
+                const QJsonArray box = operands[0].item["bounds"].toArray();
+                if (box.size() == 2)
+                {
+                    const QJsonArray lo = box[0].toArray(), hi = box[1].toArray();
+                    double extent = 0.0;
+                    for (int k = 0; k < 3 && k < lo.size() && k < hi.size(); ++k) extent = std::max(extent, hi[k].toDouble() - lo[k].toDouble());
+                    if (extent > 1e-6) reach = extent;
+                }
+            }
+            createFromMenu("operation", "path_extrude", QVector3D(0, 0, 0), reach, -1, m_generation);
+            return;
+        }
+    }
     if (!entryAllowed("operation", "extrude", -1))
     {
-        notify(T("Extrude pulls a 2D shape into a solid: select a circle, a rectangle, a triangle, a polygon or a profile first."));
+        notify(T("Extrude pulls a 2D shape into a solid: select a 2D shape first (a circle, a rectangle, a triangle, a polygon, a profile ...); with a path selected as well, the shape is swept along it."));
         return;
     }
     // (how far it is pulled: about the size of the shape, a round number -- the menu makes it of the scale it was opened at)
@@ -7510,6 +7580,8 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
         request["symmetry"] = used;
     }
     if (kind == "primitive" && name == "symmetry_planes" && !symdef.isEmpty()) request["symdef"] = symdef;
+    // (a primitive of the user's own is written again with names the script has not got: it is given the names the script has)
+    if (kind == "primitive" && m_source) request["source"] = m_source();
     request["body"] = body;
     request["other"] = other;
     if (!othersInfo.isEmpty()) request["others"] = othersInfo;
@@ -8947,7 +9019,7 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
         }
     }
 
-    // A model belongs to the first statement that uses it -- in its section (see outline.py)
+    // A model is held by the first statement that uses it when it stands directly above it -- in its section (see outline.py)
     QList<int> sectionLines;
     for (const auto v : scene["sections"].toArray())
     {
@@ -8968,21 +9040,71 @@ QJsonObject ScenePanel::predictedScene(int oldCount, const QStringList& after, c
     {
         if (list[i].contains("var")) versions[list[i]["var"].toString()] << i;
     }
-    QHash<int, QString> owner;
-    for (int i = 0; i < list.size(); ++i)
+    // THE NESTING, as outline.py works it out (read the comment there): the rows stand in the order of the script, and a model is the child of its first
+    // user only when it stands directly above it -- every row between them is one of that user's own inputs.  Any other row between (another model, a
+    // line that makes nothing, a block of plain Python) separates them: the model keeps its row where it is made and the user shows a shadow.  A loop,
+    // an if, a with is a user as a statement is (a def or a class is not: it only separates)
+    struct NestRow { int line; bool block; int at; };
+    QList<QJsonObject> blocks;
+    for (const auto v : scene["python"].toArray())
     {
-        QStringList marked;
-        for (const auto sv : list[i]["shadows"].toArray()) marked << sv.toString();
-        for (const auto dv : list[i]["deps"].toArray())
+        if (v.toObject().contains("line")) blocks << v.toObject();
+    }
+    QList<NestRow> nestRows;
+    for (int i = 0; i < list.size(); ++i) nestRows << NestRow{list[i]["line"].toInt(), false, i};
+    for (int b = 0; b < blocks.size(); ++b) nestRows << NestRow{blocks[b]["line"].toInt(), true, b};
+    std::stable_sort(nestRows.begin(), nestRows.end(), [](const NestRow& a, const NestRow& b) { return a.line < b.line; });
+    auto nestKey = [&](const NestRow& r) {
+        return r.block ? "python@" + QString::number(blocks[r.at]["line"].toInt()) : keyOf(list[r.at]);
+    };
+    auto nestWants = [&](const NestRow& r) {            // (what a row reads, except what it holds by reference or takes a property of: neither makes the model a child)
+        QSet<QString> w;
+        if (r.block)
         {
-            if (marked.contains(dv.toString())) continue;          // (a reference made by a Ctrl+drag: not the first use)
-            int earlier = -1;
-            for (int j : versions.value(dv.toString()))
+            for (const auto n : blocks[r.at]["reads"].toArray()) w.insert(n.toString());
+            return w;
+        }
+        QStringList marked;
+        for (const auto sv : list[r.at]["shadows"].toArray()) marked << sv.toString();
+        for (const auto dv : list[r.at]["deps"].toArray())
+        {
+            if (marked.contains(dv.toString()) || dv.toString() == list[r.at]["attribute_of"].toString()) continue;
+            w.insert(dv.toString());
+        }
+        return w;
+    };
+    QHash<int, QString> owner;
+    for (int index = 0; index < nestRows.size(); ++index)
+    {
+        QList<NestRow> group{nestRows[index]};
+        QSet<QString> groupKeys{nestKey(nestRows[index])};
+        for (int j = index - 1; j >= 0; --j)
+        {
+            const NestRow row = nestRows[j];
+            if (row.block || !list[row.at].contains("var")) break;
+            if (owner.contains(row.at))
             {
-                if (list[j]["line"].toInt() < list[i]["line"].toInt()) earlier = j;
+                if (groupKeys.contains(owner[row.at])) continue;        // (an input of an input: it stands in the run, and is held by that input)
+                break;
             }
-            if (earlier >= 0 && earlier != i && !owner.contains(earlier) && sectionOf(list[earlier]["line"].toInt()) == sectionOf(list[i]["line"].toInt()))
-                owner[earlier] = keyOf(list[i]);
+            const QString var = list[row.at]["var"].toString();
+            QList<NestRow> members = group;
+            std::stable_sort(members.begin(), members.end(), [&](const NestRow& a, const NestRow& b) { return a.line < b.line; });
+            int first = -1;
+            for (int m = 0; m < members.size() && first < 0; ++m)
+            {
+                if (!nestWants(members[m]).contains(var)) continue;
+                int earlier = -1;
+                for (int k : versions.value(var))
+                {
+                    if (list[k]["line"].toInt() < members[m].line) earlier = k;
+                }
+                if (earlier == row.at && sectionOf(list[row.at]["line"].toInt()) == sectionOf(members[m].line)) first = m;
+            }
+            if (first < 0) break;
+            owner[row.at] = nestKey(members[first]);
+            group << row;
+            groupKeys.insert(nestKey(row));
         }
     }
     QJsonArray items;
@@ -9082,20 +9204,119 @@ void ScenePanel::movePythonBlock(const QJsonObject& block, QTreeWidgetItem* over
         notify(T("The block cannot go there: it is inside a block of code."));
         return;
     }
-    QStringList moved = lines.mid(first, last - first + 1);
+    // (no move may break the script: Python reads the text and says what the move would break -- a name used above the statement that makes it, a function called above its
+    // `def` --, and which statements have to go along to keep the script as it is.  One question; the move is then made with them, as one edit)
+    QSet<int> gone;
+    for (int k = first; k <= last; ++k) gone.insert(k);
+    QStringList alongLabels;
+    if (m_support)
+    {
+        QJsonObject request;
+        request["source"] = m_source();
+        QJsonArray movedRange;
+        movedRange.append(first);
+        movedRange.append(last);
+        QJsonArray movedRanges;
+        movedRanges.append(movedRange);
+        request["moved"] = movedRanges;
+        request["dest"] = dest;
+        QString error;
+        const QString answer = m_support("move_check", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+        const QJsonObject check = QJsonDocument::fromJson(answer.toUtf8()).object();
+        if (check.contains("ok") && !check["ok"].toBool())
+        {
+            for (const auto l : check["alongLabels"].toArray()) alongLabels << l.toString();
+            for (const auto r : check["along"].toArray())
+            {
+                // (the statement with the comment lines above it and the blank lines under it, as a block goes)
+                const auto range = r.toArray();
+                int a = range[0].toInt(), b = range[1].toInt();
+                while (a > 0)
+                {
+                    const QString t = lines[a - 1].trimmed();
+                    if (t.startsWith('#') && !heading.match(t).hasMatch() && !hidden.match(t).hasMatch() && !gone.contains(a - 1)) --a;
+                    else break;
+                }
+                while (b + 1 < lines.size() && lines[b + 1].trimmed().isEmpty()) ++b;
+                for (int k = a; k <= b && k < lines.size(); ++k) gone.insert(k);
+            }
+            // (the statements it goes with, taken along, make one run that is put down where the place is inside it or right under it -- below the very statement that needs it: that is no
+            // move at all, so there is nothing to ask about: it cannot go there)
+            const QList<int> run = gone.values();
+            const int lo = *std::min_element(run.begin(), run.end()), hi = *std::max_element(run.begin(), run.end());
+            if (hi - lo + 1 == run.size() && dest >= lo && dest <= hi + 1)
+            {
+                notify(T("The block cannot go there: it has to stay in the order of %1.").arg(alongLabels.join(", ")));
+                return;
+            }
+            if (!confirmPythonMove(block["label"].toString(), check, alongLabels)) return;
+        }
+    }
+    QList<int> order = gone.values();
+    std::sort(order.begin(), order.end());
+    QStringList moved;
+    for (int k : order) moved << lines[k];
+    QStringList after;
+    int above = 0;                                      // (how many of the moved lines were above the place it goes to)
+    for (int k = 0; k < lines.size(); ++k)
+    {
+        if (gone.contains(k)) { if (k < dest) ++above; }
+        else after << lines[k];
+    }
+    const int into = dest - above;
     // (apart from the next statement by a blank line when it stands against it)
-    if (dest < lines.size() && !lines[dest].trimmed().isEmpty() && !moved.last().trimmed().isEmpty()) moved << QString();
+    if (into < after.size() && !after[into].trimmed().isEmpty() && !moved.last().trimmed().isEmpty()) moved << QString();
     // (and from what stands above it, when it comes down against that)
-    if (dest > 0 && !lines[dest - 1].trimmed().isEmpty() && !moved.first().trimmed().isEmpty()) moved.prepend(QString());
-    QStringList after = lines;
-    for (int k = first; k <= last; ++k) after.removeAt(first);
-    const int into = dest > last ? dest - (last - first + 1) : dest;
+    if (into > 0 && !after[into - 1].trimmed().isEmpty() && !moved.first().trimmed().isEmpty()) moved.prepend(QString());
     for (int k = 0; k < moved.size(); ++k) after.insert(into + k, moved[k]);
     // One edit over the lines between the two places (the rest is as it was)
-    const int lo = std::min(first, dest), hi = std::max(last + 1, dest);
+    const int lo = std::min(order.first(), dest), hi = std::max(order.last() + 1, dest);
     const int extra = int(after.size() - lines.size());
     const QStringList region = after.mid(lo, hi - lo + extra);
-    emit(editScript(QList<TextEdit>{TextEdit{lo, 0, hi - 1, int(lines[hi - 1].size()), region.join("\n")}}, T("Move %1").arg(block["label"].toString())));
+    emit(editScript(QList<TextEdit>{TextEdit{lo, 0, hi - 1, int(lines[hi - 1].size()), region.join("\n")}},
+                    alongLabels.isEmpty() ? T("Move %1").arg(block["label"].toString()) : T("Move %1 with what it needs").arg(block["label"].toString())));
+}
+
+bool ScenePanel::confirmPythonMove(const QString& what, const QJsonObject& check, const QStringList& along)
+{
+    // (a scripted test does not wait for the question, unless it asks for it: FIELDES_SHOW_DIALOGS)
+    const bool shown = qEnvironmentVariableIsSet("FIELDES_SHOW_DIALOGS");
+    QString list;
+    for (const auto v : check["problems"].toArray())
+    {
+        const QJsonObject p = v.toObject();
+        const QString reader = p["reader"].toString(), name = p["name"].toString(), maker = p["maker"].toString();
+        const QString line = QString::number(p["line"].toInt());
+        list += QString(QChar(0x2022)) + " " + (p["kind"].toString() == "before"
+                    ? T("%1 would run before %2 (line %3), which makes %4").arg(reader, maker, line, name)
+                    : T("%1 uses %2, which %3 (line %4) makes: that would come below it").arg(reader, name, maker, line)) + "\n";
+    }
+    if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION") && !shown)
+    {
+        fprintf(stderr, "[automation] moving %s would break the script, so %s go along:\n%s", what.toUtf8().constData(),
+                along.join(" | ").toUtf8().constData(), list.toUtf8().constData());
+        return true;
+    }
+    QSettings store;
+    if (!shown && store.value("hidden-messages/python-move-along", false).toBool()) return true;     // (always the fix)
+    QMessageBox box(QMessageBox::Question, T("This would break the script"), T("Moving %1 there would break the script.").arg(what), QMessageBox::NoButton, this);
+    box.setObjectName("ConfirmPythonMove");
+    QPushButton* fix = box.addButton(along.size() == 1 ? T("Move %1 along").arg(along[0]) : T("Move the %1 statements it goes with along").arg(along.size()),
+                                     QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(fix);
+    box.setInformativeText(
+        list + "\n" +
+        T("A line of Python can only use a name that a line above it has made, and a function can only be called below its def: a script that does not keep to that stops with an error.") +
+        "\n\n" + T("The easy fix: move the statements it goes with along, in the order they have now:") + "\n" +
+        QString(QChar(0x2022)) + " " + along.join("\n" + QString(QChar(0x2022)) + " ") + "\n\n" +
+        T("Cancel leaves everything as it is. The whole move is one undo step (Ctrl+Z)."));
+    auto again = new QCheckBox(T("Do not show this message again (always move them along)"));
+    box.setCheckBox(again);
+    box.exec();
+    if (box.clickedButton() != fix) return false;
+    if (again->isChecked() && !shown) store.setValue("hidden-messages/python-move-along", true);
+    return true;
 }
 
 void ScenePanel::shiftInsertKey(int lines)
@@ -9453,7 +9674,7 @@ bool ScenePanel::confirmFlips(const QList<Flip>& flips)
     box.setDefaultButton(fix);
     box.setInformativeText(
         list + "\n" +
-        T("The model tree gives a model its row under the first statement that uses it: that is the original, and every later use is a "
+        T("A model that stands directly above the first statement that uses it has its row under that statement: that is the original, and every later use is a "
         "shadow. A use that comes first would take that role, so the row would move there and the old place would only show a "
         "shadow: the original cannot stay where it is.") + "\n\n" +
         (added ? T("The easy fix: let the first use be the original place (a model's definition goes directly above it, when nothing in "
@@ -9791,7 +10012,7 @@ bool ScenePanel::confirmDissolve(const QList<Dissolve>& list)
     box.setDefaultButton(fix);
     box.setInformativeText(
         items + "\n" +
-        T("A model has its real row under the first statement that uses it, and a reference to it is a shadow. A shadow can only be an "
+        T("A model that stands directly above the first statement that uses it has its real row under that statement, and a reference to it is a shadow. A shadow can only be an "
         "argument of a statement: it never stands by itself in the tree. The model keeps its own row at the top level only while the "
         "statements that use it merely hold a reference (their line says '# shadow: name'). Once such a statement is above it, that "
         "use comes first, so the one inside the statement is the real model.") + "\n\n" +

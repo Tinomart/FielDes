@@ -194,6 +194,15 @@ public:
      */
     void setPrism(std::vector<ControlPoint> points, bool smoothDefault, libfive::Tree a, libfive::Tree b, std::vector<std::pair<libfive::Tree::Id, float>> guard);
     bool hasPrism() const { return !m_prism_points.empty(); }
+    /*  The wall of a prism that a press is on, for pulling it (see prismWallAt): the numbers that move the two points of the outline the wall is between -- (a var, the axis it moves
+     *  along) --, the direction in the plane of the profile that the wall faces, and the normal of that plane  */
+    struct PrismWall
+    {
+        std::vector<std::pair<libfive::Tree::Id, int>> vars;
+        QVector3D direction;
+        QVector3D planeNormal;
+    };
+    bool prismWallAt(const QVector3D& press, PrismWall& out) const;
     /*
      *  A SWEEP -- `path_extrude(profile, curve)` of a profile of points along a curve of points -- is drawn the same way: ring by ring, from the numbers the points of the profile and
      *  of the path have now (the thickness of a path point, its rotation, the twist), placed by the numbers of the shape's gizmo.  Nothing is meshed, so a point that is dragged is
@@ -1128,6 +1137,7 @@ protected:
     float color_detail = 0;                                // (see setColorDetail)
     std::vector<Eigen::Vector3f> disp;                     // displacement at the vertices
     std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_evals;   // render thread
+    std::vector<std::unique_ptr<libfive::ArrayEvaluator>> result_pool;    // render thread: the evaluators of the other threads that read the change colour (evalRangeThreaded); an evaluator of a result's formula is built from its tree once, not at every level of the drawing
     std::unique_ptr<libfive::ArrayEvaluator> probe_disp[3];              // GUI thread
     std::unique_ptr<libfive::ArrayEvaluator> probe_channel;              // GUI thread
     int probe_channel_index=-1;

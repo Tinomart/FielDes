@@ -6,7 +6,7 @@
 #
 #   --package     also makes the portable folder: FielDes with everything it needs inside -- Qt and its plugins, the libraries of the kernel, a Python
 #                 runtime with its standard library, the Python package, the examples, the blocks and the docs -- in --out (default: ~/FielDes-linux)
-#                 and as dist/FielDes-linux-x64.tar.gz in the repository.  Only the C library and the graphics driver of the machine are used
+#                 and as dist/FielDes-<version>-linux-x64.tar.gz in the repository.  Only the C library and the graphics driver of the machine are used
 #   --build-dir   where the build goes (default: ~/fieldes-build)
 #   --no-app      the kernel and the Python library only (no Qt)
 #
@@ -89,7 +89,7 @@ fi
 echo "== configuring ($BUILD)"
 cmake -S "$SRC" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_APP=$APP -DCMAKE_PREFIX_PATH="$DEPS"
 echo "== building with $JOBS jobs"
-cmake --build "$BUILD" --parallel "$JOBS"
+cmake --build "$BUILD" --parallel "$JOBS" -- -k 0       # (keep going: one run shows every file that does not compile)
 echo "== built"
 
 if [ "$PACKAGE" = 1 ]; then
@@ -193,11 +193,13 @@ exec "$here/FielDes" "$@"
 EOF
     chmod +x "$OUT/run.sh"
     mkdir -p "$REPO/dist"
-    tar -C "$(dirname "$OUT")" -czf "$REPO/dist/FielDes-linux-x64.tar.gz" "$(basename "$OUT")"
+    VERSION=$(sed -n 's/^project(FielDes VERSION \([0-9.]*\).*/\1/p' "$REPO/CMakeLists.txt")
+    ARCHIVE="$REPO/dist/FielDes-$VERSION-linux-x64.tar.gz"
+    rm -f "$REPO/dist/FielDes-linux-x64.tar.gz"          # (the name this archive had before it carried its version)
+    tar -C "$(dirname "$OUT")" -czf "$ARCHIVE" "$(basename "$OUT")"
 
     # ---- The installers: one file that installs it (and removes it again), and a Debian / Ubuntu package
-    VERSION=$(sed -n 's/^project(FielDes VERSION \([0-9.]*\).*/\1/p' "$REPO/CMakeLists.txt")
-    bash "$REPO/scripts/make-linux-installer.sh" "$REPO/dist/FielDes-linux-x64.tar.gz" "$REPO/dist/FielDes-$VERSION-linux-x64-installer.run" "$VERSION"
+    bash "$REPO/scripts/make-linux-installer.sh" "$ARCHIVE" "$REPO/dist/FielDes-$VERSION-linux-x64-installer.run" "$VERSION"
     if command -v ar >/dev/null 2>&1; then
         bash "$REPO/scripts/make-deb.sh" "$OUT" "$REPO/dist/FielDes_${VERSION}_amd64.deb" "$VERSION"
     fi
@@ -208,6 +210,6 @@ EOF
     NEWEST=$( (objdump -T "$OUT/FielDes" "$OUT"/fieldes.so "$OUT"/lib/*.so* 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1) || true)
     echo "== it needs ${NEWEST:-glibc} or newer; build on an older system (Ubuntu 22.04) to open on older machines"
     echo "== portable folder: $OUT"
-    echo "== archive: $REPO/dist/FielDes-linux-x64.tar.gz"
+    echo "== archive: $ARCHIVE"
     echo "   run it:  $OUT/FielDes   (or $OUT/run.sh)"
 fi

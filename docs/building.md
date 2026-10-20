@@ -108,11 +108,11 @@ The CMake options: `BUILD_APP` (default ON; OFF builds only the kernel and its C
 ## Linux
 
 `scripts/build-linux.sh` builds the kernel, the Python library and the application, and with `--package` makes a **self-contained** portable
-folder (`~/FielDes-linux`, and `dist/FielDes-linux-x64.tar.gz` in the repository). **It opens on a Linux desktop with nothing installed beforehand**: Qt and its
+folder (`~/FielDes-linux`, and `dist/FielDes-<version>-linux-x64.tar.gz` in the repository). **It opens on a Linux desktop with nothing installed beforehand**: Qt and its
 plugins, the kernel's libraries, a Python runtime with its standard library and every other library the program loads are inside the folder
 (`lib/`, `plugins/`, `runtime/python3/`, found through `qt.conf`, the programs' run paths and `PYTHONHOME`, which the program sets itself); only the C library and the
-graphics driver of the machine are used. Unpack it, double-click `FielDes` (or run `./FielDes`; `run.sh` does the same). It was made
-and tested on Fedora under WSL2 (Windows 11, WSLg shows the window).
+graphics driver of the machine are used. Unpack it, double-click `FielDes` (or run `./FielDes`; `run.sh` does the same). The packages of a release are
+made on **Ubuntu 22.04** (glibc 2.35, the system the release workflow uses), so they open on Ubuntu 22.04, Debian 12 and everything newer; they were tested under WSL2 (Windows 11, WSLg shows the window).
 
 **The installers.** `--package` also makes `dist/FielDes-<version>-linux-x64-installer.run` (`scripts/make-linux-installer.sh`: a shell script with the package appended -- it needs only a shell and
 tar) and `dist/FielDes_<version>_amd64.deb` (`scripts/make-deb.sh`, written with `ar` and `tar`, so `dpkg-deb` is not needed). `sh FielDes-<version>-linux-x64-installer.run` installs for the current user into
@@ -120,10 +120,11 @@ tar) and `dist/FielDes_<version>_amd64.deb` (`scripts/make-deb.sh`, written with
 removes it again, and a folder that is not a FielDes installation is never touched. `sudo apt install ./FielDes_<version>_amd64.deb` puts the program in `/opt/fieldes`, the command in `/usr/bin` and the menu entry in
 the system's. The installer was tried under WSL (install, upgrade over it, refuse a foreign folder, uninstall); the `.deb` was built and its parts checked, but not installed with dpkg.
 
-**The one thing a package cannot bring is the C library.** A program asks for a glibc as new as the one it was built with, so a package built on Fedora 44
-(glibc 2.43) opens only on a system that new. The script says at its end which glibc the package asks for; to open on nearly everything **build on an old
+**The one thing a package cannot bring is the C library.** A program asks for a glibc as new as the one it was built with, so a package built on a new system (Fedora 44, glibc 2.43)
+opens only on a system that new. The script says at its end which glibc the package asks for (`it needs GLIBC_2.35 or newer` for the packages of a release); to open on nearly everything **build on an old
 system** -- Ubuntu 22.04 (glibc 2.35) is what `.github/workflows/release.yml` uses: run it on GitHub (Actions → Release builds → Run workflow, or push a tag
-such as `v1.0.0`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. Install once:
+such as `v1.0.0`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. The same script on an Ubuntu 22.04 of your own
+(a WSL distribution does) makes the same packages. Install once:
 
 ```
 # Fedora

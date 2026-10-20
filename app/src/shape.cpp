@@ -481,6 +481,67 @@ bool Shape::prismNow(const std::map<libfive::Tree::Id, float>& v, std::vector<li
     return std::isfinite(a) && std::isfinite(b);
 }
 
+bool Shape::prismWallAt(const QVector3D& press, PrismWall& out) const
+{
+    // The wall of the prism -- the extrusion of a profile of points -- that a press on its side is on: the chord between the two points of the outline that is nearest to the press in the plane
+    // of the profile, with the numbers that move those two points (a gizmo's, one for each axis) and the direction in the plane that the wall faces.  Pulled, the wall is the two points moved
+    // together along that direction: the same as the points of the profile are moved, and the profile and the prism follow.  False where the press is on an end face (its a and b are pulled by
+    // the handles), where the prism is not what is drawn, or where the points have no numbers to move them by
+    std::vector<libfive::pointshapes::Control> cs;
+    double a = 0, b = 0;
+    if (!prismNow(vars, cs, a, b)) return false;
+    std::vector<Eigen::Vector3d> where;
+    for (const auto& c : cs) where.push_back(c.pos);
+    double frame[9];
+    if (!libfive::pointshapes::planeOf(where, frame)) return false;
+    const Eigen::Vector3d o(frame[0], frame[1], frame[2]), u(frame[3], frame[4], frame[5]), w(frame[6], frame[7], frame[8]);
+    const Eigen::Vector3d n = u.cross(w).normalized();
+    const Eigen::Vector3d p(press.x(), press.y(), press.z());
+    const double lo = std::min(a, b), hi = std::max(a, b), height = n.dot(p - o);
+    const double tol = 0.05 * (hi - lo) + 1e-4;
+    if (!(hi - lo > 1e-9) || height < lo + tol || height > hi - tol) return false;             // (an end face, or no thickness)
+    const size_t count = cs.size();
+    if (count != m_prism_points.size()) return false;
+    const Eigen::Vector3d in = p - n * n.dot(p - o);                                           // (the press, in the plane of the profile)
+    double area = 0;
+    for (size_t i = 0; i < count; ++i)
+    {
+        const Eigen::Vector3d q = cs[i].pos - o, r = cs[(i + 1) % count].pos - o;
+        area += q.dot(u) * r.dot(w) - r.dot(u) * q.dot(w);
+    }
+    double best = 1e300;
+    size_t first = 0;
+    Eigen::Vector3d direction(0, 0, 0);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const Eigen::Vector3d s = cs[i].pos, e = cs[(i + 1) % count].pos, d = e - s;
+        const double len2 = d.squaredNorm();
+        if (!(len2 > 1e-18)) continue;
+        const double t = std::max(0.0, std::min(1.0, (in - s).dot(d) / len2));
+        const double dist = ((s + d * t) - in).norm();
+        if (dist < best)
+        {
+            best = dist;
+            first = i;
+            // (outward: to the right of the edge for an outline that runs anticlockwise about the normal, to the left for one that runs clockwise)
+            direction = d.cross(n).normalized() * (area >= 0 ? 1.0 : -1.0);
+        }
+    }
+    if (!(best < 1e299) || !(direction.norm() > 0.5)) return false;
+    out.vars.clear();
+    for (const size_t k : {first, (first + 1) % count})
+    {
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (m_prism_points[k].var[axis]) out.vars.push_back({m_prism_points[k].var[axis], axis});
+        }
+    }
+    if (out.vars.empty()) return false;
+    out.direction = QVector3D(float(direction.x()), float(direction.y()), float(direction.z()));
+    out.planeNormal = QVector3D(float(n.x()), float(n.y()), float(n.z()));
+    return true;
+}
+
 void Shape::setSweep(std::vector<ControlPoint> profile, bool profileDefault, std::vector<ControlPoint> path, bool pathDefault, bool closed, libfive::Tree twist,
                      bool placed, const double about[3], const libfive::Tree move[3], const libfive::Tree rotate[3], const libfive::Tree scale[3])
 {
@@ -1664,6 +1725,95 @@ void refineForColour(libfive::Mesh& m, float detail)
         }
         m.branes.swap(out);
     }
+}
+
+// The CHANGE colour of a manufacturing result is a CLASS -- 1 added, -1 cut, 0 as it was -- read at the vertices of the mesh and run across its triangles.  A flat face is a few big triangles: where the edge of
+// the red lies inside one, the value running from a corner that is red to one far away drew a pale red over a face that was never touched (rays round the hole of a plate, wedges on the top of a boss), and a
+// face that is red all over but whose corners all lie on its rim, where nothing changed, came out grey.  So a triangle whose corners differ by more than a twentieth, and every triangle longer than `coarse`
+// (the inside of a big face is looked at), is cut into four at the middles of its edges, again and again, down to `smallest`: the edge of the colour is as fine as the smallest triangles.  The shape of the surface
+// does not change.  `evaluate(first, last)` fills values[first .. last) for the vertices first .. last - 1
+template <typename Evaluate>
+void cutByColourClass(libfive::Mesh& m, std::vector<float>& values, float coarse, float smallest, Evaluate evaluate)
+{
+    float lo = std::numeric_limits<float>::infinity(), hi = -lo;
+    for (float v : values)
+        if (std::isfinite(v)) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    if (!(hi > lo)) return;                       // (one value all over: nothing to cut)
+    using Tri = Eigen::Matrix<uint32_t, 3, 1>;
+    const float coarse2 = coarse * coarse, smallest2 = smallest * smallest;
+    for (int level = 0; level < 10; ++level)
+    {
+        const size_t before = m.verts.size();
+        std::map<std::pair<uint32_t, uint32_t>, uint32_t> middles;
+        auto middle = [&](uint32_t a, uint32_t b) {
+            const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            const auto it = middles.find(key);
+            if (it != middles.end()) return it->second;
+            const uint32_t id = uint32_t(m.verts.size());
+            m.verts.push_back(0.5f * (m.verts[a] + m.verts[b]));
+            middles.emplace(key, id);
+            return id;
+        };
+        decltype(m.branes) cut;
+        cut.reserve(m.branes.size() + m.branes.size() / 8);
+        bool any = false;
+        for (const auto& t : m.branes)
+        {
+            const float v0 = values[t[0]], v1 = values[t[1]], v2 = values[t[2]];
+            const float longest = std::max({(m.verts[t[0]] - m.verts[t[1]]).squaredNorm(), (m.verts[t[1]] - m.verts[t[2]]).squaredNorm(),
+                                            (m.verts[t[2]] - m.verts[t[0]]).squaredNorm()});
+            const bool same = !(std::isfinite(v0) && std::isfinite(v1) && std::isfinite(v2)) ||
+                              std::max({v0, v1, v2}) - std::min({v0, v1, v2}) <= 0.05f;
+            if ((same && longest <= coarse2) || longest <= smallest2)
+            {
+                cut.push_back(t);
+                continue;
+            }
+            any = true;
+            const uint32_t m01 = middle(t[0], t[1]), m12 = middle(t[1], t[2]), m20 = middle(t[2], t[0]);
+            cut.push_back(Tri(t[0], m01, m20));
+            cut.push_back(Tri(m01, t[1], m12));
+            cut.push_back(Tri(m20, m12, t[2]));
+            cut.push_back(Tri(m01, m12, m20));
+        }
+        if (!any) break;
+        values.resize(m.verts.size());
+        evaluate(before, m.verts.size());
+        m.branes = std::move(cut);
+    }
+}
+
+// A tree's values at the vertices first .. last - 1 of a mesh, on up to `threads` threads: the first evaluator is the caller's, the others are built by the threads themselves and kept in `pool` for the next call.
+// The result of a manufacturing shell is a formula that costs tens of microseconds a point, and a mesh has a hundred thousand vertices: on one thread that was seconds, and the cutting of the triangles of its
+// change colour adds as many again
+template <typename Points>
+void evalRangeThreaded(libfive::ArrayEvaluator& main, const libfive::Tree& tree, std::vector<std::unique_ptr<libfive::ArrayEvaluator>>& pool,
+                       const Points& pts, std::vector<float>& out, size_t first, size_t last, size_t threads)
+{
+    if (last <= first) return;
+    const size_t N = LIBFIVE_EVAL_ARRAY_SIZE;
+    const size_t batches = (last - first + N - 1) / N;
+    const size_t T = std::max<size_t>(1, std::min<size_t>(threads, (batches + 3) / 4));
+    if (pool.size() < T) pool.resize(T);
+    std::atomic<size_t> next{0};
+    auto work = [&](libfive::ArrayEvaluator& e) {
+        for (size_t b; (b = next.fetch_add(1)) < batches; )
+        {
+            const size_t i = first + b * N;
+            const size_t n = std::min(N, last - i);
+            for (size_t j = 0; j < n; j++) e.set(Eigen::Vector3f(pts[i + j].template cast<float>()), j);
+            const auto v = e.values(n);
+            for (size_t j = 0; j < n; j++) out[i + j] = v[j];
+        }
+    };
+    std::vector<std::thread> workers;
+    for (size_t t = 1; t < T; t++)
+        workers.emplace_back([&, t] {
+            if (!pool[t]) pool[t].reset(new libfive::ArrayEvaluator(tree));
+            work(*pool[t]);
+        });
+    work(main);
+    for (auto& w : workers) w.join();
 }
 }   // anonymous namespace
 
@@ -3286,6 +3436,7 @@ void Shape::startRender(RenderSettings s)
             if (key != run_key)
             {
                 result_evals.clear();
+                result_pool.clear();
                 run_key = key;
             }
             run_channels = m_channels;
@@ -4118,13 +4269,35 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         if (result_evals.size() != nt)
         {
             result_evals.clear();
+            result_pool.clear();
             for (const auto& c : run_channels) result_evals.emplace_back(new libfive::ArrayEvaluator(c.tree));
             if (run_has_deform)
                 for (int a = 0; a < 3; a++) result_evals.emplace_back(new libfive::ArrayEvaluator(run_deform[a]));
         }
-        const auto& verts = out.mesh->verts;
+        auto& verts = out.mesh->verts;
         out.channels.resize(run_channels.size());
-        for (size_t c = 0; c < run_channels.size(); c++) evalAll(*result_evals[c], verts, out.channels[c]);
+        // (the CHANGE colour of a manufacturing result is a class, not an amount: its triangles are cut where it changes, see cutByColourClass.  It goes first: the cut adds vertices, and every channel is then
+        // read at all of them)
+        size_t classChannel = run_channels.size();
+        if (color_map == "change")
+            for (size_t c = 0; c < run_channels.size(); c++)
+                if (run_channels[c].name == "change") { classChannel = c; break; }
+        if (classChannel < run_channels.size())
+        {
+            auto& values = out.channels[classChannel];
+            auto& e = *result_evals[classChannel];
+            const size_t threads = std::max<size_t>(1, es.size());
+            auto& pool = result_pool;
+            values.resize(verts.size());
+            evalRangeThreaded(e, run_channels[classChannel].tree, pool, verts, values, 0, verts.size(), threads);
+            double extent = 0;
+            for (int a = 0; a < 3; a++) extent = std::max(extent, r.upper[a] - r.lower[a]);
+            cutByColourClass(*out.mesh, values, float(8 * mesh_settings.min_feature), float(0.00025 * extent), [&](size_t first, size_t last) {
+                evalRangeThreaded(e, run_channels[classChannel].tree, pool, verts, values, first, last, threads);
+            });
+        }
+        for (size_t c = 0; c < run_channels.size(); c++)
+            if (c != classChannel) evalAll(*result_evals[c], verts, out.channels[c]);
         if (run_has_deform)
         {
             out.disp.assign(verts.size(), Eigen::Vector3f::Zero());
@@ -4189,11 +4362,13 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         // (it is the difference of two distances), so a triangle whose nearest corner is further from the patch than
         // that over its longest edge cannot hold any of it, and is left; one with all its corners on the patch is drawn
         // as it is; every other triangle may hold the edge of the patch, and is cut
+        // (the CHANGE colour of a manufacturing result is a result with a channel, and is cut in the result branch above, `cutByColourClass`)
         if (color_map == "bc" && verts.size() > 1)
         {
             double extent = 0;
             for (int a = 0; a < 3; a++) extent = std::max(extent, r.upper[a] - r.lower[a]);
-            const float smallest2 = float((0.002 * extent) * (0.002 * extent));
+            const double smallest = 0.002 * extent;
+            const float smallest2 = float(smallest * smallest);
             using Tri = Eigen::Matrix<uint32_t, 3, 1>;
             auto category = [](float v) { return std::isfinite(v) ? int(std::lround(v)) : -1; };
             for (int level = 0; level < 9; level++)
@@ -4282,7 +4457,7 @@ namespace {
 
 // Bump when what the mesher makes from the same shape changes (a mesh kept by an older one would
 // be read in its place).  Not tied to a build: a rebuild that changes no mesh keeps the meshes.
-const char* const kRenderCacheVersion = "fdrc1";
+const char* const kRenderCacheVersion = "fdrc3";        // (3: the change colour of a manufacturing result is a class read as the difference of two fields, and its triangles are cut where it changes: a mesh kept by fdrc1 or 2 has the pale red over untouched faces)
 
 const quint32 kCacheMagic = 0x43524446u;       // "FDRC"
 const quint32 kCacheFormat = 1;

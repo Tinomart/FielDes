@@ -27,8 +27,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSettings>
 #include <QTimer>
 
+#include <QPointer>
+
 #include "fieldes/args.hpp"
 #include "fieldes/language.hpp"
+#include "fieldes/primitives_dialog.hpp"
 
 namespace libfive { class Mesh; }
 
@@ -74,6 +77,9 @@ protected slots:
     void exportModel(const QString& var, const QString& kind, const QString& ext);
     void exportModelTo(const QString& var, const QString& kind, const QString& path);
     void onAbout(bool=false);
+    /*  Primitives > Manage primitives: the window that says which shapes the Primitives menus offer, and makes the selected model a primitive of the user's own (user_primitives.py).
+     *  Not modal: the scripted tests look at it and drive it (the verb `primitives`)  */
+    PrimitivesDialog* openPrimitivesDialog();
     /*  Help > Report a bug: opens a new issue on GitHub in the browser, filled in with the version, the system and the graphics driver; the script goes only when the user asks for it  */
     void onReportBug(bool=false);
     bool loadTourModel();
@@ -179,6 +185,7 @@ protected:
 
     Editor* editor;
     View* view;
+    QPointer<PrimitivesDialog> m_primitivesDialog;
     Tutorial* tour=nullptr;
     bool closing=false;
 

@@ -542,7 +542,8 @@ def handles(shape, values=None, **removed):
     keep_kind(out, shape)
     _widen_box(out, shape, values)
     # (a prism stays one while its numbers are what it was made with: with a face pulled it is not that prism)
-    if getattr(shape, '_prism_pos', None) is not None:
+    # (a shape that is made again of its numbers -- the extrusion of a profile, made again with the a and b the handles give it -- is a prism of its own already, drawn from those numbers)
+    if getattr(shape, '_prism_pos', None) is not None and rebuild is None:
         try:
             orig = [float(x) for x in handle_values(shape)]
             guard, still = [], len(orig) == len(values)

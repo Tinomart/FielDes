@@ -168,7 +168,7 @@ def owned(shape, cls=Shape):
     return cls(lib.libfive_tree_copy(shape.ptr))
 
 
-def trace(ctrls, default, closed, pieces=PIECES, normal=None, arc_pieces=8):
+def trace(ctrls, default, closed, pieces=PIECES, normal=None, arc_pieces=32):
     ''' (the vertices of the line through the controls, as (x, y, z); for each the number of the control it is after and how far along towards the next it is)
         -- made by the kernel.  `normal`: the normal of the plane of a face the points belong to -- the rotation of a point is then one angle about it, in
         the plane (the z number of its rotation) -- or None for a line in space.  A round corner is its arc, `arc_pieces` to a quarter turn (0: only the two ends of

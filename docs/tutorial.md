@@ -120,8 +120,12 @@ It is just a quick way to write script. Look at what it wrote, and change it.
 
 The tree shows how the model is built: **the models an operation is made of are its children.**
 `thick = offset(plate, 1)` puts `plate` under `thick`; `plate = difference(base, hole)` puts `base` and `hole` under `plate`.
-What nothing else uses is at the top. A model that two statements use has its row under the first and a half-transparent
-**shadow** under the other: that statement's own reference to it.
+What nothing else uses is at the top. A model is a child only when it stands **directly above** the statement that uses it:
+when every row between them is an input of that statement. Anything else between them -- another model, a variable, a loop,
+a function, an import -- means they are separate, so the rows of the tree always follow the order of the script. A model that
+two statements use, or one that is separated from its user, has its own row and a half-transparent **shadow** under the
+statement that uses it: that statement's own reference to it. A loop, an `if` or a `with` is a user like a statement: the models
+directly above it that it reads are inside its row.
 
 <p align="center">
   <img src="images/tree.png" width="420" alt="The model tree: typed icons, nested children, a dim 'uses' row">

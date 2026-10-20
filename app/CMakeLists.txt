@@ -36,6 +36,7 @@ set(SRCS
     src/i18n.cpp
     src/icons.cpp
     src/language.cpp
+    src/primitives_dialog.cpp
     src/live_panel.cpp
     src/scenetree.cpp
     src/script.cpp
@@ -73,6 +74,7 @@ set(QOBJECTS
     include/fieldes/findbar.hpp
     include/fieldes/interpreter.hpp
     include/fieldes/language.hpp
+    include/fieldes/primitives_dialog.hpp
     include/fieldes/live_panel.hpp
     include/fieldes/scenetree.hpp
     include/fieldes/script.hpp

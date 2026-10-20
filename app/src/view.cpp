@@ -806,6 +806,9 @@ void View::redrawPicker()
         if (any)
         {
             glReadPixels(0, 0, camera.size.width(), camera.size.height(), GL_DEPTH_COMPONENT, GL_FLOAT, pick_depth.data());
+            // (what the bodies alone have: a press inside a 2D shape that is not pulled by its edge is a press on the body under it)
+            pick_img_bodies = pick_fbo->toImage();
+            pick_depth_bodies = pick_depth;
             glClear(GL_DEPTH_BUFFER_BIT);
             color = 1;
             for (auto& s : shapes)
@@ -828,6 +831,12 @@ void View::redrawPicker()
     }
 
     pick_img = pick_fbo->toImage();
+    if (!depthRead)
+    {
+        // (no 2D shape is shown: the bodies are all there is, nothing is under anything)
+        pick_img_bodies = QImage();
+        pick_depth_bodies.clear();
+    }
 
     // There's no utility function to get the depth buffer, so we manually
     // read it with glReadPixels here.
@@ -887,7 +896,12 @@ void View::paintGL()
     painter.setRenderHint(QPainter::Antialiasing);
 
     painter.beginNativePainting();
+    // (the backdrop, with a shader of its own; the depth of the frame is cleared after it, so that nothing of the last one -- or of a driver that does not keep it -- is in it.  Measured in a real window
+    // on Windows and under WSLg, with five ways of putting the backdrop on the screen: the shapes' shader drew it black under Mesa's software renderer, a gradient painted by the painter was lost on both,
+    // a quad with a shader of its own drew the same gradient on both)
     background.draw();
+    glClearDepthf(1.0f);
+    glClear(GL_DEPTH_BUFFER_BIT);
 
     auto m = camera.M();
     glEnable(GL_DEPTH_TEST);
@@ -1796,6 +1810,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             if (ringPoint(event->pos(), m_faceStart, m_faceNormal, at))
             {
                 QVector3D d = at - m_faceStart;
+                if (!m_faceWallDir.isNull()) d = m_faceWallDir * QVector3D::dotProduct(d, m_faceWallDir);       // (a wall moves along what it faces, and nowhere else)
                 if (m_wp.open && m_wp.exists && m_faceHasRef && std::fabs(QVector3D::dotProduct(m_faceNormal, m_wp.normal())) > 0.999f)
                 {
                     d = snapToWorkPlane(m_faceRef + d, nullptr, nullptr, false) - m_faceRef;        // (the grid only: its own points are what is moving)
@@ -2277,6 +2292,7 @@ void View::mousePressEvent(QMouseEvent* event)
                             }
                         }
                         m_faceVars.clear();
+                        m_faceWallDir = QVector3D();                // (the face moves every point as the mouse does)
                         const auto& vs = face->getVars();
                         for (const auto& c : face->controlPoints())
                         {
@@ -2297,6 +2313,37 @@ void View::mousePressEvent(QMouseEvent* event)
                             m_facePressPos = event->pos();
                             return;
                         }
+                    }
+                }
+            }
+            // A WALL of a prism -- the side of the extrusion of a profile of points: it is the side of the 2D shape, and it is pulled as the 2D shape's side is, by the two points of the outline it is
+            // between, moved together in the plane of the profile (drawn at once from the numbers, written into the script when it is let go).  Its end faces are pulled by the handles (a, b)
+            if (!(event->modifiers() & Qt::ControlModifier) && picked && int(picked) <= shapes.size() && selectedShapeCount() < 2)
+            {
+                Shape* prism = shapes.at(picked - 1);
+                Shape::PrismWall wall;
+                if (prism->hasPrism() && !prism->isLocked() && !prism->isSymmetryImage() && prism->sourceLine() >= 0 && prism->prismWallAt(toModelPos(event->pos()), wall))
+                {
+                    m_faceVars.clear();
+                    const auto& vs = prism->getVars();
+                    for (const auto& v : wall.vars)
+                    {
+                        const auto it = vs.find(v.first);
+                        if (it != vs.end()) m_faceVars.append({v.first, v.second, it->second});
+                    }
+                    if (!m_faceVars.isEmpty())
+                    {
+                        press_pos = QPoint(-100000, -100000);
+                        press_target = nullptr;
+                        drag_target = nullptr;
+                        m_faceNormal = wall.planeNormal;
+                        m_faceWallDir = wall.direction;
+                        m_faceStart = toModelPos(event->pos());
+                        m_faceHasRef = false;
+                        m_faceShape = prism;
+                        m_faceActive = false;
+                        m_facePressPos = event->pos();
+                        return;
                     }
                 }
             }
@@ -2332,6 +2379,19 @@ void View::mousePressEvent(QMouseEvent* event)
             }
             drag_target = (picked && int(picked) <= shapes.size())
                 ? shapes.at(picked - 1) : nullptr;
+            // (a 2D shape is drawn over the body that was made of it, and a press inside it -- not at its edge, where it is pulled -- pulls nothing of the shape: the body that lies under it is what is
+            // pressed.  The end face of an extrusion at its base is under the shape it was extruded from: pulled there, it changes the length of the extrusion from that end)
+            if (drag_target && drag_target->is2D() && !pick_img_bodies.isNull() && !pullableAt(drag_target, event->pos()))
+            {
+                const auto under = pick_img_bodies.valid(event->pos()) ? (pick_img_bodies.pixel(event->pos()) & 0xFFFFFF) : 0;
+                if (under && int(under) <= shapes.size() && !shapes.at(under - 1)->is2D())
+                {
+                    drag_target = shapes.at(under - 1);
+                    picked = under;
+                    std::swap(pick_img, pick_img_bodies);               // (the press is read at the depth of the body: the next picture of the picker puts them right)
+                    std::swap(pick_depth, pick_depth_bodies);
+                }
+            }
             press_pos = event->pos();
             press_target = drag_target;
             // (Ctrl + click selects: it never pulls the surface it is on)

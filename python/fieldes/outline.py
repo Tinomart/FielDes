@@ -759,10 +759,275 @@ def _python_blocks(tree, src):
     for stmt in tree.body:
         if type(stmt) in _PY_BLOCKS:
             try:
-                out.append(_py_block(stmt, src))
+                block = _py_block(stmt, src)
             except Exception:
-                pass            # (a statement the tree cannot describe stays code in the editor)
+                continue            # (a statement the tree cannot describe stays code in the editor)
+            # (the names the block reads: a loop, an if, a with, a try runs where it stands, so it is a user of the models it reads, as a statement is -- the models directly above it that it reads are its children
+            # in the tree.  A def or a class reads its free names when it is CALLED, not where it is written: it is not a user, and it separates the rows like any block)
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                block['reads'] = sorted({n.id for n in ast.walk(stmt) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)})
+            out.append(block)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Moving statements: what a move of lines of the script must not break.  Every statement of the top level says which names it makes (`defs`) and which it
+# needs from the statements above it (`needs`: what it reads when it runs, and what the functions and classes it names read when they are called -- a `def`
+# reads nothing until something calls it).  A move is judged by the order it makes: every statement has to read each name from the same statement it read it
+# from before (the last one above it that made the name).  That catches a name read before it is made -- an error, a function called above its `def` --
+# and a name that would be read from another line (the same model, made by another statement).  The statements that have to go along to keep it so are found.
+
+_BUILTIN_NAMES = frozenset(dir(__import__('builtins')))
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+
+
+def _target_names(node, out):
+    ''' The names a target (an assignment, a loop variable, `with ... as`) makes '''
+    if node is None:
+        return
+    for n in ast.walk(node):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            out.add(n.id)
+
+
+def _alias_names(node):
+    return [(a.asname or a.name).split('.')[0] for a in node.names if a.name != '*']
+
+
+def _defs_of(stmt):
+    ''' The names a statement of the top level makes: assigned, defined, imported (what is inside a function or a class is a scope of its own) '''
+    out = set()
+
+    def visit(n):
+        if isinstance(n, _SCOPES):
+            out.add(n.name)
+            return
+        if isinstance(n, (ast.Lambda,) + _COMPREHENSIONS):
+            return
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            out.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            out.update(_alias_names(n))
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            out.add(n.name)
+        for child in ast.iter_child_nodes(n):
+            visit(child)
+
+    visit(stmt)
+    return out
+
+
+def _body_loads(func):
+    ''' The names a function reads when it is called: every name in it that is not its own (a parameter, something it assigns) '''
+    a = func.args
+    local = {p.arg for p in list(getattr(a, 'posonlyargs', [])) + list(a.args) + list(a.kwonlyargs)}
+    if a.vararg:
+        local.add(a.vararg.arg)
+    if a.kwarg:
+        local.add(a.kwarg.arg)
+    declared = set()
+    for n in ast.walk(func):
+        if n is func:
+            continue
+        if isinstance(n, (ast.Global, ast.Nonlocal)):
+            declared.update(n.names)
+        elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            local.add(n.id)
+        elif isinstance(n, _SCOPES):
+            local.add(n.name)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            local.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            local.update(_alias_names(n))
+    local -= declared
+    return {n.id for n in ast.walk(func) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Load, ast.Del)) and n.id not in local}
+
+
+def _immediate(node, bound, out):
+    ''' The names that a statement reads while it runs, in the order Python runs it, that no earlier part of it made (`bound` grows as names are made).  The body
+        of a function is not run by its `def`: only its decorators and defaults are; the body of a class is '''
+    if node is None:
+        return
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = node.args
+        for e in list(node.decorator_list) + list(a.defaults) + [d for d in a.kw_defaults if d is not None]:
+            _immediate(e, bound, out)
+        bound.add(node.name)
+    elif isinstance(node, ast.ClassDef):
+        for e in list(node.decorator_list) + list(node.bases) + [k.value for k in node.keywords]:
+            _immediate(e, bound, out)
+        inner = set(bound)
+        for s in node.body:
+            _immediate(s, inner, out)
+        bound.add(node.name)
+    elif isinstance(node, ast.Lambda):
+        a = node.args
+        for d in list(a.defaults) + [d for d in a.kw_defaults if d is not None]:
+            _immediate(d, bound, out)
+        inner = set(bound) | {p.arg for p in list(getattr(a, 'posonlyargs', [])) + list(a.args) + list(a.kwonlyargs)}
+        _immediate(node.body, inner, out)
+    elif isinstance(node, _COMPREHENSIONS):
+        inner = set(bound)
+        for g in node.generators:
+            _immediate(g.iter, inner, out)
+            _target_names(g.target, inner)
+            for c in g.ifs:
+                _immediate(c, inner, out)
+        for e in ([node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]):
+            _immediate(e, inner, out)
+    elif isinstance(node, ast.Name):
+        if isinstance(node.ctx, ast.Store):
+            bound.add(node.id)
+        elif node.id not in bound:
+            out.add(node.id)
+    elif isinstance(node, ast.Assign):
+        _immediate(node.value, bound, out)
+        for t in node.targets:
+            _immediate(t, bound, out)
+    elif isinstance(node, ast.AnnAssign):
+        _immediate(node.value, bound, out)
+        _immediate(node.target, bound, out)
+    elif isinstance(node, ast.AugAssign):
+        _immediate(node.value, bound, out)
+        if isinstance(node.target, ast.Name):
+            if node.target.id not in bound:
+                out.add(node.target.id)
+            bound.add(node.target.id)
+        else:
+            _immediate(node.target, bound, out)
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        _immediate(node.iter, bound, out)
+        _immediate(node.target, bound, out)
+        for s in list(node.body) + list(node.orelse):
+            _immediate(s, bound, out)
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        bound.update(_alias_names(node))
+    elif isinstance(node, ast.ExceptHandler):
+        _immediate(node.type, bound, out)
+        if node.name:
+            bound.add(node.name)
+        for s in node.body:
+            _immediate(s, bound, out)
+    elif isinstance(node, ast.NamedExpr):
+        _immediate(node.value, bound, out)
+        _immediate(node.target, bound, out)
+    else:
+        for child in ast.iter_child_nodes(node):
+            _immediate(child, bound, out)
+
+
+def _statement_facts(tree):
+    ''' For each statement of the top level: the names it makes (`defs`) and the names it needs from above (`needs`).  A star import (`from mfgkit import *`) makes a name
+        of its own, `*<its number>`, which what reads a name that nothing in the script makes -- and the library does not -- needs '''
+    stmts = list(tree.body)
+    defs = [_defs_of(s) for s in stmts]
+    stars = [i for i, s in enumerate(stmts) if isinstance(s, ast.ImportFrom) and any(a.name == '*' for a in s.names) and not (s.module or '').split('.')[0] == 'fieldes']
+    for i in stars:
+        defs[i].add('*%d' % i)
+    everything = set().union(*defs) if defs else set()
+    lib = _library_names()
+    deferred = {}
+    for s in stmts:
+        for n in ast.walk(s):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                deferred.setdefault(n.name, set()).update(_body_loads(n))
+            elif isinstance(n, ast.ClassDef):
+                loads = set()
+                for m in ast.walk(n):
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        loads |= _body_loads(m)
+                deferred.setdefault(n.name, set()).update(loads)
+    needs = []
+    for i, s in enumerate(stmts):
+        now = set()
+        _immediate(s, set(), now)
+        seen, queue = set(), list(now)
+        while queue:
+            name = queue.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            queue.extend(m for m in deferred.get(name, ()) if m not in seen)
+        mine = {n for n in seen if n in everything}
+        if isinstance(s, _SCOPES):
+            mine.discard(s.name)                    # (a function that calls itself does not need its own line above it)
+        unknown = [n for n in seen if n not in everything and n not in lib and n not in _BUILTIN_NAMES]
+        if unknown:
+            mine.update('*%d' % k for k in stars)
+        needs.append(mine)
+    return defs, needs
+
+
+def move_check(arg):
+    ''' Would a move of lines break the script?  JSON {source, moved: [[first, last], ...], dest} -- the lines (from 0) that go, and the line they go above -- ->
+        JSON {unknown} when the text is not a script; {ok: true}; or {ok: false, problems: [text, ...], along: [[first, last], ...]}: what the move would break, and the
+        other statements (their lines) that have to move with it so that nothing breaks '''
+    req = json.loads(arg)
+    source = req['source']
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return json.dumps({'unknown': True})
+    stmts = list(tree.body)
+    n = len(stmts)
+    lines = source.split('\n')
+    starts = [min([s.lineno] + [d.lineno for d in getattr(s, 'decorator_list', [])]) - 1 for s in stmts]
+    ends = [s.end_lineno - 1 for s in stmts]
+    defs, needs = _statement_facts(tree)
+    moved = {i for i in range(n) if any(starts[i] >= a and ends[i] <= b for a, b in req['moved'])}
+    dest = int(req['dest'])
+    if not moved:
+        return json.dumps({'ok': True})
+    place = next((i for i in range(n) if starts[i] >= dest), n)
+
+    def order_of(goes):
+        return [i for i in range(n) if i < place and i not in goes] + sorted(goes) + [i for i in range(n) if i >= place and i not in goes]
+
+    def reading(order):
+        last, out = {}, {}
+        for s in order:
+            for name in needs[s]:
+                out[(s, name)] = last.get(name)
+            for name in defs[s]:
+                last[name] = s
+        return out
+
+    before = reading(list(range(n)))
+
+    def broken(goes):
+        now = reading(order_of(goes))
+        return [(s, name, d) for (s, name), d in before.items() if d is not None and now[(s, name)] != d]
+
+    first = broken(moved)
+    if not first:
+        return json.dumps({'ok': True})
+    goes = set(moved)
+    for _ in range(n + 1):
+        bad = broken(goes)
+        if not bad:
+            break
+        grew = False
+        for s, name, d in bad:
+            for x in (s, d):
+                if x not in goes:
+                    goes.add(x)
+                    grew = True
+                    break
+        if not grew:
+            break
+    short = lambda i: A._short(lines[starts[i]].strip(), 50)
+    problems, seen = [], set()
+    for s, name, d in first:
+        if (s, name) in seen:
+            continue
+        seen.add((s, name))
+        if s in moved:
+            problems.append({'reader': short(s), 'name': name, 'maker': short(d), 'line': starts[d] + 1, 'kind': 'before'})
+        else:
+            problems.append({'reader': short(s), 'name': name, 'maker': short(d), 'line': starts[d] + 1, 'kind': 'after'})
+    return json.dumps({'ok': False, 'problems': problems[:8], 'along': [[starts[i], ends[i]] for i in sorted(goes - moved)],
+                       'alongLabels': [short(i) for i in sorted(goes - moved)]})
 
 
 def outline_json(arg):
@@ -1179,13 +1444,50 @@ def outline_json(arg):
                 break
         return k
 
-    for it in items:
-        for d in it.get('deps', []):
-            if d in it.get('shadows', ()) or d == it.get('attribute_of'):
-                continue            # (a reference of the statement, or a property taken out of the model: neither makes it a child)
-            earlier = [x for x in versions.get(d, []) if x['line'] < it['line']]
-            if earlier and 'owner' not in earlier[-1] and earlier[-1] is not it and section_of(earlier[-1]['line']) == section_of(it['line']):
-                earlier[-1]['owner'] = A._key_of(it)
+    py_blocks = _python_blocks(tree, src)
+
+    # THE NESTING.  The rows of the top level stand in the order of the script, and a model is the CHILD of its first user only when it stands directly above it: every row between the model and the user is one of
+    # the user's own inputs (with the models those hold).  Any other row between them -- another model, a variable, a display line, an import, a block of plain Python -- separates them: the model keeps its own row
+    # where it is made, and the user shows a shadow of it.  (It used to go down under the first user however far away, past whatever lay between: the tree listed a loop above the topology optimization its
+    # numbers came from.)  A block of plain Python (a loop, a def, an if) is a user as a statement is: the models directly above it that it reads are inside its row.  Users are taken in the order of the script,
+    # so the first user of a model is the one that holds it
+    rows = sorted([(it['line'], it, False) for it in items] + [(b['line'], b, True) for b in py_blocks], key=lambda r: r[0])
+
+    def row_key(row, is_block):
+        return 'python@%d' % row['line'] if is_block else A._key_of(row)
+
+    def wants(row, is_block):
+        ''' the names a row reads, except the ones it holds by reference (`# shadow:`) or takes a property of: neither makes the model a child '''
+        if is_block:
+            return set(row.get('reads', ()))
+        return set(d for d in row.get('deps', []) if d not in row.get('shadows', ()) and d != row.get('attribute_of'))
+
+    for index, (uline, user, user_block) in enumerate(rows):
+        group = [(user, user_block)]
+        group_keys = {row_key(user, user_block)}
+        j = index - 1
+        while j >= 0:
+            _, row, is_block = rows[j]
+            if is_block or 'var' not in row:
+                break
+            if 'owner' in row:
+                if row['owner'] in group_keys:           # (an input of an input: it stands in the run, and is held by that input)
+                    j -= 1
+                    continue
+                break
+            first = None
+            for member, member_block in sorted(group, key=lambda m: m[0]['line']):
+                if row['var'] in wants(member, member_block):
+                    earlier = [x for x in versions.get(row['var'], []) if x['line'] < member['line']]
+                    if earlier and earlier[-1] is row and section_of(row['line']) == section_of(member['line']):
+                        first = (member, member_block)
+                        break
+            if first is None:
+                break
+            row['owner'] = row_key(*first)
+            group.append((row, False))
+            group_keys.add(row_key(row, False))
+            j -= 1
     last_of = {}
     for it in items:
         if 'var' in it:
@@ -1210,7 +1512,7 @@ def outline_json(arg):
             settings.setdefault(k, {})['value'] = v
 
     return json.dumps({'items': items, 'settings': settings, 'kinds': describe_kinds(), 'domains': describe_domains(), 'truncated': truncated,
-                       'sections': sections, 'python': _python_blocks(tree, src),
+                       'sections': sections, 'python': py_blocks,
                        'errored': bool(error), 'run_done': bool(req.get('run_done')),
                        'done_line': tree.body[-1].end_lineno if tree.body else 0, 'source_md5': md5,
                        'has_roi': 'roi' in ns, 'has_roi_resolution': 'roi_resolution' in ns}, default=str)

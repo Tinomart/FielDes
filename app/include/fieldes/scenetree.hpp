@@ -93,6 +93,10 @@ public:
      *  conditions without a part for a simulation ... -- is greyed out in the menu, without a word: it is not offered for a selection that
      *  cannot make it  */
     bool entryAllowed(const QString& kind, const QString& name, int line0) const;
+
+    /*  The model that is selected, for the Primitives menu of the menu bar ("Add selection"): {name, type, line, end_line} of the first one, whose statement is on those lines
+     *  (from 1); empty when nothing that is a model of the script is selected  */
+    QJsonObject selectedModelFacts() const;
     /*  Whether what a menu on this line (-1: empty space) would work on is points and nothing else: the first menu of a point offers the
      *  field of the distance from it  */
     bool pointsOnly(int line0) const;
@@ -840,6 +844,9 @@ protected:
     /*  A block of plain Python (a row of kind `python`) is dragged on its own: it is moved among the rows of the top level, its lines moved in the script (one undoable edit).
      *  Dropped above or below `over` (`at`: DropAbove / DropBelow); what is inside a block, or inside a model, is locked: nothing is dropped there  */
     void movePythonBlock(const QJsonObject& block, QTreeWidgetItem* over, int at);
+    /*  The question when a move of Python would break the script (a name used above the statement that makes it, a function called above its def): `check` is what Python
+     *  answered (move_check: the problems and the statements that have to go along), `along` their labels.  True: move them along; false: leave the script as it is  */
+    bool confirmPythonMove(const QString& what, const QJsonObject& check, const QStringList& along);
     QJsonObject m_dragPython;                   // (the block being dragged; empty: the drag is of models)
     bool m_insertSet = false;
     QString m_insertKey;                        // (the key of the row the point is above; empty: the end)

@@ -1523,6 +1523,7 @@ void Interpreter::recordShape(
                     {
                         c.pos[a] = treeOfShape(PyTuple_GetItem(at, a));
                         if (!c.pos[a].is_valid()) { good = false; break; }
+                        c.var[a] = Shape::soleVarOf(c.pos[a]);          // (the number a wall pull moves this point by: Shape::prismWallAt)
                     }
                     PyObject* rot = (pr && PyList_Check(pr) && i < PyList_Size(pr)) ? PyList_GetItem(pr, i) : nullptr;
                     if (good && rot && PyTuple_Check(rot) && PyTuple_Size(rot) == 3)

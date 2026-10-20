@@ -23,8 +23,9 @@ from collections import OrderedDict
 
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
+from fieldes.stdlib.excluded import locks_of
 from fieldes.stdlib.fea import FieldResult, colored, _with_conditions
-from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _at, _dot, _extent_along, _frame, _join, _remembered, _sphere, _values, _where, _xyz)
+from fieldes.stdlib.manufacturing_field import (_BIG, _Context, _Normals, _at, _dot, _extent_along, _frame, _join, _remembered, _sphere, _values, _where, _xyz)
 from fieldes.stdlib.manufacturing_rules import GRACE, SUPPORT_EDGE_STEPS, ManufacturingError, _RULE_TEXT, _STRICTEST, _constraints_given, _log, _progress, _with_bar
 
 def _scoped(margin, constraint):
@@ -43,17 +44,30 @@ def _reach(ctx, radius, sign):
         so a corner is marked from about 17 % short of the limit (under 2.5 mm for a limit of 3) -- and a normal that is a degree or two off, as that of a field made from a mesh is, does not mark a corner that
         is right.  (The radius of the largest ball was tried: it told a corner 9 % short, and marked every tight arc whose normal was off by more than three degrees, 1 % of the surface of a result.) '''
     n = ctx.normals
-    f = ctx.field
+    f = ctx.walk                                   # (the values at the probes are sizes in mm: for a part held as `exact_distance` the exact distance, the one reader besides the corner fill that needs it)
     probes = []
     for k in range(1, 7):                          # (along the normal: the middle of a wall, a gap, a corner)
         s = radius * k / 6.0
         probes.append(_at(f, sign * n.x * s, sign * n.y * s, sign * n.z * s) * sign)
     for u in _sphere(10):                          # (and the ball's own sphere: for a normal that is not true)
         probes.append(_at(f, radius * u[0], radius * u[1], radius * u[2]) * sign)
+    # (and the centres a normal that is a few degrees off would have given: the rule is that a ball of the radius touches the surface at the point, not that it sits on THIS normal -- on the surface of
+    # an optimizer the normal of the field is off by a few degrees, which moves the centre by 0.26 mm at 5 degrees on a ball of 3 mm: a corner that is right was marked.  The best of the normal's centre and eight
+    # centres tilted 12 degrees round it is within 0.02 mm of the best there is, and a corner that is too tight has no centre that fits at any of them)
+    t1, t2 = _tangents(n)
+    ct, st = math.cos(math.radians(12.0)), math.sin(math.radians(12.0))
+    for k in range(8):
+        cph, sph = math.cos(k * math.pi / 4.0), math.sin(k * math.pi / 4.0)
+        probes.append(_at(f, sign * radius * (ct * n.x + st * (cph * t1[0] + sph * t2[0])), sign * radius * (ct * n.y + st * (cph * t1[1] + sph * t2[1])),
+                          sign * radius * (ct * n.z + st * (cph * t1[2] + sph * t2[2]))) * sign)
     best = probes[0]
     for p in probes[1:]:
         best = best.max(p)
-    return best.max(0) / n.scale
+    # (the clearance is read as the field says it: the field of the context has been brought to a slope of 1 as a whole (see _Context), and a division by the slope at one place, the centre along the normal,
+    # was a division by something that is not where the best centre is: on the L whose corner is rounded to a radius of 6 the slope there was 1.1 to 1.3 -- a lattice's cells round the focal point of an arc --,
+    # the best centres, found by 6000 directions, read 5.8 to 6.0 against 5.7 asked and measured by 1500 rays from the centre to the surface at 5.90 to 6.00, and 33 of the 38 samples that were marked had
+    # a ball that fits)
+    return best.max(0)
 
 
 def _chord(ctx, limit, inward):
@@ -133,7 +147,9 @@ def _rule_margins(ctx, constraints, direction):
                     (x * d[0] + y * d[1] + z * d[2]) for x in (ctx.plate_box[0][0], ctx.plate_box[1][0]) for y in (ctx.plate_box[0][1], ctx.plate_box[1][1])
                     for z in (ctx.plate_box[0][2], ctx.plate_box[1][2])))
                 # (the first layer, on the plate, rests on it; and a normal read within a few steps of an edge or a crease is a mix of the two faces, not the lean of either)
-                margin = phi - value - 1.0 - _BIG * (0.6 - height).max(0) - _BIG * (1.0 - _flatness(ctx, 3.0 * ctx.step))
+                # (broken when it leans more than the limit and the grace every rule has, 5 % of it: 2.25 degrees at 45 -- what the part's field can say of a lean is not exact, and a result made on a lattice is
+                # a lattice node off where a face meets a round one)
+                margin = phi - value * (1.0 + GRACE) - _BIG * (0.6 - height).max(0) - _BIG * (1.0 - _flatness(ctx, 3.0 * ctx.step))
             elif rule == 'min_wall':
                 margin = (value - _chord(ctx, value, True)) - GRACE * value - _BIG * (1.0 - _flatness(ctx, _edge_reach(ctx, value)))
             elif rule == 'min_gap':
@@ -300,9 +316,27 @@ def _surface_samples(ctx, count=5000, seed=7, rounds=10, batch_size=150000, seed
                 k = v / gg
                 moved.append((p[0] - k * g[0], p[1] - k * g[1], p[2] - k * g[2]))
             near = moved
+        # (a point that three steps did not bring onto the surface -- at a crease, or in the ramp where the band of a pass of the tool ends and the field rises seven times as fast as a distance -- is worked on for three more,
+        # and kept only if it is within a few hundredths of a millimetre of the surface after them.  Kept at the old distance of 0.002 of the part's size and two steps of the field -- 0.28 mm on a part of 70 --, the gradient
+        # there is not the face's: a face with the draft asked, 1.08 degrees, was read as 0.86 at such a point and marked, 0.45 % to 0.78 % of the surface of a second pass of the tool)
+        tol = 0.0005 * size + 0.5 * h
+        grads = list(_gradients(f, near, h))
+        far = [i for i, (v, _g) in enumerate(grads) if abs(v) > tol]
+        for _it in range(3):
+            if not far:
+                break
+            for i in far:
+                v, g = grads[i]
+                gg = g[0] * g[0] + g[1] * g[1] + g[2] * g[2]
+                if gg >= 1e-9:
+                    k = v / gg
+                    near[i] = (near[i][0] - k * g[0], near[i][1] - k * g[1], near[i][2] - k * g[2])
+            for i, vg in zip(far, _gradients(f, [near[i] for i in far], h)):
+                grads[i] = vg
+            far = [i for i in far if abs(grads[i][0]) > tol]
         candidates = []
-        for p, (v, g) in zip(near, _gradients(f, near, h)):
-            if abs(v) > 0.002 * size + 2 * h:
+        for p, (v, g) in zip(near, grads):
+            if abs(v) > tol:
                 continue
             m = math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
             if m < 1e-6:
@@ -512,15 +546,98 @@ def _num_reach(f, pts, normals, mags, radius, sign):
         flat.extend((p[0] + sign * s * n[0], p[1] + sign * s * n[1], p[2] + sign * s * n[2]) for p, n in zip(pts, normals))
     for u in _sphere(10):
         flat.extend((p[0] + radius * u[0], p[1] + radius * u[1], p[2] + radius * u[2]) for p in pts)
+    # (the centres a normal that is a few degrees off would have given: eight, tilted 12 degrees round the normal -- see `_reach`)
+    frames = []
+    for n in normals:
+        cx, cy, cz = n[1] * 0.81 - n[2] * 0.50, n[2] * 0.30 - n[0] * 0.81, n[0] * 0.50 - n[1] * 0.30
+        cm = max(math.sqrt(cx * cx + cy * cy + cz * cz), 1e-3)
+        t1 = (cx / cm, cy / cm, cz / cm)
+        frames.append((t1, (n[1] * t1[2] - n[2] * t1[1], n[2] * t1[0] - n[0] * t1[2], n[0] * t1[1] - n[1] * t1[0])))
+    ct, st = math.cos(math.radians(12.0)), math.sin(math.radians(12.0))
+    for k in range(8):
+        cph, sph = math.cos(k * math.pi / 4.0), math.sin(k * math.pi / 4.0)
+        flat.extend((p[0] + sign * radius * (ct * n[0] + st * (cph * t[0][0] + sph * t[1][0])), p[1] + sign * radius * (ct * n[1] + st * (cph * t[0][1] + sph * t[1][1])),
+                     p[2] + sign * radius * (ct * n[2] + st * (cph * t[0][2] + sph * t[1][2]))) for p, n, t in zip(pts, normals, frames))
     vals = _values(f, flat)
     m = len(pts)
     best = [0.0] * m
-    for k in range(16):
+    best_at = [None] * m          # (where the best centre found so far is)
+    for k in range(6 + 10 + 8):
         for i in range(m):
             v = sign * vals[k * m + i]
             if v > best[i]:
                 best[i] = v
-    return [b / min(4.0, max(0.25, g)) for b, g in zip(best, mags)]
+                best_at[i] = flat[k * m + i]
+    scale = [min(4.0, max(0.25, g)) for g in mags]
+    # (the second stage, for the samples that read short of the limit only: on the surface of an optimizer a point is often on a crease between two facets, where the normal of the field is the mean of the two and
+    # the centre of a ball that touches the point is 20 to 70 degrees from it -- the best centre of 300 was 22 to 68 degrees off at 12 of 16 places that were marked and a ball fitted.  Thirty-two more centres on
+    # cones of 24, 36, 50 and 70 degrees round the normal are read there: the dearer reading is made where it can change the answer)
+    short = [i for i in range(m) if best[i] / scale[i] < (1.0 - GRACE) * radius]
+    if short:
+        extra = []
+        angles = [math.radians(a) for a in (24.0, 36.0, 50.0, 70.0)]
+        for i in short:
+            p, n, t = pts[i], normals[i], frames[i]
+            for ang in angles:
+                ca, sa = math.cos(ang), math.sin(ang)
+                for k in range(8):
+                    cph, sph = math.cos(k * math.pi / 4.0 + 0.4), math.sin(k * math.pi / 4.0 + 0.4)
+                    extra.append((p[0] + sign * radius * (ca * n[0] + sa * (cph * t[0][0] + sph * t[1][0])), p[1] + sign * radius * (ca * n[1] + sa * (cph * t[0][1] + sph * t[1][1])),
+                                  p[2] + sign * radius * (ca * n[2] + sa * (cph * t[0][2] + sph * t[1][2]))))
+        more = _values(f, extra)
+        for j, i in enumerate(short):
+            for t, v in enumerate(more[32 * j:32 * (j + 1)]):
+                v *= sign
+                if v > best[i]:
+                    best[i] = v
+                    best_at[i] = extra[32 * j + t]
+        # (the third stage, for the samples that still read short: the probes are a fixed set of directions, and the centre of a ball that touches the point can be anywhere on the sphere of the ball's radius
+        # round it -- at a free end of a corner, where a ball swings in from beyond the end, or on the rim of a hole, 30 to 60 degrees from the normal and located to a few tenths of a millimetre.  Whether a ball of
+        # the radius touches the point is the question of where the field is largest on that sphere, and it is answered by looking round the best centre found, eight ways at a smaller angle each round (what the
+        # fill of the corner does in the kernel): a corner that is too tight has no centre on the sphere that fits, however it is looked for, and is still marked)
+        still = [i for i in short if best[i] / scale[i] < (1.0 - GRACE) * radius]
+        if still:
+            # (the pattern search below finds the top of a hill from the place it starts on, and the hill that the ball's centre has to be on can be anywhere on the sphere -- at the free end of a corner, on the
+            # rim of a hole --, narrow, with no probe of the stages before it on it: 33 of the 38 samples that were marked on an L whose corner is rounded to a radius of 6 had a ball that fits, 5.8 to 6.0 of the
+            # 5.7 asked, and the search had started on the wrong side of the sphere.  So the sphere is looked at as a whole first, in 120 directions, and the search is made from the three best of them)
+            scan = _sphere(120)
+            cand = []
+            for i in still:
+                p = pts[i]
+                cand.extend((p[0] + radius * u[0], p[1] + radius * u[1], p[2] + radius * u[2]) for u in scan)
+            seen = _values(f, cand)
+            start = {}                                  # ((sample, which start)) -> its direction; the centre is p + sign * radius * direction
+            level = {}                                  # ... -> the clearance of the best centre it found
+            for j, i in enumerate(still):
+                row = sorted(((sign * seen[len(scan) * j + k], k) for k in range(len(scan))), reverse=True)[:3]
+                for s, (v, k) in enumerate(row):
+                    u = scan[k]
+                    start[(i, s)] = (sign * u[0], sign * u[1], sign * u[2])
+                    level[(i, s)] = v
+                    if v > best[i]:
+                        best[i] = v
+            theta = 0.25
+            for _round in range(6):
+                cand, owner = [], []
+                for (i, s), d in start.items():
+                    e1, e2 = _frame(d)
+                    p = pts[i]
+                    for a_ in range(8):
+                        ca, sa = math.cos(a_ * math.pi / 4.0), math.sin(a_ * math.pi / 4.0)
+                        nd = (d[0] + theta * (ca * e1[0] + sa * e2[0]), d[1] + theta * (ca * e1[1] + sa * e2[1]), d[2] + theta * (ca * e1[2] + sa * e2[2]))
+                        nn = math.sqrt(nd[0] * nd[0] + nd[1] * nd[1] + nd[2] * nd[2])
+                        nd = (nd[0] / nn, nd[1] / nn, nd[2] / nn)
+                        cand.append((p[0] + sign * radius * nd[0], p[1] + sign * radius * nd[1], p[2] + sign * radius * nd[2]))
+                        owner.append((i, s, nd))
+                for (i, s, nd), v in zip(owner, _values(f, cand)):
+                    v *= sign
+                    if v > level[(i, s)]:
+                        level[(i, s)] = v
+                        start[(i, s)] = nd
+                    if v > best[i]:
+                        best[i] = v
+                theta *= 0.5
+    return [b / s for b, s in zip(best, scale)]
 
 
 def _num_undercut(f, pts, a, total, tol):
@@ -618,7 +735,7 @@ def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None, 
                 for (p, nn), fl in zip(zip(pts, normals), flat):
                     phi = math.degrees(math.asin(max(0.0, min(1.0, -(nn[0] * d[0] + nn[1] * d[1] + nn[2] * d[2])))))
                     height = p[0] * d[0] + p[1] * d[1] + p[2] * d[2] - plate
-                    m.append(phi - value - 1.0 - (_BIG * (0.6 - height) if height < 0.6 else 0.0) - (0.0 if fl else _BIG))
+                    m.append(phi - value * (1.0 + GRACE) - (_BIG * (0.6 - height) if height < 0.6 else 0.0) - (0.0 if fl else _BIG))
                 if supports is not None and c.support:
                     # (a place that leans out and has a support under it is held: a point just inside the top of the support, straight under it.  The support is `support_gap` from the part, measured along the
                     # normal, so straight under a face that leans its top is gap / cos further down -- 0.30 mm at the crown of a roof, 0.39 at 39 degrees from it, 0.42 at 45 -- and a point `gap` under it read
@@ -643,7 +760,9 @@ def _numeric_margins_chunk(ctx, constraints, direction, samples, supports=None, 
                 flat = _num_flat(f, pts, normals, _edge_reach(ctx, value), ctx.step)
                 m = [(value - ch - GRACE * value) if fl else -_BIG for ch, fl in zip(_num_thickness(f, pts, normals, offsets, value, False, ctx.step), flat)]
             elif rule == 'min_radius':
-                m = [value - r - GRACE * value for r in _num_reach(f, pts, normals, mags, value, +1)]
+                # (a size in mm: the exact distance of a part held as `exact_distance`, which has a slope of 1, or the field of the context, which has been brought to a slope of 1 as a whole.  The clearance is read as
+                # the field says it, at the centres of the ball: not divided by a slope read at one place, see `_reach`)
+                m = [value - r - GRACE * value for r in _num_reach(ctx.walk, pts, normals, [1.0] * len(pts), value, +1)]
             elif rule == 'draft':
                 dd = c.pull_direction
                 # (a normal read within a few steps of an edge or a crease is a mix of the two faces, not the draft of either: as for the overhang)
@@ -877,8 +996,17 @@ def _direction_of(constraints, ctx, samples):
     return best
 
 
+def _kept_field(kept):
+    ''' The regions that are not judged -- the ones a user told the tool to leave as they are -- as one field: negative inside any of them.  None when there are none '''
+    field = None
+    for region in (list(kept) if isinstance(kept, (list, tuple)) else ([kept] if kept is not None else [])):
+        region = Shape.wrap(region)
+        field = region if field is None else field.min(region)
+    return field
+
+
 def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direction=None, seed=7, rounds=10, batch_size=150000, seeds=None, supports=None, what='manufacturing_analysis',
-            progress=False):
+            progress=False, kept=None):
     ''' The check of `part` for the rules of `constraints`: a ManufacturingAnalysis (its `points` are the points of the surface it measured), or None where the part has no surface to
         measure.  The one way the optimization reaches into this file, to be told what its result still breaks: the check of a result is made here, with the measurements of the
         check, and not by what made the result.  `supports` (a field, negative inside) are the supports under what leans out: a place with a support under it is held.
@@ -896,6 +1024,14 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
     _log(t0, 'check: surface sampled: %d points' % len(points))
     if not points:
         return None
+    # (a region that was kept is not judged: nothing was asked of it, the tool never touches it, and a rule that it breaks is for the one who kept it to know.  The samples inside it are left out of the numbers --
+    # the shares are of the surface outside the kept regions -- and the colours are 0 inside it)
+    kept_field = _kept_field(kept)
+    if kept_field is not None:
+        inside = _values(kept_field, [p[0] for p in points])
+        outside = [p for p, v in zip(points, inside) if v > 0.0]
+        if outside:
+            points = outside
     if progress:
         _progress(0.3, _tr('Evaluating rules'))
     if direction is None:
@@ -904,6 +1040,9 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
     margins = _rule_margins(ctx, items, direction)
     if not margins:
         raise ManufacturingError('%s: the constraints have no rule -- give one (min_wall=0.8, overhang=45 ...)' % what)
+    if kept_field is not None:
+        weight = 1.0 - (kept_field * (1.0 / (4.0 * ctx.step))).max(0).min(1)          # (1 inside a kept region, eased out to 0 over four steps beyond it)
+        margins = OrderedDict((rule, (m[0] - _BIG * weight, m[1], m[2])) for rule, m in margins.items())
     fields = OrderedDict((rule, m[0]) for rule, m in margins.items())
     fields['all'] = _all_field(margins)
     _log(t0, 'check: rule fields built')
@@ -917,7 +1056,7 @@ def _analyse(part, constraints, samples=5000, bounds=None, plate_box=None, direc
 @_with_conditions
 @_remembered('manufacturing_analysis')
 @_with_bar('manufacturing_analysis')
-def manufacturing_analysis(part, constraints, samples=5000):
+def manufacturing_analysis(part, constraints, samples=5000, keep=None):
     ''' Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
         (manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every
         rule a field on the part, drawn as colours on it, nothing meshed.  The numbers (how much of the surface breaks each rule, and where)
@@ -927,10 +1066,16 @@ def manufacturing_analysis(part, constraints, samples=5000):
             constraints  manufacturing_constraint(...), fff_constraint(...), cnc_constraint(...), molding_constraint(...): one, or a list;
                          a rule is broken where it is broken for any of them
             samples      how many points of the surface are measured (default 5000)
+            keep         a shape, or a list of them: regions that are not judged -- the ones that are kept as they are, as `keep=` of manufacturing_optimization says -- so that
+                         the shares are of the surface outside them and their colours are those of a part that keeps its rules
 
         Returns a ManufacturingAnalysis: `.compliant`, `.report`, `.fields`.  It is a check of the part's own field and not a substitute for the check
         of the one who makes it. '''
-    out = _analyse(part, constraints, samples, progress=True)
+    # (a place the part was excluded at is locked: the shell leaves it as it is, and it is not judged either -- a hole of 5 mm that the cutter of 6 cannot cut, excluded from the job, is not a broken rule of the part)
+    kept = list(keep) if isinstance(keep, (list, tuple)) else ([keep] if keep is not None else [])
+    for _, region in locks_of(part):
+        kept.append(region)
+    out = _analyse(part, constraints, samples, progress=True, kept=kept or None)
     if out is None:
         raise ManufacturingError('manufacturing_analysis: the part has no surface to measure (is it empty?)')
     return out

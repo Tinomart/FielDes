@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Makes the installer of the Linux package: ONE file that unpacks FielDes where the user wants it and puts it in the application menu.
 #
-#   scripts/make-linux-installer.sh <FielDes-linux-x64.tar.gz> <installer.run> [version]
+#   scripts/make-linux-installer.sh <FielDes-version-linux-x64.tar.gz> <installer.run> [version]
 #
 # The installer is a shell script with the package appended to it (so it needs nothing but a shell, tar and gzip, which every system has).
 # What the user does:

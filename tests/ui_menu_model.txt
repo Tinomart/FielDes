@@ -12,7 +12,6 @@
     + rectangle
     + polygon
     + triangle
-    + profile    [A 2D shape from points or from a surface.  With points selected: made from them, in the or]
   + New 1D shape
     + polyline    [A set of lines through points.  With points selected: made from them, in the order you sel]
     + spline    [A smooth curve through points.  With points selected: made from them, in the order you sel]
@@ -34,12 +33,11 @@
   + New 2D shape
     + rounded_rectangle
     + ring
+    + profile    [A 2D shape from points or from a surface.  With points selected: made from them, in the or]
   + New surface
   + New field
     + wave
     + low_level_field
-  + New custom block
-    + bracket    [An L-shaped bracket: a base plate and an upright, with a rounded inside corner]
 + Operations
   + Offsets and walls
     + offset    [With several models selected: the first is the one this is made for, the others are what i]
@@ -69,21 +67,16 @@
     + array_x
     + array_xy
     + array_polar_z
-  + Combining
-    + union
-    + difference
-    + intersection
-    + exclude
   + Surfaces
     + surface_from_bodies    [With several models selected: the first is the one this is made for, the others are what i]
   + Field math
-    + add_fields
-    + subtract_fields
-    + multiply_fields
-    + divide_fields
-    + power_field
-    + min_fields
-    + max_fields
+    - add_fields    [Needs a second model]
+    - subtract_fields    [Needs a second model]
+    - multiply_fields    [Needs a second model]
+    - divide_fields    [Needs a second model]
+    - power_field    [Needs a second model]
+    - min_fields    [Needs a second model]
+    - max_fields    [Needs a second model]
     + abs_field
     + negate_field
     + sqrt_field
@@ -100,8 +93,8 @@
     + lattice    [With a cell selected with the model: that cell.  Otherwise a first cell to change in the s]
     + lattice_surface_conform    [With a cell selected with the model: that cell.  Otherwise a first cell to change in the s]
     + random_points    [Points made in the model, drawn as dots: how far apart they are on average, how random, th]
-    - voronoi_lattice    [A foam: the edges of the Voronoi cells around the selected points, as beams, filling the m]
-    - delaunay_lattice    [A stochastic truss: beams along the Delaunay edges between the selected points, filling th]
+    + voronoi_lattice    [A foam: the edges of the Voronoi cells around the selected points, as beams, filling the m]
+    + delaunay_lattice    [A stochastic truss: beams along the Delaunay edges between the selected points, filling th]
     ----
     + Strut cells
       + cubic    [A new cell: cell_cubic -- a lattice operation takes it as its cell]
@@ -138,8 +131,8 @@
 + Engineering
   + Structural
     + New support or load
-      - fixed    [Does not fit what is selected With several models selected: the first is the body, the oth]
-      - force    [Does not fit what is selected With several models selected: the first is the body, the oth]
+      + fixed    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + force    [With several models selected: the first is the body, the others are where it acts (bodies,]
       + gravity
       + thermal_expansion
     ----
@@ -147,6 +140,12 @@
     + modal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
     + topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
   + Thermal
+    + New thermal condition
+      + fixed_temperature    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + heat_input    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + heat_generation    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + convection    [With several models selected: the first is the body, the others are where it acts (bodies,]
+    ----
     + thermal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
     + thermal_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
   + Fluid
@@ -155,6 +154,11 @@
       + air
       + oil
       + glycerol
+    + New flow condition
+      + inlet    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + outlet    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + wall    [With several models selected: the first is the body, the others are where it acts (bodies,]
+      + slip    [With several models selected: the first is the body, the others are where it acts (bodies,]
     ----
     + fluid_analysis    [With several models selected: the first is the one this is made for, the others are what i]
     + flow_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
@@ -179,7 +183,7 @@
     + nylon
     + material
   ----
-  + parametric_optimization
+  - parametric_optimization
 + Python
   + variable    [A name for a number, a text or any value: it is used by its name further down Plain Python]
   + if    [Runs the code under it only when the condition is true Plain Python, written at the insert]
@@ -197,7 +201,7 @@
   + import    [Brings in a module of Python: math, random ... Plain Python, written at the insertion poin]
   + print    [Writes a value to the message pane of the script Plain Python, written at the insertion po]
 ----
-+ center   [The middle of the model's bounding box, as a point]
++ center    [The middle of the model's bounding box, as a point]
 + bounding_box    [The smallest box, aligned with the axes, that holds the model: a body of its own]
 ----
 + Import model...    [A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellate]
@@ -214,10 +218,6 @@
     + FBX (.fbx)
     + OFF (.off)
     + DXF (.dxf)
-  + Results
-    - VTK mesh with every field (.vtu)    [Only for a static analysis: the others do not keep a mesh to write]
-    - CSV tables (.csv)    [Only for a static analysis: the others do not keep a mesh to write]
-    + Key numbers as text (.txt)
 - Select Surface    [The selection spreads from the place you click on the surface, so it is started by right-c]
 ----
 + Delete

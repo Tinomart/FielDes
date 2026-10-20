@@ -288,8 +288,8 @@ What is a rough edge rather than a limit of the design is in [KNOWN_ISSUES.md](K
 - **Fields as material properties and loads work with the tetrahedral elements**; the voxel elements and the flow solver take
   numbers (they say so when given a field). A graded lattice cell size changes by at most a factor of 16 over the part.
 - Windows is the main platform (its package is checked to need nothing but Windows itself). **Linux**: `scripts/build-linux.sh --package` makes a folder that opens with nothing installed
-  (Qt, Python and every library inside; only the C library, the graphics driver and X11 of the machine are used), an installer (`.run`) and a `.deb` (see [Building](docs/building.md); tried under WSL2 + WSLg
-  on Fedora -- the release workflow builds them on Ubuntu 22.04 so that they open on older systems too).
+  (Qt, Python and every library inside; only the C library, the graphics driver and X11 of the machine are used), an installer (`.run`) and a `.deb` (see [Building](docs/building.md)). The packages of a
+  release are built on Ubuntu 22.04 (glibc 2.35), so they open on Ubuntu 22.04, Debian 12 and everything newer; they were tried under WSL2 + WSLg.
 - Units: STEP units are read and converted; STL/OBJ/PLY/OFF carry none and are assumed to be millimetres
   (`file_units=`).
 - Analyses are linear (small strain, linear material) and use tetrahedra (or voxel hexahedra); no contact.

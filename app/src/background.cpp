@@ -18,8 +18,6 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include "fieldes/background.hpp"
-#include "fieldes/color.hpp"
-#include "fieldes/shader.hpp"
 
 namespace FielDes {
 
@@ -59,23 +57,40 @@ void Background::initializeGL()
         vbo.release();
         vao.release();
     }
+
+    // (nothing but the position and the colour: no uniform, nothing to read that another draw could have left set)
+    program.addShaderFromSourceCode(QOpenGLShader::Vertex,
+        "#version 150\n"
+        "in vec3 vertex_position;\n"
+        "in vec3 vertex_color;\n"
+        "out vec3 sky;\n"
+        "void main() { sky = vertex_color; gl_Position = vec4(vertex_position.xy, 0.0, 1.0); }\n");
+    program.addShaderFromSourceCode(QOpenGLShader::Fragment,
+        "#version 150\n"
+        "in vec3 sky;\n"
+        "out vec4 fragColor;\n"
+        "void main() { fragColor = vec4(sky, 1.0); }\n");
+    program.bindAttributeLocation("vertex_position", 0);
+    program.bindAttributeLocation("vertex_color", 1);
+    ready = program.link();
 }
 
 void Background::draw()
 {
-    Shader::basic->bind();
-    QMatrix4x4 M;
-    glUniform1i(Shader::basic->uniformLocation("shading"), 0); // flat shading
-    glUniform4f(Shader::basic->uniformLocation("color_mul"), 1, 1, 1, 1);
-    glUniform4f(Shader::basic->uniformLocation("color_add"), 0, 0, 0, 0);
-    glUniformMatrix4fv(Shader::basic->uniformLocation("M"),
-                       1, GL_FALSE, M.data());
+    if (!ready) return;
+    // (the state a quad over the whole of the view needs, set here and not taken from whatever the last draw left)
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
+    program.bind();
     vao.bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     vao.release();
-
-    Shader::basic->release();
+    program.release();
 }
 
 }   // namespace FielDes

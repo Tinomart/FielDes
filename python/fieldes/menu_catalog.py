@@ -216,12 +216,12 @@ PRIMITIVES = [
 ] + _materials() + [(n, g, t) for n, g, t, _l in _CELLS]
 
 # The PRIMITIVES -- the most basic, low-level representation of each kind of thing: a sphere, a box, a cylinder, a cone, a torus, a pyramid and a prism for 3D; a circle, a rectangle, a triangle,
-# a polygon and a profile for 2D; a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial, a z and a noise field.  The menus show these under
+# and a polygon for 2D (a profile, a 2D shape made of points, is a Parametric shape); a polyline and a spline for 1D; a point; a plane, a sphere surface and a cylinder surface; a distance, a radial, a z and a noise field.  The menus show these under
 # Primitives, apart.  Everything else the library can make with no argument -- a rounded box, a ring, a wave, noise, your own low-level logic, a custom block -- is not a primitive, however
 # little it needs: it is a Parametric shape
 BASIC = frozenset((
     'sphere', 'box', 'cylinder', 'cone', 'torus', 'pyramid', 'prism',
-    'circle', 'rectangle', 'triangle', 'polygon', 'profile',
+    'circle', 'rectangle', 'triangle', 'polygon',
     'polyline', 'spline',
     'point',
     'symmetry_planes',
@@ -455,11 +455,13 @@ def catalog():
     ''' The lists as JSON for the menus: {"primitives": [{name, group, type}], "operations": [{name, group, other}]}; the custom
         blocks are in them too (group "Custom blocks", type "block") '''
     from fieldes.kinds import describe, describe_domains, DOMAIN_OF_FUNCTION
+    from fieldes import user_primitives
     blocks = _blocks()
+    basic = user_primitives.basic(BASIC)             # (what the user chose to show under Primitives: BASIC less what was taken out, and what was put in)
     return json.dumps({
         'kinds': describe(),
         'domains': describe_domains(),
-        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION, 'primitive': n in BASIC,
+        'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION, 'primitive': n in basic,
                              'from_selection': n in FROM_SELECTION},
                             **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
                             **({'domain': PRIMITIVE_DOMAINS[g]} if g in PRIMITIVE_DOMAINS else {}),
@@ -467,6 +469,7 @@ def catalog():
                             # (a 2D shape that is written with an x and a y only lies in the plane z = 0: the place it is made at is where the ray under the cursor meets that plane)
                             **({'flat': True} if g == '2D' and '{z}' not in t else {}))
                        for n, g, t in PRIMITIVES]
+                      + user_primitives.catalog_entries()                # (the primitives of the user's own: a model of a script, kept in a file of theirs)
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
@@ -521,6 +524,7 @@ def _fluids(others):
 # its models are accepted by ONE signature and the signature's needs are met; an entry it does not fit is greyed out in the menu (nothing is
 # said: it is not offered).  A model of no known kind (not run yet) fits anything, and so does an entry that declares nothing (a custom block).
 from fieldes.kinds import SHAPES as _SHAPES                                                       # (what a geometric operation works on)
+_FOAMS = ('voronoi_lattice', 'delaunay_lattice')                                                 # (the lattices made around a set of points)
 _PART = frozenset(('solid', 'profile', 'import', 'simulation', 'lattice'))                                 # (what a simulation is made for)
 _REGIONS = frozenset(_REGION_TYPES)                                                               # (what a condition is made of: where it acts)
 
@@ -605,6 +609,9 @@ def _selection_fits(kind, name, models):
     else:
         group = next((g for n, g, _, _ in OPERATIONS if n == name), None)
         signatures = _takes(name) or ([(_SHAPES, [])] if group else None)
+    if name in _FOAMS:
+        # (a foam is made around points; with a body selected the entry makes the points too -- see _build_operation -- so it is offered for a body as well as for points)
+        signatures = [(_SHAPES | {'point', 'points'}, [])]
     tags = [t for t in map(_tag, models) if t]
     if not signatures or not tags:
         return True
@@ -717,6 +724,14 @@ def _build_operation(name, v, others):
         cells = [o['name'] for o in others if o.get('type') == 'cell']
         if cells:
             return 'lattice_surface_conform({body}, %s, cell_size={cs})'.format(**v) % cells[0]
+    if name in _FOAMS:
+        # (the foam is made around points: the points that were selected, or -- with a body -- points made in it, written first, so that one entry makes the whole foam)
+        info = v.get('body_info') or {}
+        if info.get('type') in ('point', 'points') or any(o.get('type') in ('point', 'points') for o in others):
+            return None
+        if info.get('type') in _SHAPES or not info.get('type') and body:
+            var = v.get('var') or '%s_1' % name
+            return '%s_points = random_points(%s, spacing=%s)\n%s_points%s%s(%s_points)' % (var, body, v.get('cs', 8), var, PRELUDE, name, var)
     if name == 'texture':
         # (a surface, a field or a body that is selected with the body is where the texture goes)
         regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]
@@ -1009,6 +1024,12 @@ def call(request):
             if n == r['name']:
                 return code
         raise ValueError(tr('the Python menu has no block called %s') % r['name'])
+    if r.get('kind') == 'primitive':
+        # (a primitive of the user's own: the statements it is made of and its model, written again with names the script has not got)
+        from fieldes import user_primitives
+        mine = user_primitives.find(r['name'])
+        if mine is not None:
+            return user_primitives.insert_text(mine, r.get('var') or (r['name'] + '_1'), r.get('source') or '')
     text = _call(r)
     head, marker, expression = text.rpartition(PRELUDE)
     from fieldes import completion

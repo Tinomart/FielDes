@@ -134,10 +134,21 @@ def _join(op, values, tie):
     return out
 
 
-def _near(delta, f, width, top):
+def _near(delta, f, width, top, scope=None):
     ''' `delta` (a field between 0 and `top`) where the part's surface is within `width`, and 0 beyond: a remedy that changes the surface only near it is limited by how far a point
-        is from it, so that the mesher can tell a cell far from the surface at once, without working through the remedy in it.  The field is the one it was where it matters '''
-    return delta.min((width - f.abs()) * (10.0 * top / width)).max(0)
+        is from it, so that the mesher can tell a cell far from the surface at once, without working through the remedy in it.  The field is the one it was where it matters.
+        `scope` (a field above 0 where the remedy does something and below 0 where it surely does not -- boxes round the places that it acts in, see `_scope_field`) does the same for a cell that is
+        near the surface and far from any place the remedy acts in: the remedy's value there is 0, but no interval of a formula that finds a thin wall by a walk along the normal can say so, and the mesher
+        works through every cell of the band round the whole surface to the finest level to find that out -- minutes for a plate of 70 mm '''
+    # (the growth is cleared of NaN here, and that is for what the mesher can do with the field.  An interval carries a flag, "may be NaN" -- a division of something that may be 0 by something that may be 0, a
+    # square root of something that may be negative --, and min and max pass on the flag of their first operand, as std::min and std::max do.  A cell whose interval has the flag is ambiguous whatever its bounds
+    # say, and the mesher gives it the tape it had, unshortened: nothing below it is pruned, whatever the ramp or the scope say.  The growth of a remedy has the flag in most cells near a face (the line along the
+    # normal is found by a division that is 0 / 0 for an interval across the face), so a field of `delta.min(ramp).max(0)` was ambiguous and unpruned in every cell near the surface: the printer job of a plate
+    # of 70 mm drew for more than ten minutes, and the walls of two fins of 0.6 mm for five.  `nanfill` says what a NaN is -- no growth -- and clears the flag, with the bounds as they are)
+    out = delta.nanfill(Shape.wrap(0.0)).min((width - f.abs()) * (10.0 * top / width))
+    if scope is not None:
+        out = out.min(scope)
+    return out.max(0)
 
 
 _BIG = 1.0e3
@@ -148,23 +159,27 @@ class _Context:
     ''' Everything the fields of the rules are made from for one part: its field, how big it is, its normals '''
 
     def __init__(self, part, bounds=None):
-        self.field = Shape.wrap(part)
-        carried = getattr(self.field, '_plate_box', None)       # (a result of the shell: the plate of the part it was made from; read before the field is rescaled below)
-        lo, hi = _shape_bounds(self.field, bounds)
+        walk = Shape.wrap(part)
+        carried = getattr(walk, '_plate_box', None)       # (a result of the shell: the plate of the part it was made from; read before the field is rescaled below)
+        # (a part held as `exact_distance` carries the plain field it was made from, which has the same surface.  The walk costs about 32 calls of the part at every point it is read, and every remedy and every
+        # rule asks the part dozens of times at every point: a bracket held as `exact_distance` gave no verdict in twelve minutes where the same bracket, handed to the tool directly, takes one.  So what is read is the
+        # plain field, `field`; `walk` is the exact distance, for the two readers that need a distance and nothing else -- the corner formula (`fillet`) and the corner rule of the check, whose ball is a size in mm.
+        # For any other part `walk` is `field` itself)
+        shown = getattr(walk, '_display_field', None)
+        self.field = Shape.wrap(shown) if shown is not None else walk
+        lo, hi = _shape_bounds(walk, bounds)
         self.lo, self.hi = tuple(float(c) for c in lo), tuple(float(c) for c in hi)
         self.size = max(self.hi[i] - self.lo[i] for i in range(3)) or 1.0
         # (the rules and the remedies are read in millimetres off the field's own value -- how far a point is from the surface, how far to move along its normal --, which is true of a field
         # that is a distance and not of one that is a distance times something: a part that was scaled, a body made by a formula.  The typical slope of the field at its surface is read, and a
         # field whose slope is not 1 is divided by it, once, here: the same surface, a field that is a distance to a few per cent)
-        self.slope = _typical_slope(self.field, self.lo, self.hi, self.size)
-        # (a part held as `exact_distance` carries the plain field it was made from, which has the same surface: `base` is what a RESULT is built on and united with.  The walk costs about 32 calls of the part at every
-        # point it is read, and a result that held it in every term carried that cost into every cell of its drawing -- the result of such a part did not finish drawing in twenty minutes.  The remedies still READ
-        # the part through `field`, the walk, for its distances; only the field they are united with is plain.  For any other part, and for one that was rescaled below, `base` is `field` itself)
-        shown = getattr(self.field, '_display_field', None)
+        slope_lo, self.slope, slope_hi = _slope_range(self.field, self.lo, self.hi, self.size)
+        self.slope_spread = slope_hi - slope_lo          # (how much the slope wanders over the surface: nothing for a field that is a distance, more for a lattice's or an optimizer's)
         if abs(self.slope - 1.0) > 0.05 and 0.02 < self.slope < 50.0:
             self.field = self.field * (1.0 / self.slope)
-            shown = None
-        self.base = Shape.wrap(shown) if shown is not None else self.field
+        self.base = self.field                      # (what a RESULT is built on and united with)
+        self.walk = walk if shown is not None else self.field          # (the exact distance of a part held as `exact_distance`; see above)
+        self.walk_is_field = shown is None          # (the walk has slope 1; the field's slope is what its normals were measured on: a reading made on the walk is not to be divided by the field's slope)
         # (the step of the normals, a thousandth of the part, and NOT a round number: the normal is the mean of the derivative asked at p - h and p + h, and a plane of the part's surface that p - h or p + h
         # lies on exactly is where the derivative is the mean of the rules' on both sides, half a face's -- a sheet of nothing in the field, at the distance h from every face.  Anything that samples the field
         # in steps that divide h (a tape every 0.0005 mm, a grid of round numbers) hits it: a wall of 0.30 measured 0.344 where h was 0.023.  h that is no multiple of a round number is never on it)
@@ -174,6 +189,7 @@ class _Context:
         self.plate_box = (tuple(float(c) for c in carried[0]), tuple(float(c) for c in carried[1])) if carried else (self.lo, self.hi)
         self._normals = None
         self._one_sided = {}
+        self._from_result = carried is not None          # (a result of the tool or of the shell carries the plate of the part it was made from)
         self.clamp_calls = self._expensive_part()
 
     def _expensive_part(self):
@@ -185,19 +201,20 @@ class _Context:
             return False
         if os.environ.get('FIELDES_CLIP'):
             return True
+        # (a result of the tool is expensive by what it is made of -- the part united with remedies that each look the part up many times at every point --, and not by a clock: the same result was read as cheap
+        # on a quiet machine and as expensive on a busy one, and the second pass over it took the formula path in one and the lattices in the other, with 7.2 % of the surface breaking a rule in one and 0.6 % in the other)
+        if self._from_result:
+            return True
         # (the cost that matters is a point near the surface, where the mesher works -- a random point of the box is mostly far from it, where an oracle is cheap: the topology bracket costs 27 us a point
-        # over its box and 100 to 200 near its surface.  3000 points thrown at random; those within 3 % of the part's size of the surface are timed again, when there are 80 of them or more)
+        # over its box and 100 to 200 near its surface.  3000 points thrown at random; those within 3 % of the part's size of the surface are timed again, when there are 80 of them or more.
+        # Each is timed up to five times and the fastest run counts: a busy machine only ever makes a run slower, so the fastest is the nearest to what the field costs)
         rng = random.Random(5)
         pts = [tuple(rng.uniform(self.lo[i], self.hi[i]) for i in range(3)) for _ in range(3000)]
         _values(self.field, pts[:50])
-        started = time.time()
-        vals = _values(self.field, pts)
-        self.point_us = 1e6 * (time.time() - started) / len(pts)
+        self.point_us, vals = _us_per_point(self.field, pts)
         near = [p for p, v in zip(pts, vals) if abs(v) <= 0.03 * self.size]
         if len(near) >= 80:
-            started = time.time()
-            _values(self.field, near)
-            self.point_us = 1e6 * (time.time() - started) / len(near)
+            self.point_us = _us_per_point(self.field, near)[0]
         return self.point_us > 15.0         # (measured the same way: the plate of the CNC sampler 1.0 us, the topology bracket 27 to 30 us)
 
     @property
@@ -225,25 +242,68 @@ def _values(field, points):
     return _eval_at(field, [c for p in points for c in p], len(points))
 
 
+def _us_per_point(field, points, repeats=5):
+    ''' (microseconds a point of `field` costs, its values at `points`): the fastest of up to `repeats` runs over all of them -- a busy machine makes a run slower and never faster, so the fastest is the nearest
+        to the field's own cost.  A run of more than half a second is far above anything a rule is decided by, and ends the repeating (so does a total of a second and a half) '''
+    best, total, vals = None, 0.0, None
+    for _ in range(repeats):
+        started = time.time()
+        vals = _values(field, points)
+        spent = time.time() - started
+        total += spent
+        best = spent if best is None else min(best, spent)
+        if spent > 0.5 or total > 1.5:
+            break
+    return 1e6 * best / max(len(points), 1), vals
+
+
 def _typical_slope(field, lo, hi, size, count=500, seed=11):
     ''' The slope of the field (the length of its gradient) at its surface, as the middle of what is found at the points of 500 thrown at random that lie within 3 % of the part's size of the
         surface (60 of them are read by central differences): 1 for a distance, 2 for a distance times 2, 0.5 for a part that was scaled up by 2.  1 where too few lie near the surface to say '''
+    return _slope_range(field, lo, hi, size, count, seed)[1]
+
+
+def _slope_range(field, lo, hi, size, count=500, seed=11):
+    ''' (the tenth, the middle, the ninetieth) of the slopes found by `_typical_slope`: how much the slope wanders over the surface -- nothing for a field that is a distance (a box, a cylinder), a third
+        or more for a lattice's or an optimizer's (a gyroid: 0.7 to 1.3) '''
     rng = random.Random(seed)
     cloud = [tuple(rng.uniform(lo[i], hi[i]) for i in range(3)) for _ in range(count)]
     near = [p for p, v in zip(cloud, _values(field, cloud)) if abs(v) <= 0.03 * size][:60]
     if len(near) < 12:
-        return 1.0
+        return 1.0, 1.0, 1.0
     h = max(1e-3 * size, 0.004)
-    probes = []
-    for p in near:
-        probes.extend(((p[0] + h, p[1], p[2]), (p[0] - h, p[1], p[2]), (p[0], p[1] + h, p[2]), (p[0], p[1] - h, p[2]), (p[0], p[1], p[2] + h), (p[0], p[1], p[2] - h)))
-    v = _values(field, probes)
+
+    def read(points):
+        ''' (the value, the gradient) at each point, by central differences of step h '''
+        probes = []
+        for p in points:
+            probes.extend((p, (p[0] + h, p[1], p[2]), (p[0] - h, p[1], p[2]), (p[0], p[1] + h, p[2]), (p[0], p[1] - h, p[2]), (p[0], p[1], p[2] + h), (p[0], p[1], p[2] - h)))
+        v = _values(field, probes)
+        out = []
+        for i in range(len(points)):
+            w = v[7 * i: 7 * i + 7]
+            out.append((w[0], ((w[1] - w[2]) / (2 * h), (w[3] - w[4]) / (2 * h), (w[5] - w[6]) / (2 * h))))
+        return out
+
+    # (ON the surface: a point within 3 % of the part's size is up to a millimetre off it, and the field a millimetre off the surface of a RESULT of the tool is not the field at its surface -- the band of
+    # the pass that made it ends in a ramp that rises seven times as fast as a distance a few tenths of a millimetre off the face --, so the points are moved onto the surface first, by Newton steps along the
+    # gradient, and the slope is read where they land; a point that does not land on it is left out)
+    on = near
+    for _ in range(4):
+        moved = []
+        for p, (value, g) in zip(on, read(on)):
+            gg = g[0] * g[0] + g[1] * g[1] + g[2] * g[2]
+            moved.append(p if gg < 1e-12 else (p[0] - value * g[0] / gg, p[1] - value * g[1] / gg, p[2] - value * g[2] / gg))
+        on = moved
     slopes = []
-    for i in range(len(near)):
-        gx, gy, gz = (v[6 * i] - v[6 * i + 1]) / (2 * h), (v[6 * i + 2] - v[6 * i + 3]) / (2 * h), (v[6 * i + 4] - v[6 * i + 5]) / (2 * h)
-        slopes.append(math.sqrt(gx * gx + gy * gy + gz * gz))
+    for value, g in read(on):
+        if abs(value) <= 0.002 * size:
+            slopes.append(math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]))
+    if len(slopes) < 12:
+        return 1.0, 1.0, 1.0
     slopes.sort()
-    return slopes[len(slopes) // 2]
+    n = len(slopes)
+    return slopes[n // 10], slopes[n // 2], slopes[min(n - 1, (9 * n) // 10)]
 
 
 def _where(p):
