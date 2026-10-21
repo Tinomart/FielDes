@@ -1391,21 +1391,80 @@ std::string Shape::extentWhy(const Settings& s)
 
 void Shape::measureExtent(const Settings& s)
 {
-    m_ext_valid = false;
-    if (!s.autoScale) return;
+    // (the box is made in locals and put in its members at the end: they are never half-made, or cleared while the search is going)
+    if (!s.autoScale)
+    {
+        m_ext_valid = false;
+        m_ext_stale = false;
+        return;
+    }
     // A tree that its search could not bound in its time (intervals are too loose for it) is not bounded in it the next time either: it is the tree that is hard, not the numbers
     // -- every render of a drag started with another 50 ms of looking, in the GUI's thread.  It gets a few milliseconds (a number that makes it easy is found at once) until it is
     // another tree, or the region it is looked for in is another: the first render of a script is made over the region the program starts with, before the script's own is
     // there, and a shape that is not in that one fails at once -- that must not leave it with a few milliseconds for good
     const bool again = tree.is_valid() && m_ext_failed == tree.id() && m_ext_failed_lo == s.min && m_ext_failed_hi == s.max;
     const float seconds = again ? 0.004f : 0.05f;
-    m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi, seconds);
-    m_ext_failed = (tree.is_valid() && !m_ext_valid) ? tree.id() : libfive::Tree::Id();
-    if (!m_ext_valid)
+    QVector3D lo, hi;
+    const bool found = searchExtent(vars, s.min, s.max, lo, hi, seconds);
+    m_ext_failed = (tree.is_valid() && !found) ? tree.id() : libfive::Tree::Id();
+    if (!found)
     {
         m_ext_failed_lo = s.min;
         m_ext_failed_hi = s.max;
     }
+    if (found)
+    {
+        m_ext_lo = lo;
+        m_ext_hi = hi;
+        m_ext_valid = true;
+        m_ext_stale = false;
+        return;
+    }
+    // A shape made with var()s -- a primitive that has been given handles when it was selected -- is not found by a search of 50 ms (the script's own search, which has hundreds of
+    // them, says "a part is found in tens of milliseconds, one that has var()s in a few hundred"): it was left with no box, and so with the scene's plain resolution, in place of the
+    // finer one that its size next to the region gives it -- a small part in a large region turned coarse the moment its handles were pulled.  The script says what box the shape
+    // fills (its `_bounds`, from the numbers the primitive was made with): that is its size where the search has none
+    if (m_script_box_valid && extentSearchable())
+    {
+        if (!m_script_vars_known)
+        {
+            m_script_vars = vars;
+            m_script_vars_known = true;
+        }
+        m_ext_lo = m_script_lo;
+        m_ext_hi = m_script_hi;
+        m_ext_valid = true;
+        m_ext_stale = !scriptBoxFresh();
+        return;
+    }
+    m_ext_valid = false;
+    m_ext_stale = false;
+}
+
+void Shape::setScriptBox(QVector3D lo, QVector3D hi)
+{
+    m_script_box_valid = hi.x() >= lo.x() && hi.y() >= lo.y() && hi.z() >= lo.z();
+    m_script_lo = lo;
+    m_script_hi = hi;
+    m_script_vars = vars;
+    m_script_vars_known = true;
+}
+
+bool Shape::scriptBoxFresh() const
+{
+    // (a number of the shape that is not what it was when the script said the box, and that the shape is made of: a surface of it has been pulled since)
+    for (const auto& kv : m_script_vars)
+    {
+        const auto it = vars.find(kv.first);
+        if (it != vars.end() && it->second != kv.second && usesVar(kv.first)) return false;
+    }
+    return true;
+}
+
+bool Shape::extentSearchable() const
+{
+    return tree.is_valid() && !has_hint && !has_result && !m_step_exact && !exactCurrent() && !hasControls() && !(m_flat && hasFlatFrame()) && !hasSweep() && !hasPrism() &&
+           m_tree_nodes <= 100000;
 }
 
 bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
@@ -1466,6 +1525,9 @@ double Shape::autoResolution(const Settings& s) const
     if (!(R > 0) || !(L > 1e-6)) return s.res;
     double res = s.res * std::sqrt(std::max(1.0, R / L));
     res = std::min(res, 2000.0 / L);
+    // (the script's box of a shape whose surface is being pulled is the box it had before: the shape is larger, or smaller, than it says, and the region has grown to hold it -- the box
+    // would make it finer at every move.  It is meshed as finely as it was, and the script, which says the box again when the pull is let go, sizes it then)
+    if (m_ext_stale && m_geometry_known && m_geometry.res > 0) res = std::min(res, double(m_geometry.res));
     return std::max(res, double(s.res));
 }
 
@@ -2898,6 +2960,12 @@ bool Shape::updateFrom(const Shape* other)
         if (m_cache_on.load()) started = keepCurrent();
         emit(cacheStateChanged());
     }
+    // (the box the script says NOW, for the numbers it has now: it sizes the shape, for its resolution, where its own search finds none -- before the numbers are given, which may start a render)
+    m_script_box_valid = other->m_script_box_valid;
+    m_script_lo = other->m_script_lo;
+    m_script_hi = other->m_script_hi;
+    m_script_vars = other->vars;
+    m_script_vars_known = true;
     const bool varsChanged = updateVars(other->vars);
     if (exactChanged && !varsChanged && !started && m_geometry_known && wouldRenderDifferently(m_last_settings))
     {
@@ -3463,7 +3531,11 @@ void Shape::startRender(RenderSettings s)
             ++cache_vars_gen;
             if (s.div == MESH_DIV_NEW_VARS)
             {
+                const auto tExt = std::chrono::steady_clock::now();
                 measureExtent(s.settings);          // (the numbers changed: the shape is not where it was)
+                if (std::getenv("FIELDES_TIMING"))
+                    fprintf(stderr, "[shape] line %d: measureExtent (new numbers) %.0f ms (%s)\n", source_line + 1,
+                            1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tExt).count(), m_ext_valid ? "found" : "none");
                 sizeFirstLevel(s.settings);
             }
             s.div = (s.div == MESH_DIV_NEW_VARS) ? default_div : 0;
@@ -3479,6 +3551,15 @@ void Shape::startRender(RenderSettings s)
         colour_progress.store(0.0);
 
         placeHint();
+        // (the resolution of this level, before m_geometry is this render's: a box that is out of date does not raise it above the last one's -- see autoResolution)
+        s.res = autoResolution(s.settings);
+        if (std::getenv("FIELDES_TIMING"))
+        {
+            const QVector3D region = s.settings.max - s.settings.min, size = m_ext_hi - m_ext_lo;
+            fprintf(stderr, "[shape] line %d: level %d is meshed at %.3g per mm (the scene's %.3g; box %s, %.3g long; region %.3g long)\n", source_line + 1, s.div, s.res,
+                    double(s.settings.res), !m_ext_valid ? "NOT known" : m_ext_stale ? "the script's, out of date" : "known",
+                    m_ext_valid ? double(std::max(size.x(), std::max(size.y(), size.z()))) : 0.0, double(std::max(region.x(), std::max(region.y(), region.z()))));
+        }
         m_geometry = renderGeometry(s.settings);
         m_geometry_known = true;
         if (const char* log = std::getenv("FIELDES_SHAPE_LOG"))
@@ -3986,7 +4067,8 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     mesh_settings.low_priority = run_heavy;
     // A part with its own resolution is meshed on its own (setRenderHint):
     // over a cube around it, at the resolution it needs
-    double res = autoResolution(s.settings);
+    // (the resolution was worked out when the render started, in the GUI's thread: the box it is of is made there, and is not read from here)
+    double res = s.res > 0 ? s.res : autoResolution(s.settings);
     libfive::Region<3> mesh_region = r;
     bool own_render = false;
     {

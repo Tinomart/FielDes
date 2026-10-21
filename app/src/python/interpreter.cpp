@@ -1831,6 +1831,31 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        {
+            // The box the script says the shape fills (`_bounds`: the primitives know it from their numbers, and handles() and gizmo() carry it, widened by what was pulled).  It sizes the
+            // shape, for its resolution, where the quick search for its box finds none -- a shape made with var()s (Shape::setScriptBox)
+            PyObject* box = PyObject_GetAttrString(obj, "_bounds");
+            if (box && PyTuple_Check(box) && PyTuple_Size(box) == 2)
+            {
+                double v[6] = {0, 0, 0, 0, 0, 0};
+                bool ok = true;
+                for (int k = 0; k < 2 && ok; ++k)
+                {
+                    PyObject* corner = PyTuple_GetItem(box, k);          // (borrowed)
+                    ok = corner && PyTuple_Check(corner) && PyTuple_Size(corner) == 3;
+                    for (int a = 0; a < 3 && ok; ++a)
+                    {
+                        const double c = PyFloat_AsDouble(PyTuple_GetItem(corner, a));
+                        ok = !PyErr_Occurred() && c > -1e6 && c < 1e6;      // (a number that is not a number fails both)
+                        v[3 * k + a] = c;
+                    }
+                }
+                if (ok) shape->setScriptBox(QVector3D(float(v[0]), float(v[1]), float(v[2])), QVector3D(float(v[3]), float(v[4]), float(v[5])));
+            }
+            Py_XDECREF(box);
+            PyErr_Clear();
+        }
+
         // A thin part meshed on its own (fieldes.stdlib.cad_import):
         // (box lo, box hi, resolution, cube side, thinnest feature)
         // (a part placed with gizmo() has the hint of the part it was placed from)

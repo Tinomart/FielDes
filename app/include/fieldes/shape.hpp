@@ -381,6 +381,11 @@ public:
      *  part's own, absolute (custom_resolution(x, r)): it does not follow the scene's.  */
     void setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res);
 
+    /*  The box the script says the shape fills (its `_bounds`: told by the primitives, which know it from their numbers, and carried through handles() and gizmo(), widened by
+     *  the numbers that were pulled).  It sizes the shape, for its resolution, when the quick search for its box (measureExtent) runs out of its time -- a shape made with
+     *  var()s, a primitive that has been given handles, always does -- see autoResolution  */
+    void setScriptBox(QVector3D lo, QVector3D hi);
+
     /*  A part that is the exact distance to triangles of its own (a tessellated STEP part: fieldes tessellate()) is drawn from
      *  those triangles, not meshed from its field: a wall as thin as you like is there at any resolution, and nothing is
      *  meshed.  `mesh` holds the triangles in the part's own coordinates (one is shared by every run of the script and every
@@ -814,6 +819,7 @@ protected:
         Settings settings;
         int div;
         libfive::BRepAlgorithm alg;
+        double res = 0.0;       // (the resolution this level is meshed at, worked out in the GUI's thread when the render starts: the thread that meshes does not read the shape's box)
     };
     struct BoundedMesh {
         libfive::Mesh* mesh = nullptr;
@@ -1041,6 +1047,17 @@ protected:
     void adoptMeshFromSource();
     bool m_ext_valid = false;
     QVector3D m_ext_lo, m_ext_hi;
+    /*  The box above is the script's (setScriptBox), not a search's, and the shape has been given other numbers since the script said it (a surface being pulled): it is not the
+        shape's size now, and so it must not make the shape finer than it was meshed (autoResolution)  */
+    bool m_ext_stale = false;
+    bool m_script_box_valid = false;
+    QVector3D m_script_lo, m_script_hi;
+    std::map<libfive::Tree::Id, float> m_script_vars;       // (the numbers the shape had when the script said the box)
+    bool m_script_vars_known = false;
+    bool scriptBoxFresh() const;
+    /*  Whether a search for the shape's box is made for it at all (not for a shape with a render hint of its own, a result, one drawn from triangles of its own, a line or a face of
+        points, a sweep or a prism, or a tree too large to be looked through): the shapes that are searched, and whose search runs out of its time, are sized by the script's box  */
+    bool extentSearchable() const;
 
     // The shown step's own triangles (a step of an optimisation), else none; and the ones the render in progress draws from
     std::shared_ptr<const ExactMesh> m_step_exact;
