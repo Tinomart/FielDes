@@ -1021,10 +1021,6 @@ protected:
     QVector3D m_ext_failed_lo, m_ext_failed_hi;                // (and the region it was searched over: a search over another one is another search)
     /*  Why no box was found (for the timing log): the first condition that refuses the search, else that it ran out of time  */
     std::string extentWhy(const Settings& s);
-    /*  Whether a search for the shape's box is made for it at all: not for a shape with a render hint of its own, a result, one drawn from triangles of its own, a line or a face of
-        points, a sweep or a prism, or a tree too large to be looked through.  The shapes that are, and whose search runs out of its time (a tree with var()s, the numbers of a drag, a
-        machine that is busy with the script that has just run), are sized by the mesh they have until the search finds the box again: see measureExtent  */
-    bool extentSearchable() const;
     double autoResolution(const Settings& s) const;
     int defaultDivFor(const Settings& s);
     /*  The box of the mesh the shape has (what it looked like a moment ago): false before it has one, or before it has been drawn once (the box is read when it is)  */
