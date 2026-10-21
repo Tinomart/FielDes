@@ -1399,13 +1399,35 @@ void Shape::measureExtent(const Settings& s)
     // there, and a shape that is not in that one fails at once -- that must not leave it with a few milliseconds for good
     const bool again = tree.is_valid() && m_ext_failed == tree.id() && m_ext_failed_lo == s.min && m_ext_failed_hi == s.max;
     const float seconds = again ? 0.004f : 0.05f;
-    m_ext_valid = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi, seconds);
-    m_ext_failed = (tree.is_valid() && !m_ext_valid) ? tree.id() : libfive::Tree::Id();
-    if (!m_ext_valid)
+    const bool found = searchExtent(vars, s.min, s.max, m_ext_lo, m_ext_hi, seconds);
+    m_ext_valid = found;
+    m_ext_failed = (tree.is_valid() && !found) ? tree.id() : libfive::Tree::Id();
+    if (!found)
     {
         m_ext_failed_lo = s.min;
         m_ext_failed_hi = s.max;
     }
+    // A search that runs out of its time does not mean the shape has no size: with no box, the shape fell to the SCENE's resolution -- the number the script sets, for a shape as large as
+    // the region -- and a small shape in a large region, which the automatic resolution makes several times finer, was drawn coarse.  It happened after a handle was dragged: the shape
+    // then has var()s in its tree, which its search is slow for, and the script that the end of the drag runs keeps the machine busy at the moment the search is made.  The level
+    // a render starts at already takes the size from the mesh the shape has when there is no box (defaultDivFor); the resolution takes it from there too -- latched here, at the start of
+    // a render, so that it does not change with every level that is meshed (a resolution that followed the mesh would be another geometry at every render, and render again)
+    if (!found && extentSearchable())
+    {
+        QVector3D lo, hi;
+        if (meshSize(lo, hi))
+        {
+            m_ext_lo = lo;
+            m_ext_hi = hi;
+            m_ext_valid = true;
+        }
+    }
+}
+
+bool Shape::extentSearchable() const
+{
+    return tree.is_valid() && !has_hint && !has_result && !m_step_exact && !exactCurrent() && !hasControls() && !(m_flat && hasFlatFrame()) && !hasSweep() && !hasPrism() &&
+           m_tree_nodes <= 100000;
 }
 
 bool Shape::extentWith(const std::map<libfive::Tree::Id, float>& vs, const QVector3D& search_lo, const QVector3D& search_hi, QVector3D& lo, QVector3D& hi)
