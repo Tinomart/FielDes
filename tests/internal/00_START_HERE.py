@@ -231,7 +231,7 @@
 #   THE THREE JOB CASES BELOW THAT HOLD THE PART AS exact_distance (j1, j2, j7): the part is handed to the tool as a plain distance field, which carries no locked regions of its own, so each
 #   case names the regions that must not change in keep= (the plates, the lugs, the holes) and the judge does not count them.  Measured on 2026-10-20 on the final code, in plain
 #   Python: j1 (three processes) 330 s and j2 (the STEP bracket for the printer) 30 s pass every check; j7 (the second bracket, three processes) 372 s passed every check but one, the mould's undercut share 0.6 % -> 1.2 % -- a difference of 0.006 against the 0.011 that the kit's tolerance now allows (a point of the surface; it was run before that tolerance was set).  The same bracket
-#   handed to the tool as the optimizer made it (`opt.shape()`, which is how a person hands it over) is the showcase examples/manufacturing/18_topology_bracket.py.
+#   handed to the tool as the optimizer made it (`opt.shape()`, which is how a person hands it over) is the showcase examples/manufacturing/04_real_part.py.
 #   mfg_j1_bracket_three_processes.py                J1, J3, J4: the topology-optimized bracket (the optimizer shaped it for a point load, half the material) made ready
 #                                                    for THREE processes -- a 0.4 mm FFF printer, a 3-axis mill with a 6 mm cutter, an injection mould (ABS) -- each judged
 #                                                    by the kit's own judge against the published rules of that process: how much of the surface breaks each rule before
@@ -247,7 +247,7 @@
 #   mfg_j7_second_bracket.py                         J7: the same job on a second shape: the bracket the optimizer makes for a different load (the load turned to the
 #                                                    side), made ready for the same three processes, judged in the same way: nothing the first bracket showed is a property
 #                                                    of that one part.
-#   (the same bracket handed to the tool as the optimizer made it, `opt.shape()`, which is how a person hands it over, is the showcase examples/manufacturing/18_topology_bracket.py)
+#   (the same bracket handed to the tool as the optimizer made it, `opt.shape()`, which is how a person hands it over, is the showcase examples/manufacturing/04_real_part.py)
 #
 # PARTS THE CODE HAS NEVER SEEN.  Each of these generates six parts at random from the seeds in its name (change a seed in the file and run it: other parts) and gives each a
 # random constraint; criteria fixed beforehand are checked on every one (nothing floats beside a part, the independent check of the result, the tool's own counts).

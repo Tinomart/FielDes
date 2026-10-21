@@ -917,3 +917,12 @@ try:
     lib.libfive_field_overhang_lattice.restype = libfive_tree
 except AttributeError:
     pass
+
+# The correction lattice: what a field differs from its part by, sampled once (newer libraries; optional)
+try:
+    lib.libfive_field_bake_lattice.argtypes = [libfive_tree, libfive_tree, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float), ctypes.c_int,
+                                               ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int), ctypes.c_double, ctypes.c_double,
+                                               ctypes.POINTER(ctypes.c_double), ctypes.POINTER(libfive_tree)]
+    lib.libfive_field_bake_lattice.restype = libfive_tree
+except AttributeError:
+    pass

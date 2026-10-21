@@ -12,14 +12,14 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #       WHAT TO DO and WHAT YOU MUST SEE.  Start with walkthroughs/00_START_HERE.py.
 #
 # 2.  MANUFACTURING  --  the folder `manufacturing`
-#       The check of a part against what a printer, a mill or a mould asks of it, and the tool that changes the part until it keeps the rules: ONE EXAMPLE FOR EACH THING IT DOES, each one a
+#       The check of a part against what a printer, a mill or a mould asks of it, and the tool that changes the part until it keeps the rules: FOUR FILES (a 3D printer, a mill, an injection mould, a topology-optimized bracket), each one a
 #       part, the rules, the call, the answers worked out by hand and the checks (one PASS or FAIL line each).  Start with manufacturing/00_START_HERE.py.
 #
 # 3.  THE KNOWN ANSWERS  --  the folder `verification`
 #       Four problems with a solution on paper (a cantilever, a plate with a hole, a channel flow, conduction through a bar): the script stops with an error when FielDes is farther from the
 #       answer than a stated tolerance.
 #
-# 4.  THE EXAMPLES  --  the files 01 .. 33 next to this one
+# 4.  THE EXAMPLES  --  the files 01 .. 32 next to this one
 #       Each one is a small design that opens, runs and draws.
 #
 # 5.  REAL PARTS  --  the folders `step` and `meshes`

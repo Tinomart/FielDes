@@ -244,7 +244,7 @@ takes a few seconds and is cached next to it.
 | [`30_noise_kinds.py`](examples/30_noise_kinds.py) | Noise, one of every kind, and what scale, octaves, stretch and warp do to it |
 | [`31_texture.py`](examples/31_texture.py) | A pattern of small bumps and pits laid over the surface of a body: grit, stipple, leather, ribs, dimples, knurl |
 | [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
-| [`33_manufacturing.py`](examples/33_manufacturing.py) | What a printer cannot make of a part, where, and the part changed so that it can |
+| [`manufacturing/`](examples/manufacturing) | One file each for a 3D printer, a mill, an injection mould and a topology-optimized bracket: what the process cannot make of a part, where, and the part changed so that it can |
 
 ## Documentation
 

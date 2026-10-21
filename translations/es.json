@@ -1227,6 +1227,7 @@
  "Wall thickness increased": "Espesor de pared aumentado",
  "Overhang supported (gusset or teardrop)": "Voladizo sostenido (cartela o gota)",
  "Red and blue show what was added and removed compared with the input part.": "El rojo y el azul muestran lo que se añadió y lo que se quitó respecto a la pieza de entrada.",
+ "What is drawn is a lattice copy of the result (%.2g mm between its nodes); the numbers, the checks and the exports are those of the exact result.": "Lo que se dibuja es una copia en retícula del resultado (%.2g mm entre nodos); los números, las comprobaciones y las exportaciones son los del resultado exacto.",
  "Red and blue show what was added and removed since the first part. The numbers are those of this pass.": "El rojo y el azul muestran lo que se añadió y lo que se quitó desde la primera pieza. Las cifras son las de este paso.",
  "A hole or a slot narrower than the cutter's ball is filled up to the arc the ball rests on. To leave one as it is, exclude it: exclude(part, region), or give the region to keep=.": "Un agujero o una ranura más estrechos que la bola de la fresa se rellenan hasta el arco sobre el que se apoya la bola. Para dejarlos como están, exclúyelos: exclude(part, region), o pasa la región a keep=.",
  "  The optimizer's own re-check, not a substitute for an independent one: run manufacturing_analysis on the result.": "  La reverificación del propio optimizador no sustituye a una independiente: ejecute manufacturing_analysis sobre el resultado.",

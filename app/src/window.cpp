@@ -1745,6 +1745,8 @@ Window::Window(Arguments args)
             else if (w == "bottom") which = View::VIEW_BOTTOM;
             view->standardView(which);
         });
+        // panels on|off: the model tree over the viewport shown or hidden, for pictures of the part that nothing covers.  The setting of the user's window (View > Model tree) is not touched: it is the panel only
+        a->add("panels", [=](const QString& what){ view->scenePanel()->setVisible(what.trimmed().toLower() != "off"); });
         // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
         a->add("focusstate", [=](const QString&){
             const auto cue = findChild<FocusCue*>();

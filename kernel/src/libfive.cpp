@@ -2904,6 +2904,31 @@ libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tre
     return out.release();
 }
 
+libfive_tree libfive_field_bake_lattice(libfive_tree field, libfive_tree part, const libfive_tree* vars, const float* values, int nvars,
+                                        const double* frame, const int* dims, double pitch, double reach, double* stats, libfive_tree* zone)
+{
+    if (!field || !part || !frame || !dims) return nullptr;
+    libfive::fields::OverhangLatticeParams p;
+    for (int i = 0; i < 3; ++i) p.origin[i] = frame[i];
+    for (int i = 0; i < 9; ++i) p.axes[i] = frame[3 + i];
+    for (int i = 0; i < 3; ++i) p.n[i] = dims[i];
+    p.pitch = pitch;
+    p.tanSlope = 0.0;
+    p.reach = reach;
+    p.minZ = 0.0;
+    p.mode = 0;
+    p.negate = false;
+    p.forceLo = 1.0e30;
+    p.forceHi = -1.0e30;
+    std::map<Tree::Id, float> m;
+    for (int i = 0; i < nvars; ++i) m[static_cast<Tree::Id>(vars[i])] = values[i];
+    Tree z = Tree::invalid();
+    Tree out = libfive::fields::bakeLattice(Tree(field), Tree(part), m, p, stats, zone ? &z : nullptr);
+    if (!out.is_valid()) return nullptr;
+    if (zone) *zone = z.is_valid() ? z.release() : nullptr;
+    return out.release();
+}
+
 libfive_tree libfive_field_curvature(libfive_tree t, float h)
 {
     return libfive::fields::curvatureField(Tree(t), h).release();

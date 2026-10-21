@@ -1,4 +1,4 @@
-# 03  A MILL'S JOB: inside corners and gaps for a 6 mm cutter
+# 02  A MILL'S JOB: inside corners and gaps for a 6 mm cutter
 #
 # WHAT THIS SHOWS.  A round cutter of 6 mm cannot cut a sharp inside corner (it leaves an arc of its own radius, 3 mm), cannot go into a gap narrower than itself, and cannot reach anything that lies
 # under something else along its axis (here straight down, z).  cnc_constraint(tool_diameter=6) asks for exactly that: the tool rounds every inside corner to a radius of 3 mm, fills the gaps the cutter
@@ -7,13 +7,13 @@
 # its place is EXCLUDED from the job with `exclude(part, ...)`: the tool neither touches it nor judges it, and it stays a hole all the way through.
 #
 # WHAT YOU SEE.  The part (right) and its result (left): grey where it is as it was, red where material was added -- the arcs along every inside corner and the filled gaps; the hole is as it was.
-# WHAT YOU READ: one PASS line per check in the output pane; the answers by hand (a ball of radius 3 resting on two edges) are in the file.  About half a minute.
+# WHAT YOU READ: one PASS line per check in the output pane; the answers by hand (a ball of radius 3 resting on two edges) are in the file.  About half a minute, and the picture is there a second after the last line.
 
 import sys, os
 sys.path.append(os.path.join(os.getcwd(), 'kit'))
 from mfgkit import *
 
-t = Table('03 a mill\'s job: a plate with a fin, two blocks, an L, a boss and a hole, for a CNC cutter of 6 mm (inside corners of radius 3, gaps of 6, nothing out of reach from above)')
+t = Table('02 a mill\'s job: a plate with a fin, two blocks, an L, a boss and a hole, for a CNC cutter of 6 mm (inside corners of radius 3, gaps of 6, nothing out of reach from above)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 plate = difference(box((0, 0, 0), (70, 40, 5)), cylinder(2.5, 7, (62, 8, -1)))

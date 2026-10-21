@@ -1,17 +1,17 @@
-# 18  A TOPOLOGY-OPTIMIZED BRACKET made ready for a printer, a mill and a mould
+# 04  A TOPOLOGY-OPTIMIZED BRACKET made ready for a printer, a mill and a mould
 #
 # WHAT THIS SHOWS.  The optimizer makes a bracket from nothing but loads and supports: struts of every thickness leaning every way, nothing about it written by hand and nothing designed for any
 # process.  The same part is made ready for a 0.4 mm printer (walls, gaps, overhang), a mill with a 6 mm cutter (inside corners, reach) and an injection mould (draft, undercut, walls, inside corners); the plates
 # and lugs that carry the load and the two bolt-hole regions are kept untouched.  Each result is judged against the published rules of its process, on points of the surface, before and after.
 #
 # WHAT YOU SEE.  The bracket as the optimizer made it (right) and the result for the printer (left).  WHAT YOU READ: one PASS line for each check, for each of the three processes.
-# About six minutes (the optimization about a minute, the tool a minute for each process, the judge).
+# About five minutes (the optimization about a minute, the tool a minute for each process, the judge), and the picture is there 5 seconds after the last line.
 
 import sys, os
 sys.path.append(os.path.join(os.getcwd(), 'kit'))
 from mfgkit import *
 
-t = Table("18 a topology-optimized bracket: made ready for a printer, a mill and a mould, the part handed to the tool as it is, judged by the kit's judge")
+t = Table("04 a topology-optimized bracket: made ready for a printer, a mill and a mould, the part handed to the tool as it is, judged by the kit's judge")
 
 def judge(label, res, rules):
     # (the kit's judge: what a result is asked, written once for the three processes -- it stands up here so that no block of Python lies between the models below and what is made of them in the tree)

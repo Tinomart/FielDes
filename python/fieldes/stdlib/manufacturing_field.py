@@ -239,6 +239,19 @@ def _values(field, points):
     from fieldes.stdlib.exporting import _eval_at
     if not points:
         return []
+    hybrid = getattr(field, '_hybrid', None)
+    if hybrid is not None and len(points) > 64:
+        # (a result made of a formula and a lattice of what the formula adds, `_hybrid` = (the formula's result, the lattice's, the zone where the lattice is not exact): a batch of points is worked out by the lattice
+        # -- one lookup each -- and, at the points the zone covers, by the formula, which costs a hundred times as much.  A point is evaluated, not meshed: a `min` of the two would work out both at every point)
+        exact, cheap, zone = hybrid
+        flat = [c for p in points for c in p]
+        out = list(_eval_at(cheap, flat, len(points)))
+        zv = _eval_at(zone, flat, len(points))
+        at = [i for i, z in enumerate(zv) if z <= 0.0]
+        if at:
+            for i, v in zip(at, _eval_at(exact, [c for i in at for c in points[i]], len(at))):
+                out[i] = v
+        return out
     return _eval_at(field, [c for p in points for c in p], len(points))
 
 

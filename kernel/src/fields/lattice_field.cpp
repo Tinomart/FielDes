@@ -832,7 +832,7 @@ static Tree finishLattice(const OverhangLatticeParams& P, std::vector<float>&& v
     return Tree(std::make_unique<LatticeClause>(data));
 }
 
-Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, const OverhangLatticeParams& P, double* stats)
+Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, const OverhangLatticeParams& P, double* stats, std::vector<uint8_t>* checkOut)
 {
     const auto t0 = std::chrono::steady_clock::now();
     if (stats) for (int i = 0; i < 8; ++i) stats[i] = 0.0;
@@ -846,6 +846,20 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     if (nx < 3 || ny < 3 || nz < 3 || !(h > 0) || P.tanSlope == 0.0 || !(P.reach > 0)) return fail(1);
     const size_t nodes = size_t(nx) * ny * nz;
     if (nodes > size_t(160) * 1000 * 1000) return fail(2);          // (a lattice of more than 160 million nodes: a coarser pitch is asked for)
+
+    // The GUSSET OF THE CHECK.  The gusset is the cone under every stretch of the part, and its flank leans 5 % of the tangent inside the angle asked (43.5 degrees for 45: the check reads a face to a few per cent).
+    // On a part an optimizer shaped every face is a facet, most of them lean a degree or two past the angle, and the cone puts a wedge of fill under each: a skin a node or two thick, which nothing hangs on and no
+    // check marks -- the check lets a face through up to the angle and 5 % of it, 47.25 degrees for 45 -- drawn as the red crescents and shards that stand out of the struts of the topology bracket.  So the cone is
+    // made twice: once at the angle the check lets through, to find where a face leans past it (`checkGusset`, the nodes of that gusset), and once at the flank; a piece of the second is kept only where it holds
+    // a node of the first.  Where a face needs the fill the flank still lies inside the angle, and where it does not the part is left as it is.  Not for a cut (`negate`): the teardrop's apex is thin on purpose.
+    // (0.95 is the share of the tangent that `_remedy_overhang` takes for the flank, 1.05 the grace of the rules: the same numbers)
+    std::vector<uint8_t> checkGusset;
+    if (!checkOut && !P.negate && P.tanSlope > 0.0 && P.mode != 2 && P.mode != 3 && P.mode != 5 && P.mode != 6 && P.mode != 7)
+    {
+        OverhangLatticeParams limitParams = P;
+        limitParams.tanSlope = std::tan(std::atan(P.tanSlope / 0.95) * 1.05);
+        overhangLattice(part, vars, limitParams, nullptr, &checkGusset);
+    }
 
     // 1. The part at the nodes
     std::vector<float> F(nodes, kBound);
@@ -1618,6 +1632,97 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
         });
         if (gusset.load() == before) break;           // (nothing new: the part with its gusset is what a gusset of it would be)
     }
+    // The gusset of the CHECK, asked of the function by itself (see the top): only its nodes are wanted, as a map of where a face leans past what the check lets through
+    if (checkOut)
+    {
+        checkOut->assign(nodes, 0);
+        for (size_t q = 0; q < nodes; ++q) (*checkOut)[q] = S[q] == 1 ? 1 : 0;
+        return Tree::invalid();
+    }
+    // A piece of gusset (or of air cut) that is smaller than a few nodes in every direction is not made.  On a part that an optimizer shaped -- struts of every thickness, every face a facet -- most faces lean
+    // a degree or two past the angle, and the gusset that would put them right is a skin a fraction of a node thick: hundreds of pieces, each under a cubic millimetre, which no lattice can carry (they
+    // come out as slabs one node thick or are lost between nodes), no printer can print (a skin of a tenth of a millimetre on a 0.4 mm nozzle) and which are drawn as red specks and shards scattered over the
+    // part.  Pieces are the connected sets of gusset nodes (26 neighbours); one that holds less than 64 nodes -- 4 nodes each way -- or none of the nodes of the check's gusset (see the top) is dropped, with the nodes of the air that touch it.  What is left is the
+    // gusset of the overhangs that are big enough to matter; the independent check still lists the faces of a dropped piece as they were, a few tenths of a per cent of the surface
+    {
+        const size_t minNodes = 64;
+        std::vector<uint8_t> seen(nodes, 0);
+        std::vector<size_t> stack, piece;
+        uint64_t dropped = 0, droppedNodes = 0;
+        for (size_t start = 0; start < nodes; ++start)
+        {
+            if (S[start] != 1 || seen[start]) continue;
+            piece.clear();
+            stack.clear();
+            stack.push_back(start);
+            seen[start] = 1;
+            bool needed = checkGusset.empty();          // (a piece of the gusset is kept only where a face leans past what the check lets through: see the top)
+            while (!stack.empty())
+            {
+                const size_t q = stack.back();
+                stack.pop_back();
+                piece.push_back(q);
+                if (!needed && checkGusset[q]) needed = true;
+                const int i = int(q % size_t(nx)), j = int((q / size_t(nx)) % size_t(ny)), k = int(q / columns);
+                for (int dk = -1; dk <= 1; ++dk)
+                    for (int dj = -1; dj <= 1; ++dj)
+                        for (int di = -1; di <= 1; ++di)
+                        {
+                            const int ii = i + di, jj = j + dj, kk = k + dk;
+                            if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                            const size_t n = (size_t(kk) * ny + jj) * nx + ii;
+                            if (S[n] == 1 && !seen[n])
+                            {
+                                seen[n] = 1;
+                                stack.push_back(n);
+                            }
+                        }
+            }
+            if (piece.size() < minNodes || !needed)
+            {
+                for (size_t q : piece)
+                {
+                    S[q] = 0;
+                    G[q] = cap;
+                }
+                ++dropped;
+                droppedNodes += piece.size();
+            }
+        }
+        if (dropped)
+        {
+            // (a node of the air that was within a node of the surface of a dropped piece, and has no piece left beside it: nothing of the gusset is there any more)
+            parallelFor(size_t(nz), [&](size_t k) {
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t q = (k * size_t(ny) + size_t(j)) * size_t(nx) + size_t(i);
+                        if (S[q] != 2) continue;
+                        bool beside = false;
+                        for (int dk = -1; dk <= 1 && !beside; ++dk)
+                            for (int dj = -1; dj <= 1 && !beside; ++dj)
+                                for (int di = -1; di <= 1 && !beside; ++di)
+                                {
+                                    const int ii = i + di, jj = j + dj, kk = int(k) + dk;
+                                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                                    if (S[(size_t(kk) * ny + jj) * nx + ii] == 1) beside = true;
+                                }
+                        if (!beside)
+                        {
+                            S[q] = 0;
+                            G[q] = cap;
+                        }
+                    }
+            });
+            parallelFor(columns, [&](size_t c) {
+                uint8_t any = 0;
+                for (int k = 0; k < nz && !any; ++k) any = S[size_t(k) * columns + c] ? 1 : 0;
+                has[c] = any;
+            });
+            gusset.store(gusset.load() > droppedNodes ? gusset.load() - droppedNodes : 0);
+        }
+    }
+
     // The nodes of the part that touch a gusset (a gusset node among the 26 round them): the same formula as the air under them
     parallelFor(columns, [&](size_t c) {
         const int ci = int(c % size_t(nx)), cj = int(c / size_t(nx));
@@ -1693,6 +1798,193 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
         (void)tColumns;
     }
     return Tree(std::make_unique<LatticeClause>(data));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The CORRECTION lattice: what a field differs from the part it is made from, worked out once
+//
+// The remedies of the manufacturing tool for a part whose field is cheap -- walls thickened, a draft, a gap closed -- are formulas: each asks the part's field dozens of times at every point
+// the mesher samples (the draft's foot closing alone ~60 lookups).  The mesher needs ~1500 points for each cell on the surface, so a surface cell of the mould of showcase 03_mould.py costs ten milliseconds
+// where the part's own costs a fraction of one: 74 seconds for what the part draws in 0.2.  Direct math cannot make that formula cheaper without changing the field (six ways were measured).
+// Here the formula is LOOKED AT ONCE, in the tool: its difference to the part -- a smooth correction, the growth of the walls, 0 away from every face the remedies touch -- is sampled at the nodes
+// of a lattice (with the pruning of the mesher: a block that interval arithmetic puts farther than `reach` from the surface of the field is not looked at, the difference there is 0), and the
+// result is the part's own field PLUS that lattice.  The part's edges and faces stay exact (they are the part's), the lattice only carries the correction, which is linear along a wall (the draft)
+// and smooth elsewhere: reading it by trilinear interpolation is exact where it is linear and good to a fraction of a node at its kinks.  The mesher reads one lookup of a lattice, not the formula.
+Tree bakeLattice(const Tree& field, const Tree& part, const std::map<Tree::Id, float>& vars, const OverhangLatticeParams& P, double* stats, Tree* zone)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    if (stats) for (int i = 0; i < 8; ++i) stats[i] = 0.0;
+    auto fail = [&](double code) {
+        if (stats) stats[0] = code;
+        return Tree::invalid();
+    };
+    const int nx = P.n[0], ny = P.n[1], nz = P.n[2];
+    const double h = P.pitch;
+    if (nx < 3 || ny < 3 || nz < 3 || !(h > 0) || !(P.reach > 0)) return fail(1);
+    const size_t nodes = size_t(nx) * ny * nz;
+    if (nodes > size_t(120) * 1000 * 1000) return fail(2);          // (a lattice of more than 120 million nodes: a coarser pitch is asked for)
+
+    std::vector<float> F(nodes, kBound);
+    std::vector<uint8_t> inside(nodes, 0);          // (1 where the part is solid at the node: see the extension below)
+    std::vector<float> partAt(zone ? nodes : 0, 0.0f);          // (the part's value at the nodes that were looked at: the zone is only where the result's surface is)
+    std::atomic<uint64_t> looked(0);
+    {
+        // tiles of 16 nodes, each worked through by one thread with evaluators of its own: the field is sampled with the pruning of the mesher, and at the nodes that were looked at the part is
+        // subtracted; a node that interval arithmetic put far from the surface holds 0 (the field is the part's there)
+        const int T = 16;
+        const int tx = (nx + T - 1) / T, ty = (ny + T - 1) / T, tz = (nz + T - 1) / T;
+        const size_t tiles = size_t(tx) * ty * tz;
+        std::atomic<int> failed(0);
+        const size_t threads = std::max<size_t>(1, std::min<size_t>(std::thread::hardware_concurrency(), tiles));
+        std::atomic<size_t> next(0);
+        std::vector<std::thread> pool;
+        for (size_t th = 0; th < threads; ++th)
+        {
+            pool.emplace_back([&]() {
+                try
+                {
+                    Evaluator ev(field, vars);
+                    Evaluator evP(part, vars);
+                    const Tape::Handle root = ev.getDeck()->tape;
+                    const Tape::Handle rootP = evP.getDeck()->tape;
+                    Sampler S{P, {nx, ny, nz}, h, F, ev, looked};
+                    S.band = P.reach;
+                    S.bandIn = P.reach;
+                    size_t where[ArrayEvaluator::N];
+                    for (;;)
+                    {
+                        const size_t q = next.fetch_add(1);
+                        if (q >= tiles) break;
+                        const int ti = int(q % tx), tj = int((q / tx) % ty), tk = int(q / (size_t(tx) * ty));
+                        const int lo[3] = {ti * T, tj * T, tk * T};
+                        const int hi[3] = {std::min(nx - 1, lo[0] + T - 1), std::min(ny - 1, lo[1] + T - 1), std::min(nz - 1, lo[2] + T - 1)};
+                        S.box(lo, hi, root);
+                        size_t pending = 0;
+                        auto flush = [&]() {
+                            if (!pending) return;
+                            const auto vs = evP.values(pending, *rootP);
+                            for (size_t c = 0; c < pending; ++c)
+                            {
+                                F[where[c]] -= vs(long(c));
+                                inside[where[c]] = vs(long(c)) < 0.0f ? 1 : 0;
+                                if (zone) partAt[where[c]] = vs(long(c));
+                            }
+                            pending = 0;
+                        };
+                        for (int k = lo[2]; k <= hi[2]; ++k)
+                            for (int j = lo[1]; j <= hi[1]; ++j)
+                                for (int i = lo[0]; i <= hi[0]; ++i)
+                                {
+                                    const size_t idx = (size_t(k) * ny + j) * nx + i;
+                                    if (std::fabs(F[idx]) < 0.5f * kBound)
+                                    {
+                                        evP.set(S.world(i * h, j * h, k * h), pending);
+                                        where[pending++] = idx;
+                                        if (pending == ArrayEvaluator::N) flush();
+                                    }
+                                    else
+                                    {
+                                        F[idx] = 0.0f;
+                                    }
+                                }
+                        flush();
+                    }
+                }
+                catch (...)
+                {
+                    failed = 1;
+                }
+            });
+        }
+        for (auto& th : pool) th.join();
+        if (failed) return fail(3);
+    }
+    // The correction of a remedy that ADDS material (a wall grown, a gap filled, a draft) is -the growth outside the part's surface and 0 inside it, because the formula grows what is outside and has no reason to
+    // do anything to what is solid already -- a jump at the part's old surface.  A lattice reads a jump as a ramp one node wide, and the result, the part's value plus that ramp, then comes back to 0 inside the
+    // grown wall, along the old surface: a fin of 1.2 mm grown to 2 mm had a ridge of 0 at both its old faces, and the check, which walks through material until the field turns positive, measured the fin as 1.2 mm
+    // thick.  So the correction is carried a few nodes into the material (by the most negative value of the nodes beside it, one layer a pass): inside the part the result is solid whatever the correction is (it only
+    // adds), so no surface moves, the jump is gone, and the field inside the grown wall is clearly negative.  A node that is cut (a correction above 0) is left as it is.
+    {
+        const size_t sx = 1, sy = size_t(nx), sz = size_t(nx) * size_t(ny);
+        std::vector<std::pair<size_t, float>> take;
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            take.clear();
+            for (int k = 0; k < nz; ++k)
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t idx = (size_t(k) * ny + j) * nx + i;
+                        if (inside[idx] != 1 || F[idx] > 0.0f) continue;
+                        float cand = 0.0f;
+                        auto see = [&](size_t n) { if (inside[n] != 1) cand = std::min(cand, F[n]); };
+                        if (i > 0) see(idx - sx);
+                        if (i + 1 < nx) see(idx + sx);
+                        if (j > 0) see(idx - sy);
+                        if (j + 1 < ny) see(idx + sy);
+                        if (k > 0) see(idx - sz);
+                        if (k + 1 < nz) see(idx + sz);
+                        if (cand < -1e-6f && cand < F[idx] - 1e-6f) take.emplace_back(idx, cand);
+                    }
+            if (take.empty()) break;
+            for (const auto& t : take)
+            {
+                F[t.first] = t.second;
+                inside[t.first] = 2;
+            }
+        }
+    }
+    // THE ZONE: where a trilinear reading of the correction is not exact.  A lattice reads a correction that is linear exactly (a draft's lean, a wall grown by a constant) and a kink of it -- the top of
+    // a wall's draft, a convex edge, the foot of a wall -- over one node, which is finer than the cells a picture is made in and coarser than a check that reads the lean of a face a few hundredths of a
+    // millimetre from it (the mould's draft was marked on 0.24 % of its surface, the undercut on 0.16 %).  So the result is the lattice where the correction is linear and the formula only in the zones
+    // round its kinks: a node is a kink where a second difference of the correction along an axis is more than 4e-4 mm (a linear correction has none) AND the result's surface is within three nodes of it
+    // (a kink far from the surface -- the band's edge -- changes nothing that is drawn or measured), and the zone is the nodes within two of such a node.  -1 inside the zone, +1 elsewhere and outside
+    // the lattice
+    if (zone)
+    {
+        std::vector<uint8_t> kink(nodes, 0), spread(nodes, 0);
+        const size_t sx = 1, sy = size_t(nx), sz = size_t(nx) * size_t(ny);
+        const float tau = 4.0e-4f;
+        const float nearSurface = float(3.0 * h);
+        for (int k = 0; k < nz; ++k)
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i)
+                {
+                    const size_t idx = (size_t(k) * ny + j) * nx + i;
+                    if (std::fabs(partAt[idx] + F[idx]) >= nearSurface) continue;
+                    const float d0 = F[idx];
+                    bool bent = false;
+                    if (i > 0 && i + 1 < nx) bent = bent || std::fabs(F[idx - sx] - 2.0f * d0 + F[idx + sx]) > tau;
+                    if (j > 0 && j + 1 < ny) bent = bent || std::fabs(F[idx - sy] - 2.0f * d0 + F[idx + sy]) > tau;
+                    if (k > 0 && k + 1 < nz) bent = bent || std::fabs(F[idx - sz] - 2.0f * d0 + F[idx + sz]) > tau;
+                    if (bent) kink[idx] = 1;
+                }
+        // (a box of two nodes round each kink, one axis after the other)
+        const int R = 2;
+        auto widen = [&](const std::vector<uint8_t>& from, std::vector<uint8_t>& to, int axis) {
+            const size_t stride = axis == 0 ? sx : (axis == 1 ? sy : sz);
+            const int len = axis == 0 ? nx : (axis == 1 ? ny : nz);
+            for (int k = 0; k < nz; ++k)
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t idx = (size_t(k) * ny + j) * nx + i;
+                        const int at = axis == 0 ? i : (axis == 1 ? j : k);
+                        uint8_t v = 0;
+                        for (int s = std::max(0, at - R); s <= std::min(len - 1, at + R) && !v; ++s) v = from[idx + size_t(s) * stride - size_t(at) * stride];
+                        to[idx] = v;
+                    }
+        };
+        widen(kink, spread, 0);
+        widen(spread, kink, 1);
+        widen(kink, spread, 2);
+        std::vector<float> Z(nodes, 1.0f);
+        for (size_t q = 0; q < nodes; ++q)
+            if (spread[q]) Z[q] = -1.0f;
+        *zone = finishLattice(P, std::move(Z), 1.0f, "zone", nullptr, 0.0, double(nodes), 0.0, 0.0, 0.0, 0.0);
+    }
+    const double tSample = secondsSince(t0);
+    return finishLattice(P, std::move(F), 0.0f, "bake", stats, 0.0, double(nodes), double(looked.load()), tSample, secondsSince(t0), 0.0);
 }
 
 }   // namespace fields

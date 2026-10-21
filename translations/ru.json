@@ -1227,6 +1227,7 @@
  "Wall thickness increased": "Толщина стенки увеличена",
  "Overhang supported (gusset or teardrop)": "Нависание поддержано (ребро или каплевидная форма)",
  "Red and blue show what was added and removed compared with the input part.": "Красным и синим показано, что добавлено и что удалено по сравнению с исходной деталью.",
+ "What is drawn is a lattice copy of the result (%.2g mm between its nodes); the numbers, the checks and the exports are those of the exact result.": "Отображается решётчатая копия результата (%.2g мм между узлами); числа, проверки и экспорт относятся к точному результату.",
  "Red and blue show what was added and removed since the first part. The numbers are those of this pass.": "Красным и синим показано, что добавлено и что удалено с первой детали. Числа относятся к этому проходу.",
  "A hole or a slot narrower than the cutter's ball is filled up to the arc the ball rests on. To leave one as it is, exclude it: exclude(part, region), or give the region to keep=.": "Отверстие или паз уже шара фрезы заполняется до дуги, на которой лежит шар. Чтобы оставить его как есть, исключите его: exclude(part, region) или передайте область в keep=.",
  "  The optimizer's own re-check, not a substitute for an independent one: run manufacturing_analysis on the result.": "  Повторная проверка самим оптимизатором не заменяет независимую: запустите manufacturing_analysis для результата.",

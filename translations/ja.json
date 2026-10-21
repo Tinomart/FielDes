@@ -1227,6 +1227,7 @@
  "Wall thickness increased": "壁厚を増やしました",
  "Overhang supported (gusset or teardrop)": "オーバーハングを支えました（ガセットまたは涙形）",
  "Red and blue show what was added and removed compared with the input part.": "赤と青は、入力した部品に対して追加された部分と取り除かれた部分を示します。",
+ "What is drawn is a lattice copy of the result (%.2g mm between its nodes); the numbers, the checks and the exports are those of the exact result.": "表示されているのは結果の格子コピー（節点間隔 %.2g mm）です。数値、チェック、エクスポートは正確な結果のものです。",
  "Red and blue show what was added and removed since the first part. The numbers are those of this pass.": "赤と青は、最初の部品から追加された部分と取り除かれた部分を示します。数値はこのパスのものです。",
  "A hole or a slot narrower than the cutter's ball is filled up to the arc the ball rests on. To leave one as it is, exclude it: exclude(part, region), or give the region to keep=.": "カッターのボールより狭い穴やスロットは、ボールが載る円弧の高さまで埋められます。そのままにしたい場合は exclude(part, region) で除外するか、その領域を keep= に渡してください。",
  "  The optimizer's own re-check, not a substitute for an independent one: run manufacturing_analysis on the result.": "  最適化ツール自身の再チェックは、独立した確認の代わりにはなりません。結果に対して manufacturing_analysis を実行してください。",

@@ -69,7 +69,13 @@ struct OverhangLatticeParams
                           // either end (7); the shaft widens by `tanSlope` (the tangent of a draft; a tiny number for a straight shaft) for every unit it goes out; `reach` is the band of the part that is looked at and where the field stops)
 };
 Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars,
-                     const OverhangLatticeParams& params, double* stats);
+                     const OverhangLatticeParams& params, double* stats, std::vector<uint8_t>* checkOut = nullptr);
+
+/*  The CORRECTION lattice (lattice_field.cpp): what `field` differs from `part` by, sampled once at the nodes of a lattice -- `origin`, `axes`, `n`, `pitch` as above -- at the nodes where
+ *  `field` is within `reach` of its surface (with the pruning of the mesher), 0 everywhere else.  The part plus it is `field` there (trilinear between the nodes) and the part's own
+ *  field elsewhere.  `stats` as above.  An invalid tree when it cannot be made.  */
+Tree bakeLattice(const Tree& field, const Tree& part, const std::map<Tree::Id, float>& vars,
+                 const OverhangLatticeParams& params, double* stats, Tree* zone = nullptr);
 
 }   // namespace fields
 }   // namespace libfive

@@ -1,17 +1,17 @@
-# 04  AN INJECTION MOULD: draft, undercut and walls
+# 03  AN INJECTION MOULD: draft, undercut and walls
 #
 # WHAT THIS SHOWS.  A moulded part has to leave the mould in one direction (here straight up, z): a wall that is parallel to the pull rubs along the steel, and anything under a lip that the
 # two halves of the mould cannot reach is an undercut.  The constraint here asks for a draft of 2 degrees on every upright wall, no undercut along the pull and walls of 1.5 mm or more; the
 # tool puts a draft on the walls (they grow wider towards the foot, by the depth times the tangent of the angle), fills the undercuts and thickens a thin wall.
 #
 # WHAT YOU SEE.  The part (right) and its result (left): grey where it is as it was, red where material was added.  The card names each remedy that was applied (draft, undercut, walls) and says
-# how much each added.  WHAT YOU READ: one PASS line per check in the output pane; the answers by hand are in the file.  About two minutes.
+# how much each added.  WHAT YOU READ: one PASS line per check in the output pane; the answers by hand are in the file.  About half a minute, and the picture is there a second after the last line.
 
 import sys, os
 sys.path.append(os.path.join(os.getcwd(), 'kit'))
 from mfgkit import *
 
-t = Table('04 an injection mould job: a part for injection moulding (walls of 1.5 mm, a draft of 2 degrees, nothing out of reach along the pull)')
+t = Table('03 an injection mould job: a part for injection moulding (walls of 1.5 mm, a draft of 2 degrees, nothing out of reach along the pull)')
 
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
 plate = difference(box((0, 0, 0), (70, 40, 5)), cylinder(2.5, 7, (62, 8, -1)))
@@ -22,7 +22,7 @@ ell = union(box((32, 5, 5), (44, 8, 15)), box((32, 5, 5), (35, 25, 15)))
 boss = cylinder(5, 10, (55, 28, 5))
 part = union(union(union(union(union(plate, fin), block_a), block_b), ell), boss)
 # WHAT IS ASKED: the three rules of a mould that this file is about: walls of 1.5, a draft of 2 degrees, nothing out of reach along the pull.  (The preset `molding_constraint` also asks for inside corners of half
-# the wall; a fillet makes new vertical walls that a draft then has to lean, and a draft makes the fillet's air smaller, so corners and draft are two passes of the tool -- 15_second_pass.py -- and the corner
+# the wall; a fillet makes new vertical walls that a draft then has to lean, and a draft makes the fillet's air smaller, so corners and draft are two passes of the tool -- a second call of the tool -- and the corner
 # rule is shown by 03.)  The only conditions the tool is given: it has no loads, supports or material -- it works on the shape alone.
 rule = manufacturing_constraint(min_wall=1.5, draft=2.0, undercut_along=(0, 0, 1), pull_direction=(0, 0, 1), name='injection mould, ABS')
 print(rule)
