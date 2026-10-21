@@ -741,11 +741,11 @@ def _close_feet(ctx, result, d, lift):
         exactly 1 did not fill: a slit of air 0.1 mm wide along that line, the whole length of the foot (measured on the fin of 01_printer.py: the correction at the foot is the growth, then a gap of 0,
         then a ramp), which the correction lattice that is drawn (`_bake`) read as a neck in the grown wall and a skirt on the floor, 0.3 mm wide and not alike on the two sides.
 
-        The lifted place counts for eight times its value OUTSIDE the skin (and for its value inside it): `min(result, lifted)` pulled the field down in the air beside the foot, to the
-        lifted place's distance from the wall less the growth, in a band as wide as the growth along the 45-degree line from the corner -- where nothing is grown, the surface does not move, and the
-        value is only smaller --, and the correction lattice read that band as a correction of up to the growth, a ramp that its carry copied under the floor, so that at the floor the lattice
-        held a correction of 0.2 to 0.4 mm where the exact result has none: a fillet 0.5 mm wide and 0.5 mm high at the foot of the fin, measured at the 0.34 mm nodes of the showcase and the
-        same drawn in cells of 0.1 mm.  The place where the lifted value is 0, the surface, and every sign are as they were: only a band of a twentieth of a millimetre outside the skin holds the lifted value now '''
+        Tried and left out: counting the lifted place eight times its value outside the skin (`lifted + 7 max(0, lifted)` in the min).  `min(result, lifted)` pulls the field down in the air beside the foot, to
+        the lifted place's distance from the wall less the growth, along the 45-degree line from the corner, where nothing is grown and the surface does not move; the correction lattice reads that band as a
+        ramp, and the carry of `_bake` copies it under the floor.  Cutting the band brought the drawn foot of the fin from 0.3 mm off the exact result to 0.2, and put 0.06 % of the mould's surface under
+        the draft rule where 0.05 % is allowed (03_mould.py: the wider gate alone and the eightfold lifted place alone each pass 8 of 8, the two together fail one).  A blend that takes the lookup out of the min
+        cost 2.6 times the time of the tool, no pruning: the plain min stays '''
     norm = math.sqrt(sum(float(x) ** 2 for x in d)) or 1.0
     u = tuple(float(x) / norm for x in d)
     nd = _dot(ctx.normals, u)
@@ -755,8 +755,7 @@ def _close_feet(ctx, result, d, lift):
         floor = ((sign * nd - 0.3) * 4.0).max(0).min(1)                                            # (the nearest face of the point faces away from the floor, or is the average of it and a wall's: 1 from 55 degrees of the pull, 0 from 73)
         skin = (_at(ctx.field, *move) * (1.0 / ctx.step)).max(0).min(1)                              # (the lifted place is outside the part)
         beside = ((0.5 - _dot(_Normals(ctx.field, ctx.step, shift=move), u).abs()) * 4.0).max(0).min(1)    # (and its nearest face is a wall)
-        lifted = _at(result, *move)
-        out = out.min(lifted + 7.0 * lifted.max(0) + _BIG * (1.0 - floor * skin * beside))
+        out = out.min(_at(result, *move) + _BIG * (1.0 - floor * skin * beside))
     return out
 
 
