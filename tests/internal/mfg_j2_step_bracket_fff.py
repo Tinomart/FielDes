@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table("j2_step_bracket_fff: J2: the STEP bracket of the examples -- a part nobody designed for printing -- made ready for a 0.4 mm FFF printer, judged by the kit's own judge against the published rules (wall 0.8, overhang 45, a gap under 0.3 prints closed): the share of the surface that breaks each rule before and after, and the places that were fine left as they were")

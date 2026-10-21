@@ -12,7 +12,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('c1_L: an L of two walls 3 mm thick, an inside corner radius of 6 mm asked: a fillet, the arc of a ball of radius 6')

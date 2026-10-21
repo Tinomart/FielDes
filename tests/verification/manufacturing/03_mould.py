@@ -8,7 +8,7 @@
 # how much each added.  WHAT YOU READ: one PASS line per check in the output pane; the answers by hand are in the file.  About half a minute, and the picture is there a second after the last line.
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', '..', 'kit'))
 from mfgkit import *
 
 t = Table('03 an injection mould job: a part for injection moulding (walls of 1.5 mm, a draft of 2 degrees, nothing out of reach along the pull)')

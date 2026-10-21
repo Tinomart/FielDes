@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('o6_overhang_thresholds: four plates leaning 43, 44, 47 and 50 degrees off the vertical (the lower face looks down), an overhang of 45 degrees asked and the gusset allowed: the plate under the flank of the gusset (43.5 degrees) is left exactly as it is, the one between the flank and the rule\'s limit and grace is given at most a sliver, the two over are given a gusset under their lower face, which then leans no more than 45 degrees')

@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('w2_wedge_wall: a wedge wall 0.2 mm thick at one end and 1.1 mm at the other, over 20 mm (4 mm wide), for a 0.8 mm wall rule: the fix follows the wall, thickens only the part under 0.8 and leaves no cliff where the wall crosses it')

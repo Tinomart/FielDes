@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a3_pocket_corners: six square pockets whose inside corners have radius 0, 1, 1.8, 2.7, 3 and 5 mm, for a rule of 3 mm: the check must mark the corners that are well short of the limit (under 2 mm), must not mark those at the radius or above (3 and 5 mm), and says what it does in the zone between (2.7 mm); never an outside corner')

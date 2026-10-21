@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('g3_v_slot: a V-shaped slot, 0 mm wide at its root and 3 mm at its mouth, for a 0.4 mm gap rule: the fill closes the slot up to where it is wide enough and leaves the rest of the V as it is, with a continuous surface between')

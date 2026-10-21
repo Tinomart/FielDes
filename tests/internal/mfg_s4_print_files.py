@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('s4_print_files: a small ledge on a wall (10 x 10 x 12) with a block of support under it, written as a print: the 3MF holds the part, the supports and the no-support volume as three objects of the right volumes, the DXF has one layer for each millimetre of height, the SVG slice has the area of the section -- the one case of the suite that writes files, because writing them is a feature of the product')

@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('o4_arch_and_sphere_cavity: a tunnel with a round roof (walls 8 mm high, a half-circle of radius 6 on top) and a closed spherical cavity of radius 6, an overhang of 45 degrees asked with overhang_fix=cut: the roof of each becomes a teardrop, a pointed arch and a cone, with its apex 6 sqrt 2 = 8.49 mm above the centre and its faces leaning 45 degrees')

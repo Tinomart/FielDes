@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('g5_slit_under_a_wide_slot: a narrow slit of 0.2 mm at the bottom of a wide slot of 3 mm, for a 0.4 mm gap rule: only the slit is closed, up to its mouth, and the wide slot above it stays as wide as it was')

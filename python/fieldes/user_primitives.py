@@ -17,6 +17,7 @@ License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import ast
+import copy
 import io
 import json
 import keyword
@@ -26,7 +27,18 @@ import sys
 import tokenize
 
 # What the menus call each kind of model: the group of the Primitives menu a primitive of that kind is in
-GROUP_OF_TYPE = {'solid': '3D', 'profile': '2D', 'curve': '1D', 'point': 'Points', 'surface': 'Surfaces', 'field': 'Fields'}
+GROUP_OF_TYPE = {'solid': '3D', 'profile': '2D', 'curve': '1D', 'point': 'Points', 'surface': 'Surfaces', 'field': 'Fields', 'symmetry': 'Symmetry',
+                 'lattice': '3D', 'import': '3D', 'points': 'Points'}
+
+# The section of the manager (the kind of the list) a model of each type of the model tree belongs to: a lattice or an imported part is a 3D shape, a set of points are points.  A type this
+# does not know (a simulation, a material ...) is a 3D shape as well, so that what was made a primitive of the user's own is in a list, and can be found and renamed there
+KIND_OF_TYPE = {'solid': 'solid', 'lattice': 'solid', 'import': 'solid', 'profile': 'profile', 'curve': 'curve', 'point': 'point', 'points': 'point', 'surface': 'surface', 'field': 'field',
+                'symmetry': 'symmetry'}
+
+
+def kind_of(typ):
+    return KIND_OF_TYPE.get(typ or 'solid', 'solid')
+
 
 _CACHE = {'stamp': None, 'data': None}
 
@@ -46,11 +58,12 @@ def path():
 
 
 def _empty():
-    return {'added': [], 'removed': [], 'custom': []}
+    return {'added': [], 'removed': [], 'custom': [], 'labels': {}}
 
 
 def load():
-    ''' What the user chose: {added: [names], removed: [names], custom: [{name, type, head, expr, names, main, doc}]}.  A file that is not there, or cannot be read, is no choices '''
+    ''' What the user chose: {added: [names], removed: [names], custom: [{name, type, head, expr, names, main, doc}], labels: {name: the name the menus show}}.  A file that is not there, or
+        cannot be read, is no choices '''
     p = path()
     try:
         stamp = (os.path.getmtime(p), os.path.getsize(p))
@@ -67,6 +80,9 @@ def load():
             out['added'] = [str(n) for n in raw.get('added', []) if isinstance(n, str)]
             out['removed'] = [str(n) for n in raw.get('removed', []) if isinstance(n, str)]
             out['custom'] = [c for c in raw.get('custom', []) if isinstance(c, dict) and isinstance(c.get('name'), str) and isinstance(c.get('expr'), str)]
+            labels = raw.get('labels', {})
+            if isinstance(labels, dict):
+                out['labels'] = {str(k): str(v) for k, v in labels.items() if isinstance(k, str) and isinstance(v, str) and v.strip()}
     except (OSError, ValueError):
         out = _empty()
     _CACHE['stamp'], _CACHE['data'] = stamp, out
@@ -95,6 +111,11 @@ def find(name):
         if c['name'] == name:
             return c
     return None
+
+
+def labels():
+    ''' The names the user gave the shapes of the library: {function name: what the menus call it} '''
+    return load()['labels']
 
 
 def catalog_entries():
@@ -233,6 +254,9 @@ def manage(arg):
           set {name, on}                 put a menu entry in the list of Primitives (on) or take it out of it
           add {source, line, end_line, name, type, doc}   the model written there becomes a primitive of the user's own
           remove {name}                  a primitive of the user's own is forgotten
+          rename {name, label}           a primitive of the user's own gets another name (a new one: it is what the menus call it, and what the model it writes is called after);
+                                         a shape of the library keeps its function and gets the name the menus show (an empty label: the library's name again)
+          kind {type}                    the section of the manager a model of that type of the model tree belongs to: {kind}
         {ok: false, error} where it cannot be done '''
     from fieldes import menu_catalog as M
     r = json.loads(arg)
@@ -240,7 +264,11 @@ def manage(arg):
     try:
         if op == 'list':
             return json.dumps({'ok': True, 'entries': _entries(M, r.get('type'))})
-        d = load()
+        if op == 'kind':
+            return json.dumps({'ok': True, 'kind': kind_of(r.get('type'))})
+        # (a copy: an operation that is refused half way leaves what was read from the file as it is)
+        d = copy.deepcopy(load())
+        extra = {}                  # (what an operation tells besides the list: the name a rename ended up with)
         if op == 'set':
             name, on = r['name'], bool(r['on'])
             builtin = name in M.BASIC
@@ -253,6 +281,8 @@ def manage(arg):
             if find(name):
                 raise ValueError('"%s" is a primitive of your own: remove it to take it out' % name)
         elif op == 'add':
+            if kind_of(r.get('type')) in ('point', 'symmetry'):
+                raise ValueError('a point or a symmetry is a single button in the menus, not a list of shapes: it cannot be made a primitive')
             name = re.sub(r'\W+', '_', str(r.get('name') or '').strip()).strip('_')
             if not name or name[0].isdigit() or keyword.iskeyword(name):
                 raise ValueError('a primitive needs a name made of letters, digits and underscores')
@@ -263,16 +293,36 @@ def manage(arg):
             d['custom'].append({'name': name, 'type': typ, 'head': head, 'main': main, 'expr': expr, 'names': names, 'doc': r.get('doc') or ''})
         elif op == 'remove':
             d['custom'] = [c for c in d['custom'] if c['name'] != r['name']]
+        elif op == 'rename':
+            name, label = r['name'], str(r.get('label') or '').strip()
+            mine = next((c for c in d['custom'] if c['name'] == name), None)
+            if mine is not None:
+                new = re.sub(r'\W+', '_', label).strip('_')
+                if not new or new[0].isdigit() or keyword.iskeyword(new):
+                    raise ValueError('a primitive needs a name made of letters, digits and underscores')
+                if new != name and (any(n == new for n, _g, _t in M.PRIMITIVES) or any(o[0] == new for o in M.OPERATIONS) or any(c['name'] == new for c in d['custom'])):
+                    raise ValueError('"%s" is the name of something the menus have already: choose another' % new)
+                mine['name'] = new
+                extra['label'] = new.replace('_', ' ')
+            else:
+                if not any(n == name for n, _g, _t in M.PRIMITIVES):
+                    raise ValueError('"%s" is not a primitive' % name)
+                if label:
+                    d['labels'][name] = label
+                else:
+                    d['labels'].pop(name, None)
+                extra['label'] = label or M.LABELS.get(name, name.replace('_', ' '))
         else:
             raise ValueError('unknown operation %s' % op)
         save(d)
-        return json.dumps({'ok': True, 'entries': _entries(M, r.get('type'))})
+        return json.dumps(dict({'ok': True, 'entries': _entries(M, r.get('type'))}, **extra))
     except Exception as e:
         return json.dumps({'ok': False, 'error': str(e)})
 
 
 def _entries(M, typ):
     on = basic(M.BASIC)
+    given = labels()
     out = []
     for n, g, _t in M.PRIMITIVES:
         kind = M.GROUP_KINDS.get(g, 'solid')
@@ -280,9 +330,11 @@ def _entries(M, typ):
             continue
         if g in ('Supports and loads', 'Thermal conditions', 'Flow conditions', 'Manufacturing constraints', 'Materials', 'Fluids') or g.endswith('cells'):
             continue
-        out.append({'name': n, 'label': M.LABELS.get(n, n.replace('_', ' ')), 'group': g, 'type': kind, 'on': n in on, 'custom': False, 'builtin': n in M.BASIC})
+        out.append({'name': n, 'label': given.get(n) or M.LABELS.get(n, n.replace('_', ' ')), 'renamed': n in given, 'group': g, 'type': kind, 'on': n in on, 'custom': False,
+                    'builtin': n in M.BASIC})
     for c in catalog_entries():
-        if typ and c['type'] != typ:
+        # (the section a primitive of the user's own is in is the kind of its type: a lattice or an imported part is among the 3D shapes)
+        if typ and kind_of(c['type']) != typ:
             continue
-        out.append({'name': c['name'], 'label': c['label'], 'group': c['group'], 'type': c['type'], 'on': True, 'custom': True, 'builtin': False})
+        out.append({'name': c['name'], 'label': c['label'], 'renamed': False, 'group': c['group'], 'type': kind_of(c['type']), 'on': True, 'custom': True, 'builtin': False})
     return out

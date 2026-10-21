@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('x5_grit_texture: a plate 24 x 24 x 4 with a grit texture (bumps and pits 0.3 mm high, 1.5 mm across) on every face, an inside corner radius of 1 mm and a wall of 0.8 asked: a surface that is nowhere flat; the tool must not run away -- nothing added farther than 0.6 mm from the part, the texture still a texture')

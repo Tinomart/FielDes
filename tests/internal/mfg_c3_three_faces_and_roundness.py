@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('c3_three_faces_and_roundness: a blind pocket with sharp corners (three faces meet at each bottom corner), a through pocket whose corners are rounded to 1.5 mm and one rounded to 5 mm, an inside corner radius of 3 mm asked: the sharp pocket gets rounded vertical edges, floor edges and a sphere at each of its four bottom corners, the 1.5 mm one is made 3 mm, the 5 mm one is not touched')

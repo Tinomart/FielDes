@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a9_small_violation_on_a_big_part: a big plate 60 x 60 x 3 mm with ONE thin fin 0.3 x 3 x 3 mm on it, for a wall rule of 0.8 mm: the check must find the one small violation among thousands of samples, and the same call twice must give the same report')

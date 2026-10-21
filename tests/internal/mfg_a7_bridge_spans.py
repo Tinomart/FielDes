@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a7_bridge_spans: roofs held at both ends over gaps of 5, 10, 18, 22 and 30 mm and a ledge held at one end only, for a longest bridge of 20 mm: the check must mark the spans over 21 mm and not the open ledge')

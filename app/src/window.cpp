@@ -1715,13 +1715,36 @@ Window::Window(Arguments args)
             }
             if (verb == "add") { std::cerr << "automation: primitives add " << rest.toStdString() << ": " << (d->addSelection(rest) ? "done" : "refused") << std::endl; return; }
             if (verb == "remove") { std::cerr << "automation: primitives remove " << rest.toStdString() << ": " << (d->removeEntry(rest) ? "done" : "refused") << std::endl; return; }
+            // rename <name> <new name>: the library's answer, without the editor of the row; edit <name> <new name>: the Rename button, the new name typed over the old one, Return
+            if (verb == "rename" || verb == "edit")
+            {
+                const QString name = rest.section(' ', 0, 0), label = rest.section(' ', 1).trimmed();
+                const bool ok = verb == "rename" ? d->renameEntry(name, label) : d->editEntry(name, label);
+                std::cerr << "automation: primitives " << verb.toStdString() << " " << name.toStdString() << " -> " << label.toStdString() << ": " << (ok ? "done" : "refused") << std::endl;
+                return;
+            }
+            // dropdown [file]: the list of kinds opened; with a file the list is photographed as well (the popup window itself and its rows, <file>.rows.png), for the popup is not always in a grab of the window
+            if (verb == "dropdown")
+            {
+                if (auto box = d->findChild<QComboBox*>())
+                {
+                    box->showPopup();
+                    QApplication::processEvents();
+                    if (!rest.isEmpty() && box->view())
+                    {
+                        box->view()->window()->grab().save(rest);
+                        box->view()->viewport()->grab().save(rest + ".rows.png");
+                    }
+                }
+                return;
+            }
             if (verb == "rows")
             {
                 std::cerr << "automation: primitives kind " << d->kind().toStdString() << ":" << std::endl;
                 for (const QString& row : d->rows()) std::cerr << "automation:   " << row.toStdString() << std::endl;
                 return;
             }
-            std::cerr << "automation: primitives <open|kind|add|remove|rows|close>" << std::endl;
+            std::cerr << "automation: primitives <open|kind|add|remove|rename|edit|dropdown|rows|close>" << std::endl;
         });
         // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
         a->add("navigation", [=](const QString& what){
@@ -2024,12 +2047,14 @@ Window::Window(Arguments args)
             if (p[0] == "release") *winGrab = nullptr;
             std::cerr << "automation: winmouse " << p[0].toStdString() << " reached " << target->metaObject()->className() << " " << target->objectName().toStdString() << std::endl;
         });
-        // viewwheel <x> <y> <delta> [shift]: a turn of the mouse wheel over the viewport (120 is one notch), with Shift held when asked
+        // viewwheel <x> <y> <delta> [shift|ctrl|shift+ctrl]: a turn of the mouse wheel over the viewport (120 is one notch), with Shift and/or Ctrl held when asked
         a->add("viewwheel", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
             if (p.size() < 3) return;
             const QPoint pos(p[0].toInt(), p[1].toInt());
-            const Qt::KeyboardModifiers mods = (p.size() > 3 && p[3].toLower().contains("shift")) ? Qt::ShiftModifier : Qt::NoModifier;
+            Qt::KeyboardModifiers mods = Qt::NoModifier;
+            if (p.size() > 3 && p[3].toLower().contains("shift")) mods |= Qt::ShiftModifier;
+            if (p.size() > 3 && p[3].toLower().contains("ctrl")) mods |= Qt::ControlModifier;
             QWheelEvent e(QPointF(pos), QPointF(view->mapToGlobal(pos)), QPoint(), QPoint(0, p[2].toInt()), Qt::NoButton, mods, Qt::NoScrollPhase, false);
             QApplication::sendEvent(view, &e);
         });
@@ -2409,6 +2434,13 @@ Window::Window(Arguments args)
                 if (!menu->isVisible())
                     menu->popup(parentMenu->mapToGlobal(parentMenu->actionGeometry(found).topRight()));
             }
+        });
+        // viewframe <x0> <y0> <z0> <x1> <y1> <z1>: the camera goes in on that box of the model, looking the way it looks now, as it does for a model that is double-clicked: a place of the part is looked at by its
+        // place and not by a pixel, so that a picture of the thin fin, the slot or the foot of a gusset is the same picture at any size of the window
+        a->add("viewframe", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 6) { std::cerr << "automation: viewframe <x0> <y0> <z0> <x1> <y1> <z1>" << std::endl; return; }
+            view->focusOn(QVector3D(p[0].toFloat(), p[1].toFloat(), p[2].toFloat()), QVector3D(p[3].toFloat(), p[4].toFloat(), p[5].toFloat()), QList<int>());
         });
         // viewzoom <x> <y> <steps>: turn the mouse wheel over a point of the viewport (positive: in)
         a->add("viewzoom", [=](const QString& args){

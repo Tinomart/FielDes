@@ -8,7 +8,7 @@
 # About five minutes (the optimization about a minute, the tool a minute for each process, the judge), and the picture is there 5 seconds after the last line.
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', '..', 'kit'))
 from mfgkit import *
 
 t = Table("04 a topology-optimized bracket: made ready for a printer, a mill and a mould, the part handed to the tool as it is, judged by the kit's judge")

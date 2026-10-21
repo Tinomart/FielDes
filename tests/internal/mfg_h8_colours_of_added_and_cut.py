@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table("h8_colours_of_added_and_cut: one part that needs a gusset under a ledge (material added) and a teardrop over a bore (material cut), with a constraint of its own for each: the result is drawn as ONE body coloured by the change -- the part's own colour, red where it was added, blue where it was cut -- and the change map says +1, -1 and 0 at the places the picture colours; a fin thickened by a tenth of a millimetre is drawn the same way")

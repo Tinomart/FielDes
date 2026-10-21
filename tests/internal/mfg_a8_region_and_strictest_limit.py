@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a8_region_and_strictest_limit: thin plates on both sides of a plane, a constraint that holds only on one side, and then two constraints on one part: the check marks only what is inside the region, and holds each rule to the strictest of its limits')

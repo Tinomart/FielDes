@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('d2_cylinder_cone: a vertical cylinder of radius 5 and height 20 for a draft of 2 degrees: the wall becomes a cone, the radius at each height is 5 + (20 - z) tan 2 degrees and the top is as it was')

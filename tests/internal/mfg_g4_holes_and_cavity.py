@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('g4_holes_and_cavity: closed and narrow spaces: a hollow cube with 0.5 mm walls, and holes of 0.3, 0.5, 0.62 and 1.0 mm in a block for a gap rule of 0.6 mm: the small ones must close, the others stay')

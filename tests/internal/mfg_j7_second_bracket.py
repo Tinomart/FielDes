@@ -18,7 +18,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('j7_second_bracket: J7: the same job on a second shape: the bracket the optimizer makes for a different load (the load turned to the side), made ready for the same three processes, judged in the same way: nothing the first bracket showed is a property of that one part')

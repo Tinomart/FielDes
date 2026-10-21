@@ -1,7 +1,7 @@
 # Manufacturing: the internal cases
 
-**These are the developers' own cases -- about a hundred, each one tries to break one thing on a part made for it.** The examples to look at are in `examples/manufacturing` (one for each thing the tools do, each made from
-one of these cases and run in a real window); the cases here import their helper from the same place (`examples/manufacturing/kit`, one copy). Run one from this folder (File > Open) when a change to the tools needs it.
+**These are the developers' own cases -- about a hundred, each one tries to break one thing on a part made for it.** The showcases to look at are in `tests/verification/manufacturing` (one for each thing the tools do, each made from
+one of these cases and run in a real window); the cases here import their helper from the same place (`tests/kit`, one copy). Run one from this folder (File > Open) when a change to the tools needs it.
 
 What this folder is for: to let anyone, the author included, **see** that the manufacturing tools do what they say, on parts of every kind, in the real FielDes window.
 

@@ -307,7 +307,15 @@ def _remedy_walls(ctx, t, threshold=None, growth=False):
     # off where it did, in patches), and the end of a face is not a step of the gate but a taper: the growth runs out over the last part of the face, `_edge_room`)
     # (the slope of the field is no test here: a lattice's field, a bracket's is a distance only roughly -- 0.6 in one place, 1.3 in another -- and a gate on it left the wall ungrown over large patches, white
     # streaks over a gyroid.  Where the foot of the line is on the surface and not at the edge of its face, the normal is the face's; a place with no slope at all, a plateau, has none)
-    sure = ((n.magnitude - 0.3) * (1.0 / 0.1)).max(0).min(1) * _on_face(ctx, 0.02 * t, newton=True, slope_gate=False) * _edge_room(ctx, t, 0.2 * t)
+    # (a part whose field IS a distance -- boxes, cylinders, anything of exact planes and arcs -- has a slope of 1 on a face and less at the foot of an edge, so the gate on the slope of the field ends the growth where the
+    # face ends, in one straight strip a step wide, which is what `_edge_room` leaves to it for such a part.  Without it a point past the end of a face, whose nearest point is the EDGE, had a line along its normal that
+    # ran on through the wall on a diagonal and found it thin, and was grown by the diagonal's share: a bulge that wraps round every free edge of the wall -- the top of a fin lifted above its top face, a lip standing
+    # out past its ends, a flare where it meets the floor -- and drawn wavy, as the lines found it a little thicker or thinner with the angle.  For a field whose slope wanders -- a lattice's -- the gate would leave
+    # the wall ungrown over patches, and it is not used.  (The gate, with the 0.8 below for the slope of the field at the point itself, is what the walls had from 10-15 to the change of 10-21 that made them right for
+    # a field that is not a distance: that change put the gate and the 0.8 out for EVERY part -- not for speed: it is the same lookups at the foot as before -- and `_edge_room`, which stands in for them, makes
+    # no taper for a part that is a distance because its comment counts on the gate.  So for such a part nothing ended the growth at the edge of a face.  The part that is a distance is as it was before that change)
+    exact = ctx.slope_spread <= _NEAR_EXACT and not ctx.clamp_calls
+    sure = ((n.magnitude - (0.8 if exact else 0.3)) * (1.0 / 0.1)).max(0).min(1) * _on_face(ctx, 0.02 * t, newton=True, slope_gate=exact) * _edge_room(ctx, t, 0.2 * t)
     # (a wall the rule tolerates -- under the limit by the grace at most -- is not made thicker, but one that is under that is made the full thickness, and between the two the growth is
     # eased out, to nothing at the limit: the wall that comes out is then always more than the grace above what the check marks.  It used to be eased out BELOW the line the check marks at,
     # so that a wall of 0.76 to 0.78 came out as thick as it was, and the check, which reads a wall along lines a few degrees off the normal, marked it, with a few hundredths of a

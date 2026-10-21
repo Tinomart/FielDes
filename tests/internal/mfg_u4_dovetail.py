@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('u4_dovetail: a dovetail groove (4 mm at the mouth, 8 mm at the bottom, 6 deep) in the top of a block, an undercut along z asked: what lies under the two lips is filled, and the groove becomes a straight slot as wide as its mouth')

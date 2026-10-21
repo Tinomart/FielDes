@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('x6b_ten_times_the_size: the fin of 0.6 mm and the slot of 0.2 mm of h4, every length times 10 (a fin of 6 mm, rules of 8 and 4 mm): the tool does the same thing at ten times the size')

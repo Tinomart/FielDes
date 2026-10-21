@@ -121,7 +121,7 @@ A point has the gizmo of any model, and two of its handles mean something to the
 - **Scale a point** with its **one scale handle**, a gold **ring** round the dot (the uniform scale handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has one scale,
   always uniform; the three numbers of its `gizmo(...)` are moved together. On a **round corner it is the radius's factor** (see above). A spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
   it as straight as a corner). In a `path_extrude`, **the scale of a point is how thick the profile is there**, tapering smoothly between points: a point with scale 2 makes the tube twice as thick at that point.
-- **Shift + the mouse wheel** scales what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
+- **Shift + the mouse wheel** (or **Ctrl + the mouse wheel**) scales the point the mouse is on, selected or not, else what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 
 ## How `extrude` works
 

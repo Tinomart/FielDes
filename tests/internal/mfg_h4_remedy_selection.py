@@ -17,7 +17,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('h4_remedy_selection: a fin 0.6 mm thick and a slot of 0.2 mm between two blocks, a wall rule of 0.8 and a gap rule of 0.4 asked, and the tool told which remedy it may make (remedies=): only the one chosen is made; a remedy that no rule asks for makes nothing and the tool says so; a name that is no remedy is refused and the message lists those there are')

@@ -17,6 +17,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 
 namespace FielDes {
@@ -24,10 +25,12 @@ namespace FielDes {
 /*
  *  The Primitives menu of the menu bar: which shapes the Primitives menus offer, and primitives of the user's own.
  *
- *  The list is of one kind of model (3D shapes, 2D shapes, lines, points, surfaces, fields -- the kind of the model that is selected when the window is opened).  Every entry the
+ *  The list is of one kind of model (3D shapes, 2D shapes, lines, surfaces, fields -- the kinds whose menu is a list; a point and a symmetry are one button in the menus and have no section --
+ *  and the window opens on the kind of the model that is selected).  Every entry the
  *  menus have of that kind is a row with a check mark: marked, it is under Primitives; not marked, it is with the Parametric shapes.  "Add selection" makes the model that is
  *  selected in the model tree -- with every statement of the script that it is made of -- a primitive of the user's own, kept in a file of theirs (primitives.json in their data folder:
- *  user_primitives.py) and offered in every script; a primitive of their own can be removed again.
+ *  user_primitives.py) and offered in every script; a primitive of their own can be removed again.  "Rename" gives a row another name: the name the menus show for a shape of the
+ *  library (its function stays what it is), the name of a primitive of the user's own.
  *
  *  Everything is done by the library (primitives_manage); the window only asks, and tells the menus to be made again when something changed.
  */
@@ -49,11 +52,16 @@ public:
     QStringList rows() const;
     bool addSelection(const QString& name);
     bool removeEntry(const QString& name);
+    bool renameEntry(const QString& name, const QString& label);
+    /*  The rename as the hand does it: the row is selected, the Rename button opens its editor, `label` is typed over its name and Return is pressed  */
+    bool editEntry(const QString& name, const QString& label);
 
 private:
     void fill();
     QJsonObject ask(const QJsonObject& request);
     void say(const QString& text, bool error);
+    void beginRename(QListWidgetItem* item);
+    void finishRename();
 
     Hooks m_hooks;
     QJsonObject m_selection;
@@ -62,8 +70,10 @@ private:
     QLineEdit* m_name;
     QPushButton* m_add;
     QPushButton* m_remove;
+    QPushButton* m_rename;
     QLabel* m_note;
     bool m_filling = false;
+    QString m_renaming;                 // (the primitive whose name is being typed in its row)
 };
 
 }   // namespace FielDes

@@ -458,12 +458,13 @@ def catalog():
     from fieldes import user_primitives
     blocks = _blocks()
     basic = user_primitives.basic(BASIC)             # (what the user chose to show under Primitives: BASIC less what was taken out, and what was put in)
+    given = user_primitives.labels()                 # (and the names the user gave the shapes of the library: the menus show those)
     return json.dumps({
         'kinds': describe(),
         'domains': describe_domains(),
         'primitives': [dict({'name': n, 'group': g, 'type': GROUP_KINDS.get(g, 'solid'), 'with_bodies': n in BODY_CONDITIONS or n in FROM_SELECTION, 'primitive': n in basic,
                              'from_selection': n in FROM_SELECTION},
-                            **({'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
+                            **({'label': given[n]} if n in given else {'label': LABELS[n]} if n in LABELS else {}), **({'section': SECTIONS[g]} if g in SECTIONS else {}),
                             **({'domain': PRIMITIVE_DOMAINS[g]} if g in PRIMITIVE_DOMAINS else {}),
                             **({'doc': FROM_SELECTION[n][0]} if n in FROM_SELECTION else {}),
                             # (a 2D shape that is written with an x and a y only lies in the plane z = 0: the place it is made at is where the ray under the cursor meets that plane)

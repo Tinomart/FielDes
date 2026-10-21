@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('w4_open_box: a box open at the top with walls of 0.5 mm, a 0.8 mm wall asked (the four walls and the floor), small enough to be drawn at 14 cells to the millimetre: a wall is 7 cells thick, the layer added to it 2')

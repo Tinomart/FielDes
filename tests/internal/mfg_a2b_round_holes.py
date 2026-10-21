@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table("a2b_round_holes: round holes 0.3, 0.5 and 1.0 mm across in a small plate (14 x 8 x 5, 16 cells to the millimetre), for a 0.4 mm gap rule: the check must mark the wall of the 0.3 hole -- a round hole is a gap as wide as its diameter, and the commonest narrow gap there is -- and leave the 0.5 and the 1.0 alone; the scene is small because the check reads the surface through differences of 0.001 of the part's size")

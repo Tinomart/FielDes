@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a5_leaning_plates: seven plates leaning 20, 40, 44, 47, 50, 60 and 80 degrees off the vertical, a post with its flat bottom on the plate and a flat roof high up, for an overhang of 45 degrees: the check must mark the faces that look down and lean more than 46 degrees, and the roof, and not the up-facing faces nor the post on the plate')

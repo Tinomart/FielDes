@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('x7_hollow_with_inner_body: a hollow sphere (outer radius 10, wall 0.5) with a solid ball of radius 4 floating in its cavity, a wall rule of 0.8 mm: the shell is thickened on both sides to 0.8, the ball is not touched (look at it in the section view)')

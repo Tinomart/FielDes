@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('d4_walls_already_drafted: walls that stand 0, 0.5 and 3 degrees off the pull direction (narrower at the top), for a draft of 1 degree: the first two come out leaning 1 degree, the third is left exactly as it is, and the lean after is measured from the field')

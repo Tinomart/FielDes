@@ -10,7 +10,7 @@
 # WHAT YOU READ: one PASS line per check in the output pane; the answers by hand (a ball of radius 3 resting on two edges) are in the file.  About half a minute, and the picture is there a second after the last line.
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', '..', 'kit'))
 from mfgkit import *
 
 t = Table('02 a mill\'s job: a plate with a fin, two blocks, an L, a boss and a hole, for a CNC cutter of 6 mm (inside corners of radius 3, gaps of 6, nothing out of reach from above)')

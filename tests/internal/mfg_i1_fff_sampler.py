@@ -12,7 +12,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('i1_fff_sampler: a plate with a thin fin, a narrow slot, an L, a boss and a hole, for a 3D printer with a 0.4 mm nozzle (walls 0.8, gaps 0.4)')

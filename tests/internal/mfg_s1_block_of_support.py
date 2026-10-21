@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('s1_block_of_support: the ledge with support="block" and a budget of 5 %: the gusset is refused, a block of support is made under the ledge, with a clearance of 0.3 mm to it and none in the strip kept free, and the part itself is unchanged')

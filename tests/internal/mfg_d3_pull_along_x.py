@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('d3_pull_along_x: a block 10 x 10 x 10 for a draft of 2 degrees with the mould opening ALONG X (not z): the faces across y and z lean, their width grows toward the foot (x = 0), the two faces across x stay where they were')

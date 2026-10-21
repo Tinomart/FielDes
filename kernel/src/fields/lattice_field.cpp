@@ -1827,7 +1827,14 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
         }
     }
 
-    // The nodes of the part that touch a gusset (a gusset node among the 26 round them): the same formula as the air under them
+    // The nodes of the part that touch a gusset (a gusset node among the 26 round them): the same formula as the air under them.
+    // For a GUSSET (not a cut) the nodes of the part as it was given -- the wall it rests on, the ledge it hangs from, the plate under its foot -- take the field of the gusset's own node they touch instead
+    // (the least of the six they have beside them that are not the part's): the formula of the part's own column is the field of a COLUMN OF THE PART, which starts at the plate and is a lot more negative
+    // than the air beside it -- -10 or more, where the gusset's surface there is 0 -- so that the reading between such a node and the air node next to it put the zero within a hair of the air node, and
+    // a veneer of gusset about a node thick lay on the face of the wall, and on the plate round the foot, wherever a node of the part touched a gusset node by an edge or a corner: stepped along the line where
+    // the gusset's flank meets the wall, one tooth to a node, with a slab round its foot.  With the neighbour's own value the field runs on through the face as it runs at the node next to it, the gusset
+    // meets the wall along one straight line, and where the neighbour is not in the gusset the part's node is not either
+    const std::vector<float> Gair = (!P.negate && P.mode == 0) ? G : std::vector<float>();
     parallelFor(columns, [&](size_t c) {
         const int ci = int(c % size_t(nx)), cj = int(c / size_t(nx));
         bool any = false;
@@ -1857,8 +1864,30 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
                     }
             }
             if (!touches) continue;
+            const size_t here = size_t(k) * columns + c;
+            if (!Gair.empty() && part0[here])
+            {
+                // (a node of the part, in a gusset: the field of the gusset's own node beside it -- the least of those that are not the part's -- and none when it touches a gusset by an edge or a corner only)
+                float v = 0.0f;
+                bool found = false;
+                auto beside = [&](int ii, int jj, int kk) {
+                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) return;
+                    const size_t n = (size_t(kk) * size_t(ny) + size_t(jj)) * size_t(nx) + size_t(ii);
+                    if (part0[n] || !S[n]) return;
+                    v = found ? std::min(v, Gair[n]) : Gair[n];
+                    found = true;
+                };
+                beside(ci - 1, cj, k);
+                beside(ci + 1, cj, k);
+                beside(ci, cj - 1, k);
+                beside(ci, cj + 1, k);
+                beside(ci, cj, k - 1);
+                beside(ci, cj, k + 1);
+                if (found) G[here] = v;
+                continue;
+            }
             const double z = double(k) * h;
-            G[size_t(k) * columns + c] = std::max(-cap, std::min(cap, float((double(reachOf(c, bottom[size_t(k)], M, above0)) - z) / norm)));
+            G[here] = std::max(-cap, std::min(cap, float((double(reachOf(c, bottom[size_t(k)], M, above0)) - z) / norm)));
         }
     });
     const double tColumns = secondsSince(t0);
@@ -2006,8 +2035,12 @@ Tree bakeLattice(const Tree& field, const Tree& part, const std::map<Tree::Id, f
     // The correction of a remedy that ADDS material (a wall grown, a gap filled, a draft) is -the growth outside the part's surface and 0 inside it, because the formula grows what is outside and has no reason to
     // do anything to what is solid already -- a jump at the part's old surface.  A lattice reads a jump as a ramp one node wide, and the result, the part's value plus that ramp, then comes back to 0 inside the
     // grown wall, along the old surface: a fin of 1.2 mm grown to 2 mm had a ridge of 0 at both its old faces, and the check, which walks through material until the field turns positive, measured the fin as 1.2 mm
-    // thick.  So the correction is carried a few nodes into the material (by the most negative value of the nodes beside it, one layer a pass): inside the part the result is solid whatever the correction is (it only
-    // adds), so no surface moves, the jump is gone, and the field inside the grown wall is clearly negative.  A node that is cut (a correction above 0) is left as it is.
+    // thick.  So the correction is carried a few nodes into the material, one layer a pass: inside the part the result is solid whatever the correction is, so no surface moves, the jump is gone, and the field
+    // inside the grown wall is clearly negative.  A node that is cut (a correction above 0) is left as it is.
+    // The carry must not go THROUGH another face of the part.  It used to take the MOST negative value of the nodes beside a node, and a node under the top face of a fin touches the air above it, where nothing
+    // grows, and the air beside it, where the wall does: it took the wall's growth, and the reading between it and the air above made the top face rise by a fraction of a node over the whole top -- a bump along
+    // the top of the fin, a rim round the tops of the blocks beside a slot filled, a flare on the floor at the foot of a wall, each as wide as the carry is deep and as high as the node phase made it, so that no
+    // two sides of a symmetrical part were alike.  A node takes the LEAST negative value of what it touches instead: where it touches a face that does not grow, nothing is carried, and the nearest face rules.
     {
         const size_t sx = 1, sy = size_t(nx), sz = size_t(nx) * size_t(ny);
         std::vector<std::pair<size_t, float>> take;
@@ -2021,14 +2054,19 @@ Tree bakeLattice(const Tree& field, const Tree& part, const std::map<Tree::Id, f
                         const size_t idx = (size_t(k) * ny + j) * nx + i;
                         if (inside[idx] != 1 || F[idx] > 0.0f) continue;
                         float cand = 0.0f;
-                        auto see = [&](size_t n) { if (inside[n] != 1) cand = std::min(cand, F[n]); };
+                        bool touches = false;
+                        auto see = [&](size_t n) {
+                            if (inside[n] == 1) return;
+                            cand = touches ? std::max(cand, F[n]) : F[n];
+                            touches = true;
+                        };
                         if (i > 0) see(idx - sx);
                         if (i + 1 < nx) see(idx + sx);
                         if (j > 0) see(idx - sy);
                         if (j + 1 < ny) see(idx + sy);
                         if (k > 0) see(idx - sz);
                         if (k + 1 < nz) see(idx + sz);
-                        if (cand < -1e-6f && cand < F[idx] - 1e-6f) take.emplace_back(idx, cand);
+                        if (touches && cand < -1e-6f && cand < F[idx] - 1e-6f) take.emplace_back(idx, cand);
                     }
             if (take.empty()) break;
             for (const auto& t : take)

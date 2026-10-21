@@ -19,7 +19,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table("j1_bracket_three_processes: J1, J3, J4: the topology-optimized bracket (the optimizer shaped it for a point load, half the material) made ready for THREE processes -- a 0.4 mm FFF printer, a 3-axis mill with a 6 mm cutter, an injection mould (ABS) -- each judged by the kit's own judge against the published rules of that process: how much of the surface breaks each rule before and after, the faces that carry the load untouched, what the tool says is left")

@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('c4_slot_narrower_than_the_ball: a slot 4 mm wide through a block, narrower than the ball of an inside corner radius of 3 mm, and a slot 8 mm wide beside it: the narrow slot is filled and left with the sag of the ball resting on its two edges (0.76 mm deep), the wide one only gets its two floor corners rounded')

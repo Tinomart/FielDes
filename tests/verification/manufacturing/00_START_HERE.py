@@ -4,7 +4,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 # START HERE: MANUFACTURING.
 #
 # FielDes checks a part against what a process asks of it (a 3D printer, a mill, an injection mould) and changes the part until it keeps the rules.  There is ONE FILE FOR EACH PROCESS, and one for a real part.
-# Open one (File > Open example file..., then the folder `manufacturing`; or drag it onto the window): it builds a part, runs the tool, draws the result -- grey where the part is as it was, red where material
+# Open one (File > Open, then this folder; or drag it onto the window): it builds a part, runs the tool, draws the result -- grey where the part is as it was, red where material
 # was added, blue where it was cut, beside the part as it was -- and prints one PASS or FAIL line for each check in the output pane.  Every file is written to be read from the top: the part, what is asked
 # of it, the call of the tool, the answers worked out by hand, the checks.  Look at the picture first; the numbers are an aid.  Turn the part with Shift + left drag; View > Top / Front / Right.
 #
@@ -14,6 +14,6 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #   03_mould.py           AN INJECTION MOULD.  Draft on every upright wall, undercuts filled, thin walls thickened.
 #   04_real_part.py       A TOPOLOGY-OPTIMIZED BRACKET made ready for a printer, a mill and a mould.  The optimizer made a part with struts of every thickness leaning every way: nothing about it is written by hand.
 #
-# The folder `kit` holds the helper the checks use (a tape measure through a result's field, material counted on points); you do not need it.
+# The folder `tests/kit` (two levels up) holds the helper the checks use (a tape measure through a result's field, material counted on points); you do not need it.
 
 print("Open one of the files listed above.")

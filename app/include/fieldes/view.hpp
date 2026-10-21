@@ -1063,11 +1063,17 @@ protected:
         Taken from the profile or curve that owns the point -- what it IS, whenever it was made -- and, for a point that has no gizmo to be found by, from the mark
         the library made on it  */
     int pointStyleOf(const Shape* s) const;
-    /*  Shift + the mouse wheel scales what is selected (every selected shape or point that has scale numbers): one gesture, written to the script when the
-        wheel has rested a moment  */
-    bool scaleSelectionByWheel(int delta);
+    /*  Shift or Ctrl + the mouse wheel scales what the mouse is on, or what is selected: the point whose dot is under `at` (selected or not), else every selected shape or point that has
+        scale numbers.  One gesture, written to the script when the wheel has rested a moment  */
+    bool scaleSelectionByWheel(int delta, QPoint at);
+    bool applyWheelFactor(float factor, Shape* only);      // (the scale numbers of `only`, or of every selected shape, times `factor`; false when none of them has numbers)
+    void waitForWheelNumbers(float factor);                // (a notch over a point that has no numbers yet is kept, with those that follow, until the run that writes them is over)
+    void applyPendingWheel();
     bool m_wheelScaling = false;
     QTimer m_wheelTimer;
+    float m_wheelPending = 1.0f;
+    int m_wheelPendingTries = 0;
+    QTimer m_wheelPendingTimer;
     bool m_shiftSeen = false;            // (what the last key event said, to redraw the gizmo when it changes)
     bool m_shiftForced = false;          // (the automation holds Shift: synthetic events do not change the keyboard)
     /*  The square, on the screen, of the plane whose normal is the axis `normal`, at the gizmo's pivot (axes `normal`+1 and `normal`+2 span it)  */

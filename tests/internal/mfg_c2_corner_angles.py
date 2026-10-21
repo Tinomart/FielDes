@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('c2_corner_angles: three pocket corners of 60, 90 and 120 degrees, for an inside corner radius of 3 mm: the rounding is the arc of a ball of radius 3 touching both faces, whatever the angle, and the faces beyond the arc are untouched')

@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('s2_arch_with_supports: a tunnel with a round roof in a block, an overhang of 45 degrees asked with support="block" and a budget that refuses the teardrop: a block of support under the part of the roof that leans out, with a clearance of 0.3 mm to the roof and to the walls everywhere, and the part itself unchanged')

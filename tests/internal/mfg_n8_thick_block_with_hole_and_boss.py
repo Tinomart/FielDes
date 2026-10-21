@@ -14,7 +14,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('n8_thick_block_with_hole_and_boss: a block 14 x 14 x 8 with a round hole of radius 3 and a round boss of radius 2 that stands 0.5 mm from two of its edges, for a 0.8 mm wall rule: nothing here is thin, so nothing may be added, nothing reported, and the window draws it as fast as the part itself (found by a speed test: a remedy that looks for strips and wedges added specks along the edges of such a part)')

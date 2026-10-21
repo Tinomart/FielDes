@@ -1473,5 +1473,15 @@
  "%1 would run before %2 (line %3), which makes %4": "%1 が %4 を作る %2 (%3 行目) より前に実行されます",
  "%1 uses %2, which %3 (line %4) makes: that would come below it": "%1 は %3 (%4 行目) が作る %2 を使っています。それが下に来てしまいます",
  "Move %1 with what it needs": "%1 を必要なものと一緒に移動",
- "Extrude pulls a 2D shape into a solid: select a 2D shape first (a circle, a rectangle, a triangle, a polygon, a profile ...); with a path selected as well, the shape is swept along it.": "押し出しは 2D 形状をソリッドにします。先に 2D 形状 (円・長方形・三角形・多角形・プロファイルなど) を選択してください。パスも選択すると、形状はそれに沿ってスイープされます。"
+ "Extrude pulls a 2D shape into a solid: select a 2D shape first (a circle, a rectangle, a triangle, a polygon, a profile ...); with a path selected as well, the shape is swept along it.": "押し出しは 2D 形状をソリッドにします。先に 2D 形状 (円・長方形・三角形・多角形・プロファイルなど) を選択してください。パスも選択すると、形状はそれに沿ってスイープされます。",
+ "Primitives are the shapes that the Primitives menus offer first. Tick a shape to make it a primitive, untick it to move it to the Parametric shapes. \"Rename\" gives the selected one another name in the menus. \"Add selection\" makes the model that is selected in the model tree a primitive of your own: it is kept in a file of yours and is there in every script you open.": "プリミティブは、プリミティブのメニューで最初に表示される形状です。チェックを入れるとプリミティブになり、外すとパラメトリック形状に移ります。「名前の変更」は、選択した形状にメニューでの別の名前を付けます。「選択を追加」は、モデルツリーで選択したモデルを自分のプリミティブにします。自分のファイルに保存され、開くどのスクリプトでも使えます。",
+ "Give the primitive that is selected in the list another name: type it over the old one and press Return. The menus show the name you give; a shape of the library keeps its function. Left empty, the library's own name comes back.": "リストで選択したプリミティブに別の名前を付けます。古い名前の上に入力して Enter を押してください。メニューには付けた名前が表示されます。ライブラリの形状は関数そのものを保ちます。空にするとライブラリの名前に戻ります。",
+ "The function is %1.": "関数は %1 です。",
+ "%1 is not in this list.": "%1 はこのリストにありません。",
+ "%1 has the name of the library again.": "%1 はライブラリの名前に戻りました。",
+ "The menus call it %1 now.": "メニューでは %1 と呼ばれます。",
+ "Your primitives": "自分のプリミティブ",
+ "The Primitives menu in the menu bar is the control for the shapes the right-click menus offer first. Primitives ▸ Manage primitives... lists them kind by kind -- 3D shapes, 2D shapes, lines, surfaces, fields: tick a shape to keep it under Primitives, untick it to move it to the Parametric shapes, and Rename gives the selected one another name. With a model selected in the tree, Add selection makes it a primitive of your own, there in every script.": "メニューバーの「プリミティブ」メニューは、右クリックメニューで最初に表示される形状を管理します。プリミティブ ▸ プリミティブを管理... は、それらを種類ごと (3D 形状、2D 形状、線、サーフェス、フィールド) に一覧にします。チェックを入れるとプリミティブに残り、外すとパラメトリック形状に移り、「名前の変更」で選択したものに別の名前を付けられます。ツリーでモデルを選択して「選択を追加」を押すと、それが自分のプリミティブになり、どのスクリプトでも使えます。",
+ "The window opens on the kind of the model that is selected. Or press Show me.": "ウィンドウは、選択したモデルの種類で開きます。または「実演」を押します。",
+ "A point or a symmetry is a single button in the menus, not a list, so it cannot be made a primitive.": "点と対称はメニューでは単独のボタンで、一覧ではないため、プリミティブにはできません。"
 }

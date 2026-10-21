@@ -23,6 +23,7 @@ of the License, or (at your option) any later version.
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
+#include <QDialog>
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1165,6 +1166,34 @@ void Tutorial::buildSteps()
                 auto root = qobject_cast<QMenu*>(openMenu());
                 if (!root) { over(); return; }
                 (*walk)(root, root, QStringList{T("Primitives"), T("New 3D shape"), "sphere"}, over);
+            });
+        };
+        add(s);
+    }
+    // 11a: the control of the primitives -- which shapes the Primitives menus offer first, a name of one's own for them, and one's own primitives
+    {
+        Step s;
+        s.title = T("Your primitives");
+        s.text = T("The Primitives menu in the menu bar is the control for the shapes the right-click menus offer first. Primitives ▸ Manage primitives... lists them kind by kind -- 3D shapes, 2D shapes, "
+                   "lines, surfaces, fields: tick a shape to keep it under Primitives, untick it to move it to the Parametric shapes, and Rename gives the selected one another name. "
+                   "With a model selected in the tree, Add selection makes it a primitive of your own, there in every script.");
+        s.hint = T("The window opens on the kind of the model that is selected. Or press Show me.");
+        s.menuTitle = "Primitives";
+        s.menuEntry = "Manage primitives...";
+        s.place = Right;
+        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        s.leave = [this] { if (auto d = m_window->findChild<QDialog*>("PrimitivesDialog")) d->close(); };
+        s.show = [this](std::function<void()> over) {
+            // (the entry is chosen, and the window opens on the kind of what is selected; a moment later it is closed again)
+            m_busy = true;
+            for (QAction* a : m_window->findChildren<QAction*>())
+            {
+                if (a->text() == T("Manage primitives...")) { a->trigger(); break; }
+            }
+            after(2600, [this, over] {
+                if (auto d = m_window->findChild<QDialog*>("PrimitivesDialog")) d->close();
+                m_busy = false;
+                over();
             });
         };
         add(s);

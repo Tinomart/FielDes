@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('n7_fields_that_are_not_distances: a fin of 0.6 mm and a slot of 0.2 mm (a small scene, 12 cells to the millimetre) whose field is not a distance -- the field of the part times 2 (a slope of 2), times 0.5, and times 1 (a true distance) for comparison -- and a wall rule of 0.8 mm and a gap rule of 0.4 mm: a wall is a length and not a number of the field, so each must be measured and made the same')

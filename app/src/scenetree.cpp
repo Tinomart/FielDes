@@ -5736,8 +5736,9 @@ void ScenePanel::switchPart(const QJsonObject& imp, int part)
 
 void ScenePanel::focusOn(const QJsonObject& it)
 {
-    // (a point is not drawn, and its box is a few pixels wide: the camera would go in until nothing else is in view)
-    if (it["type"].toString() == "point") return;
+    // (a point is not drawn, and its box is a few pixels wide: the camera would go in until nothing else is in view.  A symmetry is the same: it draws its planes and nothing else, its box is
+    // the few millimetres round its centre, and a click on its row took the camera in on that and left the model out of the picture)
+    if (it["type"].toString() == "point" || symmetryModel(it)) return;
     if (it.contains("bounds"))
     {
         const auto b = it["bounds"].toArray();

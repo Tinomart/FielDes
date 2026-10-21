@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a6_undercut_kinds: six blocks of 16 mm with a side groove, a blind pocket, a hole along z, a tunnel across z, a closed cavity and an overhanging ledge, for no undercut along z: the check must mark the groove, the tunnel and the cavity and the others not')

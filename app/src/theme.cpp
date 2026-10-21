@@ -96,6 +96,10 @@ void Theme::apply(QApplication& app)
         "QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: %1; color: %3; border: 1px solid #c9c4b5;"
         "  border-radius: 4px; padding: 3px 6px; selection-background-color: %4; }"
         "QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: %4; }"
+        // (the list that opens from a drop-down in a light window: it took the dark palette of the menus -- #164c5e -- under the dark text of the window, and five of the six kinds of the primitives manager could not be read.
+        // Here it is the window's own scheme: white, grey border, dark text, the blue of the accent on the item under the cursor.  The drop-downs of the dark cards in the viewport are not in a dialog and keep their own)
+        "QDialog QComboBox QAbstractItemView, QDialog QComboBoxPrivateContainer { background: %1; color: %3; border: 1px solid #c9c4b5;"
+        "  selection-background-color: %4; selection-color: #ffffff; outline: 0; }"
         "QPlainTextEdit QScrollBar:vertical, QTextBrowser QScrollBar:vertical { background: transparent; width: 11px; margin: 0; }"
         "QPlainTextEdit QScrollBar::handle:vertical, QTextBrowser QScrollBar::handle:vertical {"
         "  background: #cfcabb; border-radius: 4px; min-height: 28px; margin: 2px; }"

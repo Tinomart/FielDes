@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('m1_same_part_other_pose: one part with a thin fin, a narrow slot and an inside corner, made 7 ways: as it is, moved off the grid, turned 37 and 90 degrees, mirrored, half the size, twice the size (the rule scaled with it): the answer must be the same')

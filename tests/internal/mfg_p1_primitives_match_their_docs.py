@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('p1_primitives_match_their_docs: the primitives the manufacturing tests are built from -- box, sphere, cylinder, cone and torus -- drawn as their documentation says: the volume of each, counted on points, against its formula (found while testing: the cone was not a cone)')

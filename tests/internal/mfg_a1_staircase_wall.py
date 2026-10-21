@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('a1_staircase_wall: a staircase of six free plates, 0.3, 0.7, 0.74, 0.78, 0.85 and 2.0 mm thick, for a 0.8 mm wall rule: the check must mark the first three and leave the other three alone')

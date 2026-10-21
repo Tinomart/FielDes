@@ -44,7 +44,7 @@ the viewport.
   tips and a place in the menus.
 
 New here? A welcome card offers a **guided tour** the first time FielDes starts (**Help → Guided tour** any time after): short cards over the
-program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version. **File → Open example file** has 33 scripts; `26` to `31` open at once, the analyses take seconds to minutes (the [examples README](examples/README.md) says how long each takes).
+program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version. **File → Open example file** has 34 scripts; `26` to `31` open at once, the analyses take seconds to minutes (the [examples README](examples/README.md) says how long each takes).
 
 ## What it does
 
@@ -244,7 +244,7 @@ takes a few seconds and is cached next to it.
 | [`30_noise_kinds.py`](examples/30_noise_kinds.py) | Noise, one of every kind, and what scale, octaves, stretch and warp do to it |
 | [`31_texture.py`](examples/31_texture.py) | A pattern of small bumps and pits laid over the surface of a body: grit, stipple, leather, ribs, dimples, knurl |
 | [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
-| [`manufacturing/`](examples/manufacturing) | One file each for a 3D printer, a mill, an injection mould and a topology-optimized bracket: what the process cannot make of a part, where, and the part changed so that it can |
+| [`33_manufacturing_optimization.py`](examples/33_manufacturing_optimization.py) | A topology-optimized bracket changed until a 3D printer, a mill and an injection mould can make it: gussets under what leans too far, thin walls thickened, inside corners rounded, draft; the plates and lugs that carry the load kept as they are |
 
 ## Documentation
 

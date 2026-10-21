@@ -1473,5 +1473,15 @@
  "%1 would run before %2 (line %3), which makes %4": "%1 会在创建 %4 的 %2（第 %3 行）之前运行",
  "%1 uses %2, which %3 (line %4) makes: that would come below it": "%1 使用 %2，而 %2 由 %3（第 %4 行）创建：它会落到下面",
  "Move %1 with what it needs": "连同所需内容移动 %1",
- "Extrude pulls a 2D shape into a solid: select a 2D shape first (a circle, a rectangle, a triangle, a polygon, a profile ...); with a path selected as well, the shape is swept along it.": "拉伸会把 2D 形状拉成实体：请先选择一个 2D 形状（圆、矩形、三角形、多边形、轮廓等）；若同时选择了路径，形状将沿路径扫掠。"
+ "Extrude pulls a 2D shape into a solid: select a 2D shape first (a circle, a rectangle, a triangle, a polygon, a profile ...); with a path selected as well, the shape is swept along it.": "拉伸会把 2D 形状拉成实体：请先选择一个 2D 形状（圆、矩形、三角形、多边形、轮廓等）；若同时选择了路径，形状将沿路径扫掠。",
+ "Primitives are the shapes that the Primitives menus offer first. Tick a shape to make it a primitive, untick it to move it to the Parametric shapes. \"Rename\" gives the selected one another name in the menus. \"Add selection\" makes the model that is selected in the model tree a primitive of your own: it is kept in a file of yours and is there in every script you open.": "基本体是“基本体”菜单最先提供的形状。勾选一个形状使其成为基本体，取消勾选则移到参数化形状。“重命名”会给所选形状在菜单中另起一个名称。“添加所选”会把在模型树中选中的模型变成你自己的基本体：它保存在你自己的文件中，在你打开的每个脚本里都可用。",
+ "Give the primitive that is selected in the list another name: type it over the old one and press Return. The menus show the name you give; a shape of the library keeps its function. Left empty, the library's own name comes back.": "给列表中选中的基本体另起一个名称：在旧名称上直接输入并按回车。菜单会显示你给的名称；库中的形状保留其函数。留空则恢复库中的名称。",
+ "The function is %1.": "函数是 %1。",
+ "%1 is not in this list.": "%1 不在此列表中。",
+ "%1 has the name of the library again.": "%1 已恢复为库中的名称。",
+ "The menus call it %1 now.": "菜单现在称它为 %1。",
+ "Your primitives": "你的基本体",
+ "The Primitives menu in the menu bar is the control for the shapes the right-click menus offer first. Primitives ▸ Manage primitives... lists them kind by kind -- 3D shapes, 2D shapes, lines, surfaces, fields: tick a shape to keep it under Primitives, untick it to move it to the Parametric shapes, and Rename gives the selected one another name. With a model selected in the tree, Add selection makes it a primitive of your own, there in every script.": "菜单栏中的“基本体”菜单控制右键菜单最先提供的形状。基本体 ▸ 管理基本体... 按类型列出它们 -- 3D 形状、2D 形状、线、表面、场：勾选一个形状使其保留在“基本体”下，取消勾选则移到参数化形状，“重命名”则给所选形状另起一个名称。在树中选中一个模型后，“添加所选”会把它变成你自己的基本体，在每个脚本中都可用。",
+ "The window opens on the kind of the model that is selected. Or press Show me.": "窗口会在所选模型的类型上打开。或点击“演示”。",
+ "A point or a symmetry is a single button in the menus, not a list, so it cannot be made a primitive.": "点或对称在菜单中是单个按钮，而不是列表，因此不能成为基本体。"
 }

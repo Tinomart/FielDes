@@ -108,6 +108,8 @@ View::View(QWidget* parent)
 
     connect(&camera, &Camera::animDone, this, &View::redrawPicker);
 
+    m_wheelPendingTimer.setInterval(120);
+    connect(&m_wheelPendingTimer, &QTimer::timeout, this, [this] { applyPendingWheel(); });
     m_wheelTimer.setSingleShot(true);
     m_wheelTimer.setInterval(450);
     connect(&m_wheelTimer, &QTimer::timeout, this, [this] {
@@ -2436,6 +2438,14 @@ void View::mousePressEvent(QMouseEvent* event)
             {
                 // Nothing to pull: a drag draws the selection rectangle (with Ctrl held, the shapes inside join the
                 // selection), and a click that does not move selects what is under the cursor, as it always did
+                if (std::getenv("FIELDES_TIMING"))
+                {
+                    // (why a press on a surface did not take it: a face that does not move says so, instead of nothing)
+                    std::fprintf(stderr, "[drag] nothing to pull at (%d, %d): picked %d (line %d), Ctrl %s, %d selected, editable %s, numbers to pull it by %s, %s\n", event->pos().x(), event->pos().y(),
+                                 int(picked), drag_target ? drag_target->sourceLine() + 1 : -1, press_ctrl ? "yes" : "no", selectedShapeCount(),
+                                 drag_target && drag_target->isEditable() ? "yes" : "no", drag_target && drag_target->nativeDragOk() ? "yes" : "no",
+                                 drag_target && drag_target->isFlat() ? "a flat shape: only its edge is pulled" : "a solid");
+                }
                 drag_target = nullptr;
                 rect_start = rect_now = event->pos();
                 rect_add = press_ctrl;
@@ -4654,21 +4664,30 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
     return true;
 }
 
-bool View::scaleSelectionByWheel(int delta)
+// The scale numbers of `only` (or, with none given, of every selected shape) times `factor`: every shape that is scaled and has numbers to scale it by -- a point's are what a spline leaves it by
+// and how thick a sweep is at it.  False when none of them has numbers
+bool View::applyWheelFactor(float factor, Shape* only)
 {
-    if (gizmo_drag || m_pullActive || m_faceActive) return false;
-    // (every shape that is selected and has numbers to scale it by -- a point's are what a spline leaves it by and how thick a sweep is at it)
-    const float factor = std::pow(1.1f, float(delta) / 120.0f);
     std::map<libfive::Tree::Id, float> numbers;
-    for (Shape* s : shapes)
-    {
-        if (!s->isSelected() || !s->hasGizmo() || s->isLocked()) continue;
+    auto scaleOf = [&](Shape* s) {
+        if (!s->hasGizmo() || s->isLocked()) return;
         const auto& h = s->gizmo();
         const auto& vars = s->getVars();
         for (int a = 0; a < 3; ++a)
         {
             const auto it = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
             if (it != vars.end()) numbers[h.scale[a]] = std::max(0.01f, it->second * factor);
+        }
+    };
+    if (only)
+    {
+        scaleOf(only);
+    }
+    else
+    {
+        for (Shape* s : shapes)
+        {
+            if (s->isSelected()) scaleOf(s);
         }
     }
     if (numbers.empty()) return false;
@@ -4682,12 +4701,68 @@ bool View::scaleSelectionByWheel(int delta)
     return true;
 }
 
+// A point has the numbers of its scale once it is selected (selecting it writes the gizmo into the script and the script runs again), which takes a moment: the notches that come over it meanwhile
+// are kept, as one factor, and applied when it has them -- they neither zoom the view nor get lost
+void View::waitForWheelNumbers(float factor)
+{
+    m_wheelPending *= factor;
+    m_wheelPendingTries = 0;
+    if (!m_wheelPendingTimer.isActive()) m_wheelPendingTimer.start();
+}
+
+void View::applyPendingWheel()
+{
+    if (m_wheelPending == 1.0f) { m_wheelPendingTimer.stop(); return; }
+    if (applyWheelFactor(m_wheelPending, nullptr))
+    {
+        m_wheelPending = 1.0f;
+        m_wheelPendingTimer.stop();
+        return;
+    }
+    // (about five seconds: when the run that writes the numbers has not come by then it is not coming)
+    if (++m_wheelPendingTries > 40)
+    {
+        m_wheelPending = 1.0f;
+        m_wheelPendingTimer.stop();
+    }
+}
+
+bool View::scaleSelectionByWheel(int delta, QPoint at)
+{
+    if (gizmo_drag || m_pullActive || m_faceActive) return false;
+    const float factor = std::pow(1.1f, float(delta) / 120.0f);
+    // The point whose dot the mouse is on is scaled whether it is selected or not -- the wheel acts on what the mouse is pointing at.  One of several selected points stands for them all
+    // (as a drag of its dot moves them all), and a point that is not selected is scaled alone
+    Shape* hovered = pointDotAt(at);
+    if (hovered && !hovered->isSelected())
+    {
+        if (hovered->sourceLine() < 0 || hovered->isLocked()) return false;
+        if (!hovered->hasGizmo())
+        {
+            // (it is selected, which gives it its numbers; this notch and the ones that follow are applied when it has them)
+            waitForWheelNumbers(factor);
+            emit(shapeClicked(hovered->sourceLine()));
+            return true;
+        }
+        return applyWheelFactor(factor, hovered);
+    }
+    if (applyWheelFactor(factor, nullptr)) return true;
+    // (a point that a notch has just selected has no numbers until its script has run again: the notches that come meanwhile wait for them)
+    if (m_wheelPendingTimer.isActive())
+    {
+        waitForWheelNumbers(factor);
+        return true;
+    }
+    return false;
+}
+
 void View::wheelEvent(QWheelEvent *event)
 {
     QOpenGLWidget::wheelEvent(event);
     event->accept();
-    // Shift + wheel scales the selection (when something that can be scaled is selected: else the wheel zooms, as it does)
-    if ((event->modifiers() & Qt::ShiftModifier) && scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x())) return;
+    // Shift + wheel, or Ctrl + wheel, scales what can be scaled: the point the mouse is on (selected or not), else the selection.  When there is nothing like that the wheel zooms, as it does
+    if ((event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+        scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x(), event->pos())) return;
     const QPoint& center = zoom_cursor_centric ? mouse.pos : rect().center();
     camera.zoomIncremental(event->angleDelta().y(), center);
     update();
@@ -6941,7 +7016,8 @@ bool View::outlineAt(QPoint pos, Shape*& shape, QVector3D& hit, int& piece) cons
     return found;
 }
 
-// The point whose dot is under a widget position (within a few pixels), the nearest one
+// The point whose dot is under a widget position (within a few pixels), the nearest one.  Two dots can be at ONE place (the corner of a profile and the start of a path that begin at the same
+// point): the one that is selected is the one that is meant, since its gizmo is what the next press or the next notch of the wheel is for, and not whichever the list holds first
 Shape* View::pointDotAt(QPoint pos) const
 {
     Shape* best = nullptr;
@@ -6955,7 +7031,9 @@ Shape* View::pointDotAt(QPoint pos) const
         const QPointF q = toScreen(p);
         const double dx = q.x() - pos.x(), dy = q.y() - pos.y();
         const double d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = s; }
+        const bool nearer = d < bestD - 1e-6;
+        const bool sameSpot = best && d <= bestD + 1e-6 && s->isSelected() && !best->isSelected();
+        if (nearer || sameSpot) { bestD = d; best = s; }
     }
     return best;
 }

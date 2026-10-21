@@ -13,7 +13,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('g6_gap_thresholds: slots 0.3, 0.37, 0.39, 0.41 and 0.5 mm wide, for a 0.4 mm gap rule: the 0.3 slot is closed, the 0.39 / 0.41 / 0.5 ones are left alone, and the one inside the ramp of the grace (0.37) must be closed or left, never made NARROWER')

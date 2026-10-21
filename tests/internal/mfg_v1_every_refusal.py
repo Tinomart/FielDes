@@ -19,7 +19,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('v1_every_refusal: every refusal of the constraint and of the tool: an overhang of 90 or -5 degrees, a draft of 0 or 45, a wall of -1 mm or of "thin", a direction of (0, 0, 0) or of two numbers, a support without an overhang or of a kind that does not exist, a negative clearance, a fix that does not exist, no constraint, an empty part: each says what is wrong and what is allowed')

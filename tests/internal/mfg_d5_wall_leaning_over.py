@@ -16,7 +16,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('d5_wall_leaning_over: a wall that leans OVER (3 degrees, wider at the top, standing on a base) with a draft of 1 degree and no undercut asked, and then with an undercut along z asked too (a mould): the draft alone leaves it, the undercut rule fills what lies under the lean, and the next pass gives the new vertical face its draft')

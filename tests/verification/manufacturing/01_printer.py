@@ -13,7 +13,7 @@
 # WHAT YOU READ: the output pane has one PASS line for each check; the answers worked out by hand are written in the file, under the call of the tool.  About a minute and a half (the tool 25 seconds, the checks the rest), and the picture is there 8 seconds after the last line.
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', '..', 'kit'))
 from mfgkit import *
 
 t = Table('01 a printer\'s job: a thin fin, a narrow slot, a ledge and a round hole on one plate, for a 3D printer with a 1.0 mm nozzle (walls 2.0, gaps 1.0, overhangs 45 degrees)')

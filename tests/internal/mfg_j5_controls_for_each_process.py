@@ -15,7 +15,7 @@
 # LOOK AT THE PICTURE: the numbers are an aid, what you see is the proof.  Turn it, zoom in (View > Top / Front / Right: the keys 7 / 1 / 3).
 
 import sys, os
-sys.path.append(os.path.join(os.getcwd(), '..', '..', 'examples', 'manufacturing', 'kit'))
+sys.path.append(os.path.join(os.getcwd(), '..', 'kit'))
 from mfgkit import *
 
 t = Table('j5_controls_for_each_process: J5, J6: controls for each process: a small part built by hand to the published rules (an L-bracket of 2 mm walls for the printer, a plate with a window of 3.2 mm corners for the mill, a drafted open box for the mould) must be found fine by the judge and left alone by the tool; the same part with one defect for each rule (a rib of 0.4 mm, a ledge leaning 70 degrees, a slot of 0.2 mm, a sharp corner, a groove, a wall without draft) must be found broken by the judge, and fixed or listed by the tool')
