@@ -2882,10 +2882,12 @@ libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float 
 
 libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tree* vars, const float* values, int nvars,
                                             const double* frame, const int* dims, double pitch, double tan_slope, double reach,
-                                            double min_z, int negate, double force_lo, double force_hi, double* stats)
+                                            double min_z, int negate, double force_lo, double force_hi, double* stats, libfive_tree keep)
 {
     if (!part || !frame || !dims) return nullptr;
     libfive::fields::OverhangLatticeParams p;
+    const Tree keepTree = keep ? Tree(keep) : Tree::invalid();          // (the regions that are kept, or none: held until the lattice is made)
+    if (keep) p.keep = &keepTree;
     for (int i = 0; i < 3; ++i) p.origin[i] = frame[i];
     for (int i = 0; i < 9; ++i) p.axes[i] = frame[3 + i];
     for (int i = 0; i < 3; ++i) p.n[i] = dims[i];

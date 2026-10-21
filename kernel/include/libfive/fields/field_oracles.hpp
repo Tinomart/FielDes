@@ -64,6 +64,8 @@ struct OverhangLatticeParams
     double minZ;
     bool negate;
     double forceLo, forceHi;
+    const Tree* keep = nullptr;    // (the regions of the part that are kept as they are, as a field negative inside them, or null: the gusset (mode 0, a positive slope) is not made where it would have to cross air inside a kept region, so nothing of it is left hanging
+                                   // below the region's cut face, apart from the part it was made for)
     int mode = 0;         // (0: the gusset / undercut fill / closing by the sign of `tanSlope`; 2: the DRAFT -- `tanSlope` the tangent of the angle, `reach` the width of the band round the part that is looked at, `minZ` the top of the part up the third axis;
                           // 3: the WALLS; 5: the CORNERS by the rolling ball, `minZ` its radius; 6 / 7: the ACCESS FILL -- the air that a ball-end tool of radius `minZ` cannot touch coming along the third axis is filled, from its top only (6) or from
                           // either end (7); the shaft widens by `tanSlope` (the tangent of a draft; a tiny number for a straight shaft) for every unit it goes out; `reach` is the band of the part that is looked at and where the field stops)

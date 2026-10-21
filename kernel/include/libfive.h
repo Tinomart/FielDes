@@ -833,7 +833,7 @@ libfive_tree libfive_field_cellular(float scale, unsigned seed, int mode, float 
  *  `min_z`), 6 and 7 the access fill (the air that a ball-end tool of radius `min_z` cannot touch along the third axis: from its top only, or from either end; `tan_slope` the taper of its shaft).  */
 libfive_tree libfive_field_overhang_lattice(libfive_tree part, const libfive_tree* vars, const float* values, int nvars,
                                             const double* frame, const int* dims, double pitch, double tan_slope, double reach,
-                                            double min_z, int negate, double force_lo, double force_hi, double* stats);
+                                            double min_z, int negate, double force_lo, double force_hi, double* stats, libfive_tree keep);
 /*  The correction lattice (libfive::fields::bakeLattice): what `field` differs from `part` by, sampled once at the nodes of a lattice where `field` is within `reach` of its surface
  *  (0 elsewhere).  `frame` 12 numbers (the origin, then three unit vectors), `dims` the nodes along each axis, `pitch` the distance between nodes, `vars` / `values` as above, `stats` 8 numbers
  *  (status 0 = made).  The part plus the returned field is `field` near its surface and the part's own field elsewhere.  Null when it cannot be made.

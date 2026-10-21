@@ -268,7 +268,7 @@ def _walls_lattice(ctx, t, threshold=None):
     names, values, count = known if known is not None else (None, None, 0)
     # (`slope` carries the share of the target thickness `t` below which a wall is thin -- the rule's limit over the target, which has a margin on it -- see _remedy_walls)
     ratio = min(1.0, max(0.5, float(threshold) / float(t))) if threshold else 1.0
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, ratio, float(band), float(t), 3, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, ratio, float(band), float(t), 3, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
     out = ctx.base.min(Shape(ptr))
@@ -465,7 +465,7 @@ def _corner_maxfilter(ctx, radius):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 5, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, 1.0, float(band), float(radius), 5, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
     # (the lattice holds the exact distance to the surface of the result, as far out as its band.  Outside the original part that is the field of the result; the part's plain field stands only inside the original part, where
@@ -524,7 +524,7 @@ def _remedy_access(ctx, axis, radius, taper=0.0, both=True):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(ctx.field.ptr, names, values, count, frame, cdims, pitch, max(float(taper), 1.0e-6), float(band), float(radius), 7 if both else 6, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(ctx.field.ptr, names, values, count, frame, cdims, pitch, max(float(taper), 1.0e-6), float(band), float(radius), 7 if both else 6, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
     inside = ctx.base + 1.0e3 * (ctx.base.max(0) * 1.0e6).min(1)
@@ -576,7 +576,7 @@ def _undercut_lattice(ctx, a):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, -1.0, 3.0 * pitch, -1.0e30, 0, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, -1.0, 3.0 * pitch, -1.0e30, 0, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
     out = ctx.base.min(Shape(ptr))
@@ -659,7 +659,7 @@ def _draft_lattice(ctx, degrees, d):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, math.tan(math.radians(degrees)), float(band), float(top), 2, 1.0e30, -1.0e30, stats)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, math.tan(math.radians(degrees)), float(band), float(top), 2, 1.0e30, -1.0e30, stats, None)
     if not ptr:
         return None
     out = ctx.base.min(Shape(ptr))
@@ -840,8 +840,10 @@ def _entry(f, d, sign, total, count=48, with_shadow=False):
 # could not rule out the cells under the part: on the topology bracket's cube of 30 mm 16,469 leaves in 60.6 thread-seconds with the places, 16,514 in 90.1 with the walk: the drawing is what costs.)
 
 
-def _remedy_overhang(ctx, degrees, d, fix, reach):
-    ''' 'fill': the part grown under every overhang at the slope asked -- a point of the air is part of it when a disc, as wide as the slope has run by the time it is up to the part (how far above
+def _remedy_overhang(ctx, degrees, d, fix, reach, keep=None):
+    ''' (`keep`: the kept regions of the part as one field, negative inside them, or None: a gusset is not made under a stretch of the part where it would have to cross air inside a kept region -- see the
+        top of kernel/src/fields/lattice_field.cpp's `K` --, so that no blade of it is left hanging below the face the region cuts)
+        'fill': the part grown under every overhang at the slope asked -- a point of the air is part of it when a disc, as wide as the slope has run by the time it is up to the part (how far above
         the point the part starts), fits inside the part there, at that height or at any of the `reach` above it: a gusset under a ledge, as deep as the ledge is wide and no deeper, up to `reach`;
         'cut': the same done to the air, the other way up -- the air grown above a channel into a teardrop.
         It is worked out ONCE, by the kernel (`libfive_field_overhang_lattice`, kernel/src/fields/lattice_field.cpp), on a lattice laid over the part in the build direction, and kept as a field of its
@@ -900,7 +902,7 @@ def _remedy_overhang(ctx, degrees, d, fix, reach):
     except Exception:
         known = None
     names, values, count = known if known is not None else (None, None, 0)
-    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, tan, float(reach), min_z, 1 if cut else 0, force_lo, force_hi, stats)
+    ptr = lib.libfive_field_overhang_lattice(f.ptr, names, values, count, frame, cdims, pitch, tan, float(reach), min_z, 1 if cut else 0, force_lo, force_hi, stats, keep.ptr if keep is not None else None)
     if not ptr:
         raise ManufacturingError('manufacturing_optimization: the overhang fix could not be made (lattice of %d x %d x %d nodes, status %d)' % (dims[0], dims[1], dims[2], int(stats[0])))
     field = Shape(ptr)
@@ -1426,6 +1428,10 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
     for r in keeps:
         w = _weight(Shape.wrap(r), 0.4 * ctx.step)
         keep_fill = w if keep_fill is None else keep_fill.max(w)
+    keep_field = None                # (the kept regions as one field, negative inside them: the overhang's gusset is made knowing where they are)
+    for r in keeps:
+        w = Shape.wrap(r)
+        keep_field = w if keep_field is None else keep_field.min(w)
     reach = float(max_support_height) if max_support_height else 0.2 * ctx.size
     pts, box = _volume_points(ctx, 12000)
     f0_vals = _values(ctx.field, pts)
@@ -1565,7 +1571,7 @@ def manufacturing_optimization(part, constraints, keep=None, remedies=None, max_
             field, offset = _as_offset(cx, _remedy_draft(cx, lean, c.pull_direction, growth=True), w_region, keep_weight, scoped, not chained)
             width = _draft_reach(cx, lean, c.pull_direction)[1]
         elif remedy == 'overhang':
-            made = _remedy_overhang(cx, value, d, c.overhang_fix, reach)
+            made = _remedy_overhang(cx, value, d, c.overhang_fix, reach, keep_field)
             info = made._lattice
             _log(t0, 'overhang field made on a lattice of %d x %d x %d nodes (%.3g mm apart) in %.1f s, %.1f s of it sampling the part at %d nodes: %.4g mm^3' % (
                 info['dims'][0], info['dims'][1], info['dims'][2], info['pitch'], info['seconds'], info['sampling_seconds'], info['looked_at'], info['volume']))

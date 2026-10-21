@@ -866,6 +866,8 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     std::atomic<uint64_t> looked(0);
     const double bandD = (P.mode == 2 || P.mode == 3 || P.mode == 5 || P.mode == 6 || P.mode == 7) ? P.reach : 0.0;
     const double bandInD = (P.mode == 3) ? 1.1 * P.minZ + 4.0 * h : ((P.mode == 5) ? P.minZ + 4.0 * h : 0.0);
+    // (a field read at the nodes, with the pruning of the mesher: the part, and the kept regions)
+    auto sampleTree = [&](const Tree& tree, std::vector<float>& into, std::atomic<uint64_t>& counter, double bandOut, double bandInside) -> bool
     {
         // tiles of 16 nodes, each worked through by one thread with an evaluator of its own
         const int T = 16;
@@ -879,11 +881,11 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
             pool.emplace_back([&]() {
                 try
                 {
-                    Evaluator ev(part, vars);
+                    Evaluator ev(tree, vars);
                     const Tape::Handle root = ev.getDeck()->tape;
-                    Sampler S{P, {nx, ny, nz}, h, F, ev, looked};
-                    S.band = bandD;
-                    S.bandIn = bandInD;
+                    Sampler S{P, {nx, ny, nz}, h, into, ev, counter};
+                    S.band = bandOut;
+                    S.bandIn = bandInside;
                     for (;;)
                     {
                         const size_t q = next.fetch_add(1);
@@ -901,9 +903,25 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
             });
         }
         for (auto& th : pool) th.join();
-        if (failed) return fail(3);
-    }
+        return !failed;
+    };
+    if (!sampleTree(part, F, looked, bandD, bandInD)) return fail(3);
     const double tSample = secondsSince(t0);
+
+    // The KEPT REGIONS (the gusset, mode 0): `K` is 1 at a node inside one.  A kept region is as the part has it: nothing is added inside it, and nothing is asked of its faces.  The gusset of a stretch of the
+    // part is a cone that hangs from the stretch down, and the region's face cuts it where it crosses air that lies inside the region -- the box of a lug stands off the lug's own underside, a box is no disc --:
+    // what lies below the cut is left hanging on the part by a line or by one end, a flat-topped V under a lug, a blade of 14 mm with a ragged end under an arm, on the topology bracket.  So (1) a stretch
+    // whose first node lies inside a kept region has no gusset under it, and (2) a node of the air is in no gusset when, between it and the stretch above it, there is a node of the air inside a kept region.
+    // What hangs from a stretch outside the regions, and reaches the face of a region from the side, is made as ever: a gusset joined to a kept plate from outside is material of the part it was made for.
+    std::vector<uint8_t> K;
+    if (P.keep && P.keep->is_valid() && !P.negate && P.tanSlope > 0.0 && P.mode == 0)
+    {
+        std::vector<float> Kv(nodes, kBound);
+        std::atomic<uint64_t> keptLooked(0);
+        if (!sampleTree(*P.keep, Kv, keptLooked, 0.0, 0.0)) return fail(3);
+        K.assign(nodes, 0);
+        for (size_t q = 0; q < nodes; ++q) K[q] = Kv[q] <= 0.0f ? 1 : 0;
+    }
 
     // The ACCESS FILL (mode 6: a tool that comes along the third axis from its top; mode 7: from either end).  `minZ` is the radius R of the tool's ball, `tanSlope` the tangent of the taper of its shaft (the
     // shaft is as wide as the ball at the ball's equator and widens by that much for every unit it goes on out: a mould half that has to slide out; a tiny number for a cutter, whose shaft is straight).  The air
@@ -1597,6 +1615,23 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
             std::vector<int> bottom(static_cast<size_t>(nz), -1), above(static_cast<size_t>(nz), -1), above0(static_cast<size_t>(nz), -1);          // (not `bottom(size_t(nz))`: that reads as a function)
             std::vector<float> M(static_cast<size_t>(nz), inf);
             stretches(c, bottom, above, above0);
+            // (the nodes of the air that have a node of the air inside a kept region between them and the stretch of the part above: no gusset there, see `K`)
+            std::vector<uint8_t> shut;
+            if (!K.empty())
+            {
+                shut.assign(static_cast<size_t>(nz), 0);
+                bool cut = false;
+                for (int k = nz - 1; k >= 0; --k)
+                {
+                    if (bottom[size_t(k)] >= 0)
+                    {
+                        cut = false;
+                        continue;
+                    }
+                    if (K[size_t(k) * columns + c]) cut = true;
+                    shut[size_t(k)] = cut ? 1 : 0;
+                }
+            }
             uint64_t added = 0, partNodes = 0;
             for (int k = 0; k < nz; ++k)
             {
@@ -1609,7 +1644,7 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
                 float g = cap;
                 const int s = above[size_t(k)], s0 = above0[size_t(k)];
                 const double z = double(k) * h;
-                if (s >= 0 && s0 >= 0 && (s0 - k) * h <= P.reach && z >= P.minZ)
+                if (s >= 0 && s0 >= 0 && (s0 - k) * h <= P.reach && z >= P.minZ && (shut.empty() || (!shut[size_t(k)] && !K[size_t(s) * columns + c])))
                 {
                     g = std::max(-cap, std::min(cap, float((double(reachOf(c, s, M, above0)) - z) / norm)));
                     if (g <= 0)
@@ -1632,6 +1667,75 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
         });
         if (gusset.load() == before) break;           // (nothing new: the part with its gusset is what a gusset of it would be)
     }
+    // A gusset is made only where it can be PRINTED: it must REST on something.  The cone under a stretch of the part is a keel that hangs from it and ends in an edge; a keel under the flat underside of an arm
+    // with nothing under it for sixty millimetres is of no use: the printer would have to start its lowest layer, the apex, in the air, and every layer above rests on that one.  That is the red blade, the wedges and
+    // the ragged fragment that hang under the arms of the topology bracket by their upper side only -- material made for the printer that the printer cannot print.  A wedge in the corner under a ledge that sticks
+    // out of a wall rests on the wall.  So the layers are gone through from the plate up: a node of the gusset stays when, in the layer under it, one of the nine nodes under and beside it is a node of the part, or
+    // a node of the gusset that stays, or the plate is under it; what rests on nothing -- and so everything that was made to rest on that -- is not made, and the faces it was to put right are listed as they are
+    // (the shell leaves them to a support).  The flank leans less than a node a layer, so a gusset that rests on a wall always has a node of it under and beside each of its own.  (Not for a cut: the teardrop is air.)
+    if (!P.negate && P.tanSlope > 0.0 && P.mode == 0)
+    {
+        uint64_t unsupported = 0;
+        for (int k = 0; k < nz; ++k)
+        {
+            const bool onPlate = k == 0 || double(k - 1) * h < P.minZ;
+            if (onPlate) continue;
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i)
+                {
+                    const size_t q = (size_t(k) * size_t(ny) + size_t(j)) * size_t(nx) + size_t(i);
+                    if (S[q] != 1) continue;
+                    bool rests = false;
+                    for (int dj = -1; dj <= 1 && !rests; ++dj)
+                        for (int di = -1; di <= 1 && !rests; ++di)
+                        {
+                            const int ii = i + di, jj = j + dj;
+                            if (ii < 0 || jj < 0 || ii >= nx || jj >= ny) continue;
+                            const size_t below = (size_t(k - 1) * size_t(ny) + size_t(jj)) * size_t(nx) + size_t(ii);
+                            if (part0[below] || S[below] == 1) rests = true;
+                        }
+                    if (!rests)
+                    {
+                        S[q] = 0;
+                        G[q] = cap;
+                        ++unsupported;
+                    }
+                }
+        }
+        if (unsupported)
+        {
+            // (a node of the air that was within a node of the surface of what was dropped and has no gusset left beside it: nothing of the gusset is there any more)
+            parallelFor(size_t(nz), [&](size_t k) {
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t q = (k * size_t(ny) + size_t(j)) * size_t(nx) + size_t(i);
+                        if (S[q] != 2) continue;
+                        bool beside = false;
+                        for (int dk = -1; dk <= 1 && !beside; ++dk)
+                            for (int dj = -1; dj <= 1 && !beside; ++dj)
+                                for (int di = -1; di <= 1 && !beside; ++di)
+                                {
+                                    const int ii = i + di, jj = j + dj, kk = int(k) + dk;
+                                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                                    if (S[(size_t(kk) * size_t(ny) + size_t(jj)) * size_t(nx) + size_t(ii)] == 1) beside = true;
+                                }
+                        if (!beside)
+                        {
+                            S[q] = 0;
+                            G[q] = cap;
+                        }
+                    }
+            });
+            parallelFor(columns, [&](size_t c) {
+                uint8_t any = 0;
+                for (int k = 0; k < nz && !any; ++k) any = S[size_t(k) * columns + c] ? 1 : 0;
+                has[c] = any;
+            });
+            gusset.store(gusset.load() > unsupported ? gusset.load() - unsupported : 0);
+        }
+    }
+
     // The gusset of the CHECK, asked of the function by itself (see the top): only its nodes are wanted, as a map of where a face leans past what the check lets through
     if (checkOut)
     {
