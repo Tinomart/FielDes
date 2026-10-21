@@ -25,6 +25,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
+#include <set>
 
 #include "fieldes/python/interpreter.hpp"
 #include "fieldes/i18n.hpp"
@@ -754,6 +756,12 @@ void Interpreter::evaluate(QString script, bool resuming)
             PyObject_SetAttrString(host_mod, "__resync", fresh_resync);
             Py_DECREF(fresh_resync);
         }
+        // (the numbers of the gizmo() calls of this run: see fieldes.stdlib.handles._note_gizmo_vars and sceneGizmoIds)
+        {
+            const auto fresh_gizmos = PyList_New(0);
+            PyObject_SetAttrString(host_mod, "__gizmo_vars", fresh_gizmos);
+            Py_DECREF(fresh_gizmos);
+        }
         // Reset all settings
         PyObject_SetAttrString(host_mod, "__resolution", Py_None);
         PyObject_SetAttrString(host_mod, "__quality", Py_None);
@@ -1334,6 +1342,43 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
     }
     Py_DECREF(host_mod);
     emit(partialResult(out));
+}
+
+// The numbers of every gizmo() call of the run (fieldes.stdlib.handles notes them in host.__gizmo_vars): a surface pull never changes one of them, whichever shape the surface
+// belongs to.  The same set for every shape of a run, made again when the list has grown; the list is held, so that no other list can take its place
+static std::shared_ptr<const std::set<libfive::Tree::Id>> sceneGizmoIds()
+{
+    static PyObject* seen = nullptr;
+    static Py_ssize_t seenSize = -1;
+    static std::shared_ptr<const std::set<libfive::Tree::Id>> made;
+    PyObject* host = PyImport_ImportModule("_fieldes_host");
+    PyObject* list = host ? PyObject_GetAttrString(host, "__gizmo_vars") : nullptr;
+    Py_XDECREF(host);
+    if (!list || !PyList_Check(list))
+    {
+        Py_XDECREF(list);
+        PyErr_Clear();
+        return nullptr;
+    }
+    if (list == seen && PyList_Size(list) == seenSize)
+    {
+        Py_DECREF(list);
+        return made;
+    }
+    auto ids = std::make_shared<std::set<libfive::Tree::Id>>();
+    for (Py_ssize_t i = 0; i < PyList_Size(list); ++i)
+    {
+        PyObject* v = PyList_GetItem(list, i);            // (borrowed)
+        PyObject* p = (v && PyObject_HasAttrString(v, "ptr")) ? PyObject_GetAttrString(v, "ptr") : nullptr;
+        if (p && PyLong_Check(p)) ids->insert(static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(p)));
+        Py_XDECREF(p);
+    }
+    PyErr_Clear();
+    Py_XDECREF(seen);
+    seen = list;                                           // (the reference of GetAttr is kept)
+    seenSize = PyList_Size(list);
+    made = ids;
+    return made;
 }
 
 void Interpreter::recordShape(
@@ -1984,6 +2029,9 @@ void Interpreter::recordShape(
             Py_XDECREF(sv);
             PyErr_Clear();
         }
+
+        // The numbers of the gizmo() calls of the script: no surface of this shape is pulled by one of them (see sceneGizmoIds)
+        shape->setSceneGizmoVars(sceneGizmoIds());
 
         // An image of another model in a symmetry (`_symmetry_of`)
         shape->setSymmetryImage(PyObject_HasAttrString(obj, "_symmetry_of") == 1);

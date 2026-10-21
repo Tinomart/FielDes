@@ -160,7 +160,7 @@ the body may shrink, grow, move, split or merge, and the card steps through the 
 
 Point at a result in the model tree and a **tab comes out of the tree's edge**: click it, then a field or a number, and `von_mises_1 = result.von_mises` is written under the analysis — a field like any other, shown in the field viewer,
 sliced, used in other models; the drawer's last button writes the **key numbers as a text file**. Every field a solver calculates is a field, not a body. The tree also shows the **arguments** of every call as rows, **sections** you
-start by clicking the gap between two rows (they fold in the code editor too), and a **Lattice** menu with every cell. And you can take the results out: `export_fea` hands a static analysis to Abaqus / CalculiX, Nastran or Gmsh,
+start by clicking the gap between two rows (they fold in the code editor too), and **Periodic lattices** and **Non-periodic lattices** menus, with every cell. And you can take the results out: `export_fea` hands a static analysis to Abaqus / CalculiX, Nastran or Gmsh,
 `export_results` writes VTK, CSV and text, `export_mesh` writes STL, OBJ, PLY, 3MF, glTF, FBX, OFF and DXF ([`22_export_files.py`](examples/22_export_files.py)).
 
 ## Quick start
@@ -244,6 +244,7 @@ takes a few seconds and is cached next to it.
 | [`30_noise_kinds.py`](examples/30_noise_kinds.py) | Noise, one of every kind, and what scale, octaves, stretch and warp do to it |
 | [`31_texture.py`](examples/31_texture.py) | A pattern of small bumps and pits laid over the surface of a body: grit, stipple, leather, ribs, dimples, knurl |
 | [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
+| [`34_non_periodic_lattices.py`](examples/34_non_periodic_lattices.py) | Lattices that do not repeat: a random net over a surface (`surface_lattice`, in hexagons or triangles, on a block with a dent) and foams with a clean surface (`random_points(surface=True)`), next to a foam the surface cuts off |
 | [`33_manufacturing_optimization.py`](examples/33_manufacturing_optimization.py) | A topology-optimized bracket changed until a 3D printer, a mill and an injection mould can make it: gussets under what leans too far, thin walls thickened, inside corners rounded, draft; the plates and lugs that carry the load kept as they are |
 
 ## Documentation
@@ -294,7 +295,7 @@ What is a rough edge rather than a limit of the design is in [KNOWN_ISSUES.md](K
   (`file_units=`).
 - Analyses are linear (small strain, linear material) and use tetrahedra (or voxel hexahedra); no contact.
 - **Not validated for safety-critical use.** FielDes is a design tool, not a certified solver. Four known-answer checks (a beam, a plate with a hole, a channel flow, conduction through a bar) are in
-  `examples/verification/` and described in [Verification](docs/analysis.md#verification-four-known-answers): the result card says it too. Compare any result with a hand calculation and a test.
+  `tests/verification/known_answers/` and described in [Verification](docs/analysis.md#verification-four-known-answers): the result card says it too. Compare any result with a hand calculation and a test.
 
 ## Project layout
 

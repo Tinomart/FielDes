@@ -151,6 +151,11 @@ plate_2 = gizmo(
 **Hover a surface** of the shape and drag it, whatever the gizmo's mode: the numbers that place that surface change — a plane's
 position, a cylinder's radius, the faces of a box. A shape made with `var()` numbers has them already.
 
+**A pull changes handle numbers and never a gizmo's** -- not the gizmo of the shape, and not the gizmo of a shape it is made of. Pull a side of the
+extrusion of a rectangle that you selected (and so has its `handles(...)` and `gizmo(...)` lines) and that side's number, the rectangle's side, is
+what changes: the other sides stay where they are, and the rectangle is not scaled, moved or turned. The two end faces of such an extrusion are
+numbers of the extrusion (`extrude_1 = handles(extrude_1, [0, 5])`, written when you select it): pull one and the extrusion gets longer or shorter from that end.
+
 For a shape written with **plain numbers** — a primitive, or a part imported from STEP, which is itself made
 of such primitives — FielDes writes, under the definition,
 
@@ -167,7 +172,7 @@ Rules:
 
 - **A shape made of a few numbers of its own lists those numbers**, one for each thing you can pull. A `rectangle` has four (its sides: `[x0, y0, x1, y1]`), a `rounded_rectangle` five (the four sides
   and the radius), a `triangle` three (its three sides, each pulled parallel to itself). A side pulled moves that side and no other, the corners of a rounded rectangle stay tangent to its sides whatever you pull, and
-  **the gizmo stays at the middle of the shape** -- it is where the shape is after a side is pulled -- without anything jumping when the script runs again (the pivot is an expression of those numbers).
+  **the pivot of the gizmo stays where the shape was made** -- the middle of the shape before any side was pulled, plain numbers that no handle changes -- so a side pulled moves that side only, at any scale of the gizmo, and nothing jumps when the script runs again.
 - Only numbers that **place** a surface are in the list. Orientations and the placement of the whole part are
   not — a dragged face moves and neither turns nor takes the rest of the part along. Use the gizmo to move or
   rotate the whole part.

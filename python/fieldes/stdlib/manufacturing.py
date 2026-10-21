@@ -734,17 +734,29 @@ def _close_feet(ctx, result, d, lift):
         is asked once more from `lift` (the most the surface moves) farther along the pull, away from the floor: there the wall is the nearest face and the result says whether it is inside the grown skin of the wall.
         If it is, the point is part of the result too: the wall's own lean goes on down to the floor, as the walls are grown, with no vertical stripe in place of it.  Asked only of a point whose nearest face is a floor
         (its normal along the pull), of a place that lies in the skin that was grown (outside the part, inside the result) and beside a wall (its normal across the pull): a gap between a floor and a ledge in the
-        part, the underside of a thickened ledge and a roof are not it.  The same under a roof, the other way up.  Where the gates are 0 the lookup is held far out and the mesher drops it '''
+        part, the underside of a thickened ledge and a roof are not it.  The same under a roof, the other way up.  Where the gates are 0 the lookup is held far out and the mesher drops it
+
+        The gate on the point's own normal is wide: a point ON the 45-degree line from the corner, where the two faces are equally near, has a normal that is the average of the wall's and the floor's
+        (read by central differences, 45 degrees from the pull), and with the gate at 1 from 0.75 up it was 0.8 there and 0 a little to the side, and the lookup that is held far out unless the gate is
+        exactly 1 did not fill: a slit of air 0.1 mm wide along that line, the whole length of the foot (measured on the fin of 01_printer.py: the correction at the foot is the growth, then a gap of 0,
+        then a ramp), which the correction lattice that is drawn (`_bake`) read as a neck in the grown wall and a skirt on the floor, 0.3 mm wide and not alike on the two sides.
+
+        The lifted place counts for eight times its value OUTSIDE the skin (and for its value inside it): `min(result, lifted)` pulled the field down in the air beside the foot, to the
+        lifted place's distance from the wall less the growth, in a band as wide as the growth along the 45-degree line from the corner -- where nothing is grown, the surface does not move, and the
+        value is only smaller --, and the correction lattice read that band as a correction of up to the growth, a ramp that its carry copied under the floor, so that at the floor the lattice
+        held a correction of 0.2 to 0.4 mm where the exact result has none: a fillet 0.5 mm wide and 0.5 mm high at the foot of the fin, measured at the 0.34 mm nodes of the showcase and the
+        same drawn in cells of 0.1 mm.  The place where the lifted value is 0, the surface, and every sign are as they were: only a band of a twentieth of a millimetre outside the skin holds the lifted value now '''
     norm = math.sqrt(sum(float(x) ** 2 for x in d)) or 1.0
     u = tuple(float(x) / norm for x in d)
     nd = _dot(ctx.normals, u)
     out = result
     for sign in (1.0, -1.0):
         move = tuple(sign * lift * c for c in u)
-        floor = ((sign * nd - 0.5) * 4.0).max(0).min(1)                                            # (the nearest face of the point faces away from the floor: 1 above a floor, 0 elsewhere)
+        floor = ((sign * nd - 0.3) * 4.0).max(0).min(1)                                            # (the nearest face of the point faces away from the floor, or is the average of it and a wall's: 1 from 55 degrees of the pull, 0 from 73)
         skin = (_at(ctx.field, *move) * (1.0 / ctx.step)).max(0).min(1)                              # (the lifted place is outside the part)
         beside = ((0.5 - _dot(_Normals(ctx.field, ctx.step, shift=move), u).abs()) * 4.0).max(0).min(1)    # (and its nearest face is a wall)
-        out = out.min(_at(result, *move) + _BIG * (1.0 - floor * skin * beside))
+        lifted = _at(result, *move)
+        out = out.min(lifted + 7.0 * lifted.max(0) + _BIG * (1.0 - floor * skin * beside))
     return out
 
 

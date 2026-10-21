@@ -105,7 +105,12 @@ _CELLS = _cell_entries()
 LABELS = {name: label for name, _g, _t, label in _CELLS}
 # The sections of the menus that a group of entries belongs to, besides the first menu: the lattice section holds the lattice operations
 # (and the points a foam is made around) and every cell
-SECTIONS = {'Strut cells': 'lattice', 'TPMS cells': 'lattice', 'Planar cells': 'lattice', 'Custom cells': 'lattice', 'Lattices': 'lattice'}
+SECTIONS = {'Strut cells': 'periodic', 'TPMS cells': 'periodic', 'Planar cells': 'periodic', 'Custom cells': 'periodic', 'Periodic lattices': 'periodic',
+            'Non-periodic lattices': 'non_periodic'}
+# The categories of the Operations menu those sections make, in the order they are listed: lattices made of cells that repeat, and lattices made around points or over a surface,
+# that do not.  (A category is in the menu when something in it is valid: see View::fillOperationsMenu)
+SECTION_MENUS = [{'name': 'periodic', 'label': tr('Periodic lattices'), 'type': 'lattice'},
+                 {'name': 'non_periodic', 'label': tr('Non-periodic lattices'), 'type': 'points'}]
 
 # What the Lattice menu says of an entry when the mouse rests on it
 HINTS = {
@@ -113,6 +118,8 @@ HINTS = {
     'lattice_surface_conform': tr('With a cell selected with the model: that cell.  Otherwise a first cell to change in the script.'),
     'random_points': tr("Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two "
                         "may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice"),
+    'surface_lattice': tr('A random net of beams over the whole surface of the model: a lattice of one layer, that does not repeat.  How far apart its nodes are, '
+                          'and how thick its beams are, are the numbers to change in the script'),
     'voronoi_lattice': tr('A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  '
                           'Select points first (random_points)'),
     'delaunay_lattice': tr('A stochastic truss: beams along the Delaunay edges between the selected points, filling the model the points were '
@@ -382,12 +389,13 @@ OPERATIONS = [
     ('body_from_field', 'Field math', 'body_from_field({body})', False),
     # Lattices (the cell is a first choice to change in the script: cell_periodic('octet'), ...; a cell that is selected with the body is the
     # cell).  A foam is not made of a cell but around points: random_points makes them in the body, and the lattice made of the points fills it
-    ('lattice', 'Lattices', "lattice({body}, cell_periodic('{cell}'), cell_size={cs}, thickness={ct})", 'optional'),
-    ('lattice_surface_conform', 'Lattices',
+    ('lattice', 'Periodic lattices', "lattice({body}, cell_periodic('{cell}'), cell_size={cs}, thickness={ct})", 'optional'),
+    ('lattice_surface_conform', 'Periodic lattices',
      "lattice_surface_conform({body}, cell_periodic('{cell}'), cell_size={cs})", 'optional'),
-    ('random_points', 'Lattices', 'random_points({body}, spacing={cs})', False),
-    ('voronoi_lattice', 'Lattices', 'voronoi_lattice({body})', False),
-    ('delaunay_lattice', 'Lattices', 'delaunay_lattice({body})', False),
+    ('random_points', 'Non-periodic lattices', 'random_points({body}, spacing={cs})', False),
+    ('voronoi_lattice', 'Non-periodic lattices', 'voronoi_lattice({body})', False),
+    ('delaunay_lattice', 'Non-periodic lattices', 'delaunay_lattice({body})', False),
+    ('surface_lattice', 'Non-periodic lattices', 'surface_lattice({body}, cell_size={cs}, thickness={ct})', False),
     # Importing: the surface of any model as the exact distance to its meshed surface (a file is imported from the menu of
     # empty space, Import model...)
     ('tessellate', 'Importing', 'tessellate({body})', False),
@@ -478,11 +486,12 @@ def catalog():
                             **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
                             **({'domain': DOMAIN_OF_FUNCTION[n]} if g == 'Simulations' and n in DOMAIN_OF_FUNCTION else {}),
                             **({'type': OPERATION_KINDS[n]} if n in OPERATION_KINDS else
-                                                                                       {'type': 'lattice'} if g == 'Lattices' else {}))
+                                                                                       {'type': 'lattice'} if g in ('Periodic lattices', 'Non-periodic lattices') else {}))
                        for n, g, _, o in OPERATIONS]
                       + [{'name': b['name'], 'group': 'Custom blocks', 'other': False, 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['operation']],
         'python': [{'name': n, 'label': l, 'doc': d} for n, l, d, _code in PYTHON],
+        'sections': SECTION_MENUS,
     })
 
 
@@ -1044,7 +1053,7 @@ def call(request):
     return head + marker + expression + _images_after(r, head, expression)
 
 
-KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'extrude')
+KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice', 'extrude')
 
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)

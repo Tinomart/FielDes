@@ -956,6 +956,18 @@ def _handle_count(shape):
         return 0
 
 
+def _handles_ends_only(shape):
+    ''' Whether the numbers handles() would write for the shape are only the two ends of an extrusion of a 2D shape that has handles of its own (profile.extrude): the sides of the extrusion
+        are pulled by the numbers of that shape.  A shape under a gizmo is asked about the shape it was made from, as _handle_count does -- the model tree measures the value that is displayed '''
+    try:
+        from fieldes.shape import Shape
+        while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
+            shape = shape._placed_from
+        return bool(getattr(shape, '_handles_ends_only', False))
+    except Exception:
+        return False
+
+
 def _new_name(value, taken):
     ''' A free variable name for the shape of an expression: "sphere_1" for sphere(...) '''
     base = 'shape'

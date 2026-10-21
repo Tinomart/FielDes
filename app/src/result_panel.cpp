@@ -258,7 +258,7 @@ ResultPanel::ResultPanel(QWidget* parent)
         auto notice = new QLabel(T("Not validated for safety-critical use"));
         notice->setObjectName("resultDisclaimer");
         notice->setWordWrap(true);
-        notice->setToolTip(T("FielDes is a design tool, not a certified solver. The program is checked against four known answers (examples/verification: a beam, a plate with a hole, "
+        notice->setToolTip(T("FielDes is a design tool, not a certified solver. The program is checked against four known answers (tests/verification/known_answers: a beam, a plate with a hole, "
                              "a channel flow, the conduction through a slab); compare any result with a hand calculation and a test before you rely on it."));
         layout->addWidget(notice);
     }

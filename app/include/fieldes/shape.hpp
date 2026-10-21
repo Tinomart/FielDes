@@ -502,6 +502,9 @@ public:
     /*  The numbers of the symmetry an image is made in (fieldes.stdlib.symmetries.symmetry_image): the image's field has them, but a surface of an image is pulled by the numbers of the
         model it is the image of -- never by the symmetry's, which would move the planes and so every image of everything  */
     void setFrozenVars(const std::set<libfive::Tree::Id>& v) { m_frozenVars = v; }
+    /*  The numbers of every gizmo() call of the script, whichever shape it places (the same set is shared by all the shapes of a run): a shape made of a placed shape -- the extrusion of a
+        rectangle that has a gizmo() line -- has them in its field, and a pull of one of its surfaces must change the handles, never the move, turn or scale of the shape inside it  */
+    void setSceneGizmoVars(std::shared_ptr<const std::set<libfive::Tree::Id>> v) { m_sceneGizmoVars = std::move(v); }
     /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
     void setSymmetryImage(bool v) { m_symmetryImage = v; }
     bool isSymmetryImage() const { return m_symmetryImage; }
@@ -516,7 +519,7 @@ public:
     void linkSource(Shape* source);
     /*  The shape of the scene this one is the image of (null when it is none, or is not shown)  */
     Shape* followedShape() const { return m_followKind != FOLLOW_NONE ? m_follows.data() : nullptr; }
-    /*  The numbers a pull of a surface of this shape leaves where they are: its gizmo's, and the symmetry's of an image  */
+    /*  The numbers a pull of a surface of this shape leaves where they are: every gizmo's (its own and those of the shapes it is made of), and the symmetry's of an image  */
     std::set<libfive::Tree::Id> pullMask() const;
     /*  How much each number of the shape resists a drag of one of its surfaces (see libfive::dragWeights): the centre of a round feature stays  */
     std::map<libfive::Tree::Id, float> dragWeights() const;
@@ -1059,6 +1062,7 @@ protected:
 
     Gizmo m_gizmo;
     std::set<libfive::Tree::Id> m_frozenVars;
+    std::shared_ptr<const std::set<libfive::Tree::Id>> m_sceneGizmoVars;
     bool m_symmetryImage = false;
     bool m_locked = false;
     bool m_linked = false;

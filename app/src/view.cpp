@@ -3781,29 +3781,21 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     }
 }
 
-void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line)
+void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line, const QString& section)
 {
     const int generation = m_scene ? m_scene->generation() : -1;
-    const bool haveModel = !m_scene || m_scene->hasModel();
-    // The operations that fill a model with a lattice, and the points a foam is made around (random_points, then voronoi_lattice)
+    // The operations that fill a model with a lattice, and the points a foam is made around (random_points, then voronoi_lattice).  With no model to work on -- an empty script, or
+    // nothing selected that fits -- they are there like every other operation and write a placeholder (`...`) where the model goes
     int shown = 0;
     for (const auto v : m_catalog["operations"].toArray())
     {
         const auto o = v.toObject();
-        if (o["section"].toString() != "lattice") continue;
+        if (o["section"].toString() != section) continue;
         const QString name = o["name"].toString();
         auto action = menu->addAction(TypeIcons::icon(o["type"].toString("lattice")), name, this,
                                       [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
         if (!o["hint"].toString().isEmpty()) action->setToolTip(o["hint"].toString());
-        if (!haveModel)
-        {
-            action->setEnabled(false);
-            action->setToolTip(T("There is no model to work on yet"));
-        }
-        else if (m_scene && !m_scene->entryAllowed("operation", name, line))
-        {
-            action->setEnabled(false);
-        }
+        if (m_scene && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
         ++shown;
     }
     if (shown) menu->addSeparator();
@@ -3813,7 +3805,7 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
     for (const auto v : m_catalog["primitives"].toArray())
     {
         const auto p = v.toObject();
-        if (p["section"].toString() != "lattice") continue;
+        if (p["section"].toString() != section) continue;
         const QString g = p["group"].toString();
         if (!groups.contains(g)) order << g;
         groups[g] << p;
@@ -3854,7 +3846,7 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
     for (const auto v : m_catalog["operations"].toArray())
     {
         if (v.toObject()["quick"].toBool()) continue;          // (in the first menu: see addQuickOperations)
-        if (v.toObject()["section"].toString() == "lattice") continue;      // (the lattice section has them: see fillLatticeMenu)
+        if (!v.toObject()["section"].toString().isEmpty()) continue;      // (the entries that have a section have a category of their own: see fillLatticeMenu)
         if (isSimulationOperation(v.toObject()["group"].toString()) != simulations) continue;
         // (a category of the Engineering menu: its analyses; the domain "-" is what has no domain, what works over an analysis of any -- it is in the menu itself)
         if (simulations && !domain.isEmpty() && (domain == "-" ? !v.toObject()["domain"].toString().isEmpty() : v.toObject()["domain"].toString() != domain)) continue;
@@ -3901,8 +3893,10 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         }
         if (o["needs_other"].toBool(o["other"].toBool()) && !haveOther)
         {
-            action->setEnabled(false);
-            action->setToolTip(T("Needs a second model"));
+            // (a second model is what it combines the first with: with none in the script a placeholder stands for it, to drop a model on)
+            const QString own = action->toolTip();
+            const QString say = T("There is no second model yet: a placeholder (...) stands where it goes");
+            action->setToolTip(own.isEmpty() || own == action->text() ? say : own + "\n" + say);
         }
         // (what is selected cannot make it: the library refuses the call for this selection -- a part with supports and loads for a set of
         // conditions, conditions with no part for a simulation ...)
@@ -4082,18 +4076,22 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
 }
 
 // What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, and a
-// Lattice menu (with what it makes and what it is made of)
+// category for each kind of lattice -- periodic and non-periodic ones -- with what it makes and what it is made of
 void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, double scale, int atLine)
 {
-    if (!m_scene || m_scene->hasModel())
+    // Nothing is left out of it for want of a model: an operation with no model to work on -- the script has none, or nothing selected fits -- is written with a placeholder
+    // (`...`) where the model goes, as the analyses of the Engineering menu are.  What has no meaning without a model -- center and bounding_box, which measure one -- is
+    // in the menu of empty space only when the script has one
+    if (line < 0 && (!m_scene || m_scene->hasModel())) addQuickOperations(ops, -1, point, scale);
+    fillOperations(ops, line, point, scale);
+    // (a category for each kind of lattice -- the catalog lists them in the order they are shown: the label is in the language already, it comes from the library)
+    for (const auto s : m_catalog["sections"].toArray())
     {
-        // (with no model there is nothing for an operation to work on: the menu says so by not having them)
-        if (line < 0) addQuickOperations(ops, -1, point, scale);
-        fillOperations(ops, line, point, scale);
+        const auto section = s.toObject();
+        auto lattices = ops->addMenu(TypeIcons::icon(section["type"].toString("lattice")), section["label"].toString());
+        lattices->setToolTipsVisible(true);
+        fillLatticeMenu(lattices, point, scale, line < 0 ? atLine : line, section["name"].toString());
     }
-    auto lattices = ops->addMenu(TypeIcons::icon("lattice"), T("Lattice"));
-    lattices->setToolTipsVisible(true);
-    fillLatticeMenu(lattices, point, scale, line < 0 ? atLine : line);
 }
 
 // What the Engineering menu holds: a category for each domain -- Structural, Thermal, Fluid -- each with the icon and the colour of its domain, each with what an analysis of it is
@@ -4144,7 +4142,7 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
         {
             const auto p = v.toObject();
             const QString g = p["group"].toString();
-            if (isSimulationPrimitive(g) || p["section"].toString() == "lattice") continue;      // (their own menus: Engineering, Lattice)
+            if (isSimulationPrimitive(g) || !p["section"].toString().isEmpty()) continue;      // (their own menus: Engineering, the lattice categories)
             if (p["primitive"].toBool() != basic) continue;
             if (!groups.contains(g)) order << g;
             groups[g] << p;

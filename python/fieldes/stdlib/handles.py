@@ -226,18 +226,14 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             return shape
         raise TypeError('gizmo(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
                         'Place the part it was made from (gizmo() on that part) -- the result follows it.' % type(shape).__name__)
-    # The pivot: where `about` says, else the middle of the shape.  The middle of a shape made of numbers of its own (a rectangle's sides, handles()) is an EXPRESSION of
-    # those numbers: it is where the shape is, whatever side is pulled, and what the gizmo turns and scales it about is where the gizmo is drawn -- the same before and after
-    # the script is run again, so nothing jumps
-    centre_expr = getattr(shape, '_centre_expr', None) if about is None else None
+    # The pivot: where `about` says, else the middle of the shape as it was made (see _centre_of): plain numbers that no handle changes, so a side that is pulled moves that side
+    # only, whatever the scale of the gizmo, and nothing jumps when the script is run again.  (It was an expression of the handle numbers once, so that the gizmo stayed at the middle of
+    # the shape whatever side was pulled: with a scale other than 1 the middle moved with the pull, and the opposite side went along with it)
     if about is not None:
         c = tuple(about)
-    elif centre_expr is not None:
-        from fieldes.stdlib.curves import value_of
-        c = tuple(value_of(e) for e in centre_expr)
     else:
         c = _centre_of(shape)
-    about_what = tuple(centre_expr) if centre_expr is not None else c
+    about_what = c
     to_rad = math.pi / 180.0
     out = shape
     if not all(_is_number(s) and s == 1 for s in scale):
@@ -318,7 +314,27 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # (the exact distance of an imported part follows the transforms above: see transforms._exact_follows)
     # what FielDes draws the gizmo from
     out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
+    _note_gizmo_vars(shape, move, rotate, scale)
     return out
+
+
+def _note_gizmo_vars(shape, move, rotate, scale):
+    ''' The numbers of a gizmo() call are written to the list of the run (host.__gizmo_vars, made empty when a script starts): FielDes keeps every one of them out of a
+        surface pull.  A gizmo moves, turns and scales; the numbers a surface is pulled by are the handles -- and the gizmo() of a 2D shape that an extrusion is made of
+        has numbers in the extrusion's field too, which a pull of the extrusion's side would otherwise take instead of the handle (the whole part scaled, moved and turned:
+        every other side went with it).  A point is the exception: the numbers of its gizmo are where it is, and the shapes made of points are pulled by them '''
+    if hasattr(shape, 'xyz'):
+        return
+    try:
+        import _fieldes_host as host
+    except ImportError:
+        return
+    noted = getattr(host, '__gizmo_vars', None)
+    if noted is None:
+        return
+    for v in tuple(move) + tuple(rotate) + tuple(scale):
+        if isinstance(v, Shape):
+            noted.append(v)
 
 
 def lock(shape):
@@ -504,9 +520,6 @@ def handles(shape, values=None, **removed):
     if rebuild is not None:
         # (a shape made of numbers of its own -- a rectangle's sides -- is made again of these)
         out = rebuild(wrapped)
-        centre = getattr(shape, '_handle_centre', None)
-        if centre is not None:
-            out._centre_expr = tuple(centre(wrapped))
     else:
         arr = (ctypes.c_void_p * max(1, n))(*[w.ptr for w in wrapped])
         p = lib.libfive_tree_expose(shape.ptr, arr, n)
@@ -574,7 +587,13 @@ def _widen_box(out, shape, values):
             return
         grow = sum(abs(a - b0) for a, b0 in zip(nums, orig))
         if grow > 1e-9:
-            out._bounds = (tuple(float(v) - grow for v in b[0]), tuple(float(v) + grow for v in b[1]))
+            # (a 2D shape that lies in the plane z = 0 -- its box is flat -- stays in it: the numbers of its handles are positions and lengths in that plane, none of them takes it out of it.  A flat box that
+            # was made thick in z lost what the extrusion of it needs -- extrude() carries the box of the face along z only from a flat one -- and the extrusion, and the gizmo() of it, had its box SEARCHED for
+            # at every run: a second or two for each statement, and the whole run, with the viewport waiting for it, once the sides had been pulled)
+            flat = abs(float(b[0][2])) < 1e-12 and abs(float(b[1][2])) < 1e-12
+            grow_z = 0.0 if flat else grow
+            out._bounds = ((float(b[0][0]) - grow, float(b[0][1]) - grow, float(b[0][2]) - grow_z),
+                           (float(b[1][0]) + grow, float(b[1][1]) + grow, float(b[1][2]) + grow_z))
             out._bounds_loose = True
     except Exception:
         _forget_box(out)                # (not known: it is searched for, with the numbers it has now)

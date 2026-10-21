@@ -651,6 +651,11 @@ protected:
     /*  The Auto scale row of the render settings: writes (or takes out) `auto_scale=False` in the view.set_bounds line  */
     void toggleAutoScale();
     bool visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit>& edits) const;
+    /*  The points a profile, a polyline or a spline is made of that nothing else uses -- the ones that go with it when it is deleted  */
+    QList<QJsonObject> ownedPointsOf(const QJsonObject& owner) const;
+    /*  The edits that show or hide the points of `owner` (see ownedPointsOf) as the owner is shown or hidden; a line that has an edit already is left alone, and the points that
+        were changed are added to `changed` (when it is given)  */
+    void addPointsVisibility(const QJsonObject& owner, bool show, QList<TextEdit>& edits, QList<QJsonObject>* changed) const;
     QJsonObject itemForVar(const QString& var) const;
     void focusOn(const QJsonObject& it);
     void select(QTreeWidgetItem* row, bool focus);
@@ -679,6 +684,9 @@ protected:
      *  are selected and that one is among them, all of them (in the order they were selected), else just that one
      *  (in empty space: the selected ones, else the last model)  */
     QList<Model> operandsFor(int line0, bool fallback = true) const;
+    /*  Whether the library writes the call of this entry for the models `operandsFor(line0)` gives (entryAllowed is this, and also true for an operation in the menu of empty space
+     *  with nothing selected: it is written with a placeholder where the model goes)  */
+    bool fitsOperands(const QString& kind, const QString& name, int line0) const;
     /*  Whether the entry is a simulation of the menu (static_analysis ...): it works on what is selected and writes a placeholder for what is
      *  not -- the part, the conditions -- so it is never greyed out for lack of them, and never takes "the last model" for its part  */
     bool isSimulation(const QString& operation) const;
@@ -716,7 +724,7 @@ protected:
     /*  The lines that make a model's surfaces draggable (a handles() statement), indented like its definition; empty (and
      *  the reason) when it cannot be done.  addHandles writes them (the model's menu, for a shape too big to get them
      *  by being selected)  */
-    QString handlesBlock(const QJsonObject& target, QString* why) const;
+    QString handlesBlock(const QJsonObject& target, QString* why, bool* later = nullptr) const;
     void addHandles(const QJsonObject& target);
     QSet<QString> m_handlesTried;              // (the models prepareSelection has tried to expose: once each)
     void updateMultiNote();

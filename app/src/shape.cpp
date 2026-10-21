@@ -344,6 +344,7 @@ std::set<libfive::Tree::Id> Shape::pullMask() const
 {
     std::set<libfive::Tree::Id> out = gizmoVars();
     out.insert(m_frozenVars.begin(), m_frozenVars.end());
+    if (m_sceneGizmoVars) out.insert(m_sceneGizmoVars->begin(), m_sceneGizmoVars->end());
     return out;
 }
 
@@ -2851,6 +2852,7 @@ bool Shape::updateFrom(const Shape* other)
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
     m_frozenVars = other->m_frozenVars;
+    m_sceneGizmoVars = other->m_sceneGizmoVars;
     m_symmetryImage = other->m_symmetryImage;
     m_sourceId = other->m_sourceId;
     m_followId = other->m_followId;

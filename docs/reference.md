@@ -67,12 +67,12 @@ normal and a single point on the plane
 
 ### `polygon(r, n, center=(0, 0))`
 
-A polygon with center-to-vertex distance r and n sides.  Its handles pull a side each -- a side moves parallel to itself, the others stay -- and the gizmo stays at the middle of the polygon
+A polygon with center-to-vertex distance r and n sides.  Its handles pull a side each -- a side moves parallel to itself, the others stay -- and the gizmo's pivot is where the polygon was made, so a side pulled moves that side only, at any scale
 
 ### `prism(a, b, c, z0, z1)`
 
 A triangular prism: the triangle of the three corners a, b, c (x, y) between the heights z0 and z1.  Its handles pull a face each -- the three sides and the two ends -- parallel to itself,
-and the gizmo stays at the middle of the prism
+and the gizmo's pivot is where the prism was made, so a face pulled moves that face only, at any scale
 
 ### `pyramid(a, b, zmin, height)`
 
@@ -91,7 +91,7 @@ A 2D ring with the given outer/inner radii and optional center
 ### `rounded_box(a, b, r)`
 
 Rounded box with the given bounds.  The radius `r` is a fraction, 0 to 1, of half the shortest side of the box (r = 0.4 on a box 15 mm thick rounds its edges with a radius of 3 mm; 1 makes the
-shortest side a half circle).  Its handles pull a side each -- a side moves, the others and the rounding stay -- and the gizmo stays at the middle of the box
+shortest side a half circle).  Its handles pull a side each -- a side moves, the others and the rounding stay -- and the gizmo's pivot is where the box was made, so a side pulled moves that side only, at any scale
 
 ### `rounded_rectangle(a, b, r)`
 
@@ -108,7 +108,7 @@ A torus lying round the z axis, with the given outer radius, inner radius, and (
 
 ### `triangle(a, b, c)`
 
-A 2D triangle between three corners.  Its handles pull a side each: a side moves parallel to itself, and the gizmo stays at the middle of the triangle
+A 2D triangle between three corners.  Its handles pull a side each: a side moves parallel to itself, and the gizmo's pivot is where the triangle was made, so a side pulled moves that side only, at any scale
 
 ## Combining shapes (CSG)
 
@@ -1170,7 +1170,7 @@ distance to the curve
 
 *(no description yet)*
 
-### `trace(ctrls, default, closed, pieces=14, normal=None, arc_pieces=8)`
+### `trace(ctrls, default, closed, pieces=14, normal=None, arc_pieces=32)`
 
 (the vertices of the line through the controls, as (x, y, z); for each the number of the control it is after and how far along towards the next it is)
 -- made by the kernel.  `normal`: the normal of the plane of a face the points belong to -- the rotation of a point is then one angle about it, in
@@ -2063,6 +2063,9 @@ A foam does not repeat, so it is not made of a cell: it is made around POINTS.  
 
 -- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
+The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, and the foam then has a clean net of beams all over it;
+surface_lattice(body, cell_size) is such a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
+
 The one-call version:
 
     from fieldes import *
@@ -2371,7 +2374,7 @@ may be a field).
 
 The Delaunay (or Voronoi) graph of your own points
 
-### `random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None)`
+### `random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False)`
 
 Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
 
@@ -2387,6 +2390,10 @@ max_distance  no point is farther than this from its nearest neighbour (mm): a p
               neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
               distances to the nearest neighbour are in: the closer together they are, the more regular the points)
 seed          another number is another pattern (the same number is the same points again)
+surface       True adds a set of points ON the surface of the body, about `spacing` apart (the nodes of a random net on the surface, as surface_lattice() makes it),
+              so that a lattice made of the points has a clean net of beams all over the surface of the body, and not beams that the surface cuts off:
+              delaunay_lattice() has its beams along the surface between them, voronoi_lattice() a net of beams one beam radius inside the surface.  The other
+              points keep their distance to them.  Needs a body
 
 Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
 distances the points really have), points.body (the body they were made in), and
@@ -2425,6 +2432,22 @@ thickness / radius / node_radius may be fields.
 A graph on a body's surface: points about cell_size apart joined into
 triangles (pattern='triangle') or the dual cells (pattern='voronoi',
 mostly hexagons)
+
+### `surface_lattice(body, cell_size=8.0, pattern='voronoi', thickness=None, radius=None, seed=1, blend=0.0, bounds=None)`
+
+A lattice that does not repeat, over the surface of a body: a random net of round beams, one layer thick, the axes of the beams lying ON the surface.
+
+body       any body (a solid, a lattice ...): the whole of its surface is covered, hollows and edges too
+cell_size  how far apart the nodes of the net are on average (mm)
+pattern    'voronoi': cells that are mostly hexagons, three beams at every node -- or 'delaunay': triangles, six beams at a node on average
+thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the cell size
+seed       another number is another net (the same number is the same net again)
+blend      rounds the joints
+bounds     ((x0, y0, z0), (x1, y1, z1)): where to look for the surface, when FielDes cannot find the extent of the body
+
+    net = surface_lattice(part, cell_size=6, thickness=1.0)
+
+Half of each beam is outside the body: intersect the net with the body to have it inside.
 
 ### `tpms(cell, cell_size=10.0, thickness=1.0, style='sheet', offset=0.0, cell_map=None, invert=False, fast=False)`
 
@@ -3731,7 +3754,7 @@ The result of manufacturing_analysis(): where the part breaks the rules of its c
 Stated on its own the part is shown red where a rule is broken and in its own colour where they are kept (the card switches to one rule).  It is a check of
 the part's own field, not a substitute for the check of the one who makes it.  Nothing of the optimization is used to make it.
 
-### `manufacturing_analysis(part, constraints, samples=5000)`
+### `manufacturing_analysis(part, constraints, samples=5000, keep=None)`
 
 Where a part breaks the rules of its constraints.  The part is checked on its own field, with other means than the shell that changes it
 (manufacturing_optimization): the normals, and what a ball of the size of each rule can reach from each point of the surface -- every
@@ -3742,6 +3765,8 @@ are measured on `samples` points of the surface.
     constraints  manufacturing_constraint(...), fff_constraint(...), cnc_constraint(...), molding_constraint(...): one, or a list;
                  a rule is broken where it is broken for any of them
     samples      how many points of the surface are measured (default 5000)
+    keep         a shape, or a list of them: regions that are not judged -- the ones that are kept as they are, as `keep=` of manufacturing_optimization says -- so that
+                 the shares are of the surface outside them and their colours are those of a part that keeps its rules
 
 Returns a ManufacturingAnalysis: `.compliant`, `.report`, `.fields`.  It is a check of the part's own field and not a substitute for the check
 of the one who makes it.

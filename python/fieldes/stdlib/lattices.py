@@ -24,6 +24,9 @@ A foam does not repeat, so it is not made of a cell: it is made around POINTS.  
 
 -- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
+The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, and the foam then has a clean net of beams all over it;
+surface_lattice(body, cell_size) is such a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
+
 The one-call version:
 
     from fieldes import *
@@ -88,7 +91,7 @@ from fieldes.stdlib.content_cache import content_cached
 from fieldes.stdlib.fieldargs import is_field, present, positive, number_or_field, returns_lattice
 
 __all__ = ['cell_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
-           'random_points', 'PointSet', 'voronoi_lattice', 'delaunay_lattice',
+           'random_points', 'PointSet', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice',
            'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
            'graph_lattice', 'voronoi_graph',
            'surface_graph', 'points_graph', 'LatticeGraph',
@@ -1487,12 +1490,14 @@ class PointSet:
 
     _no_gizmo = True             # (not something to drag: FielDes hides the handles button)
 
-    def __init__(self, points, spacing, bounds=None, seed=None, body=None):
+    def __init__(self, points, spacing, bounds=None, seed=None, body=None, skin=None):
         self.points = [tuple(float(c) for c in p) for p in points]
         self.spacing = float(spacing)
         self.bounds = bounds
         self.seed = seed
         self.body = body
+        # (the points that lie ON the surface of the body -- the last `len(skin)` of `points` -- each with the unit normal that points out of the body there: random_points(surface=True))
+        self.skin = [(tuple(float(c) for c in p), tuple(float(c) for c in n)) for p, n in (skin or [])]
 
     def _display(self):
         ''' What FielDes shows for the points: a shape with no extent that carries them (`_markers`), and the viewport draws each of them
@@ -1630,7 +1635,26 @@ def _inside(body, pts, band):
     return out
 
 
-def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None):
+def _skin_points(body, spacing, seed, bounds):
+    ''' The skin of a body: places ON its surface about `spacing` apart (the nodes of the triangulation surface_graph makes), each with the unit normal that points out of the
+        body there (the gradient of its field by central differences).  [(point, normal), ...] '''
+    from fieldes.stdlib.fields import evaluate
+    nodes = surface_graph(body, spacing, 'triangle', seed, bounds).nodes
+    h = 0.01 * spacing
+    probes = []
+    for p in nodes:
+        probes.extend(((p[0] + h, p[1], p[2]), (p[0] - h, p[1], p[2]), (p[0], p[1] + h, p[2]), (p[0], p[1] - h, p[2]), (p[0], p[1], p[2] + h), (p[0], p[1], p[2] - h)))
+    v = evaluate(body, probes)
+    out = []
+    for i, p in enumerate(nodes):
+        g = (v[6 * i] - v[6 * i + 1], v[6 * i + 2] - v[6 * i + 3], v[6 * i + 4] - v[6 * i + 5])
+        m = math.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2)
+        if m > 1e-12:
+            out.append((p, (g[0] / m, g[1] / m, g[2] / m)))
+    return out
+
+
+def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False):
     ''' Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
 
         body          where the points are made: inside it, and a layer of one `spacing` outside, so that the cells at its surface are
@@ -1645,6 +1669,10 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
                       neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
                       distances to the nearest neighbour are in: the closer together they are, the more regular the points)
         seed          another number is another pattern (the same number is the same points again)
+        surface       True adds a set of points ON the surface of the body, about `spacing` apart (the nodes of a random net on the surface, as surface_lattice() makes it),
+                      so that a lattice made of the points has a clean net of beams all over the surface of the body, and not beams that the surface cuts off:
+                      delaunay_lattice() has its beams along the surface between them, voronoi_lattice() a net of beams one beam radius inside the surface.  The other
+                      points keep their distance to them.  Needs a body
 
         Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
         distances the points really have), points.body (the body they were made in), and
@@ -1679,6 +1707,12 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
     plo = tuple(c - band for c in lo)
     phi = tuple(c + band for c in hi)
 
+    skin = []
+    if surface:
+        if body is None:
+            raise ValueError('random_points: surface=True puts points on the surface of the body: give the body the points are made in')
+        skin = _skin_points(body, spacing, seed, bounds)
+
     def make(grid_spacing):
         rng = random.Random(int(seed))
         # 1. a regular grid, moved off it by the randomness, and only where the body is
@@ -1693,6 +1727,8 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
         # 2. no two closer than min_distance
         kept = []
         near = _Hash(min_distance)
+        for p, _n in skin:
+            near.add(p)
         for p in grid:
             if not near.any_within(p, min_distance * 0.9999999):
                 near.add(p)
@@ -1701,6 +1737,8 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
         if max_distance is not None:
             far = _Hash(max_distance)
             for p in kept:
+                far.add(p)
+            for p, _n in skin:
                 far.add(p)
             for _ in range(4):
                 lonely = [p for p in kept if not far.any_within(p, max_distance, other=True)]
@@ -1741,7 +1779,7 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
         kept = make(grid_spacing)
     if len(kept) < 5:
         raise ValueError('random_points: only {} points: the spacing is too large for this region'.format(len(kept)))
-    return PointSet(kept, spacing, (lo, hi), seed, body)
+    return PointSet(kept + [p for p, _n in skin], spacing, (lo, hi), seed, body, skin)
 
 
 random_points._makes = 'points'
@@ -1757,6 +1795,24 @@ def _as_points(who, points):
     if isinstance(points, (list, tuple)) and len(points) >= 5 and all(isinstance(p, (list, tuple)) and len(p) == 3 for p in points):
         return PointSet(points, _mean_nearest(points))
     raise TypeError('{}: the first argument is a set of points: random_points(body, ...), or a list of at least five (x, y, z)'.format(who))
+
+
+def _skin_pairs(pts, body, r):
+    ''' The points a Voronoi foam is made of when the points have a skin: the points inside the body, and for each point of the skin a PAIR of points either side of a plane that
+        lies one beam radius inside the surface -- the facet between the two cells is that plane, so the beams along its edges form a net there, and the beams, which are
+        that thick, touch the surface from inside.  A pair stays only when one of its points is in the body and the other outside it (not in a wall that is too thin, not in a
+        hollow too narrow) '''
+    from fieldes.stdlib.fields import evaluate
+    depth = float(r) if isinstance(r, numbers.Number) else 0.08 * pts.spacing
+    half = max(0.25 * pts.spacing, 1.5 * depth)                            # (half the distance between the two points of a pair)
+    own = pts.points[:len(pts.points) - len(pts.skin)]
+    inside, outside = [], []
+    for p, n in pts.skin:
+        m = (p[0] - depth * n[0], p[1] - depth * n[1], p[2] - depth * n[2])
+        inside.append((m[0] - half * n[0], m[1] - half * n[1], m[2] - half * n[2]))
+        outside.append((m[0] + half * n[0], m[1] + half * n[1], m[2] + half * n[2]))
+    vi, vo = evaluate(body, inside), evaluate(body, outside)
+    return own + [q for a, b, x, y in zip(inside, outside, vi, vo) if x < 0 < y for q in (a, b)]
 
 
 def _points_lattice(who, style, points, thickness, radius, density, skin, blend, skin_blend, body):
@@ -1775,7 +1831,8 @@ def _points_lattice(who, style, points, thickness, radius, density, skin, blend,
         raise ValueError("{}: give either density or the beams' size (thickness or radius), not both".format(who))
     if r is None and density is None:
         r = 0.08 * pts.spacing
-    g = _graph_in_body(points_graph(pts.points, style), body, pts.spacing)
+    nodes = _skin_pairs(pts, body, r) if style == 'voronoi' and pts.skin else pts.points
+    g = _graph_in_body(points_graph(nodes, style), body, pts.spacing)
     if density is not None:
         # beams of radius r fill about pi r^2 * (length inside) / volume
         from fieldes.stdlib.fields import volume_of
@@ -1977,6 +2034,37 @@ def surface_graph(body, cell_size=8.0, pattern='triangle', seed=1, bounds=None):
     return _graph_from_c(ptr, 'surface_graph')
 
 
+def surface_lattice(body, cell_size=8.0, pattern='voronoi', thickness=None, radius=None, seed=1, blend=0.0, bounds=None):
+    ''' A lattice that does not repeat, over the surface of a body: a random net of round beams, one layer thick, the axes of the beams lying ON the surface.
+
+        body       any body (a solid, a lattice ...): the whole of its surface is covered, hollows and edges too
+        cell_size  how far apart the nodes of the net are on average (mm)
+        pattern    'voronoi': cells that are mostly hexagons, three beams at every node -- or 'delaunay': triangles, six beams at a node on average
+        thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the cell size
+        seed       another number is another net (the same number is the same net again)
+        blend      rounds the joints
+        bounds     ((x0, y0, z0), (x1, y1, z1)): where to look for the surface, when FielDes cannot find the extent of the body
+
+            net = surface_lattice(part, cell_size=6, thickness=1.0)
+
+        Half of each beam is outside the body: intersect the net with the body to have it inside. '''
+    modes = {'voronoi': 'voronoi', 'delaunay': 'triangle'}
+    if pattern not in modes:
+        raise ValueError("surface_lattice: pattern is 'voronoi' or 'delaunay'")
+    if not isinstance(cell_size, numbers.Number) or isinstance(cell_size, bool) or not cell_size > 0:
+        raise ValueError('surface_lattice: cell_size is a number of mm, more than 0')
+    body = Shape.wrap(body)
+    r = _beam_radius('surface_lattice', thickness, radius, 0.08 * float(cell_size))
+    out = surface_graph(body, float(cell_size), modes[pattern], seed, bounds).thicken(r, blend)
+    region = _region_of(body, bounds)
+    pad = float(r) if isinstance(r, numbers.Number) else 0.0
+    out._bounds = ((region.X.lower - pad, region.Y.lower - pad, region.Z.lower - pad), (region.X.upper + pad, region.Y.upper + pad, region.Z.upper + pad))
+    return out
+
+
+surface_lattice = returns_lattice(surface_lattice)
+
+
 @content_cached('points_graph', limit=6)
 def points_graph(points, style='delaunay'):
     ''' The Delaunay (or Voronoi) graph of your own points '''
@@ -1993,3 +2081,4 @@ lattice._takes = _declare(_BODIES | {'cell', 'field'}, [_BODIES])
 random_points._takes = _declare(_BODIES, [_BODIES])
 voronoi_lattice._takes = _declare({'points'}, [{'points'}])
 delaunay_lattice._takes = _declare({'points'}, [{'points'}])
+surface_lattice._takes = _declare(_BODIES, [_BODIES])

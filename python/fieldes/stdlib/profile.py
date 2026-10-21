@@ -231,6 +231,21 @@ def extrude(shape, a, b):
             da, db = nums
             out._bounds = (tuple(box[0][k] + min(da * n[k], db * n[k]) for k in range(3)),
                            tuple(box[1][k] + max(da * n[k], db * n[k]) for k in range(3)))
+    # A 2D shape that lies in the plane z = 0 (`plane` is None: a circle, a rectangle ...) has the box of its own outline (`_bounds`: its sides, the numbers of its handles, and of its gizmo when it
+    # is placed); the box of its extrusion is that box carried along z from a to b.  Without it the box is searched for, and the search for a shape that a gizmo has placed does not come to an
+    # end (the box touches the region it looks in): the render region did not grow for the extrusion and cut it off at its top -- a square of 5 extruded to 5 stood 1 high in the viewport
+    if plane is None and getattr(out, '_bounds', None) is None:
+        flat = getattr(shape, '_bounds', None)
+        if flat and abs(float(flat[0][2])) < 1e-9 and abs(float(flat[1][2])) < 1e-9:
+            try:
+                from fieldes.stdlib.handles import _var_numbers
+                nums = _var_numbers([a, b])
+            except Exception:
+                nums = None
+            if nums is not None:
+                out._bounds = ((float(flat[0][0]), float(flat[0][1]), min(nums)), (float(flat[1][0]), float(flat[1][1]), max(nums)))
+                if getattr(shape, '_bounds_loose', False):
+                    out._bounds_loose = True
     # A straight extrusion of a profile of points is a PRISM: the viewport draws it from the numbers of the points and of a and b at every render -- as it draws the face of
     # the profile -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `_prism_guard` are the numbers (var()s) that must still
     # be what they were for the shape to be nothing but that prism: handles() and gizmo() add theirs (a pulled face, a placed shape make it something else)
@@ -272,10 +287,31 @@ def extrude(shape, a, b):
             count = len(params)
             out._handle_params = [float(x) for x in params] + [float(x) for x in ends]
             out._handle_rebuild = lambda v: extrude(rebuild(list(v[:count])), v[count], v[count + 1])
-            centre = getattr(shape, '_handle_centre', None)
-            if centre is not None:
-                out._handle_centre = lambda v: tuple(list(centre(list(v[:count])))[:2]) + ((v[count] + v[count + 1]) * 0.5,)
+    # A 2D shape that has numbers of its own already -- a handles() and a gizmo() line, written when it was selected -- is placed by them: they are in the field of its extrusion, and the sides of the
+    # extrusion are pulled by the handles (a pull never changes a gizmo's numbers).  What they do not reach are the two ENDS, a and b: those are the numbers of the extrusion, handles(extrusion, [a, b]),
+    # made again of the shape as it is (the same 2D shape, with its numbers)
+    if plane is None and getattr(out, '_handle_params', None) is None and _has_handles_of_its_own(shape):
+        try:
+            from fieldes.stdlib.handles import _var_numbers
+            ends = _var_numbers([a, b])
+        except Exception:
+            ends = None
+        if ends is not None:
+            out._handle_params = [float(x) for x in ends]
+            out._handle_rebuild = lambda v: extrude(shape, v[0], v[1])
+            out._handles_ends_only = True
     return out
+
+
+def _has_handles_of_its_own(shape):
+    ''' Whether a 2D shape was given numbers to pull its sides by (handles()): the shape that handles() made, or the one that gizmo() placed after that '''
+    for _ in range(8):
+        if shape is None:
+            return False
+        if getattr(shape, '_pivot_shape', None) is not None:
+            return True
+        shape = getattr(shape, '_placed_from', None)
+    return False
 
 
 def _profile_at(profile, a, b, size=None, centre=None):

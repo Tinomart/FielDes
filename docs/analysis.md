@@ -694,9 +694,9 @@ of it is found in the render cache too. `cache=False` solves every time. See
 ## Verification: four known answers
 
 **FielDes is not validated for safety-critical use.** It is a design tool: the result card says so, and the limits are above. What is checked is the program, against four
-problems whose answers are known, in `examples/verification/`. Each script solves its problem, prints the program's number next to the exact one, and **stops with an error
+problems whose answers are known, in `tests/verification/known_answers/`. Each script solves its problem, prints the program's number next to the exact one, and **stops with an error
 when they differ by more than its tolerance** -- run them after a change to the solvers, the elements or the caches (`python scripts/run_example.py
-examples/verification/v1_cantilever_beam.py`). They do not use the result cache, so they always solve.
+tests/verification/known_answers/v1_cantilever_beam.py`). They do not use the result cache, so they always solve.
 
 | Script | The problem | The exact answer | FielDes (as measured 2026-10-14) | Tolerance |
 |---|---|---|---|---|

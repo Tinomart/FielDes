@@ -1938,6 +1938,17 @@ void ScenePanel::setScene(const QString& json)
     m_sceneClock.start();
     m_predicted = false;
     m_liveSettingStale = false;         // (the spans of the scene are those of a run again)
+    // The models that have no row in the scene of a finished run are forgotten by prepareSelection's "tried once" for their handles: a model that is deleted and made again under the same name
+    // (rectangle_1, extrude_1) is a new model, and gets its handles; it kept being taken for the old one, which had been tried, so the extrusion made the second time had no numbers for its ends
+    if (m_scene["run_done"].toBool() && !m_scene["errored"].toBool() && !m_handlesTried.isEmpty())
+    {
+        QSet<QString> present;
+        for (const auto v : m_scene["items"].toArray()) present << keyOf(v.toObject());
+        for (auto it = m_handlesTried.begin(); it != m_handlesTried.end();)
+        {
+            if (present.contains(*it)) ++it; else it = m_handlesTried.erase(it);
+        }
+    }
     // The tree of this text is kept for the next time it is opened (a scene of a run of the text that is in the editor now)
     if (m_source && m_scene["run_done"].toBool() && !m_scene["errored"].toBool() && m_scene["source_md5"].toString() == md5Hex(m_source()))
         saveSceneCache(json, m_scene["source_md5"].toString());
@@ -3528,6 +3539,52 @@ bool ScenePanel::visibilityEdit(const QJsonObject& it, bool show, QList<TextEdit
     return false;
 }
 
+// The points a profile (or a line) is made of that nothing else uses: they were made for it, they go with it when it is deleted (see deleteSelected), and they are shown and hidden
+// with it -- a point of a hidden shape that stayed in the view would be a dot with nothing to do.  A point that anything else still names stays as it is
+QList<QJsonObject> ScenePanel::ownedPointsOf(const QJsonObject& owner) const
+{
+    QList<QJsonObject> out;
+    const QString callee = owner["callee"].toString();
+    if (callee != "profile" && callee != "polyline" && callee != "spline") return out;
+    QSet<QString> seen;
+    for (const QString& name : directInputs(owner))
+    {
+        const QJsonObject p = itemForVar(name);
+        // (a point whose statement failed to run has no type, but it is still `point(...)`)
+        if (p.isEmpty() || (p["type"].toString() != "point" && p["callee"].toString() != "point") || seen.contains(keyOf(p))) continue;
+        bool used = false;
+        for (const auto v : m_scene["items"].toArray())
+        {
+            const auto c = v.toObject();
+            if (keyOf(c) == keyOf(owner) || keyOf(c) == keyOf(p)) continue;
+            for (const auto iv : c["inputs"].toArray()) used = used || iv.toObject()["name"].toString() == name;
+        }
+        if (used) continue;
+        seen << keyOf(p);
+        out << p;
+    }
+    return out;
+}
+
+void ScenePanel::addPointsVisibility(const QJsonObject& owner, bool show, QList<TextEdit>& edits, QList<QJsonObject>* changed) const
+{
+    for (const QJsonObject& p : ownedPointsOf(owner))
+    {
+        QList<TextEdit> more;
+        if (!visibilityEdit(p, show, more)) continue;
+        bool added = false;
+        for (const TextEdit& e : more)
+        {
+            bool taken = false;
+            for (const TextEdit& have : edits) taken = taken || (have.line0 == e.line0 && have.line1 == e.line1);
+            if (taken) continue;
+            edits << e;
+            added = true;
+        }
+        if (added && changed) *changed << p;
+    }
+}
+
 void ScenePanel::showOtherPart(const QJsonObject& imp, int part)
 {
     // "x = import_model(P)[i]..." can show only part i: split it into
@@ -3902,6 +3959,8 @@ void ScenePanel::setVisibleAll(const QList<QJsonObject>& models, bool show)
             changed << m;
         }
     }
+    // (the points a profile or a line is made of are shown and hidden with it: after the models, so that a point that is one of them is not written twice)
+    for (const auto& m : models) addPointsVisibility(m, show, edits, &changed);
     // (a line that is not the one the rows say: nothing is written, not even for the models whose lines are right)
     if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
     if (edits.isEmpty()) return;
@@ -3956,11 +4015,17 @@ void ScenePanel::toggleVisible(const QJsonObject& it)
             edits << TextEdit{L, int(t.size()), L, int(t.size()), "\n" + var};
             m_prepareAgain = true;          // (a selected model that is shown now is made ready to be dragged once the script has run)
         }
+        // (the points a profile or a line is made of are shown and hidden with it, as they are deleted with it)
+        QList<QJsonObject> withIt{it};
+        addPointsVisibility(it, show, edits, &withIt);
         if (edits.isEmpty()) return;
         // The tree follows the edit at once (its eye, its dimmed name, every line under it), without waiting for the run
-        editFollowed(edits, (show ? "Show " : "Hide ") + var, [it, show](QJsonObject& scene, const QVector<int>& moved) {
-            const int line = moved.value(it["line"].toInt() - 1, -1) + 1;
-            if (line > 0) patchAt(scene, line, it["var"].toString(), [show](QJsonObject& o) { patchVisible(o, show); });
+        editFollowed(edits, (show ? "Show " : "Hide ") + var, [withIt, show](QJsonObject& scene, const QVector<int>& moved) {
+            for (const auto& item : withIt)
+            {
+                const int line = moved.value(item["line"].toInt() - 1, -1) + 1;
+                if (line > 0) patchAt(scene, line, item["var"].toString(), [show](QJsonObject& o) { patchVisible(o, show); });
+            }
         });
         return;
     }
@@ -4144,6 +4209,8 @@ void ScenePanel::toggleSelectedVisible()
             followable = followable && m.item.contains("var");
         }
     }
+    // (the points a profile or a line is made of are shown and hidden with it: after the models, so that a point that is one of them is not written twice)
+    for (const Model& m : models) addPointsVisibility(m.item, !allShown, edits, &changed);
     // (a line that is not the one the rows say: nothing is written, not even for the models whose lines are right)
     if (!m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
     if (edits.isEmpty()) return;
@@ -4486,13 +4553,15 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
     return true;
 }
 
-QString ScenePanel::handlesBlock(const QJsonObject& target, QString* why) const
+QString ScenePanel::handlesBlock(const QJsonObject& target, QString* why, bool* later) const
 {
     // The lines that make a shape's surfaces draggable (`x = handles(x, [var(...), ...])`), indented like its definition
     QString error;
     const QString text = m_handlesSource ? m_handlesSource(target["var"].toString(), &error) : QString();
     if (text.isEmpty())
     {
+        // (`later`: the script has not been run since the model was made -- the numbers are there once it has, and are asked for again then -- and not that the model has none)
+        if (later) *later = error.isEmpty() || error.contains("is not a shape of the last run");
         const QString reason = error.isEmpty() ? T("the script has not been run") : error;
         if (qEnvironmentVariableIsSet("FIELDES_AUTOMATION"))
             fprintf(stderr, "[handles] %s: %s\n", target["var"].toString().toUtf8().constData(), reason.toUtf8().constData());
@@ -6697,7 +6766,8 @@ void ScenePanel::prepareSelection()
             QRegularExpression(QString("^\\s*%1\\s*=\\s*gizmo\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
                                QRegularExpression::MultilineOption).match(allText).hasMatch())
             needGizmo = false;
-        bool needHandles = !t["has_var"].toBool() && !t.contains("handles") && t["can_handles"].toBool() &&
+        // (a model made of a 2D shape that has its handles and its gizmo has the shape's numbers for its sides, and its two ends -- `ends_only` -- are numbers of its own: it is given those)
+        bool needHandles = (!t["has_var"].toBool() || t["ends_only"].toBool()) && !t.contains("handles") && t["can_handles"].toBool() &&
                           t["handle_count"].toInt() <= kAutoHandleNumbers && !m_handlesTried.contains(keyOf(t));
         if (needHandles &&
             QRegularExpression(QString("^\\s*%1\\s*=\\s*handles\\(\\s*%1\\b").arg(QRegularExpression::escape(var)),
@@ -6729,6 +6799,7 @@ void ScenePanel::prepareSelection()
         const auto ex = d["handles"].toObject();
         edits << deleteLines(ex["line"].toInt() - 1, ex["end_line"].toInt() - 1);
         dropped.insert(keyOf(d));
+        m_handlesTried.remove(keyOf(d));        // (the model is given the numbers that are its own -- its ends -- when it is selected next)
         names << d["var"].toString();
     }
 
@@ -6807,7 +6878,14 @@ void ScenePanel::prepareSelection()
         if (needHandles)
         {
             m_handlesTried << keyOf(t);                  // (once: a shape that cannot be exposed is not asked again)
-            block = handlesBlock(t, nullptr);
+            bool later = false;
+            block = handlesBlock(t, nullptr, &later);
+            if (later)
+            {
+                // (the run that has this model has not finished: not "cannot be exposed" -- it is asked again when the scene of that run arrives)
+                m_handlesTried.remove(keyOf(t));
+                m_prepareAgain = true;
+            }
             if (!block.isEmpty()) imports.handles = true;
         }
         if (!needGizmo && block.isEmpty()) continue;
@@ -7080,6 +7158,14 @@ bool ScenePanel::hasModel() const
 }
 
 bool ScenePanel::entryAllowed(const QString& kind, const QString& name, int line0) const
+{
+    if (fitsOperands(kind, name, line0)) return true;
+    // Nothing is selected, in the menu of empty space: the last model of the script is what an operation would work on, and when that is not what it takes nothing is left out for
+    // it -- the operation is written with a placeholder (`...`) where the model goes (createFromMenu does the same)
+    return kind == "operation" && line0 < 0 && selectedModels().isEmpty();
+}
+
+bool ScenePanel::fitsOperands(const QString& kind, const QString& name, int line0) const
 {
     if (!m_support) return true;
     // The request of createFromMenu for this entry and this selection (what the library writes it from), without writing anything
@@ -7460,20 +7546,22 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     QString other;
     QJsonObject bodyItem;           // (the model it is made for: the first selected; its extent is what a simulation is sized by)
     QJsonArray othersInfo;          // (what each of the others is: the menu writes a region, a condition or a material differently)
-    bool bare = false;              // (a simulation with nothing selected: it is written at the end of the script, whole of placeholders)
+    bool bare = false;              // (an operation with nothing to work on -- a simulation or a lattice with nothing selected, an empty script: written at the insertion point or the end of the script, whole of placeholders)
     QStringList lockedNames;        // (the selected models that are locked: read-only, so the new statement holds a reference to each, as a drag does)
     if (kind == "operation" || withBodies)
     {
         // What it works on: the model that was right-clicked, or the selected ones, in the order they were selected
-        const QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
+        QList<Model> operands = operandsFor(line0, !(operation && isSimulation(name)));
+        // (nothing selected, in the menu of empty space: the last model of the script is what the operation works on -- unless that is not what it takes, then it has none)
+        if (operation && line0 < 0 && !operands.isEmpty() && selectedModels().isEmpty() && !fitsOperands(kind, name, line0)) operands.clear();
         for (const Model& m : operands)
         {
             // (a linked copy -- `instance` -- always holds its original by reference, locked or not: see duplicateLinkedSelected)
             if ((m.item.contains("locked") || (operation && name == "instance")) && m.item.contains("var")) lockedNames << m.item["var"].toString();
         }
-        if (operands.isEmpty() && operation && isSimulation(name))
+        if (operands.isEmpty() && operation)
         {
-            // (a simulation of nothing that is selected: every input is a placeholder, written at the end of the script)
+            // (an operation of nothing that is selected, or of a script with no model: every input is a placeholder, written at the insertion point or the end of the script)
             bare = true;
         }
         else if (operands.isEmpty())
@@ -7543,11 +7631,7 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
                 if (o["failed"].toBool() || o["reassigned"].toBool() || o["kind"].toString() == "failed") continue;
                 if (o.contains("var") && o["var"].toString() != target["var"].toString()) other = o["var"].toString();
             }
-            if (other.isEmpty())
-            {
-                notify(T("%1 needs a second model.").arg(name));
-                return;
-            }
+            // (no other model in the script: the library writes a placeholder where the second one goes)
         }
     }
     QJsonObject request;

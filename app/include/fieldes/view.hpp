@@ -603,7 +603,7 @@ protected:
     void fillOperations(QMenu* menu, int line, const QVector3D& point, double scale, bool simulations = false, const QString& domain = QString());
     /*  The lattice section of a menu: the operations that fill a model with a lattice (and make points for it), then a menu for each family of
      *  cells -- struts, TPMS, planar patterns, non-periodic, custom -- each entry making that cell at once (no model is needed)  */
-    void fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line);
+    void fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, int line, const QString& section);
     /*  The Python menu: the most basic features of the language -- a variable, if, loops, a function, a class ... -- as blocks of plain code written at the insertion point of the
      *  model tree (the catalog's `python` list; no model is made of them)  */
     void fillPythonMenu(QMenu* menu, const QVector3D& point, double scale, int line);

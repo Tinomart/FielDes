@@ -21,7 +21,7 @@ progress bar shows it).
 | A few seconds | `01` (import a part, 4 s), `07` (thermal analysis, 3 s), `10` (field-driven design, 5 s), `12` (mesh export and import, 3 s) |
 | Up to half a minute | `05` (static analysis, 29 s), `06` (modal analysis, 22 s), `23` (the lattice gallery, 23 s) |
 | About a minute | `15` (a conformal lattice in the walls of a whole bracket, 48 s) |
-| **Minutes** -- start them and read the script meanwhile | `16` (water past a post, 2 min), `08` (topology optimisation, 2 min), `17` (flow topology optimisation, 3 min) |
+| **Minutes** -- start them and read the script meanwhile | `16` (water past a post, 2 min), `08` (topology optimisation, 2 min), `17` (flow topology optimisation, 3 min), `34` (six lattices that do not repeat, 3 min, nearly all of it the picture) |
 
 The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the bracket that comes with FielDes.
 
@@ -59,6 +59,7 @@ The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the 
 | `30_noise_kinds.py` | none (ten balls) | `noise_field`: the five kinds (`perlin`, `billow`, `ridged`, `cellular`, `cracks`), a stretch per axis, a `warp`, one octave against six, and a scale that is a field -- each ball is `ball - depth * noise`, so the relief is the noise |
 | `31_texture.py` | none (twelve blocks) | `texture`: the six patterns (`grit`, `stipple`, `leather`, `ribs`, `dimples`, `knurl`), on the top face only (`select_surface`) or inside a body (`region`), `side='in'` / `'out'`, a pattern of your own, and a depth that is a field |
 | `32_parametric_optimization.py` | none (a cantilever beam) | `parametric_optimization`: the lightest beam that stays under a stress and bends less than a limit -- the width and the height are `var()`s, the analysis is solved again with other numbers, and the best design is the result (every design tried is listed in the output pane) |
+| `34_non_periodic_lattices.py` | none (a block with a dent, balls) | lattices that do not repeat: `surface_lattice`, a random net of beams over a surface (hexagons or triangles; hollows and edges too), the net inside a ball, and foams with a clean surface -- `random_points(surface=True)` for `voronoi_lattice` and `delaunay_lattice` -- next to a foam whose beams the surface cuts off |
 | `33_manufacturing_optimization.py` | the bracket | `fff_constraint`, `cnc_constraint`, `molding_constraint` and `manufacturing_optimization`: the topology-optimized bracket of example 08 -- struts of every thickness leaning every way, nothing designed for a process -- changed until a 3D printer, a mill and an injection mould can make it (gussets under what leans too far, thin walls thickened, inside corners rounded, draft), the plates and lugs that carry the load kept as they are; the result is coloured by what changed (about five minutes) |
 
 (Open each script: the comment at its top says what to look at.)
@@ -70,9 +71,3 @@ two lugs with round holes at the front. It is the one sample part that is distri
 GrabCAD download whose author's terms are not known; see [`../NOTICE.md`](../NOTICE.md)). The scripts place their regions (supports, loads,
 boxes) for this part. To try them on a part of your own, put its STEP file in `step/`, change the path in the script, and adjust those numbers
 (the importing, the fields and the lattices work with any STEP file).
-
-## Verification
-
-`verification/` holds four scripts that solve a problem with a known answer and **stop with an error when FielDes is farther from it than a tolerance**: a cantilever beam, a plate with a hole,
-the flow between two plates and the conduction through a bar (see [Verification](../docs/analysis.md#verification-four-known-answers)). They check the program, not your design; run them after
-a change: `python scripts/run_example.py examples/verification/v1_cantilever_beam.py`. They take a second each, except the plate (about 30 s: the linear and the 10-node solve).

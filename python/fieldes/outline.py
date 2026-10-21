@@ -42,7 +42,7 @@ _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
 _FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
-              'handle_count', 'handle_cap', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
+              'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
 _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
@@ -67,7 +67,7 @@ _MAKES = (
     ('point', ('point', 'center')),
     ('cell', ('cell_*',)),
     ('points', ('random_points',)),
-    ('lattice', ('lattice', 'lattice_surface_conform')),
+    ('lattice', ('lattice', 'lattice_surface_conform', 'surface_lattice')),
     ('field', ('fit', 'fit_csv', 'fit_field', 'interpolate_field', 'X', 'Y', 'Z')),
 )
 _GEOMETRIC = ('solid', 'profile', 'curve', 'field', 'surface', 'lattice')
@@ -88,7 +88,7 @@ def _function_kinds():
                     _FUNCTION_KINDS[n] = 'simulation'
                 elif g == 'Conditions':
                     _FUNCTION_KINDS[n] = 'conditions'
-                elif g == 'Lattices':
+                elif g in ('Periodic lattices', 'Non-periodic lattices'):
                     _FUNCTION_KINDS[n] = M.OPERATION_KINDS.get(n, 'lattice')
                 elif g == 'Importing':
                     _FUNCTION_KINDS[n] = 'solid'
@@ -439,6 +439,8 @@ def finish(source, gs, out):
             facts['can_handles'] = 0 < n <= A._MAX_HANDLES
             facts['handle_count'] = n
             facts['handle_cap'] = A._MAX_HANDLES
+            # (the numbers are the two ends of an extrusion of a 2D shape that has handles of its own: the sides are pulled by those, see profile.extrude)
+            facts['ends_only'] = A._handles_ends_only(shapes[0])
     except Exception:
         if os.environ.get('FIELDES_OUTLINE_DEBUG'):
             import traceback
@@ -459,7 +461,7 @@ def seed(items_json):
                 continue
             facts = {'model': True, 'failed': bool(it.get('failed')), 'result': bool(it.get('result')), 'type': it.get('type'),
                      'shown': it.get('displayable') is not False, 'no_gizmo': bool(it.get('no_gizmo'))}
-            for k in ('error', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap'):
+            for k in ('error', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap', 'ends_only'):
                 if k in it:
                     facts[k] = it[k]
             _LATEST.setdefault(var, (None, it.get('callee', ''), facts))
@@ -1296,6 +1298,8 @@ def outline_json(arg):
                             item['can_handles'] = facts['can_handles']
                             item['handle_count'] = facts['handle_count']
                             item['handle_cap'] = facts['handle_cap']
+                            if facts.get('ends_only'):
+                                item['ends_only'] = True
                     # placeholders: `...` written where an argument goes (such a statement does not run, nor does what is made from it)
                     if _holes(stmt):
                         spans = sorted(A._span(n) for n in ast.walk(stmt.value)
@@ -1374,6 +1378,8 @@ def outline_json(arg):
             if 'can_handles' in facts:
                 item['can_handles'], item['handle_count'], item['handle_cap'] = (
                     facts['can_handles'], facts['handle_count'], facts['handle_cap'])
+                if facts.get('ends_only'):
+                    item['ends_only'] = True
             items.append(item)
 
     # --- "# hidden: <expr>" comment lines (top level)

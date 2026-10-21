@@ -4,12 +4,14 @@ A lattice in FielDes is a **field** that repeats through space, trimmed to a bod
 wall thickness, strut radius, offset, relative density, cell size — can itself be a field, so a lattice can
 follow a regression, a distance, a stress result, a temperature.
 
-[`examples/23_lattice_gallery.py`](../examples/23_lattice_gallery.py) shows one lattice of every kind, each in a simple body of its own.
+[`examples/23_lattice_gallery.py`](../examples/23_lattice_gallery.py) shows one lattice of every kind, each in a simple body of its own;
+[`examples/34_non_periodic_lattices.py`](../examples/34_non_periodic_lattices.py) the lattices that do not repeat: a random net over a surface, and foams with a clean surface.
 
 - [One call: lattice()](#one-call-lattice)
 - [In the menus and the model tree](#in-the-menus-and-the-model-tree)
 - [Cells: cell_periodic, cell_custom, cell_custom_truss, cell_custom_tpms](#cells)
 - [Foams: random_points, voronoi_lattice, delaunay_lattice](#foams-random_points-voronoi_lattice-delaunay_lattice)
+- [A net over a surface: surface_lattice](#a-net-over-a-surface-surface_lattice)
 - [Sizing: thickness, radius, density](#sizing-thickness-radius-density)
 - [Skin, shell and fill()](#skin-shell-and-fill)
 - [Cell maps: cells that follow the body](#cell-maps-cells-that-follow-the-body)
@@ -36,16 +38,18 @@ size of its region.
 
 ## In the menus and the model tree
 
-Lattices have a section of their own in the right-click menus: **Operations → Lattice** (on a model, and on empty space). It lists the
-operations that fill a model with a lattice (`lattice`, `lattice_surface_conform`), the three steps of a foam (`random_points`, which makes points in a
-model, then `voronoi_lattice` and `delaunay_lattice`, which are made of those points), and under them **every cell** the library has, a menu for each
-family: *Strut cells*, *TPMS cells*, *Planar cells* and *Custom cells* (`cell_custom`, `cell_custom_truss`, `cell_custom_tpms`). A cell entry writes
-the call that makes the cell -- `cell_gyroid_1 = cell_periodic('gyroid')` -- and needs no model. Select a cell together with a body and choose
-*Lattice* → `lattice`: the lattice is written with that cell (`lattice(part, cell_gyroid_1, ...)`); a field selected with them is its thickness.
+Lattices have two categories of their own in the right-click menus, under **Operations** (on a model, and on empty space): **Periodic lattices** and
+**Non-periodic lattices**. Many operations have a counterpart in each, so the two kinds are never mixed up in one list.
 
-A foam is made around **points**, not of a cell: select a model and choose *Lattice* → `random_points` (the points appear in the viewport, each as the dot of
-a gizmo), then select the points and choose `voronoi_lattice` or `delaunay_lattice`. The points know the model they were made in, so these two take the points
-and nothing else: with anything else selected they are greyed out.
+**Operations → Periodic lattices** lists the operations that fill a model with cells that repeat (`lattice`, `lattice_surface_conform`), and under them **every cell** the
+library has, a menu for each family: *Strut cells*, *TPMS cells*, *Planar cells* and *Custom cells* (`cell_custom`, `cell_custom_truss`, `cell_custom_tpms`). A cell entry writes
+the call that makes the cell -- `cell_gyroid_1 = cell_periodic('gyroid')` -- and needs no model. Select a cell together with a body and choose
+*Periodic lattices* → `lattice`: the lattice is written with that cell (`lattice(part, cell_gyroid_1, ...)`); a field selected with them is its thickness.
+
+**Operations → Non-periodic lattices** lists what does not repeat: the three steps of a foam (`random_points`, which makes points in a model, then `voronoi_lattice` and
+`delaunay_lattice`, which are made of those points) and `surface_lattice`, a random net over the surface of a model. A foam is made around **points**, not of a cell: select a
+model and choose *Non-periodic lattices* → `random_points` (the points appear in the viewport, each as the dot of a gizmo), then select the points and choose `voronoi_lattice`
+or `delaunay_lattice`. The points know the model they were made in, so these two take the points and nothing else: with anything else selected they are greyed out.
 
 Lattices and their parts have kinds of their own in the model tree, each with its own colour and icon: a **lattice** (what `lattice()` and
 `lattice_surface_conform()` make: a body filled with cells), a **lattice cell** (what the cell functions make) and a **point set** (what
@@ -110,7 +114,7 @@ truss = delaunay_lattice(points, thickness=1.0)
 The points know the body they were made in, and the lattice fills **that** body: `voronoi_lattice` and `delaunay_lattice` take the points and no body of their
 own (it could only disagree with the points). To fill another body, make the points in it.
 
-`random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None)`
+`random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False)`
 
 | Argument | What it does |
 |---|---|
@@ -120,6 +124,7 @@ own (it could only disagree with the points). To fill another body, make the poi
 | `min_distance` | no two points are closer than this (mm). Default: the spacing less 60 % of the randomness. A low number lets the points clump; the spacing itself makes them even |
 | `max_distance` | no point is farther than this from its nearest neighbour (mm): a point that is more alone gets a neighbour. Default: none. Not less than `min_distance` |
 | `seed` | another number is another pattern; the same number is the same points again |
+| `surface` | `True` adds a set of points **on the surface** of the body, about `spacing` apart, so that a foam made of the points has a clean net of beams all over the surface (see below). Needs a body. Default: off |
 
 `min_distance` and `max_distance` are the range the distances to the nearest neighbour are in: the closer together they are, the more regular the
 points. The result is a `PointSet` (`len(points)`, `points.points`, `points.stats()` for the distances the points really have, `points.body` the body they were
@@ -134,6 +139,36 @@ made in). A plain list of at least five `(x, y, z)` is a set of points too, but 
 | `density` | instead of the beams' size: the share of the body that is material (0–1), calibrated. Not together with `thickness` or `radius` |
 | `skin`, `blend`, `skin_blend` | a solid skin of this thickness on the surface of the body; the rounding of the joints; the rounding of the joints with the skin |
 | `body` | only for a list of points, which does not know one. Points from `random_points` fill the body they were made in (giving another is an error that says so) |
+
+**A clean surface.** The surface of the body cuts a foam off: its beams end where the surface is, as stubs. `random_points(part, spacing=8, surface=True)` puts points **on**
+the surface as well -- the nodes of a random net over it, the ones [`surface_lattice`](#a-net-over-a-surface-surface_lattice) makes -- and a foam made of them has a clean net of beams all over the surface of
+the body, joined to the foam inside it. `delaunay_lattice` has its beams along the surface between those points; `voronoi_lattice` a net of beams one beam radius inside the surface, so that
+the beams touch the surface from inside. The other points keep their distance to the points of the skin. It is off by default.
+
+```python
+points = random_points(part, spacing=8, surface=True)
+foam = voronoi_lattice(points, thickness=1.0)         # a foam with a clean net of beams on its surface
+```
+
+## A net over a surface: surface_lattice
+
+A lattice of **one layer** over the surface of a body that does not repeat: a random net of round beams, the axes of the beams lying on the surface (hollows and edges too).
+`surface_lattice(body, cell_size=8.0, pattern='voronoi', thickness=None, radius=None, seed=1, blend=0.0, bounds=None)`:
+
+| Argument | What it does |
+|---|---|
+| `body` | any body: the whole of its surface is covered |
+| `cell_size` | how far apart the nodes of the net are on average (mm) |
+| `pattern` | `'voronoi'`: cells that are mostly hexagons, three beams at every node; or `'delaunay'`: triangles, six beams at a node on average |
+| `thickness`, `radius` | the diameter of the beams (mm), or half of it: a number or a field. Default: 16 % of `cell_size` |
+| `seed`, `blend`, `bounds` | another number is another net; the rounding of the joints; where to look for the surface, when FielDes cannot find the extent of the body |
+
+```python
+net = surface_lattice(block, cell_size=6, thickness=1.0)
+inside = intersection(net, block)             # half of each beam is outside the body: this is the net inside it
+```
+
+It is in the menus as **Operations → Non-periodic lattices → surface_lattice**. The graph behind it is `surface_graph(body, cell_size, pattern)` (see [Graphs](#graphs)).
 
 ## Sizing: thickness, radius, density
 
@@ -463,7 +498,7 @@ layers are all filled by other cells …` says how many were left out.
 ## Graphs
 
 The foams are made through `voronoi_lattice` and `delaunay_lattice` (around the points of `random_points`); these build and thicken graphs directly --
-also a random graph on a surface, `surface_graph(body, 5, 'voronoi').thicken(0.5)` (`lattice_surface_conform()` lays cells that repeat):
+also a random graph on a surface, `surface_graph(body, 5, 'voronoi').thicken(0.5)` -- which [`surface_lattice(body, 5)`](#a-net-over-a-surface-surface_lattice) does in one call (`lattice_surface_conform()` lays cells that repeat):
 
 | | |
 |---|---|

@@ -190,7 +190,7 @@ THROUGH = {
     'parametric': ['parametric_optimization'],
     'manufacturing': ['manufacturing_analysis', 'manufacturing_optimization'],       # (the shell leaves the locked regions of its part as they are by itself)
     'selection': ['select_surface', 'surface_from_bodies'],
-    'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'cell_custom', 'random_points'],
+    'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'surface_lattice', 'cell_custom', 'random_points'],
     'conformal': ['lattice_surface_conform'],
     'fields': ['render_mesh', 'distance_to_surface', 'depth_below', 'signed_distance', 'clamp', 'ramp', 'remap_field',
                'normalize', 'lerp', 'mix', 'smoothstep', 'step_field', 'sum_fields', 'evaluate', 'sample_grid',
