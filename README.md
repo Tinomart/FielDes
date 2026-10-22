@@ -44,7 +44,7 @@ the viewport.
   tips and a place in the menus.
 
 New here? A welcome card offers a **guided tour** the first time FielDes starts (**Help → Guided tour** any time after): short cards over the
-program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version. **File → Open example file** has 34 scripts; `26` to `31` open at once, the analyses take seconds to minutes (the [examples README](examples/README.md) says how long each takes).
+program itself that point at what they talk about and let you try it. The [tutorial](docs/tutorial.md) is the written version. **File → Open example file** has 35 scripts (`00_START_HERE.py` says where everything is, `01` to `34` are the examples); `26` to `31` open at once, the analyses take seconds to minutes (the [examples README](examples/README.md) says how long each takes).
 
 ## What it does
 
@@ -52,24 +52,25 @@ program itself that point at what they talk about and let you try it. The [tutor
 |---|---|
 | **Fields everywhere** | Every size, radius, thickness, spacing and blend of every function takes a field instead of a number; so do the properties and loads of an analysis (`Material(E=field)`, `force(..., profile=field)`, a convection coefficient). Lattices have a graded cell size. [How it works](docs/fields.md#fields-everywhere) |
 | **A typed, nested model tree** | Every kind of thing — 3D shape, 2D shape, field, surface, point, simulation, material, conditions, lattice, lattice cell, point set — has its own colour and icon. The models an operation is made of are its children, **and nesting always edits the call**: drag a row onto an operation to make it an input, out of one to take it out, between its children to reorder them; a model used twice has a half-transparent **shadow** row at its other use; `Ctrl`+drag adds a reference without moving the model. [The tree](docs/interface.md#the-model-tree) |
-| **Make things from the context menu** | Right-click: *Import model...*, *Primitives* (*New 3D shape / 2D shape / 1D shape / point / surface / field*, the most basic of each), *Parametric shapes* (a rounded box, a ring, noise, low-level logic, custom blocks) and *Operations* (which holds *Lattice*) and *Engineering* (a category for each domain, *Structural / Thermal / Fluid*, which holds *New support or load / thermal condition / flow condition / fluid* and the analyses, and *New material* — materials and conditions are models of their own kind: drag one -- or several, selected together -- onto an analysis and they go in the input of their kind: `material=`, `supports=`, `inlets=` ... — then the analyses of a model) — each writes script where you clicked. *low_level_field* and *low_level_body* write a function of x, y and z for you to put your own logic in. On a model it offers the same *Operations* (offsets, moving, **field math**, ...) and *Engineering* (static, modal, topology optimization, thermal, flow, each with a placeholder for every kind of boundary condition it takes; and the materials and conditions to make), written with that model as an argument. The same menu opens on a **line of the script** and on a **row of the model tree**. |
+| **Make things from the context menu** | Right-click: *Import model...*, *Primitives* (*New 3D shape / 2D shape / 1D shape / point / surface / field*, the most basic of each), *Parametric shapes* (a rounded box, a ring, noise, low-level logic, custom blocks) and *Operations* (which holds the lattices) and *Engineering* (a category for each domain, *Structural / Thermal / Fluid*, which holds *New support or load / thermal condition / flow condition / fluid* and the analyses, and *New material* — materials and conditions are models of their own kind: drag one -- or several, selected together -- onto an analysis and they go in the input of their kind: `material=`, `supports=`, `inlets=` ... — then the analyses of a model) — each writes script where you clicked. *low_level_field* and *low_level_body* write a function of x, y and z for you to put your own logic in. On a model it offers the same *Operations* (offsets, moving, **field math**, ...) and *Engineering* (static, modal, topology optimization, thermal, flow, each with a placeholder for every kind of boundary condition it takes; and the materials and conditions to make), written with that model as an argument. The same menu opens on a **line of the script** and on a **row of the model tree**. |
+| **Your own primitives** | *Primitives → Manage primitives…* chooses which shapes the menus offer as primitives, under their kind, adds a model of your own to the list, and renames any of them (a shape of the library by the name the menus show); a primitive of yours is in the right-click menu where it belongs. [Your own primitives](docs/interface.md#your-own-primitives) |
 | **Fields you can see** | A field is not a body, so it is not drawn: it is **an icon in the viewport with its name over it**, where the object it was made from is (an eye in the tree shows or hides it). Click the icon -- or select the field in the tree -- and its **field viewer** opens: a disc of the field, coloured by its value at every point, with a radius slider and arrows to move it (drag the icon to place it elsewhere; a menu chooses among several open fields). Arithmetic works on fields as it does on numbers (`a * b`, `2 ** a`, ...), and `field_from_body(body)` turns a body into a field you may multiply freely. |
 | **Custom blocks** | A few lines in a file of the blocks folder make a function that is in every script — completion, call tips, menu entries, hot reload. [Custom blocks](docs/blocks.md) |
 | **Apps for everyone else** | An engineer declares the inputs of a script (`app.number`, `app.file`, `app.save_as`, ...) and exports it as **one `.fieldesapp` file**; whoever double-clicks it sees **a form, a Run button, a log and the files that were made** — no editor, no code. It runs without a window too (`FielDes run tool.fieldesapp --Radius 7`) and, with Watch, runs again by itself when an input file changes. [Apps](docs/apps.md) |
 | **Model with fields** | Primitives, CSG, smooth and chamfered booleans, offsets, shells, twists, bends, repeats, extrusions, revolves, helical and free-form surfaces — all of them fields, composable with ordinary arithmetic. |
-| **Import a model** | `import_model()` reads a STEP file or a mesh and chooses for each part: a part mostly of planes and cylinders is **reconstructed**, a part with more than a tenth of its surface free-form (or a surface body) is **tessellated** (see below). Reconstructed, every solid is rebuilt from its faces as a field: planes, cylinders, cones, spheres and tori exactly, **free-form (B-spline) faces by fitted closed-form surfaces**, with the deviation from the CAD reported and painted on the model. Assemblies arrive assembled, each part in its own units. |
+| **Import a model** | `import_model()` reads a STEP file and chooses for each part: a part mostly of planes and cylinders is **reconstructed**, a part with more than a tenth of its surface free-form (or a surface body) is **tessellated** (see below). Reconstructed, every solid is rebuilt from its faces as a field: planes, cylinders, cones, spheres and tori exactly, **free-form (B-spline) faces by fitted closed-form surfaces**, with the deviation from the CAD reported and painted on the model. Assemblies arrive assembled, each part in its own units. |
 | **Parts that are all free-form** | `tessellate()` fits nothing: every solid is tessellated straight from its faces (on all threads, kept next to the file) and the triangles are made the exact signed distance field — for gears, worms, threads and sculpted bodies the fitted surfaces do not follow. Meshing it takes 0.5 to 2.8 times as long as the main importer's formulas. |
 | **Exact where it matters** | `exclude()` (or `auto_exclude=True` on the import) locks a region of a shape against everything done to it afterwards; for a STEP part the locked field is the file's *own* surface, meshed straight from the B-rep and made a field, wherever the fit is poor. It works on every shape and every field. |
 | **Edit by dragging** | A gizmo (`gizmo()`: move, rotate, scale), handles on any surface of a shape or imported part (`handles()`), and `var()` numbers — what you drag is written back into the script. Every primitive (box, sphere, cylinder, cone, torus, pyramid, prism, rounded box, and the flat circle, rectangle, ring, polygon and triangle) has handles that move the face you pull and no other. |
 | **Python, as it is** | The script is plain Python and the model tree shows it: an `if`, a loop, `with`, `try`, a function or a class is a row, with the variables and statements in it under it (locked there: the code is edited in the editor), and a block moves by drag. The context menu has a **Python** category of 15 basic blocks. What you add from the tree goes to the **insertion point** -- click between two rows -- which follows the text cursor of the editor. `Ctrl+E` extrudes the selected 2D shape. [Python in the tree](docs/interface.md#python-in-the-tree) |
-| **Shapes from points** | Points are models of their own. A **profile** is the 2D shape a closed outline through points encloses (corners, or spline points with `smooth=True`); `extrude` pulls it into a solid and `path_extrude` sweeps it along a `spline` (the scale of a point is how thick the sweep is there). Press an edge and drag to pull a point out of it; double-click a point to switch it between a corner and a spline point. A **work plane** (`Shift+W`) is a grid to draw lines, splines and points on, in any plane. [Profiles](docs/profiles.md) |
+| **Shapes from points** | Points are models of their own. A **profile** is the 2D shape a closed outline through points encloses (corners, spline points with `smooth=True`, or round corners with `radius=`: an exact arc takes the place of the corner); `extrude` pulls it into a solid and `path_extrude` sweeps it along a `spline` (the scale of a point is how thick the sweep is there). Press an edge and drag to pull a point out of it; double-click a point to switch it between a corner, a spline point and a round corner. A **work plane** (`Shift+W`) is a grid to draw lines, splines and points on, in any plane. [Profiles](docs/profiles.md) |
 | **Copies and linked copies** | `Shift+D` copies a model. `Ctrl+D` **links** it: `bolt_2 = instance(bolt)` is the bolt itself, follows every change of it and can only be moved and rotated; the bolt is held by a shadow reference and keeps its own row. [Copies](docs/handles.md#copies-shiftd-and-ctrld) |
-| **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface; structural and thermal topology optimization; load cases; materials that vary through the part. **Fluid flow**: laminar flow through or around any shape, steady or in time (inlets, outlets, moving walls, symmetry planes), with the velocity field, the pressure, the wake, flows and wall forces as results, shown with streamlines and moving particles; flow topology optimization (a body in the stream reshaped for the least drag or the most lift under a volume bound). Every result is stated like a shape to show it, and the result card steps through it: the load, a mode's vibration, the flow in time, the iterations of an optimization. |
+| **Analyse** | Static structural, modal, thermal and thermal-stress analysis on tetrahedral meshes that follow the part's surface (linear, or the 10-node element with `element='tet10'`, which needs far less refinement where the part bends); structural and thermal topology optimization; load cases; materials that vary through the part. **Fluid flow** (laminar, steady or in time) and flow topology optimization. Every result is a field, shown like a shape, and the result card steps through it: the load, a mode's vibration, the flow in time, the iterations of an optimization. Each of these has its picture and its example in [Simulation, optimisation and flow](#simulation-optimisation-and-flow). |
 | **Make it** | Say what a process asks of a part -- `fff_constraint(nozzle=0.4)`, `cnc_constraint(tool_diameter=6)`, `molding_constraint(min_wall=1.5)`, or the rules one by one -- and `manufacturing_analysis` shows **where the part breaks them**, as colours on it and in numbers; `manufacturing_optimization` **changes the part until it keeps them**: thin walls thickened, narrow gaps closed, inside corners rounded, a draft put on, undercuts filled, overhangs given a gusset, a teardrop or a block of support, shown as the geometry change (red added, blue cut), with the 3MF, DXF and SVG files of a print. The check shares nothing that finds a fault with the tool that changes the part, so it can verify it. [Manufacturing](docs/manufacturing.md) |
 | **Find the numbers** | `parametric_optimization` solves a model again with other `var()` numbers and keeps the ones that make a measure of an analysis as small (or as large) as it can be while limits hold: the lightest beam under 90 MPa that bends less than 0.5 mm. [Analysis](docs/analysis.md) |
 | **Texture, noise, symmetry** | `texture(body, 'grit' / 'stipple' / 'leather' / 'ribs' / 'dimples' / 'knurl', ...)` lays a pattern of small bumps and pits over a body, or over a region of it; five kinds of noise (perlin, billow, ridged, cellular, cracks) are fields that can drive anything; a symmetry is a model of the script, and whatever you make is made at its images too. |
 | **Drive design with results** | `colored(part, field)`, `ramp(result.von_mises, …)`, `fit(data)(depth_below(part))` — results and data are fields that feed lattices, offsets and thicknesses. |
-| **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, surface and graph lattices, custom unit cells and equations, conformal cell maps (struts or a periodic surface that follows the part); any size, thickness or density — and the cell size — can be a field. Lattices and their cells have **a section of their own in the right-click menus**, with every cell to choose from, and `random_points` gives a foam **full say over how random it is** (average spacing, regular to random, the nearest and the farthest two points may be). [Lattices](docs/lattices.md) |
+| **Lattices** | Nine TPMS families (sheet or network), a dozen strut lattices, planar patterns, Voronoi foams, **`surface_lattice`** (a random net of beams over the whole surface of any body, in hexagons or triangles) and graph lattices, custom unit cells and equations, conformal cell maps (struts or a periodic surface that follows the part); any size, thickness or density — and the cell size — can be a field. Lattices have **two categories of their own in the right-click menus**, *Periodic lattices* (with every cell to choose from) and *Non-periodic lattices*, and `random_points` gives a foam **full say over how random it is** (average spacing, regular to random, the nearest and the farthest two points may be) and, with `surface=True`, **a clean surface**: points on the surface of the body, so that the foam is not cut off there. [Lattices](docs/lattices.md) |
 | **Inspect** | A section card that cuts the model and paints the field on the plane (distance, or an analysis result with its elements); wall thickness, overhang, curvature and depth fields; hover probing; legends. |
 | **Bring meshes in** | STL, OBJ, PLY, 3MF and glTF as exact distance fields (`import_model()` reads them like a STEP file). A **surface model** (open shells, as a CAD program exports a skin or a shoe) imports too: each shell a part, a sheet when it does not close. |
 | **Fast to work in** | Content-addressed caches (imports, exact distances, analyses, graphs), a render cache for the meshes you pick in the model tree, per-statement progress, breakpoints, go to definition into any library or module file (opened in a tab), hot reload of imported files and blocks, cancel for slow renders. |
@@ -102,11 +103,7 @@ Materials and loads can vary through the part: [`19_graded_material.py`](example
 
 ### Topology optimisation, with the features that must stay
 
-<p align="center">
-  <img src="docs/images/topology.png" width="900" alt="Topology optimisation of the bracket: the stiffest part in 50 % of the material; the density after 96 iterations, with the two lug holes and their rings of material kept intact; the result card steps through the iterations">
-</p>
-
-**[Topology optimisation](examples/08_topology_optimization.py)** keeps the material that carries the load and removes the rest: the stiffest bracket in half of the material, about 100 iterations, cached
+**[Topology optimisation](examples/08_topology_optimization.py)** (the first picture of this page) keeps the material that carries the load and removes the rest: the stiffest bracket in half of the material, about 100 iterations, cached
 so that running the script again is instant. The lug holes and the ring of material round them are **excluded** from the design space (`exclude(space, holes)`): the optimiser reads an excluded region as one
 to keep, and the file's own exact surface is there, whatever is taken away elsewhere. The result on its own is the optimised part coloured by its density; the result card **plays the iterations**, `opt.shape()` is
 the final body as a field you can offset, shell or fill with a lattice, and `opt.verify()` analyses it again as a check. There is a thermal version too (`thermal_topology_optimization`), and one for flow (below).
@@ -123,9 +120,7 @@ hard, light where it does not. Nothing is sampled onto a grid: the lattice is ca
 ### Flow, and a body reshaped by the flow
 
 <p align="center">
-  <img src="docs/images/flow.png" width="440" alt="Water past a round post: the speed on the fluid, streamlines, the wake behind the post, drag and lift on the result card">
-  &nbsp;
-  <img src="docs/images/flow_optimization.png" width="440" alt="Flow topology optimisation: the post reshaped for the least drag, in the flow with streamlines and its wake">
+  <img src="docs/images/flow.png" width="560" alt="Water past a round post: the speed on the fluid, streamlines, the wake behind the post, drag and lift on the result card">
 </p>
 
 **[Fluid flow](examples/16_fluid_flow.py)** solves the laminar Navier–Stokes equations around any body (steady, or in time) on tetrahedra that follow the fluid's surface: inlets, outlets, walls and slip planes are
@@ -136,19 +131,12 @@ the body may shrink, grow, move, split or merge, and the card steps through the 
 ### Lattices that follow the part
 
 <p align="center">
-  <img src="docs/images/lattice.png" width="440" alt="A gyroid whose wall thickness follows a regression over the depth below the skin of the bracket">
-  &nbsp;
-  <img src="docs/images/conformal.png" width="440" alt="A conformal strut lattice filling the wall of the whole bracket: cells that follow its faces, fillets and bores, with a row of nodes on every sharp edge">
+  <img src="docs/images/lattice.png" width="560" alt="A gyroid whose wall thickness follows a regression over the depth below the skin of the bracket">
 </p>
 
 [`09_lattice.py`](examples/09_lattice.py) grades a gyroid's wall by a **regression through a few data points** over the depth below the skin; [`15_conformal_closed_body.py`](examples/15_conformal_closed_body.py) lays strut cells that
-**follow the surface** of a whole bracket — over its faces, fillets and bores — with a row of nodes on every sharp edge. Foams are made around `random_points` (drawn in the viewport: how far apart, how random, the nearest and the farthest two may be) with `voronoi_lattice` and `delaunay_lattice`.
-
-<p align="center">
-  <img src="docs/images/lattice_gallery.png" width="400" alt="Twelve lattices seen from above, three to a row, from the bottom row up: octet struts, kelvin struts and a custom strut cell; a gyroid sheet, a Schwarz P network and a honeycomb; a Voronoi foam, a Delaunay truss and a foam by relative density; a graded gyroid, a conformal layer on a sphere and cells that follow a cylinder">
-</p>
-
-[`23_lattice_gallery.py`](examples/23_lattice_gallery.py) shows one lattice of every kind, each in a simple body of its own (no part needed): struts and a custom cell, TPMS sheets and networks, a honeycomb, three foams, a wall graded by a field, a conformal layer and a cell map.
+**follow the surface** of a whole bracket — over its faces, fillets and bores — with a row of nodes on every sharp edge.
+[`23_lattice_gallery.py`](examples/23_lattice_gallery.py) (the twelve lattices at the top of this page) shows one lattice of every kind, each in a simple body of its own (no part needed): struts and a custom cell, TPMS sheets and networks, a honeycomb, three foams, a wall graded by a field, a conformal layer and a cell map.
 
 ### Results are fields, and the tree reads like the code
 
@@ -159,8 +147,8 @@ the body may shrink, grow, move, split or merge, and the card steps through the 
 </p>
 
 Point at a result in the model tree and a **tab comes out of the tree's edge**: click it, then a field or a number, and `von_mises_1 = result.von_mises` is written under the analysis — a field like any other, shown in the field viewer,
-sliced, used in other models; the drawer's last button writes the **key numbers as a text file**. Every field a solver calculates is a field, not a body. The tree also shows the **arguments** of every call as rows, **sections** you
-start by clicking the gap between two rows (they fold in the code editor too), and **Periodic lattices** and **Non-periodic lattices** menus, with every cell. And you can take the results out: `export_fea` hands a static analysis to Abaqus / CalculiX, Nastran or Gmsh,
+sliced, used in other models; the drawer's last button writes the **key numbers as a text file**. Every field a solver calculates is a field, not a body. The tree also shows the **arguments** of every call as rows and **sections** you
+start by clicking the gap between two rows (they fold in the code editor too). And you can take the results out: `export_fea` hands a static analysis to Abaqus / CalculiX, Nastran or Gmsh,
 `export_results` writes VTK, CSV and text, `export_mesh` writes STL, OBJ, PLY, 3MF, glTF, FBX, OFF and DXF ([`22_export_files.py`](examples/22_export_files.py)).
 
 ## Quick start
@@ -174,7 +162,7 @@ start by clicking the gap between two rows (they fold in the code editor too), a
    - There is no macOS version.
 
    FielDes speaks English, Spanish, French, German, Japanese, Chinese and Russian (the language of the system by default; **Settings → Language**).
-2. The **guided tour** (a welcome card offers it the first time; later **Help → Guided tour**) walks through the basics; **File → Import model…** (`Ctrl+I`) brings in a STEP
+2. **File → Import model…** (`Ctrl+I`) brings in a STEP
    file; or open a script from `examples/` (every one runs as it is: the bracket that comes with FielDes, or geometry the script makes).
 3. Right-click empty space to make a shape; click a row in the model tree and drag the gizmo; open the section card
    (`Shift+X`); hover the model.
@@ -206,12 +194,13 @@ The last expression is what is shown; assign other shapes to names and they appe
 ## Examples
 
 **Every example runs as it is.** Examples 01–13 and 15 start from **the sample part that comes with FielDes**, the pivot-bearing support bracket
-(`examples/step/PivotBearingSupportBracket.STEP`, a GrabCAD download distributed at the maintainer's decision, see [NOTICE.md](NOTICE.md)); **examples 14, 16–23 and 25–33 make their own geometry** (24 is an app: its form asks for a model file). To try one on a STEP
+(`examples/step/PivotBearingSupportBracket.STEP`, a GrabCAD download distributed at the maintainer's decision, see [NOTICE.md](NOTICE.md)); **examples 14, 16–23 and 25–34 make their own geometry** (24 is an app: its form asks for a model file). To try one on a STEP
 file of your own, put it in `examples/step/` and change the path in the script (and the numbers that place the regions: see [`examples/step/README.md`](examples/step/README.md)). The first import of a file
 takes a few seconds and is cached next to it.
 
 | Example | Shows |
 |---|---|
+| [`00_START_HERE.py`](examples/00_START_HERE.py) | Where everything is: the examples by subject, the manufacturing example, the sample files |
 | [`01_import_a_part.py`](examples/01_import_a_part.py) | Importing, the view settings, mass properties |
 | [`02_inspect_a_part.py`](examples/02_inspect_a_part.py) | Wall thickness, overhang, curvature and depth fields; probing; sections |
 | [`03_exclude_and_assembly.py`](examples/03_exclude_and_assembly.py) | An assembly of imported parts; `exclude()` with a field object as the region: the STEP file's own surface where it matters |
@@ -244,8 +233,8 @@ takes a few seconds and is cached next to it.
 | [`30_noise_kinds.py`](examples/30_noise_kinds.py) | Noise, one of every kind, and what scale, octaves, stretch and warp do to it |
 | [`31_texture.py`](examples/31_texture.py) | A pattern of small bumps and pits laid over the surface of a body: grit, stipple, leather, ribs, dimples, knurl |
 | [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
-| [`34_non_periodic_lattices.py`](examples/34_non_periodic_lattices.py) | Lattices that do not repeat: a random net over a surface (`surface_lattice`, in hexagons or triangles, on a block with a dent) and foams with a clean surface (`random_points(surface=True)`), next to a foam the surface cuts off |
 | [`33_manufacturing_optimization.py`](examples/33_manufacturing_optimization.py) | A topology-optimized bracket changed until a 3D printer, a mill and an injection mould can make it: gussets under what leans too far, thin walls thickened, inside corners rounded, draft; the plates and lugs that carry the load kept as they are |
+| [`34_non_periodic_lattices.py`](examples/34_non_periodic_lattices.py) | Lattices that do not repeat: a random net over a surface (`surface_lattice`, in hexagons or triangles, on a block with a dent) and foams with a clean surface (`random_points(surface=True)`), next to a foam the surface cuts off |
 
 ## Documentation
 
@@ -305,6 +294,7 @@ python/       the Python library  (import fieldes)
 app/          the Qt application  (FielDes.exe)
 blocks/       the custom blocks folder: sample blocks, and where yours go
 examples/     example scripts and the STEP files they import
+tests/        what checks the work: tests/verification/00_START_HERE.py is the file to open (walkthroughs, four known answers, the manufacturing showcases and their judge)
 docs/         documentation
 scripts/      build script, headless runner, reference generator
 ```
