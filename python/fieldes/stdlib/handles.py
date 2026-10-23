@@ -202,7 +202,9 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
         priority where it is shown.
         A profile, a polyline or a spline has no numbers of its own -- its points do -- so `profile_1 = gizmo(profile_1, mode='click')` only says when the one gizmo of
-        its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).
+        its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).  With numbers it is
+        placed like any shape -- moved and turned about the middle of its points -- as the same outline through the images of its points: whatever is made of points
+        (it can make itself again through other points, `_remake`) is placed so, and what a linked copy of it, `instance(profile_1)`, is placed by.
         To make a shape undraggable, lock it: `shape = lock(shape)`. '''
     if mode is None:
         mode = 'click'
@@ -223,6 +225,9 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
             raise ValueError('gizmo(): a linked copy (instance) can only be moved and rotated: its shape is its original\'s, so it is not scaled.  '
                              'Leave scale= out; a copy that has a shape of its own is a copy of the statements (Shift+D in FielDes)')
         scale = (1, 1, 1)
+    if all(_is_number(s) and s == 1 for s in scale) and callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
+        # What is made of points -- a profile, a polyline, a spline: it can make itself again through other points -- is placed through them, whatever the numbers are
+        return _placed_outline(shape, move, rotate, mode, about)
     if not isinstance(shape, Shape) and callable(getattr(shape, '_display', None)):
         # The result of an analysis or an optimisation is not a shape: it has no surface of its own to place (what it shows is made from
         # its part).  Placed by nothing it is the result itself; placed by something, there is nothing it could mean
@@ -320,6 +325,63 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # what FielDes draws the gizmo from
     out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
     _note_gizmo_vars(shape, move, rotate, scale)
+    return out
+
+
+def _placed_point(xyz, about, move, rotate):
+    ''' A place (three numbers or expressions) as the gizmo places it: turned about `about` (x, then y, then z; degrees) and moved -- numbers, or expressions of the var()s of the
+        gizmo, so that what is placed follows them (see _placed_frame, which places the plane of a face the same way) '''
+    from fieldes.stdlib.symmetries import _add, _mul, _turn_matrix
+    R = _turn_matrix(rotate)
+    rel = [_add(xyz[i], _mul(-1.0, about[i])) for i in range(3)]
+    return tuple(_add(_add(about[i], _add(_add(_mul(R[i][0], rel[0]), _mul(R[i][1], rel[1])), _mul(R[i][2], rel[2]))), move[i]) for i in range(3))
+
+
+def _placed_outline(shape, move, rotate, mode, about=None):
+    ''' A profile, a polyline, a spline -- whatever is made of points and can make itself again through other points (`_remake`) -- placed by the gizmo: the same outline through the
+        images of its points, which are where the points are now (their var()s are in the expressions, so a point dragged moves the images with it) turned about the middle of them
+        and moved by the numbers of this gizmo.  The points of a shape are what carries its numbers, so its place is its points', and a placed outline is the shape again, made from the
+        images: its plane, its face, what an extrusion or a sweep of it is made from are the ones of the images '''
+    from fieldes.stdlib.curves import value_of
+    from fieldes.stdlib.points import Point, image_dot
+    from fieldes.stdlib.symmetries import _turn_matrix
+    move, rotate = tuple(move), tuple(rotate)
+    places = []
+    for p in shape.points:
+        xyz = getattr(p, 'xyz', None)
+        if xyz is None:
+            xyz = tuple(p) + (0.0,) * (3 - len(p))
+        places.append((p, xyz))
+    if about is not None:
+        c = tuple(float(v) for v in about)
+    else:
+        nums = [tuple(value_of(v) for v in xyz) for _p, xyz in places]
+        c = tuple(0.5 * (min(q[i] for q in nums) + max(q[i] for q in nums)) for i in range(3))
+    # The map that places a place -- about c, turned, then moved -- as numbers, for the dots: a dot is the image of a point, and is dragged back through it (see points.image_dot)
+    R = _turn_matrix(rotate)
+    rows = [[value_of(R[i][j]) for j in range(3)] for i in range(3)]
+    shift = tuple(value_of(v) for v in move)
+    frozen = [v for v in move + rotate if isinstance(v, Shape)]
+    dots, shown = [], []
+    for p, xyz in places:
+        x, y, z = _placed_point(xyz, c, move, rotate)
+        if hasattr(p, 'xyz'):
+            dot = image_dot(p, (x, y, z), rows, c, shift, frozen)     # (it is drawn with the outline: the points are part of what is placed)
+            shown.append(dot)
+        else:
+            dot = Point(x, y, z)                                      # (a point that is only numbers has no dot to draw)
+        dots.append(dot)
+    out = shape._remake(dots)
+    _carry(out, shape)
+    out._no_gizmo = False                          # (it has numbers of its own now: they are this gizmo's)
+    out._outline_gizmo = False
+    out._editable = bool(getattr(shape, '_linked', False))      # (a press on its line puts a point on it: on the original it is a copy of, and on every copy of that)
+    out._image_dots = shown
+    out._edit_map = (tuple(v for row in rows for v in row), c, shift)       # (where a place of the original is taken to this one's: what a press on its outline is taken back by)
+    out._edit_reversed = False
+    out._placed_parts = (shape, c, (1, 1, 1))
+    out._gizmo = (mode, c, move, rotate, (1, 1, 1))
+    _note_gizmo_vars(shape, move, rotate, (1, 1, 1))
     return out
 
 

@@ -539,6 +539,13 @@ protected:
     int m_dotPressLine = -1;
     bool m_dotMoved = false;
     QPoint m_dotPressPos;
+    /*  The copy of a point that was pressed (the dot of a placed copy, of an image in a symmetry): the row of the point it is a copy of, and which of the copies of that point it is, in
+        the order they are drawn.  The point is selected by the press (it is the original's row that is selected), and that copy -- and only that one -- shows the point's gizmo (its arrows,
+        its ring, the ring that sizes its influence), at the copy, taken through the map of the copy; dragging it changes the original's numbers  */
+    int m_copyLine = -1;
+    int m_copyNth = 0;
+    void applyActiveCopy();
+    int copyIndexOf(const Shape* dot) const;
     /*  Auto scale while a model is dragged: when the picture of it (the mesh, moved by the numbers of the drag) reaches out of the render region, the region grows to hold it
      *  -- with the room and the whole numbers the script's region has -- and what is shown is meshed again in it at once; the region it has grown to is what is written into the
      *  script when the drag ends (regionGrown)  */
@@ -552,6 +559,8 @@ protected:
     struct FaceVar { libfive::Tree::Id id; int axis; float value0; };
     QList<FaceVar> m_faceVars;
     void beginPull(QPoint pos);
+    /*  The point that is pulled out of an outline, drawn at once on every shape that stands for that outline (the outline, its placed copies, its images in a symmetry)  */
+    void setPullVirtual(const QVector3D& at);
     Shape* controlOwner(const Shape* point, int& index) const;
     void drawNameLabels(QPainter& painter);
     bool m_appMode = false;
@@ -1059,6 +1068,7 @@ protected:
     bool gizmo_oriented = false;                // (the drag in progress is along the axes of a turned gizmo, noted at its start)
     const Shape* gizmo_frame_shape = nullptr;
     QVector3D gizmo_frame[3];
+    QVector3D gizmo_turn_axis;                  // (the axis of a ring of a turned gizmo as the ORIGINAL has it: for a copy of a point, the axis taken back through the map of the copy)
     libfive::Tree::Id gizmo_rot_id[3] = {nullptr, nullptr, nullptr};          // ...and the rotation numbers of the shape, with the values they had at the start
     float gizmo_rot0[3] = {0, 0, 0};
     QPolygonF planeSquareIn(const QVector3D& pivot, float length, const QVector3D& eb, const QVector3D& ec) const;

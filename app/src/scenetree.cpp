@@ -5207,67 +5207,35 @@ void ScenePanel::linkModels(const QList<QJsonObject>& selected)
         m_afterRun = [=] { linkModels(selected); };            // (the script is being edited to get the models ready: the scene is a run behind)
         return;
     }
-    // Every model is cloned the same way: `copy = instance(model)` under it, with a gizmo of its own that starts where the original is (it is moved and turned, not scaled).  A profile
-    // or a line is made of its points, so its clone is a profile or a line through linked clones of its points -- they follow the points, and are what the gizmo of the clone moves --;
-    // a model that has no shape or place (a material, an analysis, the conditions of one) is its own value, which `instance` hands back
-    struct Clone { QJsonObject it; QString fresh; bool linked; bool asked; };
-    QList<Clone> clones;
-    auto listed = [&](const QJsonObject& m) {
-        for (const auto& c : clones)
-        {
-            if (keyOf(c.it) == keyOf(m)) return true;
-        }
-        return false;
-    };
+    // Every model is cloned the same way: `copy = instance(model)` under it, with a gizmo of its own that starts where the original is (it is moved and turned, not scaled).  What a
+    // clone IS -- the original's value, placed by that gizmo -- is the library's, for every kind of model: a shape is placed by its field, a profile or a line through the images of its
+    // points, and a model that has no shape or place (a material, an analysis, the conditions of one) is its own value, which `instance` hands back.  Nothing here knows kinds
+    QSet<QString> listedKeys;
+    QList<QJsonObject> clones;
     for (const auto& it : selected)
     {
-        const QString callee = it["callee"].toString();
-        if (callee != "profile" && callee != "polyline" && callee != "spline")
-        {
-            if (!listed(it)) clones.append(Clone{it, QString(), true, true});
-            continue;
-        }
-        for (const QString& input : directInputs(it))
-        {
-            const QJsonObject p = itemForVar(input);
-            if (p.isEmpty() || !p.contains("var") || (p["type"].toString() != "point" && p["callee"].toString() != "point") || listed(p)) continue;
-            clones.append(Clone{p, QString(), true, false});
-        }
-        if (!listed(it)) clones.append(Clone{it, QString(), false, true});
+        if (listedKeys.contains(keyOf(it))) continue;
+        listedKeys << keyOf(it);
+        clones << it;
     }
     const QString src = m_source ? m_source() : QString();
     const QStringList lines = src.split('\n');
     QSet<QString> taken;
-    QList<QPair<QString, QString>> renames;                       // old name, new name
-    for (auto& c : clones)
+    QStringList fresh;
+    for (const auto& it : clones)
     {
-        const QString old = c.it["var"].toString();
-        c.fresh = copyName(old, taken, c.it.contains("part_of"));
-        taken << c.fresh;
-        renames << qMakePair(old, c.fresh);
+        fresh << copyName(it["var"].toString(), taken, it.contains("part_of"));
+        taken << fresh.last();
     }
     QList<TextEdit> edits;
-    QStringList made, extra;
-    bool anyLinked = false;
-    for (const Clone& c : clones)
+    QStringList made;
+    for (int k = 0; k < clones.size(); ++k)
     {
-        const QJsonObject& it = c.it;
-        const QString old = it["var"].toString(), fresh = c.fresh;
+        const QJsonObject& it = clones[k];
+        const QString old = it["var"].toString(), name = fresh[k];
         const QString indent = indentOf(lineText(it["line"].toInt() - 1));
-        if (!c.linked)
-        {
-            // (the profile or the line itself: its statements again, through the clones of its points)
-            QString text = groupText(it);
-            for (const auto& r : renames) text = renamedIn(text, r.first, r.second);
-            const int at = groupEnd(it);
-            if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
-            else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
-            made << fresh;
-            continue;
-        }
-        anyLinked = true;
         // (the original is only referred to -- `# shadow:` -- always: taken into the copy it would move away from where it is and look like what the copy is made of)
-        const QString statement = markShadow(indent + fresh + " = instance(" + old + ")", old);
+        const QString statement = markShadow(indent + name + " = instance(" + old + ")", old);
         // The copy is where the original is and turned as it is, to start with -- its gizmo is written with the numbers the original's has -- but the numbers are its own: a copy
         // follows the SHAPE of its original, not where it is or how it is turned
         const QString originalText = groupText(it);
@@ -5284,8 +5252,9 @@ void ScenePanel::linkModels(const QList<QJsonObject>& selected)
             return QString();
         };
         QString move = tupleOf("move"), rotate = tupleOf("rotate");
-        // (an original that has no gizmo yet -- it was never selected -- is given the clone's from zero: a clone with none would be the very same shape, and is not drawn apart from it)
-        if ((move.isEmpty() || rotate.isEmpty()) && !it["no_gizmo"].toBool())
+        // (an original that has no gizmo yet -- it was never selected -- is given the clone's from zero: a clone with none would be the very same shape, and is not drawn apart from it.
+        // A profile or a line has a gizmo without numbers -- its points have them -- but its clone has numbers of its own)
+        if ((move.isEmpty() || rotate.isEmpty()) && (!it["no_gizmo"].toBool() || it["outline"].toBool()))
         {
             move = "(var(0), var(0), var(0))";
             rotate = move;
@@ -5294,21 +5263,20 @@ void ScenePanel::linkModels(const QList<QJsonObject>& selected)
         if (!move.isEmpty() && !rotate.isEmpty())
         {
             const QString in = indent + "    ";
-            placing = indent + fresh + " = gizmo(\n" + in + fresh + ",\n" + in + "move=" + move + ",\n" + in + "rotate=" + rotate + ",\n" + indent + ")\n";
+            placing = indent + name + " = gizmo(\n" + in + name + ",\n" + in + "move=" + move + ",\n" + in + "rotate=" + rotate + ",\n" + indent + ")\n";
         }
-        const QString text = statement + "\n" + placing + indent + fresh;
+        const QString text = statement + "\n" + placing + indent + name;
         const int at = groupEnd(it);
         if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
         else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
-        (c.asked ? made : extra) << fresh;
+        made << name;
     }
-    if (made.isEmpty()) made = extra;
     static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
-    if (anyLinked && !starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
+    if (!starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
     m_selectNew = made.last();
     m_selectNewMore = made.mid(0, made.size() - 1);
     m_selectNewTries = 0;
-    emit(editScript(edits, "Link " + (made + extra).join(", ")));
+    emit(editScript(edits, "Link " + made.join(", ")));
 }
 
 void ScenePanel::copySelected()

@@ -990,6 +990,12 @@ void Interpreter::evaluate(QString script, bool resuming)
             Py_XDECREF(fn);
             return res;
         };
+        m_stmtLines.clear();
+        for (unsigned i = 0; i < ret_size; ++i)
+        {
+            PyObject* value = PyList_GetItem(ret, i);
+            if (value) m_stmtLines.emplace(value, (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1);
+        }
         for (unsigned i=0; reprOk && i < ret_size; ++i) {
             const auto s = PyList_GetItem(ret, i);
             const int line = (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1;
@@ -1309,6 +1315,12 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
         return res;
     };
     const auto n = PyList_Size(snapshot);
+    m_stmtLines.clear();
+    for (Py_ssize_t i = 0; i < n; ++i)
+    {
+        PyObject* value = PyList_GetItem(snapshot, i);
+        if (value && value != Py_None) m_stmtLines.emplace(value, (int(i) < stmt_lines.size()) ? stmt_lines[i] : -1);
+    }
     for (Py_ssize_t i = 0; i < n; ++i)
     {
         const auto s = PyList_GetItem(snapshot, i);
@@ -1409,6 +1421,63 @@ void Interpreter::recordShape(
         }
         const auto shape = new Shape(drawn, vars);
         shape->setSourceLine(line);
+        {
+            // An image of another model -- a placed copy (`_instance_of`), an image in a symmetry (`_symmetry_of`) -- followed to the model that is not an image itself: the line of that
+            // model.  Pressing the outline of an image to put a point on it edits the original, at the place the press has there: `_edit_map` is where a place of the original is
+            // taken to the image's (the matrix, the centre, how far it is moved after), and `_edit_reversed` says the image runs the other way round (a mirror image)
+            auto original = [](PyObject* o) -> PyObject* {
+                for (const char* name : {"_instance_of", "_symmetry_of"})
+                {
+                    PyObject* of = PyObject_GetAttrString(o, name);
+                    PyErr_Clear();
+                    if (of && of != Py_None) return of;
+                    Py_XDECREF(of);
+                }
+                return nullptr;
+            };
+            PyObject* of = original(obj);
+            PyObject* root = nullptr;
+            for (int depth = 0; of && depth < 16; ++depth)
+            {
+                Py_XDECREF(root);
+                root = of;
+                of = original(root);
+            }
+            Py_XDECREF(of);
+            if (root)
+            {
+                const auto at = m_stmtLines.find(root);
+                if (at != m_stmtLines.end()) shape->setEditLine(at->second);
+                Py_DECREF(root);
+            }
+            PyObject* em = PyObject_GetAttrString(obj, "_edit_map");
+            PyErr_Clear();
+            if (em && PyTuple_Check(em) && PyTuple_Size(em) == 3)
+            {
+                PyObject* m9 = PyTuple_GetItem(em, 0);
+                PyObject* c3 = PyTuple_GetItem(em, 1);
+                PyObject* s3 = PyTuple_GetItem(em, 2);
+                if (PyTuple_Check(m9) && PyTuple_Size(m9) == 9 && PyTuple_Check(c3) && PyTuple_Size(c3) == 3 && PyTuple_Check(s3) && PyTuple_Size(s3) == 3)
+                {
+                    float l[9], c[3], s[3];
+                    for (int i = 0; i < 9; ++i) l[i] = float(PyFloat_AsDouble(PyTuple_GetItem(m9, i)));
+                    for (int i = 0; i < 3; ++i) c[i] = float(PyFloat_AsDouble(PyTuple_GetItem(c3, i)));
+                    for (int i = 0; i < 3; ++i) s[i] = float(PyFloat_AsDouble(PyTuple_GetItem(s3, i)));
+                    const QMatrix4x4 linear(l[0], l[1], l[2], 0, l[3], l[4], l[5], 0, l[6], l[7], l[8], 0, 0, 0, 0, 1);
+                    QMatrix4x4 full;
+                    full.translate(s[0], s[1], s[2]);
+                    full.translate(c[0], c[1], c[2]);
+                    full *= linear;
+                    full.translate(-c[0], -c[1], -c[2]);
+                    PyObject* rev = PyObject_GetAttrString(obj, "_edit_reversed");
+                    PyErr_Clear();
+                    shape->setEditMap(full, rev && PyObject_IsTrue(rev) == 1);
+                    Py_XDECREF(rev);
+                }
+            }
+            Py_XDECREF(em);
+            PyErr_Clear();
+        }
         {
             // (an imported part, moved or edited or not, has an exact distance of its own: the field viewers ask for it by this key)
             PyObject* exact = PyObject_GetAttrString(obj, "_distance_of");
@@ -1995,31 +2064,31 @@ void Interpreter::recordShape(
                     if (PyTuple_Check(rt) && PyTuple_Size(rt) == 3) hd.rotate[a] = idOf(PyTuple_GetItem(rt, a));
                     if (sc && PyTuple_Check(sc) && PyTuple_Size(sc) == 3) hd.scale[a] = idOf(PyTuple_GetItem(sc, a));
                 }
-                // The gizmo of an image (`_symmetry`: the matrix of the image, then its centre): the original's numbers, placed where the image is.  A point has its moves only
-                // (its scale and its turn are the original's to give)
+                // The gizmo of an image (`_symmetry`: the matrix of the image, then its centre, then -- for the image that is a placed copy, see points.image_dot -- how far it is moved
+                // after): the original's numbers, placed where the image is -- its moves, its turn and its scale (a point's: how strongly a spline leaves it), which the viewport
+                // draws and drags at the image through the map
                 if (PyObject_HasAttrString(obj, "_symmetry"))
                 {
                     PyObject* sy = PyObject_GetAttrString(obj, "_symmetry");
-                    if (sy && PyTuple_Check(sy) && PyTuple_Size(sy) == 2)
+                    if (sy && PyTuple_Check(sy) && (PyTuple_Size(sy) == 2 || PyTuple_Size(sy) == 3))
                     {
                         PyObject* m9 = PyTuple_GetItem(sy, 0);
                         PyObject* c3 = PyTuple_GetItem(sy, 1);
-                        if (PyTuple_Check(m9) && PyTuple_Size(m9) == 9 && PyTuple_Check(c3) && PyTuple_Size(c3) == 3)
+                        PyObject* s3 = PyTuple_Size(sy) == 3 ? PyTuple_GetItem(sy, 2) : nullptr;
+                        if (PyTuple_Check(m9) && PyTuple_Size(m9) == 9 && PyTuple_Check(c3) && PyTuple_Size(c3) == 3 && (!s3 || (PyTuple_Check(s3) && PyTuple_Size(s3) == 3)))
                         {
-                            float l[9], c[3];
+                            float l[9], c[3], s[3] = {0, 0, 0};
                             for (int i = 0; i < 9; ++i) l[i] = float(PyFloat_AsDouble(PyTuple_GetItem(m9, i)));
                             for (int i = 0; i < 3; ++i) c[i] = float(PyFloat_AsDouble(PyTuple_GetItem(c3, i)));
+                            for (int i = 0; s3 && i < 3; ++i) s[i] = float(PyFloat_AsDouble(PyTuple_GetItem(s3, i)));
                             const QMatrix4x4 linear(l[0], l[1], l[2], 0, l[3], l[4], l[5], 0, l[6], l[7], l[8], 0, 0, 0, 0, 1);
                             QMatrix4x4 full;
+                            full.translate(s[0], s[1], s[2]);
                             full.translate(c[0], c[1], c[2]);
                             full *= linear;
                             full.translate(-c[0], -c[1], -c[2]);
                             hd.mapped = true;
                             hd.map = full;
-                            if (PyObject_HasAttrString(obj, "xyz"))
-                            {
-                                for (int a = 0; a < 3; ++a) { hd.rotate[a] = nullptr; hd.scale[a] = nullptr; }
-                            }
                         }
                     }
                     Py_XDECREF(sy);

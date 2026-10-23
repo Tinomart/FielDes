@@ -58,7 +58,7 @@ class Profile(Shape):
                 out.__dict__[name] = v
         out._kind = 'profile'
         out._profile_face = True
-        return out
+        return C.with_image_dots(self, out)
 
 
 class SurfaceProfile(Shape):

@@ -16,8 +16,8 @@
 #   * Press a dot of the blue curve of a leg and drag it: the leg bends, and so do the others.  Do it on a leg that is an image: it is the original that changes, the others
 #     follow it.
 #   * Select a point of the spline: its gold ring is how THICK the leg is there (the ankle is 0.65, the knee 1.2); its rings turn the way the curve goes.
-#   * Double-click a point of the profile (its dot, on any leg): a corner or a spline point.  Press an edge of `leg_profile`'s outline and drag to pull a point out of it: a
-#     flatter or a rounder leg.
+#   * Double-click a point of the profile (its dot, on any leg): a corner or a spline point.  Press an edge of the profile's outline, on any leg, and drag to pull a point out
+#     of it: a flatter or a rounder leg.  The point is put on `leg_profile`, and every leg shows it while you drag.
 #   * Select `mirror` and drag its gizmo (the arrows, the rings): the copies, and with them all the legs, move and turn.  Select `leg_images` and drag its gizmo: the leg moves
 #     -- turned the way its copy is.  The symmetry itself stays where it is.
 #   * With `mirror` selected, the card in the top right corner changes it.  Turns: any number of copies (3: three legs; 5, 7 ...; up to 24).  Axis: planes through the axis,

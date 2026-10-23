@@ -860,9 +860,19 @@ def _stroke_text(name, places, smooth, r):
         return points + '#@@#\n' + '%s([%s]%s)' % (name, listing, smooth_arg)
     positions = [tuple(float(c) for c in p) for p in places]
     step = float((r.get('plane') or {}).get('step') or 0.0)
-    made, shapes = sym.stroke_structure(positions, elements, name, name == 'profile', max(1e-4, 1e-3 * step))
-    n = len(places)
+    tol = max(1e-4, 1e-3 * step)
     r['_symmetric'] = True
+    symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'
+    whole = sym.simple_images(positions, elements, tol)
+    if whole is not None:
+        # The images are strokes that touch nothing: each is the image of the stroke, like the image of any model, `{var}_m1 = symmetry_image({var}, symmetry_1, 1)`, written under the
+        # stroke (so that whatever is done to the stroke -- a point dragged, pulled out of an edge, deleted -- is done to its images)
+        text = points + '#@@#\n' + '%s([%s]%s)' % (name, listing, smooth_arg)
+        for k, el in enumerate(whole, 1):
+            text += (sym.POST if k == 1 else '') + sym.image_statement('{var}', '{var}_m%d' % k, el, symmetry_var)
+        return text
+    made, shapes = sym.stroke_structure(positions, elements, name, name == 'profile', tol)
+    n = len(places)
     # (the image points, each held to the point it is the image of)
     images = ''
     symmetry_var = (r.get('symmetry') or {}).get('var') or 'symmetry_1'

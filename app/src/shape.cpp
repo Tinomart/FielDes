@@ -288,7 +288,7 @@ std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const doub
 
 bool Shape::hasGizmo() const
 {
-    if (m_locked || !m_gizmo.present || m_gizmo.hidden || m_gizmo.dotOnly || m_gizmo.mode == Gizmo::NEVER) return false;
+    if (m_locked || !m_gizmo.present || m_gizmo.hidden || (m_gizmo.dotOnly && !m_activeCopy) || m_gizmo.mode == Gizmo::NEVER) return false;
     if (m_gizmo.mode == Gizmo::CLICK && !isSelected()) return false;
     for (int a = 0; a < 3; ++a)
     {
@@ -2914,6 +2914,9 @@ bool Shape::updateFrom(const Shape* other)
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
     m_outlineMode = other->m_outlineMode;           // (when the gizmo of a profile or a line is shown: `x = gizmo(x, mode=...)` changes nothing in its tree)
+    m_editLine = other->m_editLine;                 // (the line of the outline an image is an image of: what pressing its outline edits)
+    m_editMap = other->m_editMap;
+    m_editReversed = other->m_editReversed;
     m_frozenVars = other->m_frozenVars;
     m_sceneGizmoVars = other->m_sceneGizmoVars;
     m_symmetryImage = other->m_symmetryImage;

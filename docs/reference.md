@@ -917,8 +917,9 @@ The images FOLLOW what they are the images of and the symmetry: move the origina
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
 one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); what is
 made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
-gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: it is made of its points, which are the models, so each point has its images
-(`symmetry_image(point, mirror, 3)`) and the stroke goes through them.
+gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: its image is the same outline through the images of its points
+(`symmetry_image(stroke, mirror, 1)`), each point of it a dot that is pressed, dragged, selected and deleted -- it is the original's point that changes -- and a press on its outline
+puts a point on the original; a stroke whose images meet it (a half drawn on one side of a plane) is made of the points it shares with them (`symmetry_image(point, mirror, 3)`).
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

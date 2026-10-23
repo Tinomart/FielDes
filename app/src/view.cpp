@@ -441,6 +441,7 @@ void View::setShapes(QList<Shape*> new_shapes, int keepFromLine)
     requestSlice();
     refreshSymmetry();              // (the symmetry model is another shape now)
     linkFollowers();
+    applyActiveCopy();              // (the copies are linked to their points now: the one that was pressed shows the gizmo again)
 }
 
 void View::linkFollowers()
@@ -504,8 +505,13 @@ void View::highlightLines(QList<int> lines0)
 {
     for (auto& s : shapes)
     {
-        s->setSelected(lines0.contains(s->sourceLine()));
+        bool on = lines0.contains(s->sourceLine());
+        // (the dot of an image -- the point of a placed copy, of an image in a symmetry -- is the point it is the image of: selected with it)
+        if (!on && s->gizmo().dotOnly && s->followedShape()) on = lines0.contains(s->followedShape()->sourceLine());
+        s->setSelected(on);
     }
+    if (m_copyLine >= 0 && !lines0.contains(m_copyLine)) m_copyLine = -1;          // (another row is selected: no copy of the point is the one that was pressed any more)
+    applyActiveCopy();
     update();
 }
 
@@ -519,6 +525,7 @@ void View::moveSourceLines(QVector<int> moved)
     // (what the view keeps by line as well: the provisional gizmo's models, the press that waits for a gizmo)
     for (int& l : m_provLines) l = moveLine(l);
     for (int& l : m_wait.lines) l = moveLine(l);
+    if (m_copyLine >= 0) m_copyLine = moveLine(m_copyLine);
     update();
 }
 
@@ -1789,8 +1796,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             {
                 if (m_wp.open && m_wp.exists && std::fabs(QVector3D::dotProduct(m_pullNormal, m_wp.normal())) > 0.999f) at = snapToWorkPlane(at);
                 m_pullLast = at;
-                m_pullShape->setVirtualPoint(true, m_pullAfter, at);
-                m_pullShape->refresh();
+                setPullVirtual(at);
                 m_overlay->update();
             }
         }
@@ -2038,6 +2044,51 @@ QVector3D View::toModelPos(QPoint pt, float z) const
             1 - (pt.y() * 2.0) / pick_img.height(), z));
 }
 
+// The row a click on a dot selects: the point's own -- and for the dot of an image (the point of a placed copy, of an image in a symmetry) the row of the point it is the image of,
+// which is what a drag and a double click on it reach as well: so that the point can be selected, deleted and edited like any other, whatever copy it is clicked on
+static int dotLine(const Shape* shape)
+{
+    return (shape->gizmo().dotOnly && shape->followedShape()) ? shape->followedShape()->sourceLine() : shape->sourceLine();
+}
+
+// Whether this is the dot of a copy of a point that is shown (its point is shown, and it is what it is the copy of)
+static bool isPointCopy(const Shape* shape)
+{
+    return shape->gizmo().dotOnly && shape->followedShape();
+}
+
+// Which of the copies of its point this dot is, in the order they are drawn
+int View::copyIndexOf(const Shape* dot) const
+{
+    const int line = dotLine(dot);
+    int n = 0;
+    for (const Shape* s : shapes)
+    {
+        if (!isPointCopy(s) || dotLine(s) != line) continue;
+        if (s == dot) return n;
+        ++n;
+    }
+    return 0;
+}
+
+// The copy of a point that was pressed shows the point's gizmo -- its arrows, its ring, the ring that sizes its influence -- at the copy, while the point is selected: the others show
+// their dots only (every copy of it with a gizmo would be a gizmo for each leg of a symmetry).  What is dragged on it changes the numbers of the original, taken back through the
+// map of the copy (Shape::gizmoMapped)
+void View::applyActiveCopy()
+{
+    int n = 0;
+    for (Shape* s : shapes)
+    {
+        bool on = false;
+        if (m_copyLine >= 0 && isPointCopy(s) && dotLine(s) == m_copyLine)
+        {
+            on = n == m_copyNth && s->isSelected();
+            ++n;
+        }
+        s->setActiveCopy(on);
+    }
+}
+
 void View::mousePressEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mousePressEvent(event);
@@ -2197,6 +2248,13 @@ void View::mousePressEvent(QMouseEvent* event)
                 // selected or not and whatever gizmo is shown.  One that has its numbers already is moved at once (a click that does not move selects it); one that has none
                 // is selected (which gives it the numbers it is moved by) and the drag begins as soon as they are there, if the button is still down.  Several selected points
                 // are moved by the dot of their group
+                // (the press on the dot of a COPY of a point remembers which copy: it is the one that shows the point's gizmo once the point is selected)
+                if (!(event->modifiers() & Qt::ControlModifier))
+                {
+                    m_copyLine = isPointCopy(dot) ? dotLine(dot) : -1;
+                    m_copyNth = isPointCopy(dot) ? copyIndexOf(dot) : 0;
+                    applyActiveCopy();
+                }
                 const int selectedCount = selectedShapeCount();       // (the images of one row, and the dots drawn with them, are one selection)
                 const bool direct = !(event->modifiers() & Qt::ControlModifier) && dot->sourceLine() >= 0 && !dot->isLocked() && !(dot->isSelected() && selectedCount > 1);
                 // (a point has its numbers when its script has the gizmo's move numbers for it: whether it is selected -- which shows the gizmo -- does not matter)
@@ -2206,7 +2264,7 @@ void View::mousePressEvent(QMouseEvent* event)
                     press_pos = QPoint(-100000, -100000);   // (a click is made at the release)
                     press_target = nullptr;
                     drag_target = nullptr;
-                    m_dotPressLine = dot->sourceLine();
+                    m_dotPressLine = dotLine(dot);
                     m_dotPressPos = event->pos();
                     m_dotMoved = false;
                     beginGizmoDrag(GizmoGrip{dot, 3, 0}, event->pos());
@@ -2220,7 +2278,7 @@ void View::mousePressEvent(QMouseEvent* event)
                     setCursor(Qt::BusyCursor);
                     press_pos = QPoint(-100000, -100000);   // (the select is made here, not by the release)
                     press_target = nullptr;
-                    emit(shapeClicked(dot->sourceLine()));
+                    emit(shapeClicked(dotLine(dot)));
                     return;
                 }
                 drag_target = nullptr;
@@ -2467,6 +2525,12 @@ void View::mousePressEvent(QMouseEvent* event)
     }
 }
 
+// The outline an outline stands for: its own line, or -- an image of another (a placed copy, an image in a symmetry) -- the line of the one it is an image of
+static int editRootLine(const Shape* s)
+{
+    return s->editLine() >= 0 ? s->editLine() : s->sourceLine();
+}
+
 void View::mouseReleaseEvent(QMouseEvent* event)
 {
     QOpenGLWidget::mouseReleaseEvent(event);
@@ -2483,8 +2547,11 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         {
             if (active)
             {
-                // (the point stays drawn where it was let go until the script has it)
-                emit(outlineInsertRequested(shape->sourceLine(), m_pullHit, m_pullLast));
+                // (the point stays drawn where it was let go until the script has it.)  Pressed on an image of an outline -- a placed copy, an image in a symmetry -- the point is put on the
+                // outline it is an image of, where the press is on that: the place of the image taken back
+                bool invertible = false;
+                const QMatrix4x4 back = shape->editMap().inverted(&invertible);
+                emit(outlineInsertRequested(editRootLine(shape), invertible ? back.map(m_pullHit) : m_pullHit, invertible ? back.map(m_pullLast) : m_pullLast));
             }
             else
             {
@@ -2591,7 +2658,7 @@ void View::mouseReleaseEvent(QMouseEvent* event)
         (event->pos() - press_pos).manhattanLength() < 4)
     {
         const int line = (press_target && shapes.contains(press_target))
-            ? press_target->sourceLine() : -1;
+            ? dotLine(press_target) : -1;
         if (press_ctrl)
         {
             if (line >= 0) emit(shapeToggled(line));
@@ -4401,9 +4468,28 @@ void View::beginPull(QPoint pos)
     m_pullLast = m_pullHit;
     m_pullActive = true;
     setCursor(Qt::ClosedHandCursor);
-    m_pullShape->setVirtualPoint(true, after, m_pullHit);
-    m_pullShape->refresh();
+    setPullVirtual(m_pullHit);
     m_overlay->update();
+}
+
+void View::setPullVirtual(const QVector3D& at)
+{
+    // The point that is pulled out of an outline is drawn at once on every shape that stands for the same outline -- the outline itself, its placed copies, its images in a symmetry --, not
+    // only on the one that was pressed: each takes it to its own place (`editMap`) and counts its points the way it has them (a mirror image runs the other way round)
+    if (!m_pullShape) return;
+    bool invertible = false;
+    const QMatrix4x4 back = m_pullShape->editMap().inverted(&invertible);
+    const QVector3D root = invertible ? back.map(at) : at;
+    const int n = m_pullShape->controlCount();
+    auto flip = [n](int after) { return n > 0 ? ((n - 2 - after) % n + n) % n : after; };
+    const int line = editRootLine(m_pullShape);
+    const int afterRoot = m_pullShape->editReversed() ? flip(m_pullAfter) : m_pullAfter;
+    for (Shape* s : shapes)
+    {
+        if (s != m_pullShape && (!s->isEditable() || !s->hasControls() || s->controlCount() != n || editRootLine(s) != line)) continue;
+        s->setVirtualPoint(true, s->editReversed() ? flip(afterRoot) : afterRoot, s == m_pullShape ? at : s->editMap().map(root));
+        s->refresh();
+    }
 }
 
 void View::expectNewPoint(int line0)
@@ -4612,6 +4698,8 @@ bool View::planarRingNormal(const Shape* s, QVector3D& normal) const
     if (!owner || !owner->isFace() || !owner->planeNow(frame)) return false;
     const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
     normal = QVector3D::crossProduct(u, w).normalized();
+    // (the dot of a copy of a point is a point of the ORIGINAL profile: the plane it lies in, taken through the map of the copy, is the plane the copy's outline lies in)
+    if (s->gizmoMapped()) normal = s->gizmoMapLinear().mapVector(normal).normalized();
     return true;
 }
 
@@ -4659,6 +4747,12 @@ bool View::gizmoFrame(const Shape* s, QVector3D F[3]) const
     F[0] = N;
     F[1] = QVector3D::crossProduct(T, N).normalized();
     F[2] = T;
+    // (the dot of a copy of a point: the frame is the original's, taken through the map of the copy -- where the copy's own curve faces there)
+    if (s->gizmoMapped())
+    {
+        const QMatrix4x4 L = s->gizmoMapLinear();
+        for (int a = 0; a < 3; ++a) F[a] = L.mapVector(F[a]).normalized();
+    }
     return true;
 }
 
@@ -7770,7 +7864,8 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             else if (owner && owner->planeNow(frame))
             {
                 const QVector3D u{float(frame[3]), float(frame[4]), float(frame[5])}, w{float(frame[6]), float(frame[7]), float(frame[8])};
-                const QVector3D planeNormal = QVector3D::crossProduct(u, w).normalized();
+                QVector3D planeNormal = QVector3D::crossProduct(u, w).normalized();
+                if (g.shape->gizmoMapped()) planeNormal = g.shape->gizmoMapLinear().mapVector(planeNormal).normalized();      // (a copy of the point: the plane of the copy's outline)
                 if (std::fabs(QVector3D::dotProduct(planeNormal, free_normal)) > 0.2f) free_normal = planeNormal;
             }
             else if (!owner && m_wp.open && m_wp.exists && std::fabs(QVector3D::dotProduct(m_wp.normal(), free_normal)) > 0.2f)
@@ -7842,6 +7937,14 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
                 gizmo_rot_id[a] = h.rotate[a];
                 gizmo_rot0[a] = vars.at(h.rotate[a]);
             }
+        }
+        // (the turn is written in the original's numbers: about the axis the original has, which for a copy of a point is the copy's axis taken back through its map)
+        gizmo_turn_axis = gizmo_axis;
+        if (turned && g.shape->gizmoMapped())
+        {
+            bool ok = false;
+            const QMatrix4x4 back = g.shape->gizmoMapLinear().inverted(&ok);
+            if (ok) gizmo_turn_axis = back.mapVector(gizmo_axis).normalized();
         }
         QVector3D at;
         if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
@@ -8085,7 +8188,7 @@ void View::dragGizmo(QPoint pos)
         {
             // A turn about an axis of the curve's frame, on top of the turn the point had: the three angles of the sum
             QMatrix4x4 turn;
-            turn.rotate(snappedTurn(gizmo_turn), gizmo_axis);
+            turn.rotate(snappedTurn(gizmo_sign * gizmo_turn), gizmo_turn_axis);         // (a copy: the turn of the original that the copy's turn is, see gizmo_sign)
             const QVector3D angles = gizmoEuler(turn * Shape::gizmoRotation(QVector3D(gizmo_rot0[0], gizmo_rot0[1], gizmo_rot0[2])));
             std::map<libfive::Tree::Id, float> numbers;
             for (int a = 0; a < 3; ++a) numbers[gizmo_rot_id[a]] = angles[a];

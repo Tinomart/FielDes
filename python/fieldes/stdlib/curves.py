@@ -285,7 +285,18 @@ class Curve(Shape):
             # say (the sweep starts at the profile: see path_extrude).  Its points are drawn there too (points.displayed), so a point dragged is dragged where it is seen
             out._ctrl_pos = [tuple(c + s for c, s in zip(expr, shift)) for expr in self._ctrl_pos]
             out.vertices = [tuple(a + s for a, s in zip(v, shift)) for v in self.vertices]
-        return out
+        return with_image_dots(self, out)
+
+
+def with_image_dots(model, shown):
+    ''' What is drawn for a profile or a line: `shown`, and -- when it is a placed copy of another (see handles.gizmo) -- the dots of its points, which are images of the original's
+        points: each is pressed, dragged and double clicked, and it is the original's point that changes (see points.image_dot) '''
+    dots = getattr(model, '_image_dots', None)
+    if not dots:
+        return shown
+    # (each of what is returned is asked for its own display in turn: what is drawn of the outline is not asked for the dots again, or it would answer with them once more)
+    shown.__dict__.pop('_image_dots', None)
+    return [shown] + list(dots)
 
 
 # ---- the fields: direct math (expressions of x, y, z), the way a vector renderer measures a polygon: no black boxes, so the renderer can drop what is far away

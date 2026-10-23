@@ -2764,7 +2764,8 @@ Window::Window(Arguments args)
                 size_t points = 0;
                 for (const auto& line : s->outlines()) points += line.size();
                 std::cerr << "automation: outline line " << s->sourceLine() << " flat " << s->isFlat() << " curve " << s->isCurve() << " face " << s->isFace()
-                          << " editable " << s->isEditable() << " selected " << s->isSelected() << " lines " << s->outlines().size() << " points " << points << std::endl;
+                          << " editable " << s->isEditable() << " editline " << s->editLine() << " reversed " << s->editReversed() << " selected " << s->isSelected() << " lines "
+                          << s->outlines().size() << " points " << points << std::endl;
             }
         });
         a->add("fieldclick", [=](const QString& args){

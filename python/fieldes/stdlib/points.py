@@ -205,6 +205,27 @@ def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
     return Point(x, y, z, smooth, radius)
 
 
+def image_dot(source, xyz, rows, about, shift=(0.0, 0.0, 0.0), frozen=()):
+    ''' The dot of a point that is drawn somewhere else than the point is: the IMAGE of `source` under the map that takes a place to `about + rows * (place - about) + shift` (a turn or a
+        mirror image, then a move), at `xyz` -- expressions of the numbers of `source`.  It is the point in every way that is seen: it is pressed, dragged, double clicked, and it is
+        `source` that all of those change -- the numbers of `source`'s gizmo are what it is dragged by, taken back through the map (the viewport does it: `_symmetry`) --, so that the
+        original and everything that is an image of it change together.  `frozen` are the numbers of the map itself (a gizmo's): a drag of the dot never changes them.  The dots of the
+        images of a profile or a line in a symmetry, and of a placed copy of one (see handles.gizmo), are these '''
+    out = Point(xyz[0], xyz[1], xyz[2], smooth=getattr(source, '_smooth', None), radius=getattr(source, '_radius', None))
+    out._kind = getattr(source, '_kind', 'point')
+    out._symmetry_linear = rows
+    g = getattr(source, '_gizmo', None)
+    if g is not None:
+        out._gizmo = g
+        out._symmetry = (tuple(v for row in rows for v in row), tuple(about), tuple(shift))
+    out._no_handles = True
+    out._gizmo_dot_only = True          # (it has no gizmo of its own to show: the original point has)
+    out._symmetry_of = source
+    if frozen:
+        out._symmetry_vars = tuple(frozen)
+    return out
+
+
 def surface(field):
     ''' An open surface from any field: where the field is 0.  (A body's field as a surface is its skin.) '''
     return Surface(field)

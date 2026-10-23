@@ -252,6 +252,28 @@ def stroke_structure(points, elements, name, close, tol):
     return made, shapes
 
 
+def simple_images(points, elements, tol):
+    ''' The images (elements) of a stroke that are strokes of their own touching nothing: no point of an image is on a point of the stroke or of another image.  Those are written as
+        the images of the stroke, `symmetry_image(stroke, symmetry, k)`, like the image of any model -- the stroke's points have their dots on them, and whatever is done to the stroke
+        is done to them.  None when an image meets the stroke or another image (a half drawn on one side of a plane and its image on the other, which are one outline): the points
+        of the images are what joins them then (see stroke_structure) '''
+    nodes = [tuple(p) for p in points]
+    keep = []
+    for el in elements:
+        images = [el.apply(p) for p in points]
+        on = [any(math.dist(q, pos) < tol for pos in nodes) for q in images]
+        if all(on):
+            # (the stroke is its own image: nothing to make -- unless it falls on something else, which is not told here)
+            if all(math.dist(q, p) < tol for q, p in zip(images, points)) or all(math.dist(q, p) < tol for q, p in zip(images, reversed(points))):
+                continue
+            return None
+        if any(on):
+            return None
+        nodes.extend(images)
+        keep.append(el)
+    return keep
+
+
 def point_name(var, node, n, made):
     ''' The name of a node: `var_p3` for the third point put down, `var_p3_m2` for its image by the second image '''
     if node < n:

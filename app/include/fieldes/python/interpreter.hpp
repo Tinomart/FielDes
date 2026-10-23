@@ -71,6 +71,9 @@ protected:
         PyObject* obj, Result &out, std::map<libfive::Tree::Id, float>& vars,
         int line=-1, bool viewport=false);
 
+    // The line of each statement's value in the run being recorded (by the object): what a placed copy of a model finds the line of its original by (see recordShape)
+    std::map<PyObject*, int> m_stmtLines;
+
     PyObject* m_runFunc=NULL;
     PyObject* m_resumeFunc=NULL;
     PyObject* m_runnerMod=NULL;

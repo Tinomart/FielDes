@@ -464,6 +464,16 @@ public:
         see View::groupGizmo).  NEVER until a line says otherwise  */
     void setOutlineMode(Gizmo::Mode m) { m_outlineMode = m; }
     Gizmo::Mode outlineMode() const { return m_outlineMode; }
+    /*  An outline that is an IMAGE of another -- a placed copy (`instance(x)`, then its own gizmo), an image in a symmetry: the line of the outline it is an image of, which is what editing it
+        edits (-1: it is not an image, or its original is not shown), where a place of the original is taken to the image (`editMap`: original -> this), and whether the image runs the
+        other way round (a mirror image: its points are in the opposite order).  A point put on the outline of an image is put on the original -- at the place the press has there --, and
+        is drawn at once on the original and on every image of it (see View::setPullVirtual)  */
+    void setEditLine(int line) { m_editLine = line; }
+    int editLine() const { return m_editLine; }
+    void setEditMap(const QMatrix4x4& rootToThis, bool reversed) { m_editMap = rootToThis; m_editReversed = reversed; }
+    const QMatrix4x4& editMap() const { return m_editMap; }
+    bool editReversed() const { return m_editReversed; }
+    int controlCount() const { return int(m_controls.size()); }
     /*  A symmetry model (fieldes.stdlib.symmetries.symmetry_planes): the arrangement of its planes and where it was made, in its own place -- before its gizmo moved and turned it.
         The planes as they are now are `symmetryNow`'s: the definition, moved and turned by the numbers of the gizmo  */
     struct SymmetryDef
@@ -486,8 +496,11 @@ public:
     void setLinked(bool l) { m_linked = l; }
     bool isLinked() const { return m_linked; }
     /*  The gizmo is shown now: with at least one number to drag, not locked, and its mode says so (ALWAYS, or CLICK while
-     *  the shape is selected)  */
+     *  the shape is selected).  The dot of a copy of a point (dotOnly) has none -- unless it is the copy that was clicked: that one shows the point's whole gizmo, at the copy,
+     *  and what is dragged on it changes the original's numbers (View::applyActiveCopy)  */
     bool hasGizmo() const;
+    void setActiveCopy(bool on) { m_activeCopy = on; }
+    bool activeCopy() const { return m_activeCopy; }
     /*  Has a number that moves it (`gizmo(x, move=(var, ...))`), in whatever mode, and is not locked: the shared
      *  gizmo of a multi-selection can move it, whatever its own gizmo mode is  */
     bool hasMoveVars() const;
@@ -855,6 +868,10 @@ protected:
     std::vector<ControlPoint> m_controls;
     bool m_controls_default = false, m_controls_closed = false, m_controls_face = false;
     Gizmo::Mode m_outlineMode = Gizmo::NEVER;
+    int m_editLine = -1;
+    QMatrix4x4 m_editMap;
+    bool m_editReversed = false;
+    bool m_activeCopy = false;          // (the copy of a point that was clicked shows the point's gizmo: set by the viewport after every run, not by the script)
     bool m_virtual_on = false, m_run_virtual_on = false;
     int m_virtual_after = 0, m_run_virtual_after = 0;
     QVector3D m_virtual_pos, m_run_virtual_pos;

@@ -25,8 +25,9 @@ The images FOLLOW what they are the images of and the symmetry: move the origina
 with it.  They have no numbers of their own: pulling one pulls the original.  FielDes writes the images of what you make while a symmetry is selected (Shift+S turns that on and off):
 one model, `leg_images`, for a body, a 2D shape or a point (a body or a 2D shape: the union of its images; a point: a set of points); what is
 made of other models -- a path_extrude, a union -- gets its images the same way (`distinct=True` leaves out those that would be the model itself or another image); a surface or a field
-gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: it is made of its points, which are the models, so each point has its images
-(`symmetry_image(point, mirror, 3)`) and the stroke goes through them.
+gets one model for each image, `symmetry_image`; so does a profile, a line or a spline: its image is the same outline through the images of its points
+(`symmetry_image(stroke, mirror, 1)`), each point of it a dot that is pressed, dragged, selected and deleted -- it is the original's point that changes -- and a press on its outline
+puts a point on the original; a stroke whose images meet it (a half drawn on one side of a plane) is made of the points it shares with them (`symmetry_image(point, mirror, 3)`).
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -370,8 +371,6 @@ def symmetry_image(shape, symmetry, index=1):
         symmetry is selected (Shift+S) '''
     sym = symmetry
     _check(shape, sym, 'symmetry_image')
-    if getattr(shape, '_ctrl_pos', None):
-        raise TypeError('symmetry_image(): a profile or a curve is made of its points -- make the images of the points, and the profile through them')
     elements = base_elements(sym._symmetry_def)
     try:
         k = int(index)
@@ -379,6 +378,9 @@ def symmetry_image(shape, symmetry, index=1):
         raise TypeError('symmetry_image(): the number of the image is a whole number, 1 to %d' % len(elements))
     if not 1 <= k <= len(elements):
         raise ValueError('symmetry_image(): this symmetry has %d images -- number them 1 to %d, not %s' % (len(elements), len(elements), index))
+    if callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
+        # What is made of points -- a profile, a polyline, a spline -- has its image through the images of its points, like any shape has its image
+        return _outline_image(shape, sym, k)
     c, turn = _frame_of(sym)
     # (the image's matrix in the world: the element, in the symmetry's own axes, taken to where its gizmo has put them)
     m = _matmul_expr(turn, _matmul_expr(elements[k - 1], _transpose(turn)))
@@ -444,6 +446,34 @@ def symmetry_image(shape, symmetry, index=1):
     out._symmetry_source = sym
     out._symmetry_index = k
     return out
+
+
+def _outline_image(part, sym, k):
+    ''' The image numbered `k` of a profile, a polyline or a spline: the same outline through the images of its points (each a dot that is pressed, dragged, double clicked and
+        selected, and it is the original's point that all of those reach), so that whatever is done to the original -- a point dragged, pulled out of its edge, deleted -- is done to its
+        image as well, and a press on the line of the image puts a point on the original (see points.image_dot, View::setPullVirtual).  What `_carried_images` makes for what a sweep is
+        made from, as a model of its own '''
+    from fieldes.stdlib.points import Point
+    dots = []
+    for p in part.points:
+        if not hasattr(p, 'xyz'):
+            p = Point(*(tuple(p) + (0.0,) * (3 - len(p))))          # (a point that is only numbers: its image is a dot that has nothing to drag)
+        dot = symmetry_image(p, sym, k)
+        dot._gizmo_dot_only = True
+        dots.append(dot)
+    improper = bool(dots) and _determinant(dots[0]._symmetry_linear) < 0
+    made = part._remake(dots, improper)
+    mn, cn = _numeric_map(sym, k)
+    made._image_dots = dots
+    made._edit_map = (tuple(v for row in mn for v in row), tuple(cn), (0.0, 0.0, 0.0))
+    made._edit_reversed = improper
+    made._editable = True
+    made._symmetry_of = part
+    made._symmetry_source = sym
+    made._symmetry_index = k
+    made._no_handles = True
+    made._outline_gizmo = False                      # (it has no gizmo to give a mode to: the original's points are what is dragged)
+    return made
 
 
 def _numeric_map(sym, k):
@@ -570,7 +600,12 @@ def _carried_images(shape, sym, numbers):
             for dot in dots:
                 dot._gizmo_dot_only = True
             made = part._remake(dots, _determinant(dots[0]._symmetry_linear) < 0)
-            made._editable = False                      # (a press on it puts no point on it: the original's is what has them)
+            # (a press on its line puts a point on the original, taken back through the map of this image -- see points.image_dot and View::setPullVirtual -- and the points of a mirror image run
+            # the other way round)
+            mn, cn = _numeric_map(sym, k)
+            made._edit_map = (tuple(v for row in mn for v in row), tuple(cn), (0.0, 0.0, 0.0))
+            made._edit_reversed = _determinant(dots[0]._symmetry_linear) < 0
+            made._editable = True
             made._symmetry_of = part
             out.append(made)
             out.extend(dots)
