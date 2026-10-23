@@ -2913,6 +2913,7 @@ bool Shape::updateFrom(const Shape* other)
     // (the same tree: only whether its gizmo is shown, and its pivot,
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
+    m_outlineMode = other->m_outlineMode;           // (when the gizmo of a profile or a line is shown: `x = gizmo(x, mode=...)` changes nothing in its tree)
     m_frozenVars = other->m_frozenVars;
     m_sceneGizmoVars = other->m_sceneGizmoVars;
     m_symmetryImage = other->m_symmetryImage;
@@ -3098,6 +3099,11 @@ bool Shape::updateVars(const std::map<libfive::Tree::Id, float>& vs)
             used.push_back(v.first);
         }
     }
+
+    // A point is not painted -- its dot is drawn where its numbers say, taken from `vars` -- so a number of its own that changes needs no mesh made again: the number is kept (above)
+    // and nothing is rendered.  The drag of the gizmo of a point, or of the points a profile is made of, measured and meshed every one of them at every step (27 to 40 ms each on the
+    // main thread in the first step: 143 ms for the four points of a square), for a mesh that nothing draws
+    if (changed && m_isPoint && no_paint) return false;
 
     // A shape that is another one moved or mirrored, and the numbers that changed are the model's own geometry (a surface of it is pulled): it is not meshed -- it is the same
     // shape -- it takes the mesh of the model when that is made.  (The evaluators are given the numbers now: whatever renders it next is of them)

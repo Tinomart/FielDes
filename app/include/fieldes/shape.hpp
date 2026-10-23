@@ -460,6 +460,10 @@ public:
         bool dotOnly = false;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
+    /*  When the gizmo of a profile, a polyline or a spline is shown (`x = gizmo(x, mode='click')`, which has no numbers: the outline's gizmo is the shared one of its points,
+        see View::groupGizmo).  NEVER until a line says otherwise  */
+    void setOutlineMode(Gizmo::Mode m) { m_outlineMode = m; }
+    Gizmo::Mode outlineMode() const { return m_outlineMode; }
     /*  A symmetry model (fieldes.stdlib.symmetries.symmetry_planes): the arrangement of its planes and where it was made, in its own place -- before its gizmo moved and turned it.
         The planes as they are now are `symmetryNow`'s: the definition, moved and turned by the numbers of the gizmo  */
     struct SymmetryDef
@@ -850,6 +854,7 @@ protected:
     int m_point_style = 0;
     std::vector<ControlPoint> m_controls;
     bool m_controls_default = false, m_controls_closed = false, m_controls_face = false;
+    Gizmo::Mode m_outlineMode = Gizmo::NEVER;
     bool m_virtual_on = false, m_run_virtual_on = false;
     int m_virtual_after = 0, m_run_virtual_after = 0;
     QVector3D m_virtual_pos, m_run_virtual_pos;

@@ -6161,6 +6161,7 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
     members.clear();
     int selected = 0;
     bool anyShown = false, anyLocked = false;
+    const QList<const Shape*> outlines = outlinesWithGizmo();           // (the profiles and lines whose gizmo is shown: shapes drawn from the numbers of their points)
     for (Shape* s : shapes)
     {
         // (the dots of the paths that are drawn with the images of a sweep are pressed and dragged, they are not part of a selection of the row)
@@ -6170,6 +6171,24 @@ bool View::groupGizmo(QList<Shape*>& members, QVector3D& center) const
         if (!s->hasMoveVars()) continue;
         members << s;
         anyShown |= s->gizmo().mode != Shape::Gizmo::NEVER;
+    }
+    // A profile or a line has no gizmo of its own -- its points have the numbers that place it -- so, where its gizmo is shown, the points it is made of join the shared gizmo,
+    // selected themselves or not: the gizmo of the outline moves, turns and scales them all together.  The mode of the outline decides whether it is shown; the modes of its
+    // points are for the points
+    if (!outlines.isEmpty())
+    {
+        for (Shape* p : shapes)
+        {
+            if (!p->isPoint() || p->gizmo().dotOnly || members.contains(p)) continue;
+            bool ofOutline = false;
+            for (const Shape* o : outlines) ofOutline = ofOutline || o->controlOf(p) >= 0;
+            if (!ofOutline) continue;
+            anyLocked |= p->isLocked();
+            if (!p->hasMoveVars()) continue;
+            members << p;
+        }
+        anyShown = true;
+        selected = std::max(selected, 2);
     }
     // (a locked shape in the selection: the selection is not moved or edited -- there is no gizmo for it)
     if (selected < 2 || anyLocked || members.isEmpty() || !anyShown) return false;
@@ -6210,6 +6229,31 @@ bool View::groupOfPoints(const QList<Shape*>& members) const
         if (!s->isPoint() || s->gizmoMapped()) return false;          // (the rings turn and scale the points by numbers of their own: an image's are its original's)
     }
     return true;
+}
+
+// The profiles and lines whose gizmo is shown (see groupGizmo), by the mode of the outline itself (`x = gizmo(x, mode=...)`, never until a line says otherwise): click while it
+// is selected as a whole, always.  An outline that is always shown but not selected has its gizmo only while nothing else is selected: the gizmo that its points share cannot be
+// shown beside the gizmo of another selection
+QList<const Shape*> View::outlinesWithGizmo() const
+{
+    QList<const Shape*> out;
+    bool anySelected = false;
+    for (const Shape* s : shapes) anySelected = anySelected || (s->isSelected() && !s->gizmo().dotOnly);
+    for (const Shape* s : shapes)
+    {
+        if (!s->hasControls() || s->isPoint() || s->gizmo().dotOnly) continue;
+        const Shape::Gizmo::Mode mode = s->outlineMode();
+        if (mode == Shape::Gizmo::NEVER) continue;
+        if (s->isSelected() || (mode == Shape::Gizmo::ALWAYS && !anySelected && !s->isLocked())) out << s;
+    }
+    return out;
+}
+
+// Whether the shared gizmo is that of a profile or a line (see groupGizmo): arrows in all three directions, and rings that turn and scale the arrangement of its points about
+// the middle of them -- and not that of a few points, whose rings change each point's own numbers
+bool View::outlineSelected() const
+{
+    return !outlinesWithGizmo().isEmpty();
 }
 
 QVector3D View::groupRingNormal(const QList<Shape*>& members) const
@@ -6362,9 +6406,9 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
                 return GizmoGrip{members[0], 3, 0, true};
             }
             const bool shift = shiftHeld();
-            // (points of one profile have no arrows and no squares: the dot moves them, in the plane of the profile)
+            // (points of one profile have no arrows and no squares: the dot moves them, in the plane of the profile -- unless the profile itself is selected: all of it can move anywhere)
             QVector3D profileNormal;
-            const bool inProfile = groupInProfilePlane(members, profileNormal);
+            const bool inProfile = groupInProfilePlane(members, profileNormal) && !outlineSelected();
             for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
@@ -6385,22 +6429,53 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
             }
             if (groupOfPoints(members))
             {
-                // The ring that scales the points evenly about the middle of them, and the one that turns them about it
-                const double ds = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
-                if (ds < bestDist) { bestDist = ds; best = GizmoGrip{members[0], 5, 0, true}; }
-                QVector3D u, v;
-                planeBasis(groupRingNormal(members), u, v);
-                QPointF prev;
-                for (int k = 0; k <= kRingSegments; ++k)
+                const bool outline = outlineSelected();
+                if (outline && !shift)
                 {
-                    const float t = float(2 * M_PI * k / kRingSegments);
-                    const QPointF q = toScreen(groupCenter + (0.62f * L) * (std::cos(t) * u + std::sin(t) * v));
-                    if (k > 0)
+                    // The outline selected as a whole has the gizmo of any shape: a scale knob on each axis (it wins over the arrow behind it) and a ring about each axis
+                    for (int a = 0; a < 3; ++a)
                     {
-                        const double d = distanceToSegment(at, prev, q) + 1.5;      // (the arrows and the scale ring win ties)
-                        if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 6, 2, true}; }
+                        const QPointF q = toScreen(groupCenter + unitAxis(a) * (kKnobAt * L));
+                        const double d = std::hypot(at.x() - q.x(), at.y() - q.y()) - 3.5;
+                        if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 2, a, true}; }
                     }
-                    prev = q;
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        QVector3D ru, rv;
+                        planeBasis(unitAxis(a), ru, rv);
+                        QPointF rprev;
+                        for (int k = 0; k <= kRingSegments; ++k)
+                        {
+                            const float t = float(2 * M_PI * k / kRingSegments);
+                            const QPointF q = toScreen(groupCenter + (0.62f * L) * (std::cos(t) * ru + std::sin(t) * rv));
+                            if (k > 0)
+                            {
+                                const double d = distanceToSegment(at, rprev, q) + 1.5;      // (the arrows and the knobs win ties)
+                                if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 1, a, true}; }
+                            }
+                            rprev = q;
+                        }
+                    }
+                }
+                else
+                {
+                    // The ring that scales the points evenly about the middle of them (with Shift, the outline's own: all of it, evenly), and the one that turns them about it
+                    const double ds = std::fabs(std::hypot(at.x() - p0.x(), at.y() - p0.y()) - kUniformRingPx) - 3.5;
+                    if (ds < bestDist) { bestDist = ds; best = GizmoGrip{members[0], 5, 0, true}; }
+                    QVector3D u, v;
+                    planeBasis(groupRingNormal(members), u, v);
+                    QPointF prev;
+                    for (int k = 0; k <= kRingSegments && !outline; ++k)
+                    {
+                        const float t = float(2 * M_PI * k / kRingSegments);
+                        const QPointF q = toScreen(groupCenter + (0.62f * L) * (std::cos(t) * u + std::sin(t) * v));
+                        if (k > 0)
+                        {
+                            const double d = distanceToSegment(at, prev, q) + 1.5;      // (the arrows and the scale ring win ties)
+                            if (d < bestDist) { bestDist = d; best = GizmoGrip{members[0], 6, 2, true}; }
+                        }
+                        prev = q;
+                    }
                 }
             }
         }
@@ -6509,7 +6584,24 @@ bool View::gizmoGripPoint(int kind, int axis, QPoint& pos) const
     {
         // (the shared gizmo of several selected shapes has the arrows and the dot only)
         const float L = gizmoLength(groupCenter);
-        if (!(L > 0) || (kind != 0 && kind != 3 && kind != 4 && kind != 5 && kind != 6)) return false;
+        if (!(L > 0) || (kind != 0 && kind != 1 && kind != 2 && kind != 3 && kind != 4 && kind != 5 && kind != 6)) return false;
+        if (kind == 1 || kind == 2)
+        {
+            // (the rings and the knobs of an outline's own gizmo: a knob on its arrow, a ring at 45 degrees round, clear of the arrows)
+            if (!groupOfPoints(members) || !outlineSelected()) return false;
+            if (kind == 2)
+            {
+                pos = toScreen(groupCenter + unitAxis(axis) * (kKnobAt * L)).toPoint();
+            }
+            else
+            {
+                QVector3D u, v;
+                planeBasis(unitAxis(axis), u, v);
+                const float t = float(M_PI / 4);
+                pos = toScreen(groupCenter + (0.62f * L) * (std::cos(t) * u + std::sin(t) * v)).toPoint();
+            }
+            return true;
+        }
         if (kind == 5 || kind == 6)
         {
             if (!groupOfPoints(members)) return false;
@@ -6931,9 +7023,11 @@ void View::drawHints(QPainter& painter)
 {
     if (mouse.state != mouse.RELEASED || m_wait.on) return;
     QString text;
-    if (gizmo_hover.group && gizmo_hover.kind == 5) text = T("Drag the ring to scale each point evenly: they stay where they are");
-    else if (gizmo_hover.group && gizmo_hover.kind == 6) text = T("Drag the ring to turn each point: they stay where they are");
-    else if (gizmo_hover.kind == 2 && gizmo_hover.shape && (gizmo_hover.shape->isPoint() || shiftHeld())) text = T("Drag the ring to scale evenly");
+    if (gizmo_hover.group && gizmo_hover.kind == 5)
+        text = outlineSelected() ? T("Drag the ring to scale the whole outline about its middle") : T("Drag the ring to scale each point evenly: they stay where they are");
+    else if (gizmo_hover.group && gizmo_hover.kind == 6)
+        text = outlineSelected() ? T("Drag the ring to turn the whole outline about its middle") : T("Drag the ring to turn each point: they stay where they are");
+    else if (gizmo_hover.kind == 2 && !gizmo_hover.group && gizmo_hover.shape && (gizmo_hover.shape->isPoint() || shiftHeld())) text = T("Drag the ring to scale evenly");
     else if (m_dotHover && pointStyleOf(m_dotHover) != 0) text = T("Double-click: corner, spline point or round corner");
     else if (m_outlineHover && m_outlineArcHover) text = T("Drag to change the radius of this corner");
     else if (m_outlineHover) text = m_outlineHover->isCurve() ? T("Drag to pull a point out of the line") : T("Drag to pull a point out of the edge");
@@ -7121,7 +7215,7 @@ void View::drawGizmo(QPainter& painter)
                 return g == gizmo_hover || (gizmo_drag && g == gizmo_active);
             };
             QVector3D profileNormal;
-            const bool inProfile = groupInProfilePlane(members, profileNormal);           // (points of one profile: the dot only, it moves them in the plane)
+            const bool inProfile = groupInProfilePlane(members, profileNormal) && !outlineSelected();      // (points of one profile: the dot only, it moves them in the plane -- but the profile itself, selected, has the arrows)
             for (int a = 0; a < 3 && !inProfile; ++a)
             {
                 if (shift)
@@ -7152,7 +7246,40 @@ void View::drawGizmo(QPainter& painter)
             }
             if (groupOfPoints(members))
             {
-                // The rings of a group of points: the one in the plane turns them about the middle of them all, the gold one scales them evenly
+                // The rings of a group of points: the one in the plane turns them about the middle of them all, the gold one scales them evenly.  The outline selected as a whole has the
+                // gizmo of any shape instead: a ring about each axis and a knob on each axis, and with Shift the one gold ring
+                const bool outline = outlineSelected();
+                if (outline && !shift)
+                {
+                    painter.setBrush(Qt::NoBrush);
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        QVector3D ru, rv;
+                        planeBasis(unitAxis(a), ru, rv);
+                        QPolygonF poly;
+                        for (int k = 0; k <= kRingSegments; ++k)
+                        {
+                            const float t = float(2 * M_PI * k / kRingSegments);
+                            poly << toScreen(groupCenter + (0.62f * L) * (std::cos(t) * ru + std::sin(t) * rv));
+                        }
+                        const bool onRing = hotG(1, a);
+                        painter.setPen(QPen(QColor(0, 0, 0, 90), onRing ? 6 : 4.5));
+                        painter.drawPolyline(poly);
+                        painter.setPen(QPen(onRing ? kGizmoColor[a].lighter(140) : kGizmoColor[a], onRing ? 3.5 : 2.2));
+                        painter.drawPolyline(poly);
+                    }
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        const QPointF q = toScreen(groupCenter + unitAxis(a) * (kKnobAt * L));
+                        const bool onKnob = hotG(2, a);
+                        QColor kc = kGizmoColor[a];
+                        if (onKnob) kc = kc.lighter(140);
+                        const double r = onKnob ? 6.5 : 5.5;
+                        painter.setPen(QPen(QColor(0, 0, 0, 140), 1.5));
+                        painter.setBrush(kc);
+                        painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
+                    }
+                }
                 QVector3D u, v;
                 planeBasis(groupRingNormal(members), u, v);
                 QPolygonF turnPoly;
@@ -7163,25 +7290,32 @@ void View::drawGizmo(QPainter& painter)
                 }
                 const bool turning = gizmo_drag && gizmo_active.group && gizmo_active.kind == 6;
                 const bool onTurn = hotG(6, 2);
-                painter.setBrush(Qt::NoBrush);
-                painter.setPen(QPen(QColor(0, 0, 0, 90), onTurn ? 6 : 4.5));
-                painter.drawPolyline(turnPoly);
-                painter.setPen(QPen(onTurn ? kGizmoColor[2].lighter(140) : kGizmoColor[2], onTurn ? 3.5 : 2.2));
-                painter.drawPolyline(turnPoly);
+                if (!outline)
+                {
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(QColor(0, 0, 0, 90), onTurn ? 6 : 4.5));
+                    painter.drawPolyline(turnPoly);
+                    painter.setPen(QPen(onTurn ? kGizmoColor[2].lighter(140) : kGizmoColor[2], onTurn ? 3.5 : 2.2));
+                    painter.drawPolyline(turnPoly);
+                }
                 const bool scaling = gizmo_drag && gizmo_active.group && gizmo_active.kind == 5;
                 const bool onScale = hotG(5, 0);
                 QColor c = kUniformColor;
                 if (onScale) c = c.lighter(140);
-                if (scaling)
-                {
-                    painter.setPen(QPen(QColor(kUniformColor.red(), kUniformColor.green(), kUniformColor.blue(), 110), 1.2, Qt::DashLine));
-                    painter.drawEllipse(p0, kUniformRingPx, kUniformRingPx);
-                }
                 const double radius = scaling ? std::max(6.0, kUniformRingPx * double(gizmo_factor)) : kUniformRingPx;
-                painter.setPen(QPen(QColor(0, 0, 0, 90), onScale ? 6.0 : 4.5));
-                painter.drawEllipse(p0, radius, radius);
-                painter.setPen(QPen(c, onScale ? 3.5 : 2.2));
-                painter.drawEllipse(p0, radius, radius);
+                if (!outline || shift)
+                {
+                    painter.setBrush(Qt::NoBrush);
+                    if (scaling)
+                    {
+                        painter.setPen(QPen(QColor(kUniformColor.red(), kUniformColor.green(), kUniformColor.blue(), 110), 1.2, Qt::DashLine));
+                        painter.drawEllipse(p0, kUniformRingPx, kUniformRingPx);
+                    }
+                    painter.setPen(QPen(QColor(0, 0, 0, 90), onScale ? 6.0 : 4.5));
+                    painter.drawEllipse(p0, radius, radius);
+                    painter.setPen(QPen(c, onScale ? 3.5 : 2.2));
+                    painter.drawEllipse(p0, radius, radius);
+                }
                 if (scaling || turning)
                 {
                     const QString text = scaling ? QString::fromUtf8("\xc3\x97") + QString::number(double(gizmo_factor), 'f', 2)
@@ -7501,13 +7635,14 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     gizmo_oriented = false;
     gizmo_frame_shape = nullptr;
     gizmo_sign = 1.0f;
-    if ((g.kind == 5 || g.kind == 6) && g.group)
+    if ((g.kind == 1 || g.kind == 2 || g.kind == 5 || g.kind == 6) && g.group)
     {
-        // A ring of a group of points: it scales or turns them about the middle of them all.  The place of each and the numbers that move it are noted now
+        // A ring or a knob of a group of points: it scales or turns them about the middle of them all.  The place of each and the numbers that move it are noted now
         QList<Shape*> members;
         QVector3D groupCenter;
         if (!groupGizmo(members, groupCenter) || !groupOfPoints(members)) return;
         gizmo_group.clear();
+        gizmo_group_outline = outlineSelected();
         for (const Shape* s : members)
         {
             const auto& h = s->gizmo();
@@ -7537,9 +7672,17 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
             gizmo_centre = toScreen(gizmo_pivot);
             gizmo_press_r = std::max(8.0, std::hypot(double(pos.x()) - gizmo_centre.x(), double(pos.y()) - gizmo_centre.y()));
         }
+        else if (g.kind == 2)
+        {
+            // (a scale knob of the outline's own gizmo: along its axis, as the knob of any shape is)
+            gizmo_len = gizmoLength(gizmo_pivot);
+            gizmo_factor = 1.0f;
+            gizmo_dir = toScreen(gizmo_pivot + unitAxis(g.axis) * gizmo_len) - toScreen(gizmo_pivot);
+            if (std::hypot(gizmo_dir.x(), gizmo_dir.y()) < 1.0) return;    // pointing at the camera
+        }
         else
         {
-            gizmo_axis = groupRingNormal(members);
+            gizmo_axis = g.kind == 1 ? unitAxis(g.axis) : groupRingNormal(members);       // (a ring of the outline's own gizmo is about its axis)
             QVector3D at;
             if (!ringPoint(pos, gizmo_pivot, gizmo_axis, at)) return;
             gizmo_vec = at - gizmo_pivot;
@@ -7767,16 +7910,24 @@ void View::dragGizmo(QPoint pos)
         dragFillet(pos);
         return;
     }
-    if ((gizmo_active.kind == 5 || gizmo_active.kind == 6) && gizmo_active.group)
+    if ((gizmo_active.kind == 1 || gizmo_active.kind == 2 || gizmo_active.kind == 5 || gizmo_active.kind == 6) && gizmo_active.group)
     {
         // The points' places now: scaled about the middle by how far the cursor is from it against where it was pressed, or turned about it by the cursor's turn; the numbers
-        // that move each point change by what it has moved
+        // that move each point change by what it has moved.  (Kinds 1 and 2, a ring about an axis and a knob on it, are those of the outline's own gizmo; 5 and 6 those of a few points)
         std::map<libfive::Tree::Id, float> numbers;
         QMatrix4x4 turn;
         if (gizmo_active.kind == 5)
         {
             const double r = std::hypot(double(pos.x()) - gizmo_centre.x(), double(pos.y()) - gizmo_centre.y());
             gizmo_factor = std::max(0.01f, float(r / gizmo_press_r));
+        }
+        else if (gizmo_active.kind == 2)
+        {
+            // (a scale knob stretches the outline along its axis, as the knob of any shape does: pulled out by a share of its arrow, it grows by that share)
+            const double l2 = QPointF::dotProduct(gizmo_dir, gizmo_dir);
+            if (l2 < 1) return;
+            const double t = QPointF::dotProduct(QPointF(pos - gizmo_press), gizmo_dir) / l2;
+            gizmo_factor = std::max(0.01f, float(1.0 + t / kKnobAt));
         }
         else
         {
@@ -7789,6 +7940,31 @@ void View::dragGizmo(QPoint pos)
             gizmo_turn += float(std::atan2(s, c) * 180.0 / M_PI);
             gizmo_vec = now;
             turn.rotate(gizmo_turn, gizmo_axis);
+        }
+        if (!gizmo_group_outline && (gizmo_active.kind == 1 || gizmo_active.kind == 2)) return;       // (the rings and the knobs are the outline's own)
+        if (gizmo_group_outline)
+        {
+            // A profile or a line selected as a whole: the ring or the knob scales, stretches or turns the arrangement of its points about the middle of them all -- the outline keeps
+            // its shape, bigger, stretched or turned -- and the numbers that move each point change by what it has moved.  The points' own scale and rotation numbers are left as they are
+            const float turnedBy = snappedTurn(gizmo_turn);
+            QMatrix4x4 about;
+            about.rotate(turnedBy, gizmo_axis.normalized());
+            for (const GroupPoint& gp : gizmo_group)
+            {
+                QVector3D rel = gp.pos0 - gizmo_pivot;
+                if (gizmo_active.kind == 5) rel *= gizmo_factor;
+                else if (gizmo_active.kind == 2) rel[gizmo_active.axis] *= gizmo_factor;
+                else rel = about.mapVector(rel);
+                const QVector3D now = gizmo_pivot + rel;
+                const QVector3D d = now - gp.pos0;
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (gp.id[a]) numbers[gp.id[a]] = gp.value0[a] + d[a];
+                }
+            }
+            if (!numbers.empty()) applyGizmoNumbers(numbers);
+            m_overlay->update();
+            return;
         }
         // The points stay where they are: the ring scales every point by its own scale, or turns every point by its own rotation, each one alone -- it does not make the
         // arrangement of the points bigger or turn it about its middle

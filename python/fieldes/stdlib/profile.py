@@ -42,7 +42,8 @@ class Profile(Shape):
     ''' A 2D shape made of points (see `profile`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
         .smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v) '''
     _kind = 'profile'
-    _no_gizmo = True                # (its points have the gizmos: they are what is dragged)
+    _no_gizmo = True                # (no gizmo() line with numbers of its own: its points have them, and the viewport shares them -- View::groupGizmo -- to move, turn and scale it)
+    _outline_gizmo = True           # (the model tree's gizmo button gives it a line without numbers, `x = gizmo(x, mode=...)`: when that shared gizmo is shown, off until said otherwise)
 
     def _remake(self, points, improper=False):
         ''' The same outline through other points (the images of its points in a symmetry: see symmetries.symmetry_images) -- the other way round for a mirror image, which turns
@@ -180,6 +181,7 @@ def profile(source, smooth=False, radius=0):
 
 
 profile._makes_no_gizmo = True
+profile._makes_outline_gizmo = True
 
 
 def _box_of_points(points):

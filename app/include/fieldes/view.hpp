@@ -1003,6 +1003,11 @@ protected:
     /*  Several points are selected: they share one gizmo, and two rings of it scale and turn them -- evenly, about the middle of them all, which moves each of them (it is the
         numbers that move each that change).  Each point's place and its move numbers when a drag of a ring began  */
     bool groupOfPoints(const QList<Shape*>& members) const;
+    /*  Whether a profile or a line (a shape drawn from the numbers of its points) is selected as a whole: its points then join the shared gizmo, which has the arrows in all three
+        directions and rings that scale and turn the ARRANGEMENT of the points about the middle of them (selected as points alone, the rings change each point's own numbers)  */
+    bool outlineSelected() const;
+    QList<const Shape*> outlinesWithGizmo() const;
+    bool gizmo_group_outline = false;      // (the drag of a ring of the shared gizmo that is going on is the outline's: the places of the points change)
     QVector3D groupRingNormal(const QList<Shape*>& members) const;     // (the axis they turn about: the plane of their profile, else the work plane's, else the way the camera looks)
     // (the place of a point of a group and the numbers that move it; and the numbers of its own scale and rotation: the group's rings change those, point by point)
     struct GroupPoint { QVector3D pos0; libfive::Tree::Id id[3]; float value0[3]; libfive::Tree::Id scaleId[3]; float scale0[3]; libfive::Tree::Id rotId[3]; float rot0[3]; };

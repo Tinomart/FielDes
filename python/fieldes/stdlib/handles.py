@@ -201,6 +201,8 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
         'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
         priority where it is shown.
+        A profile, a polyline or a spline has no numbers of its own -- its points do -- so `profile_1 = gizmo(profile_1, mode='click')` only says when the one gizmo of
+        its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).
         To make a shape undraggable, lock it: `shape = lock(shape)`. '''
     if mode is None:
         mode = 'click'
@@ -211,6 +213,9 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         raise ValueError("gizmo(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
         raise ValueError('gizmo(): move=, rotate= and scale= take three numbers each')
+    if getattr(shape, '_outline_gizmo', False) and about is None and all(_is_number(v) for v in tuple(move) + tuple(rotate) + tuple(scale)) \
+            and all(v == 0 for v in tuple(move) + tuple(rotate)) and all(v == 1 for v in scale):
+        return _outlined(shape, mode)
     if getattr(shape, '_linked', False):
         # A linked copy is only moved and rotated: its shape is its original's.  A scale of numbers other than 1 would make it another shape -- refused; scale numbers
         # that are var()s (an older gizmo line, or one written before the copy was known to be linked) mean 1, and are not offered to be dragged
@@ -315,6 +320,22 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
     # what FielDes draws the gizmo from
     out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
     _note_gizmo_vars(shape, move, rotate, scale)
+    return out
+
+
+def _outlined(shape, mode):
+    ''' A profile, a polyline or a spline, with the mode of its gizmo (`profile_1 = gizmo(profile_1, mode='click')`).  It is the outline itself in every other way -- a copy with
+        its points, its face and its handles; a placed shape would be made again from a field and lose them --, because the gizmo of an outline has no numbers of its own: it
+        moves, turns and scales the points the outline is made of (View::groupGizmo), and this only says when that gizmo is shown '''
+    ptr = lib.libfive_tree_copy(shape.ptr)
+    try:
+        out = type(shape)(ptr)
+    except TypeError:
+        out = Shape(ptr)
+    for name, value in shape.__dict__.items():
+        if name != 'ptr':
+            out.__dict__[name] = value
+    out._outline_mode = mode
     return out
 
 

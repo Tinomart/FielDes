@@ -1529,6 +1529,18 @@ void Interpreter::recordShape(
                 {
                     shape->setNoPaint(!face);
                     shape->setControls(std::move(points), cd && PyObject_IsTrue(cd) == 1, cl && PyObject_IsTrue(cl) == 1, face);
+                    // When the gizmo of the outline is shown (`x = gizmo(x, mode=...)`: the gizmo of its points, shared); never when no such line is there
+                    if (PyObject_HasAttrString(obj, "_outline_mode"))
+                    {
+                        PyObject* om = PyObject_GetAttrString(obj, "_outline_mode");
+                        if (om && PyUnicode_Check(om))
+                        {
+                            const QString name = QString::fromUtf8(PyUnicode_AsUTF8(om));
+                            shape->setOutlineMode(name == "always" ? Shape::Gizmo::ALWAYS : name == "click" ? Shape::Gizmo::CLICK : Shape::Gizmo::NEVER);
+                        }
+                        Py_XDECREF(om);
+                        PyErr_Clear();
+                    }
                 }
                 Py_XDECREF(cr);
                 Py_XDECREF(cs);

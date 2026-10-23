@@ -264,7 +264,8 @@ class Curve(Shape):
     ''' A 1D shape (see `polyline`, `spline`).  .points are the points it was made from, .smooth the default of its points, .closed whether it is joined at its
         ends, .vertices the line it is drawn as (x, y, z) '''
     _kind = 'curve'
-    _no_gizmo = True                # (its points have the gizmos: they are what is dragged)
+    _no_gizmo = True                # (no gizmo() line with numbers of its own: its points have them, and the viewport shares them -- View::groupGizmo -- to move, turn and scale it)
+    _outline_gizmo = True           # (the model tree's gizmo button gives it a line without numbers, `x = gizmo(x, mode=...)`: when that shared gizmo is shown, off until said otherwise)
 
     def _remake(self, points, improper=False):
         ''' The same line through other points (the images of its points in a symmetry: see symmetries.symmetry_images) '''
@@ -536,3 +537,5 @@ def spline(points, closed=False):
 
 polyline._makes_no_gizmo = True
 spline._makes_no_gizmo = True
+polyline._makes_outline_gizmo = True
+spline._makes_outline_gizmo = True

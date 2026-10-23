@@ -41,10 +41,10 @@ _DISPLAYS = {}
 _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
-_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
+_FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
               'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
-_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
+_KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
 # Calls that make nothing a model (a statement that is only such a call is not a displayed model)
 _NOT_MODELS = {
@@ -197,6 +197,7 @@ def facts_of(v):
     shown = shape or result
     f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'type': mkind,
          'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown or mkind == 'field',   # (a field: its icon is what is dragged)
+         'outline': bool(getattr(v, '_outline_gizmo', False)),         # (a profile, a polyline, a spline: no numbers of its own, but a gizmo mode)
          'is_list': isinstance(v, list), 'is_pair': isinstance(v, tuple) and len(v) == 2}
     if failed:
         f['error'] = v.error
@@ -460,7 +461,7 @@ def seed(items_json):
             if not var or it.get('kind') == 'import':
                 continue
             facts = {'model': True, 'failed': bool(it.get('failed')), 'result': bool(it.get('result')), 'type': it.get('type'),
-                     'shown': it.get('displayable') is not False, 'no_gizmo': bool(it.get('no_gizmo'))}
+                     'shown': it.get('displayable') is not False, 'no_gizmo': bool(it.get('no_gizmo')), 'outline': bool(it.get('outline'))}
             for k in ('error', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles', 'handle_count', 'handle_cap', 'ends_only'):
                 if k in it:
                     facts[k] = it[k]
@@ -1243,6 +1244,7 @@ def outline_json(arg):
                             'result': bool(facts.get('result', mkind == 'simulation')),     # (what an analysis makes is a result, before it has run too)
                             'no_gizmo': facts.get('no_gizmo', not shown or mkind in ('simulation', 'conditions', 'field')
                                                   or bool(getattr(ns.get(callee), '_makes_no_gizmo', False))),
+                            'outline': bool(facts.get('outline', getattr(ns.get(callee), '_makes_outline_gizmo', False))),      # (no numbers, but a gizmo mode: see handles.gizmo)
                             'text': A._short(src.segment(stmt.value), 70), 'deps': deps}
                     if mkind:
                         item['type'] = mkind
@@ -1426,7 +1428,8 @@ def outline_json(arg):
             if h:
                 it['mode'], it['mode_explicit'] = h['mode'], True
             else:
-                it['mode'], it['mode_explicit'] = 'click', False
+                # (the gizmo of a profile, a polyline or a spline starts off: it is there when the tree's gizmo button, or a gizmo() line, says so)
+                it['mode'], it['mode_explicit'] = ('never' if it.get('outline') else 'click'), False
 
     items.sort(key=lambda it: it['line'])
     for it in items:

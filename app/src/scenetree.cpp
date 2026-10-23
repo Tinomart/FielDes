@@ -2623,7 +2623,8 @@ void ScenePanel::rebuild()
         if (!failed && it.contains("var") && kind != "display" && !it["reassigned"].toBool())
         {
             // (every model can be locked, whatever it is -- an analysis, a condition, a point: the gizmo's mode is only for what has a gizmo)
-            if (!it["no_gizmo"].toBool()) setModeButton(row, it);
+            // (a profile, a polyline or a spline has no numbers of its own, but it has the mode of its gizmo: the shared gizmo of its points)
+            if (!it["no_gizmo"].toBool() || it["outline"].toBool()) setModeButton(row, it);
             setLockButton(row, it);
         }
         else if (!failed && kind == "display" && it["can_name"].toBool() && it["visible"].toBool())
@@ -4131,7 +4132,7 @@ QList<QJsonObject> ScenePanel::editTargets() const
     // The selected models that can be edited by dragging, in the order they were selected; when none is, what
     // selectedTarget() falls back on
     auto editable = [](const QJsonObject& it) {
-        if (it["failed"].toBool() || it["reassigned"].toBool() || it["no_gizmo"].toBool()) return false;
+        if (it["failed"].toBool() || it["reassigned"].toBool() || (it["no_gizmo"].toBool() && !it["outline"].toBool())) return false;
         const QString kind = it["kind"].toString();
         if (kind == "display") return it["can_name"].toBool() && it["visible"].toBool();
         return it.contains("var") && kind != "failed";
@@ -4534,9 +4535,17 @@ bool ScenePanel::modeEdits(const QJsonObject& target, const QString& next, QList
             edits << TextEdit{ll, cc, ll, cc, ",\n" + closing + "    mode=" + quoted};
     };
 
-    if (hasGizmo && h["has_numbers"].toBool())
+    // (a profile, a polyline or a spline: its gizmo() line has no numbers -- its points have them -- and only says when the shared gizmo is shown.  The outline starts off, so
+    // a line is written for every mode that is chosen, 'click' included)
+    const bool outline = target["outline"].toBool();
+    if (hasGizmo && (h["has_numbers"].toBool() || outline))
     {
         writeMode(next);
+    }
+    else if (outline)
+    {
+        const QString t = lineText(after);
+        edits << TextEdit{after, int(t.size()), after, int(t.size()), "\n" + indent + var + " = gizmo(" + var + ", mode='" + next + "')"};
     }
     else if (hasGizmo)
     {
@@ -6811,6 +6820,20 @@ void ScenePanel::prepareSelection()
         if (!symmetryImageModel(m.item))
         {
             todo << qMakePair(m.item, false);
+            // A profile, a polyline or a spline has no gizmo of its own: where its gizmo is shown (its mode is not never: it starts as never) it is moved by the gizmos of its points
+            // (the viewport shares them, see View::groupGizmo), so its points are made ready to be dragged as well -- a point that has no gizmo() line is given one
+            const QString outline = m.item["callee"].toString();
+            if ((outline == "profile" || outline == "polyline" || outline == "spline") && m.item["mode"].toString("click") != "never")
+            {
+                for (const QString& input : directInputs(m.item))
+                {
+                    const QJsonObject p = itemForVar(input);
+                    if (p.isEmpty() || (p["type"].toString() != "point" && p["callee"].toString() != "point")) continue;
+                    bool listed = false;
+                    for (const auto& e : todo) listed = listed || keyOf(e.first) == keyOf(p);
+                    if (!listed) todo << qMakePair(p, false);
+                }
+            }
             continue;
         }
         // The image of a model has no numbers of its own: its gizmo is the original's, so the original is what is made ready (and dragging the image drags it)
