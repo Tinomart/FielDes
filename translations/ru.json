@@ -277,7 +277,6 @@
  "the render cache": "кэш рендеринга",
  "Select a model to duplicate first.": "Сначала выберите модель для дублирования.",
  "Select a model to link first.": "Сначала выберите модель для связывания.",
- "%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; Shift+D copies a model with all it is made of.": "Нельзя связать %1: связывать можно только фигуры (тело, 2D-фигуру, поверхность). Профиль или кривая состоят из своих точек — связывать нужно их; Shift+D копирует модель вместе со всем, из чего она состоит.",
  "Select a model to copy first.": "Сначала выберите модель для копирования.",
  "Copied %1 model: Ctrl+V pastes it.": "Скопирована %1 модель: Ctrl+V вставляет её.",
  "Copied %1 models: Ctrl+V pastes them.": "Скопировано моделей: %1. Ctrl+V вставляет их.",

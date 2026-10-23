@@ -277,7 +277,6 @@
  "the render cache": "den Darstellungs-Cache",
  "Select a model to duplicate first.": "Wählen Sie zuerst ein Modell zum Duplizieren aus.",
  "Select a model to link first.": "Wählen Sie zuerst ein Modell zum Verknüpfen aus.",
- "%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; Shift+D copies a model with all it is made of.": "%1 kann nicht verknüpft werden: nur eine Form kann es (ein Körper, eine 2D-Form, eine Fläche). Ein Profil oder eine Kurve besteht aus ihren Punkten, und diese sind die Modelle zum Verknüpfen; Umschalt+D kopiert ein Modell mit allem, woraus es besteht.",
  "Select a model to copy first.": "Wählen Sie zuerst ein Modell zum Kopieren aus.",
  "Copied %1 model: Ctrl+V pastes it.": "%1 Modell kopiert: Strg+V fügt es ein.",
  "Copied %1 models: Ctrl+V pastes them.": "%1 Modelle kopiert: Strg+V fügt sie ein.",

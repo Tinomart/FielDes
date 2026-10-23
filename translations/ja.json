@@ -277,7 +277,6 @@
  "the render cache": "レンダリングキャッシュ",
  "Select a model to duplicate first.": "先に複製するモデルを選択してください。",
  "Select a model to link first.": "先にリンクするモデルを選択してください。",
- "%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; Shift+D copies a model with all it is made of.": "%1 はリンクできません。リンクできるのは形状（ボディ、2D 形状、サーフェス）だけです。プロファイルやカーブは点でできており、リンクするのはその点です。Shift+D はモデルを、それを構成するものごとコピーします。",
  "Select a model to copy first.": "先にコピーするモデルを選択してください。",
  "Copied %1 model: Ctrl+V pastes it.": "%1 個のモデルをコピーしました。Ctrl+V で貼り付けます。",
  "Copied %1 models: Ctrl+V pastes them.": "%1 個のモデルをコピーしました。Ctrl+V で貼り付けます。",

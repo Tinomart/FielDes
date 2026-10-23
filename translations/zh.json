@@ -277,7 +277,6 @@
  "the render cache": "渲染缓存",
  "Select a model to duplicate first.": "请先选择要复制的模型。",
  "Select a model to link first.": "请先选择要链接的模型。",
- "%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; Shift+D copies a model with all it is made of.": "无法链接 %1：只有形状（实体、2D 形状、曲面）才能链接。轮廓或曲线由点构成，应链接的是这些点；Shift+D 会连同模型的全部组成部分一起复制它。",
  "Select a model to copy first.": "请先选择要复制的模型。",
  "Copied %1 model: Ctrl+V pastes it.": "已复制 %1 个模型：按 Ctrl+V 粘贴。",
  "Copied %1 models: Ctrl+V pastes them.": "已复制 %1 个模型：按 Ctrl+V 粘贴。",

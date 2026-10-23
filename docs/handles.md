@@ -131,7 +131,7 @@ part keeps its link to the STEP file through `gizmo()`, so `exclude()` (the exac
 
 Two ways to duplicate a model, with the viewport or the model tree focused:
 
-- **`Shift+D` copies**: the model's statements are written again under it with free names (`box_1` becomes `box_2`; copies of several models refer to each other's copies). The copy is a model of its own -- change either and the other stays.
+- **`Shift+D` copies**: the model's statements are written again under it with free names (`box_1` becomes `box_2`; copies of several models refer to each other's copies). The copy is a model of its own -- change either and the other stays. A profile, a polyline or a spline is copied **with the points it is made of**, so the copy is moved without moving the original.
 - **`Ctrl+D` links**: under the model, a block of its own that **is** the model:
 
 ```python
@@ -146,7 +146,7 @@ plate_2 = gizmo(
   The copy's shape, sizes, colours and every other property are the original's, so **when the original changes the copy changes with it**. All it has of its own is where it is: it can be **moved and rotated** with its gizmo (which has no
   scale knob), and nothing else -- its surfaces cannot be dragged and `gizmo(copy, scale=...)` and `handles(copy, ...)` are refused, because they would change the original's shape. The original is only **referred to**, always (the mark `# shadow: plate`),
   whether it is locked or not: it keeps its own row in the model tree and the copy shows a shadow of it -- taking the original into the copy would move its row away and make it look like what the copy is made of. *Operation → Repeating → instance*
-  writes the same block. A profile or a curve cannot be linked (it is made of its points: link those, or copy it with `Shift+D`); a number, a material or the result of an analysis has no shape to follow.
+  writes the same block. **`Ctrl+D` clones every model**, the same way: `copy = instance(model)`. A **profile, a polyline or a spline** is cloned as a profile or a line through linked clones of its points (they follow the original's points, and the clone is moved and turned by their gizmos -- or by the gizmo of the outline, when it is shown); a **point** is a linked clone like any other; a model that **is not a shape** -- a material, the conditions or the result of an analysis, a lattice cell -- is its own value (nothing is solved again); an **import** is cloned by its parts (one that is a single part, `part, (lo, hi) = import_model(path)[0]`, is cloned itself), and an **expression that has no name** is given one first.
 
 ## Handles: drag a surface
 

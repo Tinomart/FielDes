@@ -474,6 +474,13 @@ protected:
     QString groupText(const QJsonObject& it) const;
     QString copyName(const QString& name, const QSet<QString>& taken, bool part) const;
     QList<QJsonObject> copyableModels() const;
+    /*  Shift+D and Ctrl+D: the models they act on (the selected ones; an import is its parts; an expression that has no name is given one first -- `mode` "copy" or "link" is
+     *  done once the script has run), the plain copy of models with free names (a profile or a line with its own points), and the linked copy of a list of models: a model that
+     *  cannot be linked is copied  */
+    QList<QJsonObject> modelsToDuplicate(const char* mode);
+    QList<TextEdit> plainCopyEdits(const QList<QJsonObject>& selected, QSet<QString>& taken, QStringList& chosen, QStringList& extra) const;
+    void duplicateModels(const QList<QJsonObject>& items);
+    void linkModels(const QList<QJsonObject>& items);
     /*  The line after a model's definition and the lines of its own that follow it right away  */
     int groupEnd(const QJsonObject& it) const;
     /*  Moves the statements of `models` (and, of what they need, what is defined after `at`) in front of the line `at`
@@ -613,6 +620,8 @@ protected:
      *  and `mode` -- "click", "never", "always", "lock" or "cache" -- is applied to the new variable once the script has
      *  run again; false if it cannot be named  */
     bool nameThen(const QJsonObject& target, const QString& mode);
+    /*  Several displayed expressions named in one edit; `mode` ("copy", "link") is then applied to all of them and to the named models `together` with them  */
+    bool nameAllThen(const QList<QJsonObject>& displays, const QStringList& together, const QString& mode);
     /*  A line of text under the tree (what could not be done)  */
     void notify(const QString& text);
     /*  The render cache button: a `name = render_cache(name)` line under the shape's definition (and under
@@ -790,7 +799,7 @@ protected:
                             const QString& module = "cad_import") const;
 
     /*  A mode to apply once a displayed expression has been given a name and the script has run again  */
-    struct Pending { QString var, mode; int tries = 0; };
+    struct Pending { QString var, mode; int tries = 0; QStringList together; };
     Pending m_pending;
 
     QTreeWidget* m_tree;

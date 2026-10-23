@@ -2014,7 +2014,16 @@ void ScenePanel::setScene(const QString& json)
     if (!m_pending.var.isEmpty())
     {
         const QJsonObject target = itemForVar(m_pending.var);
-        if (!target.isEmpty())
+        // (a copy of several: every one of them must exist before the copies are made)
+        QList<QJsonObject> all{target};
+        bool ready = !target.isEmpty();
+        for (const QString& v : m_pending.together)
+        {
+            const QJsonObject t = itemForVar(v);
+            if (t.isEmpty()) ready = false;
+            else all << t;
+        }
+        if (ready)
         {
             const QString mode = m_pending.mode;
             m_pending = Pending();
@@ -2023,6 +2032,8 @@ void ScenePanel::setScene(const QString& json)
             QTimer::singleShot(0, this, [=]{
                 if (mode == "cache") toggleCache(target);
                 else if (mode == "lock") toggleLock(target);
+                else if (mode == "copy") duplicateModels(all);          // (Shift+D, Ctrl+D on expressions that had no name: they have one now)
+                else if (mode == "link") linkModels(all);
                 else setMode(target, mode);
             });
         }
@@ -4997,18 +5008,36 @@ QList<QJsonObject> ScenePanel::copyableModels() const
     return out;
 }
 
-void ScenePanel::duplicateSelected()
+// The statements of a plain copy of these models, with free names (`taken` is the names in use; `chosen` gets the names of the copies of the models asked for, `extra` those of the
+// points that were copied along).  A profile or a line is copied with the points it is made of: the copy has points of its own, so it is moved without moving the original
+QList<TextEdit> ScenePanel::plainCopyEdits(const QList<QJsonObject>& selected, QSet<QString>& taken, QStringList& chosen, QStringList& extra) const
 {
-    const QList<QJsonObject> items = copyableModels();
-    if (items.isEmpty()) { notify(T("Select a model to duplicate first.")); return; }
-    if (m_editPending && m_editClock.elapsed() < 20000)
+    QList<QJsonObject> items;
+    auto listed = [&](const QJsonObject& m) {
+        for (const auto& e : items)
+        {
+            if (keyOf(e) == keyOf(m)) return true;
+        }
+        return false;
+    };
+    QSet<QString> asked;
+    for (const auto& it : selected) asked << keyOf(it);
+    for (const auto& it : selected)
     {
-        m_afterRun = [=] { duplicateSelected(); };             // (the script is being edited to get the models ready: the scene is a run behind)
-        return;
+        const QString callee = it["callee"].toString();
+        if (callee == "profile" || callee == "polyline" || callee == "spline")
+        {
+            for (const QString& input : directInputs(it))
+            {
+                const QJsonObject p = itemForVar(input);
+                if (p.isEmpty() || !p.contains("var") || (p["type"].toString() != "point" && p["callee"].toString() != "point") || listed(p)) continue;
+                items << p;
+            }
+        }
+        if (!listed(it)) items << it;
     }
     const QString src = m_source ? m_source() : QString();
     const QStringList lines = src.split('\n');
-    QSet<QString> taken;
     QList<QPair<QString, QString>> renames;                       // old name, new name
     for (const auto& it : items)
     {
@@ -5018,7 +5047,6 @@ void ScenePanel::duplicateSelected()
         renames << qMakePair(old, fresh);
     }
     QList<TextEdit> edits;
-    QStringList made;
     for (int i = 0; i < items.size(); ++i)
     {
         QString text = groupText(items[i]);
@@ -5027,48 +5055,217 @@ void ScenePanel::duplicateSelected()
         if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
         else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()),
                                "\n" + text};
-        made << renames[i].second;
+        (asked.contains(keyOf(items[i])) ? chosen : extra) << renames[i].second;
     }
-    m_selectNew = made.last();
-    m_selectNewMore = made.mid(0, made.size() - 1);
+    return edits;
+}
+
+// The models that Shift+D and Ctrl+D act on: the selected ones, an import (its parts are what is copied) in place of its row; and a displayed expression that has no name -- it is
+// given one first, and the copy is made once the script has run (`m_pending`, mode "copy" or "link")
+QList<QJsonObject> ScenePanel::modelsToDuplicate(const char* mode)
+{
+    QList<QJsonObject> out;
+    // The models of the selected rows, in the order they were selected.  (The rows are read here, not through selectedModels(): the row of an import that is a list of parts is
+    // not a model that one describes by an expression, and it is a row that is duplicated by its parts)
+    QList<QJsonObject> models;
+    {
+        QHash<QString, QTreeWidgetItem*> rows;
+        for (auto row : m_tree->selectedItems()) rows[row->data(COL_NAME, ROLE_KEY).toString()] = row;
+        QStringList order = m_selectOrder;
+        for (auto it = rows.constBegin(); it != rows.constEnd(); ++it)
+        {
+            if (!order.contains(it.key())) order << it.key();
+        }
+        QSet<QString> listed;
+        for (const QString& key : order)
+        {
+            auto row = rows.value(key);
+            if (!row) continue;
+            QJsonObject item = modelOfRow(row);
+            if (item.isEmpty() && row->data(COL_NAME, ROLE_TYPE).toString() == "item")
+            {
+                // (the row of an import that is a list of parts -- `parts = import_model(path)` -- names no variable of its own: it is the import, which stands for its parts)
+                const auto it = row->data(COL_NAME, ROLE_ITEM).toJsonObject();
+                if (it["kind"].toString() == "import" && !it["failed"].toBool()) item = it;
+            }
+            if (item.isEmpty() || listed.contains(keyOf(item))) continue;
+            listed << keyOf(item);
+            models << item;
+        }
+    }
+    QList<QJsonObject> displays;                // (expressions displayed on their own: they have no name yet)
+    for (const QJsonObject& m : models)
+    {
+        if (m["kind"].toString() == "display") displays << m;
+    }
+    QSet<QString> seen;
+    for (const QJsonObject& m : models)
+    {
+        if (m["kind"].toString() == "import")
+        {
+            // (an import is its parts: they are the models that are copied or linked -- a copy of the import statement would import the file again under the same names)
+            const int before = int(out.size());
+            const QJsonArray all = m_scene["items"].toArray();
+            for (const auto v : all)
+            {
+                const QJsonObject p = v.toObject();
+                if (!p.contains("var") || !p.contains("part_of") || p["failed"].toBool() || seen.contains(keyOf(p))) continue;
+                if (p["part_of"].toInt(-1) != m["line"].toInt()) continue;           // (a part says the line of its import)
+                seen << keyOf(p);
+                out << p;
+            }
+            // (an import that is one part -- `part, (lo, hi) = import_model(path)[0]` -- has no parts under it: it is the model itself)
+            if (int(out.size()) == before && m.contains("var") && !m["failed"].toBool() && !seen.contains(keyOf(m)))
+            {
+                seen << keyOf(m);
+                out << m;
+            }
+            continue;
+        }
+        if (!m.contains("var") || m["failed"].toBool() || seen.contains(keyOf(m))) continue;
+        seen << keyOf(m);
+        out << m;
+    }
+    if (!displays.isEmpty())
+    {
+        // (the expressions are named, all in one edit, and the models that already have a name are copied or linked with them once the script has run)
+        QStringList together;
+        for (const QJsonObject& m : out) together << m["var"].toString();
+        nameAllThen(displays, together, mode);
+        return QList<QJsonObject>();
+    }
+    return out;
+}
+
+bool ScenePanel::nameAllThen(const QList<QJsonObject>& displays, const QStringList& together, const QString& mode)
+{
+    // `sphere(3)` and `box(...)` selected together: "sphere_1 = sphere(3)" and a line "sphere_1" under it for each, in one edit (as the gizmo button does for several), and the
+    // mode ("copy", "link") is applied to all of them -- and to `together`, the models that had a name -- once the script has run again
+    if (!m_pending.var.isEmpty()) return false;
+    QList<TextEdit> edits;
+    QStringList names;
+    for (const QJsonObject& target : displays)
+    {
+        const QString name = target["new_var"].toString();
+        const auto span = target["span"].toArray();            // [line, column, end line, end column]
+        if (name.isEmpty() || span.size() != 4 || names.contains(name)) continue;
+        const int a = span[0].toInt() - 1, b = span[2].toInt() - 1;
+        // The text may have changed since the scene was made: the expression must still start there
+        const QString head = target["label"].toString().section("...", 0, 0).left(12).simplified();
+        if (lineText(a).mid(span[1].toInt()).simplified().left(head.size()) != head) continue;
+        const QString last = lineText(b);
+        edits << TextEdit{a, span[1].toInt(), a, span[1].toInt(), name + " = "};
+        edits << TextEdit{b, int(last.size()), b, int(last.size()), "\n" + name};
+        names << name;
+    }
+    if (names.isEmpty()) return false;
+    m_pending = Pending{names[0], mode, 0, names.mid(1) + together};
+    emit(editScript(edits, "Name " + names.join(", ")));
+    return true;
+}
+
+void ScenePanel::duplicateSelected()
+{
+    duplicateModels(modelsToDuplicate("copy"));
+}
+
+void ScenePanel::duplicateModels(const QList<QJsonObject>& items)
+{
+    if (items.isEmpty())
+    {
+        if (m_pending.var.isEmpty()) notify(T("Select a model to duplicate first."));
+        return;
+    }
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { duplicateModels(items); };          // (the script is being edited to get the models ready: the scene is a run behind)
+        return;
+    }
+    QSet<QString> taken;
+    QStringList chosen, extra;
+    const QList<TextEdit> edits = plainCopyEdits(items, taken, chosen, extra);
+    m_selectNew = chosen.last();
+    m_selectNewMore = chosen.mid(0, chosen.size() - 1);
     m_selectNewTries = 0;
-    emit(editScript(edits, "Duplicate " + made.join(", ")));
+    emit(editScript(edits, "Duplicate " + (chosen + extra).join(", ")));
 }
 
 void ScenePanel::duplicateLinkedSelected()
 {
-    const QList<QJsonObject> selected = copyableModels();
-    if (selected.isEmpty()) { notify(T("Select a model to link first.")); return; }
-    if (m_editPending && m_editClock.elapsed() < 20000)
+    linkModels(modelsToDuplicate("link"));
+}
+
+void ScenePanel::linkModels(const QList<QJsonObject>& selected)
+{
+    if (selected.isEmpty())
     {
-        m_afterRun = [=] { duplicateLinkedSelected(); };       // (the script is being edited to get the models ready: the scene is a run behind)
+        if (m_pending.var.isEmpty()) notify(T("Select a model to link first."));
         return;
     }
-    // What can be linked: a shape (a body, a 2D shape, a surface, a lattice).  A profile or a curve is made of its points, a number or a material has no shape to follow
-    QList<QJsonObject> items;
-    QStringList refused;
+    if (m_editPending && m_editClock.elapsed() < 20000)
+    {
+        m_afterRun = [=] { linkModels(selected); };            // (the script is being edited to get the models ready: the scene is a run behind)
+        return;
+    }
+    // Every model is cloned the same way: `copy = instance(model)` under it, with a gizmo of its own that starts where the original is (it is moved and turned, not scaled).  A profile
+    // or a line is made of its points, so its clone is a profile or a line through linked clones of its points -- they follow the points, and are what the gizmo of the clone moves --;
+    // a model that has no shape or place (a material, an analysis, the conditions of one) is its own value, which `instance` hands back
+    struct Clone { QJsonObject it; QString fresh; bool linked; bool asked; };
+    QList<Clone> clones;
+    auto listed = [&](const QJsonObject& m) {
+        for (const auto& c : clones)
+        {
+            if (keyOf(c.it) == keyOf(m)) return true;
+        }
+        return false;
+    };
     for (const auto& it : selected)
     {
-        const QString type = it["type"].toString(), callee = it["callee"].toString();
-        const bool shape = type.isEmpty() || type == "solid" || type == "profile" || type == "surface" || type == "lattice";
-        if (shape && callee != "profile" && callee != "polyline" && callee != "spline") items << it;
-        else refused << it["var"].toString();
+        const QString callee = it["callee"].toString();
+        if (callee != "profile" && callee != "polyline" && callee != "spline")
+        {
+            if (!listed(it)) clones.append(Clone{it, QString(), true, true});
+            continue;
+        }
+        for (const QString& input : directInputs(it))
+        {
+            const QJsonObject p = itemForVar(input);
+            if (p.isEmpty() || !p.contains("var") || (p["type"].toString() != "point" && p["callee"].toString() != "point") || listed(p)) continue;
+            clones.append(Clone{p, QString(), true, false});
+        }
+        if (!listed(it)) clones.append(Clone{it, QString(), false, true});
     }
-    if (!refused.isEmpty())
-        notify(T("%1 cannot be linked: only a shape can (a body, a 2D shape, a surface). A profile or a curve is made of its points, which are the models to link; "
-                 "Shift+D copies a model with all it is made of.").arg(refused.join(", ")));
-    if (items.isEmpty()) return;
     const QString src = m_source ? m_source() : QString();
     const QStringList lines = src.split('\n');
     QSet<QString> taken;
-    QList<TextEdit> edits;
-    QStringList made;
-    for (const auto& it : items)
+    QList<QPair<QString, QString>> renames;                       // old name, new name
+    for (auto& c : clones)
     {
-        const QString old = it["var"].toString();
-        const QString fresh = copyName(old, taken, it.contains("part_of"));
-        taken << fresh;
+        const QString old = c.it["var"].toString();
+        c.fresh = copyName(old, taken, c.it.contains("part_of"));
+        taken << c.fresh;
+        renames << qMakePair(old, c.fresh);
+    }
+    QList<TextEdit> edits;
+    QStringList made, extra;
+    bool anyLinked = false;
+    for (const Clone& c : clones)
+    {
+        const QJsonObject& it = c.it;
+        const QString old = it["var"].toString(), fresh = c.fresh;
         const QString indent = indentOf(lineText(it["line"].toInt() - 1));
+        if (!c.linked)
+        {
+            // (the profile or the line itself: its statements again, through the clones of its points)
+            QString text = groupText(it);
+            for (const auto& r : renames) text = renamedIn(text, r.first, r.second);
+            const int at = groupEnd(it);
+            if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
+            else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
+            made << fresh;
+            continue;
+        }
+        anyLinked = true;
         // (the original is only referred to -- `# shadow:` -- always: taken into the copy it would move away from where it is and look like what the copy is made of)
         const QString statement = markShadow(indent + fresh + " = instance(" + old + ")", old);
         // The copy is where the original is and turned as it is, to start with -- its gizmo is written with the numbers the original's has -- but the numbers are its own: a copy
@@ -5086,7 +5283,13 @@ void ScenePanel::duplicateLinkedSelected()
             }
             return QString();
         };
-        const QString move = tupleOf("move"), rotate = tupleOf("rotate");
+        QString move = tupleOf("move"), rotate = tupleOf("rotate");
+        // (an original that has no gizmo yet -- it was never selected -- is given the clone's from zero: a clone with none would be the very same shape, and is not drawn apart from it)
+        if ((move.isEmpty() || rotate.isEmpty()) && !it["no_gizmo"].toBool())
+        {
+            move = "(var(0), var(0), var(0))";
+            rotate = move;
+        }
         QString placing;
         if (!move.isEmpty() && !rotate.isEmpty())
         {
@@ -5097,14 +5300,15 @@ void ScenePanel::duplicateLinkedSelected()
         const int at = groupEnd(it);
         if (at < lines.size()) edits << TextEdit{at, 0, at, 0, text + "\n"};
         else edits << TextEdit{int(lines.size()) - 1, int(lines.last().size()), int(lines.size()) - 1, int(lines.last().size()), "\n" + text};
-        made << fresh;
+        (c.asked ? made : extra) << fresh;
     }
+    if (made.isEmpty()) made = extra;
     static const QRegularExpression starImport(R"(^\s*from\s+fieldes\s+import\s+\*)", QRegularExpression::MultilineOption);
-    if (!starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
+    if (anyLinked && !starImport.match(src).hasMatch()) edits << TextEdit{0, 0, 0, 0, "from fieldes import *\n\n"};
     m_selectNew = made.last();
     m_selectNewMore = made.mid(0, made.size() - 1);
     m_selectNewTries = 0;
-    emit(editScript(edits, "Link " + made.join(", ")));
+    emit(editScript(edits, "Link " + (made + extra).join(", ")));
 }
 
 void ScenePanel::copySelected()
