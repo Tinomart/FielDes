@@ -49,7 +49,8 @@ A code editor for the Python script, with:
   `#sec` offers `#SECTION` in the completion. Sections only hide text: the script runs as it is, and one that holds an error,
   or a line you go to, opens by itself. `# %%` and `# region` ... `# endregion` fold the same way;
 - **objects as blocks.** A model's definition (`part = box(...)`) and everything that goes on with it -- `part = gizmo(part, ...)`, `part = handles(...)`, `part = lock(part)`, a resolution of its own,
-  and the line that shows it (`part` on a line of its own) -- is **one block**: one arrow in the gutter folds or opens all of those lines together. Each such block is told from the next by its
+  and the line that shows it (`part` on a line of its own, or `# hidden: part` for a model that is not shown) -- is **one block**: one arrow in the gutter, on the first line of the definition, folds or opens
+  all of those lines together, however many lines the definition itself runs over (the closing bracket included). Each such block is told from the next by its
   **background**: every second object has a slightly different shade of the editor's grey (lighter in the dark theme, darker in the light one), so where one object's definition starts and ends
   is seen at once. Numbers, `var(...)`s and the plain functions of Python are not objects and are not shaded;
 - **completion** while you type (`Ctrl+Space` forces it) and call tips for arguments. **A function you pick from the list is written complete,

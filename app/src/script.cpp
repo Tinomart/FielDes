@@ -82,8 +82,8 @@ QString setupOf(const QTextBlock& block)
 {
     static const QRegularExpression head(R"(^([A-Za-z_]\w*)\s*=\s*(?:handles|gizmo|lock|render_cache|custom_resolution)\(\s*([A-Za-z_]\w*)?)");
     static const QRegularExpression first(R"(^\s*([A-Za-z_]\w*)\s*[,)])");
-    // (and `name` on a line of its own: the line that shows the model goes on with it too)
-    static const QRegularExpression bare(R"(^([A-Za-z_]\w*)\s*(?:#.*)?$)");
+    // (and `name` on a line of its own: the line that shows the model goes on with it too -- or `# hidden: name`, the line that says the model is not shown)
+    static const QRegularExpression bare(R"(^(?:#\s*hidden:\s?)*([A-Za-z_]\w*)\s*(?:#.*)?$)");
     const auto shown = bare.match(block.text());
     if (shown.hasMatch()) return shown.captured(1);
     const auto m = head.match(block.text());
@@ -117,6 +117,21 @@ int bracketDelta(const QString& line)
         else if (c == ')' || c == ']' || c == '}') depth--;
     }
     return depth;
+}
+
+// The last line of the statement that starts at `s`: the line its brackets close on (`s` itself when it closes them).  `closed` says whether they do
+// close before the end of the text (a statement being typed has an open bracket, and goes on to the end)
+int statementEnd(const QTextBlock& s, bool* closed = nullptr)
+{
+    int end = s.blockNumber();
+    int depth = bracketDelta(s.text());
+    for (QTextBlock n = s.next(); depth > 0 && n.isValid(); n = n.next())
+    {
+        depth += bracketDelta(n.text());
+        end = n.blockNumber();
+    }
+    if (closed) *closed = depth <= 0;
+    return end;
 }
 
 const QRegularExpression& sectionMarker()
@@ -677,16 +692,6 @@ int Script::objectEnd(const QTextBlock& b) const
                                           "enumerate", "zip", "bool", "open", "input", "roi", "roi_resolution", "progress", "print", "evaluate", "field_range",
                                           "volume_of", "mass_properties", "find_extent", "sample_grid", "result_summary"};
     if (numbers.contains(m.captured(1))) return -1;
-    auto statementEnd = [this](const QTextBlock& s) {
-        int e = s.blockNumber();
-        int depth = bracketDelta(s.text());
-        for (QTextBlock n = s.next(); depth > 0 && n.isValid(); n = n.next())
-        {
-            depth += bracketDelta(n.text());
-            e = n.blockNumber();
-        }
-        return e;
-    };
     int last = statementEnd(b);
     QTextBlock n = document()->findBlockByNumber(last).next();
     while (n.isValid() && setupOf(n) == name)
@@ -788,35 +793,36 @@ bool Script::foldRange(int blockNum, int* endOut) const
     }
     else
     {
-        // Indented block: the following non-blank lines indented deeper
         const int ind = indentOf(b);
-        QTextBlock n = b.next();
-        while (n.isValid())
+        // An assignment whose brackets span several lines (`x = sphere(` ... `)`) is a statement to its closing bracket -- the line of the bracket
+        // included, which the indentation does not reach when it stands at the left margin
+        bool closed = true;
+        if (ind == 0 && !assignedName(text).isEmpty() && bracketDelta(text) > 0)
         {
-            if (!n.text().trimmed().isEmpty())
-            {
-                if (indentOf(n) <= ind)
-                {
-                    break;
-                }
-                end = n.blockNumber();
-            }
-            n = n.next();
+            end = statementEnd(b, &closed);
+            if (!closed) end = -1;
         }
-        // Otherwise, a statement whose brackets span several lines
-        if (end < 0)
+        // Otherwise an indented block: the following non-blank lines indented deeper
+        else
         {
-            int depth = bracketDelta(text);
-            QTextBlock m = b.next();
-            while (depth > 0 && m.isValid())
+            QTextBlock n = b.next();
+            while (n.isValid())
             {
-                depth += bracketDelta(m.text());
-                end = m.blockNumber();
-                m = m.next();
+                if (!n.text().trimmed().isEmpty())
+                {
+                    if (indentOf(n) <= ind)
+                    {
+                        break;
+                    }
+                    end = n.blockNumber();
+                }
+                n = n.next();
             }
-            if (depth > 0)
+            // Otherwise, a statement whose brackets span several lines
+            if (end < 0)
             {
-                end = -1;
+                end = statementEnd(b, &closed);
+                if (!closed || end == blockNum) end = -1;
             }
         }
 
@@ -848,14 +854,7 @@ bool Script::foldRange(int blockNum, int* endOut) const
                 QTextBlock n = document()->findBlockByNumber(last).next();
                 while (n.isValid() && setupOf(n) == name)
                 {
-                    int statementEnd = n.blockNumber();
-                    int depth = bracketDelta(n.text());
-                    for (QTextBlock m = n.next(); depth > 0 && m.isValid(); m = m.next())
-                    {
-                        depth += bracketDelta(m.text());
-                        statementEnd = m.blockNumber();
-                    }
-                    last = statementEnd;
+                    last = statementEnd(n);
                     n = document()->findBlockByNumber(last).next();
                 }
                 if (last > end) end = last;

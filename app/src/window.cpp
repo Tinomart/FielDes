@@ -2371,7 +2371,7 @@ Window::Window(Arguments args)
             row->setExpanded(args.section(' ', 0, 0) == "1");
             QApplication::processEvents();
         });
-        // folds: the fold headers of the rendered script (0-based line: closed or open) in the log
+        // folds: the fold headers of the rendered script (0-based line: closed or open, and the last line the fold takes) in the log
         a->add("folds", [=](const QString&){
             Script* s = editor->scriptWidget();
             std::cerr << "automation: folds";
@@ -2379,7 +2379,7 @@ Window::Window(Arguments args)
             {
                 int end = 0;
                 if (b.isVisible() && s->foldRange(b.blockNumber(), &end))
-                    std::cerr << " " << b.blockNumber() << (s->isFolded(b.blockNumber()) ? ":closed" : ":open");
+                    std::cerr << " " << b.blockNumber() << (s->isFolded(b.blockNumber()) ? ":closed" : ":open") << "-" << end;
             }
             std::cerr << std::endl;
         });
