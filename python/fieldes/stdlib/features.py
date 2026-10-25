@@ -17,6 +17,16 @@ What counts is a *jump* of the normal that stays a jump however closely it is lo
 turns by less and less the closer it is looked at, so it has neither edges nor corners; the rim of a cylinder, where the side meets the flat end, is an edge
 (`edge_point_at` gives a point of it; `edge_at` needs a straight one, and says so when the edge curves).
 
+Three more points to snap to:
+
+    middle = circle_center_at(part, (10.2, 0.1, 19.8))     # displayed: the centre of the circular edge nearest that place (the rim of a cylinder or a hole, the base of a cone)
+    corner = corner_at(rounded_part, (10, 10, 20), rounded=True)    # the corner that the rounding of three edges replaced: where the planes of the flat faces round it meet
+    on_edge = edge_point_at(rounded_part, (10, 0, 19.8), rounded=True)   # a point of the sharp edge that a rounding replaced
+    centre = face_center(select_surface(part, (5, 5, 0)))  # the middle of a face (a selection of surface): the mean of the places it was sampled at
+
+A rounded edge has no sharp edge: it turns by a little all along the rounding.  With `rounded=True` the faces on both sides are looked at from further and further away -- past
+the rounding, onto the flat faces -- and the point is where their planes meet, once two looks at different distances agree on it.
+
 What comes back are the ordinary things: a `point` (so it is a corner of a profile, the end of a `polyline`, a place for a gizmo) and a `polyline`
 of two points.  They are computed when the script runs, from `near` and the body: the body can be changed and they follow, as long as the edge or
 corner is still near that place.
@@ -27,7 +37,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
 import math
 
-__all__ = ['corner_at', 'edge_at', 'edge_point_at']
+__all__ = ['corner_at', 'edge_at', 'edge_point_at', 'circle_center_at', 'face_center']
 
 _SHARP = math.radians(25.0)                 # surface normals this far apart belong to faces that meet at an edge
 _PARALLEL = math.sin(math.radians(15.0))    # faces whose normals are this nearly parallel have no edge between them that can be placed
@@ -147,9 +157,10 @@ class _Surface:
             out.append((p, (g[0] / n, g[1] / n, g[2] / n), v / n) if n > 1e-9 and v == v else None)
         return out
 
-    def faces(self, center, r):
+    def faces(self, center, r, flat=False):
         ''' The faces of the surface within about r of a place: [(unit normal, mean point, samples)], the biggest first -- the surface is sampled round the place
-            and the samples whose normals are within 25 degrees of one another are one face '''
+            and the samples whose normals are within 25 degrees of one another are one face.  With flat=True only flat faces are found: the samples whose normals are within 4
+            degrees of one another are one, and the face is what lies within 2 degrees of its mean normal -- a rounding is not taken for part of the face next to it '''
         self.step = max(0.04 * r, 1e-5 * self.size)
         around = [(center[0] + r * d[0], center[1] + r * d[1], center[2] + r * d[2]) for d in _DIRECTIONS]
         samples = []
@@ -157,9 +168,10 @@ class _Surface:
             if hit is not None and abs(hit[2]) < 0.1 * r and _norm(_sub(hit[0], center)) < 2.5 * r:
                 samples.append((hit[0], hit[1]))
         clusters = []                       # [normal sum, [(point, normal) ...]]
+        together = math.radians(4.0) if flat else _SHARP
         for p, n in samples:
             for c in clusters:
-                if _angle(_unit(c[0]), n) < _SHARP:
+                if _angle(_unit(c[0]), n) < together:
                     c[0] = _add(c[0], n)
                     c[1].append((p, n))
                     break
@@ -171,7 +183,7 @@ class _Surface:
             # out -- the face is what most of its samples say, a flat one exactly)
             mean = _unit(total)
             deviations = sorted(_angle(mean, n) for _, n in members)
-            limit = max(math.radians(3.0), 1.5 * deviations[len(deviations) // 2])
+            limit = math.radians(2.0) if flat else max(math.radians(3.0), 1.5 * deviations[len(deviations) // 2])
             kept = [(p, n) for p, n in members if _angle(mean, n) <= limit]
             if len(kept) < 3:
                 continue
@@ -356,7 +368,15 @@ def features_near(values, near, scale, size):
         near = start[0]
     found = _find(surface, near, r)
     if found is None:
-        return {'corner': None, 'edge': None}
+        # (no sharp corner or edge: a rounding, if there is one, has a corner or an edge that was replaced)
+        rounded = {}
+        for kind in ('corner', 'edge'):
+            found_point = _find_rounded(surface, near, r, kind)
+            if found_point is not None:
+                rounded[kind] = found_point
+                if kind == 'corner':
+                    break
+        return {'corner': None, 'edge': None, 'circle': None, 'rounded': rounded or None}
     corner = edge = None
     if found['kind'] == 'corner':
         corner = found['point']
@@ -367,9 +387,14 @@ def features_near(values, near, scale, size):
         wider = _find(surface, near, 2.0 * r)
         if wider is not None and wider['kind'] == 'corner':
             corner = wider['point']
+    circle = None
     if edge is not None:
         edge['straight'] = _straight(surface, edge)
-    return {'corner': corner, 'edge': {'point': edge['point'], 'straight': edge['straight']} if edge else None}
+        if edge['straight'] is None:
+            found_circle = _find_circle(surface, near, r)
+            if found_circle is not None:
+                circle = {'center': found_circle[0], 'radius': found_circle[1]}
+    return {'corner': corner, 'edge': {'point': edge['point'], 'straight': edge['straight']} if edge else None, 'circle': circle, 'rounded': None}
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------
@@ -393,28 +418,135 @@ def _prepare(shape, near, scale, bounds, name):
     return near, float(scale), size, (lambda points: _eval_many(shape, points))
 
 
-def corner_at(shape, near, scale=None, bounds=None):
+def _circle_through(a, b, c):
+    ''' (centre, radius, unit normal) of the circle through three points, or None when they are on a line '''
+    u, v = _sub(a, c), _sub(b, c)
+    w = _cross(u, v)
+    w2 = _dot(w, w)
+    if w2 < 1e-18:
+        return None
+    # (the centre is c + ((|u|^2 v - |v|^2 u) x w) / (2 |w|^2))
+    t = _sub(_mul(v, _dot(u, u)), _mul(u, _dot(v, v)))
+    centre = _add(c, _mul(_cross(t, w), 1.0 / (2.0 * w2)))
+    return centre, _norm(_sub(a, centre)), _unit(w)
+
+
+def _find_circle(surface, near, r):
+    ''' The circular edge nearest `near`: (centre, radius, unit normal), or None.  The edge found there gives a point and the way it runs; two points a little way along it, put
+        onto the edge, give a first circle; the circle is then read again from the edge at wider and wider angles round it, up to 100 degrees either side, which fixes it to the
+        accuracy of the points, and a point on the far side must be on it '''
+    first = _find(surface, near, r)
+    if first is None or first['kind'] != 'edge' or first['direction'] is None:
+        return None
+    p0, t0 = first['point'], first['direction']
+    size = surface.size
+
+    seen = [p0]
+
+    def edge_near(q):
+        # (a point the faces round a place say is a corner is a point of the edge too, where the edge is a circle: the samples on the curved side of a cone or a cylinder make a third
+        # face now and then, and three faces make a corner)
+        found = _find(surface, q, r)
+        if found is None or _norm(_sub(found['point'], q)) > _REACH * r:
+            return None
+        seen.append(found['point'])
+        return found['point']
+
+    circle = None
+    step = r
+    for _ in range(3):
+        pa = edge_near(_add(p0, _mul(t0, step)))
+        pb = edge_near(_sub(p0, _mul(t0, step)))
+        if pa is not None and pb is not None:
+            circle = _circle_through(pa, p0, pb)
+            if circle is not None and circle[1] < 1e3 * size and circle[1] > 0.2 * step:
+                break
+            circle = None
+        step *= 2.0
+    if circle is None:
+        return None
+    centre, radius, normal = circle
+    theta = step / radius
+    for _ in range(8):
+        theta = min(theta * 2.0, math.radians(100.0))
+        u = _unit(_sub(p0, centre))
+        v = _cross(normal, u)
+
+        def at(angle):
+            return edge_near(_add(centre, _add(_mul(u, radius * math.cos(angle)), _mul(v, radius * math.sin(angle)))))
+
+        pa, pb = at(theta), at(-theta)
+        if pa is None or pb is None:
+            return None
+        circle = _circle_through(pa, p0, pb)
+        if circle is None:
+            return None
+        centre, radius, normal = circle
+        if theta >= math.radians(100.0) - 1e-9:
+            break
+    u = _unit(_sub(p0, centre))
+    far = edge_near(_sub(centre, _mul(u, radius)))
+    if far is None:
+        return None
+    # (every point that was found is on the circle, within a fiftieth of its radius and a thousandth of the body)
+    tolerance = 0.02 * radius + 1e-3 * size
+    if any(abs(_norm(_sub(p, centre)) - radius) > tolerance or abs(_dot(_sub(p, centre), normal)) > tolerance for p in seen):
+        return None
+    return centre, radius, normal
+
+
+def _find_rounded(surface, near, r, kind):
+    ''' The corner or the edge that a rounding replaced, near `near`: the point where the planes of the flat faces round it meet.  The faces are looked at within 2 r, then 2.8 r,
+        3.9 r ... of the place, up to 0.4 of the body: the point is taken when two looks at different distances agree on it (to within a fiftieth of the distance).  A place that
+        has one face within 2 r has no rounding, and none is looked for '''
+    size = surface.size
+    radius = 2.0 * r
+    previous = None
+    first = True
+    while radius <= 0.4 * size:
+        if first and len(surface.faces(near, radius)) < 2:
+            return None
+        first = False
+        faces = surface.faces(near, radius, flat=True)
+        cand = _candidate(faces, near) if len(faces) >= 2 else None
+        if cand is not None and cand[0] == kind and _norm(_sub(cand[1], near)) <= 1.5 * radius:
+            if previous is not None and _norm(_sub(cand[1], previous)) <= 0.02 * radius:
+                return cand[1]
+            previous = cand[1]
+        else:
+            previous = None
+        radius *= 1.4
+    return None
+
+
+def corner_at(shape, near, scale=None, bounds=None, rounded=False):
     ''' The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
 
         near    a place on or near the surface (x, y, z) -- where the corner is looked for
         scale   how far round `near` is looked, in mm (default: 3 % of the body)
         bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
+        rounded True: a corner that the rounding of three edges replaced is found too -- the point where the planes of the flat faces round it meet
 
         Raises ValueError when there is no corner round `near`.  See the module. '''
     from fieldes.stdlib.points import point
     near, scale, size, values = _prepare(shape, near, scale, bounds, 'corner_at')
     found = find_feature(values, near, scale, size, 'corner')
+    if found is None and rounded:
+        found = _rounded_feature(values, near, scale, size, 'corner')
     if found is None:
         raise ValueError('corner_at: no corner of the body near (%.4g, %.4g, %.4g): three faces that meet at sharp angles within %.3g mm of it' % (near + (scale,)))
     return point(*_clean(found['point']))
 
 
-def edge_point_at(shape, near, scale=None, bounds=None):
+def edge_point_at(shape, near, scale=None, bounds=None, rounded=False):
     ''' The point of an edge of `shape` nearest `near`: a point on the line where two faces meet at a sharp angle -- any edge, straight or curved (the rim of a
-        cylinder too).  Where a corner is nearer, the corner.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`. '''
+        cylinder too).  Where a corner is nearer, the corner.  With rounded=True an edge that a rounding replaced is found too: the point of the line where the planes of the
+        flat faces on both sides meet.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`. '''
     from fieldes.stdlib.points import point
     near, scale, size, values = _prepare(shape, near, scale, bounds, 'edge_point_at')
     found = find_feature(values, near, scale, size)
+    if found is None and rounded:
+        found = _rounded_feature(values, near, scale, size, 'edge')
     if found is None:
         raise ValueError('edge_point_at: no edge of the body near (%.4g, %.4g, %.4g): two faces that meet at a sharp angle within %.3g mm of it' % (near + (scale,)))
     return point(*_clean(found['point']))
@@ -433,6 +565,48 @@ def edge_at(shape, near, scale=None, bounds=None):
         raise ValueError('edge_at: the edge near (%.4g, %.4g, %.4g) curves, so it is not a line: edge_point_at gives a point of it' % near)
     a, b = found['straight']
     return polyline([point(*_clean(a)), point(*_clean(b))])
+
+
+def _rounded_feature(values, near, scale, size, kind):
+    ''' {'point': ...} of the corner or edge that a rounding replaced near `near`, or None '''
+    surface = _Surface(values, size)
+    r = max(min(scale, 0.2 * size), 2e-3 * size)
+    surface.step = max(0.04 * r, 1e-5 * size)
+    start = surface.project([near])[0]
+    if start is not None and abs(start[2]) < 2.0 * r:
+        near = start[0]
+    found = _find_rounded(surface, near, r, kind)
+    return None if found is None else {'point': found}
+
+
+def circle_center_at(shape, near, scale=None, bounds=None):
+    ''' The centre of the circular edge of `shape` nearest `near`: a point on the axis of a cylinder's rim, of a hole's edge, of the base of a cone.  The circle is read from the
+        edge itself at several places round it, so it is the circle that the edge is, not one fitted to a mesh.  Raises ValueError when the edge nearest `near` is not a circle
+        (a straight edge, an oval, a corner).  See the module and `corner_at`. '''
+    from fieldes.stdlib.points import point
+    near, scale, size, values = _prepare(shape, near, scale, bounds, 'circle_center_at')
+    surface = _Surface(values, size)
+    r = max(min(scale, 0.2 * size), 2e-3 * size)
+    surface.step = max(0.04 * r, 1e-5 * size)
+    start = surface.project([near])[0]
+    if start is not None and abs(start[2]) < 2.0 * r:
+        near = start[0]
+    found = _find_circle(surface, near, r)
+    if found is None:
+        raise ValueError('circle_center_at: no circular edge of the body near (%.4g, %.4g, %.4g): an edge that is a circle within %.3g mm of it' % (near + (scale,)))
+    return point(*_clean(found[0]))
+
+
+def face_center(face):
+    ''' The middle of a face -- a selection of surface (`select_surface`): the mean of the places it was sampled at, which are spread evenly over it, so it is the centre of its
+        area (for a circular face the centre of the circle).  `center(face)` is the middle of the box round it, which is the same for a disc and not for an L '''
+    from fieldes.stdlib.points import point
+    xyz = getattr(face, 'sample_points', None)
+    if not xyz:
+        from fieldes.stdlib.measure import center
+        return center(face)
+    n = len(xyz) // 3
+    return point(*_clean((sum(xyz[0::3]) / n, sum(xyz[1::3]) / n, sum(xyz[2::3]) / n)))
 
 
 # (a line like the one a Curve is: it has no gizmo() line with numbers of its own -- its points have them -- and a gizmo mode only.  The model tree decides this from what the call is

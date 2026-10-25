@@ -153,6 +153,15 @@ bracket = snap(bracket, foot, foot_corner, top, hole_edge)
 In FielDes, select the body, its face and its point, then the face and the point it goes onto (Ctrl + click, in that order) and choose **Operations → Moving → snap**: the call is written with them
 in their places, and a placeholder for what was not selected.
 
+The points can be any points: the **centre of a circular edge** (`circle_center_at`) or **of a face** (`face_center`) put two round parts on one axis, and the corner or edge a **rounding** replaced
+(`corner_at(..., rounded=True)`) works for a part whose edges are rounded:
+
+```python
+rim = circle_center_at(cylinder_part, (10, 0, 0))            # the centre of the bottom rim of a cylinder
+base = circle_center_at(cone_part, (55, 0, 0))               # the centre of the base of a cone
+cone_part = snap(cone_part, select_surface(cone_part, (42, 1, 0)), base, select_surface(cylinder_part, (3, 2, 0)), rim)   # the cone under the cylinder, on its axis
+```
+
 ## Arithmetic on fields
 
 Shapes support `+ - * / **`, unary minus, `abs`, and the methods `.min(other)`, `.max(other)`,

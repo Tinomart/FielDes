@@ -2832,6 +2832,16 @@ What counts is a *jump* of the normal that stays a jump however closely it is lo
 turns by less and less the closer it is looked at, so it has neither edges nor corners; the rim of a cylinder, where the side meets the flat end, is an edge
 (`edge_point_at` gives a point of it; `edge_at` needs a straight one, and says so when the edge curves).
 
+Three more points to snap to:
+
+    middle = circle_center_at(part, (10.2, 0.1, 19.8))     # displayed: the centre of the circular edge nearest that place (the rim of a cylinder or a hole, the base of a cone)
+    corner = corner_at(rounded_part, (10, 10, 20), rounded=True)    # the corner that the rounding of three edges replaced: where the planes of the flat faces round it meet
+    on_edge = edge_point_at(rounded_part, (10, 0, 19.8), rounded=True)   # a point of the sharp edge that a rounding replaced
+    centre = face_center(select_surface(part, (5, 5, 0)))  # the middle of a face (a selection of surface): the mean of the places it was sampled at
+
+A rounded edge has no sharp edge: it turns by a little all along the rounding.  With `rounded=True` the faces on both sides are looked at from further and further away -- past
+the rounding, onto the flat faces -- and the point is where their planes meet, once two looks at different distances agree on it.
+
 What comes back are the ordinary things: a `point` (so it is a corner of a profile, the end of a `polyline`, a place for a gizmo) and a `polyline`
 of two points.  They are computed when the script runs, from `near` and the body: the body can be changed and they follow, as long as the edge or
 corner is still near that place.
@@ -2840,13 +2850,20 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `corner_at(shape, near, scale=None, bounds=None)`
+### `circle_center_at(shape, near, scale=None, bounds=None)`
+
+The centre of the circular edge of `shape` nearest `near`: a point on the axis of a cylinder's rim, of a hole's edge, of the base of a cone.  The circle is read from the
+edge itself at several places round it, so it is the circle that the edge is, not one fitted to a mesh.  Raises ValueError when the edge nearest `near` is not a circle
+(a straight edge, an oval, a corner).  See the module and `corner_at`.
+
+### `corner_at(shape, near, scale=None, bounds=None, rounded=False)`
 
 The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
 
 near    a place on or near the surface (x, y, z) -- where the corner is looked for
 scale   how far round `near` is looked, in mm (default: 3 % of the body)
 bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
+rounded True: a corner that the rounding of three edges replaced is found too -- the point where the planes of the flat faces round it meet
 
 Raises ValueError when there is no corner round `near`.  See the module.
 
@@ -2855,10 +2872,16 @@ Raises ValueError when there is no corner round `near`.  See the module.
 The straight edge of `shape` nearest `near`: a polyline of two points, from the corner at one end of the edge to the corner at the other.  Raises ValueError
 when there is no edge round `near`, or when it curves (a circle is not a line: `edge_point_at` gives a point of it).  See the module and `corner_at`.
 
-### `edge_point_at(shape, near, scale=None, bounds=None)`
+### `edge_point_at(shape, near, scale=None, bounds=None, rounded=False)`
 
 The point of an edge of `shape` nearest `near`: a point on the line where two faces meet at a sharp angle -- any edge, straight or curved (the rim of a
-cylinder too).  Where a corner is nearer, the corner.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`.
+cylinder too).  Where a corner is nearer, the corner.  With rounded=True an edge that a rounding replaced is found too: the point of the line where the planes of the
+flat faces on both sides meet.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`.
+
+### `face_center(face)`
+
+The middle of a face -- a selection of surface (`select_surface`): the mean of the places it was sampled at, which are spread evenly over it, so it is the centre of its
+area (for a circular face the centre of the circle).  `center(face)` is the middle of the box round it, which is the same for a disc and not for an L
 
 ### `features_near(values, near, scale, size)`
 

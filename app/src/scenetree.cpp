@@ -6539,8 +6539,11 @@ void ScenePanel::addFeature(int line0, QVector3D click, QString kind)
     int after = 0;
     if (!resolveModel(line0, &target, &source, &after)) return;
 
-    const QString function = kind == "corner" ? "corner_at" : kind == "edge" ? "edge_at" : "edge_point_at";
-    const QString base = kind == "corner" ? "corner" : kind == "edge" ? "edge" : "edge_point";
+    const bool rounded = kind == "corner_rounded" || kind == "edge_rounded";
+    const QString function = kind == "corner" || kind == "corner_rounded" ? "corner_at" : kind == "edge" ? "edge_at" : kind == "circle_center" ? "circle_center_at"
+                           : kind == "face_center" ? "face_center" : "edge_point_at";
+    const QString base = kind == "corner" || kind == "corner_rounded" ? "corner" : kind == "edge" ? "edge" : kind == "circle_center" ? "circle_center"
+                       : kind == "face_center" ? "face_center" : "edge_point";
     // A free name: corner_1, corner_2, ...
     const QString src = m_source ? m_source() : QString();
     QString name;
@@ -6550,7 +6553,10 @@ void ScenePanel::addFeature(int line0, QVector3D click, QString kind)
         if (!QRegularExpression("\\b" + name + "\\b").match(src).hasMatch()) break;
     }
     auto num = [](double v) { return QString::number(v, 'g', 5); };
-    QString call = QString("%1 = %2(%3, (%4, %5, %6))").arg(name, function, source, num(click.x()), num(click.y()), num(click.z()));
+    QString call = QString("%1 = %2(%3, (%4, %5, %6)%7)").arg(name, function, source, num(click.x()), num(click.y()), num(click.z()), rounded ? QString(", rounded=True") : QString());
+    // (the middle of a face is the middle of the selection of the face the click is on: both in one statement)
+    if (kind == "face_center")
+        call = QString("%1 = face_center(select_surface(%2, (%3, %4, %5)))").arg(name, source, num(click.x()), num(click.y()), num(click.z()));
     // (a locked model is read-only: what is made from it holds a reference to it -- `# shadow: name` -- and does not take it in as its own)
     if (target.contains("locked") && target.contains("var")) call = markShadow(call, target["var"].toString());
 
@@ -6560,6 +6566,7 @@ void ScenePanel::addFeature(int line0, QVector3D click, QString kind)
     edits << TextEdit{after, int(last.size()), after, int(last.size()),
                       "\n" + indent + call + "\n" + indent + name};
     addImportIfMissing(edits, function, "features");
+    if (kind == "face_center") addImportIfMissing(edits, "select_surface", "selection");
     // (the new point or line is the selected model once the script has run)
     m_selectNew = name;
     m_selectNewTries = 0;

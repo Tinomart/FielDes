@@ -111,11 +111,15 @@ See [Analysis](analysis.md#boundary-conditions) and [Lattices](lattices.md#latti
 
 ## Corners and edges
 
-A right-click on a body **near one of its edges or corners** (within about thirty pixels) adds up to three entries to the menu, below *Select Surface*; a click on a face, or on a smooth
-surface, offers none of them, because there is nothing to snap to:
+A right-click on a body adds entries to the menu, below *Select Surface*: *Point at the centre of this face* wherever the click is on a surface, and -- **near one of its edges or corners**
+(within about thirty pixels), and only where it is true -- the ones that follow. A click on a face far from any edge offers only the first:
 
 | Entry | Writes | Makes |
 |---|---|---|
+| **Point at the centre of this face** | `face_center_1 = face_center(select_surface(part, (x, y, z)))` | a point at the middle of the face the click is on (the mean of the places it was sampled at: the centre of a disc, the centre of the area of an L) |
+| **Point at the centre of the circle** | `circle_center_1 = circle_center_at(part, (x, y, z))` | a point at the centre of the circular edge nearest the click -- the rim of a cylinder or a hole, the base of a cone (offered only for an edge that is a circle) |
+| **Point at the rounded corner** | `corner_1 = corner_at(part, (x, y, z), rounded=True)` | a rounded corner has no corner: this is the corner the rounding replaced, where the flat faces round it meet (offered where there is no sharp corner but a rounding) |
+| **Point on the rounded edge** | `edge_point_1 = edge_point_at(part, (x, y, z), rounded=True)` | a point of the sharp edge the rounding of an edge replaced, where the flat faces on both sides meet |
 | **Point at the corner** | `corner_1 = corner_at(part, (x, y, z))` | a point, exactly where three faces of the body meet, the corner nearest the click |
 | **Point on the edge** | `edge_point_1 = edge_point_at(part, (x, y, z))` | a point of the edge nearest the click -- any edge, a circle too (the rim of a cylinder) |
 | **Line along the edge** | `edge_1 = edge_at(part, (x, y, z))` | the straight edge nearest the click as a `polyline` of two points, from its corner to its corner (offered only for an edge that is a straight line) |
@@ -129,3 +133,11 @@ with the script, from the place it was given and the body as it is then, so the 
 What comes back are the ordinary things -- a `point` (a corner of a `profile`, the end of a `polyline`, a place for a gizmo) and a `polyline` -- so they are selected, moved, used as the
 points of a work plane or of a `snap`, and listed in the model tree like any other. The functions can also be written by hand: `corner_at(shape, near, scale=None, bounds=None)`, `edge_point_at(...)`,
 `edge_at(...)`; `scale` is how far round `near` is looked, in mm (by default 3 % of the body), and a `ValueError` says that there is no corner or edge within it (or that the edge curves, for `edge_at`).
+
+**Circles, faces and roundings.** `circle_center_at(shape, near)` reads the circular edge nearest `near` at several places round it -- a first circle from two points a little way along the edge, then
+again from the edge at wider and wider angles up to 100 degrees either side, and every point that was found must be on the circle -- and returns its centre: the circle that the edge *is*, not
+one fitted to a mesh. It raises a `ValueError` for an edge that is a straight line, an oval or a corner. `face_center(face)` is the middle of a surface selection: the mean of the places it was
+sampled at, which are spread evenly over it. `corner_at` and `edge_point_at` take `rounded=True`: a rounded edge turns by a little all along the rounding, so the faces on both sides are looked
+at from further and further away -- past the rounding, onto the flat faces -- and the point is where their planes meet, once two looks at different distances agree on it (to within a fiftieth of
+the distance). The checks (`tests/internal/snap_checks.py`) are a block with `round_edges(block, 5)`, whose corner and edge must be found at the sharp ones, and the centre of the rim of a cylinder,
+of a hole's edge, of a cone's base and of a tilted cylinder, each within 0.05 mm.

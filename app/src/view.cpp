@@ -4396,6 +4396,10 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         // `edge_at(...)`, like a selected surface is
         const QJsonObject found = m_scene->featuresNear(line, point, 0.3 * scale);
         const bool corner = found["corner"].isArray(), edge = found["edge"].isObject();
+        // (a circular edge has a centre, and a rounding has the corner or the edge it replaced: where the flat faces round it would meet)
+        const bool circle = found["circle"].isObject();
+        const QJsonObject rounded = found["rounded"].toObject();
+        const bool roundedCorner = rounded["corner"].isArray(), roundedEdge = rounded["edge"].isArray();
         // What is written is the place the library found -- the corner, the point of the edge -- and not the click: the call looks only about 3 % of the body round the place it is given
         // (window t332: a click 1.1 mm from an edge wrote `edge_at(block, (18.878, ...))` and the call, looking 0.6 mm round it, found no edge)
         const auto place = [](const QJsonValue& v) {
@@ -4404,9 +4408,30 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         };
         const QVector3D cornerAt = corner ? place(found["corner"]) : point;
         const QVector3D edgeAt = edge ? place(found["edge"].toObject()["point"]) : point;
-        if (corner || edge)
+        // The middle of the face the click is on, as a point (the centre of a disc: the way to put two round parts on one axis)
+        menu->addSeparator();
+        {
+            auto f = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of this face"), this, [=]{ emit(featureRequested(line, point, "face_center")); });
+            f->setToolTip(T("A point at the middle of the face of this body that the click is on: face_center(select_surface(body, (x, y, z))) -- the centre of a round face is the centre of its circle"));
+        }
+        if (corner || edge || roundedCorner || roundedEdge)
         {
             menu->addSeparator();
+            if (circle)
+            {
+                auto c = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of the circle"), this, [=]{ emit(featureRequested(line, edgeAt, "circle_center")); });
+                c->setToolTip(T("A point at the centre of the circular edge of this body that is nearest the click (the rim of a cylinder or a hole, the base of a cone): circle_center_at(body, (x, y, z)) -- snap parts together by their axes with it"));
+            }
+            if (roundedCorner)
+            {
+                auto r = menu->addAction(TypeIcons::icon("point"), T("Point at the rounded corner"), this, [=]{ emit(featureRequested(line, point, "corner_rounded")); });
+                r->setToolTip(T("A point at the corner that the rounding of this body replaced, where the flat faces round it would meet: corner_at(body, (x, y, z), rounded=True)"));
+            }
+            if (roundedEdge)
+            {
+                auto r = menu->addAction(TypeIcons::icon("point"), T("Point on the rounded edge"), this, [=]{ emit(featureRequested(line, point, "edge_rounded")); });
+                r->setToolTip(T("A point on the sharp edge that the rounding of this body replaced, where the flat faces on both sides would meet: edge_point_at(body, (x, y, z), rounded=True)"));
+            }
             if (corner)
             {
                 auto a = menu->addAction(TypeIcons::icon("point"), T("Point at the corner"), this, [=]{ emit(featureRequested(line, cornerAt, "corner")); });

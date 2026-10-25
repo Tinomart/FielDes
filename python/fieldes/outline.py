@@ -64,7 +64,7 @@ _MAKES = (
                     'heat_generation', 'convection', 'inlet', 'outlet', 'wall', 'slip')),
     ('material', ('Material', 'Fluid')),
     ('surface', ('select_surface', 'surface_from_bodies', 'surface_*')),
-    ('point', ('point', 'center', 'corner_at', 'edge_point_at')),
+    ('point', ('point', 'center', 'corner_at', 'edge_point_at', 'circle_center_at', 'face_center')),
     ('curve', ('edge_at',)),
     ('cell', ('cell_*',)),
     ('points', ('random_points',)),
