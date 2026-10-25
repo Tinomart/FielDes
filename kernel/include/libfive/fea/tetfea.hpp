@@ -35,6 +35,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include "libfive/fea/fea.hpp"
 #include "libfive/fea/tetmesh.hpp"
+#include "libfive/fea/density_design.hpp"
+#include "libfive/fea/topopt.hpp"
 #include "libfive/tree/tree.hpp"
 
 namespace libfive {
@@ -116,14 +118,31 @@ public:
     TetProblem(const Tree& shape, Eigen::Vector3d lo, Eigen::Vector3d hi, double h, double E, double nu);
 
     /*  A support.  loadCase >= 0: it holds the part only in that load case (topology optimization against several sets of
-     *  boundary conditions, each with its own supports); -1: in every case  */
-    void addSupport(const Tree& region, bool x, bool y, bool z, int loadCase = -1);
+     *  boundary conditions, each with its own supports); -1: in every case.  `displacement`: where the held directions are held AT -- 0 (the
+     *  default) the part does not move there, another number is a displacement the support imposes (mm); a static analysis solves for the
+     *  rest of the part, a modal analysis holds the part still (the displacement means nothing to a vibration), and a topology optimization
+     *  refuses it  */
+    void addSupport(const Tree& region, bool x, bool y, bool z, int loadCase = -1, Eigen::Vector3d displacement = Eigen::Vector3d::Zero());
     /*  A load in a load case (0, 1, ...): topology optimization makes the part stiff for each
      *  case on its own; a static analysis applies every load together  */
     void addForce(const Tree& region, Eigen::Vector3d total, int loadCase = 0);
     /*  The same, with the total spread over the region's surface in proportion to a field (taken at the centres of the boundary
      *  triangles; not negative) instead of evenly by area: a pressure that is not the same everywhere  */
     void addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile);
+
+    /*  The supports and loads act on the body only: a node farther outside it than `slack` is never held, and a boundary face with a corner farther
+     *  outside it is never loaded.  For a design space that is bigger than the part (the part grown outwards, with holes where the supports and loads
+     *  are): the walls the space has round such a hole lie on the edge of the region, and are not the part's surface -- a support that held them would
+     *  anchor material to a place that is not on the part, a load that took them would carry a share of the force off the part.  The body is a field,
+     *  negative inside (its distance, where it is one).  Before prepare  */
+    void setConditionBody(const Tree& body, double slack);
+
+    /*  The supports hold only nodes on the surface of the mesh (a corner of a boundary face), as the loads act only on boundary faces: a support is the
+     *  FACE where the part meets what holds it, not the slab of the part behind it that its region happens to take in.  For a design that may grow:
+     *  material it puts against that slab, or round the edge of the face, would be clamped to nodes that are held and give it a stiffness the
+     *  support does not give (it curled round the plate's edge, past the plane of the face, for nothing but that).  A support that finds no such
+     *  node holds the nodes it did.  Before prepare  */
+    void setConditionSurface(bool on) { m_conditionSurface = on; }
 
     /*  Material properties as fields of space (each is evaluated at the centre of every tetrahedron):
      *    setStiffnessField  Young's modulus in MPa -- E given to the constructor is then only what the stiffness matrix is
@@ -154,43 +173,48 @@ public:
                const std::atomic<bool>* cancel = nullptr);
     const std::vector<double>& frequencies() const { return m_frequencies; }
 
-    /*  Topology optimization (SIMP with a density filter and optimality-criteria updates): finds
-     *  the stiffest distribution of material that uses volumeFraction of the part, for the
-     *  supports and loads given.  Elements inside `keep` regions (and those holding supported or
-     *  loaded nodes) stay solid, elements inside `avoid` regions stay empty.  */
-    struct TopOpt
+    /*  A load case that is a modal analysis: the supports of the case hold the part and nothing loads it; the optimisation reads
+     *  its frequencies.  Before prepare  */
+    void markModalCase(int loadCase);
+
+    /*  Topology optimization (SIMP with a density filter and the method of moving asymptotes): finds the distribution of material
+     *  that is best for what is asked -- an objective and constraints that are formulas of MEASURES of the analyses (see topopt.hpp
+     *  and `measures`).  Elements inside `keep` regions (and those holding supported or loaded nodes) stay solid, elements inside
+     *  `avoid` regions stay empty.  */
+    struct TopOpt : topopt::DesignSettings
     {
-        double volumeFraction = 0.3;
+        using Mirror = topopt::Mirror;
+        /*  A number read from the design that the formulas use, with its sensitivity to the density of every element.  loadCase: the
+         *  analysis it is read in (the cases are numbered as the loads and the supports give them).  VOLUME is the share of the part's
+         *  volume that the design uses (0 .. 1; the part is the design space, or the part it was grown from)  */
+        enum Kind { VOLUME = 0, COMPLIANCE = 1, MAX_DISPLACEMENT = 2, MAX_VON_MISES = 3, FREQUENCY = 4, DISPLACEMENT_AT = 5 };
+        struct Measure
+        {
+            int kind = VOLUME;
+            int loadCase = 0;
+            int index = 0;                  // FREQUENCY: the mode (0 the lowest); DISPLACEMENT_AT: the component 0 / 1 / 2, or 3 for the magnitude
+            double a = 0, b = 0, c = 0;     // DISPLACEMENT_AT: the point
+        };
+        std::vector<Measure> measures;
+        /*  What every density design has -- the objective and the constraints as formulas of the measures, the density it starts with, the filter,
+         *  the extrusion, the iterations, the keep / avoid regions, the part it was grown from, how crisp it gets, the symmetry -- is in
+         *  topopt::DesignSettings (density_design.hpp)  */
+        double density = 0;                 // the material's density, t / mm^3: the mass of a frequency
         double penalty = 3.0;
-        double filterRadius = 0;        // 0: 1.5 element sizes
         double minStiffness = 1e-3;     // of the full material, for "void"
-        int extrude = -1;               // 0 / 1 / 2: the design is constant along x / y / z
-        int iterations = 100;
         int solverIterations = 20000;
         double tolerance = 1e-5;
-        std::vector<Tree> keep, avoid;
-        /*  Set when the design space is bigger than the part (the part grown outwards): the part itself.  The volume
-         *  fraction is then of the part's volume, the design starts as the part (the rest of the space nearly empty) and
-         *  material may be put outside it where that makes the design stiffer  */
-        Tree origin = Tree::invalid();
-        /*  How crisp the design is: its density is projected towards 0 and 1 with a step that grows steeper to this number
-         *  (see optimize); 1: not at all, the density the filter makes  */
-        double sharpness = 16.0;
-        /*  Mirror symmetry: the design is kept symmetric about these planes (axis 0, 1, 2 = x, y, z at the coordinate `at`; atCentre: the
-         *  plane through the middle of the part's extent along that axis).  symmetryAuto: look for the planes the part, its supports,
-         *  its loads and its keep / avoid regions are all symmetric about, and keep the design symmetric about them -- a symmetric
-         *  problem otherwise breaks its symmetry (the mesh of a symmetric part is never exactly symmetric, and a small difference
-         *  grows: one of two redundant members takes the other's material)  */
-        struct Mirror { int axis = 2; double at = 0; bool atCentre = true; };
-        std::vector<Mirror> mirrors;
-        bool symmetryAuto = false;
     };
     bool optimize(const TopOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
     /*  After optimize: the planes the design was kept symmetric about (found or asked for), `at` as it was resolved  */
     const std::vector<TopOpt::Mirror>& mirrorsUsed() const { return m_mirrorsUsed; }
-    /*  After optimize: the compliance at each iteration, and the density (0..1) as a field on the
+    /*  After optimize: the objective at each iteration, and the density (0..1) as a field on the
      *  mesh (each tetrahedron's density averaged at the nodes by volume) for meshFieldTree(., 0)  */
     const std::vector<double>& complianceHistory() const { return m_history; }
+    /*  ... and every measure at each iteration (baseHistory()[k][measure]), and every output of the program (outputHistory()[k][output]:
+     *  the objective, then the constraints)  */
+    const std::vector<std::vector<double>>& baseHistory() const { return m_baseHistory; }
+    const std::vector<std::vector<double>>& outputHistory() const { return m_outputHistory; }
     std::shared_ptr<const MeshResult> densityResult() const { return m_densityResult; }
     /*  The density as a field after iteration k (0-based; one per compliance value): how the design was found,
      *  step by step  */
@@ -205,6 +229,21 @@ public:
      *  just there -- less than `margin` above it -- is too thin to count.  Specks under 2 % of the body are not
      *  counted (0 when there is no result)  */
     int pieces(double threshold, double margin = 0.0) const;
+    /*  The density at the nodes above which the optimised part has the volume the design has: the density is partly grey, so a cut at
+     *  one half keeps less or more than the design is, and the volume above a level is counted exactly (the field is linear in each
+     *  tetrahedron), not on a grid that cannot see a wall thinner than its spacing.  0.5 when there is no result  */
+    double cutThreshold() const;
+    /*  The highest density that the design has in an element outside the part (see TopOpt::origin) that lies on the edge of the design
+     *  space: how far the design wants to reach, when it is as far as the space goes.  0 when the space is the part  */
+    double frontierDensity() const { return m_frontier; }
+    /*  After optimize with TopOpt::stopAtEdge: the run stopped because the design reached the edge of its space.  resumeState() is what a run in
+     *  a larger space goes on with (TopOpt::resume) -- empty when the run went to its end --, and designResult() the design it stopped at, the
+     *  variable of the optimisation (not the density it is projected to) as a field on the mesh, for meshFieldTree(., 0): TopOpt::startField  */
+    const std::vector<double>& resumeState() const { return m_resume; }
+    std::shared_ptr<const MeshResult> designResult() const { return m_designResult; }
+    /*  The surface of the optimised design where its density at the nodes is `level`: indexed triangles, counter-clockwise from outside,
+     *  as densitySurface() has them for an iteration -- of the design that is given back  */
+    bool finalSurface(double level, std::vector<float>& verts, std::vector<uint32_t>& tris) const;
     std::shared_ptr<const MeshResult> mode(int i) const
     {
         return (i >= 0 && size_t(i) < m_modes.size()) ? m_modes[size_t(i)] : nullptr;
@@ -223,10 +262,13 @@ private:
     Eigen::Vector3d m_lo, m_hi;
     double m_h, m_E, m_nu;
 
-    struct Support { Tree region; bool fix[3]; int loadCase = -1; };
+    struct Support { Tree region; bool fix[3]; int loadCase = -1; Eigen::Vector3d displacement = Eigen::Vector3d::Zero(); };
     struct Force { Tree region; Eigen::Vector3d total; int loadCase; Tree profile = Tree::invalid(); };
     std::vector<Support> m_supports;
     std::vector<Force> m_forces;
+    Tree m_conditionBody = Tree::invalid();     // (see setConditionBody)
+    double m_conditionSlack = 0;
+    bool m_conditionSurface = false;            // (see setConditionSurface)
     Eigen::Vector3d m_gravity = Eigen::Vector3d::Zero();
     double m_density = 0;
     Tree m_temperature = Tree::invalid();
@@ -239,6 +281,7 @@ private:
     int m_order = 1;
     std::shared_ptr<tet::QuadMesh> m_quad;      // (the 10-node elements, when m_order is 2)
     std::vector<unsigned char> m_fixedDof;      // per DOF (3 * vertex + axis)
+    std::vector<double> m_prescribed;           // per DOF: the displacement a held direction is held at (empty when every support holds at 0)
     std::vector<double> m_force;                // per DOF: the loads, gravity and thermal expansion together
     std::vector<std::vector<double>> m_caseForce;   // per load case, when there are several
     std::vector<std::vector<unsigned char>> m_caseFixed;    // per load case: the fixed DOFs of its own, when the cases have supports of their own
@@ -252,10 +295,16 @@ private:
     std::shared_ptr<MeshResult> m_result;
 
     bool m_noLoads = false;                     // prepare without loads (modal)
+    std::vector<char> m_modalCase;              // per load case: it is a modal analysis (see markModalCase)
     std::vector<float> m_topDensity;            // per tetrahedron
     std::vector<double> m_history;
+    std::vector<std::vector<double>> m_baseHistory, m_outputHistory;
     std::shared_ptr<MeshResult> m_densityResult;
     std::vector<std::vector<float>> m_densityHistory;   // per iteration: the density at the nodes
+    double m_designVolume = 0;                  // the volume the design given back has (the density integrated over the elements)
+    double m_frontier = 0;                      // see frontierDensity()
+    std::vector<double> m_resume;               // see resumeState()
+    std::shared_ptr<MeshResult> m_designResult; // see designResult() (not kept in a file: it serves the run that goes on from this one)
     std::vector<double> m_frequencies;
     std::vector<std::shared_ptr<MeshResult>> m_modes;
 };

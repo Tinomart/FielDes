@@ -44,7 +44,8 @@ design = exclude(space, holes)
 # hidden: design
 
 # the bracket as the optimizer makes it from the loads and the supports alone
-opt = topology_optimization(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, volume_fraction=0.50, element_size=5)
+opt_stress = static_analysis(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, element_size=5)
+opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
 # hidden: opt
 bracket = opt.shape()
 # hidden: bracket

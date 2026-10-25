@@ -512,27 +512,30 @@ solution, Picard, then Newton once the residual is below 1e-2; the linear system
 above 12,000 unknowns (tolerance 1e-3 of the nonlinear residual), Eigen's sparse LU below and when the iterative solve
 fails. Results are a `MeshResult` (fields 0..7: speed, vx, vy, vz, pressure, total pressure, shear rate, vorticity) read
 as Trees through `meshFieldTree`, so they are fields like any other; the flows, mean pressures and wall forces come from
-the boundary triangles (the force from the full stress of the adjacent element). `optimize` is the topology
-optimisation of a body in the flow: a level set phi at the nodes (mm, > 0 in the body; the given body's distance to
-start, smoothed by the structural solver's filter taken to the nodes), each tetrahedron's share of the body the exact
-fraction where the linear interpolant of phi is positive (the third divided difference of t_+^3 over its four values,
-with the derivative in each), a Brinkman friction alpha_max times that share, the Navier-Stokes flow solved once per
-iteration (warm-started), the objective the force on the body (w_drag F.d - w_lift F.l, F the momentum the flow loses
-in the friction), the sensitivity from the discrete adjoint (`solve` re-assembles the Newton Jacobian at convergence,
-builds its transpose on the same block pattern and solves it for lambda when `m_wantAdjoint` is set; `optimize` adds
-lambda . dR/d alpha_e by differencing `elementRows` in alpha_e, then chains through the fractions and the filter's
-transpose), phi rescaled to unit slope over the cut elements, a step of at most `move` elements down the gradient,
-and one offset of the whole level set found by bisection that brings the volume into [vMin, vMax]; every iteration's
-flow is kept as a step. A steady `solve` keeps its nonlinear iterations as steps too (the Stokes start, then each iteration). `FIELDES_FLOW_FDCHECK=1` (and `_FDCHECK_IT=k`) checks the
-sensitivities by finite differences, `FIELDES_FLOW_JSPLIT=1` prints where the friction dissipation sits. C API `libfive_tetflow_*`, Python `stdlib/fluid.py`
-(`fluid_analysis`, `flow_topology_optimization`); `FIELDES_FLOW_DEBUG=1` prints the iterations and the linear solves,
+the boundary triangles (the force from the full stress of the adjacent element). `optimizeDensity` is the topology
+optimisation of a body in the flow, on the density optimiser every design shares (`topopt::runDensityDesign`, `density_design.cpp`): one density per tetrahedron, filtered, sharpened
+(for a flow a little at every iteration: `DesignSettings::smoothSharpening`), averaged over the planes of symmetry and the lines of an extrusion, moved by the method of moving
+asymptotes (`topopt::Mma`) on the sensitivities of the measures of a `topopt::Program`; the flow's side is a `Physics` adapter: a Brinkman friction alpha_max times the density in
+each tetrahedron (alpha_max = mu / (darcy h^2)), the Navier-Stokes flow solved once per iteration (warm-started: from the last flow, with no Stokes start, by Newton's method from its first step -- a first residual above a fifth falls back to Picard -- and to 1e-5 of the load, the drag of a flow differing by 1.3e-6 between 1e-5 and 1e-9), the force on the body F = sum alpha_e (V_e / 4) sum u_i along the flow and
+across it, and, for each direction a constraint reads, one adjoint (`solve` re-assembles the Newton Jacobian at convergence, builds its transpose on the same block pattern and solves it
+for lambda in each direction of `m_objDirs`, to a reduction of 1e-6 on an incomplete LU of its own (`m_ilutAdj`, kept from one iteration to the next as the flow's is, and made again only when a solve with it takes more than twice the iterations of the first one after it was built); the sensitivity of an element is lambda . dR/d alpha_e by differencing `elementRows`
+in alpha_e, plus the explicit part of the force); the body is cut from the density at the level that keeps the design's volume (`volumeShareAbove`, exact: the density is linear in each
+tetrahedron); every iteration's flow is kept as a step. A steady `solve` keeps its nonlinear iterations as steps too (the Stokes start, then each iteration). `FIELDES_TOPO_FDCHECK=<iteration>` checks the
+sensitivities by finite differences (as for the structural designs). C API `libfive_tetflow_*`, Python `stdlib/fluid.py`
+(`fluid_analysis`, and the flow's side of `topology_optimization`).
+The heat conduction has its own adapter on the same core (`TetThermalProblem::optimizeDensity`, `tetthermal.cpp`): the conductivity of an element is the material's times kmin + (1 - kmin) rho^p, the temperature is solved by Jacobi-preconditioned conjugate gradients on the free nodes, and each measure (the peak temperature and the lowest, as p-norms brought to the peak; the peak heat flux; the temperature the heat comes in at; the temperature at a point) has its sensitivity from one adjoint solve, dM/drho_e = dM/drho_e - lambda . (dK/drho_e) T with K_ff lambda = dM/dT; the elements that hold a temperature or carry a heat input are solid, a generation region is a condition of the design space (its heat is made there, material or not: the classic volume-to-point problem), the ones that hold a temperature or a convecting face are what material must join; the result file keeps the density, its history and the temperature of the heat inputs. Python: `thermal.py` (`topology_optimization_thermal`, `ThermalTopologyResult`), `optimization_measures.py` (`Program.thermal_measure`).
+The mesh of the flow, of the structural analysis and of the heat conduction is made by `meshShapeMirrored` (`tetmesh.cpp`): a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored, so the mesh of a symmetric
+problem is exactly symmetric (`findMeshMirrors` finds the planes by comparing the field with its mirror image at 3000 fixed points; where the plane meets the surface the half mesh has a corner, and the vertices on the plane that belong to a face of the surface are moved along it onto the surface (to the nearest change of side of the field); a plane whose mirrored boundary does not lie on the shape (to a fiftieth of an element) is dropped;
+stat 28 of `libfive_tetflow_stat` is the number of planes used).
+The linear solves count iterations and never read a clock or the number of cores (the boxes of the incomplete LU follow the size of the problem: `FlowIlut::build`), so a problem is solved with the same iterations on every machine.
+`FIELDES_FLOW_DEBUG=1` prints the iterations and the linear solves,
 `FIELDES_FLOW_DUMP=<file>` the boundary nodes with their conditions, `FIELDES_FLOW_DIRECT_LIMIT=n` overrides the limit.
 `solveTransient(dt, steps, storeEvery)` is the flow in time: backward Euler with the consistent mass matrix (the time
 terms are in the SUPG / PSPG residuals too; the stabilisation parameter has no time term, so a settled flow is the
 steady solver's flow), an impulsive start from the Stokes flow, every stored step a `MeshResult` of its own sharing the
 mesh and the locator (`stepResult(k)`, `stepStats(k)`). `streamlines` integrates particle paths through a result by
 fourth-order Runge-Kutta steps of half an element (`TetLocator::locateInside`), `inletSeeds` spreads seeds over the
-inlet triangles. Both optimisers (`TetProblem::optimize`, `TetFlowProblem::optimize`) keep the nodal density after
+inlet triangles. Both optimisers (`TetProblem::optimize`, `TetFlowProblem::optimizeDensity`) keep the nodal density after
 every iteration (`densityResultAt(k)`, C API `*_density_at`).
 
 ## Result steps and the flow view

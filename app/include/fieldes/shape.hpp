@@ -233,6 +233,10 @@ public:
     bool planeNow(double frame[9]) const;
     /*  The plane a 2D shape lies in -- (origin, u, v), nine numbers -- as it is now: a profile's, a flat shape's own, z = 0 for the others; false when it is not a 2D shape  */
     bool flatPlane(double frame[9]) const;
+    /*  A surface patch (a selected surface): the plane it is best worked on, as (origin, u, v) like flatPlane -- the plane that the patch covers the most area of when it is projected onto
+     *  it (a flat face: its own plane; one that is bent: the plane its normals are the most along), through the middle of the patch.  The direction of its normal is the one the patch
+     *  faces (outwards from its body).  False when this is not a patch, or none of the mesh is on it yet  */
+    bool patchPlane(double frame[9]) const;
     bool tangentAt(int i, QVector3D& out) const;
     /*  Which control of this shape a point is (by the numbers that move it), or -1  */
     int controlOf(const Shape* point) const;
@@ -377,9 +381,13 @@ public:
      *  not finer than it needs.  `res` was chosen for the scene resolution
      *  `scene_res`; when the scene's resolution is changed (studio.
      *  set_resolution) the part's changes with it, in proportion.  A part whose
-     *  box is not inside the render region uses the scene's resolution.  A `scene_res` below 0 says the resolution is the
-     *  part's own, absolute (custom_resolution(x, r)): it does not follow the scene's.  */
+     *  box is not inside the render region uses the scene's resolution.  */
     void setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res);
+
+    /*  A resolution of its own for this body (fieldes.stdlib.custom_resolution(x, r)): the number the scene's resolution is, for this body alone.  It takes the scene's place in
+     *  autoResolution, so it is made finer for a small body in a big region as the scene's is -- there is nothing absolute about it.  0: none, the scene's is used  */
+    void setResolutionOverride(float res) { m_res_override = res > 0 ? res : 0.0f; }
+    float resolutionOverride() const { return m_res_override; }
 
     /*  The box the script says the shape fills (its `_bounds`: told by the primitives, which know it from their numbers, and carried through handles() and gizmo(), widened by
      *  the numbers that were pulled).  It sizes the shape, for its resolution, when the quick search for its box (measureExtent) runs out of its time -- a shape made with
@@ -651,6 +659,9 @@ public:
     bool showElements() const { return m_show_elements; }
     void setShowElements(bool b);
     QString elementText() const { return m_grid.text; }
+    // What the card says when a result has no elements to show, and why (more tetrahedra than are drawn)
+    void setElementNote(const QString& note) { m_elementNote = note; }
+    QString elementNote() const { return m_elementNote; }
     /*  The colour range of what is shown: of the elements' own values while the
      *  elements are shown, else of the smooth field  */
     float displayLo() const;
@@ -1012,6 +1023,7 @@ protected:
     bool has_hint=false;
     QVector3D hint_lo, hint_hi;
     float hint_res=0, hint_side=0, hint_scene_res=0;
+    float m_res_override = 0;                   // (see setResolutionOverride)
     // ...where the part is now (its gizmo moves and turns it): what the
     // render in progress uses
     QVector3D run_hint_lo, run_hint_hi;
@@ -1188,6 +1200,7 @@ protected:
 
     // Elements
     ElementGrid m_grid;
+    QString m_elementNote;
     bool m_show_elements=false;
     bool m_sec_enabled=false, m_sec_whole=false;
     QVector4D m_sec_plane;

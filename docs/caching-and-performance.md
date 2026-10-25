@@ -109,8 +109,8 @@ first one left the bar and takes the rest.
 ## The result cache
 
 An analysis is the slowest line of a script, and it is asked again every time the script runs. So **every analysis and
-optimisation is kept**: `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis` (steady and in time),
-`topology_optimization`, `thermal_topology_optimization` and `flow_topology_optimization`. The key is the whole problem
+optimisation is kept**: `static_analysis`, `modal_analysis`, `thermal_analysis`, `fluid_analysis` (steady and in time) and
+`topology_optimization` (of a structure, of a heat conduction and of a body in a flow). The key is the whole problem
 as asked — the part by the content of its expression, every support, load, condition and region, the material or the
 fluid, the element size and every setting — before anything is built. In the same session the problem asked again is
 handed back from memory; in a later session its solved form is read back from a file the kernel wrote: the mesh, every
@@ -224,13 +224,7 @@ until it crosses one. `roi_resolution` picks resolutions that are whole numbers 
 - For imports, prefer `roi_resolution(model)` — every part gets its own resolution. See
   [Region and resolution](step-import.md#region-and-resolution).
 - `view.set_quality(8)` is a good default; lower numbers are faster and rougher.
-- **One body that needs more (or less) than the scene**: `custom_resolution(body, 3)` meshes that body at 3 samples per mm
-  whatever `set_resolution` says, so a fine part does not make the whole scene fine. It is a **property row under the
-  variable** in the model tree (the number is a field of the tree, the bin takes the line away) and an entry of the right-click menu. It is the
-  body's wherever the body is: a body that reaches out of the scene's region (the box of a lattice is an estimate) is drawn at its
-  own resolution inside the region -- nothing outside the region is drawn, as for every shape. The finest a body can be drawn is
-  2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is, and the
-  row shows what is used (`8 → 7.63`, in amber, with the reason in its tooltip).
+- **One body that needs more (or less) than the scene**: `custom_resolution(body, 8)` draws that body as if the scene's resolution (`view.set_resolution`) were 8 -- the SAME number, so `custom_resolution(body, 2)` in a scene at 2 is the body as it was and twice as much is twice as fine, and it is made finer for a small body in a big region by how small it is, as the scene's is (there is no need to write a number far from the scene's to get a picture as fine as its own). A fine part does not make the whole scene fine. It is a **property row under the variable** in the model tree -- an argument like any other: click it and its number is selected in the code, ready to be typed over; the bin takes the line away -- and an entry of the right-click menu. The finest a body can be drawn is 2000 samples along its longest side; a number above that is not an error: the body is drawn at the finest there is.
 - **Quality of the exact STEP surface** is separate: `exclude(..., quality=64)` (points per full turn of a
   circle). The locked field of an excluded STEP part (its tessellation and the distance structure of the
   triangles) is made once per part and kept in memory while the script is run again; the kernel keeps the

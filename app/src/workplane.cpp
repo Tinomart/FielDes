@@ -244,7 +244,7 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
     auto fresh = new QToolButton;
     fresh->setObjectName("workPlaneNew");
     fresh->setText(T("New work plane"));
-    fresh->setToolTip(T("A new plane: the plane of the selected 2D shape, or parallel to the view (Ctrl+Shift+W)"));
+    fresh->setToolTip(T("A new plane: the plane of the selected 2D shape or surface, or parallel to the view (Ctrl+Shift+W)"));
     auto actions = new QHBoxLayout;
     actions->addWidget(face);
     actions->addWidget(fromView);

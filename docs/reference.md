@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -50,7 +50,8 @@ A 2D circle with the given radius and optional center
 
 A cone with the given base radius and height, standing along z on the (optional) base position: the base is a disc of that radius at the base height and the apex stands
 `height` above its centre.  It has two faces, the base and the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round
-its base), and the axis stays where it is
+its base), and the axis stays where it is.  The apex is rounded by half a percent of the base radius: a perfect apex is a point the surface comes to from every side at once, and a
+mesh comes out ragged there at any resolution
 
 ### `cylinder(r, h, base=(0, 0, 0))`
 
@@ -820,6 +821,10 @@ about: the centre (default: the middle of the shape's box)
 mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
 'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
 priority where it is shown.
+A profile, a polyline or a spline has no numbers of its own -- its points do -- so `profile_1 = gizmo(profile_1, mode='click')` only says when the one gizmo of
+its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).  With numbers it is
+placed like any shape -- moved and turned about the middle of its points -- as the same outline through the images of its points: whatever is made of points
+(it can make itself again through other points, `_remake`) is placed so, and what a linked copy of it, `instance(profile_1)`, is placed by.
 To make a shape undraggable, lock it: `shape = lock(shape)`.
 
 ### `handle_values(shape)`
@@ -877,6 +882,9 @@ FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
 
 The original is only REFERRED to: the mark `# shadow: plate` keeps it where it is in the model tree (a shadow of it is shown under the copy), whether it is
 locked or not -- taking the original into the copy would move its row away and make the copy look like what the original is made of.
+Every model is cloned the same way, `copy = instance(model)`: a model that is not a shape -- a material, the conditions or the result of an analysis, a lattice cell -- is its own value
+(no place to give it, nothing is solved again).  What is made of points -- a profile, a polyline, a spline -- is cloned like any shape: its copy is placed by its own gizmo, as the
+same outline through the images of the original's points (see gizmo()), so a point dragged, a number typed or a point added in the original changes every copy of it.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -1013,6 +1021,14 @@ The surface of an infinite cylinder along an axis: a surface, negative inside
 ### `displayed(shape)`
 
 What FielDes draws for a shape (see the top of this file)
+
+### `image_dot(source, xyz, rows, about, shift=(0.0, 0.0, 0.0), frozen=())`
+
+The dot of a point that is drawn somewhere else than the point is: the IMAGE of `source` under the map that takes a place to `about + rows * (place - about) + shift` (a turn or a
+mirror image, then a move), at `xyz` -- expressions of the numbers of `source`.  It is the point in every way that is seen: it is pressed, dragged, double clicked, and it is
+`source` that all of those change -- the numbers of `source`'s gizmo are what it is dragged by, taken back through the map (the viewport does it: `_symmetry`) --, so that the
+original and everything that is an image of it change together.  `frozen` are the numbers of the map itself (a gizmo's): a drag of the dot never changes them.  The dots of the
+images of a profile or a line in a symmetry, and of a placed copy of one (see handles.gizmo), are these
 
 ### `plane(point=(0, 0, 0), normal=(0, 0, 1))`
 
@@ -1194,6 +1210,11 @@ The number a coordinate has now: a number, or a field that is the same everywher
 
 What the viewport draws the line or the face from while a point is dragged: the expressions of each point's place and rotation (their numbers move with
 the script's var()s), and what each says of itself.  The line is made again from them at every frame, natively: no script is run
+
+### `with_image_dots(model, shown)`
+
+What is drawn for a profile or a line: `shown`, and -- when it is a placed copy of another (see handles.gizmo) -- the dots of its points, which are images of the original's
+points: each is pressed, dragged and double clicked, and it is the original's point that changes (see points.image_dot)
 
 ## Profiles and extrusions
 
@@ -2788,6 +2809,108 @@ lit up on the body, and a region for `fixed()` and `force()` (and the other cond
 `lattice_surface_conform()`.  If the bodies do not meet, nothing is selected (a note says so when their boxes do not
 even touch).
 
+## Corners and edges of a body
+
+Corners and edges of a body, found from its field: the points and lines a CAD program lets you snap to.
+
+    from fieldes import *
+
+    corner = corner_at(part, (10.2, 9.9, 20.1))            # displayed: the point where three faces of the part meet, nearest that place
+    edge = edge_at(part, (10.2, 0.1, 19.8))                # displayed: the straight line of the edge nearest that place, from corner to corner
+    on_edge = edge_point_at(part, (10.2, 0.1, 19.8))       # displayed: the point of the nearest edge that is nearest that place (any edge, a circle too)
+
+`near` is a place on (or near) the surface -- where you right-clicked: in FielDes, right-click a body close to an edge or a corner and the menu offers
+the call that fits (it is offered only where there is one), written under the body like `select_surface` is.
+
+They are made from the part's FIELD alone -- its value and its gradient, which is the surface normal --, as `select_surface` is, and no mesh of the part is made or
+read: around `near` the surface is sampled and its normals are sorted into faces; where two faces meet at a sharp angle there is an edge, where three do there is
+a corner, and its place is where the planes of the faces meet (worked out again from smaller and smaller neighbourhoods, so that a curved face is followed).
+What counts is a *jump* of the normal that stays a jump however closely it is looked at: a smooth surface -- a sphere, the side of a cylinder, a fillet --
+turns by less and less the closer it is looked at, so it has neither edges nor corners; the rim of a cylinder, where the side meets the flat end, is an edge
+(`edge_point_at` gives a point of it; `edge_at` needs a straight one, and says so when the edge curves).
+
+What comes back are the ordinary things: a `point` (so it is a corner of a profile, the end of a `polyline`, a place for a gizmo) and a `polyline`
+of two points.  They are computed when the script runs, from `near` and the body: the body can be changed and they follow, as long as the edge or
+corner is still near that place.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `corner_at(shape, near, scale=None, bounds=None)`
+
+The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
+
+near    a place on or near the surface (x, y, z) -- where the corner is looked for
+scale   how far round `near` is looked, in mm (default: 3 % of the body)
+bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
+
+Raises ValueError when there is no corner round `near`.  See the module.
+
+### `edge_at(shape, near, scale=None, bounds=None)`
+
+The straight edge of `shape` nearest `near`: a polyline of two points, from the corner at one end of the edge to the corner at the other.  Raises ValueError
+when there is no edge round `near`, or when it curves (a circle is not a line: `edge_point_at` gives a point of it).  See the module and `corner_at`.
+
+### `edge_point_at(shape, near, scale=None, bounds=None)`
+
+The point of an edge of `shape` nearest `near`: a point on the line where two faces meet at a sharp angle -- any edge, straight or curved (the rim of a
+cylinder too).  Where a corner is nearer, the corner.  Raises ValueError when there is no edge round `near`.  See the module and `corner_at`.
+
+### `features_near(values, near, scale, size)`
+
+What the right-click menu offers at a place: {'corner': point or None, 'edge': {'point', 'straight': (p0, p1) or None} or None} -- the nearest corner and the nearest
+edge.  A place with neither (a face, a smooth surface: nearly every click) costs a look round the place and no more
+
+### `find_feature(values, near, scale, size, kind=None)`
+
+The corner or edge nearest `near` that can be found (see the module), or None: {'kind': 'corner' | 'edge', 'point': (x, y, z), 'direction': unit vector or None,
+'straight': the two ends of the edge when it is a straight line, or None}.  `values(points)` is the field at many points (a list of floats), `scale` how many mm
+about thirty pixels span there (the neighbourhood that is looked in), `size` the size of the body.  `kind` ('corner' / 'edge') asks for that kind only
+
+## Snapping a body onto another
+
+Snapping one body onto another: the face and the point you chose on each.
+
+    from fieldes import *
+
+    foot = select_surface(bracket, seed=(0, 0, 0), angle=5)            # a face of the bracket
+    foot_corner = corner_at(bracket, (10, 10, 0))                       # and a corner of it
+    top = select_surface(plate, seed=(30, 20, 12), angle=5)            # a face of the plate
+    hole_edge = edge_point_at(plate, (30, 20, 12))                     # and a point of an edge of it
+
+    bracket = snap(bracket, foot, foot_corner, top, hole_edge)          # displayed: the bracket, standing on the plate with its corner on that point
+
+`snap(body, face, point, onto_face, onto_point)` moves `body` so that its `face` lies against `onto_face` -- the two faces facing each other, which is the direction in which the
+bodies do not go into one another -- and its `point` is at `onto_point`.  The faces are surfaces picked with `select_surface` (a flat face, or a gently curved one: it is
+the way the face faces on the average that counts), or just a direction: a vector `(0, 0, 1)` is the way a face of the other body faces.  The points are points: `point(...)`,
+a corner or an edge point from `corner_at` / `edge_point_at`, a place for a gizmo.  The other body is not given: where it is and which way it faces is all that is read of it,
+so it can be anything -- a body, a surface, a plane of the scene.
+
+    spin    degrees: the body turned about the line the two faces touch along (its normal), after it is in place -- the one thing the two faces and the two points leave free
+    gap     mm: the faces are left this far apart (a clearance; negative: pressed into one another)
+
+In FielDes, select the body, then its face and its point, then the face and the point it goes onto (Ctrl + click, in this order) and choose **Operations > Moving > snap**: the call
+is written with them in their places.  What is not selected is a placeholder in the call.
+
+The body is turned by the least turn that makes its face face away from the other one, about the point it is placed by, and then moved: so with the faces already facing each other
+it is only moved.  What comes back is the moved body, a shape like any other.  It is made with `move` and `rotate_*`, so a body that has an excluded part (see `exclude`) is moved
+as a whole, and a gizmo or `handles` of the body is left in the script after the snap, not before it.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `snap(body, face, point, onto_face, onto_point, spin=0.0, gap=0.0)`
+
+`body` moved so that its `face` lies against `onto_face` and its `point` is at `onto_point` (see the module): the least turn that makes the two faces face each other, then
+a move.
+
+face, onto_face     the faces: surfaces from select_surface(...), or the directions they face (x, y, z)
+point, onto_point   the places: point(...), corner_at(...), edge_point_at(...), or (x, y, z)
+spin                degrees: the body turned about the normal of the contact, once it is in place (default 0)
+gap                 mm: the faces are left this far apart (default 0)
+
 ## Structural analysis and topology optimization
 
 Static finite element analysis (linear elasticity) of FielDes shapes.
@@ -2940,25 +3063,26 @@ The result of topology_optimization():
 .density     a field, 0 (no material) .. 1 (solid), in the part
 .shape()     the optimized part, keeping the volume fraction asked
              for (shape(threshold=0.5): where density > 0.5)
-.compliance  compliance (N mm) at each iteration -- lower is stiffer
+.history     the objective at each iteration (what was made best: the compliance, the mass ...)
 .densities   the density field after each iteration (tetrahedral
              optimizations)
 .volume_fraction, .iterations, .seconds
 .pieces      how many separate pieces the optimized part is in (tetrahedral optimizations; more than
              one is warned about when the result is made: try a higher volume_fraction)
 .symmetry    the planes the design was kept symmetric about: {'z': 0.0} (see the symmetry argument), {} if none
-.verify()    a static analysis of the optimized part (stresses) --
-             a list, one per load case, when there are several
+.analysis    the analysis of the optimized part, made as the one the optimisation was given was (a list with several): its numbers
+             -- `best.max_von_mises`, `best.mass` -- are the true ones; .values what was asked, as that part has it; .feasible
+.verify()    the analyses of the optimized part again (a list, one per analysis, when there are several)
 Stated on its own, FielDes shows the optimized part coloured by the
 density, and the result card steps through the iterations: the part
 as it was after each one (slider, play / pause).
 
-#### `TopologyResult.keep_threshold(self, samples=40)`
+#### `TopologyResult.keep_threshold(self)`
 
-The density above which the part keeps the volume fraction that
-was asked for.  (The density field is partly grey -- between 0
-and 1 -- so cutting at 0.5 kept only 9-15 % of a block asked to
-keep 25 %: a much weaker part than the optimised one.)
+The density above which the part has the volume the design has.  (The density field is partly grey -- between 0 and 1 -- so cutting at
+0.5 kept only 9-15 % of a block asked to keep 25 %: a much weaker part than the optimised one.)  The volume above a level is counted in
+the kernel, exactly: the field is linear in each tetrahedron.  A grid of samples cannot see a wall thinner than its spacing, and cut a
+thin bracket that was to keep half of its material at 38 %
 
 #### `TopologyResult.shape(self, threshold=None)`
 
@@ -2967,11 +3091,14 @@ The optimized part: the original part where the density is above
 default the threshold that keeps the volume fraction asked for
 (see keep_threshold); 0.5 cuts the density field in the middle.
 
+#### `TopologyResult.table(self)`
+
+What was asked, at the first iteration, at the last, and as the optimized part has it, as text
+
 #### `TopologyResult.verify(self, threshold=None, element_size=None)`
 
-A static analysis of the optimized part with the same supports,
-loads and material -- with several load cases, a list of them,
-one per case
+The analyses of the optimized part again, each made as the one the optimisation was given was (a different element size if asked) --
+a list, one per analysis, when there are several
 
 ### `colored(shape, field, range=None, label=None, colormap='turbo')`
 
@@ -2980,15 +3107,21 @@ e.g. an FEA result) with a colour map; hovering the model shows the
 value.  range=(lo, hi) fixes the colour scale (default: the field's
 range on the part).  Anywhere else it is simply `shape`.
 
-### `fixed(*regions, region=None, x=True, y=True, z=True)`
+### `fixed(*regions, region=None, body=None, displacement=(0.0, 0.0, 0.0), **removed)`
 
-A support: the part is held in place wherever it lies inside `region` (a Shape: a body, a field, a selected surface).  Any number
+A support: the part is held wherever it lies inside `region` (a Shape: a body, a field, a selected surface).  Any number
 of regions can be given, one argument after the other -- fixed(a, b) holds the part where either is.
 
-region  where the part is held: a body, a field or a selected surface (the same as the first argument)
-x, y, z  False leaves that direction free (a sliding support)
+region        where the part is held: a body, a field or a selected surface (the same as the first argument)
+body          the body the support is on, when the regions are bodies that choose WHERE on it: `fixed(plate, body=bracket)` holds the bracket on its surface where it
+              meets the plate (what `surface_from_bodies(bracket, plate)` is, made by the call)
+displacement  (dx, dy, dz) in mm, where the part is held in each direction -- also written after the regions, fixed(region, (0, 0, inf)).
+              0 (the default, (0, 0, 0)) lets the part not move there: it is fixed.  `inf` (`math.inf`, `float('inf')`: `from fieldes import *` has it as
+              `inf`) leaves that direction free, so `displacement=(0, 0, inf)` is a support the part slides along z on.  Any other number is a
+              displacement the support imposes: `(0, 0, -0.5)` pushes the part 0.5 mm down where it is held (a static analysis on tetrahedra
+              solves for the rest of it; a modal analysis holds it still, a topology optimization refuses it).
 
-### `force(*args, region=None, vector=None, profile=None)`
+### `force(*args, region=None, body=None, vector=None, profile=None)`
 
 A load: the total force (fx, fy, fz) in N, spread evenly over the
 part's surface inside `region` (a Shape).  force(region, (0, 0, -100)) and
@@ -2996,6 +3129,7 @@ force(region, 0, 0, -100) and force(region=region, vector=(0, 0, -100)) are the 
 argument after the other, before the force: force(a, b, (0, 0, -100)) loads the part where either is.
 
 region   where the part is loaded: a body, a field or a selected surface (the same as the first argument)
+body     the body the load is on, when the regions are bodies that choose WHERE on it: `force(pad, (0, 0, -100), body=bracket)` loads the bracket's surface where it meets the pad
 vector   the total force (fx, fy, fz) in newtons: its direction and its size
 profile  a field: the total is spread over the surface in proportion to it (not negative) instead of evenly --
          a pressure that is not the same everywhere, e.g. `profile=ramp(x_field(), (0, 80), (0.2, 1.0))` loads
@@ -3056,65 +3190,73 @@ material's expansion coefficient per degree above `reference`
 (where it is stress-free).  Held parts are stressed; free ones grow.
 Static analysis only.
 
-### `topology_optimization(part, supports, loads, material=Material('steel', E=200000 MPa, nu=0.3), volume_fraction=0.3, element_size=None, iterations=100, filter_radius=None, keep=None, avoid=None, grow=0.0, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', bounds=None, tolerance=1e-05, cache=True, element='tet')`
+### `topology_optimization(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
 
-Topology optimization: the stiffest part that uses `volume_fraction`
-of the material of `part` (the design space), for the `supports` and
-`loads` (as in static_analysis).
+Topology optimization: the layout of material, within the part of `analysis`, that is best for what is asked of it.
 
-loads: force(...) / gravity(...) items, one or a list -- or several LOAD CASES, a list of such lists:
-        loads=[[push], [pull, gravity()]].  Each case acts on its own and the part is made stiff for all of them at once
-        (the sum of their compliances is minimised): a part that is pushed in use and pulled in assembly.
-supports: fixed(...) items, one or a list -- the same for every load case; or a list of lists, one for each load case
-        (a part that is held here in one use and there in another): topology_optimization(part,
-        supports=[[base_a], [base_b]], loads=[[push], [pull]]).
-symmetry: 'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'z': 0.0} with the plane's position.  A
-        design is kept symmetric about a plane when the part is, and so are its supports, its loads and its keep /
-        avoid regions: left to itself a symmetric problem does not stay symmetric -- the mesh of a symmetric part is
-        never exactly symmetric, the small difference grows, and one of two members that do the same job takes the
-        other's material.  'auto' finds the planes through the middle of the part (x, y, z) that the whole problem is
-        symmetric about and keeps the design symmetric about them (the output says which); None leaves it alone; 'z' asks
-        for the plane z = the middle of the part, a dict for a plane of your own.  (Tetrahedral optimizations.)
+    stress = static_analysis(part, [fixed(base)], [force(lug, (0, 0, -300))], steel)
+    best = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.3'])
+    lighter = topology_optimization(stress, constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.4'])
 
-keep:   regions (Shapes, or a list) that must stay solid -- e.g. bolt
-        bosses, mounting faces; the material around supports and
-        loads always stays
-avoid:  regions that must stay empty
-grow:   mm (default 0: the design stays inside the part).  The part may
-        also thicken OUTWARDS by up to this much, wherever that makes it
-        stiffer -- sections that are too thin grow, material that carries
-        nothing goes.  The design then starts as the part, and the
-        volume_fraction is of the part's own volume (1 spends the same
-        material, 1.2 spends 20 % more; the part is not grown round the
-        supports and loads, which stay where they are)
-extrude: 'x', 'y' or 'z' -- the design is the same all along that
-        axis (outside the keep / avoid regions): a profile to
-        extrude, or to cut right through from one side
-iterations: at most this many design updates (default 100): it stops sooner when the
-        design has settled (from the 15th on, once the sharpness has been reached, when the design hardly
-        changes or the compliance stays flat for 5 iterations).  It also sets the pace of the sharpening
-        (it reaches its full steepness at three quarters of the iterations, however many there are, so even a
-        short run ends with a crisp design).  It sets the size of the steps too (there is no step to
-        choose): how far a density may move in one iteration starts large -- the fewer the iterations, the larger -- and is
-        smaller as they go, and within that it grows while the compliance falls as the sensitivities predicted and
-        shrinks when it does not
-tolerance: how exactly each solve is made (default 1e-5)
-sharpness: how crisp the design is (default 16; tetrahedral
-        optimizations).  The density is pushed towards 0 and 1 more and
-        more as the iterations go on, up to this much: the part ends up
-        solid or empty, not grey, and nothing wanders in at the end.
-        1 leaves the density as the filter makes it (soft edges, a
-        third of the part grey)
-element_size:  mm (default: 40 elements along the longest side; the
-        optimization solves the analysis ~30-100 times)
-filter_radius: the smallest member size scale, mm (default 1.5
-        elements)
-element: 'tet' (default: tetrahedra that follow the part's surface, a density in each),
-        'hex' or 'hex_basic' (a regular grid of hexahedra)
+analysis      the result of an analysis of this script -- static_analysis, modal_analysis, thermal_analysis -- or a list of them: the part is the design
+              space, and its supports, loads and material are the problem it is designed for.  A list is several load cases (the
+              same part under other loads and supports), or a stress case and a vibration case: [stress, vibration].  The result of a
+              fluid_analysis is a BODY IN A FLOW: the body is the start of the design, the fluid domain its space, and the numbers
+              are drag_force and lift_force (the force of the flow on the body along it and across it, N) and volume_fraction (of
+              the body's own volume) -- `topology_optimization(wing, constraints=[maximize('lift_force / drag_force'),
+              'volume_fraction <= 0.4'])`.  The result of a thermal_analysis (tetrahedral elements) is a HEAT CONDUCTION:
+              the part is the design space, the held temperatures, heat inputs and convecting surfaces are the problem, and the numbers
+              are max_temperature, min_temperature, max_heat_flux, input_temperature (the temperature the heat comes in at: the
+              heat-weighted mean of the heat inputs), temperature(x, y, z), volume, mass and volume_fraction --
+              `topology_optimization(sink, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])`
+constraints   what the design is for, a list.  Comparisons it keeps: 'volume_fraction <= 0.3', 'max_von_mises <= 90', 'frequencies[0] >= 80',
+              an exact value 'frequencies[0] == 100' (kept to within a thousandth), a range '80 <= frequencies[0] <= 120' -- or a
+              function of the result that is 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
+              maximize(x) as large -- x a number of the analyses' results ('compliance', 'mass', 'max_von_mises', 'frequencies[0]'
+              ...), a formula of them ('mass + 0.01 * compliance', 'lift_force / drag_force') or a function of the result
+              (`lambda r: r.max_von_mises / r.mass`).  Without a goal the design only has to keep the comparisons.  The numbers of
+              the design that the formulas can read: volume_fraction (the share of the part's volume it uses), volume, mass, and
+              from a static analysis compliance, max_von_mises, max_displacement, safety_factor and ux(x, y, z), uy, uz, displacement
+              (the displacement at a place), from a modal analysis frequencies[i].  With several analyses a number that more than one
+              offers is, in a goal, the SUM of theirs, and a comparison on it is kept in each of them
+keep:         regions (Shapes, or a list) that must stay solid -- e.g. bolt bosses, mounting faces; the material around supports
+              and loads always stays
+avoid:        regions that must stay empty
+grow:         False (default: the design stays inside the part) or True: the design is NOT limited to the part -- it starts as the part
+              and puts material anywhere, and takes it away anywhere, where that makes it best.  volume_fraction is then of the
+              part's own volume (1 spends the same material, 1.2 spends 20 % more).  The design space follows the design: the
+              moment material reaches the edge of the space the run stops, the space is made again round the material, and the
+              same run goes on in it -- the same iteration, sharpening and step (so the space costs what the material costs, not
+              what a shell of some thickness would, and the design is never held against a wall while it runs); nothing is added
+              behind the face of the part that a support or a load acts on -- over the face, and past the plane of the face a few
+              elements round its outline: what holds the part, or pushes on it, is there -- and nothing else is forbidden: the supports
+              hold that face only, the load case is the one that was given, and on the part's side of the plane the design is as the
+              stresses ask, also round the plate.  A place that has no flat face (a bolt hole that carries a load) is kept clear as
+              the place itself.
+              Only the iterations stop the growth: if they run out with the design
+              still at the edge of its space, the output says so and the part is cut there
+grow_limit:   mm, with grow=True: the most the design may reach out from the part.  A restriction on top of grow, never the base
+              of it: left out, nothing limits how far the design grows
+extrude:      'x', 'y' or 'z' -- the design is the same all along that axis (outside the keep / avoid regions): a profile to
+              extrude, or to cut right through from one side
+iterations:   at most this many design updates (default 100; a body in a flow 80: it is sharpened a little at every iteration): it stops sooner when the design has settled (from the 15th on,
+              once the sharpness has been reached, when the design hardly changes or the objective stays flat for 5 iterations
+              -- and every constraint is kept).  It also sets the pace of the sharpening and the size of the steps
+filter_radius: the smallest member size scale, mm (default 1.5 elements)
+penalty:      the power the density is raised to in the stiffness (default 3)
+sharpness:    how crisp the design is (default 16): the density is pushed towards 0 and 1 more and more as the iterations go
+              on, up to this much.  1 leaves the density as the filter makes it (soft edges)
+symmetry:     'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'z': 0.0} with the plane's position.  A design is
+              kept symmetric about a plane when the part is, and so are its supports, its loads and its keep / avoid regions
 
-Returns a TopologyResult: .density (a field), .shape() (the
-optimized part), .compliance, .verify().  An unchanged problem is
-cached, so re-running a script is instant.
+The numbers are the kernel's own: it calculates every measure with its derivative to the density of every element (the
+compliance and the frequencies from the solution, the displacement and the stress with one more solve each), differentiates the
+formulas, and moves the design with the method of moving asymptotes on the objective and every constraint.  The stress is the
+element's von Mises stress, relaxed at low density, and its peak is the p-norm of them brought to the peak.
+
+Returns a TopologyResult: .density (a field), .shape() (the optimized part), .analysis (the analysis of that part: its numbers
+-- `best.max_von_mises` -- are the true ones; a list with several), .values (what was asked, as the optimized part has it),
+.feasible, .history (the objective per iteration), .verify().  An unchanged problem is cached, so re-running a script is instant.
 
 ## Seeing the boundary conditions
 
@@ -3181,8 +3323,8 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
     result                               # the part coloured by temperature (FielDes)
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
-    # the material layout (30 % of the part) that keeps the heat input coolest: the same four inputs
-    design = thermal_topology_optimization(part, [...], [...], [...], [...], volume_fraction=0.3)
+    # the material layout (30 % of the part) that keeps the part coolest, for the conditions of the analysis
+    design = topology_optimization(result, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])
     design.shape()
 
 Every kind of condition is an input of its own, needed -- written with a placeholder -- and takes one item or a list ([] says there is none).
@@ -3207,8 +3349,8 @@ conductivity in W / (mm K) (aluminium ~0.167 = 167 W / (m K)).
 Uses the same elements as static_analysis: tetrahedra that follow the part's
 surface (element='tet', the default: a temperature is linear in each and the
 heat flux constant in it) or, with element='hex', a voxel grid of cubes (partly
-filled at the surface), and a preconditioned conjugate-gradient solve.  Thermal
-topology optimization designs on the voxel grid only.
+filled at the surface), and a preconditioned conjugate-gradient solve.  Topology
+optimization of a thermal analysis (topology_optimization) designs on the tetrahedral mesh.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -3220,8 +3362,9 @@ The solved thermal analysis.  Fields (Shapes whose value is the
 result at each point, usable in any expression): temperature,
 heat_flux (magnitude, W/mm^2), qx, qy, qz.  Summary: max_temperature,
 min_temperature, max_heat_flux, heat_in, heat_out (W: through the
-fixed temperatures and by convection -- they balance), elements,
-iterations, seconds.
+fixed temperatures and by convection -- they balance),
+input_temperature (tetrahedral elements: the temperature the heat comes in at, weighted by how much comes in at each place),
+volume (mm^3, of the mesh) and mass (when the material has a density), elements, iterations, seconds.
 
 #### `ThermalResult.range(self, field='temperature')`
 
@@ -3229,37 +3372,37 @@ iterations, seconds.
 
 ### `ThermalTopologyResult`
 
-The result of thermal_topology_optimization():
+The result of topology_optimization() for a thermal analysis (see there): the part made best for what is asked of its temperature.
 .density      a field, 0 (no material) .. 1 (solid), in the part
-.shape()      the optimized part, keeping the volume fraction asked
-              for (shape(threshold=0.5): where density > 0.5)
-.temperature  the heat-weighted mean temperature of the heat inputs
-              at each iteration -- lower is better
-.volume_fraction, .iterations, .seconds
-.verify()     a thermal analysis of the optimized part
+.shape()      the optimized part, keeping the volume the design has (shape(threshold=0.5): where density > 0.5)
+.analysis     the thermal analysis of the optimized part, made as the one the optimisation was given was: its numbers -- `best.max_temperature`
+              -- are the true ones; .values what was asked, as that part has it; .feasible, .history (the objective per iteration), .table()
+.verify()     the thermal analysis of the optimized part again
+Stated on its own, FielDes shows the optimized part coloured by the density, and the result card steps through the iterations.
 
-#### `ThermalTopologyResult.verify(self, threshold=None, element_size=None)`
+#### `ThermalTopologyResult.keep_threshold(self)`
 
-A thermal analysis of the optimized part with the same boundary
-conditions and material
+The density above which the part has the volume the design has, counted in the kernel (see TopologyResult.keep_threshold)
 
-### `convection(*args, region=None, coefficient=None, ambient=None)`
+### `convection(*args, region=None, body=None, coefficient=None, ambient=None)`
 
 The part's exposed surface inside `region` (any number of regions, one argument after the other, then the coefficient and the
 ambient temperature) exchanges heat with an ambient temperature.
 
 region       where the part exchanges heat: a body, a field or a selected surface (the same as the first argument)
+body         the body that exchanges heat, when the regions are bodies that choose WHERE on it: its surface where they are
 coefficient  h in W / (mm^2 K): still air ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2.  A number, or a field --
              its value at each point of the surface (tetrahedral elements)
 ambient      the ambient temperature (degrees C; 20 when it is not given): a number, or a field
 
-### `fixed_temperature(*args, region=None, value=None)`
+### `fixed_temperature(*args, region=None, body=None, value=None)`
 
 The part held at temperature `value` wherever it lies inside
 `region` (a Shape; any number of regions can be given, one argument after the other, then the value:
 fixed_temperature(a, b, 20)).
 
 region  where the part is held: a body, a field or a selected surface (the same as the first argument)
+body    the body it is held on, when the regions are bodies that choose WHERE on it: `fixed_temperature(plate, 20, body=part)` holds the part's surface where it meets the plate
 value   the temperature (degrees C): a number, or a field -- the temperature at each point (tetrahedral elements)
 
 ### `heat_generation(*args, region=None, watts=None, profile=None)`
@@ -3272,12 +3415,13 @@ region   where the heat is generated: a body or a field (the same as the first a
 watts    the total power in watts
 profile  a field -- spread in proportion to it instead of evenly
 
-### `heat_input(*args, region=None, watts=None, profile=None)`
+### `heat_input(*args, region=None, body=None, watts=None, profile=None)`
 
 A total power (W) put into the part, spread evenly over its surface
 inside `region` (a Shape; any number of regions, one argument after the other, then the power); negative takes heat out.
 
 region   where the heat goes in: a body, a field or a selected surface (the same as the first argument)
+body     the body the heat goes into, when the regions are bodies that choose WHERE on it: `heat_input(chip, 8, body=part)` heats the part's surface where it meets the chip
 watts    the total power in watts (negative takes heat out)
 profile  a field -- the power is spread in proportion to it (not negative) instead of evenly
 
@@ -3293,40 +3437,14 @@ convections         convection(...) items
 
 Everything else is as in the analysis below.
 
-### `thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=Material('aluminium', E=69000 MPa, nu=0.33), volume_fraction=0.3, element_size=None, iterations=60, filter_radius=None, keep=None, avoid=None, extrude=None, penalty=3.0, move=0.2, bounds=None, conductivity=None, tolerance=1e-06, cache=True, element='hex')`
+### `topology_optimization_thermal(analysis, constraints, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
 
-Thermal topology optimization: the material layout, using
-`volume_fraction` of `part` (the design space), that keeps the heat
-coolest where it goes in -- the heat-weighted mean temperature of
-the heat inputs is minimised -- for the given boundary conditions
-(as in thermal_analysis).  The rest of the design space is taken as
-empty (a thousandth of the material's conductivity).
-
-Heat inputs (heat_input, heat_generation) are needed; the
-fixed_temperature regions are the heat sinks.  Convection follows
-the design: it cools the optimized part's surface wherever it lies
-inside a convection region -- give the region as the air around
-and inside the design space, and fins grown into it are cooled.
-The classic "volume-to-point" problem -- heat generated all through
-a part, one small sink -- grows branching conductor trees.
-
-extrude: 'x', 'y' or 'z' -- the design is constant along that axis
-        (outside the keep regions), every hole a channel right
-        through: an extruded or pin-fin heat sink.  For air cooling
-        use it: with one heat transfer coefficient everywhere, a
-        closed pocket deep in the part would count as cooled like an
-        open face.
-
-keep:   regions (Shapes, or a list) that must stay solid; the
-        material at fixed temperatures and heat inputs always stays
-avoid:  regions that must stay empty
-element_size:  mm (default: 40 elements along the longest side)
-filter_radius: the smallest member size scale, mm (default 1.5
-        elements)
-
-Returns a ThermalTopologyResult: .density (a field), .shape() (the
-optimized part), .temperature (per iteration), .verify().  An
-unchanged problem is cached, so re-running a script is instant.
+topology_optimization() of a thermal analysis: the layout of material, within the part, that is best for what is asked of its temperature.
+The held temperatures, the heat inputs and generations and the convection of the analysis are the problem (the elements that hold a temperature
+or bring heat in stay solid, and material that nothing joins to a held temperature or a convecting surface is taken out); the conductivity of
+an element is the material's times a power of its density (penalty).  The numbers it can be asked for: max_temperature, min_temperature (the
+peaks of the temperature, as p-norms), max_heat_flux, input_temperature (the heat-weighted mean temperature of the heat inputs: the usual
+goal of a heat sink), temperature(x, y, z), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each
 
 ## Fluid flow analysis
 
@@ -3348,7 +3466,7 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
     print(result.wall_force[0], 'N')                     # the force on the walls, the body's: its drag
     thicker = part + 0.02 * result.pressure              # results are fields like any other
 
-It takes what flow_topology_optimization takes -- the body, the domain, the three kinds of boundary conditions, the fluid -- and
+It takes the body, the domain, the three kinds of boundary conditions and the fluid -- what topology_optimization designs the body for -- and
 solves the flow once, around the body as it is (the way static_analysis is to topology_optimization).  The domain is a shape, the fluid
 where its field is negative, with the body's place in it: the fluid is the domain with the body cut out (difference(domain, body)).
 The boundary conditions are regions (shapes), on the surface of the fluid.  Each kind is an input of its own -- inlets, outlets, boundaries (walls and slips) -- that is needed (the call is written
@@ -3388,7 +3506,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 ### `FlowTopologyResult`
 
-The result of flow_topology_optimization(): the body made best in the flow.
+The result of topology_optimization() for a body in a flow (the result of fluid_analysis): the body made best in the flow.
 .level          a field (mm, positive inside the body, its boundary the zero level: a smooth
                 level set on the flow's mesh); .levels the same after each iteration (the first
                 the body as given, the last the final body)
@@ -3398,11 +3516,17 @@ The result of flow_topology_optimization(): the body made best in the flow.
                 flow), the last the final body's; .flow_direction, .lift_direction
 .flow           the REAL flow around the final body (a fluid_analysis of fluid_shape() with the
                 same conditions, the body a wall at rest): fields, numbers, streamlines();
-                .real_drag, .real_lift its force on the walls along the two directions
+                .real_drag, .real_lift its force on the walls along the two directions: the MEAN over several places of the mesh lattice (a mesh meets a body at
+                some place and the force depends on it, by 5 to 25 % for a body a few elements thick), .real_drag_sd the standard deviation of one place,
+                .real_drags the forces of the places, `best.drag_force` the mean as well
 .model_flow     the optimiser's own flow (the body as a friction), .model_flow.steps[k] the flow
                 around the body of iteration k
-.body, .domain, .region, .volume (mm^3 of the final body), .iterations (accepted), .seconds,
+.body, .domain, .volume (mm^3 of the final body), .iterations (accepted), .seconds,
 .steps_back (steps undone because they raised the objective), .stopped (why the run ended)
+.values         each thing the constraints asked, as the final body has it in the real flow; .feasible, .goal, .table(), .history (the
+                objective per iteration, as the optimiser's model had it), .volume_fraction (the share of the body's own volume the design
+                uses), .body_volume (mm^3 of the body it started as), .pieces (in how many pieces the body is); the numbers of the real flow -- `best.drag_force`, `best.pressure_drop`,
+                `best.speed` -- are the result's own
 Stated on its own, FielDes shows the body in the flow: the fluid coloured by the speed with
 streamlines and particles, the body solid; the result card steps through the iterations (the
 body as it was after each one, and the flow around it).
@@ -3467,55 +3591,11 @@ Stated on its own, FielDes shows it as it shows the result.
 
 The streamlines of the flow at this time (see FluidResult.streamlines)
 
-### `flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), objective='drag', volume=1.0, region=None, keep=None, avoid=None, element_size=None, iterations=40, filter_radius=None, darcy=0.1, extrude=None, symmetry='auto', flow_direction=None, lift_direction=None, bounds=None, cache=True)`
-
-Shape optimisation of a body in a flow: `body` (a Shape, the solid) sits in `domain` (the fluid domain
-it is in, a Shape that holds the body's place too) with the flow's `inlets`, `outlets` and
-`boundaries` (inlet(...), outlet(...), wall(...) and slip(...) items, as for fluid_analysis); the optimiser changes the body's shape, and
-topology, to make it best in the stream.
-
-objective   'drag' (the least force along the flow), 'lift' (the most force across it), or
-            (w_drag, w_lift): w_drag * drag - w_lift * lift is minimised
-volume      what the body may use of its own volume: a number keeps it (1.0: the same volume), a pair
-            (least, most) bounds it (0.5, 1.5); None for no bound on that side
-region      where material may be (a Shape; default: anywhere in the domain); the body only shrinks,
-            grows and moves inside it
-keep        regions that stay solid (a Shape, or a list) -- a mounting, a shaft
-avoid       regions that stay fluid
-element_size  mm (default 40 elements along the longest side); the flow is solved once per iteration,
-            with its adjoint, so it costs about two flow analyses per iteration
-iterations  at most.  It stops sooner when the objective has stopped improving (over the last five designs that were kept it
-            fell by less than half a percent).  It sets the size of the steps too (there is no step to choose): how far the
-            boundary may move in one iteration is one element at most -- half an element when 48 iterations or more are
-            allowed -- and grows while the objective falls as the sensitivities predicted; a step that raises the objective
-            is taken back and halved, so the objective never rises
-filter_radius  the level set's smoothing radius, mm (default 1.5 elements): the smallest feature
-darcy       the solid's permeability relative to the element: its friction is mu / (darcy h^2), the
-            flow penetrates it by about sqrt(darcy) elements (0.1 by default: a third of an element)
-extrude     'x', 'y' or 'z': the body is the same all along that axis (a 2D shape through a slab)
-symmetry    'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'y': 20.0} with the plane's position.  A design is kept
-            symmetric about a plane when the whole problem is -- the fluid domain, the body, the regions and the boundary conditions,
-            with the flow along the plane: left to itself a symmetric problem does not stay symmetric (the mesh of a symmetric domain
-            is never exactly symmetric, and the small difference grows into a crooked nose).  'auto' tries the planes through the
-            middle of the domain
-flow_direction, lift_direction  (dx, dy, dz): the drag and lift directions (default: the inlets' mean
-            direction, and perpendicular to it in the plane of the domain's two long axes)
-
-The body is a level set at the mesh's nodes (a smooth field whose zero level is the boundary, so
-the body's edge is placed to a fraction of an element and stays smooth); each element's share of
-the body is the exact fraction of it inside that boundary and sets its friction in the
-Navier-Stokes flow (Borrvall & Petersson's penalised solid); the force on the body is the momentum
-the flow loses in it; the sensitivities are the exact discrete adjoint's; the boundary moves down
-them, and the volume is held by offsetting the whole level.  The boundary splits and merges as it
-moves (the topology changes that way); a hole does not open in the middle of solid.  Returns a
-FlowTopologyResult (the body, the drag and lift per iteration, the flow around it).  An unchanged
-problem is cached.
-
 ### `fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=Fluid('water', density=1e-09 t/mm^3, viscosity=1e-09 MPa s), element_size=None, bounds=None, gravity=None, stokes=False, tolerance=1e-05, relaxation=1.0, cache=True, time=None, store_every=1)`
 
 Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
 fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
-inputs as flow_topology_optimization, one for each kind (each one item or a list, [] for none):
+inputs of topology_optimization for a body in a flow, one for each kind (each one item or a list, [] for none):
 inlets    inlet(...) items -- where the fluid comes in (as many as the flow has)
 outlets   outlet(...) items -- where it leaves (one is needed, or a moving wall)
 boundaries  wall(...) items -- moving walls (every surface in no region is a wall at rest) -- and slip(...) items -- symmetry planes
@@ -3542,9 +3622,10 @@ the wall force (on every wall, the body's: its drag is the part along the flow),
 Raises FeaError when the problem cannot be solved as given (a region that touches no
 surface, no outlet and no moving wall, a flow that does not converge).
 
-### `inlet(*regions, region=None, velocity=None, speed=None, flow_rate=None, profile='uniform')`
+### `inlet(*regions, region=None, body=None, velocity=None, speed=None, flow_rate=None, profile='uniform')`
 
-The fluid comes in through the surface inside `region` (a Shape; any number of regions, one argument after the other).  One of:
+The fluid comes in through the surface inside `region` (a Shape; any number of regions, one argument after the other).  `body=` is the body the surface is of (the domain),
+when the regions are bodies that choose WHERE on it: its surface where they are.  One of:
 velocity   a vector (mm/s): the direction, and the mean speed over the inlet
 speed      a mean speed (mm/s) along the inlet's inward normal
 flow_rate  a flow rate (mm^3/s) along the inward normal
@@ -3552,25 +3633,35 @@ profile    'uniform' (a plug, zero on the no-slip rim) or 'developed' (the fully
            profile of the inlet's cross-section: parabolic in a round pipe)
 The speed or flow rate is matched exactly on the mesh (the flux through the inlet's triangles).
 
-### `outlet(*regions, region=None, pressure=0.0)`
+### `outlet(*regions, region=None, body=None, pressure=0.0)`
 
 The fluid leaves through the surface inside `region` (any number of regions, one argument after the other) at `pressure` (MPa, 0 by default; the
-pressure field is relative to it).  Put it where the flow leaves parallel to the walls.
+pressure field is relative to it).  Put it where the flow leaves parallel to the walls.  `body=` is the body the surface is of, when the regions are bodies that choose
+WHERE on it.
 
-### `slip(*regions, region=None)`
-
-A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
-the fluid slides along it
-
-### `symmetry(*regions, region=None)`
+### `slip(*regions, region=None, body=None)`
 
 A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
-the fluid slides along it
+the fluid slides along it.  `body=` is the body the wall is of, when the regions are bodies that choose WHERE on it.
 
-### `wall(*regions, region=None, velocity=(0.0, 0.0, 0.0))`
+### `symmetry(*regions, region=None, body=None)`
+
+A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
+the fluid slides along it.  `body=` is the body the wall is of, when the regions are bodies that choose WHERE on it.
+
+### `topology_optimization_flow(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None, extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-05, cache=True)`
+
+topology_optimization() for a body in a flow (see fea.py): `analysis` is the result of fluid_analysis(body, domain, inlets, outlets, boundaries).
+The body is the design it starts from, the fluid domain is its space; the numbers the constraints can read are drag_force and lift_force (the
+force of the flow on the body along the flow and across it, N), volume_fraction (of the body's own volume) and volume.  The flow of every
+iteration is solved once, with one adjoint solve for each force the constraints read; the density of each tetrahedron is the friction the fluid
+feels there (1 solid, 0 fluid)
+
+### `wall(*regions, region=None, body=None, velocity=(0.0, 0.0, 0.0))`
 
 A wall moving with `velocity` (mm/s; no-slip) inside `region` (any number of regions, one argument after the other).  Surfaces in no region are walls at rest, so
-this is for moving walls, and for naming a wall whose force is wanted (wall_forces).
+this is for moving walls, and for naming a wall whose force is wanted (wall_forces).  `body=` is the body the wall is of, when the regions are bodies that choose
+WHERE on it.
 
 ## Parametric optimization
 
@@ -3585,8 +3676,8 @@ parametric_optimization: the best numbers for the var()s of a model, over an ana
     pull = force(box((99, -1, -1), (101, 25, 25)), (0, 0, -200))
     stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium)
 
-    best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)], minimize='mass',
-                                   constraints=['max_von_mises <= 90', 'max_displacement <= 0.5'])
+    best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
+                                   constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
 
 The analysis is solved again with each set of numbers the search tries -- the model is made again from the numbers, the mesh, the
 solve, every measure of the result -- and the numbers that give the best design stay in the var()s: the model, and everything after
@@ -3595,11 +3686,13 @@ search over surrogates of the objective and of every constraint that puts a desi
 one is an ordinary analysis that is kept by its content, so a run again (or another search over the same designs) finds what it
 tried in the cache.  Everything it tried is listed in the result.
 
-What it can be asked for -- `minimize=` or `maximize=` and the `constraints=` -- is a measure of the analysis' result: the name of
-one of its numbers ('mass', 'max_von_mises', 'max_displacement', 'compliance', 'safety_factor', 'volume', 'max_temperature',
+What it can be asked for -- everything is in the list `constraints=`, as in topology_optimization -- is a measure of the analysis' result:
+the name of one of its numbers ('mass', 'max_von_mises', 'max_displacement', 'compliance', 'safety_factor', 'volume', 'max_temperature',
 'pressure_drop', 'frequencies[0]' ...), an expression of them ('mass + 0.01 * compliance'), or a function of the result
-(`lambda r: r.max_von_mises / r.mass`).  A constraint is a comparison of two measures, in a text ('max_von_mises <= 90',
-'frequencies[0] >= 80'), or a function of the result that gives how much it is broken (0 or less when it is kept).
+(`lambda r: r.max_von_mises / r.mass`).  A goal is minimize(x) or maximize(x), at most one.  A constraint is a comparison of measures in a
+text ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'), or a
+function of the result that gives how much it is broken (0 or less when it is kept).  Without a goal the search only looks for a design that
+keeps the constraints.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -3630,7 +3723,7 @@ Writes the best numbers into the var()s of the script, in the text, when the run
 
 Every design tried, as text
 
-### `parametric_optimization(analysis, variables, minimize=None, maximize=None, constraints=(), max_evaluations=None, tolerance=0.002, apply=False)`
+### `parametric_optimization(analysis, variables, constraints=(), max_evaluations=None, tolerance=0.002, apply=False)`
 
 The best numbers for the var()s of a model, over an analysis: the designs the search tries are solved with `analysis` again, each with
 other numbers for the variables, and the numbers of the best one stay in the var()s.
@@ -3638,10 +3731,12 @@ other numbers for the variables, and the numbers of the best one stay in the var
 analysis      the result of an analysis of this script (static_analysis, modal_analysis, thermal_analysis, fluid_analysis ...), made of the
               var()s
 variables     what is changed: (var, low, high) -- the var() and the range it is searched in -- or a list of them
-minimize      what is made as small as it can be: a measure of the result -- the name of one of its numbers ('mass', 'max_von_mises', ...),
-maximize      or what is made as large (give one of the two)       an expression of them, or a function of the result
-constraints   what the best design keeps: a list of comparisons in a text ('max_von_mises <= 90', 'frequencies[0] >= 80'), or functions of the
-              result that are 0 or less when kept
+constraints   what the design is for, a list -- as in topology_optimization.  The comparisons the best design keeps, in a text
+              ('max_von_mises <= 90', 'frequencies[0] >= 80', an exact value 'frequencies[0] == 100', a range '80 <= frequencies[0] <= 120'),
+              or functions of the result that are 0 or less when kept.  And at most one goal: minimize(x) makes x as small as it can be,
+              maximize(x) as large -- x a measure of the result: the name of one of its numbers ('mass', 'max_von_mises', ...), an expression
+              of them ('mass + 0.01 * compliance'), or a function of the result.  Without a goal the search stops at the first design that
+              keeps the comparisons
 max_evaluations  how many designs it tries at most (default 20 + 10 for each variable)
 tolerance     it stops when the designs it is looking at are this close, of the ranges (default 0.2 %)
 apply         True writes the best numbers into the var()s of the text when the run is over (otherwise they hold for this run only)
@@ -3894,8 +3989,8 @@ operation did there.  (smooth() works on the field the shape was made from inste
 cut off at the distance to the region and would make the smoothed surface ripple round it.)  Moving, turning, scaling
 and mirroring carry both fields along together.  Operations that would
 tear the two apart -- copying the shape (arrays, symmetric_*, repeat, mirror_*) or deforming it (twist, bend, taper,
-attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisations (topology_optimization,
-thermal_topology_optimization, flow_topology_optimization) read the exclusions a shape carries as regions to keep: the
+attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisation (topology_optimization, of a
+structure, a heat conduction or a body in a flow) reads the exclusions a shape carries as regions to keep: the
 locked field stays solid, as exact as it is, and the optimised shape is excluded the same way.  The tables below say, for every function of the
 library, what it does with an excluded shape; none is left out.
 
@@ -3972,8 +4067,8 @@ transforms ...) guarded.  Done again, it changes nothing.
 ### `keep_regions(*shapes)`
 
 What an optimisation must keep solid for these shapes: the locked field of every exclusion they carry (the shape
-inside its region, as it is) -- topology_optimization, thermal_topology_optimization and
-flow_topology_optimization add these to their `keep` by themselves, however many operations came between
+inside its region, as it is) -- topology_optimization (of a structure, a heat conduction or a body in a flow)
+adds these to its `keep` by itself, however many operations came between
 exclude() and the optimisation (the locks travel with the shape).
 
 ### `locks_of(shape)`
@@ -4378,36 +4473,37 @@ part of the key the application uses, which is made of this and them.)
 
 A resolution of its own for one body.
 
-The viewport meshes the whole scene at one resolution (view.set_resolution): fine enough for the finest thing in it, which is
-more than the rest needs.  `custom_resolution(body, resolution)` gives ONE body a resolution of its own, in samples per mm,
-whatever the scene's is: a part that is intricate is drawn fine and the rest of the scene stays coarse and quick -- or a part
-that is big and plain is drawn coarser than the scene.
+The viewport meshes the scene at one resolution (view.set_resolution): fine enough for the finest thing in it, which is
+more than the rest needs.  `custom_resolution(body, resolution)` gives ONE body the resolution you say -- the number the scene's resolution
+is, for this body alone: a part that is intricate is drawn finer and the rest of the scene stays coarse and quick, or a part that is big
+and plain is drawn coarser than the scene.
 
     from fieldes import *
 
-    view.set_resolution(2)                        # the scene: 2 samples per mm
-    gear = custom_resolution(gear, 8)             # ... except the gear, drawn at 8
+    view.set_resolution(2)                        # the scene: resolution 2
+    gear = custom_resolution(gear, 8)             # ... except the gear, drawn as if the scene's were 8
     gear                                          # (it is shown by the line that names it, as always)
 
-The body is meshed on its own, over a cube round it, at that resolution; the number is the resolution, not a scale of the scene's,
-so it stays what it is when the scene's resolution is changed.  Nothing is drawn outside the region of the scene (view.set_bounds), as
-for every shape: a body that reaches out of it is drawn at its own resolution inside it.  It changes how the body is DRAWN, not what it
-is: an analysis, a boolean or an export of it is the same.
+It is the SAME number as the scene's, so it is read the same way: `custom_resolution(gear, 2)` in a scene at 2 is the gear as it was, and
+twice as much is twice as fine.  And it scales as the scene's does: with auto scale on (the default) a small body in a big region is
+drawn finer than the number says, by how small it is, whatever it is given -- so there is no need to write a number far from the scene's
+to get a picture as fine as the scene's own.  The body is meshed over the region of the scene (view.set_bounds), as every shape is.  It
+changes how the body is DRAWN, not what it is: an analysis, a boolean or an export of it is the same.
 
-The finest a body can be drawn is 2000 samples along its longest side (a longer one would be hundreds of millions of cells): a
-resolution above that is not an error, the body is drawn at the finest there is, and the model tree's row says what is used
-(`resolution 8 -> 7.6`).
+The finest a body can be drawn is 2000 samples along its longest side (a longer one would be hundreds of millions of cells): a resolution
+above that is not an error, the body is drawn at the finest there is.
 
-In FielDes, right-click a body and choose "Custom resolution": the line is written under its definition, and the number is a field
-under the body in the model tree (type in it; the bin takes the line away).
+In FielDes, right-click a body and choose "Custom resolution": the line is written under its definition, and its number is a row under
+the body in the model tree like any other argument -- click it and the number is selected in the code, ready to be typed over (the bin
+takes the line away).
 
-### `custom_resolution(shape, resolution, bounds=None)`
+### `custom_resolution(shape, resolution)`
 
-`shape` drawn at a resolution of its own: `resolution` samples per mm, whatever the scene's resolution is (see the module).
+`shape` drawn at a resolution of its own: `resolution` is the number the scene's resolution is (see the module), for this body alone.
 
 shape       a body
-resolution  samples per mm (a number above 0); 2 draws features of half a millimetre, 10 of a tenth
-bounds      ((x0, y0, z0), (x1, y1, z1)) of the body, if its extent cannot be found
+resolution  the resolution (a number above 0), as view.set_resolution says it: the scene's own number gives the body as it was drawn,
+            twice as much draws it twice as fine
 
 Returns the body itself in every other way; only the way it is meshed for the viewport is changed.
 

@@ -21,7 +21,8 @@ def judge(label, res, rules):
     t.check('%s: the tool changed %.1f %% of the part, under its budget of 25 %%' % (label, 100.0 * res.share), res.share <= 0.25 + 1e-9, '%.3f' % res.share, '<= 0.25')
 
 design, plates, lugs = _bracket_parts()
-opt = topology_optimization(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, volume_fraction=0.50, element_size=5)
+opt_stress = static_analysis(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, element_size=5)
+opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
 solid = opt.shape()
 lo, hi = (-78, -92, -63), (78, 38, 31)
 shift = 1.2 * (hi[0] - lo[0])

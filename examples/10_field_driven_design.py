@@ -38,5 +38,5 @@ colored(graded, density, label="lattice density (from stress)")
 
 # Other ways to drive it:
 #   density = ramp(result.displacement, (0, result.max_displacement), (0.5, 0.15))
-#   opt = topology_optimization(bracket, supports=[support], loads=[load], volume_fraction=0.4)
+#   opt = topology_optimization(result, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'])
 #   graded = lattice(bracket, cell_periodic("octet"), cell_size=8, density=ramp(opt.density, (0, 1), (0.1, 0.5)), skin=1.5)

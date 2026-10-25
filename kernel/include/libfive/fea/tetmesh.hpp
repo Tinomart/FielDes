@@ -50,6 +50,7 @@ struct TetMesh
     size_t degenerate = 0;                      // tetrahedra of (nearly) no volume, dropped
     size_t featureVertices = 0;                 // vertices snapped onto a sharp edge or corner
     size_t featuresReverted = 0;                // snaps put back because they folded or thinned a tetrahedron
+    size_t mirrored = 0;                        // the planes the mesh was mirrored about (meshShapeMirrored)
 };
 
 struct MeshOptions
@@ -75,6 +76,28 @@ struct MeshOptions
 bool meshShape(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi,
                double h, TetMesh& out, std::string& error,
                const MeshOptions& options = MeshOptions());
+
+/*  A plane that a shape is mirror symmetric about: the axis (0, 1, 2 = x, y, z) it is perpendicular to and its coordinate  */
+struct MeshMirror
+{
+    int axis = 0;
+    double at = 0;
+};
+
+/*  The planes through the middle of [lo, hi] (one for each axis) that `shape` is symmetric about, found by comparing its field with its mirror image at
+ *  3000 fixed pseudo-random points (the same points on every machine, so the same answer for the same input)  */
+std::vector<MeshMirror> findMeshMirrors(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h);
+
+/*  meshShape for a shape that is symmetric about the planes given.  The lattice cut by a shape is not symmetric: a quadrilateral is cut along the diagonal
+ *  through its lowest-numbered vertex, a vertex with two equal crossings goes to the first -- numbers a mirror reverses -- so a mesh of the whole has no
+ *  mirror image however the lattice is placed.  Here the part of the shape on the upper side of every plane is meshed, with the planes as its boundary, and
+ *  mirrored: vertices on a plane are shared, the others get an image, the mirrored tetrahedra swap two vertices to keep their orientation.  Where a plane
+ *  meets the surface the half mesh has a corner that the mirror image does not continue (the surface runs straight on across the plane): the vertices on a
+ *  plane that belong to a face of the surface are moved along the plane onto the surface first.  A plane whose
+ *  mirrored boundary does not lie on the shape's surface is dropped (and the mesh made without it).  Planes that do not run through the middle of the
+ *  region are ignored.  `mirrored` of the mesh says how many planes were used  */
+bool meshShapeMirrored(const Tree& shape, const Eigen::Vector3d& lo, const Eigen::Vector3d& hi, double h, const std::vector<MeshMirror>& planes,
+                       TetMesh& out, std::string& error, const MeshOptions& options = MeshOptions());
 
 struct MeshQuality
 {

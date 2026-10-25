@@ -104,7 +104,7 @@ void LivePanel::setView(const libfive::run_progress::LiveView& v)
     const QString value = QString::number(v.objective, 'g', 4), percent = QString::number(fall, 'f', 1);
     m_second->setText(v.quantity == "drag" ? T("drag %1 (%2 % from the first iteration)").arg(value, percent)
                     : v.quantity == "objective" ? T("objective %1 (%2 % from the first iteration)").arg(value, percent)
-                                                : T("compliance %1 (%2 % from the first iteration)").arg(value, percent));
+                                                : T("%1 %2 (%3 % from the first iteration)").arg(QString::fromStdString(v.quantity), value, percent));
     const QString material = QString::number(100.0 * v.volume, 'f', 1);
     const QString low = QString::number(100.0 * v.volumeLow, 'f', 1), high = QString::number(100.0 * v.volumeHigh, 'f', 1);
     const QString move = QString::number(v.change, 'f', v.kind == "flow" ? 2 : 3);
@@ -113,7 +113,10 @@ void LivePanel::setView(const libfive::run_progress::LiveView& v)
                              ? T("body volume %1 % of the original, kept at %2 % · boundary moved %3 mm").arg(material, low, move)
                              : T("body volume %1 % of the original, allowed %2 % to %3 % · boundary moved %4 mm").arg(material, low, high, move));
     else
-        m_third->setText(T("material %1 % of the part, asked for %2 % · biggest change %3").arg(material, low, move));
+        m_third->setText(T("material %1 % of the part · biggest change %2").arg(material, move));
+    // (the design reached the edge of its space: the run stops there while a larger space is made, and goes on in it -- the card stays and says so)
+    if (v.note == "grow")
+        m_third->setText(m_third->text() + "\n" + T("the design reached the edge of its space: a larger one is being made, and the optimisation goes on in it"));
     m_graph->setHistory(std::vector<float>(v.history.begin(), v.history.end()), v.iterations);
 }
 

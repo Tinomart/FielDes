@@ -666,7 +666,8 @@ QIcon itemIcon(const QJsonObject& it, bool failed)
     const QString kind = it["kind"].toString();
     if (kind == "import") return TypeIcons::icon("import");
     const QString type = it["type"].toString();
-    if (!type.isEmpty()) return TypeIcons::icon(type, it.contains("block"), it["domain"].toString());
+    // (a primitive has the picture of what it is -- a sphere a ball, a torus a ring --, anything else the picture of its kind)
+    if (!type.isEmpty()) return TypeIcons::icon(type, it.contains("block"), it["domain"].toString(), it["glyph"].toString());
     return kindIcon(kind, false);
 }
 
@@ -713,6 +714,10 @@ QIcon argIcon()
     icon = QIcon(pm);
     return icon;
 }
+
+// How far a label in a widget laid over a row (the custom_resolution row) is moved right, so that it is level with the text of the argument rows beside it (measured in window t352:
+// at 3 px it was 4 px left of them)
+constexpr int kArgTextIndent = 7;
 
 // The icon of a section: a rule with a dot, the heading of what follows
 QIcon sectionIcon()
@@ -2382,20 +2387,7 @@ void ScenePanel::rebuild()
     // (clearing and filling the tree changes its selection; the order the rows were selected in is kept meanwhile)
     m_rebuilding = true;
     static_cast<SceneTree*>(m_tree)->resetDrop();
-    // (a field of the render settings that is being typed in keeps what is typed, and the keyboard, through a rebuild)
-    QString typedFn, typedText;
-    int typedIndex = -1, typedCursor = 0;
-    if (auto typing = qobject_cast<QLineEdit*>(typingWidget()))
-    {
-        if (typing->property("fn").isValid())
-        {
-            typedFn = typing->property("fn").toString();
-            typedText = typing->text();
-            typedCursor = typing->cursorPosition();
-            typedIndex = m_settingEditors.value(typedFn).indexOf(QPointer<QLineEdit>(typing));
-        }
-    }
-    // (so does a name that is being typed in a row: its editor is opened again on the same row, with what was typed -- the
+    // (a name that is being typed in a row: its editor is opened again on the same row, with what was typed -- the
     // selection of a row writes the lines that make it ready to be dragged, and the tree is built again when they have run)
     QString nameKey, nameText;
     int nameCursor = 0, nameSelStart = -1, nameSelLength = 0;
@@ -2415,7 +2407,6 @@ void ScenePanel::rebuild()
             }
         }
     }
-    m_settingEditors.clear();
     phase("setup");
     m_tree->clear();
     phase("clear");
@@ -2480,14 +2471,14 @@ void ScenePanel::rebuild()
         auto row = makeRow(nullptr, T("Render settings"), kindIcon("settings", false),
                            "settings", QJsonObject(), "settings");
         row->setForeground(COL_NAME, kDim);
-        // The numbers are the code's: a click on a row goes to its line, and they are changed there, in the code editor
+        // The numbers are the code's: a click on a row selects its number in the code, ready to be typed over (as a variable's is), and they are changed there, in the code editor
         auto settingRow = [&](const QString& fn, const QString& label, const QString& value, const QString& tip) {
             const auto s = settings[fn].toObject();
             const bool set = s.contains("line");
             auto c = makeRow(row, label + "   " + value, QIcon(), "setting", s, "setting:" + fn);
             c->setData(COL_NAME, ROLE_LINE, set ? s["line"].toInt() - 1 : -1);
             c->setForeground(COL_NAME, set ? QColor(0xee, 0xe8, 0xd5) : kDim);
-            c->setToolTip(COL_NAME, tip + "\n" + (set ? s["text"].toString() + "\n" + T("Click: go to the line. Change the numbers in the code editor.")
+            c->setToolTip(COL_NAME, tip + "\n" + (set ? s["text"].toString() + "\n" + T("Click: select the number in the code, ready to be typed over.")
                                                     : T("Not set in the script (the default is shown): write the line in the code editor.")));
         };
         auto number = [](const QJsonValue& v) { return QString::number(v.toDouble(), 'g', 8); };
@@ -3104,58 +3095,27 @@ void ScenePanel::rebuild()
     // The property rows of the models.  They are made here, once the rows are in their order: a row that is taken out of its parent and put back
     // (above) is given back without its widgets
     auto addResolutionRow = [&](QTreeWidgetItem* row, const QJsonObject& it, const QString& meshNote = QString()) {
-        // A property of the model, a child row: the resolution it is meshed at, whatever the scene's is.  The number is typed in here
-        // (the line `x = custom_resolution(x, number)` is rewritten as it is typed); the bin takes the line away
+        // A property of the model, a child row: the resolution it is meshed at -- the number of the scene's resolution, for this model alone (and scaled by its size as that is).  It is an
+        // argument like any other: a click selects the number in the code (the line `x = custom_resolution(x, number)`), ready to be replaced by typing; the bin takes the line away
         const auto cr = it["custom_resolution"].toObject();
         const QString var = it["var"].toString();
         const QString fn = "custom_resolution:" + var;
         auto c = makeRow(row, QString(), QIcon(), "setting", cr, "setting:" + fn);
         c->setData(COL_NAME, ROLE_LINE, cr["line"].toInt() - 1);
-        c->setToolTip(COL_NAME, T("A resolution of its own for %1 (samples per mm), whatever the scene's is. Type a number; the bin "
-                                "deletes the line").arg(var) + "\n" + cr["text"].toString());
+        c->setToolTip(COL_NAME, T("A resolution of its own for %1: the number the scene's resolution is, for this model alone (it is made finer for a small model as the scene's is). "
+                                "Click it to select the number in the code and type another; the bin deletes the line").arg(var) + "\n" + cr["text"].toString());
         c->setFirstColumnSpanned(true);
+        c->setIcon(COL_NAME, argIcon());            // (the tag of an argument row: it is one -- the label is laid out after the icon, where the text of the other rows begins)
         auto w = new QWidget;
         w->setStyleSheet("background: transparent;");
         auto lay = new QHBoxLayout(w);
-        lay->setContentsMargins(0, 0, 2, 0);
+        lay->setContentsMargins(kArgTextIndent, 0, 2, 0);
         lay->setSpacing(3);
-        auto lab = new QLabel("custom_resolution");
-        lab->setFixedWidth(116);
-        lab->setAttribute(Qt::WA_TransparentForMouseEvents);
-        lab->setStyleSheet("color: #eee8d5; font-size: 8.5pt; padding: 0px;");
-        lay->addWidget(lab);
         const QString shown = cr["value"].isDouble() ? QString::number(cr["value"].toDouble(), 'g', 8) : QString();
-        auto e = new QLineEdit(shown);
-        e->setFixedSize(58, 18);
-        e->setAlignment(Qt::AlignCenter);                   // (a number is centred in its field)
-        e->setCursorPosition(0);
-        auto vd = new QDoubleValidator(0.0, 1e9, 6, e);
-        vd->setNotation(QDoubleValidator::StandardNotation);
-        vd->setLocale(QLocale::c());
-        e->setValidator(vd);
-        e->setProperty("fn", fn);
-        e->setProperty("shown", shown);
-        e->setToolTip(T("Samples per mm"));
-        e->setStyleSheet("QLineEdit { background: rgba(0, 0, 0, 80); color: #eee8d5; border: 1px solid rgba(147, 161, 161, 90);"
-                         " border-radius: 2px; padding: 0px 3px; font-size: 8.5pt; selection-background-color: #268bd2; }"
-                         "QLineEdit:focus { border: 1px solid #268bd2; background: rgba(0, 0, 0, 120); }");
-        e->installEventFilter(this);
-        connect(e, &QLineEdit::textEdited, this, [this, e] { commitSetting(e, true); });
-        connect(e, &QLineEdit::editingFinished, this, [this, e] { commitSetting(e); });
-        lay->addWidget(e);
-        m_settingEditors[fn] << QPointer<QLineEdit>(e);
-        if (cr["used"].isDouble())
-        {
-            // A body can be drawn at 2000 samples along its longest side at the most: a finer number is not an error, it is capped,
-            // and what is drawn is said here
-            auto capped = new QLabel(QString(QChar(0x2192)) + " " + QString::number(cr["used"].toDouble(), 'g', 3));
-            capped->setStyleSheet("color: #e0b050; font-size: 8.5pt; padding: 0px;");
-            capped->setToolTip(T("%1 samples per mm is more than this body can be drawn at: it is %2 mm long, and 2000 samples along its "
-                                       "longest side is the finest there is. It is drawn at %3 per mm.")
-                                   .arg(shown).arg(QString::number(2000.0 / cr["used"].toDouble(), 'g', 4))
-                                   .arg(QString::number(cr["used"].toDouble(), 'g', 3)));
-            lay->addWidget(capped);
-        }
+        auto lab = new QLabel(shown.isEmpty() ? QStringLiteral("custom_resolution") : "custom_resolution = " + shown);
+        lab->setAttribute(Qt::WA_TransparentForMouseEvents);
+        lab->setStyleSheet("color: #b4c0c0; font-size: 8.5pt; padding: 0px;");
+        lay->addWidget(lab);
         if (!meshNote.isEmpty())
         {
             // A part that was imported as a mesh (tessellated) is drawn from its own triangles: there is nothing to mesh, so no resolution
@@ -3322,15 +3282,6 @@ void ScenePanel::rebuild()
             auto bar = m_tree->verticalScrollBar();
             if (bar && bar->value() == 0 && !m_rebuilding) bar->setValue(scroll);
         });
-    }
-    if (typedIndex >= 0)
-    {
-        if (auto typing = settingEditor(typedFn, typedIndex))
-        {
-            typing->setText(typedText);
-            typing->setCursorPosition(typedCursor);
-            typing->setFocus();
-        }
     }
     if (!nameKey.isEmpty())
     {
@@ -6021,6 +5972,15 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
 
     if (type == "setting" || type == "section")
     {
+        // A number the row stands for (the resolution, the quality or the region of the render settings, the resolution of a model of its own) is selected in the code, ready to be
+        // replaced by typing -- as a variable's is, and as an argument's: the value is marked for replacement
+        const auto chosen = it["select"].toArray();
+        if (type == "setting" && chosen.size() >= 4)
+        {
+            emit(spanRequested(chosen[0].toInt() - 1, chosen[1].toInt(), chosen[2].toInt() - 1, chosen[3].toInt()));
+            emit(highlightLines({}));
+            return;
+        }
         const int line = row->data(COL_NAME, ROLE_LINE).toInt();
         if (line >= 0) emit(goToLine(line));
         emit(highlightLines({}));
@@ -6552,6 +6512,52 @@ void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, do
     m_selectNew = name;
     m_selectNewTries = 0;
     emit(editScript(edits, "Select surface " + name));
+}
+
+QJsonObject ScenePanel::featuresNear(int line0, QVector3D point, double reach) const
+{
+    QJsonObject target;
+    QString source;
+    int after = 0;
+    if (!m_support || !resolveModel(line0, &target, &source, &after) || !target.contains("var")) return QJsonObject();
+    const QJsonObject request{{"var", target["var"].toString()}, {"point", QJsonArray{point.x(), point.y(), point.z()}}, {"reach", reach}};
+    QString error;
+    const QString text = m_support("feature_near", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    return QJsonDocument::fromJson(text.toUtf8()).object();
+}
+
+void ScenePanel::addFeature(int line0, QVector3D click, QString kind)
+{
+    QJsonObject target;
+    QString source;
+    int after = 0;
+    if (!resolveModel(line0, &target, &source, &after)) return;
+
+    const QString function = kind == "corner" ? "corner_at" : kind == "edge" ? "edge_at" : "edge_point_at";
+    const QString base = kind == "corner" ? "corner" : kind == "edge" ? "edge" : "edge_point";
+    // A free name: corner_1, corner_2, ...
+    const QString src = m_source ? m_source() : QString();
+    QString name;
+    for (int n = 1;; ++n)
+    {
+        name = base + "_" + QString::number(n);
+        if (!QRegularExpression("\\b" + name + "\\b").match(src).hasMatch()) break;
+    }
+    auto num = [](double v) { return QString::number(v, 'g', 5); };
+    QString call = QString("%1 = %2(%3, (%4, %5, %6))").arg(name, function, source, num(click.x()), num(click.y()), num(click.z()));
+    // (a locked model is read-only: what is made from it holds a reference to it -- `# shadow: name` -- and does not take it in as its own)
+    if (target.contains("locked") && target.contains("var")) call = markShadow(call, target["var"].toString());
+
+    const QString indent = indentOf(lineText(target["line"].toInt() - 1));
+    const QString last = lineText(after);
+    QList<TextEdit> edits;
+    edits << TextEdit{after, int(last.size()), after, int(last.size()),
+                      "\n" + indent + call + "\n" + indent + name};
+    addImportIfMissing(edits, function, "features");
+    // (the new point or line is the selected model once the script has run)
+    m_selectNew = name;
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Snap " + name));
 }
 
 QTreeWidgetItem* ScenePanel::rowForLine(int line0) const
@@ -7368,7 +7374,9 @@ bool ScenePanel::fitsOperands(const QString& kind, const QString& name, int line
     // A new model in the menu of a MODEL (line0 >= 0): whether it fits the model(s) the menu is about is for the library to say, for every entry and not only the ones that take
     // models (menu_catalog._primitive_fits: a thing made by number is a placement, always valid; a line is made of points, a material is something a simulation takes ...)
     const bool onModel = kind == "primitive" && line0 >= 0;
-    const QList<Model> picked = (kind == "primitive" && (takesBodies(name) || onModel)) ? operandsFor(line0) : QList<Model>();
+    // (only what IS selected, or the model the menu is on: the last model of the script is what an OPERATION works on when nothing is selected, a new shape is not made of it -- a profile
+    // made on empty space with a lone spline in the script was `profile(spline)`)
+    const QList<Model> picked = (kind == "primitive" && (takesBodies(name) || onModel)) ? operandsFor(line0, false) : QList<Model>();
     const auto regionKind = [](const QJsonObject& it) {
         const QString type = it["type"].toString();
         return type == "surface" || type == "field";
@@ -7704,7 +7712,8 @@ void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, dou
     const bool operation = kind == "operation";
     // A support, a load or another condition of a simulation, when several models are selected: the first is the body, the others are
     // where the condition is -- made of them like an operation (with one model selected, or none, it has a placeholder where it acts)
-    const QList<Model> picked = (kind == "primitive" && takesBodies(name) && placed.isEmpty()) ? operandsFor(line0) : QList<Model>();
+    // (only what IS selected, or the model the menu is on: see fitsOperands -- the last model of the script is for the operations)
+    const QList<Model> picked = (kind == "primitive" && takesBodies(name) && placed.isEmpty()) ? operandsFor(line0, false) : QList<Model>();
     // ONE model that is a surface (a patch picked on a part) or a field (a distance, a ramp ...) is where the condition is: it is passed in as
     // the region, there is no body to name -- the condition acts where the part meets it.  (One body, or none: a placeholder)
     const auto regionKind = [](const QJsonObject& it) {
@@ -10794,12 +10803,6 @@ bool ScenePanel::settingsOpen() const
     return false;
 }
 
-QLineEdit* ScenePanel::settingEditor(const QString& fn, int index) const
-{
-    const auto list = m_settingEditors.value(fn);
-    return index >= 0 && index < list.size() ? list[index].data() : nullptr;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // The render settings, edited in the tree
 
@@ -10840,60 +10843,6 @@ void ScenePanel::insertSettingLine(const QString& call, const QString& fn, bool 
     m_liveSettingStale = true;
     m_editPending = true;               // (a line was added: the scene's lines are a run behind)
     m_editClock.start();
-}
-
-// The number of the line `x = custom_resolution(x, number)`, rewritten as it is typed (the line is found in the script as it is now)
-void ScenePanel::commitCustomResolution(QLineEdit* edited, bool live, const QString& var)
-{
-    bool ok = false;
-    const double v = QLocale::c().toDouble(edited->text().trimmed(), &ok);
-    if (!ok)
-    {
-        if (!live) edited->setText(edited->property("shown").toString());           // (not a number: the one that was there stays)
-        return;
-    }
-    if (!(v > 0))
-    {
-        if (live) return;
-        edited->setText(edited->property("shown").toString());
-        notify(T("The resolution must be more than 0 (samples per mm)."));
-        return;
-    }
-    const QString text = QString::number(v, 'g', 8);
-    if (text == edited->property("shown").toString())
-    {
-        if (!live && edited->hasFocus()) edited->clearFocus();
-        return;
-    }
-    const QString src = m_source ? m_source() : QString();
-    const QRegularExpression re("^(\\s*" + QRegularExpression::escape(var) + "\\s*=\\s*custom_resolution\\(\\s*" + QRegularExpression::escape(var) +
-                                "\\s*,\\s*)([^,)\\n]+)", QRegularExpression::MultilineOption);
-    const auto m = re.match(src);
-    if (!m.hasMatch())
-    {
-        if (!live) notify(T("The line of custom_resolution is not in the script as the tree expects it (%1 = custom_resolution(%1, number)).").arg(var));
-        return;
-    }
-    const int pos = m.capturedStart(2), end = m.capturedEnd(2);
-    const int line = int(src.left(pos).count('\n'));
-    const int col = pos - (int(src.lastIndexOf('\n', pos - 1)) + 1);
-    edited->setProperty("shown", text);
-    const QList<TextEdit> edit{TextEdit{line, col, line, col + (end - pos), text}};
-    if (live) emit(editScriptLive(edit, "Set custom_resolution"));
-    else emit(editScript(edit, "Set custom_resolution"));
-    if (!live) edited->clearFocus();
-}
-
-void ScenePanel::commitSetting(QLineEdit* edited, bool live)
-{
-    if (m_rebuilding) return;
-    const QString fn = edited->property("fn").toString();
-    if (fn.startsWith("custom_resolution:"))
-    {
-        commitCustomResolution(edited, live, fn.mid(int(QString("custom_resolution:").size())));
-        return;
-    }
-    // (the render settings are not typed into the tree: they are lines of the code, changed in the code editor)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

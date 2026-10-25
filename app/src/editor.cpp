@@ -19,6 +19,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <set>
 #include <cassert>
 
@@ -33,6 +34,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QJsonObject>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPainter>
@@ -42,6 +45,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QSettings>
 #include <QSizePolicy>
 #include <QRegularExpression>
+#include <QScrollBar>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QPainterPath>
 #include <QPolygonF>
 #include <QTextBlock>
@@ -65,7 +70,7 @@ namespace FielDes {
 
 namespace {
 
-enum class Glyph { Pause, Play, Retry, Terminate };
+enum class Glyph { Pause, Play, Retry, Terminate, Console };
 
 // The icons of the buttons under the editor, drawn here: the same size and weight whatever symbols the fonts of the computer have
 QIcon glyphIcon(Glyph g)
@@ -95,6 +100,15 @@ QIcon glyphIcon(Glyph g)
             case Glyph::Terminate:
                 p.drawEllipse(QPointF(8, 8), 5.2, 5.2);
                 break;
+            case Glyph::Console:
+            {
+                // The prompt: a chevron and the line it is typed on
+                p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                p.setBrush(Qt::NoBrush);
+                p.drawPolyline(QPolygonF({QPointF(3.0, 4.5), QPointF(7.2, 8.0), QPointF(3.0, 11.5)}));
+                p.drawLine(QPointF(9.0, 12.0), QPointF(13.0, 12.0));
+                break;
+            }
             case Glyph::Retry:
             {
                 // The circular arrow: an arc of 280 degrees going clockwise, ending in an arrow head at the top
@@ -123,7 +137,249 @@ QIcon glyphIcon(Glyph g)
     return icon;
 }
 
+// The play mark on the first tab (the tab that is rendered), in the accent colour
+QIcon playTabIcon()
+{
+    const qreal dpr = 2.0;
+    QPixmap pm(int(16 * dpr), int(16 * dpr));
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(Theme::accent);
+    p.drawPolygon(QPolygonF({QPointF(4, 2.5), QPointF(13, 8), QPointF(4, 13.5)}));
+    p.end();
+    return QIcon(pm);
+}
+
+// The progress row and the row of a breakpoint: cream in the light set, the colour of the bars in the dark one
+QString rowStyle()
+{
+    return QString("background-color: %1;").arg(Theme::dark() ? Theme::surface.name() : Color::base3.name());
+}
+
+QString runLabelStyle()
+{
+    return QString("color: %1;").arg(Theme::dark() ? Theme::muted.name() : Color::base01.name());
+}
+
+// The line the console is typed in: Enter runs it, Shift+Enter is a new line, Up on the first line and Down on the last go through what was run before
+class ConsoleInput : public QPlainTextEdit
+{
+public:
+    std::function<void()> run;
+    std::function<void(int)> history;
+    std::function<void()> leave;            // (Escape: the console is closed -- the window's own Escape, which cancels a render, is not for this line)
+
+protected:
+    bool event(QEvent* e) override
+    {
+        if (e->type() == QEvent::ShortcutOverride && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape && leave)
+        {
+            e->accept();
+            return true;
+        }
+        return QPlainTextEdit::event(e);
+    }
+
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        if (event->key() == Qt::Key_Escape && leave)
+        {
+            leave();
+            return;
+        }
+        const bool plain = !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier));
+        if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && plain)
+        {
+            if (run) run();
+            return;
+        }
+        if (plain && event->key() == Qt::Key_Up && textCursor().blockNumber() == 0 && history)
+        {
+            history(-1);
+            return;
+        }
+        if (plain && event->key() == Qt::Key_Down && textCursor().blockNumber() == document()->blockCount() - 1 && history)
+        {
+            history(1);
+            return;
+        }
+        QPlainTextEdit::keyPressEvent(event);
+    }
+};
+
 }   // namespace
+
+QWidget* Editor::buildConsole()
+{
+    m_console = new QWidget;
+    m_console->setObjectName("Console");
+    auto v = new QVBoxLayout(m_console);
+    v->setContentsMargins(0, 0, 0, 0);
+    v->setSpacing(0);
+    const QFont font = err_doc->defaultFont();
+    m_consoleLog = new QPlainTextEdit;
+    m_consoleLog->setObjectName("ConsoleLog");
+    m_consoleLog->setReadOnly(true);
+    m_consoleLog->setFrameShape(QFrame::NoFrame);
+    m_consoleLog->setMaximumBlockCount(3000);
+    m_consoleLog->document()->setDefaultFont(font);
+    m_consoleLog->setFixedHeight(9 * QFontMetrics(font).lineSpacing() + 10);
+    auto input = new ConsoleInput;
+    m_consoleInput = input;
+    m_consoleInput->setObjectName("ConsoleInput");
+    m_consoleInput->setFrameShape(QFrame::NoFrame);
+    m_consoleInput->document()->setDefaultFont(font);
+    m_consoleInput->setFixedHeight(2 * QFontMetrics(font).lineSpacing() + 10);
+    m_consoleInput->setTabChangesFocus(false);
+    m_consoleInput->setPlaceholderText(T("Python: Enter runs, Shift+Enter is a new line, Up and Down go through what was run"));
+    input->run = [this] {
+        const QString code = m_consoleInput->toPlainText();
+        if (code.trimmed().isEmpty()) return;
+        m_consoleInput->clear();
+        runConsole(code);
+    };
+    input->history = [this](int step) { consoleHistory(step); };
+    input->leave = [this] { setConsoleVisible(false); };
+    v->addWidget(m_consoleLog);
+    v->addWidget(m_consoleInput);
+    m_console->hide();
+    return m_console;
+}
+
+QColor Editor::consoleColor(int kind) const
+{
+    return kind == 0 ? Theme::muted : kind == 1 ? Theme::text : kind == 2 ? Theme::accent : Color::red;
+}
+
+void Editor::appendConsole(const QString& text, int kind)
+{
+    if (!m_consoleLog) return;
+    m_consoleEntries << qMakePair(text, kind);
+    if (m_consoleEntries.size() > 3000) m_consoleEntries.removeFirst();
+    QTextCursor cursor(m_consoleLog->document());
+    cursor.movePosition(QTextCursor::End);
+    QTextCharFormat fmt;
+    fmt.setForeground(consoleColor(kind));
+    cursor.insertText(text + "\n", fmt);
+    m_consoleLog->verticalScrollBar()->setValue(m_consoleLog->verticalScrollBar()->maximum());
+}
+
+void Editor::rebuildConsole()
+{
+    if (!m_consoleLog) return;
+    m_consoleLog->clear();
+    QTextCursor cursor(m_consoleLog->document());
+    for (const auto& e : m_consoleEntries)
+    {
+        QTextCharFormat fmt;
+        fmt.setForeground(consoleColor(e.second));
+        cursor.insertText(e.first + "\n", fmt);
+    }
+    m_consoleLog->verticalScrollBar()->setValue(m_consoleLog->verticalScrollBar()->maximum());
+}
+
+void Editor::consoleHistory(int step)
+{
+    if (m_consoleHistory.isEmpty()) return;
+    const int to = std::max(0, std::min(int(m_consoleHistory.size()), m_consoleAt + step));
+    m_consoleAt = to;
+    m_consoleInput->setPlainText(to < m_consoleHistory.size() ? m_consoleHistory[to] : QString());
+    m_consoleInput->moveCursor(QTextCursor::End);
+}
+
+void Editor::setConsoleVisible(bool on)
+{
+    if (!m_console || m_console->isVisible() == on) return;
+    m_console->setVisible(on);
+    if (on) m_consoleInput->setFocus(Qt::OtherFocusReason);
+    else script->setFocus(Qt::OtherFocusReason);
+    emit(consoleVisibilityChanged(on));
+}
+
+void Editor::runConsole(const QString& code)
+{
+    if (code.trimmed().isEmpty() || m_consoleBusy || !m_console) return;
+    setConsoleVisible(true);
+    if (m_consoleHistory.isEmpty() || m_consoleHistory.last() != code) m_consoleHistory << code;
+    m_consoleAt = int(m_consoleHistory.size());
+    QString shown = code;
+    shown.replace("\n", "\n... ");
+    appendConsole(">>> " + shown, 0);
+    m_consoleBusy = true;
+    m_consoleInput->setReadOnly(true);
+    // (on a thread of its own: a long computation does not stop the window; the interpreter takes turns with the script that may be running)
+    const QString request = QString::fromUtf8(QJsonDocument(QJsonObject{{"code", code}}).toJson(QJsonDocument::Compact));
+    auto watcher = new QFutureWatcher<QPair<QString, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<QString, QString>>::finished, this, [this, watcher] {
+        const auto answer = watcher->result();
+        watcher->deleteLater();
+        m_consoleBusy = false;
+        m_consoleInput->setReadOnly(false);
+        if (!answer.second.isEmpty())
+        {
+            appendConsole(answer.second, 3);
+            return;
+        }
+        const QJsonObject r = QJsonDocument::fromJson(answer.first.toUtf8()).object();
+        const QString output = r["output"].toString(), value = r["value"].toString(), error = r["error"].toString();
+        if (!output.isEmpty()) appendConsole(output.endsWith('\n') ? output.left(output.size() - 1) : output, 1);
+        if (!value.isEmpty()) appendConsole(value, 2);
+        if (!error.isEmpty()) appendConsole(error, 3);
+    });
+    watcher->setFuture(QtConcurrent::run([this, request] {
+        QString error;
+        const QString out = callSupport("terminal_exec", request, &error);
+        return qMakePair(out, error);
+    }));
+}
+
+void Editor::applyTheme()
+{
+    // The editor is paper-white (or the dark set's paper), the output a shade darker; both with the text colour of the chrome
+    // (the other tabs, which are not rendered, have a slightly darker page; the first tab is the bold one with the accent line)
+    setStyleSheet(QString(
+        "QPlainTextEdit { background-color: %1; color: %2; selection-background-color: %8; border: none; }"
+        "QPlainTextEdit#Output { background-color: %3; border-top: 1px solid %4; padding: 2px 4px; }"
+        "QPlainTextEdit#Aux { background-color: %9; }"
+        "QTabBar { background: %3; }"
+        "QTabBar::tab { background: %3; color: %5; padding: 4px 12px 3px 10px; border: none;"
+        "               border-right: 1px solid %4; border-bottom: 2px solid transparent; }"
+        "QTabBar::tab:selected { background: %1; color: %2; border-bottom: 2px solid %6; }"
+        "QTabBar::tab:first { color: %2; font-weight: bold; }"
+        "QTabBar::tab:first:selected { border-bottom: 2px solid %7; }"
+        "QWidget#AuxRow { background: %3; border-top: 1px solid %4; }"
+        "QWidget#AuxRow QLabel { color: %5; }"
+        "QWidget#Controls { background: %3; border-top: 1px solid %4; }"
+        "QWidget#Controls QToolButton { border: none; border-radius: 3px; padding: 2px; }"
+        "QWidget#Controls QToolButton:hover { background: " + Theme::hoverShade() + "; }"
+        "QWidget#Console { border-top: 1px solid %4; }"
+        "QPlainTextEdit#ConsoleLog { background-color: %3; border: none; padding: 2px 4px; }"
+        "QPlainTextEdit#ConsoleInput { background-color: %1; border: none; border-top: 1px solid %4; padding: 2px 4px; }")
+        .arg(Theme::paper.name(), Theme::text.name(), Theme::chrome.name(), Theme::border.name(),
+             Theme::muted.name(), Theme::tabLine().name(), Theme::accent.name(), Theme::selection().name(), Theme::aux().name()));
+
+    // What was drawn with the colours when it was made (the icons, the rows of the run) is made again; the first call, from the constructor, finds none of them
+    if (m_tabs) m_tabs->setTabIcon(0, playTabIcon());
+    if (m_retryButton)
+    {
+        m_iconPause = glyphIcon(Glyph::Pause);
+        m_iconPlay = glyphIcon(Glyph::Play);
+        m_retryButton->setIcon(glyphIcon(Glyph::Retry));
+        m_terminateButton->setIcon(glyphIcon(Glyph::Terminate));
+        m_consoleButton->setIcon(glyphIcon(Glyph::Console));
+        updateControls();
+    }
+    if (m_runLabel) m_runLabel->setStyleSheet(runLabelStyle());
+    if (m_runRow) m_runRow->setStyleSheet(rowStyle());
+    if (m_pauseRow) m_pauseRow->setStyleSheet(rowStyle());
+    script->update();
+    rebuildConsole();                       // (what the console shows is drawn again in the colours of the theme)
+    script->updateBlockShading();           // (the shade of every second object is made of the colours of the theme)
+    for (auto& a : m_aux) a->script->updateBlockShading();
+}
 
 Editor::Editor(Language::Type language)
     : QWidget(nullptr), script(new Script), script_doc(script->document()),
@@ -154,23 +410,7 @@ Editor::Editor(Language::Type language)
     script->setFrameShape(QFrame::NoFrame);
     // (the other tabs, which are not rendered, have a slightly darker page; the first tab is the bold
     // one with the accent line)
-    setStyleSheet(QString(
-        "QPlainTextEdit { background-color: %1; color: %2; selection-background-color: #cfe3f3; border: none; }"
-        "QPlainTextEdit#Output { background-color: %3; border-top: 1px solid %4; padding: 2px 4px; }"
-        "QPlainTextEdit#Aux { background-color: #f0ede3; }"
-        "QTabBar { background: %3; }"
-        "QTabBar::tab { background: %3; color: %5; padding: 4px 12px 3px 10px; border: none;"
-        "               border-right: 1px solid %4; border-bottom: 2px solid transparent; }"
-        "QTabBar::tab:selected { background: %1; color: %2; border-bottom: 2px solid %6; }"
-        "QTabBar::tab:first { color: %2; font-weight: bold; }"
-        "QTabBar::tab:first:selected { border-bottom: 2px solid %7; }"
-        "QWidget#AuxRow { background: %3; border-top: 1px solid %4; }"
-        "QWidget#AuxRow QLabel { color: %5; }"
-        "QWidget#Controls { background: %3; border-top: 1px solid %4; }"
-        "QWidget#Controls QToolButton { border: none; border-radius: 3px; padding: 2px; }"
-        "QWidget#Controls QToolButton:hover { background: rgba(0, 0, 0, 28); }")
-        .arg(Theme::paper.name(), Theme::text.name(), Theme::chrome.name(), Theme::border.name(),
-             Theme::muted.name(), "#9b968a", Theme::accent.name()));
+    applyTheme();
 
     // Emit the script whenever text changes
     connect(script, &QPlainTextEdit::textChanged,
@@ -202,19 +442,7 @@ Editor::Editor(Language::Type language)
         m_tabs->setFocusPolicy(Qt::NoFocus);
         m_tabs->addTab(T("Untitled"));
         m_tabs->setTabButton(0, QTabBar::RightSide, nullptr);    // (the script cannot be closed)
-        {   // A play mark: this is the tab that is rendered
-            const qreal dpr = 2.0;
-            QPixmap pm(int(16 * dpr), int(16 * dpr));
-            pm.setDevicePixelRatio(dpr);
-            pm.fill(Qt::transparent);
-            QPainter p(&pm);
-            p.setRenderHint(QPainter::Antialiasing);
-            p.setPen(Qt::NoPen);
-            p.setBrush(Theme::accent);
-            p.drawPolygon(QPolygonF({QPointF(4, 2.5), QPointF(13, 8), QPointF(4, 13.5)}));
-            p.end();
-            m_tabs->setTabIcon(0, QIcon(pm));
-        }
+        m_tabs->setTabIcon(0, playTabIcon());       // (a play mark: this is the tab that is rendered)
         m_tabs->hide();         // (shown once a second file is open)
 
         auto page = new QWidget;
@@ -280,6 +508,10 @@ Editor::Editor(Language::Type language)
         m_retryButton->setToolTip(T("Run the script again from the beginning (Ctrl+Shift+F5)"));
         m_terminateButton->setIcon(glyphIcon(Glyph::Terminate));
         m_terminateButton->setToolTip(T("Terminate the script (Shift+F5)"));
+        m_consoleButton = make("consoleButton");
+        m_consoleButton->setIcon(glyphIcon(Glyph::Console));
+        m_consoleButton->setToolTip(T("The console: type Python and run it among the names of the script (View > Console)"));
+        connect(m_consoleButton, &QToolButton::clicked, this, [this] { setConsoleVisible(!consoleVisible()); });
         connect(m_pauseButton, &QToolButton::clicked, this, &Editor::togglePause);
         connect(m_retryButton, &QToolButton::clicked, this, &Editor::retryRun);
         connect(m_terminateButton, &QToolButton::clicked, this, &Editor::terminateRun);
@@ -299,13 +531,13 @@ Editor::Editor(Language::Type language)
         QFont smallFont = m_runLabel->font();
         smallFont.setPointSizeF(8.0);
         m_runLabel->setFont(smallFont);
-        m_runLabel->setStyleSheet(QString("color: %1;").arg(Color::base01.name()));
+        m_runLabel->setStyleSheet(runLabelStyle());
         // (its text is elided to the room it has: a long statement must not widen the editor)
         m_runLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         m_runLabel->setMinimumWidth(40);
         row->addWidget(m_runBar);
         row->addWidget(m_runLabel, 1);
-        m_runRow->setStyleSheet(QString("background-color: %1;").arg(Color::base3.name()));
+        m_runRow->setStyleSheet(rowStyle());
         m_runRow->hide();
 
         // The bottom row: the result line (while the script runs, its progress instead) and, at its right, the buttons
@@ -321,6 +553,7 @@ Editor::Editor(Language::Type language)
         ll->addWidget(m_runRow);
         bl->addWidget(left, 1);
         bl->addWidget(m_controls, 0, Qt::AlignTop);
+        layout->addWidget(buildConsole());          // (hidden until View > Console: it lies above the result and the buttons)
         layout->addWidget(bottom);
     }
 
@@ -337,7 +570,7 @@ Editor::Editor(Language::Type language)
         m_pauseLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         row->addWidget(button);
         row->addWidget(m_pauseLabel, 1);
-        m_pauseRow->setStyleSheet(QString("background-color: %1;").arg(Color::base3.name()));
+        m_pauseRow->setStyleSheet(rowStyle());
         m_pauseRow->hide();
         layout->addWidget(m_pauseRow);
         connect(button, &QPushButton::clicked, this, &Editor::continueRun);

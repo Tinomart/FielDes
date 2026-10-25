@@ -42,7 +42,7 @@ _ERROR = {}
 
 # The facts of a model that a run gives, and that are laid over the row the text gives (the rest of a row is the text's)
 _FACT_KEYS = ('exact_bounds', 'colored', 'model', 'failed', 'error', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'bounds', 'can_handles',
-              'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'custom_used', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
+              'handle_count', 'handle_cap', 'ends_only', 'is_list', 'is_pair', 'surface_selection', 'displayable_known', 'properties', 'exports', 'linked', 'symmetry_image')
 # What a call to the same function is taken to make again, when the statement was edited (its text is not what ran)
 _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condition_role', 'domain', 'cls', 'is_list', 'is_pair', 'surface_selection')
 
@@ -64,7 +64,8 @@ _MAKES = (
                     'heat_generation', 'convection', 'inlet', 'outlet', 'wall', 'slip')),
     ('material', ('Material', 'Fluid')),
     ('surface', ('select_surface', 'surface_from_bodies', 'surface_*')),
-    ('point', ('point', 'center')),
+    ('point', ('point', 'center', 'corner_at', 'edge_point_at')),
+    ('curve', ('edge_at',)),
     ('cell', ('cell_*',)),
     ('points', ('random_points',)),
     ('lattice', ('lattice', 'lattice_surface_conform', 'surface_lattice')),
@@ -147,6 +148,54 @@ def _call_takes(callee):
     return []
 
 
+_PRIMITIVE_NAMES = None
+_PRESET_NAMES = None
+# The other names of the cells of the library (the menus list a cell by the first)
+_CELL_ALIASES = {'simple_cubic': 'cubic', 'schwarz': 'schwarz_p', 'schwarz_d': 'diamond', 'truncated_octahedron': 'kelvin'}
+
+
+def _primitive_names():
+    ''' The names of the primitives of the menus (menu_catalog.PRIMITIVES): each has a picture of its own in the menus and the model tree '''
+    global _PRIMITIVE_NAMES
+    if _PRIMITIVE_NAMES is None:
+        try:
+            from fieldes import menu_catalog as M
+            _PRIMITIVE_NAMES = frozenset(n for n, _g, _t in M.PRIMITIVES)
+        except Exception:
+            return frozenset()
+    return _PRIMITIVE_NAMES
+
+
+def _preset_names():
+    ''' {the name of a material or a fluid the library has ready: the primitive of the menus it is}, 'PLA' -> 'pla' '''
+    global _PRESET_NAMES
+    if _PRESET_NAMES is None:
+        try:
+            from fieldes import menu_catalog as M
+            from fieldes.stdlib import fea, fluid
+            _PRESET_NAMES = {getattr(mod, n).name: n for mod, names in ((fea, M.MATERIAL_PRESETS), (fluid, M.FLUID_PRESETS)) for n in names}
+        except Exception:
+            return {}
+    return _PRESET_NAMES
+
+
+def _glyph_of(callee, call):
+    ''' The primitive of the menus a statement makes, for the picture it has beside its kind's in the model tree: its function -- but for a cell, which is told by its kind
+        (`cell_periodic('gyroid')` is `cell_gyroid`), and a material or a fluid the library has ready, which is told by its name (`Material('PLA', ...)` is `pla`).
+        '' when it is none of them '''
+    names = _primitive_names()
+    first = None
+    if isinstance(call, ast.Call):
+        first = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg in ('kind', 'name')), None)
+    text = first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else None
+    if callee == 'cell_periodic':
+        glyph = 'cell_' + _CELL_ALIASES.get(text, text) if text else ''
+        return glyph if glyph in names else ''
+    if callee in ('Material', 'Fluid'):
+        return _preset_names().get(text, 'material' if callee == 'Material' else '')
+    return callee if callee in names else ''
+
+
 def _slot_kinds(callee, k):
     ''' The kinds of model the k-th argument of `callee` takes (the kinds the menus offer an entry by: see menu_catalog._takes), or None when the library does not say --
         a number, an option, a place that takes anything: whatever is put there is let through, and the run says if it does not fit '''
@@ -223,9 +272,6 @@ def facts_of(v):
         # (the shape knows its extent: the region of interest can be made from it; an estimate is not that, nor is the box of a part whose
         # surfaces have been dragged -- one that holds it)
         f['exact_bounds'] = not getattr(v, '_bounds_loose', False)
-    used = getattr(v, '_custom_resolution_used', None)
-    if isinstance(used, (int, float)):
-        f['custom_used'] = used
     return f
 
 
@@ -1071,6 +1117,15 @@ def outline_json(arg):
             fn = A._call_name(stmt.value)
             if fn.startswith('view.') and A._short_name(fn) in A.SETTINGS_FUNCS:
                 entry = {'line': line, 'end_line': end, 'span': A._span(stmt), 'text': src.segment(stmt)}
+                # What a click on the row selects in the code, ready to be typed over as a variable's number is: the resolution, the quality, the region (both corners)
+                names = ('lo', 'hi') if A._short_name(fn) == 'set_bounds' else (('res',) if A._short_name(fn) == 'set_resolution' else ('q',))
+                values = dict(enumerate(stmt.value.args[:len(names)]))
+                for kw in stmt.value.keywords:
+                    if kw.arg in names:
+                        values.setdefault(names.index(kw.arg), kw.value)
+                if values:
+                    first, last = A._span(values[min(values)]), A._span(values[max(values)])
+                    entry['select'] = [first[0], first[1], last[2], last[3]]
                 if A._short_name(fn) == 'set_bounds':
                     # (auto_scale, on unless the call says False: the region grows in the script when a model reaches out of it)
                     entry['auto_scale'] = not any(kw.arg == 'auto_scale' and isinstance(kw.value, ast.Constant) and kw.value.value is False
@@ -1178,11 +1233,7 @@ def outline_json(arg):
                 number = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float)) and \
                     not isinstance(arg.value, bool) else None
                 info = {'line': line, 'end_line': end, 'call': A._span(stmt.value), 'text': A._short(src.segment(stmt), 60),
-                        'value': number, 'span': A._span(arg) if arg is not None else None}
-                facts, exact = _prior(stmt.targets[0].id, text, A._callee_name(stmt.value))
-                used = (facts or {}).get('custom_used')
-                if exact and isinstance(used, (int, float)) and number is not None and used < number * (1 - 1e-9):
-                    info['used'] = used
+                        'value': number, 'select': A._span(arg) if arg is not None else None}
                 target['custom_resolution'] = info
                 continue
             if what == 'render_cache':
@@ -1278,6 +1329,9 @@ def outline_json(arg):
                         item['cls'] = facts['cls']
                     item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
                     item['callee'] = callee
+                    glyph = _glyph_of(callee, stmt.value)
+                    if glyph:
+                        item['glyph'] = glyph                    # (the picture of the primitive it makes, beside the kind's)
                     if _call_takes(callee):
                         item['takes'] = _call_takes(callee)
                     item['role'] = 'operation' if deps else 'primitive'
@@ -1364,6 +1418,9 @@ def outline_json(arg):
             item['args'] = A._args_of(stmt.value, ns, by_name, src)
             item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
             item['callee'] = A._callee_name(stmt.value)
+            glyph = _glyph_of(item['callee'], stmt.value)
+            if glyph:
+                item['glyph'] = glyph
             if _call_takes(item['callee']):
                 item['takes'] = _call_takes(item['callee'])
             item['role'] = 'operation' if deps else 'primitive'

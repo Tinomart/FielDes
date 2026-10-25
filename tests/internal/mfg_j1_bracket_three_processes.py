@@ -26,7 +26,8 @@ t = Table("j1_bracket_three_processes: J1, J3, J4: the topology-optimized bracke
 
 design, plates, lugs = _bracket_parts()
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-opt = topology_optimization(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, volume_fraction=0.50, element_size=5)
+opt_stress = static_analysis(design, supports=[fixed(plates)], loads=[force(lugs, (0, -2000, 0))], material=aluminium, element_size=5)
+opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
 solid = exact_distance(opt.shape())
 lo, hi = (-78, -92, -63), (78, 38, 31)
 shift = 1.2 * (hi[0] - lo[0])

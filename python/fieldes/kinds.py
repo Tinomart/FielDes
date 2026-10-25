@@ -59,11 +59,11 @@ DOMAINS = {
 
 # The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
 DOMAIN_OF_FUNCTION = {
-    'static_analysis': 'structural', 'modal_analysis': 'structural', 'topology_optimization': 'structural',
+    'static_analysis': 'structural', 'modal_analysis': 'structural',
     'fixed': 'structural', 'force': 'structural', 'gravity': 'structural', 'thermal_expansion': 'structural',
-    'thermal_analysis': 'thermal', 'thermal_topology_optimization': 'thermal',
+    'thermal_analysis': 'thermal',
     'fixed_temperature': 'thermal', 'heat_input': 'thermal', 'heat_generation': 'thermal', 'convection': 'thermal',
-    'fluid_analysis': 'fluid', 'flow_topology_optimization': 'fluid',
+    'fluid_analysis': 'fluid',
     'inlet': 'fluid', 'outlet': 'fluid', 'wall': 'fluid', 'slip': 'fluid',
     'manufacturing_analysis': 'manufacturing', 'manufacturing_optimization': 'manufacturing',
     'manufacturing_constraint': 'manufacturing', 'fff_constraint': 'manufacturing', 'cnc_constraint': 'manufacturing', 'molding_constraint': 'manufacturing',

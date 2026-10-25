@@ -113,13 +113,11 @@ public:
     QStringList selectionKeys() const { return m_selectOrder; }
 
     /*  For the guided tour and the tests: select the model a variable holds (once it is in the tree); the rectangle of a row (the
-     *  first whose text starts with `prefix`) in the coordinates of `in`; the tree's viewport (where a mouse is sent to); a
-     *  render setting's field (fn: "set_bounds" part 0..5 | "set_resolution" 0 | "set_quality" 0); whether the settings are open  */
+     *  first whose text starts with `prefix`) in the coordinates of `in`; the tree's viewport (where a mouse is sent to); whether the settings are open  */
     bool selectModel(const QString& var) { return selectVar(var); }
     QRect rowRect(const QString& prefix, QWidget* in);
     QWidget* treeViewport() const;
     int treeScroll() const;                      // (the vertical scroll of the tree: for tests)
-    QLineEdit* settingEditor(const QString& fn, int index) const;
     void showSettings(bool open);
     bool settingsOpen() const;
     /*  The render region a drag has grown to (the viewport grew it as the model was dragged out of it: View::regionGrown): written into the script, to be run with the
@@ -302,6 +300,14 @@ public slots:
      *  line showing it under the definition of the shape displayed by the (0-based) line `line0`
      *  (the radius is mm, 0: no limit)  */
     void addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double radius);
+
+    /*  A corner or an edge of the model displayed by the (0-based) line `line0`, near a place that was picked on its surface (a right click): writes `name = corner_at(shape, (x, y, z))`
+     *  (kind "corner": a point), `edge_at` (kind "edge": a line) or `edge_point_at` (kind "edge_point": a point of the edge), and a line showing it, under the definition of the shape  */
+    void addFeature(int line0, QVector3D click, QString kind);
+
+    /*  What the library finds near a place on the model displayed by `line0`, for the menu of a right click: {"corner": [x, y, z] or null, "edge": {"point", "straight"} or null}
+        (the neighbourhood is `reach` mm); empty when the model is no variable or the search cannot be done  */
+    QJsonObject featuresNear(int line0, QVector3D point, double reach) const;
 
     /*  The model displayed by the (0-based) line `line0` is given a resolution of its own: the line `x = custom_resolution(x, number)` is
      *  written under its definition (the number: the scene's resolution)  */
@@ -535,12 +541,7 @@ protected:
      *  the name the script has now is skipped, and the run that answers the last key brings the one that is shown  */
     bool staleWhileRenaming(const QJsonObject& scene) const;
 
-    /*  The render settings as rows with fields in them: a number is typed in the tree and the call is rewritten (or added), as it
-     *  is typed (`live`) and when the field is left  */
-    void commitSetting(QLineEdit* edited, bool live = false);
     void insertSettingLine(const QString& call, const QString& fn = QString(), bool live = false);
-    QHash<QString, QList<QPointer<QLineEdit>>> m_settingEditors;
-    void commitCustomResolution(QLineEdit* edited, bool live, const QString& var);
     /*  Where the call that the last live edit of a setting wrote stands in the script, so that the next key rewrites the same place
      *  without waiting for a run to say where it is now (the scene is a run behind)  */
     struct LiveSetting { int line0 = -1, col0 = 0; QString call; };

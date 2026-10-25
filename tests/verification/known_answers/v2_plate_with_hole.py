@@ -38,7 +38,7 @@ plane_x = box((-1, -1, -1), (0.01, b + 1, h + 1))                               
 plane_y = box((-1, -1, -1), (a + 1, 0.01, h + 1))                                 # the plane of symmetry y = 0: held in y only
 plane_z = box((-1, -1, -1), (a + 1, b + 1, 0.01))                                 # the middle plane of the thickness, z = 0: held in z only
 pull = box((a - 0.01, -1, -1), (a + 1, b + 1, h + 1))                             # the pulled end
-result = static_analysis(part, supports=[fixed(plane_x, y=False, z=False), fixed(plane_y, x=False, z=False), fixed(plane_z, x=False, y=False)],
+result = static_analysis(part, supports=[fixed(plane_x, displacement=(0, inf, inf)), fixed(plane_y, displacement=(inf, 0, inf)), fixed(plane_z, displacement=(inf, inf, 0))],
                          loads=[force(pull, (SIGMA * b * h, 0, 0))], material=steel, element_size=SIZE, cache=False)
 
 r = D / W
@@ -54,7 +54,7 @@ print("ok: within %.0f %%" % (100 * TOLERANCE))
 
 # The same plate with 10-node elements (element='tet10'): elements of 0.7 mm read the peak better than linear ones of 0.25 mm (a mesh too coarse for the
 # hole -- 1 mm, four to its radius -- reads it 20 % too high: halve the size and see whether the peak moves)
-quad = static_analysis(part, supports=[fixed(plane_x, y=False, z=False), fixed(plane_y, x=False, z=False), fixed(plane_z, x=False, y=False)],
+quad = static_analysis(part, supports=[fixed(plane_x, displacement=(0, inf, inf)), fixed(plane_y, displacement=(inf, 0, inf)), fixed(plane_z, displacement=(inf, inf, 0))],
                        loads=[force(pull, (SIGMA * b * h, 0, 0))], material=steel, element_size=SIZE_10, element='tet10', cache=False)
 peak10 = max(quad.von_mises(0.02, D / 2 + s / 40.0, h * 0.5) for s in range(0, 41))
 error10 = peak10 / SIGMA / theory - 1.0

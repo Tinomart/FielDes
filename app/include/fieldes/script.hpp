@@ -50,11 +50,16 @@ public:
 
     /*  Named layers of extra selections, composed into one list  */
     enum SelectionLayer {
-        SEL_CURRENT_LINE=0, SEL_FIND, SEL_BRACKET, SEL_ERROR,
+        SEL_BLOCKS=0, SEL_CURRENT_LINE, SEL_FIND, SEL_BRACKET, SEL_ERROR,
         SEL_FLASH, SEL_MULTI, SEL_LINK, SEL_PAUSE, SEL_COUNT
     };
     void setSelections(SelectionLayer layer,
                        const QList<QTextEdit::ExtraSelection>& sels);
+
+    /*  Every object -- a top-level `name = call(...)` and the statements that go on with it: `name = gizmo(name, ...)`, `name = handles(...)`, the line that shows it -- is one block of
+     *  lines (the one that folds with its arrow, see foldRange); the blocks are told apart by a background that is a shade different for every second one, so that where one
+     *  object's definition starts and ends is seen.  Done again a moment after the text changes, and when the theme does  */
+    void updateBlockShading();
     const QList<QTextEdit::ExtraSelection>& selections(SelectionLayer layer) const
     { return m_layers[layer]; }
 
@@ -225,6 +230,8 @@ protected:
     bool handleMultiCursorKey(QKeyEvent* e);
     int indentOf(const QTextBlock& b) const;
     bool isBlankOrComment(const QTextBlock& b) const;
+    int objectEnd(const QTextBlock& b) const;      // (the last line, 0-based, of the object that starts at this line; -1 when none does)
+    QTimer* m_shadeTimer = nullptr;
 
     Formatter* m_formatter=nullptr;
     ScriptGutter* m_gutter=nullptr;

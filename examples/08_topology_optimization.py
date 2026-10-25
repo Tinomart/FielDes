@@ -39,7 +39,8 @@ design = exclude(space, holes)                        # ... which stay as they a
 
 support = fixed(plates)
 load = force(lugs, (0, -2000, 0))
-opt = topology_optimization(design, supports=[support], loads=[load], material=aluminium, volume_fraction=0.50, element_size=5)
+opt_stress = static_analysis(design, supports=[support], loads=[load], material=aluminium, element_size=5)
+opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])
 opt
 
 optimized = opt.shape()                       # where the density is above the level that keeps the 50 % asked for

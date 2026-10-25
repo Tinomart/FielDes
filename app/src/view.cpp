@@ -1701,7 +1701,7 @@ void View::updateResultPanel()
     st.map = r->colorMap();
     st.note = r->valueNote();
     st.noteHelp = r->valueNoteHelp();
-    st.elementInfo = r->hasElements() ? r->elementText() : QString();
+    st.elementInfo = r->hasElements() ? r->elementText() : r->elementNote();
     st.hasDeform = r->hasDeformation();
     st.scale = r->deformScale();
     st.autoScale = r->deformAuto();
@@ -2454,6 +2454,15 @@ void View::mousePressEvent(QMouseEvent* event)
             }
             press_pos = event->pos();
             press_target = drag_target;
+            // Ctrl + click on the LINE of a curve (a spline, a polyline) or the edge of a profile: a line has no pixel in the pick buffer, so the press found no model at all and
+            // the click did nothing -- the line is what is toggled in the selection, as the click on a surface toggles its model (a plain click on it is handled above)
+            if (event->modifiers() & Qt::ControlModifier)
+            {
+                Shape* lineShape = nullptr;
+                QVector3D lineHit;
+                int linePiece = 0;
+                if (outlineAt(event->pos(), lineShape, lineHit, linePiece) && lineShape && lineShape->sourceLine() >= 0) press_target = lineShape;
+            }
             // (Ctrl + click selects: it never pulls the surface it is on)
             press_ctrl = bool(event->modifiers() & Qt::ControlModifier);
             // (a part in the gizmo mode is moved by the gizmo and a locked one not at all: only its
@@ -2736,6 +2745,29 @@ bool View::selectSurfaceAt(QPoint pos, const QString& mode, double angle, double
     return true;
 }
 
+bool View::featureAt(QPoint pos, const QString& kind)
+{
+    syncPicker();
+    const auto picked = pick_img.valid(pos) ? (pick_img.pixel(pos) & 0xFFFFFF) : 0;
+    if (!picked || int(picked) > shapes.size()) return false;
+    Shape* target = shapes.at(picked - 1);
+    if (target->sourceLine() < 0) return false;
+    const QVector3D at = toModelPos(pos);
+    const QJsonObject found = m_scene ? m_scene->featuresNear(target->sourceLine(), at, 0.3 * scaleAt(pos, at)) : QJsonObject();
+    if (kind == "list")
+    {
+        std::cerr << "automation: features at " << pos.x() << " " << pos.y() << ": "
+                  << QJsonDocument(found).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+        return true;
+    }
+    // (as the menu does: what is written is the place that was found, not the click)
+    const QJsonValue where = kind == "corner" ? found["corner"] : found["edge"].toObject()["point"];
+    if (!where.isArray()) return false;
+    const QJsonArray a = where.toArray();
+    emit(featureRequested(target->sourceLine(), QVector3D(float(a.at(0).toDouble()), float(a.at(1).toDouble()), float(a.at(2).toDouble())), kind));
+    return true;
+}
+
 QVector3D View::placeOnRay(QPoint pos) const
 {
     // A cursor is two-dimensional, so the depth is chosen: the closest to the origin's, that is, the point of the ray
@@ -2805,6 +2837,19 @@ bool View::planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const
         v = QVector3D(float(f[6]), float(f[7]), float(f[8])).normalized();
         return true;
     }
+    // A surface that is selected (a patch on the face of a body): the plane that it covers the most area of, as CAD does it -- a flat face gives its own plane, a bent one the plane most of
+    // it faces -- turned to face the viewer (what is outside the body is what the viewer sees of a face, and the plane's normal is the way to build on)
+    for (const Shape* s : shapes)
+    {
+        if (!s->isSelected() || !s->isSurfacePatch() || !s->patchPlane(f)) continue;
+        origin = QVector3D(float(f[0]), float(f[1]), float(f[2]));
+        u = QVector3D(float(f[3]), float(f[4]), float(f[5])).normalized();
+        v = QVector3D(float(f[6]), float(f[7]), float(f[8])).normalized();
+        QVector3D o, viewU, viewV;
+        planeOfView(o, viewU, viewV);
+        if (QVector3D::dotProduct(QVector3D::crossProduct(u, v), QVector3D::crossProduct(viewU, viewV)) < 0) std::swap(u, v);     // (swapped, u x v turns round)
+        return true;
+    }
     // Three points or more: the plane a profile of them would lie in (through the first three that are not on a line)
     std::vector<Eigen::Vector3d> points;
     for (const Shape* s : shapes)
@@ -2859,6 +2904,26 @@ void View::setWorkPlaneOpen(bool open)
     m_wpCursorValid = false;
     if (!open) emit(workPlaneReadout(QString()));
     announceWorkPlane();
+}
+
+bool View::exitMode()
+{
+    if (!m_wpPlaced.isEmpty())
+    {
+        cancelPlacement();
+        return true;
+    }
+    if (m_wp.open && m_wp.exists && m_wp.mode != 0)
+    {
+        setWorkPlaneMode(0);
+        return true;
+    }
+    if (m_wp.open)
+    {
+        setWorkPlaneOpen(false);
+        return true;
+    }
+    return false;
 }
 
 void View::newWorkPlane()
@@ -3172,7 +3237,7 @@ void View::keyPressEvent(QKeyEvent* event)
             if (!m_wpPlaced.isEmpty()) { finishPlacement(false); event->accept(); return; }
             break;
         case Qt::Key_Escape:
-            if (!m_wpPlaced.isEmpty()) { cancelPlacement(); event->accept(); return; }
+            if (exitMode()) { event->accept(); return; }
             break;
         case Qt::Key_Backspace:
             if (!m_wpPlaced.isEmpty()) { undoPlacedPoint(); event->accept(); return; }
@@ -3834,7 +3899,7 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
         for (const auto& p : entries)
         {
             const QString name = p["name"].toString();
-            auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type), false, domain), name,
+            auto action = sub->addAction(TypeIcons::icon(p["type"].toString(type), false, domain, name), name,
                                          this, [=]{ emit(createRequested("primitive", name, point, scale, atLine, -1)); });
             if (p["with_bodies"].toBool())
             {
@@ -3885,7 +3950,7 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
         {
             const QString name = p["name"].toString();
             const QString label = p["label"].toString(name);
-            auto action = sub->addAction(TypeIcons::icon("cell"), label, this,
+            auto action = sub->addAction(TypeIcons::icon("cell", false, QString(), name), label, this,
                                          [=]{ emit(createRequested("primitive", name, point, scale, line, -1)); });
             action->setToolTip(T("A new cell: %1 -- a lattice operation takes it as its cell").arg(name));
             checkPrimitive(action, name, false, line);
@@ -3916,7 +3981,9 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
         if (!v.toObject()["section"].toString().isEmpty()) continue;      // (the entries that have a section have a category of their own: see fillLatticeMenu)
         if (isSimulationOperation(v.toObject()["group"].toString()) != simulations) continue;
         // (a category of the Engineering menu: its analyses; the domain "-" is what has no domain, what works over an analysis of any -- it is in the menu itself)
-        if (simulations && !domain.isEmpty() && (domain == "-" ? !v.toObject()["domain"].toString().isEmpty() : v.toObject()["domain"].toString() != domain)) continue;
+        // (what is first in the Engineering menu itself -- the domain "^": the optimisation that designs for an analysis of any domain -- is neither in a category nor among the rest)
+        if (simulations && (domain == "^" ? !v.toObject()["top"].toBool() : v.toObject()["top"].toBool())) continue;
+        if (simulations && !domain.isEmpty() && domain != "^" && (domain == "-" ? !v.toObject()["domain"].toString().isEmpty() : v.toObject()["domain"].toString() != domain)) continue;
         ops.append(v);
     }
     if (ops.isEmpty())
@@ -4161,7 +4228,7 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, doub
     }
 }
 
-// What the Engineering menu holds: a category for each domain -- Structural, Thermal, Fluid -- each with the icon and the colour of its domain, each with what an analysis of it is
+// What the Engineering menu holds: first the optimisation that designs for an analysis of any domain, on its own; then a category for each domain -- Structural, Thermal, Fluid -- each with the icon and the colour of its domain, each with what an analysis of it is
 // given (a support or a load, a thermal or a flow condition: a model of its own, no other model is needed for it) and the analyses and optimisations of it (they work on what is
 // selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there); then the materials, which an analysis of any domain takes
 void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
@@ -4169,6 +4236,9 @@ void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, do
     static const QList<QPair<QString, QString>> categories = {
         {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}};
     const int at = line < 0 ? atLine : line;
+    // First, on its own: what designs for an analysis of any domain (topology_optimization); then a line, then the categories
+    fillOperations(menu, line, point, scale, true, "^");
+    menu->addSeparator();
     for (const auto& c : categories)
     {
         auto sub = menu->addMenu(TypeIcons::icon("simulation", false, c.first), c.second);
@@ -4224,7 +4294,7 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
                 const bool isFlat = p["flat"].toBool();
                 const QVector3D at = p["group"].toString() == "Points" ? exact : isFlat ? flat : point;
                 const double size = isFlat ? flatScale : scale;
-                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type)), p["label"].toString(name),
+                auto action = into->addAction(TypeIcons::icon(p["type"].toString(type), false, QString(), name), p["label"].toString(name),
                                               this, [=]{ emit(createRequested("primitive", name, at, size, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
                 checkPrimitive(action, name, false, atLine);
@@ -4299,8 +4369,8 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
         const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
         auto own = menu->addAction(T("Custom resolution"), this, [=]{ if (m_scene) m_scene->addCustomResolution(line); });
-        own->setToolTip(T("Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolution(x, number) under its "
-                        "definition; the number is a field under the model in the tree"));
+        own->setToolTip(T("Draw this model at a resolution of its own -- the number the scene's resolution is, for this model alone: writes custom_resolution(x, number) under its "
+                        "definition; the number is a row under the model in the tree, and a click on it selects it in the code"));
         if (type == "field" || type == "point" || type.isEmpty())
         {
             own->setEnabled(false);
@@ -4318,6 +4388,41 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         select->setEnabled(false);
         select->setToolTip(T("The selection spreads from the place you click on the surface, so it is started by right-clicking "
                            "the surface in the viewport."));
+    }
+    if (onSurface && m_scene)
+    {
+        // Near an edge or a corner of the body (the library looks at the surface round the click -- about thirty pixels -- and says what is there, so a click on a face or a smooth
+        // surface offers nothing): a point exactly at the corner, a point on the edge, the edge as a line.  They are written under the body as `corner_at(...)`, `edge_point_at(...)`,
+        // `edge_at(...)`, like a selected surface is
+        const QJsonObject found = m_scene->featuresNear(line, point, 0.3 * scale);
+        const bool corner = found["corner"].isArray(), edge = found["edge"].isObject();
+        // What is written is the place the library found -- the corner, the point of the edge -- and not the click: the call looks only about 3 % of the body round the place it is given
+        // (window t332: a click 1.1 mm from an edge wrote `edge_at(block, (18.878, ...))` and the call, looking 0.6 mm round it, found no edge)
+        const auto place = [](const QJsonValue& v) {
+            const QJsonArray a = v.toArray();
+            return QVector3D(float(a.at(0).toDouble()), float(a.at(1).toDouble()), float(a.at(2).toDouble()));
+        };
+        const QVector3D cornerAt = corner ? place(found["corner"]) : point;
+        const QVector3D edgeAt = edge ? place(found["edge"].toObject()["point"]) : point;
+        if (corner || edge)
+        {
+            menu->addSeparator();
+            if (corner)
+            {
+                auto a = menu->addAction(TypeIcons::icon("point"), T("Point at the corner"), this, [=]{ emit(featureRequested(line, cornerAt, "corner")); });
+                a->setToolTip(T("A point exactly at the corner of this body that is nearest the click: corner_at(body, (x, y, z)) -- it is found from the body's field, so it follows the body when the body changes"));
+            }
+            if (edge)
+            {
+                auto p = menu->addAction(TypeIcons::icon("point"), T("Point on the edge"), this, [=]{ emit(featureRequested(line, edgeAt, "edge_point")); });
+                p->setToolTip(T("A point exactly on the edge of this body that is nearest the click: edge_point_at(body, (x, y, z)) -- any edge, a circle too"));
+                if (found["edge"].toObject()["straight"].isArray())
+                {
+                    auto l = menu->addAction(TypeIcons::icon("curve"), T("Line along the edge"), this, [=]{ emit(featureRequested(line, edgeAt, "edge")); });
+                    l->setToolTip(T("The straight edge of this body that is nearest the click, from corner to corner: edge_at(body, (x, y, z))"));
+                }
+            }
+        }
     }
     if (m_scene)
     {

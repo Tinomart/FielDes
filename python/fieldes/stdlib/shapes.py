@@ -415,41 +415,48 @@ def cylinder(r, h, base=(0, 0, 0)):
         _bounded(out, (base[0] - r, base[1] - r, base[2]), (base[0] + r, base[1] + r, base[2] + h))
     return out
 
-def _cone_planes(slope, axis, offsets):
+_APEX = 0.005       # (the share of a cone's base radius that its apex is rounded by: see _cone_planes)
+
+
+def _cone_planes(slope, axis, offsets, eps=1e-6):
     ''' The cone as two surfaces: the base plane z = zb and the side, a cone of a FIXED slope (the unit normal of its profile (nr, nz) in (r, z)) at an offset e of its own: the side is
         nr r + nz z - e = 0.  Each has ONE number and neither depends on the other's -- the side is measured from the ground, not from the base --, so a face that is pulled moves along
         its normal (the side: the cone grows or shrinks at its slope, round its base) and nothing else changes.  `axis` is where the cone stands (the gizmo moves it: it is no handle);
-        `offsets` are e, zb.  A hair under the root of r^2, so that the field has a gradient ON the axis '''
+        `offsets` are e, zb.  r is the root of r^2 + eps^2 (not of r^2 alone): the field has a gradient ON the axis, and the apex is a rounded tip of the size `eps`.  The apex of a perfect
+        cone is a point the surface comes to from every side at once: a mesh that has to place a vertex for each cell round it comes out ragged there, whatever the resolution -- the
+        cone looks the same near its tip at every scale.  A tip rounded by a small share of the radius is the same at a scale of cells that are finer than it, and so is smooth there '''
     nr, nz = slope
     e, zb = (Shape.wrap(v) for v in offsets)
     X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
-    rad = ((X - axis[0]).square() + (Y - axis[1]).square() + 1e-12).sqrt()
+    rad = ((X - axis[0]).square() + (Y - axis[1]).square() + eps * eps).sqrt()
     return (zb - Z).max(rad * nr + Z * nz - e)
 
 
-def _rebuilt_cone(slope, axis, v):
-    out = _own(_cone_planes(slope, axis, v))
-    return _parametric(out, v, lambda w: _rebuilt_cone(slope, axis, w))
+def _rebuilt_cone(slope, axis, eps, v):
+    out = _own(_cone_planes(slope, axis, v, eps))
+    return _parametric(out, v, lambda w: _rebuilt_cone(slope, axis, eps, w))
 
 
 def cone(radius, height, base=(0, 0, 0)):
     """ A cone with the given base radius and height, standing along z on the (optional) base position: the base is a disc of that radius at the base height and the apex stands
         `height` above its centre.  It has two faces, the base and the side: its handles pull the base (it moves up or down) and the side (the cone grows or shrinks at the same slope, round
-        its base), and the axis stays where it is
+        its base), and the axis stays where it is.  The apex is rounded by half a percent of the base radius: a perfect apex is a point the surface comes to from every side at once, and a
+        mesh comes out ragged there at any resolution
     """
     if _number(radius) and _number(height) and len(base) == 3 and all(_number(c) for c in base) and radius > 0 and height > 0:
         length = math.hypot(radius, height)
         slope = (height / length, radius / length)                  # (the unit normal of the side in the plane of (r, z))
         axis = (base[0], base[1])
         offsets = [radius * height / length + slope[1] * base[2], base[2]]             # (the side's own number, measured from the ground; the base's)
-        out = _own(_cone_planes(slope, axis, offsets))
+        eps = _APEX * radius                                                           # (the apex is rounded by this much: see _cone_planes)
+        out = _own(_cone_planes(slope, axis, offsets, eps))
         _bounded(out, (base[0] - radius, base[1] - radius, base[2]), (base[0] + radius, base[1] + radius, base[2] + height))
-        return _parametric(out, offsets, lambda v: _rebuilt_cone(slope, axis, v))
+        return _parametric(out, offsets, lambda v: _rebuilt_cone(slope, axis, eps, v))
     # (a size or a place that is not a plain number -- a var(), a field -- or a cone of no size: the plane through the rim and the apex, made of the numbers themselves)
     R, H = Shape.wrap(radius), Shape.wrap(height)
     cx, cy, cz = (Shape.wrap(c) for c in base)
     X, Y, Z = Shape.X(), Shape.Y(), Shape.Z()
-    rad = ((X - cx).square() + (Y - cy).square() + 1e-12).sqrt()
+    rad = ((X - cx).square() + (Y - cy).square() + (R * _APEX).square()).sqrt()
     side = (H * rad + R * (Z - cz) - R * H) / (R.square() + H.square()).sqrt()
     return _own((cz - Z).max(side))
 

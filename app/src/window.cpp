@@ -57,8 +57,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QPushButton>
 #include <QScreen>
 #include <QSplitter>
+#include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <memory>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 #include <QDir>
@@ -75,7 +79,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDesktopServices>
 #include <QUrl>
 #include <memory>
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 
+#include "libfive/run_progress.hpp"
 #include "libfive/step/step_progress.hpp"
 
 #include "fieldes/fileassoc.hpp"
@@ -439,10 +447,20 @@ Window::Window(Arguments args)
     // shape that's too expensive to mesh at the current resolution/bounds
     // (previously the only way out of a long render was to kill the application
     // entirely, losing unsaved work).
-    auto cancel_render = new QAction(T("Cancel render"), this);
+    auto cancel_render = new QAction(T("Leave the mode / cancel render"), this);
     Shortcuts::add(cancel_render, "view.cancel-render", {QKeySequence(Qt::Key_Escape)});
     addAction(cancel_render);
-    connect(cancel_render, &QAction::triggered, this, &Window::onCancelRender);
+    // Escape leaves the innermost special mode first -- a line being drawn on the work plane, its drawing mode, its view, then the section view --, one step at a time; with none
+    // of them on it cancels the render, as it always did
+    connect(cancel_render, &QAction::triggered, this, [this] {
+        if (view->exitMode()) return;
+        if (m_sectionToggle && m_sectionToggle->isChecked())
+        {
+            m_sectionToggle->setChecked(false);
+            return;
+        }
+        onCancelRender();
+    });
 
     // Autosave every 5 seconds if there are unsaved changes and we have
     // a real file to save to (there was no autosave at first, so a
@@ -763,10 +781,28 @@ Window::Window(Arguments args)
         settings.setValue("projection", "orthographic");
     });
     view_menu->addMenu(proj_menu);
-    if (settings.value("projection", "").toString() == "orthographic")
-        ortho_action->setChecked(true);
-    else
+    {   // Light or dark, and the colours of the window and the editor by hand
+        auto theme_action = view_menu->addAction(T("Theme..."));
+        theme_action->setToolTip(T("Light or dark, and the colours of the window and the editor chosen by hand"));
+        Shortcuts::add(theme_action, "view.theme", {});
+        connect(theme_action, &QAction::triggered, this, [this] { openThemeDialog(); });
+    }
+    {   // The console under the editor: Python typed in, run among the names of the script
+        auto console_action = view_menu->addAction(T("Console"));
+        console_action->setCheckable(true);
+        console_action->setToolTip(T("A console under the editor: type Python and run it among the names of the script that ran last and of the library"));
+        Shortcuts::add(console_action, "view.console", {QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)});
+        connect(console_action, &QAction::toggled, this, [this](bool on) { editor->setConsoleVisible(on); });
+        connect(editor, &Editor::consoleVisibilityChanged, console_action, [console_action](bool on) {
+            QSignalBlocker block(console_action);
+            console_action->setChecked(on);
+        });
+    }
+    // (orthographic is the default -- this is a CAD program: a part is read without perspective; the choice of the menu is kept)
+    if (settings.value("projection", "orthographic").toString() == "perspective")
         perspective_action->setChecked(true);
+    else
+        ortho_action->setChecked(true);
 
     auto turn_y_up = new QAction(T("Turntable (Y up)"), nullptr);
     auto turn_z_up = new QAction(T("Turntable (Z up)"), nullptr);
@@ -894,7 +930,6 @@ Window::Window(Arguments args)
     tree_action->setChecked(settings.value("show-model-tree", true).toBool());
     view->scenePanel()->setVisible(tree_action->isChecked());
 
-    QAction* sectionToggle = nullptr;
     {   // Section view / field viewer: a card floating in the viewport
         auto panel = new SectionPanel(view);
         panel->hide();
@@ -931,7 +966,7 @@ Window::Window(Arguments args)
 
         auto section_action = view_menu->addAction(T("Section view"));
         section_action->setCheckable(true);
-        sectionToggle = section_action;
+        m_sectionToggle = section_action;
         // (Shift+X, like the work plane's keys: a single key with Shift, so it acts while the viewport -- or the model tree on it -- has the keyboard, and
         // never types over the editor)
         Shortcuts::add(section_action, "view.section", {QKeySequence(Qt::SHIFT | Qt::Key_X)});
@@ -989,7 +1024,7 @@ Window::Window(Arguments args)
         openAction->setCheckable(true);
         openAction->setToolTip(T("Open the work plane view: a plane with a grid, that new points and the points you drag go on"));
         auto newAction = view_menu->addAction(T("New work plane"));
-        newAction->setToolTip(T("A new plane: the plane of the selected 2D shape, or parallel to the view through the origin; its view is opened"));
+        newAction->setToolTip(T("A new plane: the plane of the selected 2D shape or surface (of a bent surface: the plane most of it faces), or parallel to the view through the origin; its view is opened"));
         auto faceAction = view_menu->addAction(T("Set view to work plane"));
         faceAction->setToolTip(T("Turn the camera to look straight at the work plane"));
         Shortcuts::add(openAction, "view.workplane", {QKeySequence(Qt::SHIFT | Qt::Key_W)});
@@ -1146,9 +1181,9 @@ Window::Window(Arguments args)
         connect(isolate, &QAction::triggered, scene, &ScenePanel::toggleIsolation);
     }
 
-    {   // Delete: D, a single key like the others (the viewport or the model tree has the focus, so it never eats typing)
+    {   // Delete: D and the Delete key, single keys like the others (the viewport or the model tree has the focus, so they never eat typing)
         auto del = view_menu->addAction(T("Delete the selected models"));
-        Shortcuts::add(del, "view.delete", {QKeySequence(Qt::Key_D)});
+        Shortcuts::add(del, "view.delete", {QKeySequence(Qt::Key_D), QKeySequence(Qt::Key_Delete)});
         del->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(del);
         auto scene = view->scenePanel();
@@ -1520,6 +1555,7 @@ Window::Window(Arguments args)
             view->setFocus(Qt::MouseFocusReason);
         });
         connect(view, &View::surfaceSelectRequested, scene, &ScenePanel::addSurfaceSelection);
+        connect(view, &View::featureRequested, scene, &ScenePanel::addFeature);
         // The context menus create primitives and operations: the interpreter lists them and writes the calls
         scene->setSupport([this](const QString& function, const QString& arg, QString* error) {
             return editor->callSupport(function, arg, error);
@@ -1745,6 +1781,50 @@ Window::Window(Arguments args)
                 return;
             }
             std::cerr << "automation: primitives <open|kind|add|remove|rename|edit|dropdown|rows|close>" << std::endl;
+        });
+        // theme <light|dark|reset|color <role> <#rrggbb>|open|close|grab <file>>: the colours of View > Theme, without writing the choice into the settings (a test must not change the
+        // user's); `open` shows the dialog of the menu, `grab` photographs it
+        a->add("theme", [=](const QString& args){
+            const QString verb = args.section(' ', 0, 0).trimmed().toLower(), rest = args.section(' ', 1).trimmed();
+            if (verb == "light" || verb == "dark") { Theme::setMode(verb == "dark" ? Theme::Mode::Dark : Theme::Mode::Light, false); applyTheme(); return; }
+            if (verb == "reset") { Theme::resetColors(false); applyTheme(); return; }
+            if (verb == "color")
+            {
+                const QColor c(rest.section(' ', 1).trimmed());
+                if (!c.isValid()) { std::cerr << "automation: theme color <role> <#rrggbb>" << std::endl; return; }
+                Theme::setColor(rest.section(' ', 0, 0).trimmed(), c, false);
+                applyTheme();
+                return;
+            }
+            if (verb == "open") { openThemeDialog(); return; }
+            if (verb == "close") { if (m_themeDialog) m_themeDialog->close(); return; }
+            if (verb == "grab") { if (m_themeDialog) m_themeDialog->grab().save(rest); else std::cerr << "automation: the theme dialog is not open" << std::endl; return; }
+            std::cerr << "automation: theme <light|dark|reset|color|open|close|grab>" << std::endl;
+        });
+        // console <open|close|run <python, "\n" for a new line>|dump <file>|grab <file>>: the console under the editor (View > Console): shown, driven as a hand does (`run` waits for the answer),
+        // its text written to a file, or photographed with the editor
+        a->add("console", [=](const QString& args){
+            const QString verb = args.section(' ', 0, 0).trimmed().toLower();
+            QString rest = args.section(' ', 1);
+            if (verb == "open") { editor->setConsoleVisible(true); return; }
+            if (verb == "close") { editor->setConsoleVisible(false); return; }
+            if (verb == "run")
+            {
+                rest.replace("\\n", "\n");
+                editor->runConsole(rest);
+                QElapsedTimer waited;
+                waited.start();
+                while (editor->consoleBusy() && waited.elapsed() < 30000) QApplication::processEvents(QEventLoop::AllEvents, 50);
+                return;
+            }
+            if (verb == "dump")
+            {
+                QFile f(rest.trimmed());
+                if (f.open(QIODevice::WriteOnly | QIODevice::Text)) f.write(editor->consoleText().toUtf8());
+                return;
+            }
+            if (verb == "grab") { editor->grab().save(rest.trimmed()); return; }
+            std::cerr << "automation: console <open|close|run|dump|grab>" << std::endl;
         });
         // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
         a->add("navigation", [=](const QString& what){
@@ -2487,6 +2567,13 @@ Window::Window(Arguments args)
                 std::cerr << "automation: no shape at " << args.toStdString() << std::endl;
             }
         });
+        // feature <x> <y> <corner|edge|edge_point|list>: what the entries of the right-click menu near an edge or a corner do (list: what the menu would offer there, written to the log)
+        a->add("feature", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 3) return;
+            if (!view->featureAt(QPoint(p[0].toInt(), p[1].toInt()), p[2]))
+                std::cerr << "automation: no shape at " << args.toStdString() << std::endl;
+        });
         // gizmodrag <kind 0|1|2|4> <axis 0-2> <dx> <dy>: press a part's gizmo (a move arrow, a
         // rotation ring, a scale square or -- with viewshift on -- a plane square, axis = its normal), drag by (dx, dy) pixels in steps, release
         a->add("gizmodrag", [=](const QString& args){
@@ -2960,41 +3047,6 @@ Window::Window(Arguments args)
         a->add("blocksfolder", [=](const QString& path){ setBlocksFolder(path.trimmed()); });        a->add("open", [=](const QString& path){
             if (loadFile(path)) setFilename(path);
         });
-        // setting <set_bounds|set_resolution|set_quality> <index> <text> [esc]: type into one field of the render settings in the
-        // tree and press Enter (or Esc), as a user does
-        a->add("setting", [=](const QString& args){
-            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
-            if (p.size() < 3) { std::cerr << "automation: setting <fn> <index> <text> [esc]\n"; return; }
-            auto scene = view->scenePanel();
-            scene->showSettings(true);
-            QApplication::processEvents();
-            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
-            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
-            f->setFocus();
-            f->selectAll();
-            f->setText(p[2]);
-            const int key = p.size() > 3 && p[3] == "esc" ? Qt::Key_Escape : Qt::Key_Return;
-            QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier), release(QEvent::KeyRelease, key, Qt::NoModifier);
-            QApplication::sendEvent(f, &press);
-            QApplication::sendEvent(f, &release);
-            QApplication::processEvents();
-            std::cerr << "automation: setting " << p[0].toStdString() << " " << p[1].toStdString() << " shows '" << f->text().toStdString() << "'\n";
-        });
-        // fieldfocus <fn> <index>: give a field of the render settings the keyboard the way a click does, and say what is selected in it
-        a->add("fieldfocus", [=](const QString& args){
-            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
-            if (p.size() < 2) { std::cerr << "automation: fieldfocus <fn> <index>\n"; return; }
-            auto scene = view->scenePanel();
-            scene->showSettings(true);
-            QApplication::processEvents();
-            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
-            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
-            f->clearFocus();
-            f->setFocus(Qt::MouseFocusReason);
-            for (int i = 0; i < 3; ++i) { QApplication::processEvents(); QThread::msleep(15); }
-            std::cerr << "automation: field " << args.toStdString() << " shows '" << f->text().toStdString() << "', selected '"
-                      << f->selectedText().toStdString() << "'\n";
-        });
         // (the editor of a name in the tree: the field that has the keyboard, else the one that is open in the tree -- a window that
         // is not the active one has no keyboard focus, and a test must not depend on that)
         auto nameEditor = [=]() -> QLineEdit* {
@@ -3091,38 +3143,6 @@ Window::Window(Arguments args)
             QApplication::sendEvent(field, &press);
             QApplication::sendEvent(field, &release);
             QApplication::processEvents();
-        });
-        // settingtype <set_bounds|set_resolution|set_quality> <index> <text> [enter]: type into one field of the render settings a key
-        // at a time (the script follows every key); Enter after it only when asked
-        a->add("settingtype", [=](const QString& args){
-            const QStringList p = args.split(' ', Qt::SkipEmptyParts);
-            if (p.size() < 3) { std::cerr << "automation: settingtype <fn> <index> <text> [enter]\n"; return; }
-            auto scene = view->scenePanel();
-            scene->showSettings(true);
-            QApplication::processEvents();
-            QLineEdit* f = scene->settingEditor(p[0], p[1].toInt());
-            if (!f) { std::cerr << "automation: no field " << args.toStdString() << "\n"; return; }
-            f->setFocus();
-            f->selectAll();
-            for (const QChar c : p[2])
-            {
-                // (the tree is built again as the script runs: the field is looked up again each key)
-                f = scene->settingEditor(p[0], p[1].toInt());
-                if (!f) break;
-                QKeyEvent key(QEvent::KeyPress, 0, Qt::NoModifier, QString(c));
-                QApplication::sendEvent(f, &key);
-                QApplication::processEvents();
-            }
-            f = scene->settingEditor(p[0], p[1].toInt());
-            if (f && p.size() > 3 && p[3] == "enter")
-            {
-                QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier), release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
-                QApplication::sendEvent(f, &press);
-                QApplication::sendEvent(f, &release);
-                QApplication::processEvents();
-            }
-            std::cerr << "automation: settingtype " << p[0].toStdString() << " " << p[1].toStdString() << " shows '"
-                      << (f ? f->text().toStdString() : std::string("?")) << "'\n";
         });
         // rowpos <row>: where the row is, in the coordinates of a grab of the window (for the tests that use the real mouse)
         a->add("rowpos", [=](const QString& args){
@@ -3481,6 +3501,17 @@ void Window::closeEvent(QCloseEvent* event)
                 }
             }
             view->cancelShapes();
+
+            // The program ends with its window.  What it is still calculating is told to give up now: the interpreter's thread is waited for
+            // when the window is taken down, and a solve of minutes looks at nothing but this flag, so without it the process stayed in the
+            // task manager until the solve was over.  And what has not gone a few seconds later is not waited for: everything the user
+            // had was saved above, so the process ends
+            libfive::run_progress::requestCancel();
+            settings.sync();
+            std::thread([] {
+                std::this_thread::sleep_for(std::chrono::seconds(6));
+                std::_Exit(0);
+            }).detach();
         }
     }
 }
@@ -3995,6 +4026,118 @@ PrimitivesDialog* Window::openPrimitivesDialog()
     m_primitivesDialog = new PrimitivesDialog(hooks, this);
     m_primitivesDialog->show();
     return m_primitivesDialog;
+}
+
+void Window::applyTheme()
+{
+    Theme::apply(*qApp);
+    editor->applyTheme();
+    if (m_themeDialog && m_themeRefresh) m_themeRefresh();
+}
+
+void Window::openThemeDialog()
+{
+    if (m_themeDialog)
+    {
+        m_themeDialog->raise();
+        m_themeDialog->activateWindow();
+        return;
+    }
+    auto dialog = new QDialog(this);
+    dialog->setObjectName("ThemeDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(T("Theme"));
+    auto layout = new QVBoxLayout(dialog);
+
+    auto top = new QHBoxLayout;
+    top->addWidget(new QLabel(T("Colours")));
+    auto mode = new QComboBox;
+    mode->setObjectName("ThemeMode");
+    mode->addItem(T("Light"));
+    mode->addItem(T("Dark"));
+    mode->setCurrentIndex(Theme::dark() ? 1 : 0);
+    top->addWidget(mode, 1);
+    layout->addLayout(top);
+
+    auto note = new QLabel(T("Light or dark, and each colour by hand: a click on a colour chooses another. What is not chosen is the default of the set. The choice is kept for the next time."));
+    note->setWordWrap(true);
+    note->setMinimumWidth(360);
+    layout->addWidget(note);
+
+    struct Row { QString key; QString label; QPushButton* swatch; QToolButton* reset; };
+    auto rows = std::make_shared<QList<Row>>();
+    auto grid = new QGridLayout;
+    grid->setColumnStretch(0, 1);
+    int r = 0;
+    for (const auto& role : Theme::roles())
+    {
+        auto name = new QLabel(role.label);
+        auto swatch = new QPushButton;
+        swatch->setObjectName("ThemeSwatch_" + role.key);
+        swatch->setFixedSize(76, 24);
+        swatch->setFocusPolicy(Qt::NoFocus);
+        auto reset = new QToolButton;
+        reset->setObjectName("ThemeReset_" + role.key);
+        reset->setText(T("Default"));
+        reset->setToolTip(T("Back to the default colour of the set"));
+        grid->addWidget(name, r, 0);
+        grid->addWidget(swatch, r, 1);
+        grid->addWidget(reset, r, 2);
+        rows->append({role.key, role.label, swatch, reset});
+        ++r;
+    }
+    layout->addLayout(grid);
+
+    auto buttons = new QDialogButtonBox;
+    auto resetAll = buttons->addButton(T("Reset colours"), QDialogButtonBox::ResetRole);
+    resetAll->setToolTip(T("Every colour of the set that is on back to its default"));
+    buttons->addButton(QDialogButtonBox::Close);
+    layout->addWidget(buttons);
+
+    // The swatches show the colours as they are; the one that is chosen by hand has its Default button
+    auto refresh = [rows, mode] {
+        {
+            QSignalBlocker block(mode);                 // (the set that is on, whoever chose it: this dialog, a test, the settings)
+            mode->setCurrentIndex(Theme::dark() ? 1 : 0);
+        }
+        for (const auto& row : *rows)
+        {
+            const QColor c = Theme::color(row.key);
+            row.swatch->setStyleSheet(QString("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }"
+                                              "QPushButton:hover { border-color: %3; }").arg(c.name(), Theme::field().name(), Theme::accent.name()));
+            row.swatch->setToolTip(c.name() + (Theme::isCustom(row.key) ? QString() : "  " + T("(the default)")));
+            row.reset->setEnabled(Theme::isCustom(row.key));
+        }
+    };
+    m_themeRefresh = refresh;
+    refresh();
+
+    connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
+        Theme::setMode(i == 1 ? Theme::Mode::Dark : Theme::Mode::Light);
+        applyTheme();
+    });
+    for (const auto& row : *rows)
+    {
+        const QString key = row.key, label = row.label;
+        connect(row.swatch, &QPushButton::clicked, this, [this, key, label, dialog] {
+            const QColor c = QColorDialog::getColor(Theme::color(key), dialog, T("Colour: %1").arg(label));
+            if (!c.isValid()) return;
+            Theme::setColor(key, c);
+            applyTheme();
+        });
+        connect(row.reset, &QToolButton::clicked, this, [this, key] {
+            Theme::resetColor(key);
+            applyTheme();
+        });
+    }
+    connect(resetAll, &QPushButton::clicked, this, [this] {
+        Theme::resetColors();
+        applyTheme();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+    connect(dialog, &QObject::destroyed, this, [this] { m_themeRefresh = nullptr; });
+    m_themeDialog = dialog;
+    dialog->show();
 }
 
 void Window::onAbout(bool)

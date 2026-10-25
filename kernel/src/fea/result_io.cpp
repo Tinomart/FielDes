@@ -36,7 +36,7 @@ namespace fea {
 namespace {
 
 const char MAGIC[4] = {'F', 'D', 'R', 'S'};
-const uint32_t VERSION = 2;
+const uint32_t VERSION = 3;
 enum Kind : uint32_t { KIND_TET = 1, KIND_TETTHERMAL = 2, KIND_TETFLOW = 3, KIND_HEX = 4, KIND_HEXTHERMAL = 5 };
 
 #ifdef _WIN32
@@ -388,6 +388,8 @@ bool ResultIO::save(const TetProblem& p, const std::string& path)
     w.doubles(p.m_frequencies);
     w.u64(p.m_modes.size());
     for (const auto& m : p.m_modes) writeOptional(w, m);
+    w.f64(p.m_designVolume);                    // (after everything a file of before has: such a file has no design volume, and says so by ending here)
+    w.f64(p.m_frontier);
     return w.close();
 }
 
@@ -423,6 +425,12 @@ std::unique_ptr<TetProblem> ResultIO::loadTet(const std::string& path)
     }
     for (const auto& d : p->m_densityHistory) if (d.size() != mesh->pos.size()) return nullptr;
     if (!r.ok) return nullptr;
+    if (r.left >= 16)
+    {
+        p->m_designVolume = r.f64();
+        p->m_frontier = r.f64();
+    }
+    if (!r.ok) return nullptr;
     p->m_prepared = true;
     return p;
 }
@@ -439,7 +447,7 @@ void ResultIO::assignSerials(TetProblem& p, uint64_t salt)
 
 bool ResultIO::save(const TetThermalProblem& p, const std::string& path)
 {
-    if (!p.m_mesh || !p.m_result) return false;
+    if (!p.m_mesh || (!p.m_result && !p.m_densityResult)) return false;
     Writer w(path);
     if (!w.ok) return false;
     writeHeader(w, KIND_TETTHERMAL);
@@ -448,6 +456,12 @@ bool ResultIO::save(const TetThermalProblem& p, const std::string& path)
     w.f64(p.m_heatIn); w.i32(p.m_looseElements);
     writeMesh(w, *p.m_mesh);
     writeOptional(w, p.m_result);
+    w.f64(p.m_inputTemperature);                // (after everything a file of before has: such a file ends before it, and has no temperature of the heat inputs)
+    writeOptional(w, p.m_densityResult);
+    w.floats2(p.m_densityHistory);
+    w.doubles(p.m_history);
+    w.raw(p.m_topDensity);
+    w.f64(p.m_designVolume);
     return w.close();
 }
 
@@ -465,8 +479,18 @@ std::unique_ptr<TetThermalProblem> ResultIO::loadTetThermal(const std::string& p
     if (!readMesh(r, *mesh)) return nullptr;
     p->m_mesh = mesh;
     auto locator = std::make_shared<TetLocator>(*mesh);
-    if (!readOptional(r, p->m_result, mesh, locator) || !p->m_result) return nullptr;
-    if (!r.ok) return nullptr;
+    if (!readOptional(r, p->m_result, mesh, locator)) return nullptr;
+    if (r.left >= 8) p->m_inputTemperature = r.f64();
+    if (r.left > 0)
+    {
+        if (!readOptional(r, p->m_densityResult, mesh, locator)) return nullptr;
+        r.floats2(p->m_densityHistory);
+        r.doubles(p->m_history);
+        r.raw(p->m_topDensity);
+        p->m_designVolume = r.f64();
+        for (const auto& d : p->m_densityHistory) if (d.size() != mesh->pos.size()) return nullptr;
+    }
+    if (!r.ok || (!p->m_result && !p->m_densityResult)) return nullptr;
     p->m_prepared = true;
     return p;
 }
@@ -475,6 +499,7 @@ void ResultIO::assignSerials(TetThermalProblem& p, uint64_t salt)
 {
     if (!salt) return;
     setSerial(p.m_result, derivedContentSerial(p.m_hash, salt, 1));
+    setSerial(p.m_densityResult, derivedContentSerial(p.m_hash, salt, 2));
 }
 
 // ------------------------------------------------------------------ flow
@@ -619,9 +644,6 @@ bool ResultIO::save(const StaticProblem& p, const std::string& path)
     w.raw(p.m_fraction);
     w.raw(p.m_active);
     writeOptionalGrid(w, p.m_result);
-    writeOptionalGrid(w, p.m_densityResult);
-    w.doubles(p.m_history);
-    w.raw(p.m_topDensity);
     w.doubles(p.m_frequencies);
     w.u64(p.m_modes.size());
     for (const auto& m : p.m_modes) writeOptionalGrid(w, m);
@@ -648,9 +670,6 @@ std::unique_ptr<StaticProblem> ResultIO::loadStatic(const std::string& path)
     if (!r.ok || p->m_fraction.size() != ne) return nullptr;
     for (int a : p->m_active) if (a < 0 || size_t(a) >= ne) return nullptr;
     if (!readOptionalGrid(r, p->m_result)) return nullptr;
-    if (!readOptionalGrid(r, p->m_densityResult)) return nullptr;
-    r.doubles(p->m_history);
-    r.raw(p->m_topDensity);
     r.doubles(p->m_frequencies);
     const uint64_t nm = r.count(1);
     if (!r.ok) return nullptr;
@@ -670,7 +689,6 @@ void ResultIO::assignSerials(StaticProblem& p, uint64_t salt)
 {
     if (!salt) return;
     setSerial(p.m_result, derivedContentSerial(p.m_hash, salt, 1));
-    setSerial(p.m_densityResult, derivedContentSerial(p.m_hash, salt, 2));
     for (size_t i = 0; i < p.m_modes.size(); ++i) setSerial(p.m_modes[i], derivedContentSerial(p.m_hash, salt, 100 + i));
 }
 
@@ -686,8 +704,6 @@ bool ResultIO::save(const ThermalProblem& p, const std::string& path)
     w.i32(p.elements); w.i32(p.nodes); w.i32(p.iterations);
     w.f64(p.residual); w.f64(p.seconds); w.f64(p.heatIn); w.f64(p.heatOutFixed); w.f64(p.heatOutConvection);
     writeOptionalGrid(w, p.m_result);
-    writeOptionalGrid(w, p.m_densityResult);
-    w.doubles(p.m_history);
     return w.close();
 }
 
@@ -707,8 +723,6 @@ std::unique_ptr<ThermalProblem> ResultIO::loadThermal(const std::string& path)
     p->residual = r.f64(); p->seconds = r.f64(); p->heatIn = r.f64(); p->heatOutFixed = r.f64();
     p->heatOutConvection = r.f64();
     if (!readOptionalGrid(r, p->m_result)) return nullptr;
-    if (!readOptionalGrid(r, p->m_densityResult)) return nullptr;
-    r.doubles(p->m_history);
     if (!r.ok) return nullptr;
     return p;
 }
@@ -718,7 +732,6 @@ void ResultIO::assignSerials(ThermalProblem& p, uint64_t salt)
     if (!salt) return;
     const uint64_t h = p.hash();
     setSerial(p.m_result, derivedContentSerial(h, salt, 1));
-    setSerial(p.m_densityResult, derivedContentSerial(h, salt, 2));
 }
 
 }   // namespace fea

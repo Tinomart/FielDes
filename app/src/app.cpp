@@ -52,6 +52,7 @@ App::App(int& argc, char** argv)
         std::cerr << "App: could not add application font";
     }
 
+    Theme::load();          // (the set of colours that was chosen, light or dark, and the colours chosen by hand in it)
     Theme::apply(*this);
     setWindowIcon(Icons::logo(64));
 

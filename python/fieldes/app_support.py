@@ -914,6 +914,81 @@ def blocks_used(source):
     return '1' if any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(tree)) else ''
 
 
+_console = {'base': None, 'mine': {}}      # (the names of the library, and what was assigned in the console)
+
+
+def terminal_exec(request):
+    ''' The console of the editor runs what was typed: `request` is JSON {"code": text}, the answer JSON {"output": what was printed, "value": the repr of the value of the last
+        expression (or ""), "error": the last lines of the traceback of an error (or "")}.  It runs in the names of the script that ran last, the library's (`from fieldes import *`,
+        as a script has it) and what was assigned in the console before -- a copy of them: a variable made or changed in the console is the console's own, the script and its tree
+        are not touched.  Like Jupyter: the last expression of a block is shown '''
+    import ast
+    import contextlib
+    import io
+    import json
+    import traceback
+    from fieldes import runner
+    code = json.loads(request).get('code', '')
+    if _console['base'] is None:
+        base = {'__name__': '__console__'}
+        exec('from fieldes import *', base)
+        _console['base'] = base
+    glob = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+    ns = dict(_console['base'])
+    ns.update(glob)
+    ns.update(_console['mine'])
+    out = io.StringIO()
+    value, error = '', ''
+    try:
+        tree = ast.parse(code, '<console>', 'exec')
+        last = None
+        if tree.body and isinstance(tree.body[-1], ast.Expr):
+            last = ast.Expression(tree.body.pop().value)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            exec(compile(tree, '<console>', 'exec'), ns)
+            if last is not None:
+                result = eval(compile(last, '<console>', 'eval'), ns)
+                if result is not None:
+                    value = repr(result)
+    except SystemExit:
+        error = 'exit() is not available here: the application is not closed from the console'
+    except BaseException:
+        lines = traceback.format_exc().splitlines()
+        # (the frames of this function are not the user's: the traceback from the line of the console on)
+        start = next((i for i, l in enumerate(lines) if l.startswith('  File "<console>"')), None)
+        error = '\n'.join(lines[start:] if start is not None else lines[-3:])
+    # what was assigned or changed in the console is kept; the names of the library and of the script as they were are not
+    for k, v in ns.items():
+        if k in ('__builtins__', '__name__'):
+            continue
+        if (k not in glob or glob[k] is not v) and (k not in _console['base'] or _console['base'][k] is not v):
+            _console['mine'][k] = v
+    return json.dumps({'output': out.getvalue(), 'value': value, 'error': error})
+
+
+def feature_near(request):
+    ''' What a right-click on a body offers near the place it was made: the corner and the edge of the body nearest that place (see fieldes.stdlib.features), as JSON
+        {"corner": [x, y, z] or null, "edge": {"point": [x, y, z], "straight": [[x, y, z], [x, y, z]] or null} or null}.  `request` is JSON {"var": the name of
+        the body in the script that ran last, "point": [x, y, z] where the click was, "reach": the mm that about thirty pixels span there}.  An empty answer
+        ({}) when the body is not one a variable holds, or has no extent to work from, or the search fails: the menu then offers nothing of this kind '''
+    import json
+    try:
+        r = json.loads(request)
+        from fieldes import runner
+        from fieldes.shape import Shape
+        from fieldes.stdlib import features
+        from fieldes.stdlib.fields import _shape_bounds, _eval_many
+        shape = runner.last_globals.get(r['var'])
+        if not isinstance(shape, Shape):
+            return '{}'
+        lo, hi = _shape_bounds(shape, None)
+        size = max(hi[i] - lo[i] for i in range(3)) or 1.0
+        found = features.features_near(lambda points: _eval_many(shape, points), tuple(float(c) for c in r['point']), float(r['reach']), size)
+        return json.dumps(found)
+    except Exception:
+        return '{}'
+
+
 def handles_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
         draggable -- "name = handles(name, [var(...), ...])" -- for FielDes to write under its definition.  It is ONE line, whatever the number of

@@ -83,6 +83,8 @@ Language::Language(Interpreter* interpreter,
 }
 
 Language::~Language() {
+    // (a solver that is going is told first: halt() reaches the script only when the call it is in comes back)
+    libfive::run_progress::requestCancel();
     m_interpreter->halt();
     m_interpreterThread.quit();
     m_interpreterThread.wait();

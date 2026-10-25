@@ -19,9 +19,9 @@ progress bar shows it).
 |---|---|
 | **Start here -- they open at once** (under 2 s) | `26` to `31` (profiles and sweeps, copies and linked copies, a profile on a plane, the symmetry, noise, texture), `04` (handles), `09` (a lattice), `11` (custom cells), `14` (a conformal lattice), `18` (fields everywhere), `19`, `20`, `21`, `22`, `24`, `25` (apps), `02`, `03` |
 | A few seconds | `01` (import a part, 4 s), `07` (thermal analysis, 3 s), `10` (field-driven design, 5 s), `12` (mesh export and import, 3 s) |
-| Up to half a minute | `05` (static analysis, 29 s), `06` (modal analysis, 22 s), `23` (the lattice gallery, 23 s) |
+| Up to half a minute | `05` (static analysis, 29 s), `06` (modal analysis, 22 s), `23` (the lattice gallery, 23 s), `35` (a heat sink designed, 26 s) |
 | About a minute | `15` (a conformal lattice in the walls of a whole bracket, 48 s) |
-| **Minutes** -- start them and read the script meanwhile | `16` (water past a post, 2 min), `08` (topology optimisation, 2 min), `17` (flow topology optimisation, 3 min), `34` (six lattices that do not repeat, 3 min, nearly all of it the picture) |
+| **Minutes** -- start them and read the script meanwhile | `16` (water past a post, 2 min), `08` (topology optimisation, 2 min), `17` (flow topology optimisation, 4 min), `34` (six lattices that do not repeat, 3 min, nearly all of it the picture) |
 
 The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the bracket that comes with FielDes.
 
@@ -43,7 +43,7 @@ The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the 
 | `14_conformal_lattice.py` | none (an S-shaped surface, the zero of a field) | `lattice_surface_conform` on an open surface of no thickness with a custom cell (`cell_custom_truss`): one layer on one side of it, cut off at the edge of a patch |
 | `15_conformal_closed_body.py` | the bracket | `lattice_surface_conform` on a closed body (a whole bracket): the cells fill its wall all the way round, over the faces, fillets and bores, with a row of nodes on every sharp edge |
 | `16_fluid_flow.py` | none (a round post in a slab of water) | `fluid_analysis(body, domain, ...)`: water past a post at Re 40, slip planes for a two-dimensional flow; the speed on the fluid, streamlines with moving particles, the wake behind the post, the drag; `time=` for the flow in time with the step slider |
-| `17_flow_topology_optimization.py` | none (the post of example 16 in its slab of water) | `flow_topology_optimization`: the post reshaped for the least drag with its volume kept; the body in the flow with its wake, iteration by iteration |
+| `17_flow_topology_optimization.py` | none (the post of example 16 in its slab of water) | `topology_optimization` of a `fluid_analysis`: the post reshaped for the least drag with its volume kept; the body in the flow with its wake, iteration by iteration |
 | `18_fields_everywhere.py` | none | wherever a number goes, a field goes: a plate grown by a field (`offset`), a blend radius that varies (`smooth_union`), a lattice of graded cell size, driven from a `point` |
 | `19_graded_material.py` | none (a cantilever beam) | fields in an analysis: a material whose stiffness varies, a load spread by a profile, compared with beam theory |
 | `20_custom_blocks.py` | none | custom blocks (`blocks/sample_blocks.py`): `perforate` with a field radius, `bracket` |
@@ -61,6 +61,7 @@ The ones that start from a part (`01` to `08`, `10`, `12`, `13`, `15`) read the 
 | `32_parametric_optimization.py` | none (a cantilever beam) | `parametric_optimization`: the lightest beam that stays under a stress and bends less than a limit -- the width and the height are `var()`s, the analysis is solved again with other numbers, and the best design is the result (every design tried is listed in the output pane) |
 | `34_non_periodic_lattices.py` | none (a block with a dent, balls) | lattices that do not repeat: `surface_lattice`, a random net of beams over a surface (hexagons or triangles; hollows and edges too), the net inside a ball, and foams with a clean surface -- `random_points(surface=True)` for `voronoi_lattice` and `delaunay_lattice` -- next to a foam whose beams the surface cuts off |
 | `33_manufacturing_optimization.py` | the bracket | `fff_constraint`, `cnc_constraint`, `molding_constraint` and `manufacturing_optimization`: the topology-optimized bracket of example 08 -- struts of every thickness leaning every way, nothing designed for a process -- changed until a 3D printer, a mill and an injection mould can make it (gussets under what leans too far, thin walls thickened, inside corners rounded, draft), the plates and lugs that carry the load kept as they are; the result is coloured by what changed (about five minutes) |
+| `35_thermal_topology_optimization.py` | none (a plate with a sink on its left edge) | `topology_optimization` of a `thermal_analysis`: a plate that makes 6 W all through it, cooled by a 12 mm strip of its edge held at 20 C; the layout of 30 % of the metal that keeps the heat coolest -- a tree of conductors from the sink, symmetric; the part coloured by its density, iteration by iteration (about half a minute) |
 
 (Open each script: the comment at its top says what to look at.)
 

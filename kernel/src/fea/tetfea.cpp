@@ -13,6 +13,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <unordered_map>
@@ -431,9 +432,9 @@ TetProblem::TetProblem(const Tree& shape, Eigen::Vector3d lo, Eigen::Vector3d hi
 {
 }
 
-void TetProblem::addSupport(const Tree& region, bool x, bool y, bool z, int loadCase)
+void TetProblem::addSupport(const Tree& region, bool x, bool y, bool z, int loadCase, Eigen::Vector3d displacement)
 {
-    m_supports.push_back(Support{region, {x, y, z}, loadCase});
+    m_supports.push_back(Support{region, {x, y, z}, loadCase, displacement});
     m_prepared = false;
 }
 
@@ -446,6 +447,21 @@ void TetProblem::addForce(const Tree& region, Eigen::Vector3d total, int loadCas
 void TetProblem::addForceProfile(const Tree& region, Eigen::Vector3d total, int loadCase, const Tree& profile)
 {
     m_forces.push_back(Force{region, total, std::max(0, loadCase), profile});
+    m_prepared = false;
+}
+
+void TetProblem::markModalCase(int loadCase)
+{
+    if (loadCase < 0) return;
+    if (m_modalCase.size() <= size_t(loadCase)) m_modalCase.resize(size_t(loadCase) + 1, 0);
+    m_modalCase[size_t(loadCase)] = 1;
+    m_prepared = false;
+}
+
+void TetProblem::setConditionBody(const Tree& body, double slack)
+{
+    m_conditionBody = body;
+    m_conditionSlack = slack;
     m_prepared = false;
 }
 
@@ -498,7 +514,10 @@ bool TetProblem::prepare(std::string& error)
     run_progress::Task task("meshing");
     task.set(0.0, "meshing the part");
     auto mesh = std::make_shared<TetMesh>();
-    if (!meshShape(m_shape, m_lo, m_hi, m_h, *mesh, error)) return false;
+    // (a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored: the mesh of a symmetric problem
+    // is then exactly symmetric, and so are the displacement and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored.  On a mesh whose
+    // mirror pairs of elements differ the design that is kept symmetric has a gradient that is not the design's own: the volume's derivative was 17 % off)
+    if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
     task.set(0.5, "resolving supports and loads");
 
     // A node within a small fraction of an element of a region counts as inside it
@@ -508,16 +527,44 @@ bool TetProblem::prepare(std::string& error)
         for (size_t i = 0; i < pts.size(); ++i) pts[i] = m.pos[i].cast<float>();
         return pts;
     };
+    // Which nodes lie on the body the conditions act on (see setConditionBody): everything, without one.  A node outside the body by more than the
+    // slack is not a place a support holds or a load acts
+    auto offBody = [&](const std::vector<Eigen::Vector3f>& pts) {
+        std::vector<char> off;
+        if (!m_conditionBody.is_valid()) return off;
+        std::vector<float> bv;
+        evalTreePoints(m_conditionBody, pts, bv);
+        off.resize(pts.size());
+        for (size_t i = 0; i < pts.size(); ++i) off[i] = !(double(bv[i]) <= m_conditionSlack);
+        return off;
+    };
     // Per vertex: bit a set = held in direction a
     // (onlyCase >= 0: the supports of that load case and those of every case; -2: all of them)
-    auto fixedMask = [&](const TetMesh& m, std::vector<unsigned char>& mask, int onlyCase = -2) {
+    // (`values`: per DOF, the displacement the support that holds it imposes -- see addSupport)
+    auto fixedNodes = [&](const TetMesh& m, std::vector<unsigned char>& mask, int onlyCase, bool surfaceOnly, std::vector<double>* values = nullptr) {
         mask.assign(m.pos.size(), 0);
+        if (values) values->assign(3 * m.pos.size(), 0.0);
         const auto pts = positions(m);
+        const std::vector<char> off = offBody(pts);
+        // (the nodes on the surface of the mesh: a corner of a boundary face -- see setConditionSurface)
+        std::vector<char> inside;
+        if (surfaceOnly && !m.faces.empty())
+        {
+            inside.assign(m.pos.size(), 0);
+            for (const auto& tri : m.faces)
+                for (int k = 0; k < 3; ++k) inside[size_t(tri[size_t(k)])] = 1;
+        }
         std::vector<float> v;
         for (const auto& s : m_supports)
         {
             if (onlyCase >= 0 && s.loadCase >= 0 && s.loadCase != onlyCase) continue;
             evalTreePoints(s.region, pts, v);
+            if (!off.empty())
+                for (size_t i = 0; i < v.size(); ++i)
+                    if (off[i]) v[i] = 1e30f;
+            if (!inside.empty())
+                for (size_t i = 0; i < v.size(); ++i)
+                    if (!inside[i]) v[i] = 1e30f;
             // (a region that misses the part by a little -- the surface of an optimised design, a
             // region placed by hand -- still holds it: the nodes within half an element)
             float rch = reach;
@@ -527,11 +574,21 @@ bool TetProblem::prepare(std::string& error)
             for (size_t i = 0; i < pts.size(); ++i)
             {
                 if (!(v[i] <= rch)) continue;
-                for (int a = 0; a < 3; ++a) if (s.fix[a]) mask[i] |= (unsigned char)(1 << a);
+                for (int a = 0; a < 3; ++a)
+                    if (s.fix[a])
+                    {
+                        mask[i] |= (unsigned char)(1 << a);
+                        if (values) (*values)[3 * i + size_t(a)] = s.displacement[a];
+                    }
             }
         }
         int count = 0;
         for (auto b : mask) count += b != 0;
+        return count;
+    };
+    auto fixedMask = [&](const TetMesh& m, std::vector<unsigned char>& mask, int onlyCase = -2, std::vector<double>* values = nullptr) {
+        int count = fixedNodes(m, mask, onlyCase, m_conditionSurface, values);
+        if (count == 0 && m_conditionSurface) count = fixedNodes(m, mask, onlyCase, false, values);      // (no node of the surface: the nodes inside it)
         return count;
     };
     std::vector<unsigned char> mask;
@@ -622,6 +679,18 @@ bool TetProblem::prepare(std::string& error)
         if (mask[i]) m_fixedNodes++;
         for (int a = 0; a < 3; ++a) if (mask[i] & (1 << a)) fixedDof[3 * i + size_t(a)] = 1;
     }
+    // The displacement a support imposes (see addSupport): what every held direction is held at, when any support holds it at more than 0
+    std::vector<double> prescribed;
+    {
+        bool imposed = false;
+        for (const auto& sp : m_supports)
+            for (int a = 0; a < 3; ++a) imposed = imposed || (sp.fix[a] && sp.displacement[a] != 0.0);
+        if (imposed)
+        {
+            std::vector<unsigned char> again;
+            fixedMask(*mesh, again, -2, &prescribed);
+        }
+    }
 
     // Loads
     const std::vector<Force> noForces;
@@ -634,6 +703,11 @@ bool TetProblem::prepare(std::string& error)
     int supportCases = 0;
     for (const auto& sp : m_supports) supportCases = std::max(supportCases, sp.loadCase + 1);
     if (!m_noLoads) nCases = std::max(nCases, supportCases);
+    if (!m_noLoads) nCases = std::max(nCases, int(m_modalCase.size()));
+    // (a case that is a modal analysis has supports and no loads: nothing in it is checked for loads; a problem of modal cases only needs none)
+    auto modalCase = [&](int c) { return size_t(c) < m_modalCase.size() && m_modalCase[size_t(c)]; };
+    bool allModal = !m_noLoads && !m_modalCase.empty();
+    for (int c = 0; c < nCases && allModal; ++c) allModal = modalCase(c);
     std::vector<std::vector<unsigned char>> caseFixed;
     if (supportCases > 0 && !m_noLoads)
     {
@@ -678,10 +752,14 @@ bool TetProblem::prepare(std::string& error)
             area[f] = 0.5 * (b - a).cross(c - a).norm();
         }
         const auto pts = positions(*mesh);
+        const std::vector<char> off = offBody(pts);
         for (const auto& fo : forces)
         {
             std::vector<float> v, vn;
             evalTreePoints(fo.region, pts, vn);
+            if (!off.empty())
+                for (size_t n = 0; n < vn.size(); ++n)
+                    if (off[n]) vn[n] = 1e30f;
             // (a load with a profile: its share of a triangle is the area times the profile there, not the area alone)
             std::vector<float> profileAtFaces, profileAtNodes;
             if (fo.profile.is_valid())
@@ -721,7 +799,8 @@ bool TetProblem::prepare(std::string& error)
                     evalTreePoints(fo.region, centres, v);
                     for (size_t f = 0; f < take.size(); ++f)
                     {
-                        take[f] = v[f] <= rch;
+                        const auto& tri = lf[f];
+                        take[f] = v[f] <= rch && (off.empty() || !(off[size_t(tri[0])] || off[size_t(tri[1])] || off[size_t(tri[2])]));
                         if (take[f]) { sel += weightOfFace(f); selArea += area[f]; }
                     }
                 }
@@ -904,7 +983,7 @@ bool TetProblem::prepare(std::string& error)
 
     // What the loads and the supports leave: something must push, and every
     // direction that is pushed must be held somewhere
-    if (!m_noLoads && caseFixed.empty())            // (cases with supports of their own are checked one by one below)
+    if (!m_noLoads && !allModal && caseFixed.empty())            // (cases with supports of their own are checked one by one below)
     {
         double freeLoad = 0, anyLoad = 0;
         for (size_t d = 0; d < nDof; ++d)
@@ -912,14 +991,15 @@ bool TetProblem::prepare(std::string& error)
             anyLoad += std::abs(force[d]);
             if (!fixedDof[d]) freeLoad += std::abs(force[d]);
         }
-        if (!(anyLoad > 0))
+        // (a displacement that a support imposes is a load too: a part that is only pushed by its supports needs no force)
+        if (!(anyLoad > 0) && prescribed.empty())
         {
             error = (m_forces.empty() && !(m_density > 0) && m_elementDensity.empty() && m_thermalStrain.empty())
-                        ? "no loads: add force(region, ...), gravity() or thermal_expansion(...)"
+                        ? "no loads: add force(region, ...), gravity() or thermal_expansion(...), or a support that imposes a displacement (fixed(region, displacement=(...)))"
                         : "the loads have no effect: a load region may only touch the supports";
             return false;
         }
-        if (!(freeLoad > 0))
+        if (!(freeLoad > 0) && prescribed.empty())
         {
             error = "the loads act only on fixed nodes: move the load region off the supports";
             return false;
@@ -948,6 +1028,7 @@ bool TetProblem::prepare(std::string& error)
     {
         for (int c = 0; c < nCases; ++c)
         {
+            if (modalCase(c)) continue;
             const std::vector<double>& cf = nCases > 1 ? caseForce[size_t(c)] : force;
             const std::vector<unsigned char>& cx = caseFixed[size_t(c)];
             double free = 0, any = 0;
@@ -956,12 +1037,12 @@ bool TetProblem::prepare(std::string& error)
                 any += std::abs(cf[d]);
                 if (!cx[d]) free += std::abs(cf[d]);
             }
-            if (!(any > 0))
+            if (!(any > 0) && prescribed.empty())
             {
                 error = "the boundary conditions " + std::to_string(c + 1) + " have no loads that act on the part";
                 return false;
             }
-            if (!(free > 0))
+            if (!(free > 0) && prescribed.empty())
             {
                 error = "the loads of the boundary conditions " + std::to_string(c + 1) + " act only on fixed nodes: move the load region off the supports";
                 return false;
@@ -993,6 +1074,7 @@ bool TetProblem::prepare(std::string& error)
     hsh = fnv(hsh, mesh->pos.data(), mesh->pos.size() * sizeof(Vec3));
     hsh = fnv(hsh, mesh->tets.data(), mesh->tets.size() * sizeof(std::array<int, 4>));
     hsh = fnv(hsh, fixedDof.data(), fixedDof.size());
+    if (!prescribed.empty()) hsh = fnv(hsh, prescribed.data(), prescribed.size() * sizeof(double));
     for (const auto& cx : caseFixed) hsh = fnv(hsh, cx.data(), cx.size());
     hsh = fnv(hsh, force.data(), force.size() * sizeof(double));
     for (const auto& cf : caseForce) hsh = fnv(hsh, cf.data(), cf.size() * sizeof(double));
@@ -1005,6 +1087,7 @@ bool TetProblem::prepare(std::string& error)
     m_mesh = mesh;
     m_quad = quad;
     m_fixedDof.swap(fixedDof);
+    m_prescribed.swap(prescribed);
     m_force.swap(force);
     m_caseForce.swap(caseForce);
     m_caseFixed.swap(caseFixed);
@@ -1035,10 +1118,24 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
 
     const std::vector<unsigned char>& fixed = m_fixedDof;
     std::vector<double> u(n, 0.0);
+    // The displacement a support imposes (see addSupport): the free directions are solved against what the load leaves after the matrix has taken
+    // its share of the imposed movement, and the held ones are given the movement back
+    std::vector<double> rhsImposed;
+    const std::vector<double>* rhs = &m_force;
+    if (!m_prescribed.empty())
+    {
+        std::vector<double> Kp(n);
+        A.K.matvec(m_prescribed.data(), Kp.data());
+        rhsImposed = m_force;
+        for (size_t i = 0; i < n; ++i) if (!fixed[i]) rhsImposed[i] -= Kp[i];
+        rhs = &rhsImposed;
+    }
     CgResult cg;
-    if (!cgSolve(A, fixed, m_force, u, tolerance, maxIterations, cancel,
+    if (!cgSolve(A, fixed, *rhs, u, tolerance, maxIterations, cancel,
                  [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error))
         return false;
+    if (!m_prescribed.empty())
+        for (size_t i = 0; i < n; ++i) if (fixed[i]) u[i] = m_prescribed[i];
     const int it = cg.iterations;
     const double rel = cg.residual;
     if (rel > std::max(tolerance * 100, 1e-3))
@@ -1068,15 +1165,18 @@ bool TetProblem::solve(int maxIterations, double tolerance, std::string& error, 
         }
     }
 
-    // Reactions at the supports, compliance
+    // Reactions at the supports, compliance.  With a displacement imposed by a support, the supports hold each other in balance (the net of all of them is the load, which is nothing
+    // when only displacements load the part), so the reaction is what the displaced supports push with -- their force in the directions they move the part -- and the compliance is the
+    // work that force does, u.Ku (the same number as f.u for a part that is loaded by forces)
     std::vector<double> Ku(n);
     A.K.matvec(u.data(), Ku.data());
     Vec3 reaction = Vec3::Zero();
     double compliance = 0;
+    const bool displaced = !m_prescribed.empty();
     for (size_t i = 0; i < n; ++i)
     {
-        if (fixed[i]) reaction[int(i % 3)] += Ku[i] - m_force[i];
-        compliance += m_force[i] * u[i];
+        if (fixed[i] && (!displaced || m_prescribed[i] != 0.0)) reaction[int(i % 3)] += Ku[i] - m_force[i];
+        compliance += displaced ? u[i] * Ku[i] : m_force[i] * u[i];
     }
 
     // Each element's stress from its own strain, then the nodal averages
@@ -1175,18 +1275,25 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
         return false;
     }
     if (!m_prepared && !prepare(error)) return false;
+    if (!m_prescribed.empty())
+    {
+        // (the sensitivities of the compliance and of the stress assume that nothing moves the part but its loads)
+        error = "a support that imposes a displacement isn't supported in topology optimization: hold the part (displacement=(0, 0, 0)) and load it with a force instead";
+        return false;
+    }
     if (!m_thermalStrain.empty())
     {
         // (its load depends on the design: the sensitivities would be wrong)
         error = "thermal expansion isn't supported in topology optimization";
         return false;
     }
-    const bool grown = s.origin.is_valid();
-    if (!(s.volumeFraction > 0 && (grown || s.volumeFraction < 1)))
-    {
-        error = grown ? "the volume fraction must be more than 0" : "the volume fraction must be between 0 and 1";
-        return false;
-    }
+    m_history.clear();
+    m_baseHistory.clear();
+    m_outputHistory.clear();
+    m_densityHistory.clear();
+    m_mirrorsUsed.clear();
+    m_resume.clear();
+    m_designResult.reset();
     const auto t0 = std::chrono::steady_clock::now();
     const TetMesh& mesh = *m_mesh;
     const size_t nv = mesh.pos.size(), na = mesh.tets.size(), n = 3 * nv;
@@ -1194,125 +1301,50 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
     const Mat6 D = elasticity(m_E, m_nu);
     Assembly A;
     buildPattern(mesh, A);
+    const bool debug = std::getenv("FIELDES_FEA_DEBUG") != nullptr;
+    std::vector<double> vol(na);
+    for (size_t a = 0; a < na; ++a) vol[a] = A.geom[a].vol;
+    double total = 0;                           // (the volume of the part, which the design space may be bigger than: told by the design)
+    std::vector<double> xPhys;                  // (the density that is being evaluated: the design's, copied in at each evaluation)
+    int it = 0;                                 // (the iteration of it)
+    const double p = s.penalty, emin = s.minStiffness;
 
-    // Element centres, and which elements are fixed solid / empty
-    std::vector<Eigen::Vector3f> centres(na);
-    std::vector<Vec3> cen(na);
+    // The structural physics of the design (density_design.cpp has the rest of it): what a load or a support holds solid, whether the problem is
+    // symmetric about a plane, the measures of a density with their sensitivities, and the picture of an iteration
+    auto fixedElements = [&](std::vector<char>& state, std::vector<char>& supported) {
+        // Elements that hold the supports and loads stay solid.  `supported`: the ones that hold a support (of any load case) -- what the material
+        // has to be joined to to be held: the elements under a load or in a keep region are solid too, but hold nothing
+        supported.assign(na, 0);
     for (size_t a = 0; a < na; ++a)
-    {
-        Vec3 c = Vec3::Zero();
-        for (int p = 0; p < 4; ++p) c += mesh.pos[size_t(mesh.tets[a][size_t(p)])];
-        cen[a] = c / 4.0;
-        centres[a] = cen[a].cast<float>();
-    }
-    std::vector<char> state(na, 0);             // 0 design, 1 solid, 2 empty
-    std::vector<float> vals;
-    for (const auto& t : s.avoid)
-    {
-        evalTreePoints(t, centres, vals);
-        for (size_t a = 0; a < na; ++a) if (vals[a] < 0) state[a] = 2;
-    }
-    for (const auto& t : s.keep)
-    {
-        evalTreePoints(t, centres, vals);
-        for (size_t a = 0; a < na; ++a) if (vals[a] < 0) state[a] = 1;
-    }
-    // The part the space was grown from: what lies outside it starts nearly empty, and the volume fraction is of what lies inside
-    std::vector<char> outside(na, 0);
-    if (grown)
-    {
-        evalTreePoints(s.origin, centres, vals);
-        for (size_t a = 0; a < na; ++a) outside[a] = !(vals[a] < 0);
-    }
-    // Elements that hold the supports and loads stay solid
-    for (size_t a = 0; a < na; ++a)
-        for (int p = 0; p < 4 && state[a] != 1; ++p)
+        for (int p = 0; p < 4; ++p)
         {
             const size_t d = 3 * size_t(mesh.tets[a][size_t(p)]);
             for (int q = 0; q < 3; ++q)
-                if (m_fixedDof[d + size_t(q)] || m_force[d + size_t(q)] != 0) state[a] = 1;
+            {
+                bool held = m_fixedDof[d + size_t(q)] != 0;
+                for (const auto& fx : m_caseFixed) held = held || fx[d + size_t(q)] != 0;
+                if (held) supported[a] = 1;
+                if (held || m_force[d + size_t(q)] != 0) state[a] = 1;
+            }
         }
-
-    // Extrusion: the design elements at each (x, y) (or the like) share one value -- their sensitivities
-    // summed -- so the design is a profile extruded through
-    std::vector<int> column(na, -1);
-    int nCol = 0;
-    if (s.extrude >= 0 && s.extrude <= 2)
-    {
-        const int u0 = s.extrude == 0 ? 1 : 0, u1 = s.extrude == 2 ? 1 : 2;
-        Vec3 lo = cen[0];
-        for (const auto& c : cen) lo = lo.cwiseMin(c);
-        std::unordered_map<int64_t, int> id;
-        const double bin = 0.5 * h;
+    };
+    auto symmetricAbout = [&](int axis, double at, const std::vector<Eigen::Vector3f>& mc, double badRegionShare, std::string& why) -> bool {
+        // The part (the same at the mirror image of every element's centre); the loads and the supports: what acts on one side is what acts on the
+        // other, mirrored
+        double sumVol = 0, badShape = 0;
+        std::vector<float> v1;
+        evalTreePoints(m_shape, mc, v1);
         for (size_t a = 0; a < na; ++a)
         {
-            if (state[a]) continue;
-            const int64_t key = int64_t(std::floor((cen[a][u0] - lo[u0]) / bin + 1e-6)) * 1000003 +
-                                int64_t(std::floor((cen[a][u1] - lo[u1]) / bin + 1e-6));
-            auto it = id.find(key);
-            if (it == id.end()) it = id.emplace(key, nCol++).first;
-            column[a] = it->second;
+            sumVol += A.geom[a].vol;
+            if (!(v1[a] <= 0.25 * h)) badShape += A.geom[a].vol;
         }
-    }
-
-    // Mirror symmetry.  For each plane the design is kept symmetric about: every element's partner, the element that holds the mirror
-    // image of its centre.  The sensitivities are averaged over the pairs, which keeps a design that starts symmetric symmetric
-    struct MirrorMap { int axis; double at; std::vector<int32_t> partner; };
-    std::vector<MirrorMap> mirrorMaps;
-    m_mirrorsUsed.clear();
-    if (s.symmetryAuto || !s.mirrors.empty())
-    {
-        Vec3 vlo = mesh.pos[0], vhi = mesh.pos[0];
-        for (const auto& p : mesh.pos)
-        {
-            vlo = vlo.cwiseMin(p);
-            vhi = vhi.cwiseMax(p);
-        }
-        const TetLocator locator(mesh);
-        auto mirrorOf = [](const Vec3& c, int axis, double at) {
-            Vec3 q = c;
-            q[axis] = 2 * at - c[axis];
-            return q;
-        };
-        auto makeMap = [&](int axis, double at) {
-            MirrorMap mm{axis, at, std::vector<int32_t>(na, -1)};
-            parallelRange(na, [&](size_t b0, size_t b1) {
-                for (size_t a = b0; a < b1; ++a)
-                {
-                    double lam[4];
-                    mm.partner[a] = locator.locateInside(mirrorOf(cen[a], axis, at), lam);
-                }
-            }, 512);
-            return mm;
-        };
-        const bool debug = std::getenv("FIELDES_FEA_DEBUG") != nullptr;
-        // Is the whole problem symmetric about this plane?  The part and the keep / avoid regions: the same at the mirror image of every
-        // element's centre; the loads and the supports: what acts on one side is what acts on the other, mirrored
-        auto problemSymmetric = [&](int axis, double at, std::string& why) -> bool {
-            std::vector<Eigen::Vector3f> mc(na);
-            for (size_t a = 0; a < na; ++a) mc[a] = mirrorOf(cen[a], axis, at).cast<float>();
-            double total = 0, badShape = 0, badRegion = 0;
-            std::vector<float> v1, v2;
-            evalTreePoints(m_shape, mc, v1);
-            for (size_t a = 0; a < na; ++a)
-            {
-                total += A.geom[a].vol;
-                if (!(v1[a] <= 0.25 * h)) badShape += A.geom[a].vol;
-            }
-            for (const auto* group : {&s.keep, &s.avoid})
-                for (const auto& t : *group)
-                {
-                    evalTreePoints(t, centres, v1);
-                    evalTreePoints(t, mc, v2);
-                    for (size_t a = 0; a < na; ++a)
-                        if ((v1[a] < 0) != (v2[a] < 0)) badRegion += A.geom[a].vol;
-                }
-            if (debug)
-                fprintf(stderr, "[tetopt] symmetry about axis %d at %.4g: part mismatch %.3f, keep/avoid mismatch %.3f\n", axis, at,
-                        badShape / std::max(total, 1e-30), badRegion / std::max(total, 1e-30));
-            if (badShape > 0.04 * total) { why = "the part is not symmetric"; return false; }
-            if (badRegion > 0.04 * total) { why = "the keep / avoid regions are not symmetric"; return false; }
-            if (!m_scale.empty()) { why = "the material is a field"; return false; }
+        if (debug)
+            fprintf(stderr, "[tetopt] symmetry about axis %d at %.4g: part mismatch %.3f, keep/avoid mismatch %.3f\n", axis, at,
+                    badShape / std::max(sumVol, 1e-30), badRegionShare);
+        if (badShape > 0.04 * sumVol) { why = "the part is not symmetric"; return false; }
+        if (badRegionShare > 0.04) { why = "the keep / avoid regions are not symmetric"; return false; }
+        if (!m_scale.empty()) { why = "the material is a field"; return false; }
 
             auto sides = [&](const std::vector<double>& f, const std::vector<unsigned char>& fx, std::string& reason) -> bool {
                 struct Side { Vec3 sum = Vec3::Zero(); double w = 0; Vec3 c = Vec3::Zero(); };
@@ -1396,500 +1428,620 @@ bool TetProblem::optimize(const TopOpt& s, std::string& error, const std::atomic
                 for (size_t c = 0; c < m_caseForce.size(); ++c)
                     if (!sides(m_caseForce[c], m_caseFixed.empty() ? m_fixedDof : m_caseFixed[c], why)) return false;
             return true;
-        };
-        for (const auto& m : s.mirrors)
-        {
-            if (m.axis < 0 || m.axis > 2) continue;
-            const double at = m.atCentre ? 0.5 * (vlo[m.axis] + vhi[m.axis]) : m.at;
-            mirrorMaps.push_back(makeMap(m.axis, at));
-            m_mirrorsUsed.push_back({m.axis, at, false});
-        }
-        if (s.symmetryAuto)
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                bool asked = false;
-                for (const auto& mm : mirrorMaps) asked = asked || mm.axis == axis;
-                if (asked) continue;
-                const double at = 0.5 * (vlo[axis] + vhi[axis]);
-                std::string why;
-                if (!problemSymmetric(axis, at, why))
-                {
-                    if (debug) fprintf(stderr, "[tetopt] not symmetric about axis %d: %s\n", axis, why.c_str());
-                    continue;
-                }
-                mirrorMaps.push_back(makeMap(axis, at));
-                m_mirrorsUsed.push_back({axis, at, true});
-            }
-    }
-    auto symmetrise = [&](std::vector<double>& v) {
-        std::vector<double> before;
-        for (const auto& mm : mirrorMaps)
-        {
-            before = v;
-            for (size_t a = 0; a < na; ++a)
-            {
-                const int q = mm.partner[a];
-                if (q >= 0) v[a] = 0.5 * (before[a] + before[size_t(q)]);
-            }
-        }
     };
 
-    // Filter: weights rmin - distance over the elements within rmin, times their volume
-    const double rmin = s.filterRadius > 0 ? s.filterRadius : 1.5 * h;
-    std::vector<size_t> fStart(na + 1, 0);
-    std::vector<uint32_t> fIdx;
-    std::vector<float> fW;
-    std::vector<double> Hs(na, 0.0);
+    const int nc = std::max<int>(1, int(m_caseForce.size()));
+    const int nb = int(s.measures.size());
+    const int nOut = s.program.outputs();
+    if (nb < 1 || nOut < 1)
     {
-        Vec3 lo = cen[0], hi = cen[0];
-        for (const auto& c : cen)
-        {
-            lo = lo.cwiseMin(c);
-            hi = hi.cwiseMax(c);
-        }
-        int dims[3];
-        double cellSize = rmin;
-        for (int a = 0; a < 3; ++a) dims[a] = std::max(1, int(std::floor((hi[a] - lo[a]) / cellSize)) + 1);
-        auto cellOf = [&](const Vec3& c, int ijk[3]) {
-            for (int a = 0; a < 3; ++a) ijk[a] = std::max(0, std::min(dims[a] - 1, int(std::floor((c[a] - lo[a]) / cellSize))));
-        };
-        const size_t nCells = size_t(dims[0]) * dims[1] * dims[2];
-        std::vector<uint32_t> cStart(nCells + 1, 0), cList(na);
-        for (size_t a = 0; a < na; ++a)
-        {
-            int c[3];
-            cellOf(cen[a], c);
-            cStart[(size_t(c[2]) * dims[1] + c[1]) * dims[0] + c[0] + 1]++;
-        }
-        for (size_t c = 0; c < nCells; ++c) cStart[c + 1] += cStart[c];
-        {
-            std::vector<uint32_t> cursor(cStart.begin(), cStart.end() - 1);
-            for (size_t a = 0; a < na; ++a)
-            {
-                int c[3];
-                cellOf(cen[a], c);
-                cList[cursor[(size_t(c[2]) * dims[1] + c[1]) * dims[0] + c[0]]++] = uint32_t(a);
-            }
-        }
-        std::vector<double> vol(na);
-        for (size_t a = 0; a < na; ++a) vol[a] = A.geom[a].vol;
-        for (size_t a = 0; a < na; ++a)
-        {
-            int c[3];
-            cellOf(cen[a], c);
-            for (int dk = -1; dk <= 1; ++dk)
-                for (int dj = -1; dj <= 1; ++dj)
-                    for (int di = -1; di <= 1; ++di)
-                    {
-                        const int i2 = c[0] + di, j2 = c[1] + dj, k2 = c[2] + dk;
-                        if (i2 < 0 || j2 < 0 || k2 < 0 || i2 >= dims[0] || j2 >= dims[1] || k2 >= dims[2]) continue;
-                        const size_t cc = (size_t(k2) * dims[1] + j2) * dims[0] + i2;
-                        for (uint32_t e = cStart[cc]; e < cStart[cc + 1]; ++e)
-                        {
-                            const uint32_t q = cList[e];
-                            const double w = rmin - (cen[q] - cen[a]).norm();
-                            if (w <= 0) continue;
-                            fIdx.push_back(q);
-                            fW.push_back(float(w * vol[q]));
-                            Hs[a] += w * vol[q];
-                        }
-                    }
-            fStart[a + 1] = fIdx.size();
-        }
-    }
-    auto filter = [&](const std::vector<double>& in, std::vector<double>& out) {
-        out.resize(na);
-        parallelRange(na, [&](size_t b0, size_t b1) {
-            for (size_t a = b0; a < b1; ++a)
-            {
-                double sum = 0;
-                for (size_t q = fStart[a]; q < fStart[a + 1]; ++q) sum += double(fW[q]) * in[fIdx[q]];
-                out[a] = sum / Hs[a];
-            }
-        }, 1024);
-    };
-    // the transpose, for the sensitivities: out_b = sum_a w_ab in_a / Hs_a
-    auto filterT = [&](const std::vector<double>& in, std::vector<double>& out) {
-        out.assign(na, 0.0);
-        for (size_t a = 0; a < na; ++a)
-        {
-            const double f = in[a] / Hs[a];
-            for (size_t q = fStart[a]; q < fStart[a + 1]; ++q) out[fIdx[q]] += double(fW[q]) * f;
-        }
-    };
-
-    std::vector<double> vol(na);
-    double total = 0, room = 0;
-    for (size_t a = 0; a < na; ++a)
-    {
-        vol[a] = A.geom[a].vol;
-        if (!outside[a]) total += vol[a];
-        if (state[a] != 2) room += vol[a];
-    }
-    const double target = s.volumeFraction * total;
-    if (!(target < 0.999 * room))
-    {
-        error = grown ? "the volume fraction is more than the design space can hold (the part grown by the distance asked for, less the regions to avoid)"
-                      : "the volume fraction is more than the part can hold (less the regions to avoid)";
+        error = "the optimisation was not told what to make best";
         return false;
     }
-    const double p = s.penalty, emin = s.minStiffness;
-    // The density is projected towards 0 and 1 (a smoothed step at 1/2, tanh(beta (x - 1/2)), steeper as the optimisation goes on):
-    // without it a third of the design stays grey -- material that is neither there nor not there, whose place in the part is
-    // decided by where the volume fraction cuts it -- and the layout keeps shifting to the very end.  beta starts at 1 (the filter's
-    // density as it is), doubles every projEvery iterations from projStart, and stops at the sharpness asked for
-    const double betaMax = s.sharpness > 1.0 ? s.sharpness : 0.0;
-    // The sharpening reaches its full steepness at three quarters of the iterations, however many there are (it used to start at the 10th and
-    // step every 5th at least, so a short run never got there: its design stayed grey): beta doubles from 1 up to the sharpness in steps of
-    // projEvery iterations, the last of them at 3/4 of the run, and the rest of the run refines the crisp design
-    const int doublings = betaMax > 1.0 ? std::max(1, int(std::ceil(std::log2(betaMax)))) : 1;
-    const int projEvery = std::max(2, int(std::ceil(0.75 * s.iterations / (2.0 * doublings))));
-    const int projStart = std::max(3, int(std::lround(0.75 * s.iterations - double(doublings) * projEvery)));
-    double beta = 1.0;
-    const double eta = 0.5;
-    auto projectOf = [&](double v) {
-        if (betaMax <= 0) return v;
-        const double den = std::tanh(beta * eta) + std::tanh(beta * (1 - eta));
-        return (std::tanh(beta * eta) + std::tanh(beta * (v - eta))) / den;
-    };
-    auto projectSlope = [&](double v) {
-        if (betaMax <= 0) return 1.0;
-        const double den = std::tanh(beta * eta) + std::tanh(beta * (1 - eta));
-        const double th = std::tanh(beta * (v - eta));
-        return beta * (1 - th * th) / den;
-    };
-    std::vector<double> xTil;
-
-    std::vector<double> x(na, grown ? std::min(1.0, s.volumeFraction) : s.volumeFraction), xPhys, dc(na), dv(na), dcF, dvF, xNew(na);
-    for (size_t a = 0; a < na; ++a)
+    auto isModal = [&](int c) { return size_t(c) < m_modalCase.size() && m_modalCase[size_t(c)]; };
+    auto fixedOf = [&](int c) -> const std::vector<unsigned char>& { return m_caseFixed.empty() ? m_fixedDof : m_caseFixed[size_t(c)]; };
+    auto forceOf = [&](int c) -> const std::vector<double>& { return nc > 1 ? m_caseForce[size_t(c)] : m_force; };
+    std::vector<char> needStatic(size_t(nc), 0);
+    std::vector<int> modesWanted(size_t(nc), 0);
+    for (const auto& ms : s.measures)
     {
-        if (outside[a]) x[a] = 0.02;            // (a little: material put in nothing grows only where the neighbours' strain says so)
-        if (state[a]) x[a] = state[a] == 1 ? 1.0 : 0.0;
-    }
-    auto physical = [&](const std::vector<double>& xs, std::vector<double>& out) {
-        filter(xs, xTil);
-        out.resize(na);
-        for (size_t a = 0; a < na; ++a)
+        if (ms.loadCase < 0 || ms.loadCase >= nc)
         {
-            if (state[a] == 1) out[a] = 1.0;
-            else if (state[a] == 2) out[a] = 0.0;
-            else out[a] = projectOf(xTil[a]);
+            error = "a measure is asked for in an analysis that the problem does not have";
+            return false;
         }
-    };
-    m_history.clear();
-    m_densityHistory.clear();
-    // The density at the nodes (each tetrahedron's averaged at its nodes by volume): the field of an iteration
-    auto nodal = [&](const std::vector<double>& xs, std::vector<float>& out) {
-        out.assign(nv, 0.0f);
-        parallelRange(nv, [&](size_t b0, size_t b1) {
-            for (size_t i = b0; i < b1; ++i)
+        if (ms.kind == TopOpt::FREQUENCY)
+        {
+            if (!isModal(ms.loadCase))
             {
-                double sum = 0, w = 0;
-                for (uint32_t e = A.vtStart[i]; e < A.vtStart[i + 1]; ++e)
-                {
-                    const size_t t = A.vtList[e];
-                    sum += vol[t] * xs[t];
-                    w += vol[t];
-                }
-                out[i] = w > 0 ? float(sum / w) : 0.0f;
+                error = "a frequency can be read from a modal analysis only";
+                return false;
             }
-        }, 256);
-    };
-    // Load cases: each solved on its own (its own warm start), the sensitivities summed -- the part
-    // stiff for all of them
-    const int nc = std::max<int>(1, int(m_caseForce.size()));
+            modesWanted[size_t(ms.loadCase)] = std::max(modesWanted[size_t(ms.loadCase)], ms.index + 1);
+        }
+        else if (ms.kind != TopOpt::VOLUME)
+        {
+            if (isModal(ms.loadCase))
+            {
+                error = "a modal analysis has frequencies and a volume, nothing that needs loads";
+                return false;
+            }
+            needStatic[size_t(ms.loadCase)] = 1;
+        }
+    }
+    for (int lc = 0; lc < nc; ++lc)
+        if (isModal(lc) && !(s.density > 0) && m_elementDensity.empty())
+        {
+            error = "a frequency needs the material's density";
+            return false;
+        }
+
     std::vector<std::vector<double>> caseU(static_cast<size_t>(nc));
     std::vector<double> scale(na);
-    run_progress::Task task("optimising");
-    // (the picture of the design that the viewport draws as it goes comes down when the optimisation ends, however it ends)
-    struct LivePicture { ~LivePicture() { run_progress::publishLive(nullptr); } } livePicture;
     std::shared_ptr<TetLocator> liveLocator;
     buildPreconditioner(m_fixedDof, A);        // (sized; refreshed each iteration)
 
-    // Which element lies across each face of an element (-1: none): for the loose-material rule
-    std::vector<std::array<int32_t, 4>> across(na);
-    {
-        struct Face { int32_t a, b, c, element, slot; };
-        std::vector<Face> faces;
-        faces.reserve(4 * na);
-        static const int corner[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
-        for (size_t e = 0; e < na; ++e)
-        {
-            across[e] = {-1, -1, -1, -1};
-            for (int q = 0; q < 4; ++q)
+    // The relaxation of the stress at low density (the qp approach): the stress an element reports is the material's for its strain, times
+    // density^q, so that a nearly empty element cannot carry a stress that holds the design back.  Why q = p - 2.5 (not less than 1/4):
+    // a design that is grey all over (every element at the density x) has the stiffness x^p, so its strain is x^-p times the solid's, and
+    // the stress it reports is x^(q-p) times the solid's -- it meets a limit at x = (solid stress / limit)^(1/(p-q)).  That share of the
+    // material is what a foam costs; it has to be more than a crisp layout needs, or the optimiser fills the part with a foam of the size
+    // of the elements (it did, with q = p - 1: 40 % of a beam, in two pieces).  With p - q = 2.5 the foam costs the solid's stress ratio
+    // to the power 0.4 -- most of the part -- while a member of full density is not changed by the exponent at all
+    const double stressExp = std::max(0.25, p - 2.5);
+    // ... and no element reports less than the one whose stiffness is the void's (below that density the stiffness stays the void's whatever the
+    // density is, so the force that still goes through such an element is no smaller): without this floor a connection taken down to nothing
+    // reported no stress at all, and the design fell apart into pieces that the constraint did not see
+    const double stressFloor = emin > 0 ? std::min(0.5, std::pow(emin, 1.0 / p)) : 1e-9;
+    const double norm = 10.0;                           // the exponent of the p-norm that stands for a peak
+    const Mat6 vmForm = [] {
+        Mat6 V = Mat6::Zero();
+        V(0, 0) = V(1, 1) = V(2, 2) = 1.0;
+        V(0, 1) = V(1, 0) = V(0, 2) = V(2, 0) = V(1, 2) = V(2, 1) = -0.5;
+        V(3, 3) = V(4, 4) = V(5, 5) = 3.0;
+        return V;
+    }();
+    // (the lowest frequencies of a design with a nearly empty part: a mass that falls off faster than the stiffness below a tenth of
+    // the density, so that the empty part has no low modes of its own)
+    auto massOf = [](double x) { return x >= 0.1 ? x : 6e5 * std::pow(x, 6) - 5e6 * std::pow(x, 7); };
+    auto massSlope = [](double x) { return x >= 0.1 ? 1.0 : 36e5 * std::pow(x, 5) - 35e6 * std::pow(x, 6); };
+    std::vector<double> peakFactor(size_t(nb), 1.0);    // what keeps a p-norm at the peak it stands for
+    std::vector<std::vector<double>> adjointU(static_cast<size_t>(nb));
+    std::unique_ptr<TetLocator> pointLocator;
+    for (const auto& ms : s.measures)
+        if (ms.kind == TopOpt::DISPLACEMENT_AT && !pointLocator) pointLocator = std::make_unique<TetLocator>(mesh);
+
+    auto gather = [&](const std::vector<double>& u, size_t a, double ue[12]) {
+        for (int q = 0; q < 4; ++q)
+            for (int d = 0; d < 3; ++d) ue[3 * q + d] = u[3 * size_t(mesh.tets[a][size_t(q)]) + size_t(d)];
+    };
+    // The energy of two displacements in an element: w^T K0 u with K0 the element's stiffness of the full material
+    auto energy = [&](size_t a, const double* w, const double* u) {
+        const Vec6 e1 = strainOf(A.geom[a], w), e2 = strainOf(A.geom[a], u);
+        return A.geom[a].vol * e1.dot(D * e2) * (m_scale.empty() ? 1.0 : m_scale[a]);
+    };
+    // The sensitivity of a measure with the solution u and its adjoint lam to the density of each element (what the stiffness part of the
+    // measure's change is): -lam^T dK/dx u
+    auto addImplicit = [&](std::vector<double>& out, const std::vector<double>& lam, const std::vector<double>& u) {
+        parallelRange(na, [&](size_t b0, size_t b1) {
+            for (size_t a = b0; a < b1; ++a)
             {
-                int32_t v[3] = {int32_t(mesh.tets[e][size_t(corner[q][0])]), int32_t(mesh.tets[e][size_t(corner[q][1])]),
-                                int32_t(mesh.tets[e][size_t(corner[q][2])])};
-                std::sort(v, v + 3);
-                faces.push_back({v[0], v[1], v[2], int32_t(e), q});
+                double ul[12], ue[12];
+                gather(lam, a, ul);
+                gather(u, a, ue);
+                out[a] -= p * std::pow(std::max(xPhys[a], 1e-9), p - 1) * (1 - emin) * energy(a, ul, ue);
             }
-        }
-        std::sort(faces.begin(), faces.end(), [](const Face& x, const Face& y) {
-            return x.a != y.a ? x.a < y.a : x.b != y.b ? x.b < y.b : x.c < y.c;
-        });
-        for (size_t i = 0; i + 1 < faces.size(); ++i)
-            if (faces[i].a == faces[i + 1].a && faces[i].b == faces[i + 1].b && faces[i].c == faces[i + 1].c)
-            {
-                across[size_t(faces[i].element)][size_t(faces[i].slot)] = faces[i + 1].element;
-                across[size_t(faces[i + 1].element)][size_t(faces[i + 1].slot)] = faces[i].element;
-            }
-    }
-    std::vector<char> floating(na, 0);
-    // The step: how far a density may move in one iteration.  It starts as large as the iterations asked for allow (a few have to go the
-    // whole way; many can be careful), the cap on it shrinks as they go so that the design has settled by the last, and within the cap it
-    // grows while the compliance falls as the sensitivities predicted and shrinks when it does not -- a trust region: the change the
-    // sensitivities predict for the step taken is compared with the change the next iteration's compliance shows
-    const double moveStart = std::max(0.2, std::min(0.5, 10.0 / std::max(1, s.iterations))), moveEnd = 0.05;
-    double moveNow = moveStart, predicted = 0, compliancePrev = 0, betaPrev = -1;
-    bool havePrediction = false;
-    int it = 0;
-    for (; it < s.iterations; ++it)
-    {
-        if (cancel && cancel->load())
-        {
-            error = "cancelled";
-            return false;
-        }
-        {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "optimising, iteration %d of %d", it + 1, s.iterations);
-            task.set(double(it) / std::max(1, s.iterations), buf);
-        }
-        if (betaMax > 0) beta = std::min(betaMax, std::pow(2.0, std::floor(std::max(0, it - projStart) / double(projEvery))));
-        physical(x, xPhys);
-        // Material that nothing joins to a support or a load carries nothing, and is taken out: left alone, an island grows from the
-        // stress at the corner of a support into the empty space beside the part, and stays there -- using the volume of a member that
-        // would be of use.  Material is where the density is above 0.3; two elements are joined when they share a face (a piece that
-        // touches the part at one corner is not held by it)
-        std::fill(floating.begin(), floating.end(), 0);
-        if (it >= 10)
-        {
-            std::vector<int32_t> parent(na);
-            std::iota(parent.begin(), parent.end(), 0);
-            auto root = [&](int32_t a) {
-                while (parent[size_t(a)] != a)
+        }, 512);
+    };
+    // The vector that is the sum of per-element contributions to the nodes' displacement DOFs
+    auto scatter = [&](const std::vector<std::array<double, 12>>& re, std::vector<double>& r) {
+        r.assign(n, 0.0);
+        parallelRange(nv, [&](size_t b0, size_t b1) {
+            for (size_t i = b0; i < b1; ++i)
+                for (uint32_t k = A.vtStart[i]; k < A.vtStart[i + 1]; ++k)
                 {
-                    parent[size_t(a)] = parent[size_t(parent[size_t(a)])];
-                    a = parent[size_t(a)];
+                    const size_t t = A.vtList[k];
+                    for (int q = 0; q < 4; ++q)
+                        if (size_t(mesh.tets[t][size_t(q)]) == i)
+                            for (int d = 0; d < 3; ++d) r[3 * i + size_t(d)] += re[t][size_t(3 * q + d)];
                 }
-                return a;
-            };
-            auto material = [&](size_t a) { return state[a] == 1 || xPhys[a] > 0.3; };
-            for (size_t a = 0; a < na; ++a)
-            {
-                if (!material(a)) continue;
-                for (int q = 0; q < 4; ++q)
-                {
-                    const int32_t b = across[a][size_t(q)];
-                    if (b < 0 || !material(size_t(b))) continue;
-                    const int32_t r0 = root(int32_t(a)), r1 = root(b);
-                    if (r0 != r1) parent[size_t(r1)] = r0;
-                }
-            }
-            std::vector<char> anchored(na, 0);
-            for (size_t a = 0; a < na; ++a)
-                if (state[a] == 1) anchored[size_t(root(int32_t(a)))] = 1;
-            for (size_t a = 0; a < na; ++a)
-                if (state[a] == 0 && xPhys[a] > 0.3 && !anchored[size_t(root(int32_t(a)))]) floating[a] = 1;
-            if (std::getenv("FIELDES_FEA_DEBUG"))
-            {
-                size_t n = 0;
-                double volume = 0;
-                for (size_t a = 0; a < na; ++a) if (floating[a]) { ++n; volume += A.geom[a].vol; }
-                fprintf(stderr, "[tetopt] iteration %d: %zu elements of loose material (%.3g mm^3)\n", it, n, volume);
-            }
-        }
+        }, 256);
+    };
+    double solveTol = std::max(s.tolerance, 1e-4), modeTol = std::max(s.tolerance, 1e-6);
+    int cgIterations = s.solverIterations;
+
+    // The measures of a density and their sensitivities to the density of every element.  update: the factors that keep a p-norm at the peak it
+    // stands for are moved on (not when the design is only looked at a little off its place)
+    auto measuresOf = [&](const std::vector<double>& xPhysIn, bool update, int iteration, std::vector<double>& bv,
+                          std::vector<std::vector<double>>& dB) -> bool {
+        xPhys = xPhysIn;
+        it = iteration;
         for (size_t a = 0; a < na; ++a)
             scale[a] = (emin + (1 - emin) * std::pow(xPhys[a], p)) * (m_scale.empty() ? 1.0 : m_scale[a]);
         assemble(mesh, D, &scale, A);
-        buildPreconditioner(m_fixedDof, A);
-        std::fill(dc.begin(), dc.end(), 0.0);
-        double compliance = 0.0;
+
+        // The static analyses that a measure reads
         for (int lc = 0; lc < nc; ++lc)
         {
-            const std::vector<double>& f = nc > 1 ? m_caseForce[size_t(lc)] : m_force;
-            std::vector<double>& u = caseU[size_t(lc)];
+            if (!needStatic[size_t(lc)]) continue;
             CgResult cg;
-            // (a case with supports of its own is held by those: its preconditioner is made for them)
-            const std::vector<unsigned char>& fixedLc = m_caseFixed.empty() ? m_fixedDof : m_caseFixed[size_t(lc)];
-            if (!m_caseFixed.empty()) buildPreconditioner(fixedLc, A);
+            buildPreconditioner(fixedOf(lc), A);
             // (the sensitivities don't need a tight solve; warm starts keep each one short)
-            if (!cgSolve(A, fixedLc, f, u, std::max(s.tolerance, 1e-4), s.solverIterations, cancel, nullptr, cg, error))
+            if (!cgSolve(A, fixedOf(lc), forceOf(lc), caseU[size_t(lc)], solveTol, cgIterations, cancel, nullptr, cg, error)) return false;
+        }
+        // The modes that a measure reads
+        std::vector<std::vector<double>> modeLambda(static_cast<size_t>(nc));
+        std::vector<std::vector<std::vector<double>>> modeVector(static_cast<size_t>(nc));
+        for (int lc = 0; lc < nc; ++lc)
+        {
+            if (modesWanted[size_t(lc)] < 1) continue;
+            std::vector<double> mass(n, 0.0);
+            for (size_t t = 0; t < na; ++t)
+            {
+                const double rho = m_elementDensity.empty() ? s.density : m_elementDensity[t];
+                const double mt = rho * A.geom[t].vol / 4.0 * massOf(xPhys[t]);
+                for (int q = 0; q < 4; ++q)
+                    for (int d = 0; d < 3; ++d) mass[3 * size_t(mesh.tets[t][size_t(q)]) + size_t(d)] += mt;
+            }
+            const std::vector<unsigned char>& fx = fixedOf(lc);
+            for (size_t i = 0; i < n; ++i) if (fx[i]) mass[i] = 0.0;
+            buildPreconditioner(fx, A);
+            int iterationsUsed = 0;
+            // (a few more modes than are read: to tell whether the last one read has a twin)
+            const int count = modesWanted[size_t(lc)] + 2;
+            if (!lobpcg(A, fx, mass, count, 300, modeTol, cancel, modeLambda[size_t(lc)], modeVector[size_t(lc)], iterationsUsed, error))
                 return false;
-            double c = 0;
-            for (size_t i = 0; i < n; ++i) c += f[i] * u[i];
-            compliance += c;
-            // compliance sensitivities from each element's strain energy
-            parallelRange(na, [&](size_t b0, size_t b1) {
-                for (size_t a = b0; a < b1; ++a)
-                {
-                    double ue[12];
-                    for (int q = 0; q < 4; ++q)
-                        for (int d = 0; d < 3; ++d) ue[3 * q + d] = u[3 * size_t(mesh.tets[a][size_t(q)]) + size_t(d)];
-                    const Vec6 eps = strainOf(A.geom[a], ue);
-                    const double ce = A.geom[a].vol * eps.dot(D * eps) * (m_scale.empty() ? 1.0 : m_scale[a]);
-                    dc[a] += -p * std::pow(std::max(xPhys[a], 1e-9), p - 1) * (1 - emin) * ce;
-                    dv[a] = vol[a];
-                }
-            }, 512);
-        }
-        m_history.push_back(compliance);
-        m_densityHistory.emplace_back();
-        nodal(xPhys, m_densityHistory.back());
-        if (betaMax > 0)
-        {
-            // (the sensitivities are of the projected density: through the projection to the filtered one)
-            for (size_t a = 0; a < na; ++a)
+            for (auto& phi : modeVector[size_t(lc)])
             {
-                const double slope = state[a] ? 0.0 : projectSlope(xTil[a]);
-                dc[a] *= slope;
-                dv[a] = vol[a] * slope;
+                double mm = 0;
+                for (size_t i = 0; i < n; ++i) mm += mass[i] * phi[i] * phi[i];
+                if (mm > 0)
+                    for (double& v : phi) v /= std::sqrt(mm);
             }
         }
-        filterT(dc, dcF);
-        filterT(dv, dvF);
-        if (!mirrorMaps.empty())
-        {
-            symmetrise(dcF);
-            symmetrise(dvF);
-        }
-        if (nCol)
-        {
-            // (one value per line: the line's sensitivities summed; x stays equal along each line, starting equal)
-            std::vector<double> cs(size_t(nCol), 0.0), vs(size_t(nCol), 0.0);
-            for (size_t a = 0; a < na; ++a)
-                if (column[a] >= 0)
-                {
-                    cs[size_t(column[a])] += dcF[a];
-                    vs[size_t(column[a])] += dvF[a];
-                }
-            for (size_t a = 0; a < na; ++a)
-                if (column[a] >= 0)
-                {
-                    dcF[a] = cs[size_t(column[a])];
-                    dvF[a] = vs[size_t(column[a])];
-                }
-        }
 
-        // the step of this iteration (see above)
-        const double moveCap = moveStart + (moveEnd - moveStart) * std::min(1.0, double(it) / std::max(1, s.iterations - 1));
-        if (havePrediction && predicted < -1e-12 * std::abs(compliancePrev) && beta == betaPrev)
+        // The measures' values and sensitivities
+        for (auto& g : dB) std::fill(g.begin(), g.end(), 0.0);
+        for (int b = 0; b < nb; ++b)
         {
-            const double ratio = (compliance - compliancePrev) / predicted;      // 1: it fell as predicted; below 0: it rose
-            if (ratio > 0.75) moveNow *= 1.4;
-            else if (ratio < 0.25) moveNow *= 0.6;
-        }
-        moveNow = std::max(0.02, std::min(moveNow, moveCap));
-        const double move = moveNow;
-
-        // optimality criteria: bisection on the volume's Lagrange multiplier
-        double l1 = 0, l2 = 1e12;
-        std::vector<double> xp;
-        for (int bis = 0; bis < 200 && (l2 - l1) / (l1 + l2 + 1e-300) > 1e-6; ++bis)
-        {
-            const double lm = 0.5 * (l1 + l2);
-            for (size_t a = 0; a < na; ++a)
+            const TopOpt::Measure& ms = s.measures[size_t(b)];
+            std::vector<double>& out = dB[size_t(b)];
+            switch (ms.kind)
             {
-                if (state[a])
-                {
-                    xNew[a] = x[a];
-                    continue;
-                }
-                if (floating[a])
-                {
-                    xNew[a] = std::max(0.0, x[a] - move);           // (no path of material to a support or a load: it goes)
-                    continue;
-                }
-                const double B = std::sqrt(std::max(0.0, -dcF[a]) / (lm * std::max(dvF[a], 1e-30)));
-                xNew[a] = std::max(0.0, std::max(x[a] - move, std::min(1.0, std::min(x[a] + move, x[a] * B))));
-            }
-            physical(xNew, xp);
-            double v = 0;
-            for (size_t a = 0; a < na; ++a) v += vol[a] * xp[a];
-            if (v > target) l1 = lm; else l2 = lm;
-        }
-        double change = 0;
-        for (size_t a = 0; a < na; ++a) change = std::max(change, std::abs(xNew[a] - x[a]));
-        {
-            // The design as it is, for the viewport: the part where the density is above the level that keeps the volume asked for (the
-            // level at which what is kept is the most that is not more than that, so the first iterations, whose density is all the same,
-            // show the whole part)
-            auto view = std::make_shared<run_progress::LiveView>();
-            view->kind = "topology";
-            view->quantity = "compliance";
-            view->iteration = it + 1;
-            view->iterations = s.iterations;
-            view->objective = compliance;
-            view->change = change;
-            double kept = 0;
-            for (size_t a = 0; a < na; ++a) kept += vol[a] * xPhys[a];
-            view->volume = total > 0 ? kept / total : 0;
-            view->volumeLow = view->volumeHigh = s.volumeFraction;
-            view->history.assign(m_history.begin(), m_history.end());
-            double lo = 0, hi = 1;
-            for (int k = 0; k < 24; ++k)
+            case TopOpt::VOLUME:
             {
-                const double mid = 0.5 * (lo + hi);
-                double keptAbove = 0;
+                // the share of the part's volume that the design uses
+                double v = 0;
                 for (size_t a = 0; a < na; ++a)
-                    if (xPhys[a] > mid) keptAbove += vol[a];
-                if (keptAbove > target) lo = mid; else hi = mid;
+                {
+                    v += vol[a] * xPhys[a];
+                    out[a] = total > 0 ? vol[a] / total : 0.0;
+                }
+                bv[size_t(b)] = total > 0 ? v / total : 0.0;
+                break;
             }
-            // The part as the result shows it: where the density (a field on the mesh) is above that level, within the design space,
-            // coloured by the density
-            auto density = std::make_shared<MeshResult>();
-            density->mesh = m_mesh;
-            if (!liveLocator) liveLocator = std::make_shared<TetLocator>(mesh);
-            density->locator = liveLocator;
-            for (auto& f : density->fields) f.assign(nv, 0.0f);
-            density->fields[0] = m_densityHistory.back();
-            density->minValue[0] = 0;
-            density->maxValue[0] = 1;
-            const Tree field = meshFieldTree(density, 0);
-            run_progress::LiveShape part;
-            part.tree = max((Tree(float(lo)) - field) * Tree(float(2.0 * rmin)), m_shape);
-            part.channels.push_back({"density", "density", field, 0.0f, 1.0f});
-            part.detail = float(h);
-            liveSurfaceIndexed(*m_mesh, m_densityHistory.back(), lo, true, part.surfaceVerts, part.surfaceTris);
-            view->shapes.push_back(std::move(part));
-            run_progress::publishLive(view);
+            case TopOpt::COMPLIANCE:
+            {
+                const std::vector<double>& f = forceOf(ms.loadCase);
+                const std::vector<double>& u = caseU[size_t(ms.loadCase)];
+                double c = 0;
+                for (size_t i = 0; i < n; ++i) c += f[i] * u[i];
+                bv[size_t(b)] = c;
+                // compliance sensitivities from each element's strain energy (the adjoint is the solution itself)
+                addImplicit(out, u, u);
+                break;
+            }
+            case TopOpt::MAX_VON_MISES:
+            {
+                // the p-norm of the elements' relaxed von Mises stress, brought to the peak it stands for
+                const std::vector<double>& u = caseU[size_t(ms.loadCase)];
+                std::vector<double> sigma(na), xq(na);
+                std::vector<std::array<double, 12>> re(na);
+                double peak = 0;
+                parallelRange(na, [&](size_t b0, size_t b1) {
+                    for (size_t a = b0; a < b1; ++a)
+                    {
+                        double ue[12];
+                        gather(u, a, ue);
+                        const Vec6 eps = strainOf(A.geom[a], ue);
+                        const Vec6 st = D * eps * (m_scale.empty() ? 1.0 : m_scale[a]);
+                        const double vm = std::sqrt(std::max(0.0, st.dot(vmForm * st)));
+                        xq[a] = std::pow(std::max(xPhys[a], stressFloor), stressExp);
+                        sigma[a] = xq[a] * vm;
+                    }
+                }, 512);
+                for (size_t a = 0; a < na; ++a) peak = std::max(peak, sigma[a]);
+                double sum = 0;
+                if (peak > 0)
+                    for (size_t a = 0; a < na; ++a) sum += std::pow(sigma[a] / peak, norm);
+                const double pn = peak * std::pow(sum, 1.0 / norm);          // (>= the peak)
+                if (update && it > 0 && pn > 0 && std::isfinite(peak / pn)) peakFactor[size_t(b)] = 0.5 * peakFactor[size_t(b)] + 0.5 * std::max(0.1, std::min(2.0, peak / pn));
+                const double factor = peakFactor[size_t(b)];
+                bv[size_t(b)] = factor * pn;
+                // d (factor * pn) / d sigma_a = factor * (sigma_a / pn)^(norm-1)
+                parallelRange(na, [&](size_t b0, size_t b1) {
+                    for (size_t a = b0; a < b1; ++a)
+                    {
+                        std::array<double, 12>& r = re[a];
+                        r.fill(0.0);
+                        if (!(pn > 0) || !(sigma[a] > 0)) continue;
+                        double ue[12];
+                        gather(u, a, ue);
+                        const Vec6 eps = strainOf(A.geom[a], ue);
+                        const Vec6 st = D * eps * (m_scale.empty() ? 1.0 : m_scale[a]);
+                        const double vm = std::sqrt(std::max(1e-30, st.dot(vmForm * st)));
+                        const double w = factor * std::pow(sigma[a] / pn, norm - 1.0) * xq[a] / vm;
+                        // d vm / d u = (D B)^T V st / vm
+                        const Mat6x12 Bm = strainMatrix(A.geom[a]);
+                        const Eigen::Matrix<double, 12, 1> dvm = Bm.transpose() * (D * (vmForm * st)) * (m_scale.empty() ? 1.0 : m_scale[a]);
+                        for (int k = 0; k < 12; ++k) r[size_t(k)] = w * dvm(k);
+                    }
+                }, 512);
+                std::vector<double> rhs;
+                scatter(re, rhs);
+                std::vector<double>& lam = adjointU[size_t(b)];
+                CgResult cg;
+                buildPreconditioner(fixedOf(ms.loadCase), A);
+                if (!cgSolve(A, fixedOf(ms.loadCase), rhs, lam, solveTol, cgIterations, cancel, nullptr, cg, error)) return false;
+                addImplicit(out, lam, u);
+                // the part that does not go through the displacement: the density's own power in the relaxed stress
+                parallelRange(na, [&](size_t b0, size_t b1) {
+                    for (size_t a = b0; a < b1; ++a)
+                    {
+                        if (!(pn > 0) || !(sigma[a] > 0) || xPhys[a] <= stressFloor) continue;
+                        out[a] += factor * std::pow(sigma[a] / pn, norm - 1.0) * stressExp * sigma[a] / xPhys[a];
+                    }
+                }, 512);
+                break;
+            }
+            case TopOpt::MAX_DISPLACEMENT:
+            {
+                // the p-norm of the nodes' displacement, each node counting as much as the material round it (the density of the nodes
+                // to the 4th power): an empty part has displacements that are of no part's
+                const std::vector<double>& u = caseU[size_t(ms.loadCase)];
+                std::vector<double> rho(nv, 0.0), vsum(nv, 0.0), mag(nv, 0.0), weight(nv, 0.0);
+                for (size_t i = 0; i < nv; ++i)
+                {
+                    for (uint32_t k = A.vtStart[i]; k < A.vtStart[i + 1]; ++k)
+                    {
+                        const size_t t = A.vtList[k];
+                        rho[i] += vol[t] * xPhys[t];
+                        vsum[i] += vol[t];
+                    }
+                    rho[i] = vsum[i] > 0 ? rho[i] / vsum[i] : 0.0;
+                    weight[i] = std::pow(rho[i], 4.0);
+                    mag[i] = std::sqrt(u[3 * i] * u[3 * i] + u[3 * i + 1] * u[3 * i + 1] + u[3 * i + 2] * u[3 * i + 2]);
+                }
+                double peak = 0;
+                for (size_t i = 0; i < nv; ++i) if (weight[i] > 1e-8) peak = std::max(peak, mag[i]);
+                double sum = 0;
+                if (peak > 0)
+                    for (size_t i = 0; i < nv; ++i) sum += weight[i] * std::pow(mag[i] / peak, norm);
+                const double pn = peak * std::pow(sum, 1.0 / norm);
+                if (update && it > 0 && pn > 0 && std::isfinite(peak / pn)) peakFactor[size_t(b)] = 0.5 * peakFactor[size_t(b)] + 0.5 * std::max(0.1, std::min(2.0, peak / pn));
+                const double factor = peakFactor[size_t(b)];
+                bv[size_t(b)] = factor * pn;
+                std::vector<double> rhs(n, 0.0);
+                if (pn > 0)
+                    for (size_t i = 0; i < nv; ++i)
+                    {
+                        if (!(mag[i] > 0) || weight[i] <= 0) continue;
+                        // d (factor * pn) / d u_i = factor * weight_i * (|u_i| / pn)^(norm-1) * u_i / |u_i|
+                        const double w = factor * weight[i] * std::pow(mag[i] / pn, norm - 1.0) / mag[i];
+                        for (int d = 0; d < 3; ++d) rhs[3 * i + size_t(d)] = w * u[3 * i + size_t(d)];
+                    }
+                std::vector<double>& lam = adjointU[size_t(b)];
+                CgResult cg;
+                buildPreconditioner(fixedOf(ms.loadCase), A);
+                if (!cgSolve(A, fixedOf(ms.loadCase), rhs, lam, solveTol, cgIterations, cancel, nullptr, cg, error)) return false;
+                addImplicit(out, lam, u);
+                // through the nodes' weights: d weight_i / d x_a = 4 rho_i^3 vol_a / vsum_i
+                if (pn > 0)
+                    for (size_t a = 0; a < na; ++a)
+                    {
+                        double acc = 0;
+                        for (int q = 0; q < 4; ++q)
+                        {
+                            const size_t i = size_t(mesh.tets[a][size_t(q)]);
+                            if (!(vsum[i] > 0)) continue;
+                            acc += factor * (1.0 / norm) * std::pow(pn, 1.0 - norm) * std::pow(mag[i], norm) * 4.0 * std::pow(rho[i], 3.0) * vol[a] / vsum[i];
+                        }
+                        out[a] += acc;
+                    }
+                break;
+            }
+            case TopOpt::DISPLACEMENT_AT:
+            {
+                // a component (ms.index 0 / 1 / 2) of the displacement at a point, or its magnitude (3): the barycentric mix of the nodes of the tetrahedron that holds it
+                const std::vector<double>& u = caseU[size_t(ms.loadCase)];
+                double lam4[4];
+                const int tet = pointLocator->locate(Vec3(ms.a, ms.b, ms.c), lam4);
+                if (tet < 0)
+                {
+                    error = "a point where the displacement is read is outside the part";
+                    return false;
+                }
+                double ux[3] = {0, 0, 0};
+                for (int q = 0; q < 4; ++q)
+                    for (int d = 0; d < 3; ++d) ux[d] += lam4[q] * u[3 * size_t(mesh.tets[size_t(tet)][size_t(q)]) + size_t(d)];
+                double direction[3] = {0, 0, 0};
+                double value;
+                if (ms.index >= 0 && ms.index < 3)
+                {
+                    value = ux[ms.index];
+                    direction[ms.index] = 1.0;
+                }
+                else
+                {
+                    value = std::sqrt(ux[0] * ux[0] + ux[1] * ux[1] + ux[2] * ux[2]);
+                    for (int d = 0; d < 3; ++d) direction[d] = value > 0 ? ux[d] / value : 0.0;
+                }
+                bv[size_t(b)] = value;
+                std::vector<double> rhs(n, 0.0);
+                for (int q = 0; q < 4; ++q)
+                    for (int d = 0; d < 3; ++d) rhs[3 * size_t(mesh.tets[size_t(tet)][size_t(q)]) + size_t(d)] += lam4[q] * direction[d];
+                std::vector<double>& lam = adjointU[size_t(b)];
+                CgResult cg;
+                buildPreconditioner(fixedOf(ms.loadCase), A);
+                if (!cgSolve(A, fixedOf(ms.loadCase), rhs, lam, solveTol, cgIterations, cancel, nullptr, cg, error)) return false;
+                addImplicit(out, lam, u);
+                break;
+            }
+            case TopOpt::FREQUENCY:
+            {
+                // the natural frequency (Hz) of mode ms.index; modes of the same frequency (a symmetric design has them) share their sensitivity
+                const std::vector<double>& lamda = modeLambda[size_t(ms.loadCase)];
+                const auto& phis = modeVector[size_t(ms.loadCase)];
+                const double l0 = lamda[size_t(ms.index)];
+                if (!(l0 > 0))
+                {
+                    error = "the design has a mode that is not positive: a frequency cannot be read";
+                    return false;
+                }
+                std::vector<size_t> cluster;
+                for (size_t j = 0; j < lamda.size(); ++j)
+                    if (std::abs(lamda[j] - l0) <= 1e-4 * l0) cluster.push_back(j);
+                bv[size_t(b)] = std::sqrt(l0) / 6.283185307179586;
+                const double dFreq = 1.0 / (2.0 * 6.283185307179586 * std::sqrt(l0));                       // d f / d lambda
+                for (size_t j : cluster)
+                {
+                    const std::vector<double>& phi = phis[j];
+                    parallelRange(na, [&](size_t b0, size_t b1) {
+                        for (size_t a = b0; a < b1; ++a)
+                        {
+                            double pe[12];
+                            gather(phi, a, pe);
+                            const double stiff = p * std::pow(std::max(xPhys[a], 1e-9), p - 1) * (1 - emin) * energy(a, pe, pe);
+                            double square = 0;
+                            for (int k = 0; k < 12; ++k) square += pe[k] * pe[k];
+                            const double rho = m_elementDensity.empty() ? s.density : m_elementDensity[a];
+                            const double massPart = lamda[j] * massSlope(xPhys[a]) * rho * A.geom[a].vol / 4.0 * square;
+                            out[a] += dFreq * (stiff - massPart) / double(cluster.size());
+                        }
+                    }, 512);
+                }
+                break;
+            }
+            default:
+                error = "a measure that the optimisation does not know";
+                return false;
+            }
         }
-        // (what the sensitivities say this step changes the compliance by: for the next iteration to compare with what it did; not along
-        // extruded columns, where the sensitivities were summed)
-        havePrediction = nCol == 0;
-        predicted = 0;
-        if (havePrediction)
-            for (size_t a = 0; a < na; ++a) predicted += dcF[a] * (xNew[a] - x[a]);
-        compliancePrev = compliance;
-        betaPrev = beta;
-        x.swap(xNew);
-        // converged: the design stopped moving, or the compliance stopped improving over the last 5 iterations
-        const size_t H = m_history.size();
-        const bool flat = H > 6 && std::abs(m_history[H - 1] - m_history[H - 6]) < 2e-3 * std::abs(m_history[H - 1]);
-        if (std::getenv("FIELDES_FEA_DEBUG"))
-            fprintf(stderr, "[tetopt] iteration %d compliance %.6g change %.4f\n", it, compliance, change);
-        if (it >= 15 && (betaMax <= 0 || beta >= betaMax) && (change < 0.01 || flat)) { ++it; break; }
-    }
-    physical(x, xPhys);
+        return true;
+    };
 
-    // The density per tetrahedron, and as a field on the mesh (averaged at the nodes by volume)
+    struct Adapter : topopt::Physics
+    {
+        int count = 0;
+        double* partTotal = nullptr;
+        std::function<void(std::vector<char>&, std::vector<char>&)> fixedFn;
+        std::function<bool(int, double, const std::vector<Eigen::Vector3f>&, double, std::string&)> symmetricFn;
+        std::function<bool(const std::vector<double>&, bool, int, std::vector<double>&, std::vector<std::vector<double>>&)> measuresFn;
+        std::function<std::vector<double>()> saveFn;
+        std::function<void(const std::vector<double>&)> restoreFn;
+        std::function<void(bool)> tightFn;
+        std::function<void(const topopt::IterationView&)> keptFn;
+        int measureCount() const override { return count; }
+        void partVolume(double volume) override { *partTotal = volume; }
+        void fixedElements(std::vector<char>& state, std::vector<char>& supported) override { fixedFn(state, supported); }
+        bool symmetricAbout(int axis, double at, const std::vector<Eigen::Vector3f>& mirrored, double regionMismatch, std::string& why) override
+        {
+            return symmetricFn(axis, at, mirrored, regionMismatch, why);
+        }
+        bool evaluate(const std::vector<double>& x, bool update, int iteration, std::vector<double>& values, std::vector<std::vector<double>>& sens,
+                      std::string&) override
+        {
+            return measuresFn(x, update, iteration, values, sens);
+        }
+        std::vector<double> saveState() const override { return saveFn(); }
+        void restoreState(const std::vector<double>& state) override { restoreFn(state); }
+        void tightSolves(bool on) override { tightFn(on); }
+        void iterationKept(const topopt::IterationView& view) override { keptFn(view); }
+    } adapter;
+    adapter.count = nb;
+    adapter.partTotal = &total;
+    adapter.fixedFn = fixedElements;
+    adapter.symmetricFn = symmetricAbout;
+    adapter.measuresFn = measuresOf;
+    adapter.saveFn = [&]() { return peakFactor; };
+    adapter.restoreFn = [&](const std::vector<double>& state) { peakFactor = state; };
+    double savedSolveTol = 0, savedModeTol = 0;
+    int savedIterations = 0;
+    adapter.tightFn = [&](bool on) {
+        if (on)
+        {
+            savedSolveTol = solveTol;
+            savedModeTol = modeTol;
+            savedIterations = cgIterations;
+            solveTol = 1e-10;
+            modeTol = 1e-10;
+            cgIterations = std::max(cgIterations, 5000);
+        }
+        else
+        {
+            solveTol = savedSolveTol;
+            modeTol = savedModeTol;
+            cgIterations = savedIterations;
+        }
+    };
+    adapter.keptFn = [&](const topopt::IterationView& view) {
+        // The design as it is, for the viewport: the part where the density is above the level that keeps the material the design has
+        // (so the first iterations, whose density is all the same, show the whole part)
+        auto live = std::make_shared<run_progress::LiveView>();
+        live->kind = "topology";
+        live->quantity = s.objectiveLabel.empty() ? "objective" : s.objectiveLabel;
+        live->iteration = view.iteration;
+        live->iterations = view.iterations;
+        live->objective = view.objective;
+        live->change = view.change;
+        double kept = 0;
+        for (size_t a = 0; a < na; ++a) kept += vol[a] * view.xPhys[a];
+        live->volume = view.share;
+        live->volumeLow = live->volumeHigh = live->volume;
+        live->history.assign(view.history.begin(), view.history.end());
+        double lo = 0, hi = 1;
+        for (int k = 0; k < 24; ++k)
+        {
+            const double mid = 0.5 * (lo + hi);
+            double keptAbove = 0;
+            for (size_t a = 0; a < na; ++a)
+                if (view.xPhys[a] > mid) keptAbove += vol[a];
+            if (keptAbove > kept) lo = mid; else hi = mid;
+        }
+        // The part as the result shows it: where the density (a field on the mesh) is above that level, within the design space,
+        // coloured by the density
+        auto density = std::make_shared<MeshResult>();
+        density->mesh = m_mesh;
+        if (!liveLocator) liveLocator = std::make_shared<TetLocator>(mesh);
+        density->locator = liveLocator;
+        for (auto& f : density->fields) f.assign(nv, 0.0f);
+        density->fields[0] = view.nodal;
+        density->minValue[0] = 0;
+        density->maxValue[0] = 1;
+        const Tree field = meshFieldTree(density, 0);
+        run_progress::LiveShape part;
+        part.tree = max((Tree(float(lo)) - field) * Tree(float(2.0 * view.filterRadius)), m_shape);
+        part.channels.push_back({"density", "density", field, 0.0f, 1.0f});
+        part.detail = float(h);
+        liveSurfaceIndexed(*m_mesh, view.nodal, lo, true, part.surfaceVerts, part.surfaceTris);
+        live->shapes.push_back(std::move(part));
+        run_progress::publishLive(live);
+    };
+
+    topopt::DesignResult res;
+    if (!topopt::runDensityDesign(mesh, vol, h, A.vtStart, A.vtList, s, adapter, res, error, cancel)) return false;
+
+    // The results, as the problem keeps them: the objective, every measure and every output at each iteration; the density per tetrahedron, and as a
+    // field on the mesh (each tetrahedron's averaged at the nodes by volume)
+    m_history = res.history;
+    m_baseHistory = res.baseHistory;
+    m_outputHistory = res.outputHistory;
+    m_densityHistory = res.densityHistory;
+    m_mirrorsUsed = res.mirrorsUsed;
     m_topDensity.assign(na, 0.0f);
-    for (size_t a = 0; a < na; ++a) m_topDensity[a] = float(xPhys[a]);
+    for (size_t a = 0; a < na; ++a) m_topDensity[a] = float(res.xPhys[a]);
     auto R2 = std::make_shared<MeshResult>();
     R2->mesh = m_mesh;
     R2->locator = std::make_shared<TetLocator>(mesh);
     for (auto& f : R2->fields) f.assign(nv, 0.0f);
-    nodal(xPhys, R2->fields[0]);
+    R2->fields[0] = res.nodal;
     R2->minValue[0] = 0;
     R2->maxValue[0] = 1;
-    R2->iterations = it;
+    R2->iterations = res.iterations;
     R2->compliance = m_history.empty() ? 0 : m_history.back();
-    double v = 0;
-    for (size_t a = 0; a < na; ++a) v += vol[a] * xPhys[a];
-    R2->volume = v;
+    R2->volume = res.designVolume;
+    m_designVolume = res.designVolume;
+    m_frontier = res.frontier;
     R2->elements = int(na);
     R2->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     m_densityResult = R2;
+    // (the run stopped at the edge of its space: the design it stopped at, for the run in a larger space)
+    m_resume = res.resume;
+    if (!m_resume.empty())
+    {
+        auto R3 = std::make_shared<MeshResult>();
+        R3->mesh = m_mesh;
+        R3->locator = R2->locator;
+        for (auto& f : R3->fields) f.assign(nv, 0.0f);
+        R3->fields[0] = res.designNodal;
+        R3->minValue[0] = 0;
+        R3->maxValue[0] = 1;
+        R3->elements = int(na);
+        m_designResult = R3;
+    }
+    return true;
+}
+
+namespace {
+
+// The share of a tetrahedron's volume where the field that is linear through the values v[0..3] at its corners is above `level`.  The
+// corners above it and below it are counted, and each case is the volume of what the plane cuts off -- written with the distances to the
+// level (all positive), so that nothing cancels when two corners are nearly alike
+double shareAbove(const double* v, double level)
+{
+    double up[4], down[4];
+    int nu = 0, nd = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (v[i] > level) up[nu++] = v[i] - level;
+        else down[nd++] = level - v[i];
+    }
+    (void)nd;
+    switch (nu)
+    {
+    case 0: return 0.0;
+    case 4: return 1.0;
+    case 1: return up[0] * up[0] * up[0] / ((up[0] + down[0]) * (up[0] + down[1]) * (up[0] + down[2]));
+    case 3: return 1.0 - down[0] * down[0] * down[0] / ((down[0] + up[0]) * (down[0] + up[1]) * (down[0] + up[2]));
+    default:
+    {
+        const double p = up[0], q = up[1], u = down[0], w = down[1];
+        const double below = (p * q * (u * u + u * w + w * w) + (p + q) * u * w * (u + w) + u * u * w * w) /
+                             ((p + u) * (q + u) * (p + w) * (q + w));
+        return 1.0 - below;
+    }
+    }
+}
+
+}   // anonymous namespace
+
+double TetProblem::cutThreshold() const
+{
+    if (!m_mesh || !m_densityResult || !(m_designVolume > 0) || m_densityResult->fields[0].size() != m_mesh->pos.size()) return 0.5;
+    const TetMesh& mesh = *m_mesh;
+    const std::vector<float>& dens = m_densityResult->fields[0];
+    const size_t nt = mesh.tets.size();
+    std::vector<double> vol(nt);
+    for (size_t t = 0; t < nt; ++t)
+    {
+        const auto& c = mesh.tets[t];
+        const Vec3 p0 = mesh.pos[size_t(c[0])];
+        vol[t] = std::abs((mesh.pos[size_t(c[1])] - p0).dot((mesh.pos[size_t(c[2])] - p0).cross(mesh.pos[size_t(c[3])] - p0))) / 6.0;
+    }
+    auto volumeAbove = [&](double level) {
+        double sum = 0;
+        for (size_t t = 0; t < nt; ++t)
+        {
+            const auto& c = mesh.tets[t];
+            const double v[4] = {double(dens[size_t(c[0])]), double(dens[size_t(c[1])]), double(dens[size_t(c[2])]), double(dens[size_t(c[3])])};
+            sum += vol[t] * shareAbove(v, level);
+        }
+        return sum;
+    };
+    double a = 0.0, b = 1.0;
+    for (int i = 0; i < 40; ++i)
+    {
+        const double mid = 0.5 * (a + b);
+        if (volumeAbove(mid) > m_designVolume) a = mid;
+        else b = mid;
+    }
+    return 0.5 * (a + b);
+}
+
+bool TetProblem::finalSurface(double level, std::vector<float>& verts, std::vector<uint32_t>& tris) const
+{
+    if (!m_mesh || !m_densityResult || m_densityResult->fields[0].size() != m_mesh->pos.size()) return false;
+    liveSurfaceIndexed(*m_mesh, m_densityResult->fields[0], level, true, verts, tris);
     return true;
 }
 
@@ -2135,10 +2287,23 @@ bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& err
 
     const std::vector<unsigned char>& fixed = m_fixedDof;
     std::vector<double> u(n, 0.0);
+    // (the displacement a support imposes: see solve)
+    std::vector<double> rhsImposed;
+    const std::vector<double>* rhs = &m_force;
+    if (!m_prescribed.empty())
+    {
+        std::vector<double> Kp(n);
+        A.K.matvec(m_prescribed.data(), Kp.data());
+        rhsImposed = m_force;
+        for (size_t i = 0; i < n; ++i) if (!fixed[i]) rhsImposed[i] -= Kp[i];
+        rhs = &rhsImposed;
+    }
     CgResult cg;
-    if (!cgSolve(A, fixed, m_force, u, tolerance, maxIterations, cancel,
+    if (!cgSolve(A, fixed, *rhs, u, tolerance, maxIterations, cancel,
                  [&](double frac, const std::string& text) { task.set(0.05 + 0.9 * frac, text); }, cg, error))
         return false;
+    if (!m_prescribed.empty())
+        for (size_t i = 0; i < n; ++i) if (fixed[i]) u[i] = m_prescribed[i];
     const int it = cg.iterations;
     const double rel = cg.residual;
     if (rel > std::max(tolerance * 100, 1e-3))
@@ -2167,15 +2332,16 @@ bool TetProblem::solveQuad(int maxIterations, double tolerance, std::string& err
         }
     }
 
-    // Reactions at the supports, compliance
+    // Reactions at the supports, compliance (see the same lines of the solver of the linear element)
     std::vector<double> Ku(n);
     A.K.matvec(u.data(), Ku.data());
     Vec3 reaction = Vec3::Zero();
     double compliance = 0;
+    const bool displaced = !m_prescribed.empty();
     for (size_t i = 0; i < n; ++i)
     {
-        if (fixed[i]) reaction[int(i % 3)] += Ku[i] - m_force[i];
-        compliance += m_force[i] * u[i];
+        if (fixed[i] && (!displaced || m_prescribed[i] != 0.0)) reaction[int(i % 3)] += Ku[i] - m_force[i];
+        compliance += displaced ? u[i] * Ku[i] : m_force[i] * u[i];
     }
 
     std::vector<double> volume;

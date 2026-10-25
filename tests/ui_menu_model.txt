@@ -58,6 +58,7 @@
     + move
     + rotate_z
     + scale_xyz
+    + snap
     + reflect_x
     + symmetric_x
     + symmetric_y
@@ -129,6 +130,8 @@
       + custom_truss    [A new cell: cell_custom_truss -- a lattice operation takes it as its cell]
       + custom_tpms    [A new cell: cell_custom_tpms -- a lattice operation takes it as its cell]
 + Engineering
+  + topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  ----
   + Structural
     + New support or load
       + fixed    [With several models selected: the first is the body, the others are where it acts (bodies,]
@@ -138,7 +141,6 @@
     ----
     + static_analysis    [With several models selected: the first is the one this is made for, the others are what i]
     + modal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
-    + topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
   + Thermal
     + New thermal condition
       + fixed_temperature    [With several models selected: the first is the body, the others are where it acts (bodies,]
@@ -147,7 +149,6 @@
       + convection    [With several models selected: the first is the body, the others are where it acts (bodies,]
     ----
     + thermal_analysis    [With several models selected: the first is the one this is made for, the others are what i]
-    + thermal_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
   + Fluid
     + New fluid
       + water
@@ -161,7 +162,6 @@
       + slip    [With several models selected: the first is the body, the others are where it acts (bodies,]
     ----
     + fluid_analysis    [With several models selected: the first is the one this is made for, the others are what i]
-    + flow_topology_optimization    [With several models selected: the first is the one this is made for, the others are what i]
   + Manufacturing
     + New manufacturing constraint
       + manufacturing_constraint
@@ -206,7 +206,7 @@
 ----
 + Import model...    [A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellate]
 ----
-+ Custom resolution    [Draw this model at a resolution of its own, whatever the scene's is: writes custom_resolut]
++ Custom resolution    [Draw this model at a resolution of its own -- the number the scene's resolution is, for th]
 + Export
   + Mesh
     + STL (.stl)

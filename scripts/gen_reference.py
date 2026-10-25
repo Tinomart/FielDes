@@ -33,6 +33,8 @@ MODULES = [
     ('lattices', 'Lattices', 'fieldes.stdlib.lattices'),
     ('conformal', 'Lattices that follow a surface', 'fieldes.stdlib.conformal'),
     ('selection', 'Selecting surfaces', 'fieldes.stdlib.selection'),
+    ('features', 'Corners and edges of a body', 'fieldes.stdlib.features'),
+    ('snapping', 'Snapping a body onto another', 'fieldes.stdlib.snapping'),
     ('fea', 'Structural analysis and topology optimization', 'fieldes.stdlib.fea'),
     ('boundary_conditions', 'Seeing the boundary conditions', 'fieldes.stdlib.boundary_conditions'),
     ('thermal', 'Thermal analysis and thermal topology optimization', 'fieldes.stdlib.thermal'),

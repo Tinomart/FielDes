@@ -33,8 +33,7 @@ pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=4)
 
 best = parametric_optimization(stress, [(width, 8, 30), (height, 6, 24)],
-                               minimize='mass',
-                               constraints=['max_von_mises <= 90', 'max_displacement <= 0.5'])
+                               constraints=[minimize('mass'), 'max_von_mises <= 90', 'max_displacement <= 0.5'])
 
 starting_beam = move(box((0, 0, 0), (100, 20, 12)), (0, -35, 0))
 known_best_beam = move(box((0, 0, 0), (100, width_low, height_known)), (0, 25, 0))

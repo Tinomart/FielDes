@@ -14,6 +14,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cstdio>
 #include <cstdlib>
 #include <array>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -59,8 +60,9 @@ struct FlowIlut
     {
         N = rows;
         const int nv = int(pos.size());
-        int threads = int(std::thread::hardware_concurrency());
-        if (threads < 1) threads = 1;
+        // (the number of boxes follows the size of the problem and never the machine: the preconditioner decides which iterates the solver visits, so a
+        // count taken from the number of cores would make the same flow another flow on another machine)
+        int threads = 16;
         if (const char* e = std::getenv("FIELDES_FLOW_BLOCKS")) threads = std::max(1, std::atoi(e));     // (for the developer)
         const int P = std::max(1, std::min(threads, nv / 1000));
         double overlap = 1.5 * h;
@@ -430,6 +432,8 @@ bool TetFlowProblem::prepare(std::string& error)
 {
     m_ilut.reset();
     m_ilutIter = -1;
+    m_ilutAdj.reset();
+    m_ilutAdjIter = -1;
     m_warning.clear();
     if (!(m_h > 0) || !(m_rho > 0) || !(m_mu > 0))
     {
@@ -444,7 +448,10 @@ bool TetFlowProblem::prepare(std::string& error)
     run_progress::Task task("meshing");
     task.set(0.0, "meshing the fluid");
     auto mesh = std::make_shared<TetMesh>();
-    if (!meshShape(m_shape, m_lo, m_hi, m_h, *mesh, error)) return false;
+    // (a shape that is symmetric about a plane through the middle of its region is meshed on one side of the plane and mirrored: the mesh of a symmetric problem
+    // is then exactly symmetric, and so are the flow and the design on it -- a lattice cut by the shape cannot be, see meshShapeMirrored)
+    if (!meshShapeMirrored(m_shape, m_lo, m_hi, m_h, findMeshMirrors(m_shape, m_lo, m_hi, m_h), *mesh, error)) return false;
+    m_meshMirrors = int(mesh->mirrored);
     if (mesh->faces.empty())
     {
         error = "the fluid domain has no surface";
@@ -1045,8 +1052,9 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
     bool analysed = false;
     bool usedDirect = false, usedIterative = false;
     std::vector<double> dsc(N, 1.0), val2(16 * nb), rhs2(N), x2(N);
+    bool matrixIsNewton = false;            // (whether the matrix of the linear solve in hand is a Newton Jacobian)
     // (the relative residual the nonlinear iteration is at, so the linear solve need not go far below it)
-    auto linearSolve = [&](std::vector<double>& x, double currentRel, std::string& err) {
+    auto linearSolve = [&](std::vector<double>& x, double currentRel, std::string& err, double reduction = 0.0) {
         // The entries of the flow equations span many orders of magnitude (mu is 1e-9 MPa s for water, the pressure
         // stabilisation goes like h^3 / mu): the system is scaled symmetrically by its diagonal, D A D y = D b, x = D y,
         // D = 1 / sqrt(|a_ii|), which brings every diagonal to one and the solvers to convergence in far fewer steps
@@ -1089,10 +1097,9 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
             // or failed
             auto buildIlut = [&]() {
                 m_ilut.reset(new FlowIlut());
-                const auto tb0 = std::chrono::steady_clock::now();
                 m_ilut->build(outer, inner, val2, long(N), mesh.pos, m_h, fill, drop);
-                m_ilutBuildSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - tb0).count();
                 m_ilutN = N;
+                m_ilutNewton = matrixIsNewton;
                 m_ilutBase = 0;
                 m_ilutIter = -1;
             };
@@ -1113,7 +1120,7 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
             const double r0n = r0.norm();
             // (the absolute scale of the residual: the first solve's, from the start that holds only the given velocities)
             if (!(m_residualScale > 0)) m_residualScale = r0n;
-            double tol = currentRel > 0 ? std::min(1e-2, 0.1 * currentRel) : m_opt.linearTolerance;
+            double tol = reduction > 0 ? reduction : (currentRel > 0 ? std::min(1e-2, 0.1 * currentRel) : m_opt.linearTolerance);
             tol = std::max(tol, m_opt.linearTolerance * m_residualScale / std::max(r0n, 1e-300));
             if (!(r0n > 0) || tol >= 1.0)
             {
@@ -1122,10 +1129,11 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
                 usedIterative = true;
                 return true;
             }
-            // (kept while the iterations it needed last time cost less than two builds: a fresh factorisation of the
-            // matrix at hand needs fewer iterations, so past that point building again is the cheaper path)
-            bool reused = m_ilut && m_ilutN == N && m_ilutIter >= 0 &&
-                          (m_ilutIter <= 40 || double(m_ilutIter) * m_ilutIterSeconds <= 2.0 * m_ilutBuildSeconds);
+            // (kept while the last solve with it needed no more than twice the iterations of the first solve after it was built, 80 at least.  The rule counts
+            // iterations and never reads a clock: a rule that looked at the time gave the same problem another preconditioner, and so other bits, whenever the
+            // machine was busy)
+            bool reused = m_ilut && m_ilutN == N && m_ilutIter >= 0 && m_ilutIter <= std::max(80L, 2 * m_ilutBase) &&
+                          m_ilutNewton == matrixIsNewton;
             if (!reused) buildIlut();
             const auto tl1 = std::chrono::steady_clock::now();
             bool ok = false;
@@ -1193,7 +1201,6 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
                 reused = false;
                 run();
             }
-            m_ilutIterSeconds = iterations > 0 ? std::chrono::duration<double>(std::chrono::steady_clock::now() - tl1).count() / double(iterations) : 0.0;
             if (ok)
             {
                 if (!reused) m_ilutBase = std::max(1L, iterations);
@@ -1269,13 +1276,16 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
     struct Iterate { std::vector<double> u, p; double residual; };
     std::vector<Iterate> iterates;
     const bool keepIterates = !m_quiet && !stepping;
-    if (!stepping)
+    // (a warm solve of the optimiser's -- quiet, the last flow in hand -- starts from that flow: the Stokes solution thrown at it, 111 BiCGSTAB iterations and a factorisation, would only give the last flow up)
+    if (!stepping && !(warm && !keepIterates && !m_opt.stokes))
     {
         taskSet(0.05, direct ? "solving the Stokes equations (direct)" : "solving the Stokes equations (iterative)");
         if (!linearSolve(x, 0.0, error)) return false;
         unpack(x);
         if (keepIterates) iterates.push_back({u, p, std::numeric_limits<double>::quiet_NaN()});
     }
+    else if (debug && !stepping)
+        fprintf(stderr, "[tetflow] a warm start from the last flow: no Stokes start\n");
     int it = 0;
     double rel = 0;
     bool converged = true;
@@ -1285,7 +1295,9 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
         // Picard, then Newton once the residual has come down; damped when it climbs
         double rel0 = -1, best = std::numeric_limits<double>::max();
         double omega = m_opt.relaxation;
-        bool newton = false;
+        // A warm start (the optimiser's: the last flow, the design moved a little) goes straight to Newton: its first residual is a few percent, and the Picard steps that a
+        // cold start needs to come down to one cost three solves for nothing.  A first residual above a fifth (the flow is too far for a Newton step) takes the Picard way
+        bool newton = warm && !stepping;
         int newtonOff = 0;
         std::vector<double> xPrev;
         converged = false;
@@ -1304,6 +1316,12 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
             for (size_t k = 0; k < N; ++k) r[k] = m_fixed[k] ? 0.0 : y[k] - rhs[k];
             rel = freeNorm(r) / scale;
             if (rel0 < 0) rel0 = rel;
+            if (it == 0 && useNewton && rel > 0.2)
+            {
+                newton = false;
+                rel0 = -1;
+                continue;
+            }
             if (keepIterates && !iterates.empty()) iterates.back().residual = rel;
             if (debug) fprintf(stderr, "[tetflow] iteration %d (%s): residual %.3e, %ld outlet triangles with backflow (each counted thrice)\n", it, useNewton ? "Newton" : "Picard", rel, backflowFaces.load());
             {
@@ -1334,6 +1352,7 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
             best = std::min(best, rel);
             if (newtonOff > 0) --newtonOff;
             xPrev = x;
+            matrixIsNewton = useNewton;
             if (!linearSolve(x, rel, error)) return false;
             const double w = useNewton ? 1.0 : omega;
             for (size_t k = 0; k < N; ++k) x[k] = w * x[k] + (1.0 - w) * xPrev[k];
@@ -1370,7 +1389,7 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
     m_u = u;
     m_p = p;
 
-    m_adjoint.clear();
+    m_adjoints.clear();
     if (m_wantAdjoint && !stepping)
     {
         // The discrete adjoint of the Stokes-Brinkman system for the dissipated power J = sum_e mu V |grad u|^2 +
@@ -1382,20 +1401,6 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
         taskSet(0.96, "the adjoint");
         // (the convective flow: the exact Jacobian at the converged state, not the last iteration's)
         if (convect) assemble(u, true, true);
-        // dJ/dU of the objective J = F . m_objDir, F = sum_e alpha_e int u dV = sum_e alpha_e (V_e / 4) sum_i u_i
-        std::vector<double> rJ(N, 0.0);
-        for (size_t t = 0; t < nt; ++t)
-        {
-            const double al = friction ? m_alpha[t] : 0.0;
-            if (!(al > 0)) continue;
-            const double w = al * A.geom[t].vol / 4.0;
-            const auto& tv = mesh.tets[t];
-            for (int q = 0; q < 4; ++q)
-            {
-                const size_t n = size_t(tv[size_t(q)]);
-                for (int a2 = 0; a2 < 3; ++a2) rJ[4 * n + size_t(a2)] += w * m_objDir[a2];
-            }
-        }
         std::vector<double> valT(val.size(), 0.0), rhsT(N, 0.0);
         for (size_t i = 0; i < nv; ++i)
         {
@@ -1421,24 +1426,57 @@ bool TetFlowProblem::solve(double tolerance, std::string& error, const std::atom
                     valT[size_t(outer[row]) + 4 * sii + size_t(r)] = 1.0;
                     rhsT[row] = 0.0;
                 }
-                else
-                    rhsT[row] = -rJ[row];
             }
         }
         std::swap(val, valT);
         std::swap(rhs, rhsT);
         const double savedScale = m_residualScale;
-        m_residualScale = 0;
-        m_ilutIter = -1;
-        std::vector<double> lam(N, 0.0);
-        std::string errA;
-        const bool okA = linearSolve(lam, 0.0, errA);
-        m_ilutIter = -1;
+        // (the factorisation of the adjoint's matrix has a place of its own: swapped in here and out below, so that the one of the flow, made for the last Newton matrix, serves the next flow as well)
+        std::swap(m_ilut, m_ilutAdj);
+        std::swap(m_ilutN, m_ilutAdjN);
+        std::swap(m_ilutBase, m_ilutAdjBase);
+        std::swap(m_ilutIter, m_ilutAdjIter);
+        std::swap(m_ilutNewton, m_ilutAdjNewton);
+        matrixIsNewton = convect;
+        // One adjoint for each objective J_k = F . dir_k (the force on the body along a direction), all on the
+        // transposed matrix just built -- the factorisation made for the first is kept for the rest
+        const std::vector<Eigen::Vector3d>& dirs = m_objDirs;
+        for (const auto& dir : dirs)
+        {
+            // dJ/dU of the objective J = F . dir, F = sum_e alpha_e int u dV = sum_e alpha_e (V_e / 4) sum_i u_i
+            std::vector<double> rJ(N, 0.0);
+            for (size_t t = 0; t < nt; ++t)
+            {
+                const double al = friction ? m_alpha[t] : 0.0;
+                if (!(al > 0)) continue;
+                const double w = al * A.geom[t].vol / 4.0;
+                const auto& tv = mesh.tets[t];
+                for (int q = 0; q < 4; ++q)
+                {
+                    const size_t n = size_t(tv[size_t(q)]);
+                    for (int a2 = 0; a2 < 3; ++a2) rJ[4 * n + size_t(a2)] += w * dir[a2];
+                }
+            }
+            for (size_t row = 0; row < N; ++row) rhs[row] = m_fixed[row] ? 0.0 : -rJ[row];
+            m_residualScale = 0;
+            std::vector<double> lam(N, 0.0);
+            std::string errA;
+            if (!linearSolve(lam, 0.0, errA, m_adjointTolerance))
+            {
+                if (debug) fprintf(stderr, "[tetflow] the adjoint solve failed: %s\n", errA.c_str());
+                m_adjoints.clear();
+                break;
+            }
+            m_adjoints.push_back(std::move(lam));
+        }
+        std::swap(m_ilut, m_ilutAdj);
+        std::swap(m_ilutN, m_ilutAdjN);
+        std::swap(m_ilutBase, m_ilutAdjBase);
+        std::swap(m_ilutIter, m_ilutAdjIter);
+        std::swap(m_ilutNewton, m_ilutAdjNewton);
         m_residualScale = savedScale;
         std::swap(val, valT);
         std::swap(rhs, rhsT);
-        if (okA) m_adjoint = lam;
-        else if (debug) fprintf(stderr, "[tetflow] the adjoint solve failed: %s\n", errA.c_str());
     }
 
     // The fields of an iterate (the converged flow, or an earlier one for the steps): each element's velocity
@@ -1879,7 +1917,40 @@ std::vector<Vec3> TetFlowProblem::inletSeeds(int n) const
 ////////////////////////////////////////////////////////////////////////////////
 // Flow topology optimisation
 
-bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::atomic<bool>* cancel)
+namespace {
+
+// The share of a tetrahedron's volume where the field that is linear through the values v[0..3] at its corners is above `level`: the corners above
+// it and below it are counted, and each case is the volume of what the plane cuts off, written with the distances to the level (all positive) so that
+// nothing cancels when two corners are nearly alike (the same as the structural optimiser's, tetfea.cpp)
+double volumeShareAbove(const double* v, double level)
+{
+    double up[4], down[4];
+    int nu = 0, nd = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (v[i] > level) up[nu++] = v[i] - level;
+        else down[nd++] = level - v[i];
+    }
+    (void)nd;
+    switch (nu)
+    {
+    case 0: return 0.0;
+    case 4: return 1.0;
+    case 1: return up[0] * up[0] * up[0] / ((up[0] + down[0]) * (up[0] + down[1]) * (up[0] + down[2]));
+    case 3: return 1.0 - down[0] * down[0] * down[0] / ((down[0] + up[0]) * (down[0] + up[1]) * (down[0] + up[2]));
+    default:
+    {
+        const double p = up[0], q = up[1], u = down[0], w = down[1];
+        const double below = (p * q * (u * u + u * w + w * w) + (p + q) * u * w * (u + w) + u * u * w * w) /
+                             ((p + u) * (q + u) * (p + w) * (q + w));
+        return 1.0 - below;
+    }
+    }
+}
+
+}   // anonymous namespace
+
+bool TetFlowProblem::optimizeDensity(const DensityOpt& s, std::string& error, const std::atomic<bool>* cancel)
 {
     if (!m_prepared && !prepare(error)) return false;
     if (!s.body.is_valid())
@@ -1897,19 +1968,19 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         error = "the flow needs an inlet for the body to be optimised in it";
         return false;
     }
-    if (!(s.volumeMin >= 0 && s.volumeMax >= s.volumeMin))
+    if (s.measures.empty())
     {
-        error = "the volume must be between 0 and 1 times the body's, the least no more than the most";
+        error = "the optimisation was not told what to make best";
         return false;
     }
     const auto t0 = std::chrono::steady_clock::now();
     const TetMesh& mesh = *m_mesh;
     const size_t nv = mesh.pos.size(), na = mesh.tets.size(), nf = mesh.faces.size();
     const double h = m_h;
-    const bool debug = std::getenv("FIELDES_FLOW_DEBUG") != nullptr;
     std::vector<TetGeom> geom(na);
     std::vector<Vec3> cen(na);
     std::vector<Eigen::Vector3f> centres(na);
+    std::vector<double> vol(na);
     for (size_t a = 0; a < na; ++a)
     {
         const auto& v = mesh.tets[a];
@@ -1918,12 +1989,11 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         for (int p = 0; p < 4; ++p) c += mesh.pos[size_t(v[size_t(p)])];
         cen[a] = c / 4.0;
         centres[a] = cen[a].cast<float>();
+        vol[a] = geom[a].vol;
     }
-    std::vector<double> vol(na);
-    for (size_t a = 0; a < na; ++a) vol[a] = geom[a].vol;
 
-    // The directions: the flow's (the inlets' mean), the lift's (perpendicular to it, in the plane of the domain's
-    // two long axes -- a slab's plane -- or any perpendicular when the flow runs along the thin axis)
+    // The directions: the flow's (the inlets' mean), the lift's (perpendicular to it, in the plane of the domain's two long axes -- a slab's plane --
+    // or any perpendicular when the flow runs along the thin axis)
     Vec3 d = s.flowDir;
     if (!(d.norm() > 0))
     {
@@ -1961,40 +2031,8 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
     l.normalize();
     m_flowDir = d;
     m_liftDir = l;
-    const Vec3 objDir = s.wDrag * d - s.wLift * l;
-    if (!(objDir.norm() > 0))
-    {
-        error = "the objective weighs nothing: give a drag or a lift weight";
-        return false;
-    }
 
-    // Which elements are fixed: fluid (avoid regions, outside the design region, the inlets' and outlets' own
-    // elements) or solid (keep regions); the rest are the design.
-    std::vector<char> state(na, 0);             // 0 design, 1 fluid, 2 solid
-    std::vector<float> vals;
-    if (s.region.is_valid())
-    {
-        evalTreePoints(s.region, centres, vals);
-        for (size_t a = 0; a < na; ++a) if (!(vals[a] < 0)) state[a] = 1;
-    }
-    for (const auto& t : s.avoid)
-    {
-        evalTreePoints(t, centres, vals);
-        for (size_t a = 0; a < na; ++a) if (vals[a] < 0) state[a] = 1;
-    }
-    for (const auto& t : s.keep)
-    {
-        evalTreePoints(t, centres, vals);
-        for (size_t a = 0; a < na; ++a) if (vals[a] < 0) state[a] = 2;
-    }
-    for (size_t f = 0; f < nf; ++f)
-        if (m_faceKind[f] == 0 || m_faceKind[f] == 1) state[size_t(mesh.faceTet[f])] = 1;
-
-    // The design is a LEVEL SET at the nodes, phi (mm, > 0 inside the body), the body its zero level: a smooth
-    // boundary that moves, splits and merges, placed to a fraction of an element.  Each element's share of the
-    // body is the exact fraction of it where the linear interpolant of phi is positive, and that fraction sets its
-    // friction.  A node of a fluid element is held at -h, of a solid (keep) element at +h, the rest are the
-    // variables; phi starts as the given body's own distance.
+    // Each vertex's elements
     std::vector<uint32_t> vtStart(nv + 1, 0), vtList(4 * na);
     for (const auto& t : mesh.tets)
         for (int p = 0; p < 4; ++p) vtStart[size_t(t[size_t(p)]) + 1]++;
@@ -2004,416 +2042,50 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         for (size_t a = 0; a < na; ++a)
             for (int p = 0; p < 4; ++p) vtList[cursor[size_t(mesh.tets[a][size_t(p)])]++] = uint32_t(a);
     }
-    std::vector<char> nodeState(nv, 0);         // 0 variable, 1 held fluid, 2 held solid
-    for (size_t i = 0; i < nv; ++i)
-    {
-        bool fluid = false, solid = false, design = false;
-        for (uint32_t e = vtStart[i]; e < vtStart[i + 1]; ++e)
-        {
-            const char st = state[vtList[e]];
-            fluid = fluid || st == 1;
-            solid = solid || st == 2;
-            design = design || st == 0;
-        }
-        nodeState[i] = fluid ? 1 : solid ? 2 : design ? 0 : 1;
-    }
-    std::vector<Eigen::Vector3f> nodePts(nv);
-    for (size_t i = 0; i < nv; ++i) nodePts[i] = mesh.pos[i].cast<float>();
-    evalTreePoints(s.body, nodePts, vals);
-    std::vector<double> phi(nv);
-    for (size_t i = 0; i < nv; ++i)
-        phi[i] = nodeState[i] == 1 ? -h : nodeState[i] == 2 ? h : -double(vals[i]);
-    auto hold = [&](std::vector<double>& ph) {
-        for (size_t i = 0; i < nv; ++i)
-            if (nodeState[i] == 1) ph[i] = -h;
-            else if (nodeState[i] == 2) ph[i] = h;
-    };
 
-    // Extrusion: the variable nodes along a line share one value
-    std::vector<int> column(nv, -1);
-    int nCol = 0;
-    std::vector<double> colCount;
-    if (s.extrude >= 0 && s.extrude <= 2)
-    {
-        const int u0 = s.extrude == 0 ? 1 : 0, u1 = s.extrude == 2 ? 1 : 2;
-        Vec3 lo = mesh.pos[0];
-        for (const auto& c : mesh.pos) lo = lo.cwiseMin(c);
-        std::unordered_map<int64_t, int> id;
-        const double bin = 0.25 * h;
-        for (size_t i = 0; i < nv; ++i)
-        {
-            if (nodeState[i]) continue;
-            const int64_t key = int64_t(std::floor((mesh.pos[i][u0] - lo[u0]) / bin + 0.5)) * 1000003 +
-                                int64_t(std::floor((mesh.pos[i][u1] - lo[u1]) / bin + 0.5));
-            auto it = id.find(key);
-            if (it == id.end()) it = id.emplace(key, nCol++).first;
-            column[i] = it->second;
-        }
-        colCount.assign(size_t(nCol), 0.0);
-        for (size_t i = 0; i < nv; ++i) if (column[i] >= 0) colCount[size_t(column[i])] += 1.0;
-    }
-    auto alongColumns = [&](std::vector<double>& v, bool mean) {
-        if (!nCol) return;
-        std::vector<double> sum(size_t(nCol), 0.0);
-        for (size_t i = 0; i < nv; ++i) if (column[i] >= 0) sum[size_t(column[i])] += v[i];
-        for (size_t i = 0; i < nv; ++i)
-            if (column[i] >= 0) v[i] = mean ? sum[size_t(column[i])] / colCount[size_t(column[i])] : sum[size_t(column[i])];
-    };
-    alongColumns(phi, true);
-
-    // The smoothing of the boundary's motion (the descent direction, not the shape): weights rmin - distance over
-    // the nodes within rmin, times their share of the volume (the filter of the structural optimiser, at the nodes)
+    // The design starts as the body: density 1 inside it, 0 outside, across the width of an element at its boundary (the share of an element the
+    // boundary cuts that is solid, to the first order).  The body's volume is what the share of volume is of
+    topopt::DesignSettings ds = s;
+    ds.origin = Tree::invalid();
+    ds.startDomain = Tree::invalid();
+    ds.frontierBlocked = Tree::invalid();
+    ds.stopAtEdge = false;
+    ds.resume.clear();
+    // The friction of the elements at the edge of the body changes the forces a lot with a little density: at the step that few iterations ask for (0.4) the
+    // objective swung by a fifth from one iteration to the next and the body came out lopsided; 0.2 is smooth
+    ds.moveStart = 0.2;
+    ds.smoothSharpening = true;
+    ds.startField = max(Tree(0.0f), min(Tree(1.0f), Tree(0.5f) - s.body * Tree(float(1.0 / h))));
+    std::vector<float> startVals;
+    evalTreePoints(ds.startField, centres, startVals);
     const double rmin = s.filterRadius > 0 ? s.filterRadius : 1.5 * h;
-    std::vector<double> vn(nv, 0.0);
-    for (size_t a = 0; a < na; ++a)
-        for (int p = 0; p < 4; ++p) vn[size_t(mesh.tets[a][size_t(p)])] += 0.25 * vol[a];
-    std::vector<size_t> fStart(nv + 1, 0);
-    std::vector<uint32_t> fIdx;
-    std::vector<float> fW;
-    std::vector<double> Hs(nv, 0.0);
-    {
-        Vec3 lo = mesh.pos[0], hi = mesh.pos[0];
-        for (const auto& c : mesh.pos)
-        {
-            lo = lo.cwiseMin(c);
-            hi = hi.cwiseMax(c);
-        }
-        const double cell = rmin;
-        int dims[3];
-        for (int k = 0; k < 3; ++k) dims[k] = std::max(1, int((hi[k] - lo[k]) / cell) + 1);
-        std::vector<std::vector<uint32_t>> grid(size_t(dims[0]) * dims[1] * dims[2]);
-        auto cellOf = [&](const Vec3& c, int* ijk) {
-            for (int k = 0; k < 3; ++k) ijk[k] = std::max(0, std::min(dims[k] - 1, int((c[k] - lo[k]) / cell)));
-        };
-        for (size_t i = 0; i < nv; ++i)
-        {
-            int ijk[3];
-            cellOf(mesh.pos[i], ijk);
-            grid[size_t(ijk[0]) + size_t(dims[0]) * (size_t(ijk[1]) + size_t(dims[1]) * size_t(ijk[2]))].push_back(uint32_t(i));
-        }
-        for (size_t i = 0; i < nv; ++i)
-        {
-            int ijk[3];
-            cellOf(mesh.pos[i], ijk);
-            for (int dz = -1; dz <= 1; ++dz)
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (int dx = -1; dx <= 1; ++dx)
-                    {
-                        const int ii = ijk[0] + dx, jj = ijk[1] + dy, kk = ijk[2] + dz;
-                        if (ii < 0 || jj < 0 || kk < 0 || ii >= dims[0] || jj >= dims[1] || kk >= dims[2]) continue;
-                        for (uint32_t j : grid[size_t(ii) + size_t(dims[0]) * (size_t(jj) + size_t(dims[1]) * size_t(kk))])
-                        {
-                            const double dist = (mesh.pos[i] - mesh.pos[j]).norm();
-                            if (dist < rmin)
-                            {
-                                const double w = (rmin - dist) * vn[j];
-                                fIdx.push_back(j);
-                                fW.push_back(float(w));
-                                Hs[i] += w;
-                            }
-                        }
-                    }
-            fStart[i + 1] = fIdx.size();
-        }
-    }
-    auto filter = [&](const std::vector<double>& in, std::vector<double>& out) {
-        out.resize(nv);
-        parallelRange(nv, [&](size_t b0, size_t b1) {
-            for (size_t i = b0; i < b1; ++i)
-            {
-                double sum = 0;
-                for (size_t q = fStart[i]; q < fStart[i + 1]; ++q) sum += double(fW[q]) * in[fIdx[q]];
-                out[i] = Hs[i] > 0 ? sum / Hs[i] : in[i];
-            }
-        }, 1024);
-    };
-    auto filterT = [&](const std::vector<double>& in, std::vector<double>& out) {
-        out.assign(nv, 0.0);
-        for (size_t i = 0; i < nv; ++i)
-        {
-            if (!(Hs[i] > 0)) { out[i] += in[i]; continue; }
-            const double f = in[i] / Hs[i];
-            for (size_t q = fStart[i]; q < fStart[i + 1]; ++q) out[fIdx[q]] += double(fW[q]) * f;
-        }
-    };
 
-    // The fraction of a tetrahedron where the linear interpolant of its four nodal values is positive -- the
-    // volume of the simplex above the plane -- as the third divided difference of t_+^3 over the values (one
-    // positive corner: a small similar tetrahedron, (d / (d - a)) (d / (d - b)) (d / (d - c)); the rest follows),
-    // with its derivative in each nodal value.  Equal values are nudged apart: the formula divides by their
-    // differences.
-    auto fraction = [h](const double u[4], double* grad) -> double {
-        double v[4] = {u[0], u[1], u[2], u[3]};
-        int pos = 0, neg = 0;
-        double scale = 0;
-        for (int k = 0; k < 4; ++k)
-        {
-            scale = std::max(scale, std::abs(v[k]));
-            if (v[k] > 0) ++pos;
-            if (v[k] < 0) ++neg;
-        }
-        if (grad) for (int k = 0; k < 4; ++k) grad[k] = 0;
-        if (neg == 0) return 1.0;
-        if (pos == 0) return 0.0;
-        // (the nudge: a thousandth of the values' size, and never below a millionth of an element -- values all
-        // within a hair of the zero level would otherwise divide by nothing)
-        const double eps = std::max(1e-3 * scale, 1e-6 * h);
-        for (int pass = 0; pass < 4; ++pass)
-            for (int i = 0; i < 4; ++i)
-                for (int j = i + 1; j < 4; ++j)
-                    if (std::abs(v[i] - v[j]) < eps) v[j] += (v[j] >= v[i]) ? eps : -eps;
-        double P[4], g[4], gp[4];
-        for (int k = 0; k < 4; ++k)
-        {
-            P[k] = 1.0;
-            for (int j = 0; j < 4; ++j) if (j != k) P[k] *= (v[k] - v[j]);
-            g[k] = v[k] > 0 ? v[k] * v[k] * v[k] : 0.0;
-            gp[k] = v[k] > 0 ? 3.0 * v[k] * v[k] : 0.0;
-        }
-        double F = 0;
-        for (int k = 0; k < 4; ++k) F += g[k] / P[k];
-        if (grad)
-        {
-            for (int k = 0; k < 4; ++k)
-            {
-                double sumInv = 0;
-                for (int j = 0; j < 4; ++j) if (j != k) sumInv += 1.0 / (v[k] - v[j]);
-                double gk = gp[k] / P[k] - g[k] / P[k] * sumInv;
-                for (int m = 0; m < 4; ++m) if (m != k) gk += g[m] / (P[m] * (v[m] - v[k]));
-                grad[k] = gk;
-            }
-        }
-        if (!std::isfinite(F))
-        {
-            if (grad) for (int k = 0; k < 4; ++k) grad[k] = 0;
-            return pos > neg ? 1.0 : 0.0;
-        }
-        if (grad) for (int k = 0; k < 4; ++k) if (!std::isfinite(grad[k])) grad[k] = 0;
-        return std::max(0.0, std::min(1.0, F));
-    };
-    // Every element's share of the body from the smoothed level set, held elements aside
-    std::vector<double> phiTilde, rho(na, 0.0);
-    auto fractions = [&](const std::vector<double>& ph, std::vector<double>& out) {
-        out.resize(na);
-        parallelRange(na, [&](size_t b0, size_t b1) {
-            for (size_t a = b0; a < b1; ++a)
-            {
-                if (state[a] == 1) { out[a] = 0.0; continue; }
-                if (state[a] == 2) { out[a] = 1.0; continue; }
-                double u[4];
-                for (int p = 0; p < 4; ++p) u[p] = ph[size_t(mesh.tets[a][size_t(p)])];
-                out[a] = fraction(u, nullptr);
-            }
-        }, 1024);
-    };
-    auto solidVolume = [&](const std::vector<double>& fr) {
-        double v = 0;
-        for (size_t a = 0; a < na; ++a) v += vol[a] * fr[a];
-        return v;
-    };
-    auto nodal = [&](const std::vector<double>& ph, std::vector<float>& out) {
-        out.resize(nv);
-        for (size_t i = 0; i < nv; ++i) out[i] = float(ph[i]);
-    };
-    // The mean slope of the level set across the elements it cuts: a distance function has 1, and the steps
-    // are measured in mm of boundary motion, so phi is rescaled to a slope of 1 each iteration (a cheap
-    // reinitialisation; the smoothing flattens it a little every time)
-    auto slopeOf = [&](const std::vector<double>& ph) {
-        double sum = 0, cnt = 0;
-        for (size_t a = 0; a < na; ++a)
-        {
-            if (state[a]) continue;
-            const auto& tv = mesh.tets[a];
-            double mn = ph[size_t(tv[0])], mx = mn;
-            for (int p = 1; p < 4; ++p)
-            {
-                mn = std::min(mn, ph[size_t(tv[size_t(p)])]);
-                mx = std::max(mx, ph[size_t(tv[size_t(p)])]);
-            }
-            if (!(mn < 0 && mx > 0)) continue;
-            Eigen::Matrix<double, 4, 3> g;
-            m_locator->gradients(int(a), g);
-            Vec3 gr = Vec3::Zero();
-            for (int p = 0; p < 4; ++p) gr += ph[size_t(tv[size_t(p)])] * g.row(p).transpose();
-            sum += gr.norm();
-            cnt += 1.0;
-        }
-        return cnt > 0 ? sum / cnt : 1.0;
-    };
-
-    // Mirror symmetry (as the structural optimiser has it).  For each plane the design is kept symmetric about, every node's partner: the
-    // tetrahedron that holds the mirror image of the node, with the barycentric weights there.  The sensitivities are averaged over the pairs,
-    // which keeps a design that starts symmetric symmetric -- left to itself it does not: the mesh of a symmetric domain is never exactly
-    // symmetric, the small difference grows, and one flank of a nose gets a lump the other has not
-    struct NodeMirror { int axis; double at; bool found; std::vector<std::array<int32_t, 4>> from; std::vector<std::array<double, 4>> w; };
-    std::vector<NodeMirror> mirrorMaps;
-    m_mirrorsUsed.clear();
-    if (s.symmetryAuto || !s.mirrors.empty())
+    const int nb = int(s.measures.size());
+    // The directions the measures need an adjoint for
+    std::vector<Vec3> dirsK;
+    std::vector<int> dirOf(size_t(nb), -1);
+    for (int b = 0; b < nb; ++b)
     {
-        auto mirrorOf = [](const Vec3& c, int axis, double at) {
-            Vec3 q = c;
-            q[axis] = 2 * at - c[axis];
-            return q;
-        };
-        // (the locator the solver keeps is made by its first solve, which has not been made yet)
-        std::shared_ptr<const TetLocator> mirrorLocator = m_locator;
-        if (!mirrorLocator) mirrorLocator = std::make_shared<TetLocator>(mesh);
-        auto makeMap = [&](int axis, double at, bool found) {
-            NodeMirror mm{axis, at, found, std::vector<std::array<int32_t, 4>>(nv), std::vector<std::array<double, 4>>(nv)};
-            parallelRange(nv, [&](size_t b0, size_t b1) {
-                for (size_t i = b0; i < b1; ++i)
-                {
-                    double lam[4];
-                    const int t = mirrorLocator->locate(mirrorOf(mesh.pos[i], axis, at), lam);
-                    if (t < 0)
-                    {
-                        mm.from[i] = {int32_t(i), int32_t(i), int32_t(i), int32_t(i)};
-                        mm.w[i] = {1.0, 0.0, 0.0, 0.0};
-                        continue;
-                    }
-                    for (int q = 0; q < 4; ++q)
-                    {
-                        mm.from[i][size_t(q)] = int32_t(mesh.tets[size_t(t)][size_t(q)]);
-                        mm.w[i][size_t(q)] = lam[q];
-                    }
-                }
-            }, 512);
-            return mm;
-        };
-        // Is the whole problem symmetric about this plane?  The flow along it; the domain and the regions the same at the mirror image of every
-        // element's centre; the body the same at the mirror image of every node near its boundary; each kind of boundary (an inlet, an outlet, a
-        // wall, a slip) of the same area and in the same place on the two sides
-        auto problemSymmetric = [&](int axis, double at, std::string& why) -> bool {
-            if (std::abs(d[axis]) > 0.05) { why = "the flow does not run along the plane"; return false; }
-            std::vector<Eigen::Vector3f> mc(na);
-            for (size_t a = 0; a < na; ++a) mc[a] = mirrorOf(cen[a], axis, at).cast<float>();
-            double total = 0, badDomain = 0, badRegion = 0;
-            std::vector<float> v1, v2;
-            evalTreePoints(m_shape, mc, v1);
-            for (size_t a = 0; a < na; ++a)
-            {
-                total += vol[a];
-                if (!(v1[a] <= 0.25f * float(h))) badDomain += vol[a];
-            }
-            if (badDomain > 0.04 * total) { why = "the fluid domain is not symmetric"; return false; }
-            std::vector<Tree> trees;
-            if (s.region.is_valid()) trees.push_back(s.region);
-            for (const auto& t : s.keep) trees.push_back(t);
-            for (const auto& t : s.avoid) trees.push_back(t);
-            for (const auto& t : trees)
-            {
-                evalTreePoints(t, centres, v1);
-                evalTreePoints(t, mc, v2);
-                for (size_t a = 0; a < na; ++a)
-                    if ((v1[a] < 0) != (v2[a] < 0)) badRegion += vol[a];
-            }
-            if (badRegion > 0.04 * total) { why = "the region, or the regions to keep or to avoid, are not symmetric"; return false; }
-            {
-                std::vector<Eigen::Vector3f> mp(nv);
-                for (size_t i = 0; i < nv; ++i) mp[i] = mirrorOf(mesh.pos[i], axis, at).cast<float>();
-                evalTreePoints(s.body, nodePts, v1);
-                evalTreePoints(s.body, mp, v2);
-                size_t near = 0, bad = 0;
-                for (size_t i = 0; i < nv; ++i)
-                    if (std::abs(v1[i]) < 2.0 * h)
-                    {
-                        ++near;
-                        if ((v1[i] < 0) != (v2[i] < 0)) ++bad;
-                    }
-                if (near > 0 && double(bad) > 0.06 * double(near)) { why = "the body is not symmetric"; return false; }
-            }
-            {
-                struct Side { double a = 0; Vec3 c = Vec3::Zero(); };
-                Side sd[5][2];                                  // (the kind of boundary + 1: -1 a wall at rest ... 3 a slip; above the plane, below it)
-                for (size_t f = 0; f < nf; ++f)
-                {
-                    const int kind = m_faceKind[f];
-                    if (kind < -1 || kind > 3) continue;
-                    const auto& fn = mesh.faces[f];
-                    const Vec3 c = (mesh.pos[size_t(fn[0])] + mesh.pos[size_t(fn[1])] + mesh.pos[size_t(fn[2])]) / 3.0;
-                    const double dd = c[axis] - at;
-                    if (std::abs(dd) < 0.25 * h) continue;      // (on the plane)
-                    Vec3 q = c;
-                    q[axis] = std::abs(dd);                     // (the distance from the plane: the same for a point and its image)
-                    Side& sdk = sd[kind + 1][dd > 0 ? 0 : 1];
-                    sdk.a += m_faceArea[f];
-                    sdk.c += m_faceArea[f] * q;
-                }
-                for (int k = 0; k < 5; ++k)
-                {
-                    const double a0 = sd[k][0].a, a1 = sd[k][1].a;
-                    if (a0 + a1 <= 0) continue;
-                    if (std::abs(a0 - a1) > 0.06 * std::max(a0, a1)) { why = "the boundary conditions differ between the two sides"; return false; }
-                    if (a0 > 0 && a1 > 0 && (sd[k][0].c / a0 - sd[k][1].c / a1).norm() > 0.5 * h)
-                    {
-                        why = "the boundary conditions are in other places on the two sides";
-                        return false;
-                    }
-                }
-            }
-            return true;
-        };
-        for (const auto& m : s.mirrors)
+        const int kind = s.measures[size_t(b)];
+        if (kind != MEASURE_DRAG && kind != MEASURE_LIFT) continue;
+        const Vec3 dir = kind == MEASURE_DRAG ? d : l;
+        int found = -1;
+        for (size_t k = 0; k < dirsK.size(); ++k) if ((dirsK[k] - dir).norm() < 1e-12) found = int(k);
+        if (found < 0)
         {
-            if (m.axis < 0 || m.axis > 2) continue;
-            const double at = m.atCentre ? 0.5 * (m_lo[m.axis] + m_hi[m.axis]) : m.at;
-            mirrorMaps.push_back(makeMap(m.axis, at, false));
-            m_mirrorsUsed.push_back({m.axis, at, false});
+            found = int(dirsK.size());
+            dirsK.push_back(dir);
         }
-        if (s.symmetryAuto)
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                bool asked = false;
-                for (const auto& mm : mirrorMaps) asked = asked || mm.axis == axis;
-                if (asked) continue;
-                const double at = 0.5 * (m_lo[axis] + m_hi[axis]);
-                std::string why;
-                if (!problemSymmetric(axis, at, why))
-                {
-                    if (debug) fprintf(stderr, "[tetflow opt] not symmetric about axis %d: %s\n", axis, why.c_str());
-                    continue;
-                }
-                mirrorMaps.push_back(makeMap(axis, at, true));
-                m_mirrorsUsed.push_back({axis, at, true});
-            }
-    }
-    auto symmetrise = [&](std::vector<double>& v) {
-        std::vector<double> before;
-        for (const auto& mm : mirrorMaps)
-        {
-            before = v;
-            for (size_t i = 0; i < nv; ++i)
-            {
-                if (nodeState[i]) continue;
-                double m = 0;
-                for (size_t q = 0; q < 4; ++q) m += mm.w[i][q] * before[size_t(mm.from[i][q])];
-                v[i] = 0.5 * (before[i] + m);
-            }
-        }
-    };
-    if (!mirrorMaps.empty())
-    {
-        symmetrise(phi);
-        alongColumns(phi, true);
+        dirOf[size_t(b)] = found;
     }
 
-    phiTilde = phi;
-    fractions(phiTilde, rho);
-    const double bodyVolume = solidVolume(rho);
-    if (!(bodyVolume > 0))
-    {
-        error = "the body lies in no element of the fluid domain";
-        return false;
-    }
-    const double vMin = s.volumeMin * bodyVolume, vMax = s.volumeMax * bodyVolume;
-
-    // The friction of the solid: mu / (darcy h^2), so the flow penetrates it by about sqrt(darcy) elements; an
-    // element's friction is its share of the body times that (an element the boundary cuts in two carries half).
-    // It is set by the element, not by the body: a solid many times more impermeable than that is a wall already
-    // when a sliver of it is in an element, the fraction then changes the flow only when it is nearly nothing, and
-    // the sensitivities sit on that edge and mislead (the body zig-zagged; the finite-difference check read 3-5x).
+    // The friction of the solid: mu / (darcy h^2), so the flow penetrates it by about sqrt(darcy) elements.  An element's friction follows its density
+    // linearly, alpha = alpha_max rho.  (Borrvall & Petersson's convex interpolation was tried: a grey element is then mostly fluid, so the optimiser parks
+    // volume as a cloud of grey that costs no drag, and every sharpening step takes the cloud away at once.)  The force on the body from the flow just
+    // solved: F = sum_e alpha_e (V_e / 4) sum_i u_i
     const double alphaMax = m_mu / (std::max(s.darcy, 1e-6) * h * h);
-    // The force on the body from the flow just solved: F = sum_e alpha_e (V_e / 4) sum_i u_i
+    auto alphaOf = [&](double rho) { return alphaMax * std::max(0.0, std::min(1.0, rho)); };
+    auto dAlphaOf = [&](double) { return alphaMax; };
     auto bodyForce = [&]() {
         Vec3 F = Vec3::Zero();
         for (size_t a = 0; a < na; ++a)
@@ -2430,106 +2102,184 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         return F;
     };
 
-    m_history.clear();
-    m_dropHistory.clear();
-    m_densityHistory.clear();
-    m_steps.clear();
-    m_stepStats.clear();
-    const Options saved = m_opt;
-    m_quiet = true;
-    m_wantAdjoint = true;
-    m_objDir = objDir;
-    m_u.clear();
-    m_p.clear();
-    run_progress::Task task("optimising the body in the flow");
-    // (the picture of the body that the viewport draws as it goes comes down when the optimisation ends, however it ends)
-    struct LivePicture { ~LivePicture() { run_progress::publishLive(nullptr); } } livePicture;
-    std::vector<float> liveObjective;
+    std::vector<char> held;                             // (the core's state of each element: 0 design, 1 solid, 2 fluid)
+    double bodyVolume = 0;
+    std::vector<double> dragRec, liftRec;               // (the drag and the lift of each iteration that was evaluated and not taken back)
+    // The level set the rest of the flow code knows (mm, positive inside the body) from a density at the nodes, the body where the density is above `cut`
+    auto levelOf = [&](const std::vector<float>& dens, double cut) {
+        std::vector<float> out(nv);
+        for (size_t i = 0; i < nv; ++i) out[i] = float((double(dens[i]) - cut) * 2.0 * rmin);
+        return out;
+    };
+    // The cut of a density into the body: the level above which the volume is the design's own.  The density is partly grey, and a cut at one half gave
+    // another volume than the one the design was held to.  Counted exactly (the density is linear in each tetrahedron), by halving
+    auto cutLevel = [&](const std::vector<float>& dens, double volume) {
+        double lo = 0.0, hi = 1.0;
+        for (int k = 0; k < 30; ++k)
+        {
+            const double mid = 0.5 * (lo + hi);
+            double above = 0;
+            for (size_t a = 0; a < na; ++a)
+            {
+                double v[4];
+                for (int p = 0; p < 4; ++p) v[p] = double(dens[size_t(mesh.tets[a][size_t(p)])]);
+                above += vol[a] * volumeShareAbove(v, mid);
+            }
+            if (above > volume) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    };
 
-    // The boundary's step: the most it moves in one iteration, in mm.  It is as large as the iterations asked for allow (a short run has to go the
-    // whole way, a long one can be careful: one element at most, half an element at 48 iterations and more) and the same all the way -- a cap that
-    // shrinks as the run goes (it did) leaves the last iterations too small to move a nose or a tail the few millimetres they still have to go, and
-    // the design creeps.  Within the cap the step grows while the objective falls as the sensitivities predicted, and is halved when a step made it
-    // worse (taken back, below): the objective never rises, so there is nothing else to hold it back
-    const double stepStart = std::max(0.5, std::min(1.0, 24.0 / std::max(1, s.iterations))) * h;
-    std::vector<double> accepted;                           // (the objective of each design that was kept, for the stop below)
-    double step = stepStart, predicted = 0;
-    bool havePrediction = false;
-    int it = 0, rejected = 0;
-    bool ok = true;
-    std::vector<double> dc(na), gN, gPhi, gPrev, phiPrev, phiNew(nv), phiS(nv), phiT2, rho2;
-    double Jprev = std::numeric_limits<double>::infinity();
-    double tSolve = 0;                                      // (debug: the seconds of an iteration's flow and adjoint)
-    std::chrono::steady_clock::time_point tStep;
-    m_optRejected = 0;
-    m_optStop = 0;
-    for (; it < s.iterations; ++it)
+    struct Adapter : topopt::Physics
     {
-        if (cancel && cancel->load())
+        int count = 0;
+        std::function<void(std::vector<char>&, std::vector<char>&)> fixedFn;
+        std::function<bool(int, double, const std::vector<Eigen::Vector3f>&, double, std::string&)> symmetricFn;
+        std::function<bool(const std::vector<double>&, bool, int, std::vector<double>&, std::vector<std::vector<double>>&, std::string&)> measuresFn;
+        std::function<void(const std::vector<double>&)> restoreFn;
+        std::function<void(const topopt::IterationView&)> keptFn;
+        std::function<void(bool)> tightFn;
+        int measureCount() const override { return count; }
+        const char* taskName() const override { return "optimising the body in the flow"; }
+        void fixedElements(std::vector<char>& state, std::vector<char>& supported) override { fixedFn(state, supported); }
+        bool symmetricAbout(int axis, double at, const std::vector<Eigen::Vector3f>& mirrored, double regionMismatch, std::string& why) override
         {
-            error = "cancelled";
-            ok = false;
-            break;
+            return symmetricFn(axis, at, mirrored, regionMismatch, why);
         }
+        bool evaluate(const std::vector<double>& x, bool update, int iteration, std::vector<double>& values,
+                      std::vector<std::vector<double>>& sens, std::string& err) override
         {
-            char buf[64];
-            if (rejected) snprintf(buf, sizeof(buf), "optimising, iteration %d of %d (%d taken back)", it + 1, s.iterations, rejected);
-            else snprintf(buf, sizeof(buf), "optimising, iteration %d of %d", it + 1, s.iterations);
-            task.set(double(it) / std::max(1, s.iterations), buf);
-            task.span(double(it) / std::max(1, s.iterations), double(it + 1) / std::max(1, s.iterations));
+            return measuresFn(x, update, iteration, values, sens, err);
         }
-        phiTilde = phi;
-        fractions(phiTilde, rho);
-        m_alpha.assign(na, 0.0);
-        for (size_t a = 0; a < na; ++a) m_alpha[a] = alphaMax * rho[a];
-        m_time = 0;
-        m_snapshot = true;
-        const auto tA = std::chrono::steady_clock::now();
-        const bool solved = solve(1e-9, error, cancel);
-        m_snapshot = false;
-        tSolve = std::chrono::duration<double>(std::chrono::steady_clock::now() - tA).count();
-        tStep = std::chrono::steady_clock::now();
-        if (!solved)
-        {
-            ok = false;
-            break;
-        }
-        if (!m_steps.empty()) m_steps.back().iteration = it;
-        const Vec3 F = bodyForce();
-        const double J = F.dot(objDir);
-        // A step that raised the objective was too long: back to the design before it, the step halved, the same
-        // gradient (no new adjoint); the record of that design is dropped
-        const bool backtrack = it > 0 && J > Jprev * (1.0 + 1e-3) && step > 0.02 * h && !gPrev.empty();
-        if (backtrack)
-        {
-            if (!m_steps.empty()) { m_steps.pop_back(); m_stepStats.pop_back(); }
-            phi = phiPrev;
-            phiTilde = phi;
-            fractions(phiTilde, rho);
-            step *= 0.5;
-            ++rejected;
-            gPhi = gPrev;
-            if (debug) fprintf(stderr, "[tetflow opt] iteration %d: J %.6g above %.6g -- step back, step now %.3f mm\n", it, J, Jprev, step);
-        }
-        else
-        {
-        m_history.push_back(F.dot(d));
-        m_dropHistory.push_back(F.dot(l));
-        m_densityHistory.emplace_back();
-        nodal(phiTilde, m_densityHistory.back());
+        void restoreState(const std::vector<double>& state) override { restoreFn(state); }
+        void iterationKept(const topopt::IterationView& view) override { keptFn(view); }
+        void tightSolves(bool on) override { tightFn(on); }
+    } adapter;
+    adapter.count = nb;
+    // The tolerances of the optimiser's flows and adjoints: the drag of a flow differs by 1.3e-6 between 1e-5 and 1e-9 of the load, and the gradient the adjoint gives is needed to a part in 10^4; the
+    // finite-difference check (FIELDES_TOPO_FDCHECK) switches to tight ones for the evaluations it compares with
+    double flowTolerance = 1e-5, adjointReduction = 1e-6;
+    adapter.tightFn = [&](bool on) {
+        flowTolerance = on ? 1e-9 : 1e-5;
+        adjointReduction = on ? 1e-9 : 1e-6;
+    };
 
-        // The sensitivities dJ/dalpha_e: the explicit part (V_e / 4) sum_i u_i . objDir, and the adjoint part
-        // lambda . d(K U - F)/d alpha_e (the element's rows at alpha and at alpha + delta, closed-form)
-        std::vector<double> adj(na, 0.0), explicitPart(na, 0.0);
-        if (m_adjoint.size() == 4 * nv)
+    // What the flow holds: the fluid outside the region where material may be, at the inlets and the outlets (on top of the regions to avoid and to
+    // keep, which the core has applied); the body's volume, from the density the design starts with
+    adapter.fixedFn = [&](std::vector<char>& state, std::vector<char>&) {
+        if (s.region.is_valid())
         {
+            std::vector<float> vals;
+            evalTreePoints(s.region, centres, vals);
+            for (size_t a = 0; a < na; ++a)
+                if (state[a] == 0 && !(vals[a] < 0)) state[a] = 2;
+        }
+        for (size_t f = 0; f < nf; ++f)
+            if (m_faceKind[f] == 0 || m_faceKind[f] == 1) state[size_t(mesh.faceTet[f])] = 2;
+        held = state;
+        bodyVolume = 0;
+        for (size_t a = 0; a < na; ++a) bodyVolume += vol[a] * (state[a] == 1 ? 1.0 : state[a] == 2 ? 0.0 : double(startVals[a]));
+    };
+
+    // Is the whole problem symmetric about this plane?  The flow along it; the domain and the region the same at the mirror image of every element's
+    // centre (the regions to keep and to avoid: the core's word); the body the same near its boundary; each kind of boundary (an inlet, an outlet, a
+    // wall, a slip) of the same area and in the same place on the two sides
+    adapter.symmetricFn = [&](int axis, double at, const std::vector<Eigen::Vector3f>& mc, double regionMismatch, std::string& why) -> bool {
+        if (std::abs(d[axis]) > 0.05) { why = "the flow does not run along the plane"; return false; }
+        double total = 0;
+        for (size_t a = 0; a < na; ++a) total += vol[a];
+        std::vector<float> v1, v2;
+        evalTreePoints(m_shape, mc, v1);
+        double badDomain = 0;
+        for (size_t a = 0; a < na; ++a)
+            if (!(v1[a] <= 0.25f * float(h))) badDomain += vol[a];
+        if (badDomain > 0.04 * total) { why = "the fluid domain is not symmetric"; return false; }
+        if (regionMismatch > 0.04) { why = "the regions to keep or to avoid are not symmetric"; return false; }
+        if (s.region.is_valid())
+        {
+            evalTreePoints(s.region, centres, v1);
+            evalTreePoints(s.region, mc, v2);
+            double bad = 0;
+            for (size_t a = 0; a < na; ++a)
+                if ((v1[a] < 0) != (v2[a] < 0)) bad += vol[a];
+            if (bad > 0.04 * total) { why = "the region where the body may be is not symmetric"; return false; }
+        }
+        {
+            evalTreePoints(s.body, centres, v1);
+            evalTreePoints(s.body, mc, v2);
+            size_t near = 0, bad = 0;
+            for (size_t a = 0; a < na; ++a)
+                if (std::abs(v1[a]) < 2.0 * h)
+                {
+                    ++near;
+                    if ((v1[a] < 0) != (v2[a] < 0)) ++bad;
+                }
+            if (near > 0 && double(bad) > 0.06 * double(near)) { why = "the body is not symmetric"; return false; }
+        }
+        {
+            struct Side { double a = 0; Vec3 c = Vec3::Zero(); };
+            Side sd[5][2];                                  // (the kind of boundary + 1: -1 a wall at rest ... 3 a slip; above the plane, below it)
+            for (size_t f = 0; f < nf; ++f)
+            {
+                const int kind = m_faceKind[f];
+                if (kind < -1 || kind > 3) continue;
+                const auto& fn = mesh.faces[f];
+                const Vec3 c = (mesh.pos[size_t(fn[0])] + mesh.pos[size_t(fn[1])] + mesh.pos[size_t(fn[2])]) / 3.0;
+                const double dd = c[axis] - at;
+                if (std::abs(dd) < 0.25 * h) continue;      // (on the plane)
+                Vec3 q = c;
+                q[axis] = std::abs(dd);                     // (the distance from the plane: the same for a point and its image)
+                Side& sdk = sd[kind + 1][dd > 0 ? 0 : 1];
+                sdk.a += m_faceArea[f];
+                sdk.c += m_faceArea[f] * q;
+            }
+            for (int k = 0; k < 5; ++k)
+            {
+                const double a0 = sd[k][0].a, a1 = sd[k][1].a;
+                if (a0 + a1 <= 0) continue;
+                if (std::abs(a0 - a1) > 0.06 * std::max(a0, a1)) { why = "the boundary conditions differ between the two sides"; return false; }
+                if (a0 > 0 && a1 > 0 && (sd[k][0].c / a0 - sd[k][1].c / a1).norm() > 0.5 * h)
+                {
+                    why = "the boundary conditions are in other places on the two sides";
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+
+    // The measures of a density: the flow with the body's friction, the force on the body along the flow and across it, and the exact discrete
+    // adjoint for the sensitivity of each of those to every element's density; the volume of the body, as a share of the body it started as
+    adapter.measuresFn = [&](const std::vector<double>& x, bool update, int iteration, std::vector<double>& values,
+                             std::vector<std::vector<double>>& sens, std::string& err) -> bool {
+        m_alpha.assign(na, 0.0);
+        for (size_t a = 0; a < na; ++a) m_alpha[a] = alphaOf(x[a]);
+        m_time = 0;
+        m_snapshot = update;
+        m_adjointTolerance = adjointReduction;
+        const bool solved = solve(flowTolerance, err, cancel);
+        m_snapshot = false;
+        if (!solved) return false;
+        if (update && !m_steps.empty()) m_steps.back().iteration = iteration;
+        const Vec3 F = bodyForce();
+        // dForce[k][e]: d (F . dirsK[k]) / d density of element e -- the explicit part (V_e / 4) sum_i u_i . dir, and the adjoint part
+        // lambda . d(K U - F) / d alpha_e (the element's rows at alpha and at alpha + delta, closed-form), times d alpha / d density = alpha_max
+        std::vector<std::vector<double>> dForce(dirsK.size(), std::vector<double>(na, 0.0));
+        if (!dirsK.empty())
+        {
+            if (m_adjoints.size() != dirsK.size())
+            {
+                err = "the adjoint of the flow could not be solved";
+                return false;
+            }
             const Vec3 fb = m_rho * m_g;
             const bool convect = !m_opt.stokes;
+            const size_t nk = dirsK.size();
             parallelRange(na, [&](size_t b0, size_t b1) {
                 ElemRows e1, e2;
                 for (size_t a = b0; a < b1; ++a)
                 {
-                    if (state[a]) continue;
+                    if (held[a]) continue;
                     const auto& tv = mesh.tets[a];
                     const double hea = std::cbrt(6.0 * std::sqrt(2.0) * vol[a]);
                     const double dd = 1e-4 * std::max(m_alpha[a], m_rho * 4.0 * (m_mu / m_rho) / (hea * hea));
@@ -2546,296 +2296,193 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
                         for (int c = 0; c < 3; ++c) U[4 * qn + c] = m_u[3 * n + size_t(c)];
                         U[4 * qn + 3] = m_p[n];
                     }
-                    explicitPart[a] = vol[a] / 4.0 * su.dot(objDir);
-                    double sum = 0;
+                    double sums[2] = {0.0, 0.0};
                     for (int li = 0; li < 4; ++li)
                     {
                         const size_t n = size_t(tv[size_t(li)]);
                         bool any = false;
-                        for (int r = 0; r < 4; ++r) any = any || m_adjoint[4 * n + size_t(r)] != 0;
+                        for (size_t k = 0; k < nk; ++k)
+                            for (int r = 0; r < 4; ++r) any = any || m_adjoints[k][4 * n + size_t(r)] != 0;
                         if (!any) continue;
                         elementRows(geom[a], li, hea, av, pk, convect, false, m_alpha[a], fb, m_mu, m_rho, 0.0, uo, e1);
                         elementRows(geom[a], li, hea, av, pk, convect, false, m_alpha[a] + dd, fb, m_mu, m_rho, 0.0, uo, e2);
                         for (int r = 0; r < 4; ++r)
                         {
-                            const double lam = m_adjoint[4 * n + size_t(r)];
-                            if (lam == 0) continue;
                             double dr = -(e2.b[r] - e1.b[r]);
-                            for (int k = 0; k < 16; ++k) dr += (e2.r[r][k] - e1.r[r][k]) * U[k];
-                            sum += lam * dr / dd;
+                            for (int k16 = 0; k16 < 16; ++k16) dr += (e2.r[r][k16] - e1.r[r][k16]) * U[k16];
+                            for (size_t k = 0; k < nk; ++k)
+                            {
+                                const double lam = m_adjoints[k][4 * n + size_t(r)];
+                                if (lam != 0) sums[k] += lam * dr / dd;
+                            }
                         }
                     }
-                    adj[a] = sum;
+                    const double dAlpha = dAlphaOf(x[a]);
+                    for (size_t k = 0; k < nk; ++k) dForce[k][a] = dAlpha * (vol[a] / 4.0 * su.dot(dirsK[k]) + sums[k]);
                 }
             }, 256);
         }
-        // dJ/drho_e, then at the nodes of the smoothed level set through each cut element's fraction, then back
-        // through the smoothing; along an extruded line, one value
-        for (size_t a = 0; a < na; ++a) dc[a] = state[a] ? 0.0 : alphaMax * (explicitPart[a] + adj[a]);
-        gN.assign(nv, 0.0);
-        for (size_t a = 0; a < na; ++a)
+        double solid = 0;
+        for (size_t a = 0; a < na; ++a) solid += vol[a] * x[a];
+        values.assign(size_t(nb), 0.0);
+        for (int b = 0; b < nb; ++b)
         {
-            if (state[a] || dc[a] == 0) continue;
-            const auto& tv = mesh.tets[a];
-            double u[4], gr[4];
-            for (int p = 0; p < 4; ++p) u[p] = phiTilde[size_t(tv[size_t(p)])];
-            fraction(u, gr);
-            for (int p = 0; p < 4; ++p) gN[size_t(tv[size_t(p)])] += dc[a] * gr[p];
-        }
-        if (!mirrorMaps.empty()) symmetrise(gN);
-        if (std::getenv("FIELDES_FLOW_FDCHECK") && it == (std::getenv("FIELDES_FLOW_FDCHECK_IT") ? std::atoi(std::getenv("FIELDES_FLOW_FDCHECK_IT")) : 0))
-        {
-            // dJ/dphiTilde_i against a finite difference: a node of the smoothed level set moved, the fractions
-            // and the flow solved again -- the six nodes with the largest |g| and six spread over the cut ones
-            const double delta = 0.05 * h;
-            std::vector<size_t> order, pick;
-            for (size_t i = 0; i < nv; ++i) if (gN[i] != 0) order.push_back(i);
-            std::sort(order.begin(), order.end(), [&](size_t p, size_t q2) { return std::abs(gN[p]) > std::abs(gN[q2]); });
-            for (size_t k = 0; k < order.size() && pick.size() < 6; ++k) pick.push_back(order[k]);
-            for (size_t k = 0; k < 6 && !order.empty(); ++k) pick.push_back(order[(order.size() * (2 * k + 1)) / 12]);
-            const std::vector<double> u0 = m_u, p0 = m_p;
-            m_wantAdjoint = false;
-            fprintf(stderr, "[tetflow fdcheck] J %.8g drag %.6g lift %.6g, alphaMax %.4g, %zu cut nodes\n", J, m_history.back(), m_dropHistory.back(), alphaMax, order.size());
-            for (size_t i : pick)
+            std::vector<double>& g = sens[size_t(b)];
+            g.assign(na, 0.0);
+            switch (s.measures[size_t(b)])
             {
-                std::vector<double> ph2 = phiTilde;
-                ph2[i] += delta;
-                fractions(ph2, rho2);
-                for (size_t b2 = 0; b2 < na; ++b2) m_alpha[b2] = alphaMax * rho2[b2];
-                m_u = u0;
-                m_p = p0;
-                std::string err2;
-                if (!solve(1e-11, err2, cancel)) { fprintf(stderr, "[tetflow fdcheck]   solve failed: %s\n", err2.c_str()); continue; }
-                const double J2 = bodyForce().dot(objDir);
-                const double fd = (J2 - J) / delta;
-                fprintf(stderr, "[tetflow fdcheck]   node %zu phi %.4f: g %.6g, finite difference %.6g, ratio %.3f\n",
-                        i, phiTilde[i], gN[i], fd, gN[i] != 0 ? fd / gN[i] : 0.0);
+            case MEASURE_DRAG:
+                values[size_t(b)] = F.dot(d);
+                g = dForce[size_t(dirOf[size_t(b)])];
+                break;
+            case MEASURE_LIFT:
+                values[size_t(b)] = F.dot(l);
+                g = dForce[size_t(dirOf[size_t(b)])];
+                break;
+            default:
+                values[size_t(b)] = solid / bodyVolume;
+                for (size_t a = 0; a < na; ++a) g[a] = held[a] ? 0.0 : vol[a] / bodyVolume;
+                break;
             }
-            for (size_t b2 = 0; b2 < na; ++b2) m_alpha[b2] = alphaMax * rho[b2];
-            m_u = u0;
-            m_p = p0;
-            m_wantAdjoint = true;
         }
-        // The direction: the nodal gradient smoothed (K^T K, symmetric, so still a descent direction); the shape
-        // itself is never smoothed, so a nose or a tail can sharpen as far as the sensitivities ask
+        if (update)
         {
-            std::vector<double> gS;
-            filter(gN, gS);
-            filterT(gS, gPhi);
+            dragRec.push_back(F.dot(d));
+            liftRec.push_back(F.dot(l));
         }
-        for (size_t i = 0; i < nv; ++i) if (nodeState[i]) gPhi[i] = 0.0;
-        alongColumns(gPhi, false);
-        // The volume's own gradient at the nodes, treated the same way, and the direction projected off it when
-        // the volume is to be kept (the constrained steepest descent: at the optimum the two are proportional and
-        // the direction vanishes; the offset after the step then only corrects what the curvature leaves)
-        if (vMax - vMin < 1e-6 * bodyVolume)
+        return true;
+    };
+
+    // A step that made the design worse is taken back (the core): the flow of the iteration that was undone is dropped with it
+    adapter.restoreFn = [&](const std::vector<double>&) {
+        if (!m_steps.empty()) m_steps.pop_back();
+        if (!m_stepStats.empty()) m_stepStats.pop_back();
+        if (!dragRec.empty())
         {
-            std::vector<double> vN(nv, 0.0), vS, vPhi;
-            for (size_t a = 0; a < na; ++a)
+            dragRec.pop_back();
+            liftRec.pop_back();
+        }
+    };
+
+    // The picture of the body that the viewport draws as it goes: the fluid and the body as the result shows them (this level set is positive inside
+    // the body): the fluid is the domain with the body taken out, coloured by the speed of this iteration's flow (every field, as the result has them),
+    // with the streamlines of that flow; the body is a shape of its own
+    adapter.keptFn = [&](const topopt::IterationView& view) {
+        auto live = std::make_shared<run_progress::LiveView>();
+        live->kind = "flow";
+        live->quantity = s.objectiveLabel.empty() ? "objective" : s.objectiveLabel;
+        live->iteration = view.iteration;
+        live->iterations = view.iterations;
+        live->objective = view.objective;
+        live->history.assign(view.history.begin(), view.history.end());
+        double solid = 0;
+        for (size_t a = 0; a < na; ++a) solid += vol[a] * view.xPhys[a];
+        live->volume = solid / bodyVolume;
+        live->volumeLow = live->volumeHigh = live->volume;
+        live->change = view.change;
+        const auto flow = m_steps.empty() ? nullptr : m_steps.back().result;
+        if (flow)
+        {
+            const std::vector<float> levelNodal = levelOf(view.nodal, 0.5);
+            auto level = std::make_shared<MeshResult>();
+            level->mesh = flow->mesh;
+            level->locator = flow->locator;
+            for (auto& f : level->fields) f.assign(nv, 0.0f);
+            level->fields[0] = levelNodal;
             {
-                if (state[a]) continue;
-                const auto& tv = mesh.tets[a];
-                double u[4], gr[4];
-                for (int p = 0; p < 4; ++p) u[p] = phiTilde[size_t(tv[size_t(p)])];
-                fraction(u, gr);
-                for (int p = 0; p < 4; ++p) vN[size_t(tv[size_t(p)])] += vol[a] * gr[p];
+                // (the field says how far it reaches: the evaluation of the tree takes its bounds from these)
+                float mn = 0, mx = 0;
+                for (float v : level->fields[0]) { mn = std::min(mn, v); mx = std::max(mx, v); }
+                level->minValue[0] = mn;
+                level->maxValue[0] = mx;
             }
-            if (!mirrorMaps.empty()) symmetrise(vN);
-            filter(vN, vS);
-            filterT(vS, vPhi);
-            for (size_t i = 0; i < nv; ++i) if (nodeState[i]) vPhi[i] = 0.0;
-            alongColumns(vPhi, false);
-            double gv = 0, vv = 0;
-            for (size_t i = 0; i < nv; ++i)
+            const Tree levelTree = meshFieldTree(level, 0);
+            Tree bodyTree = max(-levelTree, m_shape);
+            if (s.region.is_valid()) bodyTree = max(bodyTree, s.region);
+            static const char* names[FLOW_FIELD_COUNT] = {"speed", "vx", "vy", "vz", "pressure", "total_pressure", "shear_rate", "vorticity"};
+            static const char* labels[FLOW_FIELD_COUNT] = {"speed (mm/s)", "velocity x (mm/s)", "velocity y (mm/s)", "velocity z (mm/s)",
+                                                           "pressure (MPa)", "total pressure (MPa)", "shear rate (1/s)", "vorticity (1/s)"};
+            run_progress::LiveShape fluid;
+            fluid.tree = max(m_shape, -bodyTree);
+            for (int f = 0; f < FLOW_FIELD_COUNT; ++f)
+                fluid.channels.push_back({names[f], labels[f], meshFieldTree(flow, f), flow->minValue[f], flow->maxValue[f]});
+            fluid.linesLo = flow->minValue[SPEED];
+            fluid.linesHi = flow->maxValue[SPEED];
+            fluid.detail = float(h);
             {
-                gv += gPhi[i] * vPhi[i];
-                vv += vPhi[i] * vPhi[i];
-            }
-            if (vv > 0) for (size_t i = 0; i < nv; ++i) gPhi[i] -= (gv / vv) * vPhi[i];
-        }
-        {
-            size_t bad = 0;
-            for (size_t i = 0; i < nv; ++i) if (!std::isfinite(gPhi[i])) { gPhi[i] = 0.0; ++bad; }
-            if (bad && debug) fprintf(stderr, "[tetflow opt] iteration %d: %zu nodes of the direction were not finite (set to zero)\n", it, bad);
-        }
-        phiPrev = phi;
-        gPrev = gPhi;
-        if (havePrediction && predicted < 0 && std::isfinite(Jprev))
-        {
-            const double ratio = (J - Jprev) / predicted;       // 1: the objective fell as predicted; below 0: it rose
-            if (ratio > 0.75) step *= 1.5;
-        }
-        Jprev = J;
-        accepted.push_back(J);
-        }   // (a fresh gradient)
-        step = std::min(step, stepStart);
-        double gmax = 0;
-        for (size_t i = 0; i < nv; ++i) gmax = std::max(gmax, std::abs(gPhi[i]));
-        if (!(gmax > 0))
-        {
-            if (debug) fprintf(stderr, "[tetflow opt] iteration %d: no sensitivity left\n", it);
-            m_optStop = 3;
-            ++it;
-            break;
-        }
-        // The step: the level set rescaled to a slope of 1, then moved down the gradient by at most `move`
-        // elements, then the body's volume brought within its bounds by one offset of the whole level set
-        // (found by bisection: an offset of the level set is an offset of the boundary)
-        const double slope = slopeOf(phiTilde);
-        for (size_t i = 0; i < nv; ++i) phiNew[i] = nodeState[i] ? phi[i] : phi[i] / std::max(slope, 1e-9) - step * gPhi[i] / gmax;
-        hold(phiNew);
-        alongColumns(phiNew, true);
-        auto volumeWithShift = [&](double c) {
-            for (size_t i = 0; i < nv; ++i) phiS[i] = nodeState[i] ? phiNew[i] : phiNew[i] + c;
-            fractions(phiS, rho2);
-            return solidVolume(rho2);
-        };
-        double v0 = volumeWithShift(0.0);
-        if (v0 < vMin || v0 > vMax)
-        {
-            const double target = v0 < vMin ? vMin : vMax;
-            double lo = v0 < vMin ? 0.0 : -h, hi = v0 < vMin ? h : 0.0;
-            for (int grow = 0; grow < 8 && ((v0 < vMin && volumeWithShift(hi) < target) || (v0 > vMax && volumeWithShift(lo) > target)); ++grow)
-            {
-                if (v0 < vMin) hi *= 2.0; else lo *= 2.0;
-            }
-            for (int bis = 0; bis < 60 && hi - lo > 1e-6 * h; ++bis)
-            {
-                const double c = 0.5 * (lo + hi);
-                if (volumeWithShift(c) < target) lo = c; else hi = c;
-            }
-            volumeWithShift(0.5 * (lo + hi));
-            phiNew = phiS;
-        }
-        // (how far the boundary moved: the change of the level set near it, the far field's rescale aside)
-        double change = 0;
-        for (size_t i = 0; i < nv; ++i)
-            if (!nodeState[i] && std::abs(phi[i]) < 2.0 * h) change = std::max(change, std::abs(phiNew[i] - phi[i]));
-        // (what the sensitivities say this step changes the objective by: for the next iteration to compare with what it did)
-        predicted = 0;
-        for (size_t i = 0; i < nv; ++i)
-            if (!nodeState[i]) predicted += gN[i] * (phiNew[i] - phi[i]);
-        havePrediction = true;
-        phi.swap(phiNew);
-        if (debug && !backtrack)
-            fprintf(stderr, "[tetflow opt] iteration %d: drag %.6g lift %.6g J %.6g, body volume %.4g of %.4g (%.3f), slope %.3f, step %.3f mm, moved %.3f mm; flow+adjoint %.1f s, sensitivities+step %.1f s\n",
-                    it, m_history.back(), m_dropHistory.back(), J, solidVolume(rho), bodyVolume, solidVolume(rho) / bodyVolume, slope, step, change,
-                    tSolve, std::chrono::duration<double>(std::chrono::steady_clock::now() - tStep).count());
-        if (!backtrack)
-        {
-            // The body as it is, for the viewport: where the smoothed level set of this iteration is above zero
-            auto view = std::make_shared<run_progress::LiveView>();
-            view->kind = "flow";
-            view->quantity = s.wLift != 0 ? "objective" : "drag";
-            view->iteration = it + 1;
-            view->iterations = s.iterations;
-            view->objective = J;
-            liveObjective.push_back(float(J));
-            view->history = liveObjective;
-            view->volume = solidVolume(rho) / bodyVolume;
-            view->volumeLow = s.volumeMin;
-            view->volumeHigh = s.volumeMax;
-            view->change = change;
-            // The body and the fluid around it as the result shows them (this level set is positive inside the body): the fluid is
-            // the domain with the body taken out, coloured by the speed of this iteration's flow (every field, as the result has them),
-            // with the streamlines of that flow; the body is a shape of its own
-            const auto flow = m_steps.empty() ? nullptr : m_steps.back().result;
-            if (flow)
-            {
-                auto level = std::make_shared<MeshResult>();
-                level->mesh = flow->mesh;
-                level->locator = flow->locator;
-                for (auto& f : level->fields) f.assign(nv, 0.0f);
-                level->fields[0] = m_densityHistory.back();
+                // the streamlines from the inlets, cut where they would enter the body (in this flow the body is a friction and a little fluid
+                // creeps through it)
+                Vec3 lo = mesh.pos[0], hi = mesh.pos[0];
+                for (const auto& p : mesh.pos)
                 {
-                    // (the field says how far it reaches: the evaluation of the tree takes its bounds from these)
-                    float mn = 0, mx = 0;
-                    for (float v : level->fields[0]) { mn = std::min(mn, v); mx = std::max(mx, v); }
-                    level->minValue[0] = mn;
-                    level->maxValue[0] = mx;
+                    lo = lo.cwiseMin(p);
+                    hi = hi.cwiseMax(p);
                 }
-                const Tree levelTree = meshFieldTree(level, 0);
-                Tree bodyTree = max(-levelTree, m_shape);
-                if (s.region.is_valid()) bodyTree = max(bodyTree, s.region);
-                static const char* names[FLOW_FIELD_COUNT] = {"speed", "vx", "vy", "vz", "pressure", "total_pressure", "shear_rate",
-                                                              "vorticity"};
-                static const char* labels[FLOW_FIELD_COUNT] = {"speed (mm/s)", "velocity x (mm/s)", "velocity y (mm/s)",
-                                                               "velocity z (mm/s)", "pressure (MPa)", "total pressure (MPa)",
-                                                               "shear rate (1/s)", "vorticity (1/s)"};
-                run_progress::LiveShape fluid;
-                fluid.tree = max(m_shape, -bodyTree);
-                for (int f = 0; f < FLOW_FIELD_COUNT; ++f)
-                    fluid.channels.push_back({names[f], labels[f], meshFieldTree(flow, f), flow->minValue[f], flow->maxValue[f]});
-                fluid.linesLo = flow->minValue[SPEED];
-                fluid.linesHi = flow->maxValue[SPEED];
-                fluid.detail = float(h);
+                const double size = (hi - lo).maxCoeff();
+                const double maxTime = 3.0 * size / std::max(double(flow->maxValue[SPEED]), 1e-12);
+                std::vector<std::vector<std::array<double, 5>>> lines;
+                streamlines(flow, inletSeeds(40), maxTime, 4000, false, lines);
+                for (const auto& line : lines)
                 {
-                    // the streamlines from the inlets, cut where they would enter the body (in this flow the body is a friction and a little
-                    // fluid creeps through it)
-                    Vec3 lo = mesh.pos[0], hi = mesh.pos[0];
-                    for (const auto& p : mesh.pos)
+                    std::vector<std::array<float, 5>> run;
+                    auto close = [&]() {
+                        if (run.size() >= 2) fluid.lines.push_back(run);
+                        run.clear();
+                    };
+                    for (const auto& p : line)
                     {
-                        lo = lo.cwiseMin(p);
-                        hi = hi.cwiseMax(p);
-                    }
-                    const double size = (hi - lo).maxCoeff();
-                    const double maxTime = 3.0 * size / std::max(double(flow->maxValue[SPEED]), 1e-12);
-                    std::vector<std::vector<std::array<double, 5>>> lines;
-                    streamlines(flow, inletSeeds(40), maxTime, 4000, false, lines);
-                    const std::vector<float>& phiNodes = m_densityHistory.back();
-                    for (const auto& line : lines)
-                    {
-                        std::vector<std::array<float, 5>> run;
-                        auto close = [&]() {
-                            if (run.size() >= 2) fluid.lines.push_back(run);
-                            run.clear();
-                        };
-                        for (const auto& p : line)
+                        double lam[4];
+                        const int t = flow->locator->locateInside(Vec3(p[0], p[1], p[2]), lam);
+                        double inside = -1;
+                        if (t >= 0)
                         {
-                            double lam[4];
-                            const int t = flow->locator->locateInside(Vec3(p[0], p[1], p[2]), lam);
-                            double inside = -1;
-                            if (t >= 0)
-                            {
-                                inside = 0;
-                                for (int q = 0; q < 4; ++q) inside += lam[q] * phiNodes[size_t(mesh.tets[size_t(t)][size_t(q)])];
-                            }
-                            if (inside > 0) close();
-                            else run.push_back({float(p[0]), float(p[1]), float(p[2]), float(p[3]), float(p[4])});
+                            inside = 0;
+                            for (int q = 0; q < 4; ++q) inside += lam[q] * levelNodal[size_t(mesh.tets[size_t(t)][size_t(q)])];
                         }
-                        close();
+                        if (inside > 0) close();
+                        else run.push_back({float(p[0]), float(p[1]), float(p[2]), float(p[3]), float(p[4])});
                     }
+                    close();
                 }
-                view->shapes.push_back(std::move(fluid));
-                run_progress::LiveShape body;
-                body.tree = bodyTree;
-                view->shapes.push_back(std::move(body));
             }
-            run_progress::publishLive(view);
+            live->shapes.push_back(std::move(fluid));
+            run_progress::LiveShape body;
+            body.tree = bodyTree;
+            live->shapes.push_back(std::move(body));
         }
-        // The objective has stopped improving: over the last five designs that were kept it fell by less than half a percent.  (The boundary's
-        // own motion is no measure: the step is the way the direction is scaled, so the boundary always moves by about it)
-        if (!backtrack && accepted.size() > 7 && accepted[accepted.size() - 6] - accepted.back() < 0.005 * std::abs(accepted.back()))
-        {
-            m_optStop = 1;
-            ++it;
-            break;
-        }
-        if (step <= 0.02 * h) { m_optStop = 2; ++it; break; }     // (steps this short make no progress)
-    }
-    m_optRejected = rejected;
-    if (debug && rejected) fprintf(stderr, "[tetflow opt] %d steps taken back\n", rejected);
+        run_progress::publishLive(live);
+    };
+
+    m_history.clear();
+    m_dropHistory.clear();
+    m_densityHistory.clear();
+    m_steps.clear();
+    m_stepStats.clear();
+    m_baseHistory.clear();
+    m_outputHistory.clear();
+    m_optRejected = 0;
+    m_optStop = 0;
+    const Options saved = m_opt;
+    m_quiet = true;
+    m_wantAdjoint = !dirsK.empty();
+    m_objDirs = dirsK;
+    m_u.clear();
+    m_p.clear();
+
+    topopt::DesignResult res;
+    const bool ran = topopt::runDensityDesign(mesh, vol, h, vtStart, vtList, ds, adapter, res, error, cancel);
     m_opt = saved;
     m_quiet = false;
     m_wantAdjoint = false;
-    if (!ok) return false;
-    // the final flow around the final body, for the result's fields and the last step; the last step taken was
-    // never checked, so if it raised the objective the design before it (the best accepted) is the result
-    auto finalSolve = [&](double& J) {
-        phiTilde = phi;
-        fractions(phiTilde, rho);
+    m_adjointTolerance = 0.0;
+    m_objDirs.clear();
+    m_adjoints.clear();
+    if (!ran) return false;
+
+    // The final flow around the final body, for the result's fields and the last step
+    {
         m_alpha.assign(na, 0.0);
-        for (size_t a = 0; a < na; ++a) m_alpha[a] = alphaMax * rho[a];
+        for (size_t a = 0; a < na; ++a) m_alpha[a] = alphaOf(res.xPhys[a]);
         m_quiet = true;
         m_time = 0;
         m_snapshot = true;
@@ -2843,26 +2490,24 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         m_snapshot = false;
         m_quiet = false;
         if (!fine) return false;
-        if (!m_steps.empty()) m_steps.back().iteration = it;
-        J = bodyForce().dot(objDir);
-        return true;
-    };
-    double Jfinal = 0;
-    if (!finalSolve(Jfinal)) return false;
-    if (!phiPrev.empty() && Jfinal > Jprev * (1.0 + 1e-3))
-    {
-        if (debug) fprintf(stderr, "[tetflow opt] the last step raised J to %.6g from %.6g: the design before it is the result\n", Jfinal, Jprev);
-        if (!m_steps.empty()) { m_steps.pop_back(); m_stepStats.pop_back(); }
-        phi = phiPrev;
-        if (!finalSolve(Jfinal)) return false;
-    }
-    {
+        if (!m_steps.empty()) m_steps.back().iteration = res.iterations;
         const Vec3 F = bodyForce();
-        m_history.push_back(F.dot(d));
-        m_dropHistory.push_back(F.dot(l));
-        m_densityHistory.emplace_back();
-        nodal(phiTilde, m_densityHistory.back());
+        dragRec.push_back(F.dot(d));
+        liftRec.push_back(F.dot(l));
     }
+    m_history = dragRec;
+    m_dropHistory = liftRec;
+    m_baseHistory = res.baseHistory;
+    m_outputHistory = res.outputHistory;
+    double finalVolume = 0;
+    for (size_t a = 0; a < na; ++a) finalVolume += vol[a] * res.xPhys[a];
+    for (size_t k = 0; k < res.densityHistory.size(); ++k) m_densityHistory.push_back(levelOf(res.densityHistory[k], 0.5));
+    const double finalCut = cutLevel(res.nodal, finalVolume);
+    m_densityHistory.push_back(levelOf(res.nodal, finalCut));
+    m_mirrorsUsed.clear();
+    for (const auto& m : res.mirrorsUsed) m_mirrorsUsed.push_back({m.axis, m.at, m.atCentre});
+    m_optRejected = res.stepsBack;
+    m_optStop = res.iterations < s.iterations ? 1 : 0;
 
     auto R2 = std::make_shared<MeshResult>();
     R2->mesh = m_mesh;
@@ -2875,8 +2520,74 @@ bool TetFlowProblem::optimize(const FlowOpt& s, std::string& error, const std::a
         R2->minValue[0] = mn;
         R2->maxValue[0] = mx;
     }
-    R2->iterations = it;
-    R2->volume = solidVolume(rho);
+    // the volume of the final body: where the density is above the cut, exactly (the density is linear in each tetrahedron) -- the design's own
+    double cut = 0;
+    for (size_t a = 0; a < na; ++a)
+    {
+        double v[4];
+        for (int p = 0; p < 4; ++p) v[p] = double(res.nodal[size_t(mesh.tets[a][size_t(p)])]);
+        cut += vol[a] * volumeShareAbove(v, finalCut);
+    }
+    // In how many pieces the final body is: the elements whose density (the mean of their four nodes) is above the cut, joined where they share a face.  The
+    // volume the design has to keep can sit where it costs no drag -- in water that is at rest -- and then it is pieces of its own: the result says so
+    {
+        std::vector<char> solid(na, 0);
+        for (size_t a = 0; a < na; ++a)
+        {
+            double mean = 0;
+            for (int p = 0; p < 4; ++p) mean += double(res.nodal[size_t(mesh.tets[a][size_t(p)])]);
+            solid[a] = mean / 4.0 > finalCut ? 1 : 0;
+        }
+        struct Face { int32_t a, b, c, element; };
+        std::vector<Face> faces;
+        static const int corner[4][3] = {{1, 2, 3}, {0, 2, 3}, {0, 1, 3}, {0, 1, 2}};
+        for (size_t e = 0; e < na; ++e)
+        {
+            if (!solid[e]) continue;
+            for (int q = 0; q < 4; ++q)
+            {
+                int32_t v[3] = {int32_t(mesh.tets[e][size_t(corner[q][0])]), int32_t(mesh.tets[e][size_t(corner[q][1])]), int32_t(mesh.tets[e][size_t(corner[q][2])])};
+                std::sort(v, v + 3);
+                faces.push_back({v[0], v[1], v[2], int32_t(e)});
+            }
+        }
+        std::sort(faces.begin(), faces.end(), [](const Face& x, const Face& y) {
+            return x.a != y.a ? x.a < y.a : x.b != y.b ? x.b < y.b : x.c < y.c;
+        });
+        std::vector<int32_t> parent(na);
+        std::iota(parent.begin(), parent.end(), 0);
+        auto root = [&](int32_t a) {
+            while (parent[size_t(a)] != a)
+            {
+                parent[size_t(a)] = parent[size_t(parent[size_t(a)])];
+                a = parent[size_t(a)];
+            }
+            return a;
+        };
+        for (size_t i = 0; i + 1 < faces.size(); ++i)
+            if (faces[i].a == faces[i + 1].a && faces[i].b == faces[i + 1].b && faces[i].c == faces[i + 1].c)
+            {
+                const int32_t r0 = root(faces[i].element), r1 = root(faces[i + 1].element);
+                if (r0 != r1) parent[size_t(r1)] = r0;
+            }
+        std::vector<double> pieceVolume(na, 0.0);
+        double largest = 0;
+        for (size_t a = 0; a < na; ++a)
+            if (solid[a])
+            {
+                double& v = pieceVolume[size_t(root(int32_t(a)))];
+                v += vol[a];
+                largest = std::max(largest, v);
+            }
+        m_pieces = 0;
+        for (size_t a = 0; a < na; ++a)
+            if (pieceVolume[a] > 0.02 * largest) ++m_pieces;
+    }
+    m_bodyVolume = bodyVolume;
+    m_designVolume = 0;
+    for (size_t a = 0; a < na; ++a) m_designVolume += vol[a] * res.xPhys[a];
+    R2->iterations = res.iterations;
+    R2->volume = cut;
     R2->elements = int(na);
     R2->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     m_densityResult = R2;

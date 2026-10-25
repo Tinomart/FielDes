@@ -26,7 +26,7 @@ air = convection(box((10, -1, -1), (50, 40, 11)), 10e-6, ambient=20.0)
 hot = thermal_analysis(slab, fixed_temperatures=[cold], heat_inputs=[heat], heat_generations=[], convections=[air],
                        material=aluminium, element_size=3)
 
-best = parametric_optimization(hot, (t, 5, 25), minimize='max_temperature', max_evaluations=14)
+best = parametric_optimization(hot, (t, 5, 25), constraints=[minimize('max_temperature')], max_evaluations=14)
 
 starting_slab = move(box((0, 0, 0), (60, 10, 10)), (0, -40, 0))
 known_best_slab = move(box((0, 0, 0), (60, 25, 10)), (0, 40, 0))

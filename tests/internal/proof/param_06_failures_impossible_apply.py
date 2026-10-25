@@ -30,9 +30,9 @@ wall = fixed(box((-1, -1, -1), (1, 60, 60)))
 pull = force(box((99, -1, -1), (101, 60, 60)), (0, 0, -200))
 stress = static_analysis(bar, supports=[wall], loads=[pull], material=aluminium, element_size=4)
 
-best = parametric_optimization(stress, (thin, 0.05, 20), minimize='mass', constraints='max_von_mises <= 90',
+best = parametric_optimization(stress, (thin, 0.05, 20), constraints=[minimize('mass'), 'max_von_mises <= 90'],
                                max_evaluations=16, apply=True)
-impossible = parametric_optimization(stress, (thin, 8, 20), minimize='mass', constraints='max_von_mises <= 1', max_evaluations=16)
+impossible = parametric_optimization(stress, (thin, 8, 20), constraints=[minimize('mass'), 'max_von_mises <= 1'], max_evaluations=16)
 print('=== the run that asks for 1 MPa:')
 print(impossible)
 

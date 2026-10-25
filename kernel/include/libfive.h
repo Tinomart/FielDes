@@ -451,7 +451,9 @@ void libfive_tetmesh_delete(libfive_tetmesh* m);
 typedef struct libfive_tetfea_ libfive_tetfea;
 libfive_tetfea* libfive_tetfea_new(libfive_tree shape, libfive_region3 region,
                                    float element_size, float E, float nu);
-void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, int y, int z);
+/*  A support: the directions x, y, z (non-zero: held) of the part inside `region` are held at the displacement dx, dy, dz (mm: 0 does not let the part move there, another
+ *  number imposes a displacement; a static analysis solves for the rest of the part)  */
+void libfive_tetfea_add_support(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double dx, double dy, double dz);
 void libfive_tetfea_add_force(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz);
 void libfive_tetfea_set_gravity(libfive_tetfea* f, float gx, float gy, float gz, float density);
 void libfive_tetfea_set_thermal(libfive_tetfea* f, libfive_tree temperature, float alpha, float reference);
@@ -477,12 +479,52 @@ void libfive_tetfea_set_salt(libfive_tetfea* f, uint64_t salt);
 /*  Before libfive_tetfea_optimize: the design space (the shape the problem was made of) is the part grown outwards, and
  *  `origin` is the part: the volume fraction is then of the part's volume and material may go outside it  */
 void libfive_tetfea_set_origin(libfive_tetfea* f, libfive_tree origin);
+/*  A design to start the optimisation from (a field: its value at the centre of each element is the density the element starts with, not
+ *  under 0.02): the design space is a new one, made round a design that was found in a smaller one.  The tree must stay alive until
+ *  libfive_tetfea_optimize returns  */
+void libfive_tetfea_set_start_field(libfive_tetfea* f, libfive_tree field);
+/*  With a start field: the region (negative inside) it is known in -- the design space it was found in.  An element outside it starts empty:
+ *  beyond its mesh the field is only the value at its edge carried outwards  */
+void libfive_tetfea_set_start_domain(libfive_tetfea* f, libfive_tree region);
+/*  With an origin: libfive_tetfea_optimize stops as soon as the design reaches the edge of its space (see TopOpt::stopAtEdge).  Afterwards
+ *  libfive_tetfea_resume gives the state the run went on from, the number of values it has (0: the run went to its end; at most `max` are
+ *  copied into `out`), and libfive_tetfea_design the design variable it stopped at, a field like libfive_tetfea_density.  A run in a larger
+ *  space goes on from there: libfive_tetfea_set_start_field (design), libfive_tetfea_set_start_domain (the old space) and
+ *  libfive_tetfea_set_resume with those values, and the same `iterations` as before  */
+void libfive_tetfea_set_stop_at_edge(libfive_tetfea* f, int on);
+/*  With an origin: the region (negative inside) where the edge of the space is held in by something the space is not made larger against -- the
+ *  place of a support or a load, a limit on how far the design reaches.  An element of the edge whose centre is inside it does not count for
+ *  libfive_tetfea_frontier, nor for stopping at the edge  */
+void libfive_tetfea_set_frontier_blocked(libfive_tetfea* f, libfive_tree region);
+/*  Before libfive_tetfea_prepare: the supports and loads act on this body only (a field, negative inside: its distance, where it is one) -- a node
+ *  farther outside it than `slack` is not held, and a boundary face with a corner there is not loaded.  For a design space made bigger than the
+ *  part (see libfive_tetfea_set_origin), whose holes round the places of the conditions have walls on the edge of those places  */
+void libfive_tetfea_set_condition_body(libfive_tetfea* f, libfive_tree body, double slack);
+/*  Before libfive_tetfea_prepare: the supports hold only nodes on the surface of the mesh (a corner of a boundary face) -- the face where the part
+ *  meets what holds it, not the slab of the part behind it that the region of the support takes in.  For a design that may grow (material put
+ *  against that slab would be clamped to held nodes: a gain the support does not give).  A support that finds no such node holds as before  */
+void libfive_tetfea_set_condition_surface(libfive_tetfea* f, int on);
+int libfive_tetfea_resume(libfive_tetfea* f, double* out, int max);
+void libfive_tetfea_set_resume(libfive_tetfea* f, const double* state, int count);
+libfive_tree libfive_tetfea_design(libfive_tetfea* f);
+/*  With an origin (the part a grown design space was made from): the elements outside it count for libfive_tetfea_frontier only when
+ *  they are farther than this from it (the value of the origin's field there: its distance, when it is one)  */
+void libfive_tetfea_set_frontier_distance(libfive_tetfea* f, double distance);
+/*  After the optimisation: the density above which the optimised part has the volume of the design (0.5 without a result)  */
+double libfive_tetfea_cut_threshold(libfive_tetfea* f);
+/*  ... the highest density the design has in an element outside the part on the edge of its design space (see TopOpt::origin)  */
+double libfive_tetfea_frontier(libfive_tetfea* f);
+/*  ... the surface of the design where its density is `level` (indexed triangles, counter-clockwise from outside): counts[0] vertices
+ *  and counts[1] triangles are made, and copied out by libfive_tetfea_surface_copy into arrays of 3 * counts[0] floats and
+ *  3 * counts[1] indices.  0 when there is no result  */
+int libfive_tetfea_surface(libfive_tetfea* f, double level, int64_t* counts);
+void libfive_tetfea_surface_copy(libfive_tetfea* f, float* verts, uint32_t* tris);
 /*  Before libfive_tetfea_optimize: how crisp the design is -- the density is projected towards 0 and 1 with a step that grows
  *  steeper up to this number (default 16; 1 or less: not projected, grey regions stay)  */
 void libfive_tetfea_set_sharpness(libfive_tetfea* f, double sharpness);
 /*  A support that holds the part only in one load case (0, 1, ...) -- optimising against several sets of boundary conditions, each with its
  *  own supports.  Supports added with libfive_tetfea_add_support hold it in every case  */
-void libfive_tetfea_add_support_case(libfive_tetfea* f, libfive_tree region, int x, int y, int z, int load_case);
+void libfive_tetfea_add_support_case(libfive_tetfea* f, libfive_tree region, int x, int y, int z, double dx, double dy, double dz, int load_case);
 /*  Before libfive_tetfea_optimize: keep the design symmetric about the plane axis (0, 1, 2 = x, y, z) = at, or (at_centre) through the middle
  *  of the part's extent along that axis; or (set_symmetry_auto) about every plane the whole problem is symmetric about  */
 void libfive_tetfea_add_mirror(libfive_tetfea* f, int axis, double at, int at_centre);
@@ -520,10 +562,27 @@ int libfive_tetfea_element_range(libfive_tetfea* f, int field, float* lo, float*
  *  own; a static analysis applies every load together  */
 void libfive_tetfea_add_force_case(libfive_tetfea* f, libfive_tree region, float fx, float fy, float fz,
                                    int load_case);
-/*  Topology optimization on the mesh (as libfive_fea_optimize): density per tetrahedron, SIMP with a
- *  volume-weighted filter and optimality-criteria updates.  Then libfive_tetfea_density (a field) and
- *  libfive_tetfea_history (the compliance per iteration).  */
-int libfive_tetfea_optimize(libfive_tetfea* f, float volume_fraction, float penalty, float filter_radius,
+/*  A load case (0, 1, ...) that is a modal analysis: its supports hold the part and nothing loads it; the optimisation reads its
+ *  frequencies.  Before libfive_tetfea_optimize  */
+void libfive_tetfea_mark_modal_case(libfive_tetfea* f, int load_case);
+/*  What the topology optimisation is asked for: MEASURES it reads from the design, and the formulas of them that are the objective and the
+ *  constraints (see kernel/include/libfive/fea/topopt.hpp).  opt_measure adds one and gives its number: kind 0 the volume, 1 the compliance,
+ *  2 the peak displacement, 3 the peak von Mises stress, 4 a frequency (index: the mode, 0 the lowest), 5 the displacement at the point
+ *  (a, b, c) (index: the component 0 / 1 / 2, or 3 for the magnitude), each in the load case given.  opt_op adds an operation to the program,
+ *  in postfix (codes: 0 constant `value`, 1 measure `index`, 2 + , 3 - , 4 * , 5 / , 6 ^ , 7 negate, 8 abs, 9 min, 10 max, 11 sqrt, 12 log,
+ *  13 exp, 14 end of an output): the first output is the objective, minimised, the others constraints that are kept at 0 or less.
+ *  opt_start: the density every element starts with, the material's density (t / mm^3, for a frequency), what the objective is
+ *  called, and its sign (-1 when it is made as large as it can be: the program minimises its negative).  measure_history(outputs = 0, k)
+ *  gives the measure k at every iteration, (outputs = 1, k) the output k  */
+void libfive_tetfea_opt_clear(libfive_tetfea* f);
+int libfive_tetfea_opt_measure(libfive_tetfea* f, int kind, int load_case, int index, double a, double b, double c);
+void libfive_tetfea_opt_op(libfive_tetfea* f, int code, double value, int index);
+void libfive_tetfea_opt_start(libfive_tetfea* f, double start_density, double material_density, const char* label, double sign);
+int libfive_tetfea_measure_history(libfive_tetfea* f, int outputs, int index, double* out, int max);
+/*  Topology optimization on the mesh: density per tetrahedron, SIMP with a
+ *  volume-weighted filter and the method of moving asymptotes on what opt_measure / opt_op asked for.  Then libfive_tetfea_density (a field)
+ *  and libfive_tetfea_history (the objective per iteration).  */
+int libfive_tetfea_optimize(libfive_tetfea* f, float penalty, float filter_radius,
                             int iterations, const libfive_tree* keep, int keep_count,
                             const libfive_tree* avoid, int avoid_count, int solver_iterations, float tolerance,
                             int extrude);
@@ -541,6 +600,10 @@ double libfive_tetfea_mode_frequency(libfive_tetfea* f, int i);
 libfive_tree libfive_tetfea_mode_field(libfive_tetfea* f, int i, int field);
 float libfive_tetfea_mode_field_min(libfive_tetfea* f, int i, int field);
 float libfive_tetfea_mode_field_max(libfive_tetfea* f, int i, int field);
+/*  What the element display needs of a mode (the mesh is the problem's: libfive_tetfea_counts / _mesh): the mode's displacement at the vertices (3 floats each), and a field of
+ *  it in each tetrahedron (its displacement at its centre; the field numbers of libfive_tetfea_mode_field)  */
+void libfive_tetfea_mode_node_displacements(libfive_tetfea* f, int i, float* out);
+int64_t libfive_tetfea_mode_element_values(libfive_tetfea* f, int i, int field, float* out, int64_t capacity);
 void libfive_tetfea_delete(libfive_tetfea* f);
 
 /*
@@ -573,10 +636,41 @@ libfive_tetthermal* libfive_tetthermal_load(const char* path);
 void libfive_tetthermal_set_salt(libfive_tetthermal* f, uint64_t salt);
 int libfive_tetthermal_solve(libfive_tetthermal* f, int max_iterations, float tolerance);
 const char* libfive_tetthermal_message(libfive_tetthermal* f);
+/*  The mesh of a solved thermal analysis and each tetrahedron's own value of a field (the temperature at its centre; its own heat flux, constant in it): as
+ *  libfive_tetfea_counts / _mesh / _element_values  */
+void libfive_tetthermal_counts(libfive_tetthermal* f, int64_t* out3);
+void libfive_tetthermal_mesh(libfive_tetthermal* f, float* vertices, int32_t* tets, int32_t* faces, int32_t* face_tet);
+int64_t libfive_tetthermal_element_values(libfive_tetthermal* f, int field, float* out, int64_t capacity);
 libfive_tree libfive_tetthermal_field(libfive_tetthermal* f, int field);
 float libfive_tetthermal_field_min(libfive_tetthermal* f, int field);
 float libfive_tetthermal_field_max(libfive_tetthermal* f, int field);
 double libfive_tetthermal_stat(libfive_tetthermal* f, int which);
+/*  libfive_tetthermal_stat(f, which): 8 the temperature the heat comes in at; 9 how many steps of an optimisation were taken back; 10 the design's volume;
+ *  11 the volume of the part's mesh.
+ *
+ *  Topology optimization of the part's material (see TetThermalProblem::optimizeDensity).  Before libfive_tetthermal_optimize_density: libfive_tetthermal_opt_clear,
+ *  then libfive_tetthermal_opt_measure for each measure the formulas read, in the order of their numbers (kind 0 the volume as a share of the part's,
+ *  1 the peak temperature, 2 the lowest, 3 the peak heat flux, 4 the temperature the heat comes in at, 5 the temperature at the point a, b, c), then
+ *  libfive_tetthermal_opt_op for each operation of the formulas (the program of topopt.hpp, an output ended by End: the objective first, then the
+ *  constraints), then libfive_tetthermal_opt_start (the density the design starts with, the objective's name, -1 as its sign when it is to be made as
+ *  large as it can be, how crisp the design gets) and, to keep it symmetric, libfive_tetthermal_add_mirror / libfive_tetthermal_set_symmetry_auto  */
+void libfive_tetthermal_opt_clear(libfive_tetthermal* f);
+int libfive_tetthermal_opt_measure(libfive_tetthermal* f, int kind, double a, double b, double c);
+void libfive_tetthermal_opt_op(libfive_tetthermal* f, int code, double value, int index);
+void libfive_tetthermal_opt_start(libfive_tetthermal* f, double start_density, const char* label, double sign, double sharpness);
+void libfive_tetthermal_add_mirror(libfive_tetthermal* f, int axis, double at, int at_centre);
+void libfive_tetthermal_set_symmetry_auto(libfive_tetthermal* f, int on);
+/*  After the optimisation: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it was found
+ *  to be symmetric and kept so; *at is the plane's coordinate  */
+int libfive_tetthermal_mirror(libfive_tetthermal* f, int axis, double* at);
+int libfive_tetthermal_optimize_density(libfive_tetthermal* f, float penalty, float filter_radius, int iterations, const libfive_tree* keep, int keep_count,
+                                        const libfive_tree* avoid, int avoid_count, int solver_iterations, float tolerance, int extrude);
+int libfive_tetthermal_measure_history(libfive_tetthermal* f, int outputs, int index, double* out, int max);
+libfive_tree libfive_tetthermal_density(libfive_tetthermal* f);
+libfive_tree libfive_tetthermal_density_at(libfive_tetthermal* f, int k);
+int libfive_tetthermal_history(libfive_tetthermal* f, double* out, int max);
+double libfive_tetthermal_cut_threshold(libfive_tetthermal* f);
+int libfive_tetthermal_pieces(libfive_tetthermal* f, double threshold, double margin);
 void libfive_tetthermal_delete(libfive_tetthermal* f);
 
 /*
@@ -612,6 +706,10 @@ void libfive_tetflow_set_salt(libfive_tetflow* f, uint64_t salt);
 int libfive_tetflow_solve(libfive_tetflow* f, float tolerance);
 const char* libfive_tetflow_message(libfive_tetflow* f);
 const char* libfive_tetflow_warning(libfive_tetflow* f);
+/*  The mesh of a solved flow and each tetrahedron's value of a field (the speed of its mean velocity, the others the mean of its vertices'): as libfive_tetfea_counts / _mesh / _element_values  */
+void libfive_tetflow_counts(libfive_tetflow* f, int64_t* out3);
+void libfive_tetflow_mesh(libfive_tetflow* f, float* vertices, int32_t* tets, int32_t* faces, int32_t* face_tet);
+int64_t libfive_tetflow_element_values(libfive_tetflow* f, int field, float* out, int64_t capacity);
 libfive_tree libfive_tetflow_field(libfive_tetflow* f, int field);
 float libfive_tetflow_field_min(libfive_tetflow* f, int field);
 float libfive_tetflow_field_max(libfive_tetflow* f, int field);
@@ -641,25 +739,11 @@ int libfive_tetflow_streamlines(libfive_tetflow* f, int k, const double* seeds, 
                                 int backward, double* out, int capacity, int* counts);
 /*  Up to n points over the inlets to seed streamlines from (3 doubles each); returns how many  */
 int libfive_tetflow_inlet_seeds(libfive_tetflow* f, int n, double* out);
-/*  Shape optimisation of a body in the flow (see tetflow.hpp): `body` (solid where negative) is optimised
- *  inside `region` (NULL: anywhere in the fluid domain) for the objective w_drag * drag - w_lift * lift, minimised
- *  (drag along the flow direction d -- zero: the inlets' mean -- lift along l -- zero: perpendicular to d in the
- *  domain's long plane), with the solid volume between v_min and v_max times the body's own; elements in `keep`
- *  stay solid, in `avoid` fluid; extrude -1, or 0 / 1 / 2 for a design constant along x / y / z; darcy sets the
- *  solid's friction (mu / (darcy D^2)).  1 on success; then libfive_tetflow_level is the body as a level set (mm, > 0
- *  inside it, its boundary the zero level), libfive_tetflow_level_at the same after iteration k, libfive_tetflow_history fills up to max
- *  values of the drag (kind 0) or the lift (kind 1, N), one per iteration and the final body's last; the flow of
- *  every iteration is a step (libfive_tetflow_step_*, its iteration the step's), the last around the final body,
- *  which is also libfive_tetflow_field.  libfive_tetflow_direction gives d (kind 0) or l (kind 1).  */
-int libfive_tetflow_optimize(libfive_tetflow* f, libfive_tree body, libfive_tree region, float w_drag, float w_lift,
-                             float dx, float dy, float dz, float lx, float ly, float lz, float v_min, float v_max,
-                             float filter_radius, int iterations, const libfive_tree* keep, int keep_count,
-                             const libfive_tree* avoid, int avoid_count, int extrude, float darcy);
-/*  Before libfive_tetflow_optimize: keep the design symmetric about the plane axis (0, 1, 2 = x, y, z) = at, or (at_centre) through the middle of
+/*  Before libfive_tetflow_optimize_density: keep the design symmetric about the plane axis (0, 1, 2 = x, y, z) = at, or (at_centre) through the middle of
  *  the domain's extent along that axis; or (set_symmetry_auto) about every plane the whole problem is symmetric about  */
 void libfive_tetflow_add_mirror(libfive_tetflow* f, int axis, double at, int at_centre);
 void libfive_tetflow_set_symmetry_auto(libfive_tetflow* f, int on);
-/*  After libfive_tetflow_optimize: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it
+/*  After libfive_tetflow_optimize_density: 0 if the design was not kept symmetric about a plane perpendicular to the axis, 1 if it was (asked for), 2 if it
  *  was found to be symmetric and kept so; *at is the plane's coordinate  */
 int libfive_tetflow_mirror(libfive_tetflow* f, int axis, double* at);
 libfive_tree libfive_tetflow_level(libfive_tetflow* f);
@@ -667,6 +751,21 @@ int libfive_tetflow_history(libfive_tetflow* f, int kind, double* out, int max);
 void libfive_tetflow_direction(libfive_tetflow* f, int kind, double* out3);
 /*  The design field after iteration k (0-based, one per power value; NULL past the end)  */
 libfive_tree libfive_tetflow_level_at(libfive_tetflow* f, int k);
+/*  The same task on the optimiser every density-based design shares (see TetFlowProblem::optimizeDensity): one density per tetrahedron, the
+ *  objective and the constraints formulas of measures of the flow.  Before libfive_tetflow_optimize_density: libfive_tetflow_opt_clear, then
+ *  libfive_tetflow_opt_measure for each measure the formulas read, in the order of their numbers (kind 0 the drag, 1 the lift, 2 the volume of the body
+ *  as a share of its own), then libfive_tetflow_opt_op for each operation of the formulas (the program of topopt.hpp, an output ended by End: the
+ *  objective first, then the constraints), then libfive_tetflow_opt_start (the objective's name, -1 as its sign when it is to be made as large as it can
+ *  be, how crisp the design is).  The results: libfive_tetflow_level is the body as a level set (mm, > 0 inside it: the density above the level that keeps the design's volume), libfive_tetflow_level_at the same after iteration k, libfive_tetflow_history the drag (kind 0) or the lift (kind 1, N) of each kept iteration and of the final body last, the flow of every iteration a step (libfive_tetflow_step_*, the last around the final body: libfive_tetflow_field), libfive_tetflow_direction the flow direction (kind 0) and the lift direction (kind 1),
+ *  and libfive_tetflow_measure_history gives every measure (outputs 0) or every output of the program (outputs 1) at each kept iteration  */
+void libfive_tetflow_opt_clear(libfive_tetflow* f);
+int libfive_tetflow_opt_measure(libfive_tetflow* f, int kind);
+void libfive_tetflow_opt_op(libfive_tetflow* f, int code, double value, int index);
+void libfive_tetflow_opt_start(libfive_tetflow* f, const char* label, double sign, double sharpness);
+int libfive_tetflow_optimize_density(libfive_tetflow* f, libfive_tree body, libfive_tree region, float dx, float dy, float dz, float lx, float ly,
+                                     float lz, float filter_radius, int iterations, const libfive_tree* keep, int keep_count,
+                                     const libfive_tree* avoid, int avoid_count, int extrude, float darcy);
+int libfive_tetflow_measure_history(libfive_tetflow* f, int outputs, int index, double* out, int max);
 void libfive_tetflow_delete(libfive_tetflow* f);
 
 /*
@@ -700,35 +799,12 @@ uint64_t libfive_thermal_hash(libfive_thermal* t);
 int libfive_thermal_save(libfive_thermal* f, const char* path);
 libfive_thermal* libfive_thermal_load(const char* path);
 void libfive_thermal_set_salt(libfive_thermal* f, uint64_t salt);
-/*  Thermal topology optimization (see thermal.hpp; extrude: -1, or 0 / 1 / 2
- *  for a design constant along x / y / z): 1 on success;
- *  libfive_thermal_density is then the density field (0..1) and
- *  libfive_thermal_history fills up to max values of the heat-weighted
- *  mean temperature of the heat inputs, one per iteration  */
-int libfive_thermal_optimize(libfive_thermal* t, float volume_fraction, float penalty,
-                             float filter_radius, int iterations, float move,
-                             const libfive_tree* keep, int keep_count,
-                             const libfive_tree* avoid, int avoid_count,
-                             int solver_iterations, float tolerance, int extrude);
-libfive_tree libfive_thermal_density(libfive_thermal* t);
-int libfive_thermal_history(libfive_thermal* t, double* out, int max);
 const char* libfive_thermal_message(libfive_thermal* t);
 libfive_tree libfive_thermal_field(libfive_thermal* t, int field);
 float libfive_thermal_field_min(libfive_thermal* t, int field);
 float libfive_thermal_field_max(libfive_thermal* t, int field);
 double libfive_thermal_stat(libfive_thermal* t, int which);
 void libfive_thermal_delete(libfive_thermal* t);
-/*  Topology optimization of a prepared problem (see fea.hpp): returns 1 on
- *  success; libfive_fea_density is then the density field (0..1) and
- *  libfive_fea_history fills up to max compliance values (one per
- *  iteration), returning how many there are.  */
-int libfive_fea_optimize(libfive_fea* f, float volume_fraction, float penalty,
-                         float filter_radius, int iterations, float move,
-                         const libfive_tree* keep, int keep_count,
-                         const libfive_tree* avoid, int avoid_count,
-                         int solver_iterations, float tolerance, int extrude);
-libfive_tree libfive_fea_density(libfive_fea* f);
-int libfive_fea_history(libfive_fea* f, double* out, int max);
 
 /*
  *  Evaluates a math tree at n points (xyz holds 3n floats) into out (n

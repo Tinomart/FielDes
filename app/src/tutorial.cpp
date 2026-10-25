@@ -1997,7 +1997,8 @@ void Tutorial::buildSteps()
                       "beam = box((0, 0, 0), (60, 20, 10))\n"
                       "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
                       "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
-                      "opt = topology_optimization(beam, supports=[support], loads=[load], material=steel, volume_fraction=0.4, element_size=2.5)\n"
+                      "stress = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=2.5)\n"
+                      "opt = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'])\n"
                       "opt");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);

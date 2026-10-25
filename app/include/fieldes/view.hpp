@@ -165,6 +165,9 @@ public:
     /*  Selects the surface under a widget position as the menu of a right-click does (for scripted
      *  tests); false if no shape with a line of the script is there  */
     bool selectSurfaceAt(QPoint pos, const QString& mode, double angle, double radius);
+    /*  What the entries of the right-click menu near an edge or a corner do, for the body under `pos`: `kind` "corner", "edge" or "edge_point" asks for it to be written into the script;
+     *  "list" writes what the menu would offer there to the log (for the tests)  */
+    bool featureAt(QPoint pos, const QString& kind);
 
     /*  What the context menus create: the primitives and operations of the library, as the interpreter lists
      *  them (fieldes.menu_catalog); asked once, when a script has run, so a right-click never waits for Python  */
@@ -209,6 +212,9 @@ public slots:
      *  none), a new plane -- the plane of the selected 2D shape, or parallel to the view through the origin -- is Ctrl+Shift+W, and W turns the camera to face it  */
     const WorkPlane& workPlane() const { return m_wp; }
     void setWorkPlaneOpen(bool open);
+    /*  Escape: one step out of the special mode the viewport is in, the innermost first -- the line being drawn on the work plane is dropped, then the kind of drawing that is on is
+     *  stopped (clicks select again), then the work plane view is closed.  False when there is nothing to leave (the window then goes on: it closes the section view, or cancels the render)  */
+    bool exitMode();
     void newWorkPlane();
     void workPlaneFromView();
     void faceWorkPlane();
@@ -448,6 +454,8 @@ signals:
      *  degrees, the radius in mm, 0 = no limit)
      */
     void surfaceSelectRequested(int line0, QVector3D point, QString mode, double angle, double radius);
+    /*  The menu of a right click on a body near an edge or a corner: a point at the corner ("corner"), the edge as a line ("edge") or a point on the edge ("edge_point")  */
+    void featureRequested(int line0, QVector3D point, QString kind);
 
     /*
      *  An entry of a context menu was chosen: a new primitive (kind "primitive") placed at `point`, or an

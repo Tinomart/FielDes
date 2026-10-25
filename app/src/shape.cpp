@@ -172,7 +172,7 @@ void Shape::setMarkers(std::vector<QVector3D> points)
 
 void Shape::setRenderHint(QVector3D lo, QVector3D hi, float res, float side, float scene_res)
 {
-    has_hint = res > 0 && side > 0 && scene_res != 0;          // (a scene resolution below 0: the resolution is absolute: custom_resolution)
+    has_hint = res > 0 && side > 0 && scene_res > 0;
     hint_lo = lo;
     hint_hi = hi;
     hint_res = res;
@@ -889,6 +889,50 @@ bool Shape::flatPlane(double frame[9]) const
     return true;
 }
 
+bool Shape::patchPlane(double frame[9]) const
+{
+    // The triangles of the mesh whose corners are all on the patch (the value at a vertex at most the cutoff: see setColorCutoff) are the patch.  Each is an area, as a vector (the mesh is
+    // counter-clockwise from outside).  The plane that the patch covers the most area of is the one whose normal is the most along the normals of its triangles, weighted by their areas:
+    // the strongest direction of the sum of area n n^T (for a flat face that is its normal, and for a bent one the one most of it faces)
+    if (!has_cutoff || !mesh || color_values.size() < mesh->verts.size()) return false;
+    Eigen::Matrix3d moment = Eigen::Matrix3d::Zero();
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero(), centre = Eigen::Vector3d::Zero();
+    double area = 0;
+    for (const auto& t : mesh->branes)
+    {
+        if (!(color_values[t[0]] <= color_cutoff && color_values[t[1]] <= color_cutoff && color_values[t[2]] <= color_cutoff)) continue;
+        const Eigen::Vector3d a = mesh->verts[t[0]].cast<double>(), b = mesh->verts[t[1]].cast<double>(), c = mesh->verts[t[2]].cast<double>();
+        const Eigen::Vector3d vector = 0.5 * (b - a).cross(c - a);
+        const double w = vector.norm();
+        if (!(w > 0)) continue;
+        const Eigen::Vector3d n = vector / w;
+        moment += w * n * n.transpose();
+        sum += vector;
+        centre += w * (a + b + c) / 3.0;
+        area += w;
+    }
+    if (!(area > 0)) return false;
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(moment);
+    Eigen::Vector3d n = solver.eigenvectors().col(2);            // (the largest eigenvalue's: they are in increasing order)
+    if (n.dot(sum) < 0) n = -n;                                  // (the side the patch faces)
+    // (a plane through the middle of the patch with u and v across it: u is perpendicular to the normal and to the axis it is the least along)
+    int axis = 0;
+    for (int i = 1; i < 3; ++i)
+        if (std::fabs(n[i]) < std::fabs(n[axis])) axis = i;
+    Eigen::Vector3d e = Eigen::Vector3d::Zero();
+    e[axis] = 1.0;
+    const Eigen::Vector3d u = e.cross(n).normalized();
+    const Eigen::Vector3d v = n.cross(u);
+    const Eigen::Vector3d o = centre / area;
+    for (int i = 0; i < 3; ++i)
+    {
+        frame[i] = o[i];
+        frame[3 + i] = u[i];
+        frame[6 + i] = v[i];
+    }
+    return true;
+}
+
 bool Shape::planeNow(double frame[9]) const
 {
     std::vector<libfive::pointshapes::Control> cs;
@@ -1518,17 +1562,19 @@ bool Shape::searchExtent(const std::map<libfive::Tree::Id, float>& numbers, cons
 
 double Shape::autoResolution(const Settings& s) const
 {
-    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return s.res;
+    // (a body with a resolution of its own -- custom_resolution -- has it in the place of the scene's, and is scaled by its size as the scene's is)
+    const double base = m_res_override > 0 ? double(m_res_override) : double(s.res);
+    if (!s.autoScale || !m_ext_valid || has_hint || has_result) return base;
     const QVector3D region = s.max - s.min, size = m_ext_hi - m_ext_lo;
     const double R = std::max(region.x(), std::max(region.y(), region.z()));
     const double L = std::max(size.x(), std::max(size.y(), size.z()));
-    if (!(R > 0) || !(L > 1e-6)) return s.res;
-    double res = s.res * std::sqrt(std::max(1.0, R / L));
+    if (!(R > 0) || !(L > 1e-6)) return base;
+    double res = base * std::sqrt(std::max(1.0, R / L));
     res = std::min(res, 2000.0 / L);
     // (the script's box of a shape whose surface is being pulled is the box it had before: the shape is larger, or smaller, than it says, and the region has grown to hold it -- the box
     // would make it finer at every move.  It is meshed as finely as it was, and the script, which says the box again when the pull is let go, sizes it then)
     if (m_ext_stale && m_geometry_known && m_geometry.res > 0) res = std::min(res, double(m_geometry.res));
-    return std::max(res, double(s.res));
+    return m_res_override > 0 ? res : std::max(res, double(s.res));       // (the resolution of its own may be coarser than the scene's)
 }
 
 bool Shape::meshSize(QVector3D& lo, QVector3D& hi) const
@@ -1572,29 +1618,19 @@ int Shape::defaultDivFor(const Settings& s)
 bool Shape::ownRegion(const Settings& s, const QVector3D& box_lo, const QVector3D& box_hi, float side,
                       QVector3D& lo, QVector3D& hi, double& res) const
 {
-    // The region a shape with a resolution of its own is meshed over, and that resolution.  The shape's box (placed by its gizmo) in
-    // the scene's region: a cube round the box, `side` long (a power of two of cells of that resolution).  An absolute resolution
-    // (custom_resolution: the scene's resolution does not enter) is the shape's wherever it is: a body that reaches out of the scene's
-    // region is meshed at it over the part of the cube that is in the region (nothing outside the region is drawn, as for every shape)
-    // -- and not at the scene's resolution, which is what a body that only pokes out of the region by a little (the box of a lattice is
-    // an estimate) used to get without a word.  A resolution that follows the scene's (an import's part) is the part's only when the
-    // whole part is in the region
+    // The region a part with a resolution of its own (an import's part: fieldes.stdlib.cad_import.roi_resolution) is meshed over, and that resolution.  The part's box (placed by its
+    // gizmo) in the scene's region: a cube round the box, `side` long (a power of two of cells of that resolution).  The resolution follows the scene's -- in proportion, or the number
+    // of custom_resolution(part, r) in the scene's place -- and is the part's only when the whole part is in the region
     if (!has_hint) return false;
     const bool inside = box_lo.x() >= s.min.x() && box_hi.x() <= s.max.x() &&
                         box_lo.y() >= s.min.y() && box_hi.y() <= s.max.y() &&
                         box_lo.z() >= s.min.z() && box_hi.z() <= s.max.z();
-    if (!inside && hint_scene_res > 0) return false;
+    if (!inside) return false;
     const QVector3D c = 0.5f * (box_lo + box_hi);
     const float h = 0.5f * side;
     lo = QVector3D(c.x() - h, c.y() - h, c.z() - h);
     hi = QVector3D(c.x() + h, c.y() + h, c.z() + h);
-    res = hint_scene_res > 0 ? double(hint_res) * (s.res / double(hint_scene_res)) : double(hint_res);
-    if (!inside)
-    {
-        lo = QVector3D(std::max(lo.x(), s.min.x()), std::max(lo.y(), s.min.y()), std::max(lo.z(), s.min.z()));
-        hi = QVector3D(std::min(hi.x(), s.max.x()), std::min(hi.y(), s.max.y()), std::min(hi.z(), s.max.z()));
-        if (!(hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z())) return false;     // (none of it is in the region)
-    }
+    res = double(hint_res) * ((m_res_override > 0 ? double(m_res_override) : double(s.res)) / double(hint_scene_res));
     return true;
 }
 
@@ -2941,6 +2977,16 @@ bool Shape::updateFrom(const Shape* other)
     {
         setRenderHint(other->hint_lo, other->hint_hi, other->hint_res, other->hint_side, other->hint_scene_res);
         if (m_geometry_known && wouldRenderDifferently(m_last_settings))
+        {
+            startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
+            started = true;
+        }
+    }
+    // The resolution of its own is what the script says NOW too (a number typed over in the code changes it, the bin of its row takes it away)
+    if (other->m_res_override != m_res_override)
+    {
+        setResolutionOverride(other->m_res_override);
+        if (!started && m_geometry_known && wouldRenderDifferently(m_last_settings))
         {
             startRender(RenderSettings { m_last_settings, defaultDivFor(m_last_settings), m_last_alg });
             started = true;

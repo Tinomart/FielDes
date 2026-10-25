@@ -30,6 +30,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <Eigen/Eigen>
 
+#include "libfive/fea/density_design.hpp"
 #include "libfive/fea/tetfea.hpp"
 
 namespace libfive {
@@ -69,6 +70,45 @@ public:
     std::shared_ptr<const MeshResult> result() const { return m_result; }
     std::shared_ptr<const TetMesh> mesh() const { return m_mesh; }
 
+    /*  Topology optimization: one density to each tetrahedron of the part (the design space), the conductivity of an element the material's times
+     *  kmin + (1 - kmin) rho^p, on the design core every analysis shares (density_design.hpp).  The held temperatures, the heat inputs and the
+     *  convecting faces of the part's own surface act as in the analysis; the elements that hold a temperature or bring heat in stay solid, and
+     *  material that nothing joins to a held temperature or a convecting face is taken out.  Elements inside `keep` regions stay solid, inside
+     *  `avoid` regions empty.  The measures are numbers of the temperature, each with its sensitivity to the density of every element (an adjoint
+     *  solve): the peak temperature and the lowest, the peak heat flux, the temperature the heat comes in at, the temperature at a point  */
+    enum DensityMeasure { MEASURE_VOLUME = 0, MEASURE_MAX_TEMPERATURE = 1, MEASURE_MIN_TEMPERATURE = 2, MEASURE_MAX_HEAT_FLUX = 3,
+                          MEASURE_INPUT_TEMPERATURE = 4, MEASURE_TEMPERATURE_AT = 5 };
+    struct DensityMeasureSpec
+    {
+        int kind = MEASURE_VOLUME;
+        double a = 0, b = 0, c = 0;     // MEASURE_TEMPERATURE_AT: the point
+    };
+    struct DensityOpt : topopt::DesignSettings
+    {
+        std::vector<DensityMeasureSpec> measures;
+        double penalty = 3.0;
+        double minConductivity = 1e-3;      // of the full material, for "void"
+        int solverIterations = 50000;
+        double tolerance = 1e-6;
+    };
+    bool optimizeDensity(const DensityOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
+    /*  After optimizeDensity: the planes the design was kept symmetric about; the objective, every measure and every output of the program at each
+     *  kept iteration; the density (0..1) as a field on the mesh, and after each iteration; the density at the nodes above which the design's volume
+     *  is what the design has (the cut), and in how many pieces the part cut there is  */
+    const std::vector<topopt::Mirror>& mirrorsUsed() const { return m_mirrorsUsed; }
+    const std::vector<double>& designHistory() const { return m_history; }
+    const std::vector<std::vector<double>>& baseHistory() const { return m_baseHistory; }
+    const std::vector<std::vector<double>>& outputHistory() const { return m_outputHistory; }
+    std::shared_ptr<const MeshResult> densityResult() const { return m_densityResult; }
+    size_t densityHistoryCount() const { return m_densityHistory.size(); }
+    std::shared_ptr<const MeshResult> densityResultAt(size_t k) const;
+    double cutThreshold() const;
+    int pieces(double threshold, double margin = 0.0) const;
+    int stepsBack() const { return m_stepsBack; }
+    double designVolume() const { return m_designVolume; }
+    /*  After solve: the temperature the heat comes in at -- the free nodes' temperature weighted by the heat that comes in at each  */
+    double inputTemperature() const { return m_inputTemperature; }
+
 private:
     friend struct ResultIO;
     Tree m_shape;
@@ -90,12 +130,24 @@ private:
     std::vector<unsigned char> m_fixed;         // per vertex: held at m_fixedValue
     std::vector<double> m_fixedValue;
     std::vector<double> m_source;               // per vertex: heat in (W)
+    std::vector<double> m_sourceFixed;          // ... of it what a heat input puts in over a surface or at a point (a design holds the elements that carry it; a generation is a condition of the design space)
     struct ConvTri { int a, b, c; double area, h, ambient; };
     std::vector<ConvTri> m_conv;
     double m_heatIn = 0;
     int m_looseElements = 0;
     uint64_t m_hash = 0;
     std::shared_ptr<MeshResult> m_result;
+    double m_inputTemperature = 0;
+
+    // The optimisation
+    std::vector<topopt::Mirror> m_mirrorsUsed;
+    std::vector<double> m_history;
+    std::vector<std::vector<double>> m_baseHistory, m_outputHistory;
+    std::vector<std::vector<float>> m_densityHistory;   // per iteration: the density at the nodes
+    std::vector<float> m_topDensity;                    // per tetrahedron
+    std::shared_ptr<MeshResult> m_densityResult;
+    double m_designVolume = 0;
+    int m_stepsBack = 0;
 };
 
 }   // namespace fea

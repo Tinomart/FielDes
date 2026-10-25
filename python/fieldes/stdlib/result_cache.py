@@ -72,7 +72,7 @@ def _folder():
 
 # What the solvers' results are, as a number: it changes when a change to a solver changes what it gives for the same problem (a different
 # optimiser, another mesh), and only then -- so that a program that is rebuilt or updated reads back what an earlier one solved
-RESULT_VERSION = 4
+RESULT_VERSION = 6      # (6: the voxel structural result's file has no design; 5: a thermal result's file has the temperature of the heat inputs and the design; the flow optimiser solves its flows from the last flow)
 
 
 def _key(kind, ekey):

@@ -1974,6 +1974,29 @@ void Interpreter::recordShape(
         Py_XDECREF(hintOwner);
         PyErr_Clear();
 
+        // A resolution of its own (fieldes.stdlib.custom_resolution): the number the scene's resolution is, for this body alone.  A body placed with gizmo() or edited with handles() has
+        // the one of the body it was made from
+        {
+            PyObject* owner = obj;
+            Py_INCREF(owner);
+            for (int depth = 0; owner && depth < 8 && !PyObject_HasAttrString(owner, "_resolution_override") && PyObject_HasAttrString(owner, "_placed_from"); ++depth)
+            {
+                PyObject* from = PyObject_GetAttrString(owner, "_placed_from");
+                Py_DECREF(owner);
+                owner = from;
+            }
+            double own = 0.0;
+            if (owner && PyObject_HasAttrString(owner, "_resolution_override"))
+            {
+                PyObject* r = PyObject_GetAttrString(owner, "_resolution_override");
+                if (r && PyNumber_Check(r)) own = PyFloat_AsDouble(r);
+                Py_XDECREF(r);
+            }
+            PyErr_Clear();
+            Py_XDECREF(owner);
+            shape->setResolutionOverride(own > 0.0 ? float(own) : 0.0f);
+        }
+
         // The exact triangles of a tessellated part (fieldes.stdlib.tessellated_import): (key, vertices as bytes of floats,
         // triangles as bytes of unsigned ints, the 12 numbers of the 3 x 4 matrix that places them).  The part is drawn from them
         // (Shape::setExactMesh); a mesh is kept by its key, so that the script's next run does not copy it again
@@ -2468,6 +2491,8 @@ void Interpreter::recordShape(
                                          float(num("_deform_scale", 0)), float(num("_deform_auto", 1)),
                                          grid);
                         shape->setColorDetail(float(num("_color_detail", 0)));
+                        // (why a result has no elements to show, when it has none: said on the card where their number stands)
+                        shape->setElementNote(str("_fea_elements_note"));
                     }
                 }
                 Py_XDECREF(fields);

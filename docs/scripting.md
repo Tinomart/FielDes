@@ -133,6 +133,26 @@ and the field-based ones in [Fields](fields.md): `smooth_union`, `smooth_differe
 scaled or mirrored with them and remembers where it came from, so `exclude()` (the exact STEP surface)
 follows it.
 
+### Snapping a body onto another
+
+`snap(body, face, point, onto_face, onto_point, spin=0, gap=0)` moves `body` so that its `face` lies against `onto_face` -- the two faces facing each other, the direction in which the
+bodies do not go into one another -- and its `point` is at `onto_point`. The faces are surfaces from `select_surface(...)` (or just a direction, `(0, 0, 1)`), the points are `point(...)`s --
+a corner or an edge point from `corner_at(...)` / `edge_point_at(...)`, which the right-click menu of a body writes near its edges and corners
+(see [Selecting surfaces](selecting-surfaces.md#corners-and-edges)). `spin` (degrees) then turns the body about the normal of the contact, the one thing the two faces and the two points
+leave free, and `gap` (mm) leaves the faces that far apart. The other body is not given: only where its face is and which way it faces is read, so what you snap onto can be a body, a plane
+or a surface.
+
+```python
+foot = select_surface(bracket, seed=(0, 0, 0), angle=5)
+foot_corner = corner_at(bracket, (10, 10, 0))
+top = select_surface(plate, seed=(30, 20, 12), angle=5)
+hole_edge = edge_point_at(plate, (30, 20, 12))
+bracket = snap(bracket, foot, foot_corner, top, hole_edge)
+```
+
+In FielDes, select the body, its face and its point, then the face and the point it goes onto (Ctrl + click, in that order) and choose **Operations → Moving → snap**: the call is written with them
+in their places, and a placeholder for what was not selected.
+
 ## Arithmetic on fields
 
 Shapes support `+ - * / **`, unary minus, `abs`, and the methods `.min(other)`, `.max(other)`,

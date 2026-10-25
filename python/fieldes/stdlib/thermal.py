@@ -14,8 +14,8 @@ Steady-state thermal analysis (heat conduction) of FielDes shapes.
     result                               # the part coloured by temperature (FielDes)
     thicker = part - 0.2 * result.heat_flux   # results are fields like any other
 
-    # the material layout (30 % of the part) that keeps the heat input coolest: the same four inputs
-    design = thermal_topology_optimization(part, [...], [...], [...], [...], volume_fraction=0.3)
+    # the material layout (30 % of the part) that keeps the part coolest, for the conditions of the analysis
+    design = topology_optimization(result, constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3'])
     design.shape()
 
 Every kind of condition is an input of its own, needed -- written with a placeholder -- and takes one item or a list ([] says there is none).
@@ -40,8 +40,8 @@ conductivity in W / (mm K) (aluminium ~0.167 = 167 W / (m K)).
 Uses the same elements as static_analysis: tetrahedra that follow the part's
 surface (element='tet', the default: a temperature is linear in each and the
 heat flux constant in it) or, with element='hex', a voxel grid of cubes (partly
-filled at the surface), and a preconditioned conjugate-gradient solve.  Thermal
-topology optimization designs on the voxel grid only.
+filled at the surface), and a preconditioned conjugate-gradient solve.  Topology
+optimization of a thermal analysis (topology_optimization) designs on the tetrahedral mesh.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -58,11 +58,11 @@ from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions)
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key, value_key
+from fieldes.stdlib.element_mesh import element_mesh as _element_mesh, elements_note as _elements_note
 from fieldes.stdlib import result_cache
 
 __all__ = ['fixed_temperature', 'heat_input', 'heat_generation', 'convection',
-           'thermal_analysis', 'ThermalResult', 'thermal_topology_optimization',
-           'ThermalTopologyResult']
+           'thermal_analysis', 'ThermalResult', 'ThermalTopologyResult']
 
 
 class _Temperature(_Condition):
@@ -127,14 +127,15 @@ def _one(rest, what, count=1):
     return rest
 
 
-def fixed_temperature(*args, region=None, value=None):
+def fixed_temperature(*args, region=None, body=None, value=None):
     ''' The part held at temperature `value` wherever it lies inside
         `region` (a Shape; any number of regions can be given, one argument after the other, then the value:
         fixed_temperature(a, b, 20)).
 
         region  where the part is held: a body, a field or a selected surface (the same as the first argument)
+        body    the body it is held on, when the regions are bodies that choose WHERE on it: `fixed_temperature(plate, 20, body=part)` holds the part's surface where it meets the plate
         value   the temperature (degrees C): a number, or a field -- the temperature at each point (tetrahedral elements) '''
-    found, rest = _regions(args, region, 'fixed_temperature()')
+    found, rest = _regions(args, region, 'fixed_temperature()', body)
     if value is not None:
         if rest:
             raise TypeError('fixed_temperature(): the value is given once -- as the argument after the regions, or as value=')
@@ -145,14 +146,15 @@ def fixed_temperature(*args, region=None, value=None):
 fixed_temperature._required = ('region', 'value')
 
 
-def heat_input(*args, region=None, watts=None, profile=None):
+def heat_input(*args, region=None, body=None, watts=None, profile=None):
     ''' A total power (W) put into the part, spread evenly over its surface
         inside `region` (a Shape; any number of regions, one argument after the other, then the power); negative takes heat out.
 
         region   where the heat goes in: a body, a field or a selected surface (the same as the first argument)
+        body     the body the heat goes into, when the regions are bodies that choose WHERE on it: `heat_input(chip, 8, body=part)` heats the part's surface where it meets the chip
         watts    the total power in watts (negative takes heat out)
         profile  a field -- the power is spread in proportion to it (not negative) instead of evenly '''
-    found, rest = _regions(args, region, 'heat_input()')
+    found, rest = _regions(args, region, 'heat_input()', body)
     if watts is not None:
         if rest:
             raise TypeError('heat_input(): the power is given once -- as the argument after the regions, or as watts=')
@@ -182,15 +184,16 @@ def heat_generation(*args, region=None, watts=None, profile=None):
 heat_generation._required = ('region', 'watts')
 
 
-def convection(*args, region=None, coefficient=None, ambient=None):
+def convection(*args, region=None, body=None, coefficient=None, ambient=None):
     ''' The part's exposed surface inside `region` (any number of regions, one argument after the other, then the coefficient and the
         ambient temperature) exchanges heat with an ambient temperature.
 
         region       where the part exchanges heat: a body, a field or a selected surface (the same as the first argument)
+        body         the body that exchanges heat, when the regions are bodies that choose WHERE on it: its surface where they are
         coefficient  h in W / (mm^2 K): still air ~5e-6 - 25e-6, forced air ~25e-6 - 250e-6, water ~500e-6 - 1e-2.  A number, or a field --
                      its value at each point of the surface (tetrahedral elements)
         ambient      the ambient temperature (degrees C; 20 when it is not given): a number, or a field '''
-    found, rest = _regions(args, region, 'convection()')
+    found, rest = _regions(args, region, 'convection()', body)
     if coefficient is not None:
         if len(rest) > 1 or (rest and ambient is not None):
             raise TypeError('convection(): the coefficient is given once -- as the argument after the regions, or as coefficient=')
@@ -234,8 +237,9 @@ class ThermalResult(FieldResult):
         result at each point, usable in any expression): temperature,
         heat_flux (magnitude, W/mm^2), qx, qy, qz.  Summary: max_temperature,
         min_temperature, max_heat_flux, heat_in, heat_out (W: through the
-        fixed temperatures and by convection -- they balance), elements,
-        iterations, seconds. '''
+        fixed temperatures and by convection -- they balance),
+        input_temperature (tetrahedral elements: the temperature the heat comes in at, weighted by how much comes in at each place),
+        volume (mm^3, of the mesh) and mass (when the material has a density), elements, iterations, seconds. '''
 
     def __init__(self, handle, shape, material):
         self._handle = handle
@@ -258,10 +262,28 @@ class ThermalResult(FieldResult):
         self.heat_out = self.heat_out_fixed + self.heat_out_convection
         self.min_temperature, self.max_temperature = self._ranges['temperature']
         self.max_heat_flux = self._ranges['heat_flux'][1]
+        self.input_temperature = stat(8) if handle.tet else None
+        self.volume = stat(11) if handle.tet else None
+        density = getattr(material, 'density', None)
+        self.mass = float(density) * self.volume if handle.tet and isinstance(density, (int, float)) and density > 0 else None
 
     def range(self, field='temperature'):
         ''' (min, max) of a field over the part '''
         return self._ranges[field]
+
+    def _mesh_data(self):
+        ''' What FielDes draws for "Elements": the mesh the solver used and each tetrahedron's own value of each field -- the temperature at its centre, its own heat flux (constant in it) --
+            for an analysis on tetrahedra; None for a voxel grid or when there are more tetrahedra than are drawn (see element_mesh) '''
+        cached = getattr(self, '_mesh_full', False)
+        if cached is not False:
+            return cached
+        full = None
+        if self._handle.tet and hasattr(lib, 'libfive_tetthermal_element_values'):
+            p = self._handle.ptr
+            full = _element_mesh(lambda b: lib.libfive_tetthermal_counts(p, b), lambda v, t, f, ft: lib.libfive_tetthermal_mesh(p, v, t, f, ft),
+                                 lambda f, buf, n: lib.libfive_tetthermal_element_values(p, f, buf, n), range(len(_FIELDS)), None)
+        self._mesh_full = full
+        return full
 
     def _display(self):
         ''' What FielDes shows for the result stated on its own: the part coloured by the temperature
@@ -272,6 +294,9 @@ class ThermalResult(FieldResult):
                              for name in _FIELDS]
         out._color_field_name = 'temperature'
         out._color_detail = float(getattr(self, 'element_size', 0) or 0)
+        out._fea_mesh = self._mesh_data()
+        if out._fea_mesh is None and self._handle.tet:
+            out._fea_elements_note = _elements_note(int(self.elements))       # (more tetrahedra than are drawn: the card says why it has no elements)
         return out
 
     def __repr__(self):
@@ -477,100 +502,88 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
 
 
 ################################################################################
-# Thermal topology optimization
+# Topology optimization of a thermal analysis: the call is topology_optimization (fea.py), this is its thermal side
 
 class ThermalTopologyResult(TopologyResult):
-    ''' The result of thermal_topology_optimization():
+    """ The result of topology_optimization() for a thermal analysis (see there): the part made best for what is asked of its temperature.
         .density      a field, 0 (no material) .. 1 (solid), in the part
-        .shape()      the optimized part, keeping the volume fraction asked
-                      for (shape(threshold=0.5): where density > 0.5)
-        .temperature  the heat-weighted mean temperature of the heat inputs
-                      at each iteration -- lower is better
-        .volume_fraction, .iterations, .seconds
-        .verify()     a thermal analysis of the optimized part '''
+        .shape()      the optimized part, keeping the volume the design has (shape(threshold=0.5): where density > 0.5)
+        .analysis     the thermal analysis of the optimized part, made as the one the optimisation was given was: its numbers -- `best.max_temperature`
+                      -- are the true ones; .values what was asked, as that part has it; .feasible, .history (the objective per iteration), .table()
+        .verify()     the thermal analysis of the optimized part again
+        Stated on its own, FielDes shows the optimized part coloured by the density, and the result card steps through the iterations. """
 
-    def __init__(self, handle, part, density, history, settings, element_size, bounds,
-                 boundary, material, conductivity, stats):
-        TopologyResult.__init__(self, handle, part, density, history, settings, element_size,
-                                bounds, [], [], material, stats)
-        self.temperature = history
-        self._boundary = boundary
-        self._conductivity = conductivity
-
-    def verify(self, threshold=None, element_size=None):
-        ''' A thermal analysis of the optimized part with the same boundary
-            conditions and material '''
-        return _thermal_analysis(self.shape(threshold), self._boundary, self.material,
-                                element_size=element_size or self.element_size,
-                                bounds=self.bounds, conductivity=self._conductivity,
-                                element=self.settings.get('element', 'hex'))
-
-    def __repr__(self):
-        t = self.temperature
-        return _tr('Thermal topology optimization: %.0f %% of the part kept, heat input temperature %.4g -> %.4g '
-                   '(%d iterations, %.1f s)') % (
-                       100 * self.volume_fraction, t[0] if t else 0, t[-1] if t else 0, self.iterations, self.seconds)
+    def keep_threshold(self):
+        """ The density above which the part has the volume the design has, counted in the kernel (see TopologyResult.keep_threshold) """
+        if getattr(self, '_keep_threshold', None) is not None:
+            return self._keep_threshold
+        ptr = getattr(getattr(self, '_handle', None), 'ptr', None)
+        t = float(lib.libfive_tetthermal_cut_threshold(ptr)) if ptr else 0.5
+        self._keep_threshold = t
+        return t
 
 
 _topo_cache = OrderedDict()
 
 
-@_with_conditions
-def thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_generations, convections, material=aluminium,
-                                  volume_fraction=0.3, element_size=None, iterations=60, filter_radius=None,
-                                  keep=None, avoid=None, extrude=None, penalty=3.0, move=0.2,
-                                  bounds=None, conductivity=None,
-                                  tolerance=1e-6, cache=True, element='hex'):
-    ''' Thermal topology optimization: the material layout, using
-        `volume_fraction` of `part` (the design space), that keeps the heat
-        coolest where it goes in -- the heat-weighted mean temperature of
-        the heat inputs is minimised -- for the given boundary conditions
-        (as in thermal_analysis).  The rest of the design space is taken as
-        empty (a thousandth of the material's conductivity).
-
-        Heat inputs (heat_input, heat_generation) are needed; the
-        fixed_temperature regions are the heat sinks.  Convection follows
-        the design: it cools the optimized part's surface wherever it lies
-        inside a convection region -- give the region as the air around
-        and inside the design space, and fins grown into it are cooled.
-        The classic "volume-to-point" problem -- heat generated all through
-        a part, one small sink -- grows branching conductor trees.
-
-        extrude: 'x', 'y' or 'z' -- the design is constant along that axis
-                (outside the keep regions), every hole a channel right
-                through: an extruded or pin-fin heat sink.  For air cooling
-                use it: with one heat transfer coefficient everywhere, a
-                closed pocket deep in the part would count as cooled like an
-                open face.
-
-        keep:   regions (Shapes, or a list) that must stay solid; the
-                material at fixed temperatures and heat inputs always stays
-        avoid:  regions that must stay empty
-        element_size:  mm (default: 40 elements along the longest side)
-        filter_radius: the smallest member size scale, mm (default 1.5
-                elements)
-
-        Returns a ThermalTopologyResult: .density (a field), .shape() (the
-        optimized part), .temperature (per iteration), .verify().  An
-        unchanged problem is cached, so re-running a script is instant. '''
-    if element == 'tet':
-        raise FeaError("thermal topology optimization designs one density per cell of a regular grid: "
-                       "there is no tetrahedral mesh option (element='hex')")
-    boundary = _boundary(fixed_temperatures, heat_inputs, heat_generations, convections, 'thermal_topology_optimization')
+def topology_optimization_thermal(analysis, constraints, iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
+                                  extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-5, cache=True):
+    """ topology_optimization() of a thermal analysis: the layout of material, within the part, that is best for what is asked of its temperature.
+        The held temperatures, the heat inputs and generations and the convection of the analysis are the problem (the elements that hold a temperature
+        or bring heat in stay solid, and material that nothing joins to a held temperature or a convecting surface is taken out); the conductivity of
+        an element is the material's times a power of its density (penalty).  The numbers it can be asked for: max_temperature, min_temperature (the
+        peaks of the temperature, as p-norms), max_heat_flux, input_temperature (the heat-weighted mean temperature of the heat inputs: the usual
+        goal of a heat sink), temperature(x, y, z), volume, mass and volume_fraction; their sensitivities come from one adjoint solve each """
+    from fieldes.stdlib import optimization_measures as measures
+    from fieldes.stdlib.fea import _optimization_analyses, _symmetry_request
+    if getattr(lib, 'libfive_tetthermal_optimize_density', None) is None:
+        raise FeaError('this FielDes library is too old for topology optimization of a thermal analysis')
+    iterations = 100 if iterations is None else iterations
+    if not constraints:
+        raise TypeError("topology_optimization: say what the design is for -- constraints=[minimize('max_temperature'), 'volume_fraction <= 0.3', ...]")
+    if grow:
+        raise FeaError('topology_optimization: grow=True lets the design of a structure reach out of its part; a thermal design stays in the part (grow=False)')
+    analyses = _optimization_analyses(analysis, 'topology_optimization')
+    if len(analyses) != 1 or analyses[0].kind != 'thermal':
+        raise FeaError('topology_optimization: a thermal analysis is designed on its own: give the one thermal_analysis result (not a list, not together with another kind of analysis)')
+    first = analyses[0]
+    args = first.arguments
+    part = args['shape']
+    if not isinstance(part, Shape):
+        raise TypeError('topology_optimization: the part must be a Shape')
+    if args.get('element', 'tet') != 'tet':
+        raise FeaError("topology_optimization: a thermal analysis is designed on the tetrahedral mesh: make it with element='tet' (the default)")
+    boundary = _boundary(args['fixed_temperatures'], args['heat_inputs'], args['heat_generations'], args['convections'], 'topology_optimization')
     _use_conditions(boundary, part)
-    k = _conductivity(material, conductivity, 'thermal_topology_optimization')
+    material, conductivity = args['material'], args.get('conductivity')
+    k = _conductivity(material, conductivity, 'topology_optimization')
+    element_size, bounds = args.get('element_size'), args.get('bounds')
+    mirrors = _symmetry_request(symmetry, 'tet', 'topology_optimization')
     keep = [] if keep is None else list(keep if isinstance(keep, (list, tuple)) else [keep])
     avoid = [] if avoid is None else list(avoid if isinstance(avoid, (list, tuple)) else [avoid])
-    # (what the part has excluded stays as it is: its locked fields are regions to keep)
-    keep = keep + keep_regions(part)
-    # The whole problem by its content, before anything is built (see static_analysis)
-    ekey = problem_key('thermal_topology', part=part, part_bounds=getattr(part, '_bounds', None),
-                       boundary=boundary, material=material, conductivity=conductivity,
-                       volume_fraction=float(volume_fraction), element_size=element_size,
-                       iterations=int(iterations), filter_radius=filter_radius, keep=keep, avoid=avoid,
-                       extrude=extrude, penalty=float(penalty), move=float(move), bounds=bounds,
-                       max_iterations=max_iterations, tolerance=tolerance,
-                       element=element) if cache else None
+    keep = keep + keep_regions(part)             # (what the part has excluded stays as it is: its locked fields are regions to keep)
+    axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
+    if extrude not in axes:
+        raise ValueError("extrude is None, 'x', 'y' or 'z'")
+    if isinstance(constraints, str) or callable(constraints):
+        constraints = [constraints]
+    given = [a.result for a in analyses]
+
+    def baseline_leaf(key):
+        return 1.0 if key[0] == 'fraction' else measures.true_value(key, given)
+
+    def baseline(node):
+        return measures.evaluate(node, baseline_leaf)
+
+    outputs, goal = measures.outputs_of(constraints, analyses, baseline)
+    program = measures.Program(outputs)
+    if ('fraction',) not in program.measures:
+        program.measures.append(('fraction',))                      # (the share of the part the design uses is always kept: the result reports it)
+    start = program.start_fraction()
+    ekey = problem_key('thermal_topology', part=part, part_bounds=getattr(part, '_bounds', None), boundary=boundary, material=material,
+                       conductivity=conductivity, element_size=element_size, bounds=bounds, program=program.key(), start=start,
+                       iterations=int(iterations), filter_radius=filter_radius, keep=keep, avoid=avoid, extrude=extrude, penalty=float(penalty),
+                       sharpness=float(sharpness), symmetry=mirrors[2], tolerance=tolerance, algorithm=1) if cache else None
     if ekey is not None and ekey in _topo_cache:
         _topo_cache.move_to_end(ekey)
         cached = _topo_cache[ekey]
@@ -580,80 +593,101 @@ def thermal_topology_optimization(part, fixed_temperatures, heat_inputs, heat_ge
         r.__dict__.update(cached.__dict__)
         r.part = part
         return r
-    handle, element_size, (lo, hi) = _problem(part, boundary, k, element_size, bounds,
-                                              'thermal_topology_optimization', element)
-    axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
-    if extrude not in axes:
-        raise ValueError("extrude is None, 'x', 'y' or 'z'")
-    settings = {'volume_fraction': float(volume_fraction), 'penalty': float(penalty),
-                'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
-                'move': float(move), 'extrude': axes[extrude], 'element': element}
-    blist = list(boundary if isinstance(boundary, (list, tuple)) else [boundary])
-    kind = 'tetthermal' if handle.tet else 'thermal'
+    handle, element_size, (lo, hi) = _problem(part, boundary, k, element_size, bounds, 'topology_optimization', 'tet')
+    settings = {'volume_fraction': start, 'penalty': float(penalty), 'filter_radius': float(filter_radius or 0.0), 'iterations': int(iterations),
+                'extrude': axes[extrude], 'element': 'tet', 'sharpness': float(sharpness), 'symmetry': mirrors[2], 'grow': 0, 'grow_limit': 0.0}
 
-    def finish(handle, ptr, seconds):
-        ''' The result from a solved problem (just optimised, or read back from its file) '''
-        density = field_shape(lib.libfive_thermal_density(ptr))
-        hist = (ctypes.c_double * 1000)()
-        m = lib.libfive_thermal_history(ptr, hist, 1000)
-        history = [hist[i] for i in range(min(m, 1000))]
-        stats = {'volume_fraction': settings['volume_fraction'], 'iterations': len(history), 'seconds': seconds}
-        return ThermalTopologyResult(handle, part, density, history, settings, element_size,
-                                     (lo, hi), blist, material, conductivity, stats)
+    def finish(handle, ptr, seconds, symmetric=None, saved=None):
+        """ The result from a solved problem (just optimised, or read back from its file: `symmetric`, what the file says; `saved`, its numbers) """
+        density = field_shape(lib.libfive_tetthermal_density(ptr))
+        buf = (ctypes.c_double * 1000)()
+        m = lib.libfive_tetthermal_history(ptr, buf, 1000)
+        history = [buf[i] for i in range(min(m, 1000))]
+        densities = []
+        for j in range(len(history)):
+            f = lib.libfive_tetthermal_density_at(ptr, j)
+            if not f:
+                break
+            densities.append(field_shape(f))
+        if saved is not None:
+            bases, outs = saved['bases'], saved['outputs']
+            history = saved.get('history') or history
+            share = float(saved['share'])
+        else:
+            bases, outs = [], []
+            for j in range(len(program.measures)):
+                n = lib.libfive_tetthermal_measure_history(ptr, 0, j, buf, 1000)
+                bases.append([buf[i] for i in range(n)])
+            for j in range(len(outputs)):
+                n = lib.libfive_tetthermal_measure_history(ptr, 1, j, buf, 1000)
+                outs.append([buf[i] for i in range(n)])
+            share = bases[program.measures.index(('fraction',))][-1] if history else start
+        stats = {'volume_fraction': share, 'iterations': len(history), 'seconds': seconds}
+        result = ThermalTopologyResult(handle, part, density, history, settings, element_size, (list(lo), list(hi)), [], [], material, stats)
+        result.densities = densities
+        result._set_problem(analyses, outputs, program, bases, outs, goal)
+        # The planes the design was kept symmetric about: {'x': [position, how]} -- asked for (1), or found (2: and then said)
+        if symmetric is None:
+            symmetric = {}
+            for j, name in enumerate('xyz'):
+                at = ctypes.c_double()
+                how = lib.libfive_tetthermal_mirror(ptr, j, ctypes.byref(at))
+                if how:
+                    symmetric[name] = [float(at.value), int(how)]
+        found = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
+        if found:
+            print('topology_optimization: the part and its conditions are symmetric about %s: the design is kept symmetric '
+                  '(symmetry=None leaves it alone).' % ' and '.join(found))
+        result.symmetry = {n: v[0] for n, v in symmetric.items()}
+        result._symmetry_info = symmetric
+        # A part that falls into pieces cannot do what a part is for: say so (a link thinner than a millimetre of the cut surface is not one)
+        width = 2.0 * (settings['filter_radius'] or 1.5 * element_size)
+        result.pieces = result._join(lib.libfive_tetthermal_pieces, ptr, 1.0 / width)
+        if result.pieces > 1:
+            print('topology_optimization: the optimised part is in %d separate pieces (nothing joins them). Try more material (a looser limit on the volume) -- '
+                  'the loose scraps show what the part would become -- or fewer or smaller keep regions.' % result.pieces)
+        result._verify_into()
+        if any(isinstance(b, _HeatGeneration) for b in boundary):
+            print('topology_optimization: a heat generation is a condition of the design space: its heat is made where its region is, material or not (the classic volume-to-point problem), '
+                  'while the analysis of the optimized part makes it in the part only -- so the temperatures of that analysis are lower than the optimiser had.')
+        return result
 
     # solved in an earlier session: read back (see result_cache.py)
-    loaded = result_cache.load(kind, ekey, 'thermal topology optimization')
-    if loaded is not None:
-        result = finish(_Handle(loaded[0], handle.tet), loaded[0], float(loaded[1].get('seconds', 0)))
+    loaded = result_cache.load('tetthermal', ekey, 'thermal topology optimization')
+    if loaded is not None and loaded[1].get('measures'):
+        result = finish(_Handle(loaded[0], True), loaded[0], float(loaded[1].get('seconds', 0)), dict(loaded[1].get('symmetry') or {}), loaded[1]['measures'])
         _topo_cache[ekey] = result
         return result
     ptr = handle.ptr
-    if not lib.libfive_thermal_prepare(ptr):
-        raise FeaError(lib.libfive_thermal_message(ptr).decode('utf-8', 'replace'))
-    # cache key: the prepared problem, the settings, the keep / avoid regions
-    # and the boundary conditions' regions (by their expressions: convection
-    # reaches inside the design space, where the prepared problem doesn't
-    # record it)
-    items = boundary if isinstance(boundary, (list, tuple)) else [boundary]
-    try:
-        key = (lib.libfive_thermal_hash(ptr), tuple(sorted(settings.items())),
-               tuple(shape_key(_shape(r, 'keep')) for r in keep),
-               tuple(shape_key(_shape(r, 'avoid')) for r in avoid),
-               tuple((type(b).__name__, shape_key(b.region)) +
-                     tuple(sorted((k, value_key(v)) for k, v in vars(b).items() if k != 'region'))
-                     for b in items))
-    except Uncacheable:
-        key = None
-    if cache and key is not None and key in _topo_cache:
-        cached = _topo_cache[key]
-        _topo_cache.move_to_end(key)
-        if cached.part is part:
-            return cached
-        r = object.__new__(ThermalTopologyResult)
-        r.__dict__.update(cached.__dict__)
-        r.part = part
-        return r
-
-    keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[r.ptr for r in keep])
-    avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[r.ptr for r in avoid])
+    if not lib.libfive_tetthermal_prepare(ptr):
+        raise FeaError('topology_optimization: ' + lib.libfive_tetthermal_message(ptr).decode('utf-8', 'replace'))
+    keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[_shape(r, 'keep').ptr for r in keep])
+    avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[_shape(r, 'avoid').ptr for r in avoid])
+    if mirrors[0]:
+        lib.libfive_tetthermal_set_symmetry_auto(ptr, 1)
+    for axis, at in mirrors[1]:
+        lib.libfive_tetthermal_add_mirror(ptr, axis, 0.0 if at is None else float(at), 1 if at is None else 0)
     if ekey is not None:
-        lib.libfive_thermal_set_salt(ptr, result_cache.salt(kind, ekey))
+        lib.libfive_tetthermal_set_salt(ptr, result_cache.salt('tetthermal', ekey))
+    lib.libfive_tetthermal_opt_clear(ptr)
+    for key in program.measures:
+        lib.libfive_tetthermal_opt_measure(ptr, *program.thermal_measure(key))
+    for code, value, index in program.ops:
+        lib.libfive_tetthermal_opt_op(ptr, int(code), float(value), int(index))
+    lib.libfive_tetthermal_opt_start(ptr, float(start), (outputs[0].text or 'constraints').encode('utf-8'), -1.0 if goal == 'maximize' else 1.0, float(sharpness))
     t0 = time.time()
-    ok = lib.libfive_thermal_optimize(ptr, settings['volume_fraction'], settings['penalty'],
-                                      settings['filter_radius'], settings['iterations'],
-                                      settings['move'], keep_arr, len(keep), avoid_arr,
-                                      len(avoid), int(max_iterations), float(tolerance),
-                                      settings['extrude'])
+    ok = lib.libfive_tetthermal_optimize_density(ptr, settings['penalty'], settings['filter_radius'], settings['iterations'], keep_arr, len(keep), avoid_arr,
+                                                 len(avoid), 50000, float(tolerance), settings['extrude'])
     if not ok:
-        raise FeaError(lib.libfive_thermal_message(ptr).decode('utf-8', 'replace'))
+        raise FeaError('topology_optimization: ' + lib.libfive_tetthermal_message(ptr).decode('utf-8', 'replace'))
     result = finish(handle, ptr, time.time() - t0)
-    result_cache.save(kind, ekey, ptr, 'thermal topology optimization', {'seconds': result.seconds})
-    if cache and key is not None:
-        _topo_cache[key] = result
+    meta = {'seconds': result.seconds, 'symmetry': result._symmetry_info,
+            'measures': {'bases': result._bases, 'outputs': result._outs, 'share': result.volume_fraction, 'history': list(result.history)}}
+    result_cache.save('tetthermal', ekey, ptr, 'thermal topology optimization', meta)
     if ekey is not None:
         _topo_cache[ekey] = result
-    while len(_topo_cache) > 8:
-        _topo_cache.popitem(last=False)
+        while len(_topo_cache) > 8:
+            _topo_cache.popitem(last=False)
     return result
 
 

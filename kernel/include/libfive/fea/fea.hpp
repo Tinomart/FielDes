@@ -144,35 +144,6 @@ public:
         return (i >= 0 && size_t(i) < m_modes.size()) ? m_modes[size_t(i)] : nullptr;
     }
 
-    /*  Topology optimization (SIMP with a density filter and optimality-
-     *  criteria updates): finds the stiffest distribution of material that
-     *  uses volumeFraction of the part, for the supports and loads given.
-     *  Elements inside `keep` regions (and those holding supported or loaded
-     *  nodes) stay solid, elements inside `avoid` regions stay empty.  */
-    struct TopOpt
-    {
-        double volumeFraction = 0.3;
-        double penalty = 3.0;
-        double filterRadius = 0;        // 0: 1.5 element sizes
-        double move = 0.2;
-        double minStiffness = 1e-3;     // of the full material, for "void"
-        int extrude = -1;               // 0 / 1 / 2: the design is constant along
-                                        //   x / y / z (extruded, or machinable
-                                        //   from one side through)
-        int iterations = 60;
-        int solverIterations = 20000;
-        double tolerance = 1e-5;
-        std::vector<Tree> keep, avoid;
-    };
-    bool optimize(const TopOpt& settings, std::string& error,
-                  const std::atomic<bool>* cancel=nullptr);
-    /*  After optimize: the density (0..1) of each element (all elements, i
-     *  fastest), the compliance at each iteration, and the density as a
-     *  Result on the element centres (field 0) for fieldTree  */
-    const std::vector<float>& density() const { return m_topDensity; }
-    const std::vector<double>& complianceHistory() const { return m_history; }
-    std::shared_ptr<const Result> densityResult() const { return m_densityResult; }
-
     /*  Grid size (elements along each axis)  */
     int ex() const { return m_ex; }
     int ey() const { return m_ey; }
@@ -235,14 +206,6 @@ protected:
     bool m_noLoads = false;                 // prepare without loads (modal)
     std::vector<double> m_frequencies;
     std::vector<std::shared_ptr<Result>> m_modes;
-
-    // Topology optimization
-    std::vector<double> m_elemScale;        // per active element, empty = 1
-    std::vector<double> m_lastU;            // warm start (quick solves)
-    bool m_quick = false;                   // skip the result fields
-    std::vector<float> m_topDensity;
-    std::vector<double> m_history;
-    std::shared_ptr<Result> m_densityResult;
 
     size_t elem(int i, int j, int k) const { return (size_t(k) * m_ey + j) * m_ex + i; }
     size_t node(int i, int j, int k) const { return (size_t(k) * (m_ey + 1) + j) * (m_ex + 1) + i; }

@@ -627,7 +627,7 @@ def handles(shape, values=None, **removed):
         out._distance_of = _lazy_once(lambda: _handle_distance(shape, out, values, get))
     # (what the importer, roi() and the viewport read off a part: its box, its colouring, its exact regions)
     from fieldes.stdlib import cad_import
-    for name in ('_bounds', '_render_hint') + tuple(cad_import._CARRIED):
+    for name in ('_bounds', '_render_hint', '_resolution_override', '_custom_resolution') + tuple(cad_import._CARRIED):
         if hasattr(shape, name):
             try:
                 setattr(out, name, getattr(shape, name))

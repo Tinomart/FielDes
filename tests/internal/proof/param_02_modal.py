@@ -33,8 +33,7 @@ wall = fixed(box((-1, -1, -1), (1, 40, 40)))
 modes = modal_analysis(bar, supports=[wall], material=aluminium, modes=3, element_size=3)
 
 best = parametric_optimization(modes, [(b, 4, 20), (h, 4, 20)],
-                               maximize='frequencies[0]',
-                               constraints=['mass <= 0.04'])
+                               constraints=[maximize('frequencies[0]'), 'mass <= 0.04'])
 
 starting_bar = move(box((0, 0, 0), (100, 8, 16)), (0, -35, 0))
 known_best_bar = move(box((0, 0, 0), (100, side, side)), (0, 30, 0))

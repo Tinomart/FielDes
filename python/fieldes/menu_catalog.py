@@ -49,18 +49,23 @@ def _g(value):
     return '%.6g' % value
 
 
+# The materials and the fluids the library has ready (variables of fieldes.stdlib.fea and .fluid)
+MATERIAL_PRESETS = ('steel', 'stainless_steel', 'aluminium', 'titanium', 'pla', 'petg', 'abs_plastic', 'nylon')
+FLUID_PRESETS = ('water', 'air', 'oil', 'glycerol')
+
+
 def _materials():
     ''' The materials the menus offer: the presets of the library, written out with their numbers (so that they are there to
         change), a Material of your own, and the fluids '''
     out = []
     try:
         from fieldes.stdlib import fea, fluid
-        for name in ('steel', 'stainless_steel', 'aluminium', 'titanium', 'pla', 'petg', 'abs_plastic', 'nylon'):
+        for name in MATERIAL_PRESETS:
             m = getattr(fea, name)
             out.append((name, 'Materials', 'Material(%r, %s, %s, %s, %s, %s, %s)' % (
                 m.name, _g(m.E), _g(m.nu), _g(m.density), _g(m.yield_strength), _g(m.conductivity), _g(m.expansion))))
         out.append(('material', 'Materials', "Material('{mname}', {mE}, {mnu}, {mdens}, {myield})"))
-        for name in ('water', 'air', 'oil', 'glycerol'):
+        for name in FLUID_PRESETS:
             f = getattr(fluid, name)
             out.append((name, 'Fluids', 'Fluid(%r, %s, %s)' % (f.name, _g(f.density), _g(f.viscosity))))
     except Exception:
@@ -271,7 +276,6 @@ PARAMS = {
     'noise_field': {'n': 3},
     'static_analysis': {'es': '$es'},
     'modal_analysis': {'modes': 6, 'es': '$es'},
-    'topology_optimization': {'vf': 0.3, 'es': '$es'},
     'thermal_analysis': {'temp': 20, 'watts': 5, 'es': '$es'},
     'fluid_analysis': {'speed': 100, 'es': '$es'},
     'fixed_temperature': {'temp': 20},
@@ -354,6 +358,8 @@ OPERATIONS = [
     ('move', 'Moving', 'move({body}, ({dx}, {dy}, {dz}))', False),
     ('rotate_z', 'Moving', 'rotate_z({body}, {angle_rad})', False),
     ('scale_xyz', 'Moving', 'scale_xyz({body}, ({sx}, {sy}, {sz}))', False),
+    # Snapping a body onto another: the body, a face and a point of it, then the face and the point it goes onto, as they were selected (see _build_operation)
+    ('snap', 'Moving', 'snap({body}{others})', 'optional'),
     ('reflect_x', 'Moving', 'reflect_x({body})', False),
     ('symmetric_x', 'Moving', 'symmetric_x({body})', False),
     ('symmetric_y', 'Moving', 'symmetric_y({body})', False),
@@ -409,13 +415,9 @@ OPERATIONS = [
     # conditions that are selected with the body are written in the input of their kind.  The completion writes the inputs from the signature
     ('static_analysis', 'Simulations', 'static_analysis({body})', 'optional'),
     ('modal_analysis', 'Simulations', 'modal_analysis({body})', 'optional'),
-    ('topology_optimization', 'Simulations', 'topology_optimization({body})', 'optional'),
+    ('topology_optimization', 'Simulations', 'topology_optimization({body})', False),
     ('thermal_analysis', 'Simulations', 'thermal_analysis({body})', 'optional'),
     ('fluid_analysis', 'Simulations', 'fluid_analysis({body})', 'optional'),
-    # The optimisations that change a body for the best heat or flow: a thermal one (the part, its four thermal inputs) and a flow one (the body
-    # and the fluid domain it sits in, the three flow inputs)
-    ('thermal_topology_optimization', 'Simulations', 'thermal_topology_optimization({body})', 'optional'),
-    ('flow_topology_optimization', 'Simulations', 'flow_topology_optimization({body})', 'optional'),
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
     ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),
@@ -427,6 +429,10 @@ OPERATIONS = [
 
 # (operations that are in the first menu of a body, not under a group: used all the time)
 QUICK = ('center', 'bounding_box', 'distance_to_point')
+
+# What is the first entry of the Engineering menu, on its own, above the categories of the domains: the optimisation that designs for an analysis of any domain -- a static, a modal, a thermal
+# one, a flow -- and so is in the category of none of them
+TOP = ('topology_optimization',)
 
 # The "Python" menu: the most basic features of the language as blocks of plain code, written at the top level of the script, at the insertion point of the model tree (not
 # made into a model: no `name = ...`, no display line).  The code is edited in the code editor; the tree shows the blocks and what is in them.  A body of `pass` is where the
@@ -482,7 +488,7 @@ def catalog():
                       + [{'name': b['name'], 'group': 'Custom blocks', 'type': 'block', 'doc': b['doc']}
                          for b in blocks if b['primitive']],
         # (`other`: takes the other selected models; `needs_other`: is not offered without a second model)
-        'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK},
+        'operations': [dict({'name': n, 'group': g, 'other': bool(o), 'needs_other': o is True, 'quick': n in QUICK, 'top': n in TOP},
                             **({'section': SECTIONS[g]} if g in SECTIONS else {}), **({'hint': HINTS[n]} if n in HINTS else {}),
                             **({'domain': DOMAIN_OF_FUNCTION[n]} if g == 'Simulations' and n in DOMAIN_OF_FUNCTION else {}),
                             **({'type': OPERATION_KINDS[n]} if n in OPERATION_KINDS else
@@ -504,6 +510,9 @@ def _others(r):
     if others is None:
         others = [{'name': n.strip()} for n in (r.get('other') or '').split(',') if n.strip()]
     return others
+
+
+_BODY_TYPES = ('solid', 'profile', 'import')            # (the models that are a body: a condition made of two of them has the first for its body and the rest for where it acts)
 
 
 def _where(models):
@@ -742,6 +751,21 @@ def _build_operation(name, v, others):
         if info.get('type') in _SHAPES or not info.get('type') and body:
             var = v.get('var') or '%s_1' % name
             return '%s_points = random_points(%s, spacing=%s)\n%s_points%s%s(%s_points)' % (var, body, v.get('cs', 8), var, PRELUDE, name, var)
+    if name == 'snap':
+        # (the body, then a face and a point of it, then the face and the point it goes onto: the faces and the points are taken in the order they were selected, and what was not
+        # selected is a placeholder -- the arguments after the first gap are named, as the completion writes them)
+        faces = [o['name'] for o in others if o.get('type') == 'surface']
+        points = [o['name'] for o in others if o.get('type') == 'point']
+        args, named = [body], False
+        for argument, given in zip(('face', 'point', 'onto_face', 'onto_point'), (faces[:1], points[:1], faces[1:2], points[1:2])):
+            if given and not named:
+                args.append(given[0])
+            elif given:
+                args.append('%s=%s' % (argument, given[0]))
+            else:
+                named = True
+                args.append('%s=...' % argument)
+        return 'snap(%s)' % ', '.join(args)
     if name == 'texture':
         # (a surface, a field or a body that is selected with the body is where the texture goes)
         regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]
@@ -1106,7 +1130,18 @@ def _call(r):
         regions = _where(selected)
         if not regions:
             raise ValueError(tr('%s acts where a surface, a field or a body says: select one or several of those') % name)
-        return BODY_CONDITIONS[name].format(region=_region_arg(regions), volume=_region_arg(regions), **values)
+        # With several models selected the FIRST is the body the condition is on and the others say where on it: bodies that choose the place are written as `body=`, and the call makes
+        # the surface of the body there itself (`fixed(plate, body=bracket)`).  Surfaces and fields that are selected with it are the place already
+        body = None
+        first = selected[0]
+        if len(selected) >= 2 and first.get('type') in _BODY_TYPES:
+            where = _where(selected[1:])
+            if where:
+                regions = where
+                if any(o.get('type') in _BODY_TYPES for o in where) and name != 'heat_generation':
+                    body = first['name']
+        text = _region_arg(regions)
+        return BODY_CONDITIONS[name].format(region=text + (', body=' + body if body else ''), volume=text, **values)
     if kind == 'operation' and (values['body'] or name in _SIMULATIONS) and (r.get('others') is not None or r.get('body_info')
                                                                              or name in _SIMULATIONS):
         built = _build_operation(name, values, others)

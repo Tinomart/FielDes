@@ -103,10 +103,10 @@ Materials and loads can vary through the part: [`19_graded_material.py`](example
 
 ### Topology optimisation, with the features that must stay
 
-**[Topology optimisation](examples/08_topology_optimization.py)** (the first picture of this page) keeps the material that carries the load and removes the rest: the stiffest bracket in half of the material, about 100 iterations, cached
+**[Topology optimisation](examples/08_topology_optimization.py)** (the first picture of this page) keeps the material that carries the load and removes the rest: `topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.5'])` is the stiffest bracket in half of the material -- and any other number the analysis measures can be the goal or a limit (`minimize('mass')` under `'max_von_mises <= 90'`, a natural frequency that must be 100 Hz) --, about 100 iterations, cached
 so that running the script again is instant. The lug holes and the ring of material round them are **excluded** from the design space (`exclude(space, holes)`): the optimiser reads an excluded region as one
 to keep, and the file's own exact surface is there, whatever is taken away elsewhere. The result on its own is the optimised part coloured by its density; the result card **plays the iterations**, `opt.shape()` is
-the final body as a field you can offset, shell or fill with a lattice, and `opt.verify()` analyses it again as a check. There is a thermal version too (`thermal_topology_optimization`), and one for flow (below).
+the final body as a field you can offset, shell or fill with a lattice, and `opt.verify()` analyses it again as a check. The same call designs a heat conduction (`topology_optimization` of a `thermal_analysis`: the coolest layout for the material it may use, [example 35](examples/35_thermal_topology_optimization.py)), and a body in a flow (below).
 
 ### Let one result drive another design
 
@@ -125,7 +125,7 @@ hard, light where it does not. Nothing is sampled onto a grid: the lattice is ca
 
 **[Fluid flow](examples/16_fluid_flow.py)** solves the laminar Navier–Stokes equations around any body (steady, or in time) on tetrahedra that follow the fluid's surface: inlets, outlets, walls and slip planes are
 regions, and the results are the velocity, pressure, vorticity and shear rate **as fields**, with streamlines and moving particles, the wake, the **drag and lift forces and coefficients** and the pressure drop on the card.
-**[Flow topology optimisation](examples/17_flow_topology_optimization.py)** reshapes a body in the stream for the least drag or the most lift with its volume bound, from a level set and the solver's exact adjoint:
+**[Flow topology optimisation](examples/17_flow_topology_optimization.py)** reshapes a body in the stream for the least drag or the most lift with its volume bound -- or any formula of the two forces -- on the optimiser of the structural designs and the solver's exact adjoint:
 the body may shrink, grow, move, split or merge, and the card steps through the iterations.
 
 ### Lattices that follow the part
@@ -217,7 +217,7 @@ takes a few seconds and is cached next to it.
 | [`14_conformal_lattice.py`](examples/14_conformal_lattice.py) | A lattice of a custom cell (`cell_custom_truss`) that follows an open surface |
 | [`15_conformal_closed_body.py`](examples/15_conformal_closed_body.py) | A conformal strut lattice filling the wall of a whole bracket: faces, fillets, bores, edges followed |
 | [`16_fluid_flow.py`](examples/16_fluid_flow.py) | Water past a round post in a channel: the velocity field and the wake, streamlines with moving particles, the drag; the flow in time as an option |
-| [`17_flow_topology_optimization.py`](examples/17_flow_topology_optimization.py) | The channel through a block with the least pressure drop |
+| [`17_flow_topology_optimization.py`](examples/17_flow_topology_optimization.py) | The post of example 16 reshaped for the least drag, its volume kept |
 | [`18_fields_everywhere.py`](examples/18_fields_everywhere.py) | A plate grown by a field, a blend whose radius varies, a lattice of graded cell size — driven from a point |
 | [`19_graded_material.py`](examples/19_graded_material.py) | A material whose stiffness varies and a load spread by a profile, against beam theory |
 | [`20_custom_blocks.py`](examples/20_custom_blocks.py) | Your own blocks: `perforate` with a field radius, `bracket` |
@@ -235,6 +235,7 @@ takes a few seconds and is cached next to it.
 | [`32_parametric_optimization.py`](examples/32_parametric_optimization.py) | The lightest beam that is stiff and strong enough, found by solving it again with other numbers |
 | [`33_manufacturing_optimization.py`](examples/33_manufacturing_optimization.py) | A topology-optimized bracket changed until a 3D printer, a mill and an injection mould can make it: gussets under what leans too far, thin walls thickened, inside corners rounded, draft; the plates and lugs that carry the load kept as they are |
 | [`34_non_periodic_lattices.py`](examples/34_non_periodic_lattices.py) | Lattices that do not repeat: a random net over a surface (`surface_lattice`, in hexagons or triangles, on a block with a dent) and foams with a clean surface (`random_points(surface=True)`), next to a foam the surface cuts off |
+| [`35_thermal_topology_optimization.py`](examples/35_thermal_topology_optimization.py) | A heat sink designed: a plate that makes heat all through it and a strip of its edge held at 20 C, with 30 % of the metal laid where it carries the heat best (`topology_optimization` of a `thermal_analysis`) |
 
 ## Documentation
 

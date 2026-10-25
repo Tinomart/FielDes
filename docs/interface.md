@@ -25,7 +25,7 @@ does; *Clear list* empties it; a file that is gone is left out). Then the menus:
 | **File** | New, Open, Open recent, **Open example file** (the small scripts of the `examples` folder next to the program, one for each family of features: open one, run it, change it), Import model, Open as viewer, Load the default script, Revert to saved, Save, Save As, Export mesh, **Export as app** and **Preview as app** (a script that people who never open the editor can run: see [Apps](apps.md)), Export / copy screenshot, Quit |
 | **Primitives** | The primitives, each under its kind (New 3D shape, New 2D shape, New point ...), and the primitives of your own; **Manage primitives...** chooses which shapes are primitives and adds your own (see [Your own primitives](#your-own-primitives)) |
 | **Edit** | Undo and redo, Find and replace, Go to (definition, line, the editor's tabs), Lines, Breakpoints, Folding, Autocomplete |
-| **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, Model tree, Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
+| **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, **Theme** (light or dark, and the colours by hand), Model tree, Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
 | **Settings** | **Keyboard shortcuts…**, **Blocks folder…** and **Show the blocks folder** (your [custom blocks](blocks.md)), editor text bigger / smaller, Automatically reload changes, Rotation mode, Rotation sensitivity, Zoom center |
 | **Help** | The guide, About, **Report a bug** (a new GitHub issue in your browser with the version and your system filled in; your script only if you choose to copy it; known problems are in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)), **Guided tour** (cards over the program that walk through the basics, offered the first time it starts; see also the [tutorial](tutorial.md)), Shape reference |
 
@@ -48,6 +48,10 @@ A code editor for the Python script, with:
   (or the end of the file) when its arrow is clicked; the box that stands for the hidden lines says how many they are. Typing
   `#sec` offers `#SECTION` in the completion. Sections only hide text: the script runs as it is, and one that holds an error,
   or a line you go to, opens by itself. `# %%` and `# region` ... `# endregion` fold the same way;
+- **objects as blocks.** A model's definition (`part = box(...)`) and everything that goes on with it -- `part = gizmo(part, ...)`, `part = handles(...)`, `part = lock(part)`, a resolution of its own,
+  and the line that shows it (`part` on a line of its own) -- is **one block**: one arrow in the gutter folds or opens all of those lines together. Each such block is told from the next by its
+  **background**: every second object has a slightly different shade of the editor's grey (lighter in the dark theme, darker in the light one), so where one object's definition starts and ends
+  is seen at once. Numbers, `var(...)`s and the plain functions of Python are not objects and are not shaded;
 - **completion** while you type (`Ctrl+Space` forces it) and call tips for arguments. **A function you pick from the list is written complete,
   the same call a right-click menu entry writes**: each argument it cannot do without is a **placeholder** after its name (`select_surface(shape=..., seed=...,`),
   the first one selected so that typing replaces it and `Tab` going on to the next -- the statement does not run until they are all filled in (nor does what is made from it; the rest of the script does)
@@ -123,6 +127,17 @@ Below the editor: what the script printed (`print(...)`), the value of the last 
 not a shape, import and analysis summaries, warnings, and the traceback of an error — with the
 offending line underlined in the editor. The error's text is red, everything else dark grey.
 
+### The console
+
+**View → Console** (`Ctrl+\``), or the prompt button at the right of the output, opens a console above the output pane: a history and a line to type in. What is typed is **Python, run among
+the names of the script that ran last and of the library** (`from fieldes import *`, as a script has it): `bracket.bounds`, `volume_of(bracket)`, `evaluate(top, (0, 0, 10))`, `help(snap)`,
+`print(...)`, or a block of several lines -- like a notebook, the value of the last expression is shown. `Enter` runs it, `Shift+Enter` is a new line, `Up` and `Down` go through what was run before.
+Printed text is shown in the text colour, a value in the accent colour, an error as its traceback in red.
+
+It runs on a thread of its own, so a long computation does not stop the window. The names of the script are a **copy**: what you assign or change in the console is the console's own (it is
+kept between commands) and the script, its model tree and the viewport are not touched -- put it in the script if it is to stay. The console reads the script as of its last run; run it again to
+bring its names up to date.
+
 ## The viewport
 
 | | |
@@ -140,7 +155,7 @@ offending line underlined in the editor. The error's text is red, everything els
 | **Click empty space** | Deselect everything (not with Shift or Ctrl held). The keys that work on the selection then have nothing to work on until you click a model |
 | **Ctrl+click** a model | Add it to the selection, or take it out when it is in: select several models one by one |
 | **`I`** (viewport or model tree focused) | **Isolate** the selected models: only they are shown, every other model hidden (script edits, undoable); `I` again shows what was shown before. Select another model while isolated and press `I` to isolate that one instead |
-| **`D`** (viewport or model tree focused) | **Delete** the selected models from the script: their definitions and the lines that show, hide, edit and lock them go, as one undoable step. If the rest of the script still uses their names it asks once first. Also in the right-click menu of a model (**Delete**; with several models selected and the one you right-click among them, it deletes all of them) |
+| **`D`** or **`Delete`** (viewport or model tree focused) | **Delete** the selected models from the script: their definitions and the lines that show, hide, edit and lock them go, as one undoable step. If the rest of the script still uses their names it asks once first. Also in the right-click menu of a model (**Delete**; with several models selected and the one you right-click among them, it deletes all of them) |
 | **`Shift+D`** (viewport or model tree focused) | **Copy** the selected models: their statements are written again under them with free names, as one undoable step (a copy that is its own model, changed independently; a profile or a line is copied with its own points) |
 | **`Ctrl+E`** (viewport or model tree focused) | **Extrude** the selected 2D shape (a circle, a rectangle, a triangle, a polygon, a profile): `extrude(shape, 0, size)` is written under it -- *Operation → Extruding → extrude* on the selection -- with the size a round number of the shape's own size. The two end faces of the solid -- the ones parallel to the shape -- are then draggable (the length of the extrusion: pull the far end, or the end the shape stands on, from where the shape is drawn over it, away from its edge), and so are its walls; the 2D shape underneath keeps priority at its edge. **A 2D shape and a path (a curve) selected together** write `path_extrude(shape, path)`: the shape swept along the path. A selection that is neither gets a word of why not |
 | **`Ctrl+D`** (viewport or model tree focused) | **Link** the selected models: under each, `copy = instance(model)` -- a block that **is** the model and follows every change of it, and can only be **moved and rotated** (its gizmo has no scale and its surfaces cannot be dragged). The model is held by reference (`# shadow: model`), always, locked or not, so it keeps its own row and the copy shows a shadow of it. Also *Operation → Repeating → instance*. **Every model is cloned with `Ctrl+D`**, the same way: a profile or a line as the same outline through the images of its points, with its points drawn (a point dragged or double clicked on the clone, or a point put on its outline, is the original's, and every clone changes with it), a point, a material, the conditions or the result of an analysis (nothing is solved again) as themselves, an import by its parts, expressions without a name after they are named. In the editor `Ctrl+D` is still the next occurrence |
@@ -199,8 +214,8 @@ model had been right-clicked in the viewport:
 - The model tree has no menu of its own: what that menu had is the row's buttons and keys (the eye, gizmo, lock, cache, reimport,
   reset, delete, `V`, `E`, `R`, `C`, `D`).
 
-**Nothing is asked: what a menu entry writes is code, and the code is the place to change it.** A *topology_optimization* is written with its
-`volume_fraction`, `element_size`, `iterations` and every other argument it has, each with its default; a *lattice* with its cell, its cell size and
+**Nothing is asked: what a menu entry writes is code, and the code is the place to change it.** A *topology_optimization* is written for the analysis you right-clicked, with `constraints=...` to fill in, and with its
+`iterations` and every other argument it has, each with its default; a *lattice* with its cell, its cell size and
 the rest; a `force` with its `vector` -- and where something is **missing** (the region a force acts on, a body for an analysis) the call has a
 **placeholder** after the argument's name (`force(region=..., vector=(0, -100, 0), profile=None)`). It is the same call the completion writes,
 laid out the same way (one argument to a line). Nothing opens a form: edit the numbers in the code editor, where the call is.
@@ -211,12 +226,12 @@ laid out the same way (one argument to a line). Nothing opens a form: edit the n
 a support, a load, a thermal or a flow condition (each of them a kind of its own: the input of an analysis it goes in), a material or a fluid -- and every entry says what it takes; a selection that has something an entry does not take in it, or
 lacks what it needs, does not fit. So *move* or *offset* is greyed out with a force selected; an **Engineering** entry is greyed out only when the selection has something it does not take -- *static_analysis* with a thermal condition or a fluid
 among the models (*modal_analysis* takes no load, *thermal_analysis* only thermal conditions, *fluid_analysis* only flow conditions and a fluid), or with a second part or a second material for an
-input that takes one (*flow_topology_optimization* takes two parts: the body and its fluid domain); a surface, a field, a point or a lattice cell is no argument of any simulation. **An operation or a simulation is never greyed out, or left out of the menu, for lack of something to work on**: the menu of empty space has every operation and the whole *Lattice* menu even in a script that has no model (only *center*, *bounding_box* and *Select Surface*, which are about a model, need one), and an operation with nothing selected is written with `...` where the model goes -- on the last model of the script when that is what it takes. A simulation too, with nothing selected (right-click
+input that takes one (*fluid_analysis* takes two parts: the body and its fluid domain); a surface, a field, a point or a lattice cell is no argument of any simulation. **An operation or a simulation is never greyed out, or left out of the menu, for lack of something to work on**: the menu of empty space has every operation and the whole *Lattice* menu even in a script that has no model (only *center*, *bounding_box* and *Select Surface*, which are about a model, need one), and an operation with nothing selected is written with `...` where the model goes -- on the last model of the script when that is what it takes. A simulation too, with nothing selected (right-click
 the empty viewport), with only its conditions or only its material selected, it is written with a placeholder for the part and for everything that is missing; the conditions of **New support or load** and the other **New ... condition**
 menus take the surfaces, fields or bodies they act on -- **a condition has no body of its own**: the simulation is given the body. A model that has not run yet has no known kind and fits everything; your own [custom blocks](blocks.md) say nothing about what they take, so they are always offered.
 
-The **Engineering** menu has a category for each domain -- **Structural**, **Thermal**, **Fluid** and **Manufacturing** (its constraints and *manufacturing_analysis* and *manufacturing_optimization*: see [Manufacturing](manufacturing.md)), each in the colour and with the icon of its domain in the model tree -- and lists in them *static_analysis*, *modal_analysis*, *topology_optimization*, *thermal_analysis*, *thermal_topology_optimization*,
-*fluid_analysis* (the flow around a body in a domain, as it is: the same inputs as *flow_topology_optimization*, which changes the body) and *flow_topology_optimization*; and, in the menu itself, under them, *parametric_optimization* -- it works over an analysis of any domain, so it is in no category -- which is written for the result you right-clicked, with `variables=...` and `minimize=...` to fill in (see [Parametric optimization](analysis.md#parametric-optimization)). Each analysis is written with the model you right-clicked as the part (the first argument of every simulation; the boundary
+The **Engineering** menu starts with *topology_optimization*, on its own (it designs for an analysis of any domain -- static, modal, thermal or flow -- so it is in no category), and then has a category for each domain -- **Structural**, **Thermal**, **Fluid** and **Manufacturing** (its constraints and *manufacturing_analysis* and *manufacturing_optimization*: see [Manufacturing](manufacturing.md)), each in the colour and with the icon of its domain in the model tree -- and lists in them *static_analysis*, *modal_analysis*, *thermal_analysis* (*topology_optimization* of its result reshapes the part for its temperature),
+*fluid_analysis* (the flow around a body in a domain, as it is; *topology_optimization* of its result reshapes the body); and, in the menu itself, under them, *parametric_optimization* -- it works over an analysis of any domain, so it is in no category -- which is written for the result you right-clicked, with `variables=...` and `constraints=...` to fill in (see [Parametric optimization](analysis.md#parametric-optimization)). Each analysis is written with the model you right-clicked as the part (the first argument of every simulation; the boundary
 conditions have no body in them) -- or, when you right-clicked the empty viewport or selected only conditions, with `shape=...` in its place -- with **`parameter_name=...` for everything the call cannot do without** -- **one input for each kind of boundary condition it takes**, all of them
 required -- and the library's own default for every other argument. A menu never makes up a region, a number, a text
 or a call of its own to put there:
@@ -306,7 +321,7 @@ on one placeholder only its own kind is taken, and another kind is refused, with
 **A shadow cannot be put above its original.** The tree gives a model its row under the **first statement that uses it** when it stands directly above it (otherwise it keeps its own row where it is made, and every use shows a shadow): that row is the original; every later use is a shadow. So a shadow can only go into a statement *below* the original. Ctrl+drag a model into a statement that is *above* it, or move a shadow there, and a message explains it: the new use would come first, so it would become the original and the old place would only show a shadow — and the model has to be defined above any use for the script to run. The same happens **indirectly**: a statement that holds a shadow can be dragged above the original, or the original dragged below it. The program works out the tree the edit would give, before it writes anything, and if any shadow would then come first it asks **once**, listing every model it is about (three shadows in one statement are one message, not three). The message offers the easy fix, which is its default: **the first use becomes the original place** (for a copy (Ctrl+drag), the model's definition goes directly above that statement, when nothing in between uses it) **and a reference stays where the original was**. *Do not show this message again* makes it always do that, without asking (**Settings → Show hidden messages again** brings the message back); Cancel leaves everything as it is; one `Ctrl+Z` undoes it. It is the same kind of rule as taking a model out of an operation that cannot do without it: the script is never left broken.
 
 **Taking a model out of a list.** A model that is one of the things in a **list** a call is given -- `loads=[force_1, force_2]`,
-`topology_optimization(part, supports, [[push], [pull]])`, `union_all([a, b, c])` -- is taken out of the list, and the call keeps the rest:
+`topology_optimization([push_case, pull_case], constraints=[...])`, `union_all([a, b, c])` -- is taken out of the list, and the call keeps the rest:
 the trash button of the `force_1` row under `static_analysis_1` leaves `loads=[force_2]`, not nothing. Taking out the **last**
 model of a list leaves a **placeholder** in it (`loads=...`, never an empty `[]`, which would only fail later): the analysis
 and its other inputs stay, and the statement waits there, as at every placeholder, until something is written -- drop a model on the
@@ -371,7 +386,7 @@ The keys you type are one step of `Ctrl+Z`.
 
 **Render settings.** Open the row: the region (the two corners of `view.set_bounds`), the resolution and the quality, as the script has them
 (or the defaults, dimmed, when it has not set them: the strip under the editor offers the line). **They are read here and written in the code editor**:
-a click on a row goes to its line. The rows have no bin: a render setting is a line of the code, and it is changed or deleted there.
+a click on a row **selects its number in the code, marked for replacement** (the region: both corners), as a click on a variable or an argument does, so the next thing you type replaces it. The rows have no bin: a render setting is a line of the code, and it is changed or deleted there.
 The corners the program writes are **whole numbers** (a minimum is rounded down and a maximum up, so the region still covers what it
 covered), with two decimals only for what is under 1, a part a few millimetres across. **The region follows the models** (*Auto scale*, on by default and written in the call as
 `auto_scale=True`; the row of that name in *Render settings* switches it, as `auto_scale=False` does; it also sets each model's own resolution): the numbers of `view.set_bounds` are rewritten in the code editor, live,
@@ -402,7 +417,7 @@ once and empties the viewport, so what the old script made is never left standin
 | **Lock button** (key `R`) | A switch of its own: a locked shape cannot be dragged at all, and keeps its gizmo mode. It writes (and deletes) the line `part = lock(part)` under the definition. On a row that is one of several selected, it locks or unlocks all of them (as `R` does); a selection with a locked model in it cannot be moved or edited |
 | **Keys `V`, `R`, `C`, `E`** | Show / hide, lock, render cache, gizmo mode. `V`, `R` and `C` act on all selected models by one rule: if they are not all in the *on* state (shown, locked, cached), they are all put there first; only when they all are, they are all turned off. `E` sends models that are all in one gizmo mode to the next, and models in different modes to click |
 | **Cache button** (stack of disks, key `C`) | The **render cache** is on for every shape unless you turn it off: the button writes (or deletes) the line `part = render_cache(part, False)` under its definition. With it on (the default), the finished mesh is kept on disk and shown at once the next time the same shape is rendered; anything that changes about the math makes it mesh again. Blue: on; green: the mesh on screen was read from the cache; amber: the shape cannot be kept (hover). Off until you click it. See [Caching and performance](caching-and-performance.md#the-render-cache) |
-| **custom_resolution row** (a property under a variable, or under a part of an import) | A resolution of its own for that one body, in samples per mm, whatever the scene's `view.set_resolution` is: type the number (the line `part = custom_resolution(part, 3)` is written as you type), the bin takes the line away. It is also **Custom resolution** in the right-click menu of the model. Use it when one part needs more detail than the scene should be meshed at -- or less. See [Caching and performance](caching-and-performance.md#resolution-and-quality) |
+| **custom_resolution row** (a property under a variable, or under a part of an import) | A resolution of its own for that one body -- the number the scene's `view.set_resolution` is, for this body alone (it is made finer for a small body as the scene's is): the row reads `custom_resolution = 3`, a click on it selects the number of the line `part = custom_resolution(part, 3)` in the code, ready to be typed over, like any argument; the bin takes the line away. It is also **Custom resolution** in the right-click menu of the model. Use it when one part needs more detail than the scene should be meshed at -- or less. See [Caching and performance](caching-and-performance.md#resolution-and-quality) |
 | **⟳ Reimport** (on an import) | Read the file again (bumps `rev=` in the call). Imported files are also watched: one saved by another program is read again by itself |
 | **⟳ Reimport** (on a part) | Back to what the file says: the part's handle edits are deleted and the file read again |
 | **↺ Reset** (on an import) | Delete the import's cache and the handle edits of all its parts, and import afresh |
@@ -481,7 +496,7 @@ models with ordinary numbers. Three keys, all of which act while the viewport (o
 | Key | |
 |---|---|
 | `Shift+W` (or **View → Work plane**) | opens and closes the **work plane view**: the plane is drawn with a grid, and its card is shown. A plane is made when there is none |
-| `Ctrl+Shift+W` (or **View → New work plane**; **works wherever the keyboard is**, in the code editor too, and gives it to the viewport) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a profile, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; with nothing selected, **parallel to the camera view, through the origin** |
+| `Ctrl+Shift+W` (or **View → New work plane**; **works wherever the keyboard is**, in the code editor too, and gives it to the viewport) | makes a **new** plane and opens its view: the plane of the **selected 2D shape** (a profile, a circle, a shape from a surface ...) -- or of three or more selected points -- where it is; **a selected surface** (a face of a body picked in the viewport) gets its own plane, through the middle of the face and **turned to face you**, and a surface that is not flat gets the plane that covers the most of it (the plane most of it faces); with nothing selected, **parallel to the camera view, through the origin** |
 | `W` (or **View → Set view to work plane**) | turns the camera to **look straight at** the plane. It only moves the camera: it never changes the script |
 
 The card (top right, below the section card when that is open) has three buttons that say what a click draws -- **Line**, **Spline**, **Point**, each with a picture of what it makes -- a line that says whether you are drawing, and the plane's settings: **Grid** on and off, **Snap to grid** and **Snap to points**, the **grid step** (automatic, from how large the picture is, or a number), the plane's
@@ -656,6 +671,16 @@ progress of the operation in it.
 - A script exports by itself with `export_mesh(part, "part.stl")`, `export_fea(result, "bracket.inp")`, `export_results(result, "bracket.vtu")` and `export_field(field, "stress.vti")` -- see [Exporting and importing files](meshes.md#exporting-and-importing-meshes).
 - **Key numbers on the screen:** the result card prints the numbers that matter under its field drop-down -- the maximum stress, displacement and safety factor of a static analysis, the drag and lift (and their coefficients), flows and pressure drop of a flow, the temperatures of a thermal analysis, the natural frequencies of a modal analysis -- and the same numbers are the **Export key numbers as text** button of the result's property drawer.
 
+## Theme: light, dark and your own colours
+
+**View → Theme…** opens a small window (it stays open while you work, and what you change shows at once): **Colours** chooses the **Light** set -- a pale window, white bars, a
+paper-white editor -- or the **Dark** set -- a dark teal window, the editor in Solarized's darkest base. The viewport and the cards on it (model tree, section card, result
+card) are dark in both. Under it the eight colours of the set are listed -- **Window**, **Bars and buttons**, **Editor**, **Line numbers**, **Lines**, **Text**, **Quiet text** and
+**Selection and focus** -- each as a swatch: a click on it chooses another colour, **Default** next to it takes the colour back to the set's own (it is enabled only for a colour you
+chose), and **Reset colours** takes all of the set that is on back. The two sets keep their own choices, so a colour you changed in Light does not leak into Dark. The shades that
+follow from the eight (the border of a field, a pressed button, the selected text, the page of a file that is not run, the scroll bar handles) are worked out from them, so a
+choice of yours never leaves a part of the window in the colours of the other set. The choice is kept in the settings and is there the next time FielDes starts.
+
 ## Language
 
 FielDes shows its menus, dialogs, tooltips, the guided tour, the guide, the creation forms and the result legends in **English, Spanish, French, German,
@@ -736,7 +761,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |
 | Frame all | `Home` |
-| Cancel a render | `Esc` |
+| Leave the mode you are in, one step at a time: the line being drawn, the kind of drawing, the work plane view, the section view; the console when its line has the keyboard. With none of them on: cancel a render | `Esc` |
 
 | Settings | |
 |---|---|

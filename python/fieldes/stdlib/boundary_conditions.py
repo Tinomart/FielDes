@@ -111,11 +111,21 @@ def display_condition(item):
     return drawn[key]
 
 
+def _support_text(item):
+    ''' What a support says of itself: Fixed, Sliding (fixed in the directions that are held), and -- when it imposes a movement -- the displacement it holds the part at '''
+    held = ''.join(a for a, on in zip('xyz', item.axes) if on)
+    moved = ', '.join('{} {:g} mm'.format(a, d) for a, d, on in zip('xyz', item.displacement, item.axes) if on and d != 0)
+    text = 'Fixed' if len(held) == 3 else 'Sliding (fixed in {})'.format(held or 'nothing')
+    return text + (', displaced {}'.format(moved) if moved else '')
+
+
 def describe(item):
     ''' One line that says what a condition is (its text beside it in the picture) '''
     if isinstance(item, _Support):
-        axes = ''.join(a for a, on in zip('xyz', item.axes) if on)
-        return 'fixed ({})'.format(axes) if len(axes) == 3 else 'sliding support (fixed in {})'.format(axes or 'nothing')
+        held = ''.join(a for a, on in zip('xyz', item.axes) if on)
+        moved = ', '.join('{} {:g} mm'.format(a, d) for a, d, on in zip('xyz', item.displacement, item.axes) if on and d != 0)
+        text = 'fixed ({})'.format(held) if len(held) == 3 else 'sliding support (fixed in {})'.format(held or 'nothing')
+        return text + (', displaced {}'.format(moved) if moved else '')
     if isinstance(item, _Force):
         n = math.sqrt(sum(c * c for c in item.vector))
         return 'force {:g} N ({:g}, {:g}, {:g})'.format(n, *item.vector)
@@ -224,9 +234,7 @@ def _draw(items, part):
             continue
         for p, n in pts:
             glyphs.append((cat, False, tuple(p[a] + n[a] * lift for a in range(3)), n, 0.7 * step))
-        axes = ''.join(a for a, on in zip('xyz', s.axes) if on)
-        text = 'Fixed' if cat == FIXED else 'Sliding (fixed in {})'.format(axes or 'nothing')
-        labels.append((cat, text, _label_point(pts, 0.9 * step)))
+        labels.append((cat, _support_text(s), _label_point(pts, 0.9 * step)))
 
     forces = [l for l in drawn_loads if isinstance(l, _Force)]
     biggest = max([math.sqrt(sum(c * c for c in l.vector)) for l in forces] or [1.0]) or 1.0

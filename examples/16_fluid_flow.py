@@ -1,6 +1,6 @@
 # Fluid flow around a body: water past a round post in a channel, and the wake behind it.
 #
-# The flow goes around a body, inside a domain, as in flow_topology_optimization (this is that, solved once, for the body as it
+# The flow goes around a body, inside a domain, as topology_optimization designs it (this is the flow it starts from, solved once, for the body as it
 # is): the body is the post, the domain a thin slab of water that holds the post's place (slip on both faces of the slab and on
 # its sides: a two-dimensional flow, open at the sides).  fluid_analysis(body, domain, inlets, outlets, boundaries, fluid,
 # element_size) solves the Navier-Stokes equations on tetrahedra that follow the fluid's surface (the domain with the body cut out).

@@ -17,7 +17,7 @@ Fluid flow analysis of FielDes shapes: incompressible laminar flow, steady or in
     print(result.wall_force[0], 'N')                     # the force on the walls, the body's: its drag
     thicker = part + 0.02 * result.pressure              # results are fields like any other
 
-It takes what flow_topology_optimization takes -- the body, the domain, the three kinds of boundary conditions, the fluid -- and
+It takes the body, the domain, the three kinds of boundary conditions and the fluid -- what topology_optimization designs the body for -- and
 solves the flow once, around the body as it is (the way static_analysis is to topology_optimization).  The domain is a shape, the fluid
 where its field is negative, with the body's place in it: the fluid is the domain with the body cut out (difference(domain, body)).
 The boundary conditions are regions (shapes), on the surface of the fluid.  Each kind is an input of its own -- inlets, outlets, boundaries (walls and slips) -- that is needed (the call is written
@@ -55,6 +55,7 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 '''
+import types
 import ctypes
 import math
 import time
@@ -64,14 +65,15 @@ from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
 from fieldes.stdlib.excluded import keep_regions, carry_locks
-from fieldes.stdlib.fea import (FeaError, FieldResult, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given, _use_conditions, _with_conditions,
-                                _symmetry_request)
+from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
+                                _use_conditions, _with_conditions, _symmetry_request)
 from fieldes.stdlib.csg import difference as _difference
 from fieldes.stdlib.content_cache import Uncacheable, problem_key, shape_key
 from fieldes.stdlib import result_cache
+from fieldes.stdlib.element_mesh import element_mesh as _element_mesh, elements_note as _elements_note
 
 __all__ = ['Fluid', 'water', 'air', 'oil', 'glycerol', 'inlet', 'outlet', 'wall', 'slip', 'symmetry',
-           'fluid_analysis', 'FluidResult', 'FluidStep', 'flow_topology_optimization', 'FlowTopologyResult']
+           'fluid_analysis', 'FluidResult', 'FluidStep', 'FlowTopologyResult']
 
 
 def _scalar(value, what):
@@ -148,15 +150,16 @@ def _flow_conditions(inlets, outlets, boundaries, what):
 _PROFILES = {'uniform': 0, 'developed': 1}
 
 
-def inlet(*regions, region=None, velocity=None, speed=None, flow_rate=None, profile='uniform'):
-    ''' The fluid comes in through the surface inside `region` (a Shape; any number of regions, one argument after the other).  One of:
+def inlet(*regions, region=None, body=None, velocity=None, speed=None, flow_rate=None, profile='uniform'):
+    ''' The fluid comes in through the surface inside `region` (a Shape; any number of regions, one argument after the other).  `body=` is the body the surface is of (the domain),
+        when the regions are bodies that choose WHERE on it: its surface where they are.  One of:
         velocity   a vector (mm/s): the direction, and the mean speed over the inlet
         speed      a mean speed (mm/s) along the inlet's inward normal
         flow_rate  a flow rate (mm^3/s) along the inward normal
         profile    'uniform' (a plug, zero on the no-slip rim) or 'developed' (the fully developed
                    profile of the inlet's cross-section: parabolic in a round pipe)
         The speed or flow rate is matched exactly on the mesh (the flux through the inlet's triangles). '''
-    region, rest = _regions(regions, region, 'inlet()')
+    region, rest = _regions(regions, region, 'inlet()', body)
     if rest:
         if len(rest) == 1 and velocity is None:
             velocity = rest[0]
@@ -183,10 +186,11 @@ def inlet(*regions, region=None, velocity=None, speed=None, flow_rate=None, prof
 inlet._required = ('region', 'speed')
 
 
-def outlet(*regions, region=None, pressure=0.0):
+def outlet(*regions, region=None, body=None, pressure=0.0):
     ''' The fluid leaves through the surface inside `region` (any number of regions, one argument after the other) at `pressure` (MPa, 0 by default; the
-        pressure field is relative to it).  Put it where the flow leaves parallel to the walls. '''
-    found, rest = _regions(regions, region, 'outlet()')
+        pressure field is relative to it).  Put it where the flow leaves parallel to the walls.  `body=` is the body the surface is of, when the regions are bodies that choose
+        WHERE on it. '''
+    found, rest = _regions(regions, region, 'outlet()', body)
     if len(rest) > 1:
         raise TypeError('outlet(region, ..., pressure=): only the pressure can follow the regions')
     if rest:
@@ -196,10 +200,11 @@ def outlet(*regions, region=None, pressure=0.0):
 outlet._required = ('region',)
 
 
-def wall(*regions, region=None, velocity=(0.0, 0.0, 0.0)):
+def wall(*regions, region=None, body=None, velocity=(0.0, 0.0, 0.0)):
     ''' A wall moving with `velocity` (mm/s; no-slip) inside `region` (any number of regions, one argument after the other).  Surfaces in no region are walls at rest, so
-        this is for moving walls, and for naming a wall whose force is wanted (wall_forces). '''
-    found, rest = _regions(regions, region, 'wall()')
+        this is for moving walls, and for naming a wall whose force is wanted (wall_forces).  `body=` is the body the wall is of, when the regions are bodies that choose
+        WHERE on it. '''
+    found, rest = _regions(regions, region, 'wall()', body)
     if len(rest) > 1:
         raise TypeError('wall(region, ..., velocity=): only the velocity can follow the regions')
     if rest:
@@ -212,10 +217,10 @@ def wall(*regions, region=None, velocity=(0.0, 0.0, 0.0)):
 wall._required = ('region',)
 
 
-def slip(*regions, region=None):
+def slip(*regions, region=None, body=None):
     ''' A symmetry plane or frictionless wall inside `region` (any number of regions, one argument after the other): nothing flows through it,
-        the fluid slides along it '''
-    found, rest = _regions(regions, region, 'slip()')
+        the fluid slides along it.  `body=` is the body the wall is of, when the regions are bodies that choose WHERE on it. '''
+    found, rest = _regions(regions, region, 'slip()', body)
     if rest:
         raise TypeError('slip(region, ...): only regions can be given')
     return _Slip(found)
@@ -458,6 +463,22 @@ class FluidResult(FieldResult):
             pos += 5 * m
         return lines
 
+    def _mesh_data(self):
+        ''' What FielDes draws for "Elements": the mesh of the fluid and each tetrahedron's value of each field -- the speed of its mean velocity, the others the mean of its vertices' --
+            None when there are more tetrahedra than are drawn (see element_mesh) '''
+        cached = getattr(self, '_mesh_full', False)
+        if cached is not False:
+            return cached
+        full = None
+        if hasattr(lib, 'libfive_tetflow_element_values') and getattr(self, '_handle', None) is not None:
+            p = self._handle.ptr
+            full = _element_mesh(lambda b: lib.libfive_tetflow_counts(p, b), lambda v, t, f, ft: lib.libfive_tetflow_mesh(p, v, t, f, ft),
+                                 lambda f, buf, n: lib.libfive_tetflow_element_values(p, f, buf, n), range(len(_FIELDS)), None)
+            if full is None:
+                self._elements_note = _elements_note(int(self.elements))
+        self._mesh_full = full
+        return full
+
     def _display(self):
         ''' What FielDes shows for the result stated on its own: the fluid coloured by the speed, with 40 streamlines
             from the inlets and particles moving along them drawn over it; a step per solver iteration (a steady
@@ -467,14 +488,18 @@ class FluidResult(FieldResult):
             shown = {'_color_fields': [(name, _LABELS[name], getattr(self, name)) + tuple(self._ranges[name])
                                        for name in _FIELDS],
                      '_color_field_name': 'speed', '_flow_lines': self.streamlines(),
-                     '_flow_range': tuple(self._ranges['speed'])}
+                     '_flow_range': tuple(self._ranges['speed']),
+                     '_fea_mesh': self._mesh_data(), '_fea_elements_note': getattr(self, '_elements_note', '')}
             if len(self.steps) > 1:
-                shown['_color_steps'] = [{'label': s.label,
+                # (the last step is the result itself: its fields and its lines are the result's own, so that its elements are shown with it)
+                last = len(self.steps) - 1
+                shown['_color_steps'] = [{'label': s.label} if k == last else
+                                         {'label': s.label,
                                           'channels': [(name, _LABELS[name], getattr(s, name)) + tuple(s._ranges[name])
                                                        for name in _FIELDS],
                                           'lines': self.streamlines(step=k)}
                                          for k, s in enumerate(self.steps)]
-                shown['_color_step'] = len(self.steps) - 1
+                shown['_color_step'] = last
             self._shown = shown
         out = colored(self.shape, self.speed, range=self._ranges['speed'], label=_LABELS['speed'], colormap='turbo')
         out.__dict__.update(shown)
@@ -619,7 +644,7 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
                    tolerance=1e-5, relaxation=1.0, cache=True, time=None, store_every=1):
     ''' Laminar flow of `fluid` around `body` (a Shape, the solid the flow goes around) in `domain` (a Shape whose inside is the
         fluid, the body's place in it too: the fluid is the domain with the body cut out) with the boundary conditions, the same
-        inputs as flow_topology_optimization, one for each kind (each one item or a list, [] for none):
+        inputs of topology_optimization for a body in a flow, one for each kind (each one item or a list, [] for none):
         inlets    inlet(...) items -- where the fluid comes in (as many as the flow has)
         outlets   outlet(...) items -- where it leaves (one is needed, or a moving wall)
         boundaries  wall(...) items -- moving walls (every surface in no region is a wall at rest) -- and slip(...) items -- symmetry planes
@@ -670,7 +695,7 @@ def _fluid_analysis(shape, conditions, fluid=water, element_size=None, bounds=No
             raise ValueError('fluid_analysis: the duration and the time step must be positive')
         nsteps = max(1, int(round(duration / dt)))
         time = (nsteps * dt, dt)
-    ekey = problem_key('flow', shape=shape, part_bounds=getattr(shape, '_bounds', None), conditions=conditions,
+    ekey = problem_key('flow', mesh=2, shape=shape, part_bounds=getattr(shape, '_bounds', None), conditions=conditions,
                        fluid=fluid, element_size=element_size, bounds=bounds, gravity=gravity, stokes=bool(stokes),
                        max_iterations=int(max_iterations), tolerance=float(tolerance),
                        relaxation=float(relaxation), time=time, store_every=int(store_every)) if cache else None
@@ -767,7 +792,7 @@ def _outside_body(lines, level):
 
 
 class FlowTopologyResult(FieldResult):
-    ''' The result of flow_topology_optimization(): the body made best in the flow.
+    ''' The result of topology_optimization() for a body in a flow (the result of fluid_analysis): the body made best in the flow.
         .level          a field (mm, positive inside the body, its boundary the zero level: a smooth
                         level set on the flow's mesh); .levels the same after each iteration (the first
                         the body as given, the last the final body)
@@ -777,23 +802,28 @@ class FlowTopologyResult(FieldResult):
                         flow), the last the final body's; .flow_direction, .lift_direction
         .flow           the REAL flow around the final body (a fluid_analysis of fluid_shape() with the
                         same conditions, the body a wall at rest): fields, numbers, streamlines();
-                        .real_drag, .real_lift its force on the walls along the two directions
+                        .real_drag, .real_lift its force on the walls along the two directions: the MEAN over several places of the mesh lattice (a mesh meets a body at
+                        some place and the force depends on it, by 5 to 25 % for a body a few elements thick), .real_drag_sd the standard deviation of one place,
+                        .real_drags the forces of the places, `best.drag_force` the mean as well
         .model_flow     the optimiser's own flow (the body as a friction), .model_flow.steps[k] the flow
                         around the body of iteration k
-        .body, .domain, .region, .volume (mm^3 of the final body), .iterations (accepted), .seconds,
+        .body, .domain, .volume (mm^3 of the final body), .iterations (accepted), .seconds,
         .steps_back (steps undone because they raised the objective), .stopped (why the run ended)
+        .values         each thing the constraints asked, as the final body has it in the real flow; .feasible, .goal, .table(), .history (the
+                        objective per iteration, as the optimiser's model had it), .volume_fraction (the share of the body's own volume the design
+                        uses), .body_volume (mm^3 of the body it started as), .pieces (in how many pieces the body is); the numbers of the real flow -- `best.drag_force`, `best.pressure_drop`,
+                        `best.speed` -- are the result's own
         Stated on its own, FielDes shows the body in the flow: the fluid coloured by the speed with
         streamlines and particles, the body solid; the result card steps through the iterations (the
         body as it was after each one, and the flow around it). '''
 
-    def __init__(self, model_flow, body, domain, region, level, levels, drag, lift, directions, settings,
+    def __init__(self, model_flow, body, domain, level, levels, drag, lift, directions, settings,
                  element_size, bounds, seconds):
         self.model_flow = model_flow
-        self.flow = None                     # (the real flow: set by flow_topology_optimization)
+        self.flow = None                     # (the real flow: set by topology_optimization)
         self.real_drag = self.real_lift = None
         self.body = body
         self.domain = domain
-        self.region = region
         self.level = level
         self.levels = levels
         self.drag = drag
@@ -817,8 +847,6 @@ class FlowTopologyResult(FieldResult):
         d = self.level if iteration is None else self.levels[iteration]
         # (inside the fluid domain: the level set is a field on its mesh, continued outside it by its nearest value)
         out = (-d).max(self.domain)
-        if self.region is not None:
-            out = out.max(self.region)
         out._bounds = self.bounds
         return carry_locks(out, self.body)
 
@@ -843,9 +871,7 @@ class FlowTopologyResult(FieldResult):
                 last = k == n - 1
                 step = {'label': label}
                 if last:
-                    # (the final body: the real flow around it)
-                    step['channels'] = [(name, _LABELS[name], getattr(real, name)) + tuple(real._ranges[name]) for name in _FIELDS]
-                    step['lines'] = real.streamlines()
+                    pass        # (the final body: the real flow around it is what the result itself shows, with its elements: no fields of its own for the step)
                 elif k < len(model.steps):
                     st = model.steps[k]
                     step['channels'] = [(name, _LABELS[name], getattr(st, name)) + tuple(st._ranges[name]) for name in _FIELDS]
@@ -857,7 +883,8 @@ class FlowTopologyResult(FieldResult):
             shown = {'fluid': self.fluid_shape(), 'body': self.shape(),
                      '_color_fields': [(name, _LABELS[name], getattr(real, name)) + tuple(real._ranges[name]) for name in _FIELDS],
                      '_flow_lines': real.streamlines(), '_flow_range': tuple(real._ranges['speed']),
-                     'fluid_steps': fluid_steps, 'body_steps': body_steps, 'real': real}
+                     'fluid_steps': fluid_steps, 'body_steps': body_steps, 'real': real,
+                     '_fea_mesh': real._mesh_data(), '_fea_elements_note': getattr(real, '_elements_note', '')}
             self._shown = shown
         real = shown['real']
         fluid = colored(shown['fluid'], real.speed, range=real._ranges['speed'], label=_LABELS['speed'], colormap='turbo')
@@ -865,6 +892,8 @@ class FlowTopologyResult(FieldResult):
         fluid._color_field_name = 'speed'
         fluid._flow_lines = shown['_flow_lines']
         fluid._flow_range = shown['_flow_range']
+        fluid._fea_mesh = shown['_fea_mesh']
+        fluid._fea_elements_note = shown['_fea_elements_note']
         fluid._color_detail = float(self.element_size or 0)
         body = Shape(lib.libfive_tree_copy(shown['body'].ptr))
         body._bounds = self.bounds
@@ -875,127 +904,212 @@ class FlowTopologyResult(FieldResult):
             body._color_step = len(shown['body_steps']) - 1
         return [fluid, body]
 
+    table = TopologyResult.table
+
+    def _set_problem(self, analyses, outputs, program, bases, outs, goal, body_volume):
+        self._analyses, self._outputs, self._program = analyses, outputs, program
+        self._bases, self._outs, self.goal = bases, outs, goal
+        self.body_volume = body_volume
+        self.analysis = self.flow
+        sign = -1.0 if goal == 'maximize' else 1.0
+        self.history = [sign * v for v in outs[0]] if outs else []
+        fraction = bases[program.measures.index(('fraction',))] if bases else []
+        self.volume_fraction = fraction[-1] if fraction else None
+        self.values = OrderedDict()
+        self.feasible = None
+
+    def _verify_into(self):
+        ''' The numbers that were asked for, as the final body has them in the real flow '''
+        from fieldes.stdlib import optimization_measures as measures
+        share = self.volume / self.body_volume if self.body_volume > 0 else None      # (what the cut body keeps of the body, exactly)
+        self._part_share = share
+
+        def leaf(key):
+            if key[0] == 'fraction':
+                return share
+            return measures.true_value(key, [self._mean_flow])
+        sign = -1.0 if self.goal == 'maximize' else 1.0
+        self.feasible = True
+        for o in self._outputs:
+            try:
+                if o.role == 'objective':
+                    self.values[o.text] = sign * measures.evaluate(o.node, leaf)
+                else:
+                    self.values[o.text] = measures.evaluate(o.value, leaf)
+                    if not measures.evaluate(o.node, leaf) <= 1e-3:
+                        self.feasible = False
+            except Exception as e:
+                self.values[o.text] = None
+                self.feasible = None
+                self._verify_error = str(e).strip().split('\n')[0]
+        self.objective = next(iter(self.values.values()), None)
+
+    @property
+    def drag_coefficient(self):
+        ''' The drag as a coefficient, of the force the result says (`drag_force`: the mean over the places of the mesh lattice), with the reference of the real flow
+            (1/2 rho U^2 and the frontal area of the body's box).  None when it is not known '''
+        flow, force = self.__dict__.get('flow'), self.__dict__.get('drag_force')
+        ref = flow._reference() if flow is not None else None
+        return None if ref is None or force is None else force / (ref[0] * ref[1])
+
+    @property
+    def lift_coefficient(self):
+        ''' The lift as a coefficient, of the force the result says (`lift_force`: the mean over the places), as `drag_coefficient` '''
+        flow, force = self.__dict__.get('flow'), self.__dict__.get('lift_force')
+        ref = flow._reference() if flow is not None else None
+        return None if ref is None or force is None else force / (ref[0] * ref[1])
+
+    def __getattr__(self, name):
+        # (what the real flow around the final body has: its numbers and fields -- `best.drag_force`, `best.pressure_drop`, `best.speed`)
+        if name.startswith('_') or self.__dict__.get('_forwarding'):
+            raise AttributeError(name)
+        flow = self.__dict__.get('flow')
+        if flow is not None and (name in flow.__dict__ or hasattr(type(flow), name)):
+            self.__dict__['_forwarding'] = True
+            try:
+                return getattr(flow, name)
+            finally:
+                self.__dict__['_forwarding'] = False
+        return FieldResult.__getattr__(self, name)
+
     def __repr__(self):
-        d, l = self.drag, self.lift
-        s = _tr("Flow topology optimization: drag %.4g -> %.4g N, lift %.4g -> %.4g N in the optimiser's model "
-                '(%d iterations%s, %s; %.1f s)') % (
-                    d[0] if d else 0, d[-1] if d else 0, l[0] if l else 0, l[-1] if l else 0, self.iterations,
-                    _tr(', %d steps taken back') % self.steps_back if self.steps_back else '', self.stopped, self.seconds)
-        if self.real_drag is not None:
-            s += '\n' + _tr('  the real flow around the final body: drag %.4g N, lift %.4g N') % (self.real_drag, self.real_lift)
-        return s
+        share = 100 * (self.volume_fraction or 0.0)
+        if self.goal == 'satisfy':
+            lines = [_tr('Topology optimization of a flow: %.0f %% of the body kept (%d iterations, %s; %.1f s)') % (share, self.iterations, self.stopped, self.seconds)]
+        else:
+            h = self.history
+            lines = [_tr('Topology optimization of a flow: %s %s %.4g -> %.4g, %.0f %% of the body kept (%d iterations, %s; %.1f s)') % (
+                self.goal, self._outputs[0].text, h[0] if h else 0, h[-1] if h else 0, share, self.iterations, self.stopped, self.seconds)]
+        if len(self._outputs) > 1 or self.values:
+            lines.append(self.table())
+        drags = getattr(self, 'real_drags', None)
+        if drags and len(drags) > 1 and self.real_drag:
+            spread = 100.0 * (max(drags) - min(drags)) / abs(self.real_drag)
+            lines.append(_tr('  The real flow around the final body was solved on the mesh lattice at %d places: its drag is %.4g N (the mean; the places differ by %.1f %%, the mean is good to about %.1f %%).') % (
+                len(drags), self.real_drag, spread, 100.0 * self.real_drag_sd / abs(self.real_drag) / math.sqrt(len(drags))))
+            if spread > 5.0:
+                lines.append(_tr('  A body this thin is not resolved by the mesh: the places differ by more than 5 percent, so one mesh alone is no better than that; a smaller element_size narrows it.'))
+        if getattr(self, 'pieces', 1) > 1:
+            lines.append(_tr('  The body is in %d pieces: the small ones are volume parked where the optimiser\'s friction lets the flow through (a piece of an element or two), so it charges them little drag and the real flow charges more; a finer element_size holds the volume in one body.') % self.pieces)
+        if self.feasible is False:
+            lines.append(_tr('  A constraint is broken by the optimized part (the design is the optimiser\'s own; the part is cut from it).'))
+        return '\n'.join(lines)
 
 
-_shape_cache = OrderedDict()
+def _phase_forces(result, items, fluid, element_size, bounds, stokes, cache, d, l):
+    """ The force of the real flow around the final body along the flow (d) and across it (l), on the mesh lattice at several places.  A mesh of tetrahedra on a lattice meets a
+        body at some place, and the force on the body depends on it -- by 5 to 25 % for a body a few elements thick, measured -- so one mesh is not an answer: the flow is solved
+        on the lattice moved against the body (the region of the mesh grown by a part of an element on its lower side, in each direction: a low-discrepancy sequence over one period
+        of the lattice, half an element), and the mean and the spread are what the result reports.  The first place is the domain's own region (the flow `result.flow`) """
+    flow = result.flow
+    wf = flow.wall_force
+    drags = [sum(wf[i] * d[i] for i in range(3))]
+    lifts = [sum(wf[i] * l[i] for i in range(3))]
+    n = int(getattr(flow, 'elements', 0) or 0)
+    count = 8 if n <= 100000 else (4 if n <= 300000 else (2 if n <= 1000000 else 1))
+    lo, hi = bounds
+    h = float(element_size)
+    alpha = (0.8191725134, 0.6710436067, 0.5497004779)           # (the generalised golden ratio sequence for three dimensions)
+    shape = result.fluid_shape()
+    for k in range(1, count):
+        shift = [((0.5 + alpha[a] * k) % 1.0) * 0.5 * h for a in range(3)]
+        moved = (tuple(lo[a] - shift[a] for a in range(3)), tuple(hi))
+        f = _fluid_analysis(shape, items, fluid=fluid, element_size=element_size, bounds=moved, stokes=stokes, cache=cache)
+        w = f.wall_force
+        drags.append(sum(w[i] * d[i] for i in range(3)))
+        lifts.append(sum(w[i] * l[i] for i in range(3)))
+    return drags, lifts
 
 
-@_with_conditions
-def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=water, objective='drag', volume=1.0, region=None, keep=None,
-                            avoid=None, element_size=None, iterations=40, filter_radius=None, darcy=0.1,
-                            extrude=None, symmetry='auto', flow_direction=None, lift_direction=None, bounds=None, cache=True):
-    ''' Shape optimisation of a body in a flow: `body` (a Shape, the solid) sits in `domain` (the fluid domain
-        it is in, a Shape that holds the body's place too) with the flow's `inlets`, `outlets` and
-        `boundaries` (inlet(...), outlet(...), wall(...) and slip(...) items, as for fluid_analysis); the optimiser changes the body's shape, and
-        topology, to make it best in the stream.
+def _mean_sd(values):
+    mean = sum(values) / len(values)
+    sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1)) if len(values) > 1 else 0.0
+    return mean, sd
 
-        objective   'drag' (the least force along the flow), 'lift' (the most force across it), or
-                    (w_drag, w_lift): w_drag * drag - w_lift * lift is minimised
-        volume      what the body may use of its own volume: a number keeps it (1.0: the same volume), a pair
-                    (least, most) bounds it (0.5, 1.5); None for no bound on that side
-        region      where material may be (a Shape; default: anywhere in the domain); the body only shrinks,
-                    grows and moves inside it
-        keep        regions that stay solid (a Shape, or a list) -- a mounting, a shaft
-        avoid       regions that stay fluid
-        element_size  mm (default 40 elements along the longest side); the flow is solved once per iteration,
-                    with its adjoint, so it costs about two flow analyses per iteration
-        iterations  at most.  It stops sooner when the objective has stopped improving (over the last five designs that were kept it
-                    fell by less than half a percent).  It sets the size of the steps too (there is no step to choose): how far the
-                    boundary may move in one iteration is one element at most -- half an element when 48 iterations or more are
-                    allowed -- and grows while the objective falls as the sensitivities predicted; a step that raises the objective
-                    is taken back and halved, so the objective never rises
-        filter_radius  the level set's smoothing radius, mm (default 1.5 elements): the smallest feature
-        darcy       the solid's permeability relative to the element: its friction is mu / (darcy h^2), the
-                    flow penetrates it by about sqrt(darcy) elements (0.1 by default: a third of an element)
-        extrude     'x', 'y' or 'z': the body is the same all along that axis (a 2D shape through a slab)
-        symmetry    'auto' (default), None, 'x' / 'y' / 'z' or several ('xz'), or {'y': 20.0} with the plane's position.  A design is kept
-                    symmetric about a plane when the whole problem is -- the fluid domain, the body, the regions and the boundary conditions,
-                    with the flow along the plane: left to itself a symmetric problem does not stay symmetric (the mesh of a symmetric domain
-                    is never exactly symmetric, and the small difference grows into a crooked nose).  'auto' tries the planes through the
-                    middle of the domain
-        flow_direction, lift_direction  (dx, dy, dz): the drag and lift directions (default: the inlets' mean
-                    direction, and perpendicular to it in the plane of the domain's two long axes)
 
-        The body is a level set at the mesh's nodes (a smooth field whose zero level is the boundary, so
-        the body's edge is placed to a fraction of an element and stays smooth); each element's share of
-        the body is the exact fraction of it inside that boundary and sets its friction in the
-        Navier-Stokes flow (Borrvall & Petersson's penalised solid); the force on the body is the momentum
-        the flow loses in it; the sensitivities are the exact discrete adjoint's; the boundary moves down
-        them, and the volume is held by offsetting the whole level.  The boundary splits and merges as it
-        moves (the topology changes that way); a hole does not open in the middle of solid.  Returns a
-        FlowTopologyResult (the body, the drag and lift per iteration, the flow around it).  An unchanged
-        problem is cached. '''
-    if getattr(lib, 'libfive_tetflow_optimize', None) is None:
-        raise FeaError('this FielDes library is too old for flow shape optimization')
-    conditions = _flow_conditions(inlets, outlets, boundaries, 'flow_topology_optimization')
-    _use_conditions(conditions, domain)
+_density_cache = OrderedDict()
+
+
+def topology_optimization_flow(analysis, constraints=(), iterations=None, filter_radius=None, keep=None, avoid=None, grow=False, grow_limit=None,
+                               extrude=None, penalty=3.0, sharpness=16.0, symmetry='auto', tolerance=1e-5, cache=True):
+    ''' topology_optimization() for a body in a flow (see fea.py): `analysis` is the result of fluid_analysis(body, domain, inlets, outlets, boundaries).
+        The body is the design it starts from, the fluid domain is its space; the numbers the constraints can read are drag_force and lift_force (the
+        force of the flow on the body along the flow and across it, N), volume_fraction (of the body's own volume) and volume.  The flow of every
+        iteration is solved once, with one adjoint solve for each force the constraints read; the density of each tetrahedron is the friction the fluid
+        feels there (1 solid, 0 fluid) '''
+    from fieldes.stdlib import optimization_measures as measures
+    from fieldes.stdlib.fea import _optimization_analyses
+    iterations = 80 if iterations is None else iterations
+    if getattr(lib, 'libfive_tetflow_optimize_density', None) is None:
+        raise FeaError('this FielDes library is too old for the topology optimization of a flow')
+    if not constraints:
+        raise TypeError("topology_optimization: say what the design is for -- constraints=[minimize('drag_force'), 'volume_fraction <= 0.5', ...]")
+    if grow or grow_limit is not None:
+        raise ValueError('topology_optimization: a body in a flow is designed inside the fluid domain it is in -- the domain is its space, grow does not apply')
+    if penalty != 3.0 or tolerance != 1e-5:
+        raise ValueError("topology_optimization: penalty and tolerance belong to the structural optimiser -- a flow has neither")
+    analyses = _optimization_analyses(analysis, 'topology_optimization')
+    if len(analyses) != 1:
+        raise FeaError('topology_optimization: a body in a flow is designed for one flow analysis (%d were given)' % len(analyses))
+    a = analyses[0]
+    flow = a.result
+    body, domain = flow.body, flow.domain
     if not isinstance(body, Shape) or not isinstance(domain, Shape):
-        raise TypeError('flow_topology_optimization: the body and the domain must be Shapes')
-    if region is not None and not isinstance(region, Shape):
-        raise TypeError('flow_topology_optimization: region must be a Shape')
-    if objective == 'drag':
-        weights = (1.0, 0.0)
-    elif objective == 'lift':
-        weights = (0.0, 1.0)
-    else:
-        try:
-            weights = (float(objective[0]), float(objective[1]))
-        except (TypeError, IndexError, ValueError):
-            raise ValueError("flow_topology_optimization: objective is 'drag', 'lift' or (w_drag, w_lift)")
-    if isinstance(volume, (int, float)):
-        vmin = vmax = float(volume)
-    else:
-        try:
-            vmin = 0.0 if volume[0] is None else float(volume[0])
-            vmax = 1e6 if volume[1] is None else float(volume[1])
-        except (TypeError, IndexError, ValueError):
-            raise ValueError('flow_topology_optimization: volume is a number or a pair (least, most), of the body\'s volume')
-    if not (0 <= vmin <= vmax):
-        raise ValueError('flow_topology_optimization: the least volume must be no more than the most, both at least 0')
+        raise FeaError('topology_optimization: the flow analysis needs its body and its domain -- fluid_analysis(body, domain, inlets, outlets, boundaries)')
+    if a.arguments.get('gravity') is not None:
+        raise FeaError("topology_optimization: gravity isn't supported in the optimisation of a flow")
+    if a.arguments.get('time') is not None:
+        raise FeaError('topology_optimization: a flow in time (time=) is not optimised -- the steady flow is')
+    fluid = a.arguments['fluid']
+    element_size = a.arguments.get('element_size')
+    bounds = a.arguments.get('bounds')
+    stokes = bool(a.arguments.get('stokes', False))
+    conditions = list(flow._conditions)
+    found = flow._flow_direction()
+    if found is None:
+        raise FeaError('topology_optimization: the direction of the flow is not known -- give an inlet a velocity=(vx, vy, vz): drag and lift are along it and across it')
+    fdir = tuple(float(v) for v in found[0])
+    ldir = tuple(float(v) for v in flow._lift_direction(fdir))
+    _use_conditions(conditions, domain)
     keep = [] if keep is None else list(keep if isinstance(keep, (list, tuple)) else [keep])
     avoid = [] if avoid is None else list(avoid if isinstance(avoid, (list, tuple)) else [avoid])
-    # (what the body has excluded stays as it is: its locked fields are regions to keep)
     keep = keep + keep_regions(body)
     axes = {None: -1, 'x': 0, 'y': 1, 'z': 2}
     if extrude not in axes:
         raise ValueError("extrude is None, 'x', 'y' or 'z'")
-    mirrors = _symmetry_request(symmetry, 'tet', 'flow_topology_optimization')
-    fd = tuple(float(v) for v in flow_direction) if flow_direction is not None else (0.0, 0.0, 0.0)
-    ld = tuple(float(v) for v in lift_direction) if lift_direction is not None else (0.0, 0.0, 0.0)
-    if len(fd) != 3 or len(ld) != 3:
-        raise ValueError('flow_topology_optimization: the directions are (dx, dy, dz)')
-    ekey = problem_key('flow_topology', body=body, domain=domain, part_bounds=getattr(domain, '_bounds', None),
-                       conditions=conditions, fluid=fluid, weights=weights, volume=(vmin, vmax), region=region,
-                       keep=keep, avoid=avoid, element_size=element_size, iterations=int(iterations),
-                       filter_radius=filter_radius, darcy=float(darcy), extrude=extrude,
-                       directions=(fd, ld), bounds=bounds, symmetry=mirrors[2],
-                       algorithm=3) if cache else None        # (what the optimiser gives for the same problem: bumped when it changes -- 2: the step cap that does not shrink, the stop on a plateau; 3: symmetry)
-    if ekey is not None and ekey in _shape_cache:
-        _shape_cache.move_to_end(ekey)
-        cached = _shape_cache[ekey]
+    mirrors = _symmetry_request(symmetry, 'tet', 'topology_optimization')
+    if isinstance(constraints, str) or callable(constraints):
+        constraints = [constraints]
+
+    def baseline_leaf(key):
+        return 1.0 if key[0] == 'fraction' else measures.true_value(key, [flow])
+
+    def baseline(node):
+        return measures.evaluate(node, baseline_leaf)
+
+    outputs, goal = measures.outputs_of(constraints, analyses, baseline)
+    program = measures.Program(outputs)
+    if ('fraction',) not in program.measures:
+        program.measures.append(('fraction',))                      # (the share of the body the design uses is always kept: the result reports it)
+    ekey = problem_key('flow_topology_density', mesh=2, body=body, domain=domain, part_bounds=getattr(domain, '_bounds', None), conditions=conditions,
+                       fluid=fluid, program=program.key(), directions=(fdir, ldir), element_size=element_size, bounds=bounds, stokes=stokes,
+                       keep=keep, avoid=avoid, iterations=int(iterations), filter_radius=filter_radius, extrude=extrude, sharpness=float(sharpness),
+                       symmetry=mirrors[2], algorithm=4) if cache else None      # (bumped when the optimiser changes -- 3: linear friction, smooth sharpening, the mesh mirrored about the planes of symmetry; 4: the design kept exactly symmetric, the flows started from the last flow and solved to 1e-5, the real drag the mean over the places of the lattice)
+    if ekey is not None and ekey in _density_cache:
+        _density_cache.move_to_end(ekey)
+        cached = _density_cache[ekey]
         if cached.body is body and cached.domain is domain:
             return cached
         r = object.__new__(FlowTopologyResult)
         r.__dict__.update(cached.__dict__)
         r.body, r.domain = body, domain
         return r
-    handle, element_size, (lo, hi), items = _problem(domain, conditions, fluid, element_size, bounds, None, False, 60, 1.0,
-                                                     'flow_topology_optimization')
-    settings = {'weights': weights, 'volume': (vmin, vmax), 'filter_radius': float(filter_radius or 0.0),
-                'iterations': int(iterations), 'extrude': axes[extrude], 'darcy': float(darcy)}
+    handle, element_size, (lo, hi), items = _problem(domain, conditions, fluid, element_size, bounds, None, stokes, 60, 1.0, 'topology_optimization')
+    settings = {'iterations': int(iterations), 'extrude': axes[extrude], 'darcy': 0.1, 'filter_radius': float(filter_radius or 0.0),
+                'sharpness': float(sharpness)}
 
-    def finish(handle, ptr, seconds, symmetric=None):
-        ''' The result from a solved problem (just optimised, or read back from its file); `symmetric`: the planes the design was kept symmetric
-            about, when they were kept with it ({'y': [position, how]}: asked for (1), or found (2: and then said)) '''
+    def finish(handle, ptr, seconds, symmetric=None, saved=None):
+        ''' The result from a solved problem (just optimised, or read back from its file: `saved`, what the file says besides) '''
         level = field_shape(lib.libfive_tetflow_level(ptr))
         buf = (ctypes.c_double * 1000)()
         m = lib.libfive_tetflow_history(ptr, 0, buf, 1000)
@@ -1010,21 +1124,39 @@ def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=
             levels.append(Shape(p))
         d3 = (ctypes.c_double * 3)()
         lib.libfive_tetflow_direction(ptr, 0, d3)
-        fdir = (d3[0], d3[1], d3[2])
+        used_flow = (d3[0], d3[1], d3[2])
         lib.libfive_tetflow_direction(ptr, 1, d3)
-        ldir = (d3[0], d3[1], d3[2])
-        flow = FluidResult(handle, domain, fluid, items)
-        flow._bounds = (lo, hi)
-        flow.element_size = element_size
-        flow._read_steps()
-        result = FlowTopologyResult(flow, body, domain, region, level, levels, drag, lift, (fdir, ldir), settings,
-                                    element_size, (lo, hi), seconds)
+        used_lift = (d3[0], d3[1], d3[2])
+        model = FluidResult(handle, domain, fluid, items)
+        model._bounds = (lo, hi)
+        model.element_size = element_size
+        model._read_steps()
+        result = FlowTopologyResult(model, body, domain, level, levels, drag, lift, (used_flow, used_lift), settings, element_size, (lo, hi), seconds)
         # the real flow around the final body: the body a wall at rest, the same conditions (cached like any flow)
-        result.flow = _fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi),
-                                     cache=cache)
-        wf = result.flow.wall_force
-        result.real_drag = sum(wf[i] * fdir[i] for i in range(3))
-        result.real_lift = sum(wf[i] * ldir[i] for i in range(3))
+        result.flow = _fluid_analysis(result.fluid_shape(), items, fluid=fluid, element_size=element_size, bounds=(lo, hi), stokes=stokes, cache=cache)
+        # (what fluid_analysis tells its result, so that its drag_force and lift_force can be read: the flow's direction is the inlets')
+        result.flow.body, result.flow.domain, result.flow._conditions = result.shape(), domain, conditions
+        drags, lifts = _phase_forces(result, items, fluid, element_size, (lo, hi), stokes, cache, used_flow, used_lift)
+        result.real_drags, result.real_lifts = drags, lifts
+        result.real_drag, result.real_drag_sd = _mean_sd(drags)
+        result.real_lift, result.real_lift_sd = _mean_sd(lifts)
+        result.drag_force, result.lift_force = result.real_drag, result.real_lift         # (what `best.drag_force` says: the mean over the places, not the one mesh)
+        result._mean_flow = types.SimpleNamespace(drag_force=result.real_drag, lift_force=result.real_lift)
+        if saved is not None:
+            bases, outs, body_volume = saved['bases'], saved['outputs'], float(saved['body_volume'])
+            pieces = int(saved.get('pieces', 1))
+        else:
+            bases, outs = [], []
+            for j in range(len(program.measures)):
+                n = lib.libfive_tetflow_measure_history(ptr, 0, j, buf, 1000)
+                bases.append([buf[i] for i in range(n)])
+            for j in range(len(outputs)):
+                n = lib.libfive_tetflow_measure_history(ptr, 1, j, buf, 1000)
+                outs.append([buf[i] for i in range(n)])
+            body_volume = float(lib.libfive_tetflow_stat(ptr, 25))
+            pieces = int(lib.libfive_tetflow_stat(ptr, 27))
+        result._set_problem(analyses, outputs, program, bases, outs, goal, body_volume)
+        result.pieces = pieces
         if symmetric is None:
             symmetric = {}
             probe = getattr(lib, 'libfive_tetflow_mirror', None)
@@ -1033,23 +1165,24 @@ def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=
                 how = probe(ptr, k, ctypes.byref(at)) if probe else 0
                 if how:
                     symmetric[name] = [float(at.value), int(how)]
-        found = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
-        if found:
-            print('flow_topology_optimization: the domain, the body and the boundary conditions are symmetric about %s: the design is kept symmetric '
-                  '(symmetry=None leaves it alone).' % ' and '.join(found))
+        found_planes = ['%s = %.4g' % (n, v[0]) for n, v in symmetric.items() if v[1] == 2]
+        if found_planes:
+            print('topology_optimization: the domain, the body and the boundary conditions are symmetric about %s: the design is kept symmetric '
+                  '(symmetry=None leaves it alone).' % ' and '.join(found_planes))
         result.symmetry = {n: v[0] for n, v in symmetric.items()}
         result._symmetry_info = symmetric
+        result._verify_into()
         return result
 
     # solved in an earlier session: read back (see result_cache.py)
     loaded = result_cache.load('tetflow', ekey, 'flow topology optimization')
-    if loaded is not None:
-        result = finish(_Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)), dict(loaded[1].get('symmetry') or {}))
-        _shape_cache[ekey] = result
+    if loaded is not None and loaded[1].get('measures'):
+        result = finish(_Handle(loaded[0]), loaded[0], float(loaded[1].get('seconds', 0)), dict(loaded[1].get('symmetry') or {}), loaded[1]['measures'])
+        _density_cache[ekey] = result
         return result
     ptr = handle.ptr
     if not lib.libfive_tetflow_prepare(ptr):
-        raise FeaError('flow_topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
+        raise FeaError('topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     keep_arr = (ctypes.c_void_p * max(1, len(keep)))(*[_shape(r, 'keep').ptr for r in keep])
     avoid_arr = (ctypes.c_void_p * max(1, len(avoid)))(*[_shape(r, 'avoid').ptr for r in avoid])
     if mirrors[0] and getattr(lib, 'libfive_tetflow_set_symmetry_auto', None):
@@ -1058,27 +1191,25 @@ def flow_topology_optimization(body, domain, inlets, outlets, boundaries, fluid=
         lib.libfive_tetflow_add_mirror(ptr, axis, 0.0 if at is None else float(at), 1 if at is None else 0)
     if ekey is not None:
         lib.libfive_tetflow_set_salt(ptr, result_cache.salt('tetflow', ekey))
+    lib.libfive_tetflow_opt_clear(ptr)
+    for key in program.measures:
+        lib.libfive_tetflow_opt_measure(ptr, program.flow_measure(key))
+    for code, value, index in program.ops:
+        lib.libfive_tetflow_opt_op(ptr, int(code), float(value), int(index))
+    lib.libfive_tetflow_opt_start(ptr, (outputs[0].text or 'constraints').encode('utf-8'), -1.0 if goal == 'maximize' else 1.0, float(sharpness))
     t0 = time.time()
-    ok = lib.libfive_tetflow_optimize(ptr, body.ptr, region.ptr if region is not None else None, weights[0], weights[1],
-                                      fd[0], fd[1], fd[2], ld[0], ld[1], ld[2], vmin, vmax, settings['filter_radius'],
-                                      settings['iterations'], keep_arr, len(keep), avoid_arr, len(avoid),
-                                      settings['extrude'], settings['darcy'])
+    ok = lib.libfive_tetflow_optimize_density(ptr, body.ptr, None, fdir[0], fdir[1], fdir[2], ldir[0], ldir[1], ldir[2], settings['filter_radius'],
+                                              settings['iterations'], keep_arr, len(keep), avoid_arr, len(avoid), settings['extrude'], settings['darcy'])
     if not ok:
-        raise FeaError('flow_topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
+        raise FeaError('topology_optimization: ' + lib.libfive_tetflow_message(ptr).decode('utf-8', 'replace'))
     result = finish(handle, ptr, time.time() - t0)
-    # (as topology_optimization does: when the iterations ran out while the objective was still falling, say so)
-    drag = result.drag
-    span = max(3, settings['iterations'] // 4)
-    if weights[1] == 0 and result.stopped == 'the iteration limit' and len(drag) > span + 1 and drag[-1] > 0:
-        gain = (drag[-1 - span] - drag[-1]) / drag[-1]
-        if gain > 0.01:
-            print('flow_topology_optimization: stopped at the limit of %d iterations with the drag still falling (%.1f %% over the last %d): '
-                  'more iterations lower it further.' % (settings['iterations'], 100 * gain, span))
-    result_cache.save('tetflow', ekey, ptr, 'flow topology optimization', {'seconds': result.seconds, 'symmetry': result._symmetry_info})
+    meta = {'seconds': result.seconds, 'symmetry': result._symmetry_info,
+            'measures': {'bases': result._bases, 'outputs': result._outs, 'body_volume': result.body_volume, 'pieces': result.pieces}}
+    result_cache.save('tetflow', ekey, ptr, 'flow topology optimization', meta)
     if ekey is not None:
-        _shape_cache[ekey] = result
-        while len(_shape_cache) > 8:
-            _shape_cache.popitem(last=False)
+        _density_cache[ekey] = result
+        while len(_density_cache) > 8:
+            _density_cache.popitem(last=False)
     return result
 
 

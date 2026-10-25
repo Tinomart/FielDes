@@ -167,43 +167,37 @@ public:
     const std::vector<double>& velocity() const { return m_u; }
     const std::vector<double>& pressure() const { return m_p; }
 
-    /*  Shape optimisation of a BODY in the flow.  The body (a tree, solid where negative) becomes a density rho
-     *  per tetrahedron (1 solid, 0 fluid) that may change inside `region` (everywhere when invalid); it sets a
-     *  Brinkman friction alpha = alpha_max q rho / (1 - rho + q) (Borrvall & Petersson's interpolation with
-     *  gamma = 1 - rho; alpha_max = mu / (darcy D^2), D the inlet's hydraulic diameter).  The force the body takes
-     *  from the flow, F = sum_e alpha_e int u dV (the momentum the fluid loses in it), gives the objective
-     *  J = wDrag F.d - wLift F.l -- d the flow direction (the inlets' mean when flowDir is zero), l the lift
-     *  direction (when zero: perpendicular to d in the plane of the domain's two long axes) -- minimised with the
-     *  solid volume kept between volumeMin and volumeMax (fractions of the body's own volume) by the exact discrete
-     *  adjoint of the Navier-Stokes system, a density filter with a tanh projection (sharpened 1 to 16 after the
-     *  first third of the iterations), and a projected gradient step of at most `move` per iteration.  Elements in
-     *  `keep` regions stay solid, those in `avoid` regions, at the inlets and outlets, and outside `region` stay
-     *  fluid.  The flow of every iteration is kept as a step (stepIteration = the iteration), the last the final
-     *  body's.  */
-    struct FlowOpt
+
+    /*  Shape optimisation of a BODY in the flow, on the optimiser every density-based design shares (density_design.hpp): one density per tetrahedron (1 solid, 0 fluid),
+     *  filtered, sharpened, kept symmetric, moved by the method of moving asymptotes on the MEASURES of the flow -- the force on the body along the
+     *  flow (drag) and across it (lift), the volume of the body as a share of its own -- with the objective and the constraints as formulas of
+     *  them (`program`).  The friction of an element is alpha_max times its density; the force on the body, F = sum_e alpha_e int u dV, is the
+     *  momentum the fluid loses in it; the sensitivity of each force to every element's density is the exact discrete adjoint's (one adjoint solve
+     *  per direction, on the factorisation of the flow's own).  The results are those of optimize(): the drag and lift of every iteration (the last
+     *  of the final body), the design as a level set (mm, positive inside the body: the density above one half, scaled by the filter radius), the flows
+     *  as steps  */
+    enum DensityMeasure { MEASURE_DRAG = 0, MEASURE_LIFT = 1, MEASURE_VOLUME = 2 };
+    struct DensityOpt : topopt::DesignSettings
     {
-        Tree body = Tree::invalid();
-        Tree region = Tree::invalid();
-        double wDrag = 1.0, wLift = 0.0;
-        Eigen::Vector3d flowDir = Eigen::Vector3d::Zero(), liftDir = Eigen::Vector3d::Zero();
-        double volumeMin = 1.0, volumeMax = 1.0;   // of the body's own volume
-        double filterRadius = 0;        // the level set's smoothing radius (0: 1.5 element sizes)
-        int extrude = -1;               // 0 / 1 / 2: the design is constant along x / y / z
-        int iterations = 40;
-        double darcy = 0.1;             // the solid's permeability relative to the element: the flow penetrates it by sqrt(darcy) elements
-        std::vector<Tree> keep, avoid;
-        /*  Mirror symmetry: the design is kept symmetric about these planes (axis 0, 1, 2 = x, y, z at the coordinate `at`; atCentre: the plane
-         *  through the middle of the domain's extent along that axis).  symmetryAuto: look for the planes the domain, the body, the regions and
-         *  the boundary conditions are all symmetric about, and keep the design symmetric about them -- a symmetric problem otherwise breaks its
-         *  symmetry (the mesh of a symmetric domain is never exactly symmetric, and a small difference grows into a crooked nose)  */
-        struct Mirror { int axis = 0; double at = 0; bool atCentre = true; };
-        std::vector<Mirror> mirrors;
-        bool symmetryAuto = false;
+        Tree body = Tree::invalid();                    // the body the design starts as (solid where negative); its volume is the volume the share is of
+        Tree region = Tree::invalid();                  // where material may be (invalid: anywhere in the fluid domain)
+        Eigen::Vector3d flowDir = Eigen::Vector3d::Zero(), liftDir = Eigen::Vector3d::Zero();      // the flow direction (zero: the inlets' mean) and the lift direction (zero: perpendicular to it in the plane of the domain's two long axes)
+        double darcy = 0.1;                             // the solid's permeability relative to the element: its friction is mu / (darcy h^2)
+        std::vector<int> measures;                      // the kind (DensityMeasure) of each measure the program reads, in the program's order
     };
-    bool optimize(const FlowOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
+    bool optimizeDensity(const DensityOpt& settings, std::string& error, const std::atomic<bool>* cancel = nullptr);
+    /*  After optimizeDensity: every measure, and every output of the program, at each kept iteration  */
+    const std::vector<std::vector<double>>& baseHistory() const { return m_baseHistory; }
+    const std::vector<std::vector<double>>& outputHistory() const { return m_outputHistory; }
+    /*  After optimizeDensity: the volume of the body the design started as (mm^3), and the volume of the design (the density integrated)  */
+    double bodyVolume() const { return m_bodyVolume; }
+    double designVolume() const { return m_designVolume; }
+    /*  After optimizeDensity: in how many pieces the final body is (a piece under a fiftieth of the largest is a speck and is not counted)  */
+    int pieces() const { return m_pieces; }
     /*  After optimize: the planes the design was kept symmetric about (`found`: by itself, not asked for)  */
     struct MirrorUsed { int axis; double at; bool found; };
     const std::vector<MirrorUsed>& mirrorsUsed() const { return m_mirrorsUsed; }
+    int meshMirrors() const { return m_meshMirrors; }
     /*  After optimize: the drag and the lift (N) at each iteration (the last of the final body), the design as a
      *  field on the mesh (field 0: each tetrahedron's rho averaged at the nodes by volume) for meshFieldTree(., 0),
      *  and the directions used  */
@@ -276,12 +270,22 @@ private:
     std::unique_ptr<FlowIlut> m_ilut;           // the block incomplete LU of the scaled system, kept between solves
     size_t m_ilutN = 0;
     long m_ilutBase = 0, m_ilutIter = -1;
-    double m_ilutBuildSeconds = 0, m_ilutIterSeconds = 0;   // what a build cost, and one BiCGSTAB iteration with it
+    std::unique_ptr<FlowIlut> m_ilutAdj;        // the same for the matrix of the adjoint (the transpose): a place of its own, so that the factorisation of the flow is not thrown away at every iteration of the optimiser
+    size_t m_ilutAdjN = 0;
+    long m_ilutAdjBase = 0, m_ilutAdjIter = -1;
+    bool m_ilutAdjNewton = false;
+    double m_adjointTolerance = 0.0;            // the reduction asked of the optimiser's adjoint solves (0: the solver's own tolerance)
+    bool m_ilutNewton = false;                  // whether the kept factorisation was made of a Newton matrix (one of a Picard matrix is a poor preconditioner for it)
+    int m_meshMirrors = 0;                      // the planes the mesh was mirrored about (see prepare)
     // The discrete adjoint of the last (Stokes) solve, when the optimiser asks for it: lambda with K^T lambda = -dJ/dU,
     // J the dissipated power; zero at the held unknowns
     bool m_wantAdjoint = false;
-    std::vector<double> m_adjoint;
-    Eigen::Vector3d m_objDir = Eigen::Vector3d::Zero();   // the force direction the objective weighs (J = F . m_objDir)
+    // The force directions the optimiser wants adjoints for (J_k = F . m_objDirs[k]): one adjoint solve for each, lambda_k with K^T lambda_k = -dJ_k / dU
+    std::vector<Eigen::Vector3d> m_objDirs;
+    std::vector<std::vector<double>> m_adjoints;
+    std::vector<std::vector<double>> m_baseHistory, m_outputHistory;
+    double m_bodyVolume = 0, m_designVolume = 0;
+    int m_pieces = 0;
     Eigen::Vector3d m_flowDir = Eigen::Vector3d::Zero(), m_liftDir = Eigen::Vector3d::Zero();
     std::vector<Eigen::Vector3d> m_inletDir;    // per inlet: the direction its velocity was given along
 

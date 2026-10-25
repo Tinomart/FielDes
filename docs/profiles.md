@@ -47,7 +47,7 @@ The **selection rectangle** (drag on empty space) selects every kind of model: s
 
 ## Drawing in the work plane
 
-Open a **work plane** (`Shift+W`, or `Ctrl+Shift+W` for a new one -- the plane of the selected 2D shape, or parallel to the view) and click the plane: in **line** mode every click is the next point of a line, **a click on the first point
+Open a **work plane** (`Shift+W`, or `Ctrl+Shift+W` for a new one -- the plane of the selected 2D shape or surface, or parallel to the view) and click the plane: in **line** mode every click is the next point of a line, **a click on the first point
 closes it and makes a profile of it**, `Enter` ends it open (a `polyline`); in **spline** mode the same with a smooth curve; in **point** mode every click is a point. `E` goes round the three drawing modes; **a right click in the viewport (or the button that is on, clicked again) stops drawing**, and `E` brings back the mode that was on: nothing is put down and things are selected, moved, turned and scaled as usual, and no marker shows on the plane. While drawing a marker shows the point a click puts down -- a square for a line, a round point with a ring for a spline, a dot for a point. The grid and snapping keep the points
 exact, and the points land on the plane, written as ordinary numbers. When not drawing, a profile (or any 2D shape) in the plane is moved about in it by pressing it. See [The work plane](interface.md#the-work-plane).
 

@@ -18,8 +18,11 @@ from fieldes.stdlib.mesh_import import *
 from fieldes.stdlib.importing import *
 from fieldes.stdlib.exporting import *
 from fieldes.stdlib.fea import *
+from fieldes.stdlib.optimization_measures import *
 from fieldes.stdlib.boundary_conditions import *
 from fieldes.stdlib.selection import *
+from fieldes.stdlib.features import *
+from fieldes.stdlib.snapping import *
 from fieldes.stdlib.thermal import *
 from fieldes.stdlib.fluid import *
 from fieldes.stdlib.parametric import *

@@ -82,6 +82,10 @@ QString setupOf(const QTextBlock& block)
 {
     static const QRegularExpression head(R"(^([A-Za-z_]\w*)\s*=\s*(?:handles|gizmo|lock|render_cache|custom_resolution)\(\s*([A-Za-z_]\w*)?)");
     static const QRegularExpression first(R"(^\s*([A-Za-z_]\w*)\s*[,)])");
+    // (and `name` on a line of its own: the line that shows the model goes on with it too)
+    static const QRegularExpression bare(R"(^([A-Za-z_]\w*)\s*(?:#.*)?$)");
+    const auto shown = bare.match(block.text());
+    if (shown.hasMatch()) return shown.captured(1);
     const auto m = head.match(block.text());
     if (!m.hasMatch()) return QString();
     QString argument = m.captured(2);
@@ -151,6 +155,12 @@ Script::Script(QWidget* parent)
     });
     connect(document(), &QTextDocument::contentsChange,
             this, &Script::onContentsChange);
+    // The shades of the objects follow the text a moment after it stops changing
+    m_shadeTimer = new QTimer(this);
+    m_shadeTimer->setSingleShot(true);
+    m_shadeTimer->setInterval(150);
+    connect(m_shadeTimer, &QTimer::timeout, this, &Script::updateBlockShading);
+    connect(document(), &QTextDocument::contentsChanged, m_shadeTimer, QOverload<>::of(&QTimer::start));
     updateGutterWidth();
 
     m_completionModel = new QStringListModel(this);
@@ -559,7 +569,7 @@ void Script::paintGutter(QPaintEvent* event)
                     p.drawPath(arrow);
                 }
             }
-            p.setPen(blockNumber == current ? Color::base00 : Color::base1);
+            p.setPen(blockNumber == current ? (Theme::dark() ? Theme::text : Color::base00) : Color::base1);
             p.drawText(0, top, numberRight, sfm.height(), Qt::AlignRight | Qt::AlignVCenter,
                        QString::number(blockNumber + 1));
 
@@ -650,6 +660,68 @@ bool Script::isBlankOrComment(const QTextBlock& b) const
 {
     const QString t = b.text().trimmed();
     return t.isEmpty() || t.startsWith('#');
+}
+
+int Script::objectEnd(const QTextBlock& b) const
+{
+    // An object is a top-level `name = <call>(...)` and the statements that go on with the same name (`name = gizmo(name, ...)`, `name = handles(...)`, `name`, ...), to the end of their brackets
+    if (!b.isValid() || indentOf(b) != 0) return -1;
+    const QString text = b.text();
+    const QString name = assignedName(text);
+    if (name.isEmpty() || !setupOf(b).isEmpty()) return -1;
+    // (what is made by a call: `x = 5` or `x = a + b` is a number, not an object; the functions of Python and of the script's own numbers make none either)
+    static const QRegularExpression call(R"(=\s*(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)\s*\()");
+    const auto m = call.match(text);
+    if (!m.hasMatch()) return -1;
+    static const QSet<QString> numbers = {"var", "int", "float", "str", "len", "range", "list", "dict", "tuple", "set", "sum", "min", "max", "abs", "round", "sorted",
+                                          "enumerate", "zip", "bool", "open", "input", "roi", "roi_resolution", "progress", "print", "evaluate", "field_range",
+                                          "volume_of", "mass_properties", "find_extent", "sample_grid", "result_summary"};
+    if (numbers.contains(m.captured(1))) return -1;
+    auto statementEnd = [this](const QTextBlock& s) {
+        int e = s.blockNumber();
+        int depth = bracketDelta(s.text());
+        for (QTextBlock n = s.next(); depth > 0 && n.isValid(); n = n.next())
+        {
+            depth += bracketDelta(n.text());
+            e = n.blockNumber();
+        }
+        return e;
+    };
+    int last = statementEnd(b);
+    QTextBlock n = document()->findBlockByNumber(last).next();
+    while (n.isValid() && setupOf(n) == name)
+    {
+        last = statementEnd(n);
+        n = document()->findBlockByNumber(last).next();
+    }
+    return last;
+}
+
+void Script::updateBlockShading()
+{
+    QList<QTextEdit::ExtraSelection> sels;
+    // Every second object has a background a shade away from the paper: a little lighter in the dark set, a little darker in the light one
+    const QColor shade = Theme::mix(Theme::paper, Theme::text, Theme::dark() ? 0.07 : 0.045);
+    int index = 0;
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+    {
+        const int end = objectEnd(b);
+        if (end < 0) continue;
+        if (index++ % 2 == 1)
+        {
+            for (QTextBlock line = b; line.isValid() && line.blockNumber() <= end; line = line.next())
+            {
+                QTextEdit::ExtraSelection s;
+                s.format.setBackground(shade);
+                s.format.setProperty(QTextFormat::FullWidthSelection, true);
+                s.cursor = QTextCursor(line);
+                s.cursor.clearSelection();
+                sels << s;
+            }
+        }
+        b = document()->findBlockByNumber(end);
+    }
+    setSelections(SEL_BLOCKS, sels);
 }
 
 bool Script::foldRange(int blockNum, int* endOut) const
@@ -995,10 +1067,10 @@ void Script::paintEvent(QPaintEvent* e)
             const int x = int(r.left()) + fm.horizontalAdvance(block.text()) +
                           document()->documentMargin() + 6;
             QRect box(x, int(r.top()) + 2, fm.horizontalAdvance(" " + label + " "), fm.height() - 4);
-            p.setPen(Color::base1);
-            p.setBrush(Color::base2);
+            p.setPen(Theme::dark() ? Theme::border : Color::base1);
+            p.setBrush(Theme::dark() ? Theme::gutter : Color::base2);
             p.drawRoundedRect(box, 3, 3);
-            p.setPen(Color::base00);
+            p.setPen(Theme::dark() ? Theme::muted : Color::base00);
             p.drawText(box, Qt::AlignCenter, label);
         }
         block = block.next();
@@ -1007,7 +1079,7 @@ void Script::paintEvent(QPaintEvent* e)
     for (const auto& c : m_extraCursors)
     {
         const QRect r = cursorRect(c);
-        p.fillRect(QRect(r.left(), r.top(), 2, r.height()), Color::base00);
+        p.fillRect(QRect(r.left(), r.top(), 2, r.height()), Theme::dark() ? Theme::text : Color::base00);
     }
 }
 
@@ -1017,7 +1089,7 @@ void Script::paintEvent(QPaintEvent* e)
 void Script::onCursorMoved()
 {
     QTextEdit::ExtraSelection line;
-    line.format.setBackground(QColor(0, 0, 0, 12));
+    line.format.setBackground(Theme::dark() ? QColor(255, 255, 255, 14) : QColor(0, 0, 0, 12));
     line.format.setProperty(QTextFormat::FullWidthSelection, true);
     line.cursor = textCursor();
     line.cursor.clearSelection();

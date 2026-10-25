@@ -47,7 +47,7 @@ struct LiveView
 {
     uint64_t serial = 0;                // set by publishLive: changes with every picture
     std::string kind;                   // what runs: "topology" (the stiffest part for a volume) or "flow" (the body in a flow)
-    std::string quantity;               // what `objective` is: "compliance", "drag", or "objective" (drag less lift)
+    std::string quantity;               // what `objective` is: the text of the goal ("compliance", "mass", "lift_force / drag_force"), "drag", or "objective" (drag less lift)
     int iteration = 0, iterations = 0;  // the one just done (counting from 1), and the most there will be
     double objective = 0;               // of the design of this iteration (it should fall)
     double volume = 0;                  // the material of the design, as a fraction of the part's (of the body's own volume, for a flow)
@@ -55,6 +55,10 @@ struct LiveView
     double change = 0;                  // how far the design moves from this iteration to the next: the largest change of a density
                                         // (topology), the boundary's largest move in mm (flow)
     std::vector<float> history;         // `objective` of every iteration so far
+    // What the card should say besides the numbers, as a key the viewer translates (empty: nothing).  "grow": the design reached the edge of its
+    // design space, the run has stopped there and a larger space is being made -- the picture is the last one of the run that stopped, and it stays
+    // (the card must not go and come back: it looked like something had broken) until the first picture of the run that goes on replaces it
+    std::string note;
     // The design as it is now, made of the shapes its result is made of (the part cut from the density, the fluid with the body taken out
     // and the body ...): the viewer renders them as it renders the result
     std::vector<LiveShape> shapes;

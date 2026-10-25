@@ -108,3 +108,24 @@ ribs = lattice_surface_conform(foot, cell_periodic('octet'), cell_thickness=5, c
 A selection is a surface, so a `fixed()` or `force()` on it acts on the surface nodes of the analysis that lie within it
 (about a hundredth of the model): on a coarse analysis, thicken it by an element or two with `offset_by(selection, mm)`.
 See [Analysis](analysis.md#boundary-conditions) and [Lattices](lattices.md#lattices-that-follow-a-surface).
+
+## Corners and edges
+
+A right-click on a body **near one of its edges or corners** (within about thirty pixels) adds up to three entries to the menu, below *Select Surface*; a click on a face, or on a smooth
+surface, offers none of them, because there is nothing to snap to:
+
+| Entry | Writes | Makes |
+|---|---|---|
+| **Point at the corner** | `corner_1 = corner_at(part, (x, y, z))` | a point, exactly where three faces of the body meet, the corner nearest the click |
+| **Point on the edge** | `edge_point_1 = edge_point_at(part, (x, y, z))` | a point of the edge nearest the click -- any edge, a circle too (the rim of a cylinder) |
+| **Line along the edge** | `edge_1 = edge_at(part, (x, y, z))` | the straight edge nearest the click as a `polyline` of two points, from its corner to its corner (offered only for an edge that is a straight line) |
+
+Like `select_surface`, they are made from the body's **field** alone -- its value and its gradient, which is the surface normal --, and no mesh of the body is made or read: the surface
+round the click is sampled and its normals are sorted into faces; two faces that meet at a sharp angle make an edge, three make a corner, and the place is where the planes of the faces
+meet, worked out again from smaller and smaller neighbourhoods so that a curved face is followed to the sharp feature itself. What counts is a jump of the normal that **stays a jump however
+closely it is looked at**: a smooth surface -- a sphere, the side of a cylinder, a fillet -- turns by less and less the closer it is looked at, so it has neither. The call is run again
+with the script, from the place it was given and the body as it is then, so the point or line **follows the body** when the body is changed, as long as the edge or corner is still near that place.
+
+What comes back are the ordinary things -- a `point` (a corner of a `profile`, the end of a `polyline`, a place for a gizmo) and a `polyline` -- so they are selected, moved, used as the
+points of a work plane or of a `snap`, and listed in the model tree like any other. The functions can also be written by hand: `corner_at(shape, near, scale=None, bounds=None)`, `edge_point_at(...)`,
+`edge_at(...)`; `scale` is how far round `near` is looked, in mm (by default 3 % of the body), and a `ValueError` says that there is no corner or edge within it (or that the edge curves, for `edge_at`).

@@ -36,7 +36,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #  5. THE TOUR.  Help > Guided tour, to the step "Your primitives" (after "Make things"): the menu bar's Primitives menu is drawn with "Manage primitives..." framed; "Show me" opens the window on
 #     the selected model's kind and closes it again.
 #
-#  6. THE EXAMPLES.  File > Open example file: the files 00 .. 34 and the folders step and meshes -- no walkthroughs, no manufacturing folder, no verification folder (the known-answer problems are in tests/verification/known_answers).
+#  6. THE EXAMPLES.  File > Open example file: the files 00 .. 35 and the folders step and meshes -- no walkthroughs, no manufacturing folder, no verification folder (the known-answer problems are in tests/verification/known_answers).
 #     Run examples/33_manufacturing_optimization.py (about five minutes): the bracket as the optimizer made it (right) and its result for the printer (left), grey where it is as it was, red where
 #     material was added; the mill's and the mould's results are models of the tree (the eye shows them).
 #
@@ -58,5 +58,54 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #  9. THE LATTICES THAT DO NOT REPEAT.  Open examples/34_non_periodic_lattices.py (about three minutes; the progress bar shows it).  YOU MUST SEE: row 1, a net of beams over the whole surface of a block with
 #     a dent, the hollow and the edges included (cells like hexagons), the same net in triangles, and the net inside a ball; row 2, the foam whose beams the surface cuts off (stubs at the surface) beside two foams
 #     with a clean surface -- a net of beams on the ball's skin, joined to the foam inside, in Voronoi cells and in triangles.  Change `spacing=6` in a `random_points` call and the tile follows.
+#
+# 10. THE HEAT SINK.  Open examples/35_thermal_topology_optimization.py (about half a minute).  YOU MUST SEE: the optimized part coloured by its density, red where the metal is solid: thick trunks from
+#     the strip on the left edge (the sink) that branch out towards the rest of the plate, the same above and below the middle line; the console says the plate's heat-weighted temperature, the
+#     optimiser's own value and the value of the part analysed again (lower: only the metal makes heat in it); the card steps through the iterations.
+#
+# 11. THE SYMMETRIC MESH.  Open examples/06_modal_analysis.py (about twenty seconds) and look at the first mode from the front (View > Front).  YOU MUST SEE: both lugs moving alike, the same red on
+#     both (the first mode, about 1507 Hz); before the mesh was mirrored one lug moved about twice as far as the other.  Then open examples/17_flow_topology_optimization.py (about four minutes): a slender
+#     spindle with pointed ends in the stream, the same above and below the middle line; the card says a drag coefficient of about 0.3 and a lift coefficient of a few thousandths (a symmetric body has no lift:
+#     that is the noise of the places of the lattice, about 1 % of the drag, and the one flow that is drawn has a lift of 1e-11 of its drag).
+#
+# 12. THE ELEMENTS OF A RESULT, AND THE CUT THROUGH THEM.  Open examples/05_static_analysis.py, then examples/07_thermal_analysis.py, examples/06_modal_analysis.py and examples/16_fluid_flow.py, one after the
+#     other.  On the result card of each: the button "Elements" (and, below the colour bar, the number of nodes and elements).  YOU MUST SEE: pressing it draws the tetrahedra of the part, coloured by the value of
+#     each element; then View > Section view (Shift+X), choose an axis and move the plane through the part: with the elements shown the card of the section has "Whole elements", and with it ticked the plane keeps whole
+#     elements instead of cutting them smooth.  The thermal result shows the temperature, the flow its speed, a mode the displacement of that mode.  A result with more than 8 000 000 tetrahedra has no such button
+#     -- its card says how many there are and that they are too many to draw.  A small solid part has millions at the default element size (a cube 0.4 mm on a side: 2 678 400): its elements are drawn.
+#
+# 13. THE ENGINEERING MENU.  Right-click empty space in the viewport, open Engineering.  YOU MUST SEE: "topology_optimization" first, on its own, a line under it, and then Structural, Thermal, Fluid and
+#     Manufacturing -- no topology_optimization inside Structural.
+#
+# 14. THE ICONS.  Right-click empty space, open Primitives (and Parametric shapes, Operations > the lattice categories, Engineering > New material / New support or load ...).  YOU MUST SEE: an icon of its own
+#     beside every entry: a ball for the sphere, a cylinder, a cone, a ring for the torus, a pyramid, a prism; outlines for the circle, the rectangle, the ring, the polygon, the triangle; a sheet, a globe, a tube
+#     for the surfaces; rings, layers, noise, waves for the fields; a wall with hatching for fixed, an arrow for a force; an ingot with its element for a metal, a drop for a fluid; and a different picture for
+#     each cell of the lattices.  Then open examples/05_static_analysis.py: the rows of the model tree show the same pictures.
+#
+# THE NIGHT OF 2026-10-25/26 (the build of 2026-10-26 02:48).  Open walkthroughs/07_the_night_of_2026_10_26.py first: it draws snap, the corners and edges of the right-click menu, custom_resolution as an
+# argument row, an imposed displacement and a body as the region of a support in five groups, and its first lines say what to do and what you must see in each.  The rest is the interface:
+#
+# 15. DELETE AND ESC.  Select a model (the viewport or the tree) and press Delete: it goes, as with D.  Make a work plane (Ctrl+Shift+W) and press Esc while a line is being drawn, then again, then again.
+#     YOU MUST SEE: one step each time -- the line being drawn is dropped, then the drawing mode is left, then the work plane's view is closed.  Esc also closes the section view (Shift+X), then cancels a
+#     render that is running, and in the console (Ctrl+`) it hands the keyboard back to the editor (this last one has not been seen in a window).
+#
+# 16. A PLANE ON A SURFACE.  Select one flat face of a box (right-click it > Select Surface) and press Ctrl+Shift+W.  YOU MUST SEE: a work plane lying on that face, turned to face you.  (On a bent
+#     surface the plane is the one of the projection that covers the largest area: not seen in a window yet.)
+#
+# 17. A SPLINE IS SELECTED LIKE ANY MODEL.  In walkthroughs/07 click the thin blue line of `curve_1` (above the block): it is selected.  Select the block, then Ctrl+click the line: it joins the selection.
+#     Right-click empty space with nothing selected in a script that has only a spline, Parametric shapes > New 2D shape > profile: YOU MUST SEE a rectangle of four points of its own; the spline is not
+#     passed to the profile.
+#
+# 18. THE THEME, THE CONSOLE, THE BLOCKS.  View > Theme...: choose Dark (and Light again), change a colour by hand, Reset.  YOU MUST SEE: the editor, the trees, the dialogs and the output change at once, the
+#     defaults come back with Reset.  View > Console (Ctrl+`): type `1 + 1` and press Enter (2), `print("a")` (a), `undefined_name` (a traceback of your line only); Shift+Enter is a new line, Up and Down go
+#     through what you ran.  In the editor every object (its lines, its gizmo, its handles) is one block with its arrow, and every second block is a shade darker: fold one and the whole object goes.
+#
+# 19. THE ORTHOGRAPHIC VIEW IS THE DEFAULT.  Start FielDes with no settings file (a new user): the cube of any script has parallel edges, the top face of a cube in the iso view is an exact rhombus.
+#
+# 20. THE RENDER SETTINGS ARE ARGUMENTS TOO.  Open the render settings row of the model tree and click Resolution, Quality or Region.  YOU MUST SEE: the number is selected in the code, ready to be typed
+#     over, as a variable's is.
+#
+# 21. THE IMPOSED DISPLACEMENT.  In walkthroughs/07 group D: a beam held at one end whose tip is pushed 1 mm and no force at all.  YOU MUST SEE: total load 0 N, support reaction 2344 N, compliance
+#     2344 N mm, maximum displacement 1 mm (at 2 mm elements 2063 N; beam theory with shear says about 1940 N, the clamps stiffen it a few percent more).  Change `inf` to 0 and the tip is held in y too.
 
 print("Open one of the files listed above.")

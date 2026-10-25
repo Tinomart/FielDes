@@ -19,7 +19,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #pragma once
 
+#include <functional>
+
 #include <QApplication>
+#include <QDialog>
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QFileSystemWatcher>
@@ -80,6 +83,11 @@ protected slots:
     /*  Primitives > Manage primitives: the window that says which shapes the Primitives menus offer, and makes the selected model a primitive of the user's own (user_primitives.py).
      *  Not modal: the scripted tests look at it and drive it (the verb `primitives`)  */
     PrimitivesDialog* openPrimitivesDialog();
+    /*  View > Theme: light or dark, and the eight colours of the window and the editor (Theme), chosen by hand where the default of the set is not wanted.  Not modal: the colours change
+     *  what is open as they are chosen.  `applyTheme` puts the colours as they are now on everything that was made with the colours of before (the application's palette and style
+     *  sheet, the editor)  */
+    void openThemeDialog();
+    void applyTheme();
     /*  Help > Report a bug: opens a new issue on GitHub in the browser, filled in with the version, the system and the graphics driver; the script goes only when the user asks for it  */
     void onReportBug(bool=false);
     bool loadTourModel();
@@ -186,6 +194,9 @@ protected:
     Editor* editor;
     View* view;
     QPointer<PrimitivesDialog> m_primitivesDialog;
+    QPointer<QDialog> m_themeDialog;
+    QPointer<QAction> m_sectionToggle;                 // (View > Section view: Escape closes it when nothing else is to be left first)
+    std::function<void()> m_themeRefresh;              // (the swatches of the theme dialog, made again when the colours changed from anywhere)
     Tutorial* tour=nullptr;
     bool closing=false;
 

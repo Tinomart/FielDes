@@ -48,8 +48,7 @@ beam = difference(box((0, 0, 0), (100, width, height)), cylinder(radius, 40, (50
 stress = static_analysis(beam, supports=[wall], loads=[pull], material=aluminium, element_size=3)
 
 best = parametric_optimization(stress, [(width, 20, 40), (height, 8, 20), (radius, 2, 8)],
-                               minimize='mass',
-                               constraints=['max_von_mises <= 120', 'max_displacement <= 0.8'])
+                               constraints=[minimize('mass'), 'max_von_mises <= 120', 'max_displacement <= 0.8'])
 
 starting_beam = move(beam_of(40, 20, 2), (0, -60, 0))
 starting_beam

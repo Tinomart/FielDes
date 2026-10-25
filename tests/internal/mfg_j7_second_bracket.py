@@ -25,7 +25,8 @@ t = Table('j7_second_bracket: J7: the same job on a second shape: the bracket th
 
 design, plates, lugs = _bracket_parts()
 # THE PART: written out by hand here (boxes, cylinders, spheres: nothing about it is computed)
-opt = topology_optimization(design, supports=[fixed(plates)], loads=[force(lugs, (1500, -1500, 0))], material=aluminium, volume_fraction=0.40, element_size=5)
+opt_stress = static_analysis(design, supports=[fixed(plates)], loads=[force(lugs, (1500, -1500, 0))], material=aluminium, element_size=5)
+opt = topology_optimization(opt_stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'])
 solid = exact_distance(opt.shape())
 lo, hi = (-78, -92, -63), (78, 38, 31)
 shift = 1.2 * (hi[0] - lo[0])

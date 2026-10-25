@@ -353,7 +353,7 @@ def _node_sets(data, result):
             continue
         inside = _eval_at(s.region, xyz, nv)
         nodes = [i for i in range(nv) if inside[i] <= 0.0]
-        supports.append({'nodes': nodes, 'axes': tuple(s.axes)})
+        supports.append({'nodes': nodes, 'axes': tuple(s.axes), 'values': tuple(float(d) if held else 0.0 for held, d in zip(s.axes, s.displacement))})
     # centroids of the boundary triangles
     cen = []
     area = []
@@ -435,7 +435,9 @@ def _write_inp(path, data, result, sets):
         for k, s in enumerate(supports):
             for axis, held in enumerate(s['axes']):
                 if held and s['nodes']:
-                    out.append('SUPPORT_%d, %d, %d' % (k + 1, axis + 1, axis + 1))
+                    # (a support that imposes a displacement: the value is the fourth field of the line)
+                    value = s['values'][axis]
+                    out.append('SUPPORT_%d, %d, %d' % (k + 1, axis + 1, axis + 1) + (', %.9g' % value if value != 0 else ''))
     if loads:
         out.append('*CLOAD')
         for k, l in enumerate(loads):
@@ -474,12 +476,18 @@ def _write_bdf(path, data, result, sets):
     out.append('PSOLID,1,1')
     out.append('MAT1,1,%.9g,,%.9g,%.9g' % (float(m.E), m.nu, float(m.density)))
     for s in supports:
-        dofs = ''.join(str(a + 1) for a, held in enumerate(s['axes']) if held)
-        if not dofs or not s['nodes']:
+        # (the directions held at 0 are one SPC1 for all the nodes; one that imposes a displacement is a SPC for each node, with the value)
+        dofs = ''.join(str(a + 1) for a, held in enumerate(s['axes']) if held and s['values'][a] == 0)
+        if not s['nodes']:
             continue
         nodes = [str(n + 1) for n in s['nodes']]
-        for i in range(0, len(nodes), 8):
-            out.append('SPC1,1,%s,%s' % (dofs, ','.join(nodes[i:i + 8])))
+        if dofs:
+            for i in range(0, len(nodes), 8):
+                out.append('SPC1,1,%s,%s' % (dofs, ','.join(nodes[i:i + 8])))
+        for a, held in enumerate(s['axes']):
+            if held and s['values'][a] != 0:
+                for n in s['nodes']:
+                    out.append('SPC,1,%d,%d,%.9g' % (n + 1, a + 1, s['values'][a]))
     load_ids = []
     for l in loads:
         magnitude = math.sqrt(sum(c * c for c in l['vector']))

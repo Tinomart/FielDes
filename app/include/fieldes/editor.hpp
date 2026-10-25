@@ -63,6 +63,18 @@ public:
     /*  Sets the script state to the default for the current language */
     void loadDefaultScript();
 
+    /*  The editor's look from the colours of the theme as they are now (the constructor does it once; the Window again when the theme is changed)  */
+    void applyTheme();
+
+    /*  The console under the editor (View > Console, or the button at the right of the output): Python typed in runs among the names of the script that ran last and of the library,
+     *  and what it prints and the value of its last expression are shown above the line it is typed in.  Enter runs, Shift+Enter is a new line, Up and Down go through what was run.
+     *  runConsole is what Enter does (the tests call it); consoleText is what is shown  */
+    void setConsoleVisible(bool on);
+    bool consoleVisible() const { return m_console && m_console->isVisible(); }
+    bool consoleBusy() const { return m_consoleBusy; }
+    void runConsole(const QString& code);
+    QString consoleText() const { return m_consoleLog ? m_consoleLog->toPlainText() : QString(); }
+
     /*  Loads an interpreter / syntax / formatter for the given language */
     void setLanguage(Language::Type type);
 
@@ -206,6 +218,8 @@ signals:
     void scriptChanged(QString s);
     void modificationChanged(bool m);
     void undoAvailable(bool a);
+    /*  The console was shown or hidden (the View menu's entry follows it)  */
+    void consoleVisibilityChanged(bool on);
     void redoAvailable(bool a);
 
     /*
@@ -385,8 +399,25 @@ protected:
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_retryButton = nullptr;
     QToolButton* m_terminateButton = nullptr;
+    QToolButton* m_consoleButton = nullptr;
     QIcon m_iconPause, m_iconPlay;
     void updateControls();
+
+    // The console (see setConsoleVisible): the history of what was typed and answered, the line it is typed in, and what was typed before
+    QWidget* m_console = nullptr;
+    QPlainTextEdit* m_consoleLog = nullptr;
+    QPlainTextEdit* m_consoleInput = nullptr;
+    QStringList m_consoleHistory;
+    int m_consoleAt = 0;
+    bool m_consoleBusy = false;
+    QWidget* buildConsole();
+    // What the console shows is kept as text and the KIND of each piece (0 what was typed, 1 what it printed, 2 a value, 3 an error), so that it is drawn again in the colours of the
+    // theme when the theme is changed
+    QList<QPair<QString, int>> m_consoleEntries;
+    void appendConsole(const QString& text, int kind);
+    QColor consoleColor(int kind) const;
+    void rebuildConsole();
+    void consoleHistory(int step);
 
     // A pause asked for (the script waits for its next checkpoint: the label says "Pausing..." until it has, then "Paused")
     bool m_pauseWanted = false;

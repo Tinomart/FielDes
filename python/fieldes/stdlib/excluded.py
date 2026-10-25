@@ -20,8 +20,8 @@ operation did there.  (smooth() works on the field the shape was made from inste
 cut off at the distance to the region and would make the smoothed surface ripple round it.)  Moving, turning, scaling
 and mirroring carry both fields along together.  Operations that would
 tear the two apart -- copying the shape (arrays, symmetric_*, repeat, mirror_*) or deforming it (twist, bend, taper,
-attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisations (topology_optimization,
-thermal_topology_optimization, flow_topology_optimization) read the exclusions a shape carries as regions to keep: the
+attract, repel ...) -- raise an ExcludedError: do them before exclude().  The optimisation (topology_optimization, of a
+structure, a heat conduction or a body in a flow) reads the exclusions a shape carries as regions to keep: the
 locked field stays solid, as exact as it is, and the optimised shape is excluded the same way.  The tables below say, for every function of the
 library, what it does with an excluded shape; none is left out.
 
@@ -71,8 +71,8 @@ def _clip(body, locks):
 
 def keep_regions(*shapes):
     """ What an optimisation must keep solid for these shapes: the locked field of every exclusion they carry (the shape
-        inside its region, as it is) -- topology_optimization, thermal_topology_optimization and
-        flow_topology_optimization add these to their `keep` by themselves, however many operations came between
+        inside its region, as it is) -- topology_optimization (of a structure, a heat conduction or a body in a flow)
+        adds these to its `keep` by itself, however many operations came between
         exclude() and the optimisation (the locks travel with the shape). """
     out, seen = [], set()
     for s in shapes:
@@ -154,9 +154,6 @@ KEEPS_FIRST = {
     'fields': ['thicken', 'shell_inside', 'shell_outside', 'shell_centered', 'offset_by', 'smooth_difference',
                'offset_exact', 'shell_exact', 'round_edges', 'fillet', 'smooth'],
     'lattices': ['fill', 'lattice'],
-    'fea': ['topology_optimization'],
-    'thermal': ['thermal_topology_optimization'],
-    'fluid': ['flow_topology_optimization'],
 }
 
 DECORATES = {
@@ -184,12 +181,14 @@ THROUGH = {
     'handles': ['gizmo', 'lock', 'handle_values'],
     'render_cache': ['render_cache', 'render_cache_key'],
     'custom_resolution': ['custom_resolution'],
-    'fea': ['static_analysis', 'modal_analysis'],
+    'fea': ['static_analysis', 'modal_analysis', 'topology_optimization'],
     'thermal': ['thermal_analysis'],
     'fluid': ['fluid_analysis'],
     'parametric': ['parametric_optimization'],
     'manufacturing': ['manufacturing_analysis', 'manufacturing_optimization'],       # (the shell leaves the locked regions of its part as they are by itself)
     'selection': ['select_surface', 'surface_from_bodies'],
+    'features': ['corner_at', 'edge_at', 'edge_point_at'],
+    'snapping': ['snap'],
     'lattices': ['relative_density', 'lattice_parameter_for_density', 'voronoi_graph', 'surface_graph', 'surface_lattice', 'cell_custom', 'random_points'],
     'conformal': ['lattice_surface_conform'],
     'fields': ['render_mesh', 'distance_to_surface', 'depth_below', 'signed_distance', 'clamp', 'ramp', 'remap_field',
