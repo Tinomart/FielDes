@@ -278,6 +278,8 @@ PARAMS = {
     'modal_analysis': {'modes': 6, 'es': '$es'},
     'thermal_analysis': {'temp': 20, 'watts': 5, 'es': '$es'},
     'fluid_analysis': {'speed': 100, 'es': '$es'},
+    'mesh_volume': {'es': '$es'},
+    'mesh_surface': {'es': '$es'},
     'fixed_temperature': {'temp': 20},
     'heat_input': {'watts': 5},
     'heat_generation': {'watts': 5},
@@ -418,6 +420,9 @@ OPERATIONS = [
     ('topology_optimization', 'Simulations', 'topology_optimization({body})', False),
     ('thermal_analysis', 'Simulations', 'thermal_analysis({body})', 'optional'),
     ('fluid_analysis', 'Simulations', 'fluid_analysis({body})', 'optional'),
+    # Meshing: the body as a mesh of elements for the solver of another program (its own category of the Engineering menu)
+    ('mesh_volume', 'Simulations', 'mesh_volume({body})', 'optional'),
+    ('mesh_surface', 'Simulations', 'mesh_surface({body})', 'optional'),
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
     ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),

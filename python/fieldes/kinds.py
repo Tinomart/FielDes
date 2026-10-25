@@ -55,6 +55,7 @@ DOMAINS = {
     'thermal':    ('Thermal',    '#f08c2a', '#f5b46e'),
     'fluid':      ('Fluid',      '#6f86f2', '#a1b0f7'),
     'manufacturing': ('Manufacturing', '#46c37b', '#86d9a8'),
+    'mesh':       ('Mesh',       '#b07fe0', '#cfb0ee'),
 }
 
 # The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
@@ -67,6 +68,7 @@ DOMAIN_OF_FUNCTION = {
     'inlet': 'fluid', 'outlet': 'fluid', 'wall': 'fluid', 'slip': 'fluid',
     'manufacturing_analysis': 'manufacturing', 'manufacturing_optimization': 'manufacturing',
     'manufacturing_constraint': 'manufacturing', 'fff_constraint': 'manufacturing', 'cnc_constraint': 'manufacturing', 'molding_constraint': 'manufacturing',
+    'mesh_volume': 'mesh', 'mesh_surface': 'mesh',
 }
 
 # ... and of a value, by its class (a subclass is of its parent's domain)
@@ -78,6 +80,7 @@ _DOMAIN_OF_CLASS = {
     '_Temperature': 'thermal', '_Heat': 'thermal', '_HeatInput': 'thermal', '_HeatGeneration': 'thermal', '_Convection': 'thermal',
     '_Inlet': 'fluid', '_Outlet': 'fluid', '_Wall': 'fluid', '_Slip': 'fluid',
     'ManufacturingConstraint': 'manufacturing', 'ManufacturingAnalysis': 'manufacturing', 'ManufacturingResult': 'manufacturing',
+    'Mesh': 'mesh',
 }
 
 

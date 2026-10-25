@@ -17,6 +17,7 @@ from fieldes.stdlib.tessellated_import import *
 from fieldes.stdlib.mesh_import import *
 from fieldes.stdlib.importing import *
 from fieldes.stdlib.exporting import *
+from fieldes.stdlib.meshing import *
 from fieldes.stdlib.fea import *
 from fieldes.stdlib.optimization_measures import *
 from fieldes.stdlib.boundary_conditions import *

@@ -171,6 +171,9 @@
     ----
     + manufacturing_analysis    [With several models selected: the first is the one this is made for, the others are what i]
     + manufacturing_optimization    [With several models selected: the first is the one this is made for, the others are what i]
+  + Mesh
+    + mesh_volume    [With several models selected: the first is the one this is made for, the others are what i]
+    + mesh_surface    [With several models selected: the first is the one this is made for, the others are what i]
   ----
   + New material
     + steel

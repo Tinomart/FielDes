@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Meshing for the solver of another program](#meshing-for-the-solver-of-another-program) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -710,11 +710,14 @@ reads them for a laser or a router, or to see the stack.  It is not G-code and t
 
 Millimetres.  Returns the path and writes nothing it could not read from the field.
 
-### `export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False)`
+### `export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, **options)`
 
 Writes the surface of a body as a triangle mesh file, in the format of the file's extension:
 
     .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
+
+A mesh of elements -- what mesh_volume and mesh_surface make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
+.obj, or format='fluent' / 'openfoam' (a folder); the options (scale=0.001 for metres, ...) are those of Mesh.export (see meshwriters.py)
 
 part        a body (a shape, a list of them, the design an optimisation made, the body of an analysis' result)
 path        the file to write (a folder that is not there is made)
@@ -3150,7 +3153,8 @@ material's E and density are used.
 
 modes        how many (the lowest first)
 element_size mm (default: about 40 elements along the longest side;
-             20 with element='tet10')
+             20 with element='tet10'; larger for a solid part that would have
+             more than half a million tetrahedra (125 000 with 'tet10'))
 element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
              part that bends are far better on the same mesh), 'hex' or
              'hex_basic': see the module documentation
@@ -3169,7 +3173,10 @@ loads      what pushes it: force(...) / gravity(...) / thermal_expansion(...) it
            The conditions have no body in them (this function is given it); each is a model of its own and is drawn on the part
 material   a Material (default steel); E in MPa
 element_size   the element edge in mm (default: the part's longest
-           side over 60; over 30 with element='tet10')
+           side over 60; over 30 with element='tet10' -- or larger, for a
+           solid part that would have more than a million tetrahedra
+           (250 000 with 'tet10'): the size at which it has that many.
+           A size that is given is used as it is)
 element    'tet' (default: tetrahedra that follow the part's surface),
            'tet10' (the same with 10 nodes: quadratic elements, about
            three times the element size for the same accuracy),
@@ -3603,7 +3610,7 @@ boundaries  wall(...) items -- moving walls (every surface in no region is a wal
 (see the module's description) -- the steady flow, or the flow in time (time=).  Each condition
 is a model of its own, drawn on `domain`.  Every surface in no region is a wall at rest: the body's is, unless a wall(...) moves it.
 
-element_size   mm (default: 40 elements along the longest side); the passages should be
+element_size   mm (default: 40 elements along the longest side, or larger when that would make more than 300 000 tetrahedra); the passages should be
                four elements across or more
 gravity        (gx, gy, gz) in mm/s^2, a body force on the fluid (none by default)
 stokes         True: creeping flow, the convection left out (linear: one solve)
@@ -3662,6 +3669,158 @@ feels there (1 solid, 0 fluid)
 A wall moving with `velocity` (mm/s; no-slip) inside `region` (any number of regions, one argument after the other).  Surfaces in no region are walls at rest, so
 this is for moving walls, and for naming a wall whose force is wanted (wall_forces).  `body=` is the body the wall is of, when the regions are bodies that choose
 WHERE on it.
+
+## Meshing for the solver of another program
+
+Meshing: a body as a mesh of elements, for the solver of another program.
+
+    from fieldes import *
+
+    part = ...                                                   # any body, in mm
+    mesh = mesh_volume(part, element_size=2.0)                   # tetrahedra of about 2 mm that follow the surface
+    mesh = mesh_volume(part, 2.0, element='hex')                 # hexahedra (each tetrahedron cut into four)
+    mesh = mesh_volume(part, 2.0, element='tet10')               # 10-node tetrahedra, the edges on the surface curved
+    mesh = mesh_volume(part, graded_size(part, wall_size=0.5, growth_rate=1.2, max_size=4.0))      # 0.5 mm at the surface, growing inwards
+    mesh = mesh_volume(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6),
+                       zones={'inlet': inlet, 'outlet': outlet})                # a flow: prism layers on the wall, named patches
+    surface = mesh_surface(part, 1.0, element='quad')            # the surface alone, triangles or quadrilaterals
+
+    print(mesh)                                                  # what it has
+    print(mesh.quality().report())                               # skewness, orthogonal quality, aspect ratio ... and what they mean for a solver
+    mesh.export('part.msh')                                      # Gmsh;  .vtu .inp .bdf .unv .stl ...;  format='fluent' | 'openfoam'
+
+The mesh is made by isosurface stuffing on the body's own field (a conforming tetrahedral mesh whose boundary vertices lie on the surface: see the kernel's
+tetmesh.hpp), and what is asked of it afterwards is done to that mesh:
+
+    element_size    a number (mm), or a field -- a body whose value at a point is the element size there, a function of a list of points that returns their sizes,
+                    or graded_size(...).  The mesh starts at the largest size the field has and is refined where it asks for less: the longest edge of a tetrahedron
+                    is bisected (with the tetrahedra round it, so the mesh stays conforming) until its edges are no longer than the size asked for there, and the new
+                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than half a million.
+    element         'tet' (linear tetrahedra), 'tet10' (10-node tetrahedra), 'hex' (hexahedra: every tetrahedron cut into four -- the elements have the shape the
+                    tetrahedra give them, which is not a hex-dominant mesh's, but they are hexahedra for a solver that needs them)
+    boundary_layers inflation_layers(...): prism layers on the surface of a solid, growing into the fluid (the first height, the growth rate, the number of layers)
+    zones           the names of the patches of the boundary: {'inlet': region, 'outlet': region}: a boundary face lies in the first region that holds its middle,
+                    and the rest are `default_zone` ('wall'); feature_angle splits that one into walls at the creases
+    cell_zones      the same for the cells: {'solid': region}; the rest are 'fluid'
+    optimize        the poor tetrahedra are mended after the meshing (on by default): the nodes of poor tetrahedra are moved (those on the surface along it, `smooth`
+                    rounds in each pass), edges and faces swapped and interior nodes collapsed, wherever that makes the worst tetrahedron round them better
+
+Every length is in mm, as everywhere in FielDes.  A mesh is a description of the elements: it has no material, no conditions and no solver settings.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `Mesh`
+
+A mesh: nodes, the cells (solids: tetrahedra, 10-node tetrahedra, hexahedra, prisms) and the faces of its boundary (triangles, quadrilaterals), each of
+them in a zone with a name.  Everything is in flat arrays:
+
+    nodes                   array('d'): x y z of every node
+    cells[kind]             array('i'): the nodes of every cell of that kind, in the order the kind has them (see meshing.py)  -- 'tet4' 'tet10' 'hex8' 'prism6'
+    faces[kind]             the boundary: 'tri3' 'quad4', the corner nodes in order, normal out
+    cell_zone[kind], face_zone[kind]   array('i'): the zone of every cell / face (an index into cell_zone_names / zone_names)
+
+quality() measures it, export(path) writes it for another program
+
+#### `Mesh.cell_count(self, kind=None)`
+
+*(no description yet)*
+
+#### `Mesh.cell_ids(self)`
+
+Every cell as (kind, index in its kind): the order the writers number them in
+
+#### `Mesh.corners(self, kind, i, faces=False)`
+
+The corner nodes of cell i (or of face i) of that kind
+
+#### `Mesh.export(self, path, format=None, **options)`
+
+Writes the mesh: format 'gmsh' (.msh, version 2.2), 'vtk' (.vtu), 'abaqus' (.inp), 'nastran' (.bdf), 'unv' (.unv), 'fluent' (.msh: Ansys Fluent's mesh),
+'openfoam' (a polyMesh folder: `path` is the folder), 'stl' / 'obj' (the surface).  The format is found from the ending of the path when it is not given.
+options: scale (a factor for the coordinates: 0.001 for metres), zones=False (without the zones), and, for the formats that have them, the ones they list
+
+#### `Mesh.face_count(self, kind=None, zone=None)`
+
+*(no description yet)*
+
+#### `Mesh.quality(self, full=False, max_cells=150000)`
+
+How good the elements are (MeshQuality).  The numbers that look at the neighbours of an element are made for meshes of up to `max_cells` cells,
+and for a larger one -- they take a dictionary of its faces -- when full=True is asked; the others are made for every `k`-th cell of a larger mesh
+
+#### `Mesh.surface_area(self)`
+
+The area of the boundary faces (mm^2)
+
+#### `Mesh.surface_mesh(self)`
+
+The boundary alone, as a mesh
+
+#### `Mesh.volume(self)`
+
+The volume of the cells (mm^3)
+
+### `MeshError`
+
+A mesh that cannot be made, and why
+
+### `MeshQuality`
+
+How good the elements are, in the numbers a solver is told about: skewness (0 is a regular element, 1 degenerate), orthogonal quality (1 is best, 0 worst),
+the ratio of the longest edge to the shortest, the volume of an element beside the ones it touches, and the smallest dihedral angle of the tetrahedra.
+`metrics[name]` is (minimum, mean, maximum); report() says what they mean
+
+#### `MeshQuality.report(self)`
+
+*(no description yet)*
+
+### `graded_size(wall, wall_size, growth_rate=1.2, max_size=None)`
+
+An element size that grows with the distance from a surface: `wall_size` at the surface of `wall`, and `growth_rate - 1` more for every mm from it (1.2: the
+size has grown by 0.2 mm after one mm), up to `max_size`.  It is what mesh_volume's element_size takes for a mesh that is fine where the flow or the stress is
+and coarse elsewhere:
+
+    mesh = mesh_volume(air, graded_size(body, wall_size=0.5, growth_rate=1.2, max_size=8))
+
+`wall` is a body: the distance is that from the surface of it, on either side (a solid in a fluid, or the fluid's own boundary)
+
+### `inflation_layers(on, first_height, growth_rate=1.2, layers=5)`
+
+Layers of prisms on the surface of a solid, for a flow: `layers` of them, the one at the wall `first_height` thick and each one `growth_rate` times as thick
+as the one before it (the first height is what sets y+: about y+ times the viscosity over the friction velocity).  mesh_volume's `boundary_layers` takes it:
+
+    air = difference(box_of_air, body)
+    mesh = mesh_volume(air, 2.0, boundary_layers=inflation_layers(body, first_height=0.05, growth_rate=1.2, layers=6))
+
+`on` is the solid whose surface the layers grow from, into the mesh.  The core of the mesh is the body with that much taken off the surface, the layers are
+what is between it and the surface: they are made of its boundary, moved to the surface in steps, so the layers follow it -- and at a sharp convex corner,
+where the direction of the surface is not defined, they are skewed: round the corners of a body that needs good layers.  The total thickness must be less than
+half of the thinnest passage of the fluid
+
+### `mesh_surface(body, element_size=None, element='tri', zones=None, default_zone='wall', feature_angle=None, bounds=None, name=None)`
+
+The surface of `body` as a mesh of triangles ('tri') or quadrilaterals ('quad': every triangle cut into three, so the quadrilaterals are about half the
+size of the triangles).  It is the boundary of the tetrahedra that mesh_volume makes, so it follows the body's surface and is conforming, and it costs the
+volume mesh; its arguments are mesh_volume's
+
+### `mesh_volume(body, element_size=None, element='tet', boundary_layers=None, zones=None, default_zone='wall', feature_angle=None, cell_zones=None, curved=True, smooth=6, optimize=True, bounds=None, name=None)`
+
+The inside of `body` as a mesh of elements (see the description of this module).
+
+    mesh = mesh_volume(part, element_size=2.0)
+
+element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than half a million
+element         'tet', 'tet10' or 'hex'
+boundary_layers inflation_layers(...): prisms on the surface of a solid
+zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
+cell_zones      {name: region}: zones of cells; the rest are 'fluid'
+curved          the nodes the elements have in the middle of edges and faces on the boundary (tet10, hex) lie on the surface
+smooth          rounds of moving the nodes of poor tetrahedra toward the middle of their neighbours (along the surface for the nodes on it), where that makes the
+                worst of their tetrahedra better; 0 for none
+optimize        mend the poor tetrahedra: twice the nodes are moved as `smooth` says and edges and faces are swapped (False: the mesh as it comes, the fastest)
+bounds         ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
 
 ## Parametric optimization
 

@@ -4234,7 +4234,7 @@ void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, doub
 void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
 {
     static const QList<QPair<QString, QString>> categories = {
-        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}};
+        {"structural", T("Structural")}, {"thermal", T("Thermal")}, {"fluid", T("Fluid")}, {"manufacturing", T("Manufacturing")}, {"mesh", T("Mesh")}};
     const int at = line < 0 ? atLine : line;
     // First, on its own: what designs for an analysis of any domain (topology_optimization); then a line, then the categories
     fillOperations(menu, line, point, scale, true, "^");

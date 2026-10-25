@@ -97,10 +97,13 @@ def _surface_arrays(shape, bounds, resolution):
     return xyz, tri
 
 
-def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False):
+def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, **options):
     ''' Writes the surface of a body as a triangle mesh file, in the format of the file's extension:
 
             .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
+
+        A mesh of elements -- what mesh_volume and mesh_surface make -- is written as it is, with its zones: .msh (Gmsh), .vtu, .inp (Abaqus), .bdf (Nastran), .unv, .stl,
+        .obj, or format='fluent' / 'openfoam' (a folder); the options (scale=0.001 for metres, ...) are those of Mesh.export (see meshwriters.py)
 
         part        a body (a shape, a list of them, the design an optimisation made, the body of an analysis' result)
         path        the file to write (a folder that is not there is made)
@@ -112,6 +115,11 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
         Millimetres in every format that has no unit; the ones that state their unit (3MF, FBX, DXF) say millimetres (a glTF is in metres, Y up, as
         glTF is).  Returns the path. '''
     path = os.fspath(path)
+    from fieldes.stdlib.meshing import Mesh
+    if isinstance(part, Mesh):
+        return part.export(path, **options)
+    if options:
+        raise TypeError('export_mesh() got unexpected keyword arguments: {} (they are for a mesh made by mesh_volume)'.format(', '.join(sorted(options))))
     ext = os.path.splitext(path)[1].lower()
     if ext not in meshfiles.MESH_WRITE_FORMATS:
         raise ValueError('export_mesh({!r}): the mesh formats are {}'.format(path, ', '.join(meshfiles.MESH_WRITE_FORMATS)))

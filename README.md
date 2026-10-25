@@ -236,6 +236,7 @@ takes a few seconds and is cached next to it.
 | [`33_manufacturing_optimization.py`](examples/33_manufacturing_optimization.py) | A topology-optimized bracket changed until a 3D printer, a mill and an injection mould can make it: gussets under what leans too far, thin walls thickened, inside corners rounded, draft; the plates and lugs that carry the load kept as they are |
 | [`34_non_periodic_lattices.py`](examples/34_non_periodic_lattices.py) | Lattices that do not repeat: a random net over a surface (`surface_lattice`, in hexagons or triangles, on a block with a dent) and foams with a clean surface (`random_points(surface=True)`), next to a foam the surface cuts off |
 | [`35_thermal_topology_optimization.py`](examples/35_thermal_topology_optimization.py) | A heat sink designed: a plate that makes heat all through it and a strip of its edge held at 20 C, with 30 % of the metal laid where it carries the heat best (`topology_optimization` of a `thermal_analysis`) |
+| [`36_meshing_for_cfd.py`](examples/36_meshing_for_cfd.py) | A mesh for another program's solver: the air in a channel round a post, fine at the post and coarse away from it, prism layers on the post, an inlet, an outlet and walls as zones, the quality of the elements, and the mesh written for Gmsh, Fluent, OpenFOAM and ParaView (`mesh_volume`) |
 
 ## Documentation
 

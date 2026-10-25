@@ -39,6 +39,7 @@ MODULES = [
     ('boundary_conditions', 'Seeing the boundary conditions', 'fieldes.stdlib.boundary_conditions'),
     ('thermal', 'Thermal analysis and thermal topology optimization', 'fieldes.stdlib.thermal'),
     ('fluid', 'Fluid flow analysis', 'fieldes.stdlib.fluid'),
+    ('meshing', 'Meshing for the solver of another program', 'fieldes.stdlib.meshing'),
     ('parametric', 'Parametric optimization', 'fieldes.stdlib.parametric'),
     ('manufacturing_rules', 'Manufacturing: the constraints', 'fieldes.stdlib.manufacturing_rules'),
     ('manufacturing_check', 'Manufacturing: the check', 'fieldes.stdlib.manufacturing_check'),
