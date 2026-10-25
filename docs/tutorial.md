@@ -273,6 +273,7 @@ A few words mean something particular in FielDes, and some mean something else i
 | [Profiles](profiles.md) | 2D, 1D and 3D shapes made of points: `profile`, `curve`, `extrude`, `path_extrude` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Meshing](meshing.md) | a body as a mesh of elements for another program's solver: sizes, boundary layers, zones, quality, the files |
+| [CAD operations](cad.md) | turning about any axis, mirroring in any plane, patterns, revolving, cutting by a plane, holes, align, and measuring: `rotate`, `mirror`, `circular_pattern`, `revolve`, `hole`, `surface_area` ... |
 | [Lattices](lattices.md) | cells, graded and conformal lattices |
 | [Importing STEP files](step-import.md) | how a CAD part becomes a field |
 | [Library reference](reference.md) | every function, from its docstring |

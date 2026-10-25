@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Meshing for the solver of another program](#meshing-for-the-solver-of-another-program) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Meshing for the solver of another program](#meshing-for-the-solver-of-another-program) | [CAD operations: turning, mirroring, patterns, revolving, holes, measuring](#cad-operations-turning-mirroring-patterns-revolving-holes-measuring) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -3821,6 +3821,120 @@ smooth          rounds of moving the nodes of poor tetrahedra toward the middle 
                 worst of their tetrahedra better; 0 for none
 optimize        mend the poor tetrahedra: twice the nodes are moved as `smooth` says and edges and faces are swapped (False: the mesh as it comes, the fastest)
 bounds         ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's cannot be found
+
+## CAD operations: turning, mirroring, patterns, revolving, holes, measuring
+
+The operations of a CAD program, on bodies that are fields: turning, mirroring, patterns, revolving, cutting by a plane, holes, a few more shapes, and measuring.
+
+    from fieldes import *
+
+    arm = rotate(bar, axis=(1, 1, 0), angle=30, center=(0, 0, 0))           # about any axis through any point (degrees)
+    both = mirror(arm, normal=(1, 0, 0), point=(0, 0, 0))                   # the arm and its mirror image in a plane
+    studs = linear_pattern(stud, count=4, step=(15, 0, 0))                  # the stud and three more, 15 mm apart
+    ring = circular_pattern(blade, count=6, axis=(0, 0, 1), center=(0, 0, 0))     # six blades round an axis
+    wheel = revolve(profile, angle=270, axis_point=(0, 0), axis_direction=(0, 1))   # a 2D profile revolved about a line of its plane
+    top, bottom = split(block, normal=(0, 0, 1), point=(0, 0, 5))           # a body cut by a plane into its two sides
+    plate = hole(plate, position=(10, 10, 4), diameter=5, kind='countersink', head_diameter=10)     # a hole from the top face down
+    part = union(capsule(3, 20), tube(8, 6, 12))                            # a capsule, a tube
+    print(surface_area(part), section_area(part, (0, 0, 1), (0, 0, 5)), distance_between(a, b), interference(a, b))
+
+Every function takes plain numbers for its places, directions and angles (a point of the script, which has .x .y .z, is taken for a position) and returns a body
+that is made of the ones it was given by the fields' own arithmetic, so what comes out is a body like any other: it can be meshed, offset, shelled, exported and measured.
+Lengths are in mm and angles in degrees.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `align(shape, to, axis='z', mode='center', gap=0.0)`
+
+The body moved along one axis ('x', 'y' or 'z') to line up with another body, by the boxes round them: `mode` 'min' puts their low sides on one plane, 'max' their
+high sides, 'center' their middles, 'above' puts the body on the high side of `to` (with `gap` mm between), and 'below' on the low side
+
+### `capsule(radius, height, base=(0, 0, 0))`
+
+A cylinder with a hemisphere on each end, standing along z on `base`: `height` is the whole length, so it is at least twice the radius
+
+### `circular_pattern(shape, count, axis=(0, 0, 1), center=(0, 0, 0), angle=360.0)`
+
+`count` copies of the body round the line through `center` with the direction `axis`, as one body.  With the whole turn (`angle` 360, the default) the copies
+are evenly spread and the last one is not on the first; with less, the first is where the body is and the last `angle` degrees from it
+
+### `cut_plane(shape, normal=(0, 0, 1), point=(0, 0, 0), keep='above')`
+
+The body cut by the plane through `point` that is square to `normal`: the part on the side that `normal` points to is kept (`keep='above'`), or the part
+on the other side (`keep='below'`)
+
+### `distance_between(a, b, element_size=None)`
+
+The shortest distance (mm) between the surfaces of two bodies, 0 when they touch or overlap.  The surface of each is meshed (the default size is a fortieth of the longest
+side of the two) and the closest pair of vertices is found; then that pair is improved by going from one surface to the other along the gradient of the field (the way to the nearest
+point of a surface that is a distance field, which is exact for a plane and a sphere), until the distance stops getting shorter.  It takes seconds for two bodies with
+a hundred thousand vertices between them
+
+### `hole(body, position, diameter, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0)`
+
+The body with a hole in it: it starts on the surface at `position` and goes `depth` into the body along `direction` (the default goes down; through everything
+when `depth` is None), `diameter` wide; `kind` 'counterbore' or 'countersink' adds the step or the cone at the mouth (see hole_cutter)
+
+### `hole_cutter(position, diameter, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0)`
+
+The shape of a hole, to subtract from a body (hole does that): it starts on the surface at `position` and goes `depth` into the body along `direction` (through
+everything when `depth` is None), `diameter` wide.  `kind` is 'simple', 'counterbore' (a wider, flat-bottomed step at the mouth: `head_diameter` across,
+`head_depth` deep) or 'countersink' (a cone at the mouth that opens to `head_diameter` at the surface, `angle` degrees across: 90 for a metric screw).  Use it for
+a pattern of holes: union the cutters, subtract the union once
+
+### `interference(a, b)`
+
+The volume (mm^3) that two bodies have in common, by sampling (about 1 % off for a part that is not thin): 0 when they only touch or do not meet
+
+### `linear_pattern(shape, count, step)`
+
+`count` copies of the body in a row, the first where the body is and each one `step` (x, y, z) from the one before, as one body
+
+### `mirror(shape, normal=(1, 0, 0), point=(0, 0, 0))`
+
+The body and its mirror image in the plane through `point` that is square to `normal`, as one body (a part that is made on one side of its plane of symmetry,
+then mirrored).  Where the body crosses the plane the two halves fuse
+
+### `reflect(shape, normal=(1, 0, 0), point=(0, 0, 0))`
+
+The mirror image of the body in the plane through `point` that is square to `normal`: the body itself is gone, only its image is left.  (mirror keeps both)
+
+### `revolve(profile, angle=360.0, axis_point=(0, 0), axis_direction=(0, 1))`
+
+The body that a 2D profile makes by turning about a line in its own plane (the plane of x and y: the profile is what a 2D shape is at z = 0).  The line goes through
+`axis_point` (x, y) and has the direction `axis_direction` (x, y); with the default it is the y axis.  `angle` is how far it turns, 360 for a body of revolution.
+With less than the whole turn the profile must lie on the right of the axis (seen along its direction: x > 0 for the y axis), and it turns from the plane of the
+profile toward z.  revolve_y is this for the whole turn about a line parallel to y
+
+### `rotate(shape, axis=(0, 0, 1), angle=0.0, center=(0, 0, 0))`
+
+The body turned by `angle` degrees about the line through `center` with the direction `axis` (the right-hand rule: the thumb along the axis, the fingers the
+way it turns).  rotate_x, rotate_y and rotate_z are this about an axis of the coordinates, in radians
+
+### `section_area(shape, normal=(0, 0, 1), point=(0, 0, 0), resolution=300)`
+
+The area (mm^2) of the cross section of a body with the plane through `point` that is square to `normal`, counted on a grid of `resolution` cells along the larger side
+of the section: about 0.5 % off for 300
+
+### `slot(length, width, center=(0, 0))`
+
+A 2D slot (an obround: a rectangle with a half circle on each short end), `length` long in x and `width` across, about `center` (x, y); `length` is the whole length,
+so it is at least the width.  Extrude it for a slot in a plate
+
+### `split(shape, normal=(0, 0, 1), point=(0, 0, 0))`
+
+The body cut in two by the plane through `point` that is square to `normal`: (the part the normal points to, the other part)
+
+### `surface_area(shape, element_size=None)`
+
+The area of the surface of a body (mm^2), from a mesh of triangles on its surface: with the default size (a fortieth of the body's longest side) a sphere's is
+about 1 % low, and a finer `element_size` (mm) is closer.  A mesh of this kind cuts the corners of curves, so the area is always a little low
+
+### `tube(outer_radius, inner_radius, height, base=(0, 0, 0))`
+
+A hollow cylinder (a pipe), standing along z on `base`: `outer_radius` and `inner_radius` are its two radii
 
 ## Parametric optimization
 
