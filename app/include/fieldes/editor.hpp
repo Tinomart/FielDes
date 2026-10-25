@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <vector>
 
 #include <QPlainTextEdit>
+#include <QSplitter>
 #include <QPointer>
 #include <QStackedWidget>
 #include <QTabBar>
@@ -66,14 +67,14 @@ public:
     /*  The editor's look from the colours of the theme as they are now (the constructor does it once; the Window again when the theme is changed)  */
     void applyTheme();
 
-    /*  The console under the editor (View > Console, or the button at the right of the output): Python typed in runs among the names of the script that ran last and of the library,
-     *  and what it prints and the value of its last expression are shown above the line it is typed in.  Enter runs, Shift+Enter is a new line, Up and Down go through what was run.
-     *  runConsole is what Enter does (the tests call it); consoleText is what is shown  */
-    void setConsoleVisible(bool on);
-    bool consoleVisible() const { return m_console && m_console->isVisible(); }
+    /*  The terminal at the bottom of the editor (always there; the splitter above it is its size): the output of the run -- what it printed, its error, its warnings -- and, under it, the
+     *  line Python is typed in.  What is typed in runs among the names of the script that ran last and of the library, and what it prints and the value of its last expression are shown in
+     *  the output.  Enter runs, Shift+Enter is a new line, Up and Down go through what was run.  focusConsole (Ctrl+`) puts the cursor in the line; runConsole is what Enter does (the
+     *  tests call it); consoleText is what the output shows  */
+    void focusConsole();
     bool consoleBusy() const { return m_consoleBusy; }
     void runConsole(const QString& code);
-    QString consoleText() const { return m_consoleLog ? m_consoleLog->toPlainText() : QString(); }
+    QString consoleText() const { return err->toPlainText(); }
 
     /*  Loads an interpreter / syntax / formatter for the given language */
     void setLanguage(Language::Type type);
@@ -218,8 +219,6 @@ signals:
     void scriptChanged(QString s);
     void modificationChanged(bool m);
     void undoAvailable(bool a);
-    /*  The console was shown or hidden (the View menu's entry follows it)  */
-    void consoleVisibilityChanged(bool on);
     void redoAvailable(bool a);
 
     /*
@@ -296,6 +295,7 @@ protected slots:
 
 protected:
     void setResult(QColor color, QString result);
+    void showEvent(QShowEvent* event) override;
 
     /*  The "stopped at a breakpoint" row (with its Continue button)  */
     void showPause(int line, bool hole = false);
@@ -338,7 +338,21 @@ protected:
     QTextDocument* err_doc;     // owned by err;
 
     QVBoxLayout* layout;    // owned by the widget itself
-    QVBoxLayout* m_warnings=nullptr;  // current warnings block, if any
+
+    // The terminal under the script (see buildTerminal): the pane, the splitter that says how high it is, what the output of it is made of (the result of the run, the warnings of the run
+    // -- they are lines of it, and the button that applies their fixes is in its header -- and what the console did) and whether the pane has been given its height yet
+    QSplitter* m_split = nullptr;
+    QWidget* m_terminal = nullptr;
+    QPushButton* m_fixButton = nullptr;
+    QStringList m_warningTexts;
+    QColor m_resultColor;
+    int m_resultKind = 0;                   // (0: the colour as given, 1: the muted colour of the theme, 2: its text colour)
+    QString m_resultText;
+    bool m_terminalSized = false;
+    bool m_outputAtEnd = true;              // (the output is scrolled to its end)
+    QWidget* buildTerminal();
+    void rebuildTerminal();
+    void fitConsoleInput();
 
     // The Language manages the embedded interpreter
     QScopedPointer<Language> m_language;
@@ -399,24 +413,19 @@ protected:
     QToolButton* m_pauseButton = nullptr;
     QToolButton* m_retryButton = nullptr;
     QToolButton* m_terminateButton = nullptr;
-    QToolButton* m_consoleButton = nullptr;
     QIcon m_iconPause, m_iconPlay;
     void updateControls();
 
-    // The console (see setConsoleVisible): the history of what was typed and answered, the line it is typed in, and what was typed before
-    QWidget* m_console = nullptr;
-    QPlainTextEdit* m_consoleLog = nullptr;
+    // The console (see focusConsole): the line it is typed in, what was typed before, and whether an answer is awaited
     QPlainTextEdit* m_consoleInput = nullptr;
     QStringList m_consoleHistory;
     int m_consoleAt = 0;
     bool m_consoleBusy = false;
-    QWidget* buildConsole();
     // What the console shows is kept as text and the KIND of each piece (0 what was typed, 1 what it printed, 2 a value, 3 an error), so that it is drawn again in the colours of the
     // theme when the theme is changed
     QList<QPair<QString, int>> m_consoleEntries;
     void appendConsole(const QString& text, int kind);
     QColor consoleColor(int kind) const;
-    void rebuildConsole();
     void consoleHistory(int step);
 
     // A pause asked for (the script waits for its next checkpoint: the label says "Pausing..." until it has, then "Paused")

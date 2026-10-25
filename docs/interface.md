@@ -25,8 +25,8 @@ does; *Clear list* empties it; a file that is gone is left out). Then the menus:
 | **File** | New, Open, Open recent, **Open example file** (the small scripts of the `examples` folder next to the program, one for each family of features: open one, run it, change it), Import model, Open as viewer, Load the default script, Revert to saved, Save, Save As, Export mesh, **Export as app** and **Preview as app** (a script that people who never open the editor can run: see [Apps](apps.md)), Export / copy screenshot, Quit |
 | **Primitives** | The primitives, each under its kind (New 3D shape, New 2D shape, New point ...), and the primitives of your own; **Manage primitives...** chooses which shapes are primitives and adds your own (see [Your own primitives](#your-own-primitives)) |
 | **Edit** | Undo and redo, Find and replace, Go to (definition, line, the editor's tabs), Lines, Breakpoints, Folding, Autocomplete |
-| **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, **Theme** (light or dark, and the colours by hand), Model tree, Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
-| **Settings** | **Keyboard shortcuts…**, **Blocks folder…** and **Show the blocks folder** (your [custom blocks](blocks.md)), editor text bigger / smaller, Automatically reload changes, Rotation mode, Rotation sensitivity, Zoom center |
+| **View** | Origin axes, orientation triad, legends, bounding boxes, Projection, Model tree, **Console** (the cursor in the line Python is typed in under the output, `Ctrl+\``), Section view, Standard views, Frame all, Zoom to bounds, **Meshing algorithm** (the render options: dual contouring, iso-simplex, hybrid) |
+| **Settings** | **Keyboard shortcuts…**, **Blocks folder…** and **Show the blocks folder** (your [custom blocks](blocks.md)), editor text bigger / smaller, **Theme…** (light or dark, and the colours by hand), Automatically reload changes, Rotation mode, Rotation sensitivity, Zoom center |
 | **Help** | The guide, About, **Report a bug** (a new GitHub issue in your browser with the version and your system filled in; your script only if you choose to copy it; known problems are in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)), **Guided tour** (cards over the program that walk through the basics, offered the first time it starts; see also the [tutorial](tutorial.md)), Shape reference |
 
 Everything else is in the viewport: the model tree, the section card, the legends and the result card.
@@ -128,9 +128,13 @@ Below the editor: what the script printed (`print(...)`), the value of the last 
 not a shape, import and analysis summaries, warnings, and the traceback of an error — with the
 offending line underlined in the editor. The error's text is red, everything else dark grey.
 
+That pane is a **terminal**, and it is always there. The output is above and the line Python is typed in (`>>>`) is at its foot (see *The console*, below); the warnings of a run are lines of the output, and
+**Fix All** -- when they have a fix -- is in the header of the pane, beside the run buttons. The bar between the editor and the pane is a splitter: drag it to make the pane higher or lower
+(the height is remembered).
+
 ### The console
 
-**View → Console** (`Ctrl+\``), or the prompt button at the right of the output, opens a console above the output pane: a history and a line to type in. What is typed is **Python, run among
+The line at the foot of the output pane (`>>>`; **View → Console**, or `Ctrl+\``, puts the cursor in it) is a console: its answers are shown in the output, under what the run printed. What is typed is **Python, run among
 the names of the script that ran last and of the library** (`from fieldes import *`, as a script has it): `bracket.bounds`, `volume_of(bracket)`, `evaluate(top, (0, 0, 10))`, `help(snap)`,
 `print(...)`, or a block of several lines -- like a notebook, the value of the last expression is shown. `Enter` runs it, `Shift+Enter` is a new line, `Up` and `Down` go through what was run before.
 Printed text is shown in the text colour, a value in the accent colour, an error as its traceback in red.
@@ -674,7 +678,7 @@ progress of the operation in it.
 
 ## Theme: light, dark and your own colours
 
-**View → Theme…** opens a small window (it stays open while you work, and what you change shows at once): **Colours** chooses the **Light** set -- a pale window, white bars, a
+**Settings → Theme…** opens a small window (it stays open while you work, and what you change shows at once): **Colours** chooses the **Light** set -- a pale window, white bars, a
 paper-white editor -- or the **Dark** set -- a dark teal window, the editor in Solarized's darkest base. The viewport and the cards on it (model tree, section card, result
 card) are dark in both. Under it the eight colours of the set are listed -- **Window**, **Bars and buttons**, **Editor**, **Line numbers**, **Lines**, **Text**, **Quiet text** and
 **Selection and focus** -- each as a swatch: a click on it chooses another colour, **Default** next to it takes the colour back to the set's own (it is enabled only for a colour you
@@ -762,7 +766,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |
 | Frame all | `Home` |
-| Leave the mode you are in, one step at a time: the line being drawn, the kind of drawing, the work plane view, the section view; the console when its line has the keyboard. With none of them on: cancel a render | `Esc` |
+| Leave the mode you are in, one step at a time: the line being drawn, the kind of drawing, the work plane view, the section view; in the terminal's line, back to the editor. With none of them on: cancel a render | `Esc` |
 
 | Settings | |
 |---|---|

@@ -2160,7 +2160,13 @@ void ScenePanel::fitRegion()
     const bool allowShrink = m_regionFitted && unknown == 0;
     m_regionFitted = true;
     bool outside = false;
-    for (int k = 0; k < 3; ++k) outside = outside || nlo[k] < lo[k] - 1e-6 || nhi[k] > hi[k] + 1e-6;
+    // (the default region, when the script sets none: a model that stands exactly on its faces -- a cube from -10 to 10 -- has no surface in it, the mesher finds no change of sign on the
+    // edge of the region, and nothing is drawn.  One that reaches them is made room for like one that is past them)
+    const bool defaultRegion = set.size() != 2;
+    for (int k = 0; k < 3; ++k)
+    {
+        outside = outside || nlo[k] < lo[k] - 1e-6 || nhi[k] > hi[k] + 1e-6 || (defaultRegion && (nlo[k] < lo[k] + 1e-6 || nhi[k] > hi[k] - 1e-6));
+    }
     if (timing)
         std::cerr << "[region] models (" << nlo[0] << ", " << nlo[1] << ", " << nlo[2] << ")-(" << nhi[0] << ", " << nhi[1] << ", " << nhi[2] << ") region ("
                   << lo[0] << ", " << lo[1] << ", " << lo[2] << ")-(" << hi[0] << ", " << hi[1] << ", " << hi[2] << ") outside " << outside << " may shrink "
@@ -2180,8 +2186,8 @@ void ScenePanel::fitRegion()
         for (int k = 0; k < 3; ++k)
         {
             if (shrink) text << regionNumber(pass == 0 ? nlo[k] - room : nhi[k] + room, pass == 0 ? -1 : 1);
-            else text << (pass == 0 ? regionNumber(nlo[k] < lo[k] ? nlo[k] - room : lo[k], -1)
-                                    : regionNumber(nhi[k] > hi[k] ? nhi[k] + room : hi[k], 1));
+            else text << (pass == 0 ? regionNumber(nlo[k] < lo[k] + (defaultRegion ? 1e-6 : 0.0) ? nlo[k] - room : lo[k], -1)
+                                    : regionNumber(nhi[k] > hi[k] - (defaultRegion ? 1e-6 : 0.0) ? nhi[k] + room : hi[k], 1));
         }
     }
     writeRegion(text, nlo, nhi);

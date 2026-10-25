@@ -83,7 +83,7 @@ protected slots:
     /*  Primitives > Manage primitives: the window that says which shapes the Primitives menus offer, and makes the selected model a primitive of the user's own (user_primitives.py).
      *  Not modal: the scripted tests look at it and drive it (the verb `primitives`)  */
     PrimitivesDialog* openPrimitivesDialog();
-    /*  View > Theme: light or dark, and the eight colours of the window and the editor (Theme), chosen by hand where the default of the set is not wanted.  Not modal: the colours change
+    /*  Settings > Theme: light or dark, and the eight colours of the window and the editor (Theme), chosen by hand where the default of the set is not wanted.  Not modal: the colours change
      *  what is open as they are chosen.  `applyTheme` puts the colours as they are now on everything that was made with the colours of before (the application's palette and style
      *  sheet, the editor)  */
     void openThemeDialog();

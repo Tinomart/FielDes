@@ -23,7 +23,7 @@ namespace FielDes {
  *  model is the one dark thing on the screen.
  *  Dark: the window is dark as well (a dark teal window, the editor in Solarized's darkest base), the viewport and its cards as they are.
  *
- *  Each of the eight colours below can be chosen by hand, for each set (View > Theme): what is not chosen is the default of the set.
+ *  Each of the eight colours below can be chosen by hand, for each set (Settings > Theme): what is not chosen is the default of the set.
  *  The choice is kept in the settings; the Window changes the look of what is open with `apply` and `Editor::applyTheme`.
  */
 namespace Theme

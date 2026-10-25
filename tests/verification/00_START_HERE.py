@@ -96,8 +96,9 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     Right-click empty space with nothing selected in a script that has only a spline, Parametric shapes > New 2D shape > profile: YOU MUST SEE a rectangle of four points of its own; the spline is not
 #     passed to the profile.
 #
-# 18. THE THEME, THE CONSOLE, THE BLOCKS.  View > Theme...: choose Dark (and Light again), change a colour by hand, Reset.  YOU MUST SEE: the editor, the trees, the dialogs and the output change at once, the
-#     defaults come back with Reset.  View > Console (Ctrl+`): type `1 + 1` and press Enter (2), `print("a")` (a), `undefined_name` (a traceback of your line only); Shift+Enter is a new line, Up and Down go
+# 18. THE THEME, THE TERMINAL, THE BLOCKS.  Settings > Theme...: choose Dark (and Light again), change a colour by hand, Reset.  YOU MUST SEE: the editor, the trees, the dialogs and the output change at once, the
+#     defaults come back with Reset.  The terminal under the editor is there as soon as a file is open (output above, a `>>>` line at its foot; Ctrl+` puts the cursor in the line; drag the bar above the pane to make it higher or lower):
+#     type `1 + 1` and press Enter (2), `print("a")` (a), `undefined_name` (a traceback of your line only); Shift+Enter is a new line, Up and Down go
 #     through what you ran.  In the editor every object (its lines, its gizmo, its handles) is one block with its arrow, and every second block is a shade darker.  Click the arrow of the first line of an object (try one whose definition runs over several lines, one with a handles/gizmo statement, one that is hidden): YOU MUST SEE every line of that object go,
 #     the closing bracket of its definition, its handles(...) / gizmo(...) / lock(...) lines, the line that shows it (or its `# hidden:` line), and "... N lines" on its first line.  The next object stays where it is.
 #

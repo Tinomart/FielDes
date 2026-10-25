@@ -713,6 +713,11 @@ Window::Window(Arguments args)
         cmd(settings_menu, "settings.font-smaller", T("Editor text smaller"),
             {QKeySequence(Qt::CTRL | Qt::Key_Minus), QKeySequence(Qt::CTRL | Qt::KeypadModifier | Qt::Key_Minus)},
             [=]{ script()->zoomOutFont(); });
+        // (light or dark, and the colours of the window and the editor by hand: a setting, with the text size beside it)
+        auto theme_action = settings_menu->addAction(T("Theme..."));
+        theme_action->setToolTip(T("Light or dark, and the colours of the window and the editor chosen by hand"));
+        Shortcuts::add(theme_action, "settings.theme", {});
+        connect(theme_action, &QAction::triggered, this, [this] { openThemeDialog(); });
     }
 
     auto autoload_action = settings_menu->addAction(T("Automatically reload changes"));
@@ -781,22 +786,11 @@ Window::Window(Arguments args)
         settings.setValue("projection", "orthographic");
     });
     view_menu->addMenu(proj_menu);
-    {   // Light or dark, and the colours of the window and the editor by hand
-        auto theme_action = view_menu->addAction(T("Theme..."));
-        theme_action->setToolTip(T("Light or dark, and the colours of the window and the editor chosen by hand"));
-        Shortcuts::add(theme_action, "view.theme", {});
-        connect(theme_action, &QAction::triggered, this, [this] { openThemeDialog(); });
-    }
-    {   // The console under the editor: Python typed in, run among the names of the script
+    {   // The terminal under the editor is always there (Python typed in, run among the names of the script): this puts the cursor in the line it is typed in
         auto console_action = view_menu->addAction(T("Console"));
-        console_action->setCheckable(true);
         console_action->setToolTip(T("A console under the editor: type Python and run it among the names of the script that ran last and of the library"));
         Shortcuts::add(console_action, "view.console", {QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft)});
-        connect(console_action, &QAction::toggled, this, [this](bool on) { editor->setConsoleVisible(on); });
-        connect(editor, &Editor::consoleVisibilityChanged, console_action, [console_action](bool on) {
-            QSignalBlocker block(console_action);
-            console_action->setChecked(on);
-        });
+        connect(console_action, &QAction::triggered, this, [this] { editor->focusConsole(); });
     }
     // (orthographic is the default -- this is a CAD program: a part is read without perspective; the choice of the menu is kept)
     if (settings.value("projection", "orthographic").toString() == "perspective")
@@ -1782,7 +1776,7 @@ Window::Window(Arguments args)
             }
             std::cerr << "automation: primitives <open|kind|add|remove|rename|edit|dropdown|rows|close>" << std::endl;
         });
-        // theme <light|dark|reset|color <role> <#rrggbb>|open|close|grab <file>>: the colours of View > Theme, without writing the choice into the settings (a test must not change the
+        // theme <light|dark|reset|color <role> <#rrggbb>|open|close|grab <file>>: the colours of Settings > Theme, without writing the choice into the settings (a test must not change the
         // user's); `open` shows the dialog of the menu, `grab` photographs it
         a->add("theme", [=](const QString& args){
             const QString verb = args.section(' ', 0, 0).trimmed().toLower(), rest = args.section(' ', 1).trimmed();
@@ -1801,13 +1795,13 @@ Window::Window(Arguments args)
             if (verb == "grab") { if (m_themeDialog) m_themeDialog->grab().save(rest); else std::cerr << "automation: the theme dialog is not open" << std::endl; return; }
             std::cerr << "automation: theme <light|dark|reset|color|open|close|grab>" << std::endl;
         });
-        // console <open|close|run <python, "\n" for a new line>|dump <file>|grab <file>>: the console under the editor (View > Console): shown, driven as a hand does (`run` waits for the answer),
+        // console <open|close|run <python, "\n" for a new line>|dump <file>|grab <file>>: the terminal under the editor: the cursor in its line (open) or back in the script (close), driven as a hand does (`run` waits for the answer),
         // its text written to a file, or photographed with the editor
         a->add("console", [=](const QString& args){
             const QString verb = args.section(' ', 0, 0).trimmed().toLower();
             QString rest = args.section(' ', 1);
-            if (verb == "open") { editor->setConsoleVisible(true); return; }
-            if (verb == "close") { editor->setConsoleVisible(false); return; }
+            if (verb == "open") { editor->focusConsole(); return; }
+            if (verb == "close") { editor->scriptWidget()->setFocus(); return; }
             if (verb == "run")
             {
                 rest.replace("\\n", "\n");

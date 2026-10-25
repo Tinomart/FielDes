@@ -70,7 +70,7 @@ namespace FielDes {
 
 namespace {
 
-enum class Glyph { Pause, Play, Retry, Terminate, Console };
+enum class Glyph { Pause, Play, Retry, Terminate };
 
 // The icons of the buttons under the editor, drawn here: the same size and weight whatever symbols the fonts of the computer have
 QIcon glyphIcon(Glyph g)
@@ -100,15 +100,6 @@ QIcon glyphIcon(Glyph g)
             case Glyph::Terminate:
                 p.drawEllipse(QPointF(8, 8), 5.2, 5.2);
                 break;
-            case Glyph::Console:
-            {
-                // The prompt: a chevron and the line it is typed on
-                p.setPen(QPen(c, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-                p.setBrush(Qt::NoBrush);
-                p.drawPolyline(QPolygonF({QPointF(3.0, 4.5), QPointF(7.2, 8.0), QPointF(3.0, 11.5)}));
-                p.drawLine(QPointF(9.0, 12.0), QPointF(13.0, 12.0));
-                break;
-            }
             case Glyph::Retry:
             {
                 // The circular arrow: an arc of 280 degrees going clockwise, ending in an arrow head at the top
@@ -170,7 +161,7 @@ class ConsoleInput : public QPlainTextEdit
 public:
     std::function<void()> run;
     std::function<void(int)> history;
-    std::function<void()> leave;            // (Escape: the console is closed -- the window's own Escape, which cancels a render, is not for this line)
+    std::function<void()> leave;            // (Escape: back to the script -- the window's own Escape, which cancels a render, is not for this line)
 
 protected:
     bool event(QEvent* e) override
@@ -212,29 +203,65 @@ protected:
 
 }   // namespace
 
-QWidget* Editor::buildConsole()
+// The terminal at the bottom of the editor: a header (the progress of the run, Fix All when the warnings have a fix, the buttons of the run), the output -- what the run printed,
+// its error, its warnings, and what was typed in the line below and answered -- and that line, which is where Python is typed.  The pane is always there, and the splitter above it
+// is how large it is
+QWidget* Editor::buildTerminal()
 {
-    m_console = new QWidget;
-    m_console->setObjectName("Console");
-    auto v = new QVBoxLayout(m_console);
+    m_terminal = new QWidget;
+    m_terminal->setObjectName("Terminal");
+    auto v = new QVBoxLayout(m_terminal);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(0);
+
+    auto header = new QWidget;
+    header->setObjectName("TerminalHeader");
+    auto h = new QHBoxLayout(header);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(2);
+    m_fixButton = new QPushButton(T("Fix All"));
+    m_fixButton->setFocusPolicy(Qt::NoFocus);
+    m_fixButton->hide();
+    h->addWidget(m_runRow, 100);
+    h->addStretch(1);
+    h->addWidget(m_fixButton, 0, Qt::AlignVCenter);
+    h->addWidget(m_controls, 0, Qt::AlignVCenter);
+    v->addWidget(header);
+
+    err->setMinimumHeight(0);
+    err->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    err->setMaximumBlockCount(6000);
+    // (an output that is at its end stays at its end when the pane is made lower or higher; one that was scrolled up stays where it was)
+    connect(err->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int max) {
+        if (m_outputAtEnd) err->verticalScrollBar()->setValue(max);
+    });
+    connect(err->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        m_outputAtEnd = value >= err->verticalScrollBar()->maximum() - 2;
+    });
+    v->addWidget(err, 1);
+
     const QFont font = err_doc->defaultFont();
-    m_consoleLog = new QPlainTextEdit;
-    m_consoleLog->setObjectName("ConsoleLog");
-    m_consoleLog->setReadOnly(true);
-    m_consoleLog->setFrameShape(QFrame::NoFrame);
-    m_consoleLog->setMaximumBlockCount(3000);
-    m_consoleLog->document()->setDefaultFont(font);
-    m_consoleLog->setFixedHeight(9 * QFontMetrics(font).lineSpacing() + 10);
+    auto row = new QWidget;
+    row->setObjectName("ConsoleRow");
+    auto r = new QHBoxLayout(row);
+    r->setContentsMargins(6, 0, 4, 0);
+    r->setSpacing(4);
+    auto prompt = new QLabel(">>>");
+    prompt->setObjectName("ConsolePrompt");
+    prompt->setFont(font);
+    prompt->setContentsMargins(0, 2, 0, 0);
     auto input = new ConsoleInput;
     m_consoleInput = input;
     m_consoleInput->setObjectName("ConsoleInput");
     m_consoleInput->setFrameShape(QFrame::NoFrame);
+    m_consoleInput->setFont(font);              // (the hint in the empty line is drawn in the widget's font, what is typed in the document's: both the font of the output)
     m_consoleInput->document()->setDefaultFont(font);
-    m_consoleInput->setFixedHeight(2 * QFontMetrics(font).lineSpacing() + 10);
     m_consoleInput->setTabChangesFocus(false);
-    m_consoleInput->setPlaceholderText(T("Python: Enter runs, Shift+Enter is a new line, Up and Down go through what was run"));
+    // (the hint is short, so that it fits the line when the editor is narrow; the whole of it is the tooltip.  The line does not wrap: what is typed goes on to the side, and the line grows by the lines of it)
+    m_consoleInput->setPlaceholderText(T("Python (Enter runs, Shift+Enter new line, Up/Down history)"));
+    m_consoleInput->setToolTip(T("Python: Enter runs, Shift+Enter is a new line, Up and Down go through what was run"));
+    m_consoleInput->setLineWrapMode(QPlainTextEdit::NoWrap);
+    m_consoleInput->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     input->run = [this] {
         const QString code = m_consoleInput->toPlainText();
         if (code.trimmed().isEmpty()) return;
@@ -242,11 +269,80 @@ QWidget* Editor::buildConsole()
         runConsole(code);
     };
     input->history = [this](int step) { consoleHistory(step); };
-    input->leave = [this] { setConsoleVisible(false); };
-    v->addWidget(m_consoleLog);
-    v->addWidget(m_consoleInput);
-    m_console->hide();
-    return m_console;
+    input->leave = [this] { script->setFocus(Qt::OtherFocusReason); };
+    connect(m_consoleInput, &QPlainTextEdit::textChanged, this, &Editor::fitConsoleInput);
+    fitConsoleInput();
+    r->addWidget(prompt, 0, Qt::AlignTop);
+    r->addWidget(m_consoleInput, 1);
+    v->addWidget(row);
+    return m_terminal;
+}
+
+// The line Python is typed in is as high as what is typed in it (one line, up to six)
+void Editor::fitConsoleInput()
+{
+    if (!m_consoleInput) return;
+    const int lines = std::max(1, std::min(6, m_consoleInput->document()->blockCount()));
+    // (the lines, the margin of the document above and below them and the padding of the style sheet: with less the line shows a scroll bar for one line of text)
+    m_consoleInput->setFixedHeight(lines * QFontMetrics(m_consoleInput->font()).lineSpacing() + int(2 * m_consoleInput->document()->documentMargin()) + 6);
+}
+
+// The text of the terminal is made again from its parts: the result of the run (its color), the warnings of the run (they may have bold and code in them) and what the console
+// did.  The first two are replaced by every run, the last stays
+void Editor::rebuildTerminal()
+{
+    err->clear();
+    QTextCursor cursor(err->document());
+    bool first = true;
+    auto paragraph = [&] {
+        if (!first) cursor.insertBlock(QTextBlockFormat(), QTextCharFormat());
+        first = false;
+    };
+    if (!m_resultText.isEmpty())
+    {
+        paragraph();
+        QTextCharFormat fmt;
+        fmt.setForeground(m_resultKind == 1 ? Theme::muted : m_resultKind == 2 ? Theme::text : m_resultColor);
+        cursor.insertText(m_resultText, fmt);
+    }
+    for (const QString& w : m_warningTexts)
+    {
+        paragraph();
+        if (Qt::mightBeRichText(w))
+        {
+            cursor.insertHtml(w);
+        }
+        else
+        {
+            QTextCharFormat fmt;
+            fmt.setForeground(Theme::text);
+            cursor.insertText(w, fmt);
+        }
+    }
+    for (const auto& e : m_consoleEntries)
+    {
+        paragraph();
+        QTextCharFormat fmt;
+        fmt.setForeground(consoleColor(e.second));
+        cursor.insertText(e.first, fmt);
+    }
+    // (what was just done in the console is at the end: that is where the eye is; a run that has said nothing of the kind starts at the top)
+    err->verticalScrollBar()->setValue(m_consoleEntries.isEmpty() ? 0 : err->verticalScrollBar()->maximum());
+}
+
+// The first time the editor is shown the terminal gets the height it had when the program was last closed (seven lines of output and the line Python is typed in, at first)
+void Editor::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (m_terminalSized) return;
+    QTimer::singleShot(0, this, [this] {
+        if (m_terminalSized || !m_split || m_split->height() < 200) return;
+        const int fallback = 8 * QFontMetrics(err_doc->defaultFont()).lineSpacing() + 40;
+        const int saved = QSettings("FielDes", "FielDes").value("terminal-height", fallback).toInt();
+        const int h = std::max(70, std::min(saved, m_split->height() / 2));
+        m_split->setSizes({m_split->height() - h, h});
+        m_terminalSized = true;
+    });
 }
 
 QColor Editor::consoleColor(int kind) const
@@ -256,29 +352,9 @@ QColor Editor::consoleColor(int kind) const
 
 void Editor::appendConsole(const QString& text, int kind)
 {
-    if (!m_consoleLog) return;
     m_consoleEntries << qMakePair(text, kind);
     if (m_consoleEntries.size() > 3000) m_consoleEntries.removeFirst();
-    QTextCursor cursor(m_consoleLog->document());
-    cursor.movePosition(QTextCursor::End);
-    QTextCharFormat fmt;
-    fmt.setForeground(consoleColor(kind));
-    cursor.insertText(text + "\n", fmt);
-    m_consoleLog->verticalScrollBar()->setValue(m_consoleLog->verticalScrollBar()->maximum());
-}
-
-void Editor::rebuildConsole()
-{
-    if (!m_consoleLog) return;
-    m_consoleLog->clear();
-    QTextCursor cursor(m_consoleLog->document());
-    for (const auto& e : m_consoleEntries)
-    {
-        QTextCharFormat fmt;
-        fmt.setForeground(consoleColor(e.second));
-        cursor.insertText(e.first + "\n", fmt);
-    }
-    m_consoleLog->verticalScrollBar()->setValue(m_consoleLog->verticalScrollBar()->maximum());
+    rebuildTerminal();
 }
 
 void Editor::consoleHistory(int step)
@@ -290,19 +366,14 @@ void Editor::consoleHistory(int step)
     m_consoleInput->moveCursor(QTextCursor::End);
 }
 
-void Editor::setConsoleVisible(bool on)
+void Editor::focusConsole()
 {
-    if (!m_console || m_console->isVisible() == on) return;
-    m_console->setVisible(on);
-    if (on) m_consoleInput->setFocus(Qt::OtherFocusReason);
-    else script->setFocus(Qt::OtherFocusReason);
-    emit(consoleVisibilityChanged(on));
+    if (m_consoleInput) m_consoleInput->setFocus(Qt::OtherFocusReason);
 }
 
 void Editor::runConsole(const QString& code)
 {
-    if (code.trimmed().isEmpty() || m_consoleBusy || !m_console) return;
-    setConsoleVisible(true);
+    if (code.trimmed().isEmpty() || m_consoleBusy || !m_consoleInput) return;
     if (m_consoleHistory.isEmpty() || m_consoleHistory.last() != code) m_consoleHistory << code;
     m_consoleAt = int(m_consoleHistory.size());
     QString shown = code;
@@ -342,7 +413,7 @@ void Editor::applyTheme()
     // (the other tabs, which are not rendered, have a slightly darker page; the first tab is the bold one with the accent line)
     setStyleSheet(QString(
         "QPlainTextEdit { background-color: %1; color: %2; selection-background-color: %8; border: none; }"
-        "QPlainTextEdit#Output { background-color: %3; border-top: 1px solid %4; padding: 2px 4px; }"
+        "QPlainTextEdit#Output { background-color: %3; border: none; padding: 2px 4px; }"
         "QPlainTextEdit#Aux { background-color: %9; }"
         "QTabBar { background: %3; }"
         "QTabBar::tab { background: %3; color: %5; padding: 4px 12px 3px 10px; border: none;"
@@ -352,12 +423,16 @@ void Editor::applyTheme()
         "QTabBar::tab:first:selected { border-bottom: 2px solid %7; }"
         "QWidget#AuxRow { background: %3; border-top: 1px solid %4; }"
         "QWidget#AuxRow QLabel { color: %5; }"
-        "QWidget#Controls { background: %3; border-top: 1px solid %4; }"
+        "QWidget#Terminal { background: %3; }"
+        "QWidget#TerminalHeader { background: %3; }"
+        "QWidget#Controls { background: %3; }"
         "QWidget#Controls QToolButton { border: none; border-radius: 3px; padding: 2px; }"
         "QWidget#Controls QToolButton:hover { background: " + Theme::hoverShade() + "; }"
-        "QWidget#Console { border-top: 1px solid %4; }"
-        "QPlainTextEdit#ConsoleLog { background-color: %3; border: none; padding: 2px 4px; }"
-        "QPlainTextEdit#ConsoleInput { background-color: %1; border: none; border-top: 1px solid %4; padding: 2px 4px; }")
+        "QWidget#ConsoleRow { background: %1; border-top: 1px solid %4; }"
+        "QPlainTextEdit#ConsoleInput { background-color: %1; border: none; padding: 2px 4px; }"
+        "QLabel#ConsolePrompt { color: %5; background: transparent; }"
+        "QSplitter::handle:vertical { background: %3; border-top: 1px solid %4; }"
+        "QSplitter::handle:vertical:hover { background: " + Theme::hoverShade() + "; }")
         .arg(Theme::paper.name(), Theme::text.name(), Theme::chrome.name(), Theme::border.name(),
              Theme::muted.name(), Theme::tabLine().name(), Theme::accent.name(), Theme::selection().name(), Theme::aux().name()));
 
@@ -369,14 +444,13 @@ void Editor::applyTheme()
         m_iconPlay = glyphIcon(Glyph::Play);
         m_retryButton->setIcon(glyphIcon(Glyph::Retry));
         m_terminateButton->setIcon(glyphIcon(Glyph::Terminate));
-        m_consoleButton->setIcon(glyphIcon(Glyph::Console));
         updateControls();
     }
     if (m_runLabel) m_runLabel->setStyleSheet(runLabelStyle());
     if (m_runRow) m_runRow->setStyleSheet(rowStyle());
     if (m_pauseRow) m_pauseRow->setStyleSheet(rowStyle());
     script->update();
-    rebuildConsole();                       // (what the console shows is drawn again in the colours of the theme)
+    rebuildTerminal();                      // (what the terminal shows is drawn again in the colours of the theme)
     script->updateBlockShading();           // (the shade of every second object is made of the colours of the theme)
     for (auto& a : m_aux) a->script->updateBlockShading();
 }
@@ -401,7 +475,6 @@ Editor::Editor(Language::Type language)
         script_doc->setDefaultFont(font);
         QFont out("Inconsolata", std::max(8, font.pointSize() - 3));
         err_doc->setDefaultFont(out);
-        err->setFixedHeight(QFontMetrics(out).height() + 8);
     }
 
     // The editor is paper-white, the output a shade darker; both with the text colour of the chrome
@@ -470,9 +543,14 @@ Editor::Editor(Language::Type language)
         connect(m_tabs, &QTabBar::currentChanged, this, &Editor::onTabChanged);
         connect(m_tabs, &QTabBar::tabCloseRequested, this, [this](int i){ closeTab(i); });
     }
-    layout->addWidget(m_tabs);
-    layout->addWidget(m_pages, 1);
-    layout->addWidget(m_auxRow);
+    // (the script with its tabs is the upper part of a splitter, the terminal the lower one: see below)
+    auto top = new QWidget;
+    auto topLayout = new QVBoxLayout(top);
+    topLayout->setContentsMargins(0, 0, 0, 0);
+    topLayout->setSpacing(2);
+    topLayout->addWidget(m_tabs);
+    topLayout->addWidget(m_pages, 1);
+    topLayout->addWidget(m_auxRow);
 
     // Go to definition looks in the files the script imports; the text size is shared by the tabs
     script->setDefinitionResolver([this](const QString& name, const QString& owner) {
@@ -508,10 +586,6 @@ Editor::Editor(Language::Type language)
         m_retryButton->setToolTip(T("Run the script again from the beginning (Ctrl+Shift+F5)"));
         m_terminateButton->setIcon(glyphIcon(Glyph::Terminate));
         m_terminateButton->setToolTip(T("Terminate the script (Shift+F5)"));
-        m_consoleButton = make("consoleButton");
-        m_consoleButton->setIcon(glyphIcon(Glyph::Console));
-        m_consoleButton->setToolTip(T("The console: type Python and run it among the names of the script (View > Console)"));
-        connect(m_consoleButton, &QToolButton::clicked, this, [this] { setConsoleVisible(!consoleVisible()); });
         connect(m_pauseButton, &QToolButton::clicked, this, &Editor::togglePause);
         connect(m_retryButton, &QToolButton::clicked, this, &Editor::retryRun);
         connect(m_terminateButton, &QToolButton::clicked, this, &Editor::terminateRun);
@@ -540,21 +614,19 @@ Editor::Editor(Language::Type language)
         m_runRow->setStyleSheet(rowStyle());
         m_runRow->hide();
 
-        // The bottom row: the result line (while the script runs, its progress instead) and, at its right, the buttons
-        auto bottom = new QWidget;
-        auto bl = new QHBoxLayout(bottom);
-        bl->setContentsMargins(0, 0, 0, 0);
-        bl->setSpacing(0);
-        auto left = new QWidget;
-        auto ll = new QVBoxLayout(left);
-        ll->setContentsMargins(0, 0, 0, 0);
-        ll->setSpacing(0);
-        ll->addWidget(err);
-        ll->addWidget(m_runRow);
-        bl->addWidget(left, 1);
-        bl->addWidget(m_controls, 0, Qt::AlignTop);
-        layout->addWidget(buildConsole());          // (hidden until View > Console: it lies above the result and the buttons)
-        layout->addWidget(bottom);
+        // Under the script the terminal, in a splitter: how high it is, is the user's to say (and is remembered)
+        m_split = new QSplitter(Qt::Vertical);
+        m_split->setChildrenCollapsible(false);
+        m_split->setHandleWidth(5);
+        m_split->addWidget(top);
+        m_split->addWidget(buildTerminal());
+        m_split->setStretchFactor(0, 1);
+        m_split->setStretchFactor(1, 0);
+        connect(m_split, &QSplitter::splitterMoved, this, [this] {
+            if (!m_terminalSized || qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) return;        // (a scripted test never changes the user's settings)
+            QSettings("FielDes", "FielDes").setValue("terminal-height", m_split->sizes().value(1));
+        });
+        layout->addWidget(m_split, 1);
     }
 
     {   // Where a run stopped at a breakpoint waits to be continued
@@ -738,7 +810,6 @@ void Editor::onSpinner()
         m_runShown = 0.0;
         m_runLogged = -1;
         m_runOperation = {-2, 0};
-        err->hide();
         m_runRow->show();
     }
     if (m_terminating)
@@ -871,7 +942,6 @@ void Editor::onInterpreterDone(Result r)
         std::cerr << "[bar-script] " << std::fixed << QDateTime::currentMSecsSinceEpoch() / 1000.0
                   << " done after " << m_runClock.elapsed() / 1000.0 << " s" << std::endl;
     m_runRow->hide();
-    err->show();
     m_interpreterBusyDebounce.stop();
     spinner.stop();
 
@@ -1000,36 +1070,22 @@ void Editor::onInterpreterDone(Result r)
     // Set selections, which may include new errors if !r.okay
     script->setSelections(Script::SEL_ERROR, selections);
 
-    // Clear warnings from the UI.  (Only the warnings layout itself: other
-    // child widgets, e.g. the find bar, own vertical layouts too, and the
-    // previous "every QVBoxLayout but the main one" sweep deleted them.)
-    if (m_warnings) {
-        for (int i=0; i < m_warnings->count(); ++i) {
-            auto item = m_warnings->itemAt(i)->widget();
-            if (item) {
-                item->deleteLater();
-            }
-        }
-        layout->removeItem(m_warnings);
-        m_warnings->deleteLater();
-        m_warnings = nullptr;
-    }
-    // Insert new warnings into the UI
+    // The warnings of the run are lines of the terminal and its Fix All button is in the header of the terminal; the ones of the run before are replaced
+    m_warningTexts.clear();
+    m_fixButton->disconnect(this);
+    m_fixButton->hide();
     if (!r.warnings.isEmpty()) {
         QStringList fixes;
 
-        auto v = new QVBoxLayout();
-        v->setContentsMargins(10, 10, 10, 10);
         for (auto& f : r.warnings) {
-            v->addWidget(new QLabel(f.first, this));
+            m_warningTexts << f.first;
             if (!f.second.isEmpty()) {
                 fixes.push_back(f.second);
             }
         }
 
         if (fixes.size()) {
-            auto button = new QPushButton(T("Fix All"), this);
-            connect(button, &QPushButton::pressed, this, [=](){
+            connect(m_fixButton, &QPushButton::pressed, this, [=](){
                 // The import of the library goes to the top of the script; every other fix (the render settings) goes under
                 // that line -- above it `view` is not there yet, and a settings line written before the model it is about
                 // (`view.set_bounds(*roi(part))`) is an error -- and in the order they are listed
@@ -1073,11 +1129,10 @@ void Editor::onInterpreterDone(Result r)
                     at = c.position();
                 }
                 c.endEditBlock();});
-            v->addWidget(button, 0, Qt::AlignHCenter);
+            m_fixButton->show();
         }
-        layout->addLayout(v);
-        m_warnings = v;
     }
+    rebuildTerminal();
 
     // Announce the settings
     if (r.okay || !r.shapes.isEmpty()) {
@@ -1125,13 +1180,11 @@ void Editor::redo()
 
 void Editor::setResult(QColor color, QString result)
 {
-    QTextCharFormat fmt;
-    fmt.setForeground(color);
-    err->setCurrentCharFormat(fmt);
-    err->setPlainText(result);
-    int lines = err_doc->size().height() + 1;
-    QFontMetrics fm(err_doc->defaultFont());
-    err->setFixedHeight(std::min(this->height() / 4, lines * fm.lineSpacing() + 10));
+    // (what is kept is which colour of the theme it is, so that a change of theme draws it in the colours of the new one)
+    m_resultKind = color == Theme::muted ? 1 : color == Theme::text ? 2 : 0;
+    m_resultColor = color;
+    m_resultText = result;
+    rebuildTerminal();
 }
 
 namespace {
