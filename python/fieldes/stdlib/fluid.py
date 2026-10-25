@@ -64,6 +64,7 @@ from collections import OrderedDict
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
+from fieldes.stdlib.element_size import default_element_size
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions, _symmetry_request)
@@ -598,7 +599,7 @@ def _problem(shape, conditions, fluid, element_size, bounds, gravity, stokes, ma
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / 40.0
+        element_size = default_element_size(shape, lo, hi, 40.0, 300000)
     element_size = float(element_size)
     pad = 1e-6 * max(max(size), 1e-9)
     region = libfive_region_t()
@@ -652,7 +653,7 @@ def fluid_analysis(body, domain, inlets, outlets, boundaries, fluid=water, eleme
         (see the module's description) -- the steady flow, or the flow in time (time=).  Each condition
         is a model of its own, drawn on `domain`.  Every surface in no region is a wall at rest: the body's is, unless a wall(...) moves it.
 
-        element_size   mm (default: 40 elements along the longest side); the passages should be
+        element_size   mm (default: 40 elements along the longest side, or larger when that would make more than 300 000 tetrahedra); the passages should be
                        four elements across or more
         gravity        (gx, gy, gz) in mm/s^2, a body force on the fluid (none by default)
         stokes         True: creeping flow, the convection left out (linear: one solve)

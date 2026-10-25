@@ -62,6 +62,7 @@ from collections import OrderedDict
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
+from fieldes.stdlib.element_size import default_element_size
 from fieldes.stdlib.excluded import keep_regions, carry_locks
 from fieldes.stdlib.content_cache import Uncacheable, cache_for, problem_key, shape_key, value_key
 from fieldes.stdlib import result_cache
@@ -802,7 +803,10 @@ def static_analysis(shape, supports, loads, material=steel, element_size=None,
                    The conditions have no body in them (this function is given it); each is a model of its own and is drawn on the part
         material   a Material (default steel); E in MPa
         element_size   the element edge in mm (default: the part's longest
-                   side over 60; over 30 with element='tet10')
+                   side over 60; over 30 with element='tet10' -- or larger, for a
+                   solid part that would have more than a million tetrahedra
+                   (250 000 with 'tet10'): the size at which it has that many.
+                   A size that is given is used as it is)
         element    'tet' (default: tetrahedra that follow the part's surface),
                    'tet10' (the same with 10 nodes: quadratic elements, about
                    three times the element size for the same accuracy),
@@ -847,7 +851,10 @@ def _static_analysis_solve(shape, supports, loads, material, element_size, bound
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / (30.0 if element == 'tet10' else 60.0)
+        if element in ('tet', 'tet10'):
+            element_size = default_element_size(shape, lo, hi, 30.0 if element == 'tet10' else 60.0, 250000 if element == 'tet10' else 1000000)
+        else:
+            element_size = max(size) / 60.0
     element_size = float(element_size)
     if not element_size > 0:
         raise FeaError('element_size must be positive')
@@ -1260,7 +1267,8 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
 
         modes        how many (the lowest first)
         element_size mm (default: about 40 elements along the longest side;
-                     20 with element='tet10')
+                     20 with element='tet10'; larger for a solid part that would have
+                     more than half a million tetrahedra (125 000 with 'tet10'))
         element      'tet' (default), 'tet10' (10-node elements: the frequencies of a
                      part that bends are far better on the same mesh), 'hex' or
                      'hex_basic': see the module documentation
@@ -1290,7 +1298,10 @@ def modal_analysis(shape, supports, material=steel, modes=6, element_size=None, 
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / (20.0 if element == 'tet10' else 40.0)
+        if element in ('tet', 'tet10'):
+            element_size = default_element_size(shape, lo, hi, 20.0 if element == 'tet10' else 40.0, 125000 if element == 'tet10' else 500000)
+        else:
+            element_size = max(size) / 40.0
     element_size = float(element_size)
     pad = 1e-6 * max(max(size), 1e-9)
     region = libfive_region_t()
@@ -2043,7 +2054,7 @@ def topology_optimization(analysis, constraints=(), iterations=None, filter_radi
     lo, hi = bounds if bounds is not None else _bounds(part)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / 40.0
+        element_size = default_element_size(part, lo, hi, 40.0, 400000)
     element_size = float(element_size)
     fn = lambda name: getattr(lib, 'libfive_tetfea_' + name)
     kind = 'tetfea'

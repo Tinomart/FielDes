@@ -205,7 +205,7 @@ result                                             # shown: the stress on the de
 `static_analysis(shape, supports, loads, material=steel, element_size=None, bounds=None,
 tolerance=1e-6, cache=True, element='tet')` with the
 conditions of [Boundary conditions](#boundary-conditions) (`loads=[]` for none). The element size defaults to the part's
-longest side over 60 (over 30 with `element='tet10'`, the 10-node element: see [Elements and accuracy](#elements-and-accuracy)). It raises `FeaError` if the problem cannot be solved as given (no support touching the
+longest side over 60 (over 30 with `element='tet10'`, the 10-node element: see [Elements and accuracy](#elements-and-accuracy)); a solid part that this would give more than a million tetrahedra (250 000 with `'tet10'`) gets the larger element at which it has that many -- a cube 0.4 mm on a side has 1 063 776 and solves in 5.7 s, where it had 2 678 400 and 18.6 s (the number of tetrahedra is estimated, and is right to a few percent) -- and a size that is given is used as it is, with no limit. It raises `FeaError` if the problem cannot be solved as given (no support touching the
 part, supports that do not hold it in place).
 
 ## Reading a result

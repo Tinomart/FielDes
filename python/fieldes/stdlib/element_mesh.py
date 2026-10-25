@@ -12,7 +12,7 @@ import ctypes
 from fieldes.i18n import tr as _tr
 
 # More tetrahedra than this are not handed to the viewer (every field's value in every one of them goes with them: about 100 bytes a tetrahedron, and the viewer's copies of them): the
-# card says so instead of showing no button.  The default mesh of a solid part is already millions of them (the largest extent over 60: a cube has 2.7 million), and the elements are
+# card says so instead of showing no button.  The default mesh of a solid part had millions of them (the largest extent over 60: a cube had 2.7 million) until the default was given a budget of a million (see element_size.py), and the elements are
 # what a user opens a result to see
 MAX_DRAWN = 8000000
 

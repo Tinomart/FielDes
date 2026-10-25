@@ -54,6 +54,7 @@ from collections import OrderedDict
 from fieldes.ffi import lib, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape, field_shape
+from fieldes.stdlib.element_size import default_element_size
 from fieldes.stdlib.excluded import keep_regions
 from fieldes.stdlib.fea import (FeaError, FieldResult, TopologyResult, aluminium, colored, _bounds, _shape, _regions, _Condition, _register_slots, _given,
                                 _use_conditions, _with_conditions)
@@ -325,7 +326,7 @@ def _problem(shape, boundary, k, element_size, bounds, what, element='tet'):
     lo, hi = bounds if bounds is not None else _bounds(shape)
     size = [hi[i] - lo[i] for i in range(3)]
     if element_size is None:
-        element_size = max(size) / 40.0
+        element_size = default_element_size(shape, lo, hi, 40.0, 1000000) if element == 'tet' else max(size) / 40.0
     element_size = float(element_size)
     pad = 1e-6 * max(max(size), 1e-9)
     region = libfive_region_t()
@@ -428,7 +429,7 @@ def _thermal_analysis(shape, boundary, material=aluminium, element_size=None, bo
 
         material: its conductivity is used (W / (mm K)); conductivity=
                   overrides it
-        element_size: mm (default: 40 elements along the longest side)
+        element_size: mm (default: 40 elements along the longest side, or larger when that would make more than a million tetrahedra)
         element:  'tet' (default: tetrahedra that follow the part's surface) or
                   'hex' (voxel hexahedra)
 
