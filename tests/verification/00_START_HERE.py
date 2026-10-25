@@ -36,7 +36,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #  5. THE TOUR.  Help > Guided tour, to the step "Your primitives" (after "Make things"): the menu bar's Primitives menu is drawn with "Manage primitives..." framed; "Show me" opens the window on
 #     the selected model's kind and closes it again.
 #
-#  6. THE EXAMPLES.  File > Open example file: the files 00 .. 35 and the folders step and meshes -- no walkthroughs, no manufacturing folder, no verification folder (the known-answer problems are in tests/verification/known_answers).
+#  6. THE EXAMPLES.  File > Open example file: the files 00 .. 37 and the folders step and meshes -- no walkthroughs, no manufacturing folder, no verification folder (the known-answer problems are in tests/verification/known_answers).
 #     Run examples/33_manufacturing_optimization.py (about five minutes): the bracket as the optimizer made it (right) and its result for the printer (left), grey where it is as it was, red where
 #     material was added; the mill's and the mould's results are models of the tree (the eye shows them).
 #
@@ -75,7 +75,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     -- its card says how many there are and that they are too many to draw.  A small solid part has millions at the default element size (a cube 0.4 mm on a side: 2 678 400): its elements are drawn.
 #
 # 13. THE ENGINEERING MENU.  Right-click empty space in the viewport, open Engineering.  YOU MUST SEE: "topology_optimization" first, on its own, a line under it, and then Structural, Thermal, Fluid and
-#     Manufacturing -- no topology_optimization inside Structural.
+#     Manufacturing -- no topology_optimization inside Structural -- and a last category, Mesh, with mesh_volume and mesh_surface.
 #
 # 14. THE ICONS.  Right-click empty space, open Primitives (and Parametric shapes, Operations > the lattice categories, Engineering > New material / New support or load ...).  YOU MUST SEE: an icon of its own
 #     beside every entry: a ball for the sphere, a cylinder, a cone, a ring for the torus, a pyramid, a prism; outlines for the circle, the rectangle, the ring, the polygon, the triangle; a sheet, a globe, a tube
@@ -109,5 +109,23 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #
 # 21. THE IMPOSED DISPLACEMENT.  In walkthroughs/07 group D: a beam held at one end whose tip is pushed 1 mm and no force at all.  YOU MUST SEE: total load 0 N, support reaction 2344 N, compliance
 #     2344 N mm, maximum displacement 1 mm (at 2 mm elements 2063 N; beam theory with shear says about 1940 N, the clamps stiffen it a few percent more).  Change `inf` to 0 and the tip is held in y too.
+
+# 22. THE MESH FOR ANOTHER PROGRAM.  Open examples/36_meshing_for_cfd.py (about ten seconds to mesh).  YOU MUST SEE: a green channel with a round hole where the post stands (the post is taller than the channel), the
+#     card "Element size (mm) - per element, press Elements" at the lower right; press Elements: the cells, small and blue at the post (0.4 mm) and large and orange away from it (3 mm), the three layers of prisms
+#     in the hole; the output says "made in 5-6 s", 29,000 tetrahedra and 3,000 prisms, zones inlet, outlet and five walls, and a quality report: no element inside out, the worst skewness 0.92, 0.35 % of the
+#     cells above 0.85, none above 0.95, orthogonal quality 0.36 at worst.  The four files (Gmsh, Fluent, OpenFOAM, ParaView) are in the folder the last line names.  In the dark theme the card and the cells
+#     are as readable.  Right-click empty space > Engineering: Mesh > mesh_volume, mesh_surface.
+#
+# 23. THE CAD OPERATIONS.  Open examples/37_cad_toolbox.py (a few seconds).  YOU MUST SEE: a flange with a hub, a bore through its middle, six countersunk bolt holes round it, six radial slots between the
+#     bolts and three gussets from the hub to the rim (a slanted face each); from above (View > Top) the holes, the slots and the three gussets are evenly spread, the gussets 15 degrees off the bolts.  The output:
+#     "volume 38048 mm^3", a section at z = 3 of 4392 mm^2, at z = 16 of 607 mm^2, the hub overlapping the plate by 4247 mm^3 and the gussets 5.0 mm from the bore.  Right-click a model: Moving has rotate,
+#     reflect and mirror, Repeating has linear_pattern and circular_pattern, Extruding has revolve, Combining has cut_plane and hole; Parametric shapes has capsule, tube and slot.
+#
+# 24. THE POINTS TO SNAP TO.  In walkthroughs/07 group F (y = 170 .. 210): a drum (a cylinder), a cone snapped under it on its axis, and a block with rounded edges.  WHAT TO DO: right-click the drum on its top face
+#     far from the rim; then right-click the front rim of its bottom; then the front upper corner of the block (the rounded one at x = 110, y = 170); then the middle of its upper front edge.  YOU MUST SEE: on the
+#     face only "Point at the centre of this face"; at the rim also "Point at the centre of the circle" and "Point on the edge"; at the rounded corner "Point at the rounded corner"; on the rounded edge "Point on
+#     the rounded edge" -- and picking one writes `circle_center_1 = circle_center_at(drum, (x, y, z))` (or `face_center(select_surface(...))`, or `corner_at(..., rounded=True)`) with a dot where it belongs:
+#     at the middle of the circle, at the middle of the face, and on the SHARP corner and edge the rounding replaced, just outside the rounded block.  The cone `under` stands apex down below the drum, coaxial
+#     with it, its base touching the drum's bottom: it was made by `snap(funnel, funnel_base, funnel_middle, drum_bottom, drum_middle)` with the two centres of the circles.
 
 print("Open one of the files listed above.")
