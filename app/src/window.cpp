@@ -3590,6 +3590,9 @@ bool Window::onSave(bool)
 
 void Window::onCancelRender(bool)
 {
+    // (Escape with no mode to leave cancels what is being rendered.  With nothing rendering it leaves the picture alone: it used to take every finished shape out of the viewport as well,
+    // while the model tree went on listing them and the status bar said "Rendered in ...")
+    if (!view->isRendering()) return;
     view->cancelShapes();
 }
 
