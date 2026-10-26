@@ -3059,8 +3059,8 @@ Window::Window(Arguments args)
             std::cerr << "automation: screenpoint " << at.x() << " " << at.y() << std::endl;
         });
         // undo / redo: the script's own undo, as Ctrl+Z and Ctrl+Y do in the editor
-        a->add("undo", [=](const QString&){ editor->scriptWidget()->undo(); });
-        a->add("redo", [=](const QString&){ editor->scriptWidget()->redo(); });
+        a->add("undo", [=](const QString&){ editor->undo(); });
+        a->add("redo", [=](const QString&){ editor->redo(); });
         // delete: the D key of the viewport (the selected models are deleted)
         a->add("delete", [=](const QString&){ view->scenePanel()->deleteSelected(); });
         // key <sequence>: the action that has this shortcut (Ctrl+E, F7 ...) is triggered, as the key does it, when exactly one action owns the sequence and it is enabled; the log says which actions

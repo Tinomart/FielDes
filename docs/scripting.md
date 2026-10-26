@@ -86,7 +86,7 @@ Every object that is made by a call -- a shape, the result of an operation, a co
 | `position=(x, y, z)` | mm: how far the object is moved from where its definition puts it (0 is where it is made) |
 | `rotation=(x, y, z)` | degrees: how it is turned about the middle of its box, x first, then y, then z |
 | `scale=(x, y, z)` or one number | factors: how big it is, about the middle of its box |
-| `alpha=` | 0 to 1: how solid it is drawn (1 is solid, 0 is not drawn); the object is the same in every other way |
+| `alpha=` | 0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least); the object is the same in every other way |
 
 ```python
 part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)

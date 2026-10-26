@@ -495,6 +495,28 @@ if ns is not None and 'mesh' in ns:
     check('example: drawable', shown is not None and shown._fea_mesh is not None)
 print(took())
 
+# ---------------------------------------------------------------- 13. what the right-click menu writes for a mesh
+stage('13. the call the Engineering > Mesh entries write (the body and nothing else: everything else has its default)')
+import json
+from fieldes import menu_catalog
+
+
+def menu_call(name, body='box_1'):
+    return menu_catalog.call(json.dumps({'kind': 'operation', 'name': name, 'body': body, 'var': name + '_1', 'indent': 0, 'x': 0, 'y': 0, 'z': 0, 'scale': 10,
+                                         'body_info': {'name': body, 'type': 'solid'}}))
+
+
+text = run('mesh_volume from the menu', lambda: menu_call('mesh_volume'))
+check('mesh_volume from the menu is written with the body alone', text == 'mesh_volume(box_1)', repr(text))
+text = run('mesh_surface from the menu', lambda: menu_call('mesh_surface'))
+check('mesh_surface from the menu is written with the body alone', text == 'mesh_surface(box_1)', repr(text))
+text = run('static_analysis from the menu', lambda: menu_call('static_analysis'))
+check('static_analysis from the menu still has the body and its inputs as placeholders (an analysis, unlike a mesh, is written with every argument)',
+      text is not None and text.startswith('static_analysis(\n    box_1,\n    supports=...,\n    loads=...,'), repr(text))
+text = run('fluid_analysis from the menu', lambda: menu_call('fluid_analysis'))
+check('fluid_analysis from the menu has the fluid domain as a placeholder beside the body', text is not None and 'domain=...' in text and 'inlets=...' in text, repr(text))
+print(took())
+
 print('=' * 70)
 print('{} check(s) failed'.format(len(failures)) if failures else 'ALL CHECKS PASSED', failures, '   total {:.1f} s'.format(time.time() - t_all))
 

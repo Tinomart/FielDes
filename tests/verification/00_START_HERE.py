@@ -169,7 +169,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     Ctrl+Shift+W: the work plane is made on it and the view turns to look straight at it.
 #
 # 33. THE NEW BASE SHAPES ARE DRAGGABLE, FACE BY FACE.  Right-click empty space > Parametric shapes: capsule, tube, slot.  YOU MUST SEE: the capsule and the tube with the cube icon of a 3D shape and the slot with
-#     the square of a 2D shape, each with a gizmo (a capsule is a body, not a field).  Press the side of the capsule and drag: its radius changes and the ends stay round; press an end: its length changes;
+#     the square of a 2D shape, each with a gizmo (a capsule is a body, not a field).  Press the side of the capsule and drag: its radius changes and the ends stay round; press the tip of an end: its length changes (press it off the tip, on the round shoulder, and the pull goes along the surface's normal, as it does for every surface of the program: the capsule grows longer and wider together);
 #     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Primitives > Parametric shapes) pulls by its ends.
 #     Each drag changes one number in the `handles(...)` line, never a scale.
 #

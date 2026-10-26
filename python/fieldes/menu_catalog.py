@@ -599,14 +599,17 @@ def _is_flow(name):
 
 
 def _parts_of(name):
-    ''' How many models the analysis `name` is made for -- a body, and for a flow the domain it sits in: the parameters of its signature that come before its conditions '''
+    ''' How many models the analysis `name` is made for -- a body, and for a flow the domain it sits in: the parameters of its signature that come before its conditions and
+        before the first one that has a default (a model is always needed; what has a default -- the element size of a mesh, its element, its zones -- is not one) '''
     try:
         from fieldes.stdlib.fea import _SLOTS
+        import fieldes
+        parameters = list(inspect.signature(getattr(fieldes, name)).parameters.values())
     except Exception:
         return 1
     n = 0
-    for p in _parameters_of(name):
-        if p in _SLOTS or p in ('material', 'fluid'):
+    for p in parameters:
+        if p.name in _SLOTS or p.name in ('material', 'fluid') or p.default is not p.empty:
             break
         n += 1
     return max(1, n)
@@ -738,6 +741,8 @@ def _build_operation(name, v, others):
     ''' The text of an operation that is given the models selected with the body (see OPERATIONS: 'optional'), or None when they say
         nothing it can use -- the template is written then '''
     if name in _SIMULATIONS:
+        if any(n == name and t != '%s({body})' % name for n, _g, t, _o in OPERATIONS):
+            return None             # (an entry whose template says more than the body -- `solve('heat', part)` -- is written from its template)
         body, info, others = _body_first(v['body'], v.get('body_info') or {}, others)
         v = dict(v, body=body, body_info=info)
     body = v['body']

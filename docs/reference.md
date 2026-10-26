@@ -411,7 +411,7 @@ Every object that is made by a call -- a shape, the result of an operation, a co
     position   (x, y, z) in mm: how far the object is moved from where its definition puts it (0 is where it is made)
     rotation   (x, y, z) in degrees: how it is turned about the middle of its box, x first, then y, then z
     scale      (x, y, z) factors, or one number: how big it is, about the middle of its box
-    alpha      0 to 1: how solid it is drawn (1 is solid, 0 is not drawn): the object is the same in every other way
+    alpha      0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least): the object is the same in every other way
 
 They are ordinary arguments of the call.  FielDes's model tree shows them inside every object, a click on one selects its number in the code, and the gizmo in the
 viewport drags the first three: when the object is selected, FielDes writes them with `var()` numbers (`position=(var(40), var(0), var(0))`) and a drag changes the

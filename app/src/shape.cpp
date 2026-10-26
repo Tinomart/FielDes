@@ -3439,21 +3439,21 @@ void Shape::draw(const QMatrix4x4& M)
         else if (selected)
         {   // Model-tree selection: warm highlight
             glUniform4f(Shader::basic->uniformLocation("color_mul"),
-                        1.0 * s, 0.82 * s, 0.42 * s, 1.0f);
+                        1.0 * s, 0.82 * s, 0.42 * s, opacity);
             glUniform4f(Shader::basic->uniformLocation("color_add"),
                         0.10 * s, 0.10 * s, 0.05 * s, 0.0f);
         }
         else if (is2D())
         {   // A 2D shape: a very subtle light blue, so that it is told from a body at a glance
             glUniform4f(Shader::basic->uniformLocation("color_mul"),
-                        0.94 * s, 0.84 * s, 0.85 * s, 1.0f);
+                        0.94 * s, 0.84 * s, 0.85 * s, opacity);
             glUniform4f(Shader::basic->uniformLocation("color_add"),
                         0.03 * s, 0.21 * s, 0.28 * s, 0.0f);
         }
         else
         {
             glUniform4f(Shader::basic->uniformLocation("color_mul"),
-                        0.96 * s, 0.75 * s, 0.63 * s, 1.0f);
+                        0.96 * s, 0.75 * s, 0.63 * s, opacity);
             glUniform4f(Shader::basic->uniformLocation("color_add"),
                         0.03 * s, 0.21 * s, 0.26 * s, 0.0f);
         }
