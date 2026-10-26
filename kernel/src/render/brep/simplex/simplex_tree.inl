@@ -536,8 +536,28 @@ bool SimplexTree<N>::collectChildren(Evaluator* eval,
             *this->leaf, leaf_sub, already_solved, this->region,
             eval, tape);
 
+    // A cell on the boundary of the region is not merged into one bigger than a few cells (as in DCTree::collectChildren): the vertices of a big merged cell stand half a cell inside the
+    // boundary, so a surface that leaves through it -- a plane square to an axis merges all the way up to the root -- would be drawn short of it
+    const bool on_boundary = [&]{
+        if (this->region.level <= 2) {
+            return false;
+        }
+        const SimplexTree<N>* root = this;
+        while (root->parent != nullptr) {
+            root = root->parent;
+        }
+        for (unsigned a = 0; a < N; ++a) {
+            const double tol = 1e-9 * (root->region.upper(a) - root->region.lower(a));
+            if (this->region.lower(a) <= root->region.lower(a) + tol ||
+                this->region.upper(a) >= root->region.upper(a) - tol) {
+                return true;
+            }
+        }
+        return false;
+    }();
+
     // We've successfully collapsed the cell!
-    if (err < max_err) {
+    if (!on_boundary && err < max_err) {
         // Calculate and save vertex inside/outside states
         saveVertexSigns(eval, tape, already_solved);
 
