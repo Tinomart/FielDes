@@ -1832,12 +1832,14 @@ void refineForColour(libfive::Mesh& m, float detail)
 // (the inside of a big face is looked at), is cut into four at the middles of its edges, again and again, down to `smallest`: the edge of the colour is as fine as the smallest triangles.  The shape of the surface
 // does not change.  `evaluate(first, last)` fills values[first .. last) for the vertices first .. last - 1
 template <typename Evaluate>
-void cutByColourClass(libfive::Mesh& m, std::vector<float>& values, float coarse, float smallest, Evaluate evaluate)
+void cutByColourClass(libfive::Mesh& m, std::vector<float>& values, float coarse, float smallest, Evaluate evaluate, bool always = false)
 {
     float lo = std::numeric_limits<float>::infinity(), hi = -lo;
     for (float v : values)
         if (std::isfinite(v)) { lo = std::min(lo, v); hi = std::max(hi, v); }
-    if (!(hi > lo)) return;                       // (one value all over: nothing to cut)
+    // (one value all over: nothing to cut -- unless the value is what the vertices happen to read and the inside of the faces may hold another: the check of a sharp box reads
+    // nothing at any corner of its overhang, all of them on edges, and the face is broken all over -- `always`)
+    if (!(hi > lo) && !always) return;
     using Tri = Eigen::Matrix<uint32_t, 3, 1>;
     const float coarse2 = coarse * coarse, smallest2 = smallest * smallest;
     for (int level = 0; level < 10; ++level)
@@ -4420,11 +4422,14 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
         auto& verts = out.mesh->verts;
         out.channels.resize(run_channels.size());
         // (the CHANGE colour of a manufacturing result is a class, not an amount: its triangles are cut where it changes, see cutByColourClass.  It goes first: the cut adds vertices, and every channel is then
-        // read at all of them)
+        // read at all of them.  So is the colour of a manufacturing CHECK -- 1 where a rule is broken, 0 where it is kept --, which is a class too: the check leaves out the places near an edge (the normal there
+        // is a mix of two faces), so on a sharp box the overhang of a flat face is a few big triangles whose corners all lie on its edges, all of them read 0, and the face came out grey under a card that said
+        // 12 % of the surface was broken.  Its triangles are looked at inside, `always`: all the corners reading the same is what the problem is)
+        const bool violation = color_map == "violation";
         size_t classChannel = run_channels.size();
-        if (color_map == "change")
+        if (color_map == "change" || violation)
             for (size_t c = 0; c < run_channels.size(); c++)
-                if (run_channels[c].name == "change") { classChannel = c; break; }
+                if (run_channels[c].name == (violation ? "all" : "change")) { classChannel = c; break; }
         if (classChannel < run_channels.size())
         {
             auto& values = out.channels[classChannel];
@@ -4435,9 +4440,14 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
             evalRangeThreaded(e, run_channels[classChannel].tree, pool, verts, values, 0, verts.size(), threads);
             double extent = 0;
             for (int a = 0; a < 3; a++) extent = std::max(extent, r.upper[a] - r.lower[a]);
+            const size_t vertsBefore = verts.size();
+            const auto tCut = std::chrono::steady_clock::now();
             cutByColourClass(*out.mesh, values, float(8 * mesh_settings.min_feature), float(0.00025 * extent), [&](size_t first, size_t last) {
                 evalRangeThreaded(e, run_channels[classChannel].tree, pool, verts, values, first, last, threads);
-            });
+            }, violation);
+            if (violation)
+                fprintf(stderr, "[fieldes] colour of a check, the big faces looked at inside: %zu -> %zu vertices, %.0f ms\n", vertsBefore, verts.size(),
+                        1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tCut).count());
         }
         for (size_t c = 0; c < run_channels.size(); c++)
             if (c != classChannel) evalAll(*result_evals[c], verts, out.channels[c]);
@@ -4600,7 +4610,7 @@ namespace {
 
 // Bump when what the mesher makes from the same shape changes (a mesh kept by an older one would
 // be read in its place).  Not tied to a build: a rebuild that changes no mesh keeps the meshes.
-const char* const kRenderCacheVersion = "fdrc3";        // (3: the change colour of a manufacturing result is a class read as the difference of two fields, and its triangles are cut where it changes: a mesh kept by fdrc1 or 2 has the pale red over untouched faces)
+const char* const kRenderCacheVersion = "fdrc5";        // (5: the flank of a gusset or a teardrop is smoothed in the kernel's lattice: a mesh kept by fdrc4 has it in ribs.  4: the colour of a manufacturing check is read inside the big faces, cut as the change colour's are: a mesh kept by fdrc3 has the flat overhang of a sharp box grey under a card that says 12 %.  3: the change colour of a manufacturing result is a class read as the difference of two fields, and its triangles are cut where it changes: a mesh kept by fdrc1 or 2 has the pale red over untouched faces)
 
 const quint32 kCacheMagic = 0x43524446u;       // "FDRC"
 const quint32 kCacheFormat = 1;

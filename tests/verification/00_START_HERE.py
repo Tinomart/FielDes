@@ -191,4 +191,11 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     Chinese or Russian; the names of the code (fixed_1, static_analysis, app.number) stay as they are, and no button is cut off in any of them.
 #
 
+# 35. THE LAST FIXES.  (a) THE ROWS OF THE MODEL TREE.  Make a box and open its row: `a = (-5, -5, -5)`, `b = (5, 5, 5)`, `position = ...`, `rotation = ...`, `scale = 1`, `alpha = 1` and `Render settings` are whole, to the
+#     right edge of the tree, also with a larger system font -- no `a...)`, no blue blank space to their right.  (b) A FLAT OVERHANG OF A SHARP BOX.  `part = union(box((-6, -6, 0), (6, 6, 16)), box((-18, -6, 16), (18, 6, 22)))`,
+#     `manufacturing_analysis(part, constraints=[fff_constraint(nozzle=0.4, overhang=45)])`, then View > Bottom.  YOU MUST SEE: both undersides of the cap red, the stem's bottom grey between them, the card saying 12 %
+#     for the overhang.  (c) THE GUSSET.  The same T with `rounded_box((-18, -6, 16), (18, 6, 22), 0.3)` for the cap, through `manufacturing_optimization(part, constraints=[fff_constraint(nozzle=0.4, overhang=45)], max_change=0.25)`,
+#     then View > Bottom and View > Front.  YOU MUST SEE: the added gussets red under both ends of the cap, each one clean surface -- no ribs, no cream streaks --, a straight 45 degree line in the front view, and "Places still
+#     breaking a rule: 0" on the card.
+#
 print("Open one of the files listed above.")

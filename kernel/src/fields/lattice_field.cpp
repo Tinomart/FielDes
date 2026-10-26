@@ -1837,7 +1837,9 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
     // A node of the part that touches the gusset by an edge or a corner only takes the least of the gusset nodes it touches as well, and not the air value it keeps otherwise (the lines below).  Measured on the
     // bracket's printer result (the independent judge, 618 - 636 points of the surface): with the air value the judge found the wall thin on 2.1 % of the surface, every one of the flagged points on the
     // flank of the gusset where it meets the face it hangs from, 0.52 - 0.76 mm of material across; with the value given to these nodes too, on 0.16 % -- as with the formula of the part's own column
-    const std::vector<float> Gair = (!P.negate && P.mode == 0) ? G : std::vector<float>();
+    // (the nodes of the part that take the field of the gusset's node beside them are filled in AFTER the flank has been smoothed, below: they list here the heights at which they do)
+    const bool partTakesNeighbour = !P.negate && P.mode == 0;
+    std::vector<std::vector<int>> takesAt(partTakesNeighbour ? columns : size_t(0));
     parallelFor(columns, [&](size_t c) {
         const int ci = int(c % size_t(nx)), cj = int(c / size_t(nx));
         bool any = false;
@@ -1868,17 +1870,120 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
             }
             if (!touches) continue;
             const size_t here = size_t(k) * columns + c;
-            if (!Gair.empty() && part0[here])
+            if (partTakesNeighbour && part0[here])
             {
-                // (a node of the part, in a gusset: the field of the gusset's own node beside it -- the least of those that are not the part's among the six it has beside it, and when it touches the gusset by
-                // an edge or a corner only the least of those among the twenty-six round it)
+                takesAt[c].push_back(k);
+                continue;
+            }
+            const double z = double(k) * h;
+            G[here] = std::max(-cap, std::min(cap, float((double(reachOf(c, bottom[size_t(k)], M, above0)) - z) / norm)));
+        }
+    });
+
+    // THE FLANK, SMOOTHED.  The surface of a gusset is where the field changes sign, and it came out in ribs, one to a few columns wide, drawn from below and exported alike (they got wider with the
+    // mesher's cell and thinner with a finer resolution; measured on a T-shaped part: the flank, 1.0 mm of height for 1.0 mm of run, came out in steps of a lattice cell, 0.01 to 0.09 mm, each
+    // cell with a flat stretch and a steep one).  The nodes are not at fault one by one: the flank is a heightfield that the rounds and above all the pass that drops what rests on nothing cut out of
+    // the lattice a layer at a time, one column further out in every layer, and the zero of the field between a node that was kept and one that was cut -- `cap`, far away -- lies where the
+    // values put it, a node's width apart from layer to layer.  A smoothing of the values of the nodes on their own (a median, a mean, along the axes) found nothing to do: the cut nodes are
+    // not "nodes of the flank" to it, and the picture did not change.  So the field is smoothed AS A SURFACE: in a region of three nodes round every place where it changes sign, the values are
+    // limited to a node and a half either way (a saturated distance: the nodes the cut left at `cap` and the deep ones of the gusset are equal to it, which is what they are, inside or outside) and
+    // blurred, [1 2 1] / 4 along x, y and z, twice.  A blur of that is odd about the surface, so a plane stays where it is -- a flank of the exact slope is exact --, a step of a node or less is gone
+    // (the blur is wider than it), and a crease or an end is rounded within two nodes, finer than any printer prints.  Nodes of the part are never read (a neighbour that is one counts as the node itself), and
+    // nothing outside the region is touched.  What the mesher reads is the field itself, so the exact result, the drawn copy and the exports are smooth alike.  (The teardrop of a cut is the same
+    // lattice read the other way up and is smoothed the same way.)
+    {
+        const bool timing = std::getenv("FIELDES_TIMING") != nullptr;          // (the console says what the smoothing cost, when FIELDES_TIMING is set)
+        const auto tSmooth = std::chrono::steady_clock::now();
+        auto atNode = [&](int i, int j, int k) { return (size_t(k) * size_t(ny) + size_t(j)) * size_t(nx) + size_t(i); };
+        std::vector<uint8_t> R(nodes, 0), R2(nodes, 0);
+        // (the nodes of the air that have a neighbour of the air on the other side of the sign change)
+        parallelFor(size_t(nz), [&](size_t k) {
+            const int di[6] = {-1, 1, 0, 0, 0, 0}, dj[6] = {0, 0, -1, 1, 0, 0}, dk[6] = {0, 0, 0, 0, -1, 1};
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i < nx; ++i)
+                {
+                    const size_t q = atNode(i, j, int(k));
+                    if (part0[q]) continue;
+                    const bool inside = G[q] <= 0.0f;
+                    for (int s = 0; s < 6; ++s)
+                    {
+                        const int ii = i + di[s], jj = j + dj[s], kk = int(k) + dk[s];
+                        if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                        const size_t n = atNode(ii, jj, kk);
+                        if (!part0[n] && ((G[n] <= 0.0f) != inside))
+                        {
+                            R[q] = 1;
+                            break;
+                        }
+                    }
+                }
+        });
+        // (three times over: every node of the air beside a node of the region joins it)
+        for (int round = 0; round < 3; ++round)
+        {
+            parallelFor(size_t(nz), [&](size_t k) {
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t q = atNode(i, j, int(k));
+                        R2[q] = R[q];
+                        if (R[q] || part0[q]) continue;
+                        bool joins = false;
+                        for (int dk = -1; dk <= 1 && !joins; ++dk)
+                            for (int dj = -1; dj <= 1 && !joins; ++dj)
+                                for (int di = -1; di <= 1 && !joins; ++di)
+                                {
+                                    const int ii = i + di, jj = j + dj, kk = int(k) + dk;
+                                    if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                                    if (R[atNode(ii, jj, kk)]) joins = true;
+                                }
+                        if (joins) R2[q] = 1;
+                    }
+            });
+            R.swap(R2);
+        }
+        const float limit = float(1.5 * h);
+        auto limited = [&](size_t q) { return std::max(-limit, std::min(limit, G[q])); };
+        std::vector<float> T(nodes);
+        for (int pass = 0; pass < 6; ++pass)
+        {
+            const int axis = pass % 3;                 // (x, y, z, x, y, z)
+            const size_t stride = axis == 0 ? size_t(1) : (axis == 1 ? size_t(nx) : size_t(nx) * size_t(ny));
+            const int len = axis == 0 ? nx : (axis == 1 ? ny : nz);
+            parallelFor(size_t(nz), [&](size_t k) {
+                for (int j = 0; j < ny; ++j)
+                    for (int i = 0; i < nx; ++i)
+                    {
+                        const size_t q = atNode(i, j, int(k));
+                        if (!R[q])
+                        {
+                            T[q] = G[q];
+                            continue;
+                        }
+                        const float v = limited(q);
+                        const int at = axis == 0 ? i : (axis == 1 ? j : int(k));
+                        float lo = v, hi = v;
+                        if (at > 0 && !part0[q - stride]) lo = limited(q - stride);
+                        if (at + 1 < len && !part0[q + stride]) hi = limited(q + stride);
+                        T[q] = 0.25f * lo + 0.5f * v + 0.25f * hi;
+                    }
+            });
+            G.swap(T);
+        }
+        // The nodes of the part, in a gusset: the field of the gusset's own node beside it -- the least of those that are not the part's among the six it has beside it, and when it touches the gusset by
+        // an edge or a corner only the least of those among the twenty-six round it.  (The values of the gusset's nodes, as they are after the smoothing: the part's nodes join the flank that is drawn.)
+        if (partTakesNeighbour)
+        parallelFor(columns, [&](size_t c) {
+            const int ci = int(c % size_t(nx)), cj = int(c / size_t(nx));
+            for (const int k : takesAt[c])
+            {
                 float v = 0.0f;
                 bool found = false;
                 auto beside = [&](int ii, int jj, int kk) {
                     if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny || kk >= nz) return;
                     const size_t n = (size_t(kk) * size_t(ny) + size_t(jj)) * size_t(nx) + size_t(ii);
                     if (part0[n] || !S[n]) return;
-                    v = found ? std::min(v, Gair[n]) : Gair[n];
+                    v = found ? std::min(v, G[n]) : G[n];
                     found = true;
                 };
                 beside(ci - 1, cj, k);
@@ -1893,13 +1998,17 @@ Tree overhangLattice(const Tree& part, const std::map<Tree::Id, float>& vars, co
                         for (int dj = -1; dj <= 1; ++dj)
                             for (int di = -1; di <= 1; ++di) beside(ci + di, cj + dj, k + dk);
                 }
-                if (found) G[here] = v;
-                continue;
+                if (found) G[size_t(k) * columns + c] = v;
             }
-            const double z = double(k) * h;
-            G[here] = std::max(-cap, std::min(cap, float((double(reachOf(c, bottom[size_t(k)], M, above0)) - z) / norm)));
+        });
+        if (timing)
+        {
+            size_t regionNodes = 0;
+            for (const uint8_t r : R) regionNodes += r;
+            std::fprintf(stderr, "[fieldes] lattice: the flank smoothed in %.0f ms (%zu of %zu nodes in its region); the whole lattice %.1f s\n", 1000.0 * secondsSince(tSmooth), regionNodes,
+                         nodes, secondsSince(t0));
         }
-    });
+    }
     const double tColumns = secondsSince(t0);
 
     // 4. The field

@@ -951,6 +951,14 @@ public:
         return e;
     }
     void setEditorData(QWidget*, const QModelIndex&) const override {}
+    // (an argument, a placeholder or a resolution is "name = value": when the row is too narrow for all of it, it is the end of the value that goes
+    // -- the name is what the row is for --, not the middle of the whole text as for the name of a model)
+    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        const QString type = index.data(ROLE_TYPE).toString();
+        if (type == "arg" || type == "hole" || type == "setting") option->textElideMode = Qt::ElideRight;
+    }
     void setModelData(QWidget* editor, QAbstractItemModel*, const QModelIndex& index) const override
     {
         if (renamed) renamed(index, static_cast<QLineEdit*>(editor)->text());
@@ -3251,6 +3259,18 @@ void ScenePanel::rebuild()
         }
     }
     applyShowOnly();
+    // A row with nothing in the columns of the buttons -- an argument, a placeholder, a property, the render settings -- is as wide as the whole row:
+    // its name stays in the name column otherwise, which is only what is left of the panel after the room for the buttons that the row does
+    // not have (about 120 pixels of 270), and the middle of every "name = value" was cut out of it.  A row with a button, an icon or a widget in
+    // another column keeps its columns
+    for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+    {
+        QTreeWidgetItem* row = *i;
+        bool bare = true;
+        for (int c = COL_NAME + 1; c <= COL_DOT && bare; ++c)
+            bare = row->icon(c).isNull() && row->text(c).isEmpty() && !m_tree->itemWidget(row, c);
+        if (bare) row->setFirstColumnSpanned(true);
+    }
 
     // Footer notes: analysis problems, truncated huge scripts
     QString note;
