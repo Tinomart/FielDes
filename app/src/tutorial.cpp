@@ -1316,8 +1316,12 @@ void Tutorial::buildSteps()
         // (the viewport's own button is framed, and the arrow ends at it; it is the one place the user may press in this step)
         auto popRect = [this]() -> QRect {
             auto* b = m_view->findChild<QToolButton*>("PopOutButton");
+            // (once the viewport is in a window of its own its button is not in this one: widgetRect is empty then, and an empty rect padded by the frame's margin is a speck at the window's corner,
+            // which the arrow and the card went to)
+            const QRect r = b ? widgetRect(b) : QRect();
+            if (r.isEmpty()) return QRect();
             // (the button sits in the very corner of the window: the frame stays inside it, so no edge of the frame is cut off)
-            return b && b->isVisible() ? widgetRect(b).adjusted(-4, -4, 4, 4).intersected(m_window->rect().adjusted(2, 2, -2, -2)) : QRect();
+            return r.adjusted(-4, -4, 4, 4).intersected(m_window->rect().adjusted(2, 2, -2, -2));
         };
         s.aim = popRect;
         s.holes = [popRect]() -> QVector<QRect> { const QRect r = popRect(); return r.isEmpty() ? QVector<QRect>() : QVector<QRect>{r}; };
