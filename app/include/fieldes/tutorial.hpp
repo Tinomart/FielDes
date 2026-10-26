@@ -54,6 +54,9 @@ public:
     ~Tutorial() override;
 
     bool active() const { return m_active; }
+    /*  The document in the editor is the model the tour wrote there, not the user's: no question about saving it is asked while the tour is on, and it is not marked as changed
+     *  when the tour ends  */
+    bool ownsDocument() const { return m_ownsDocument; }
 
     /*  The welcome card: start the tour, or not (the first time FielDes runs)  */
     void offer();
@@ -79,6 +82,7 @@ public:
     bool stepDone() const { return m_done; }
     /*  Whether a "Show me" is running, or its result is still being shown (before everything is put back as it was)  */
     bool demoRunning() const { return m_demo; }
+    bool demoHolding() const { return m_demoHolding; }
     /*  Opens a step.  Every step has a state of its own -- the script, what is selected, whether the section view is on: the first
      *  time it is what the steps before it left, and from then on whenever the step is opened (with Back too) it is put back as it
      *  was when the step was first opened, so that what the step asks for can be done again  */
@@ -103,7 +107,7 @@ private:
 
     void buildSteps();
     QString chapterTitle(int chapter) const;
-    QString chapterLearned(int chapter) const;      // (what the chapter was about: the congratulation of its last card)
+    QString chapterAbout(int chapter) const;        // (what the chapter is about: the description on the card that ends the chapter before it)
     void saveProgress();                            // (the step that is open, and the chapters that are done, in the settings)
     int resumeIndex() const;                        // (the step the tour was left at: the first of the first chapter when it never was)
     void showChapters();                            // (the chapter menu of the card)
@@ -145,7 +149,7 @@ private:
     void restore(const State& state);
     /*  Puts a whole script in the editor (a step that works on a model of its own), without it counting as a change of the user's  */
     void useScript(const QString& text, bool frame = true);       // (`frame`: the camera goes to the region the script sets, at once)
-    void selectAgain(QStringList names, int tries);
+    void selectAgain(QStringList names, int tries, int epoch = -1);
     void symmetryAgain(const QString& var, int tries);         // (the symmetry in use is put back once its model is in the tree)
     QAction* sectionAction() const;
     /*  Puts everything back as it was before a "Show me" (at once: the step is changing, or the tour ends)  */
@@ -187,6 +191,7 @@ private:
     double m_sectionBase = 0;               // (where the section plane was when the step saw it switched on: moving it is the step's task)
     bool m_sectionSeen = false;
     int m_generation = 0;                   // (what a timer of an earlier step must not do)
+    int m_selectEpoch = 0;                  // (a selection that is asked for replaces the ones asked for before it: a late retry of the older one must not select over it)
     double m_baseline = 0;                  // (what a step compares the user's work with)
     QString m_baselineText;                 // (the same, when the work is a stretch of the script)
     bool m_viewTouched = false;             // (the user has pressed in the view or turned the wheel since a step put its own model there: its camera is theirs)
@@ -204,6 +209,16 @@ private:
     QRect m_menuRect;
     QPoint m_cursor;
     bool m_cursorShown = false;
+    bool m_ownsDocument = false;            // (the tour's model is the document in the editor: see ownsDocument)
+    bool m_menuTriggered = false;           // (the entry of the menu the step is about has been chosen, or the menu it holds has opened)
+    QVector<QMetaObject::Connection> m_menuConns;    // (what tells that: connected when the step opens, undone when it changes)
+    bool m_cardMoved = false;               // (the user dragged the card: it stays where they put it until the step changes)
+    bool m_demoHolding = false;             // (a "Show me" has made what it shows and it is on the screen for a moment before everything is put back)
+    int m_busyTicks = 0;                    // (how long, in polls, the script has been running or the viewport drawing: past a second the card says it is working)
+    bool m_noteBusy = false;                // (the line under the card's text says that now)
+    bool m_dragging = false;
+    QPoint m_dragPress, m_dragStart;        // (where the mouse was pressed, on the screen, and where the card was)
+    int m_popState = 0;                     // (the step about pulling a pane out: 0 not yet, 1 the viewport has been out)
 };
 
 }   // namespace FielDes

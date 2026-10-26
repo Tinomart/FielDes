@@ -1830,6 +1830,7 @@ ScenePanel::ScenePanel(QWidget* parent)
 
     m_note->setWordWrap(true);
     m_note->setOpenExternalLinks(false);
+    m_note->setTextInteractionFlags(Qt::TextBrowserInteraction);       // (an error or a note under the tree can be selected and copied; its links work as they did)
     {
         QPalette amber = m_note->palette();
         amber.setColor(QPalette::Link, QColor(0xf0, 0xa0, 0x40));
@@ -11830,7 +11831,9 @@ void ScenePanel::applyShowOnly()
         QTreeWidgetItem* row = *i;
         if (row->childCount() == 0 || row->data(COL_NAME, ROLE_TYPE).toString() != "item") continue;
         const QString var = row->data(COL_NAME, ROLE_ITEM).toJsonObject()["var"].toString();
-        const bool open = m_showOnlyOpen.contains(var) || holdsPlaceholder(row);
+        // (nor is a call closed where the user is writing in it: a placeholder that is typed over is not one any more, and the row would close under the hand)
+        const int line = foldLineOf(row);
+        const bool open = m_showOnlyOpen.contains(var) || holdsPlaceholder(row) || (m_writingIn && line >= 0 && textMatchesScene() && m_writingIn(line));
         row->setExpanded(open);
         if (open)
             for (auto p = row->parent(); p; p = p->parent()) p->setExpanded(true);

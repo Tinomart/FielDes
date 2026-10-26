@@ -124,6 +124,13 @@ if ($Package) {
     Mirror (Join-Path $Source 'docs') (Join-Path $PackageDir 'docs') @()
     # The translations of the program's texts (translations/<code>.json; English needs no file)
     Mirror (Join-Path $Source 'translations') (Join-Path $PackageDir 'translations') @()
+    # The solved problems of the guided tour (seed-cache/result-cache, made by scripts/make-seed-cache.ps1 from the solvers that are packaged): the first time a chapter shows a solved beam or flow it is
+    # read from a file and not solved while the screen is empty.  They are not in git: a file is made for one version of the solvers (RESULT_VERSION)
+    if (Test-Path (Join-Path $Source 'seed-cache')) {
+        Mirror (Join-Path $Source 'seed-cache') (Join-Path $PackageDir 'seed-cache') @()
+    } else {
+        Write-Warning 'seed-cache/ is not there: the tour solves its beam and its flow the first time it shows them (run scripts/make-seed-cache.ps1 first).'
+    }
     # The custom blocks folder (the sample blocks; the user's own blocks go here or in a folder of their choice)
     Mirror (Join-Path $Source 'blocks') (Join-Path $PackageDir 'blocks') @('/XD', '__pycache__')
     # 5. The MSVC runtime, so it runs without the VC++ redistributable installed

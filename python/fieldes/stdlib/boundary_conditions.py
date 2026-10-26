@@ -45,6 +45,7 @@ from fieldes.shape import Shape
 from fieldes.stdlib.content_cache import content_cached
 from fieldes.stdlib.fea import _Support, _Force, _Gravity, _Thermal, _bounds, FeaError
 from fieldes.stdlib.fields import evaluate
+from fieldes.i18n import tr as _tr
 
 __all__ = []
 
@@ -69,14 +70,14 @@ def _kind_of(item):
     from fieldes.stdlib import thermal, fluid
     if isinstance(item, thermal._Temperature):
         value = item.value
-        return TEMPERATURE, 'pad', ('%g °C' % value) if isinstance(value, (int, float)) else 'Temperature (a field)'
+        return TEMPERATURE, 'pad', ('%g °C' % value) if isinstance(value, (int, float)) else _tr('Temperature (a field)')
     if isinstance(item, thermal._HeatGeneration):
-        return GENERATION, 'none', '%g W generated' % item.power
+        return GENERATION, 'none', _tr('%g W generated') % item.power
     if isinstance(item, thermal._Heat):
-        return HEAT, 'in' if item.power >= 0 else 'out', ('%g W' % item.power) if item.power >= 0 else ('%g W out' % -item.power)
+        return HEAT, 'in' if item.power >= 0 else 'out', ('%g W' % item.power) if item.power >= 0 else (_tr('%g W out') % -item.power)
     if isinstance(item, thermal._Convection):
         h = item.coefficient
-        return CONVECTION, 'pad', ('Convection h = %g' % h) if isinstance(h, (int, float)) else 'Convection (a field)'
+        return CONVECTION, 'pad', (_tr('Convection h = %g') % h) if isinstance(h, (int, float)) else _tr('Convection (a field)')
     if isinstance(item, fluid._Inlet):
         if item.flow_rate > 0:
             what = '%g mm³/s' % item.flow_rate
@@ -84,14 +85,14 @@ def _kind_of(item):
             what = '%g mm/s' % item.speed
         else:
             what = '%g mm/s' % math.sqrt(sum(v * v for v in item.direction))
-        return INLET, 'in', 'Inlet ' + what
+        return INLET, 'in', _tr('Inlet %s') % what
     if isinstance(item, fluid._Outlet):
-        return OUTLET, 'out', 'Outlet' if not item.pressure else 'Outlet %g MPa' % item.pressure
+        return OUTLET, 'out', _tr('Outlet') if not item.pressure else _tr('Outlet %g MPa') % item.pressure
     if isinstance(item, fluid._Wall):
         moving = any(abs(v) > 0 for v in item.velocity)
-        return WALL, 'pad', 'Moving wall' if moving else 'Wall'
+        return WALL, 'pad', _tr('Moving wall') if moving else _tr('Wall')
     if isinstance(item, fluid._Slip):
-        return SLIP, 'pad', 'Slip'
+        return SLIP, 'pad', _tr('Slip')
     return None
 
 
@@ -115,8 +116,8 @@ def _support_text(item):
     ''' What a support says of itself: Fixed, Sliding (fixed in the directions that are held), and -- when it imposes a movement -- the displacement it holds the part at '''
     held = ''.join(a for a, on in zip('xyz', item.axes) if on)
     moved = ', '.join('{} {:g} mm'.format(a, d) for a, d, on in zip('xyz', item.displacement, item.axes) if on and d != 0)
-    text = 'Fixed' if len(held) == 3 else 'Sliding (fixed in {})'.format(held or 'nothing')
-    return text + (', displaced {}'.format(moved) if moved else '')
+    text = _tr('Fixed') if len(held) == 3 else _tr('Sliding (fixed in {})').format(held or _tr('nothing'))
+    return text + (_tr(', displaced {}').format(moved) if moved else '')
 
 
 def describe(item):
@@ -269,7 +270,7 @@ def _draw(items, part):
                 p, d, length = arrow
                 glyphs.append((GRAVITY, False, p, d, length))
                 g = math.sqrt(sum(c * c for c in l.g))
-                labels.append((GRAVITY, 'Gravity {:.4g} m/s²'.format(g / 1000.0),
+                labels.append((GRAVITY, _tr('Gravity {:.4g} m/s²').format(g / 1000.0),
                                tuple(p[i] - d[i] * 0.25 * length for i in range(3))))
                 present.add(GRAVITY)
 

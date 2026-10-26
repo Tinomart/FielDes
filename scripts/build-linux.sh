@@ -105,6 +105,12 @@ if [ "$PACKAGE" = 1 ]; then
     rsync -a --exclude '__pycache__' --include 'step/PivotBearingSupportBracket.STEP' --exclude 'step/*.s*p' --exclude 'step/*.STEP' --exclude 'step/*.STP' --exclude '*.fieldes-cache.*' \
           --exclude 'meshes' "$SRC/examples/" "$OUT/examples/"
     rsync -a "$SRC/blocks" "$SRC/docs" "$SRC/translations" "$OUT/"
+    # (the solved problems of the guided tour, made by scripts/make-seed-cache.ps1 from the solvers that are packaged: not in git, a file is made for one version of the solvers)
+    if [ -d "$SRC/seed-cache" ]; then
+        rsync -a "$SRC/seed-cache" "$OUT/"
+    else
+        echo "WARNING: seed-cache/ is not there: the tour solves its beam and its flow the first time it shows them (run scripts/make-seed-cache.ps1 first)"
+    fi
     cp -f "$SRC"/README.md "$SRC"/CHANGELOG.md "$SRC"/LICENSE-GPL-2.0 "$SRC"/LICENSE-MPL-2.0 "$SRC"/NOTICE.md "$OUT"/
     cp -f "$SRC"/app/deploy/icon/fieldes.png "$OUT"/fieldes.png          # (the icon of the menu entry the installers make)
 

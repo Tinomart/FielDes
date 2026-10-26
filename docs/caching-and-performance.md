@@ -129,6 +129,15 @@ The files are in `result-cache` beside the field cache (`FIELDES_RESULT_CACHE_DI
 4 GB, oldest first out. A file that cannot be read as written is refused and the problem is solved. **Settings → Clear the
 caches** deletes them with the rest.
 
+**Solved problems that come with the program.** The guided tour shows a solved beam, a flow, an optimization: asked cold, each is
+a wait of seconds with nothing to look at. So the program's folder carries what the tour solves, `seed-cache/result-cache`
+next to its `python` folder, and a problem that the user's own `result-cache` has no file for is read from there (the log says
+`read the static analysis back (4.1 MB, 0.1 s, shipped with the program)`); nothing is copied, the folder may be read-only, and
+the user's own files come first. The seeds are made for one version of the solvers -- the key holds `RESULT_VERSION` -- by
+`scripts/make-seed-cache.ps1`, which runs the tour's solving steps in a window with a result cache of its own, and the build
+scripts copy them into the packages (they are not in git). `FIELDES_NO_SEED=1` reads none (to time a cold solve),
+`FIELDES_SEED_CACHE_DIR` names another folder.
+
 ## The render cache
 
 Meshing is the slow part of showing a big shape, and the viewport's memory of it ends with the session. So **every

@@ -1746,6 +1746,9 @@ void Editor::setFold(int line0, bool folded)
 {
     int end = 0;
     if (line0 < 0 || !script->foldRange(line0, &end)) return;       // (a line with nothing under it to fold)
+    // (the lines the user is typing in are not hidden, whoever asks -- a row of the tree that closes, a tour step that shows only what it is about: the text cursor would be
+    // taken out of them, to the line the call begins on, and what is typed next would go there, where no argument can be written)
+    if (folded && writingIn(line0)) return;
     if (script->isFolded(line0) != folded) script->setFolded(line0, folded);
 }
 

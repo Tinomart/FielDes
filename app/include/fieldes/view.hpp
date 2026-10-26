@@ -206,6 +206,10 @@ public slots:
     /*  Standard camera views (relative to the current up axis); which
      *  is a StandardView  */
     void standardView(int which);
+    /*  The guided tour: where the point of the orientation triad for a world direction is (in the view's coordinates; false while the triad is not drawn), and whether the view looks
+     *  straight along an axis of the world -- a standard side  */
+    bool triadTip(const QVector3D& dir, QPointF& tip) const;
+    bool onStandardSide();
 
     /*  Section view / field viewer  */
     void setSection(SectionSettings s);
@@ -315,6 +319,7 @@ public slots:
     void setZoomCursorCentric() { zoom_cursor_centric = true; }
     void setZoomSceneCentric() { zoom_cursor_centric = false; }
     void zoomTo() { camera.zoomTo(settings.min, settings.max); }
+    void lookFrom(const QVector3D& dir) { camera.lookFrom(dir); }          // (the camera looks at the model from that side: a standard view, but of any side)
     void zoomToBox(QVector3D min, QVector3D max) { camera.zoomTo(min, max); }       // (the camera on a box, before the script that sets it has run)
 
     void toDCMeshing();
@@ -641,8 +646,10 @@ protected:
     /*  The entry that makes a body from the field of the model at `line` (-1: the selected field the viewer shows)  */
     void addBodyFromField(QMenu* menu, int line, const QVector3D& point, double scale);
     /*  New material, New fluid, New support or load, New thermal condition and New flow condition, as the menus of the Engineering
-     *  menu: what an analysis is given, made at a place like any new model.  `domain`: the ones of that domain (empty: those of no domain, the materials)  */
-    void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain);
+     *  menu: what an analysis is given, made at a place like any new model.  `domain`: the ones of that domain (empty: those of no domain, the materials).  `only`: just
+     *  those groups ("Fluids", "Flow conditions" ...); `skip`: all but those  */
+    void fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain,
+                                  const QStringList& only = QStringList(), const QStringList& skip = QStringList());
     /*  Where a primitive goes: the point of the ray under a widget position that is closest to the origin  */
     QVector3D placeOnRay(QPoint pos) const;
     /*  The work plane's state and its pieces in the viewport  */

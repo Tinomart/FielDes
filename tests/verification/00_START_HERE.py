@@ -50,8 +50,8 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     c. THE GUSSET (behind, on the left, under the ledge): from the RIGHT (View > Right), turned a little with Shift + left drag, zoomed on it.  YOU MUST SEE: a red pyramid under the ledge whose
 #        sloped faces meet the wall along straight lines, with no teeth and no white gaps between the red and the wall, and no slab sticking out of its foot onto the plate.
 #
-#  8. THE LATTICE MENUS.  Right-click empty space in the viewport, first with a script that has no model, then with a box selected, and open Operations.  YOU MUST SEE: two categories at the bottom of
-#     the list -- Periodic lattices (lattice, lattice_surface_conform and the four families of cells) and Non-periodic lattices (random_points, voronoi_lattice, delaunay_lattice, surface_lattice).  With no model
+#  8. THE LATTICE MENUS.  Right-click empty space in the viewport, first with a script that has no model, then with a box selected, and open Engineering.  YOU MUST SEE: two categories in the list, under the
+#     domains (Structural, Thermal, Fluid ...) -- Periodic lattices (lattice, lattice_surface_conform and the four families of cells) and Non-periodic lattices (random_points, voronoi_lattice, delaunay_lattice, surface_lattice).  With no model
 #     every operation of the menu is there, none greyed out, and picking one writes `...` where the model goes (only center and bounding_box, which measure a model, are left out).  With the box selected,
 #     Non-periodic lattices > surface_lattice writes `surface_lattice(box_1, cell_size=..., ...)` and a net of beams covers the box.
 #
@@ -77,7 +77,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 # 13. THE ENGINEERING MENU.  Right-click empty space in the viewport, open Engineering.  YOU MUST SEE: "topology_optimization" first, on its own, a line under it, and then Structural, Thermal, Fluid and
 #     Manufacturing -- no topology_optimization inside Structural -- and a last category, Mesh, with mesh_volume and mesh_surface.
 #
-# 14. THE ICONS.  Right-click empty space, open Primitives (and Parametric shapes, Operations > the lattice categories, Engineering > New material / New support or load ...).  YOU MUST SEE: an icon of its own
+# 14. THE ICONS.  Right-click empty space, open Primitives (and Parametric shapes, Engineering > the lattice categories, Engineering > New material / New support or load ...).  YOU MUST SEE: an icon of its own
 #     beside every entry: a ball for the sphere, a cylinder, a cone, a ring for the torus, a pyramid, a prism; outlines for the circle, the rectangle, the ring, the polygon, the triangle; a sheet, a globe, a tube
 #     for the surfaces; rings, layers, noise, waves for the fields; a wall with hatching for fixed, an arrow for a force; an ingot with its element for a metal, a drop for a fluid; and a different picture for
 #     each cell of the lattices.  Then open examples/05_static_analysis.py: the rows of the model tree show the same pictures.
@@ -173,16 +173,18 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Parametric shapes) pulls by its side (the diameter: the pitch stays) and by its ends -- by its side the same wherever you press the thread (a crest, a root, a flank facing up or down, either side): the arrow of the pull points straight away from the axis, and the same drag gives the same new diameter.
 #     Each drag changes one number in the `handles(...)` line, never a scale.
 #
-# 34. THE GUIDED TOUR IN CHAPTERS.  Help > Guided tour (the first time: the welcome card).  YOU MUST SEE: the title of every card whole -- the place in the tour ("Chapter 1 of 12 · 2 / 7") is a small line ABOVE it --
+# 34. THE GUIDED TOUR IN CHAPTERS.  Help > Guided tour (the first time: the welcome card).  YOU MUST SEE: the title of every card whole -- the place in the tour ("Chapter 1 of 12 · 2 / 6") is a small line ABOVE it --
 #     and a button "Chapters" on every card but the first and the last: it lists the twelve chapters (a tick for the done ones, the one you are in in bold) and goes to the one you choose.  Chapter 1 is the idea of
 #     FielDes (the script is the model, change a number, every shape is a field -- the section view --, a field instead of a number, what that means for design -- the point moves and the thickness with it --,
-#     a lattice that follows a field, an analysis as a field); chapter 2 the view (standard views, your own navigation, panes pulled out, the gizmo, the keys); chapter 3 the model tree, with the step "Snap one body
-#     onto another" (Show me: tip, then corner are selected, S: the peg stands on the corner, only its position changes); 4 work planes; 5 symmetry; 6 the special features in short (lattices, simulations, flows,
+#     an analysis as a field); chapter 2 the view (the standard views by a click on a point of the little coordinate axis in the corner, your own navigation, panes pulled out -- click the button of the
+#     viewport, it goes out, click it again, the step turns green --, the gizmo, the keys); chapter 3 the model tree, with the step "Snap one body
+#     onto another" (Show me: tip, then corner are selected, S: the peg stands on the corner, only its position changes) and "Copy or link"; 4 work planes; 5 symmetry (a mirror, editing the original or an
+#     image, Shift+S on and off); 6 the special features in short (lattices, simulations, flows,
 #     manufacturing, apps -- each with a picture of its own); 7 to 12 build a lattice, a static analysis, a flow, a topology optimization, a manufacturing optimization and an app.
 #     WHAT TO DO IN 7 TO 12: do each step by hand -- select the models (Ctrl+click), right-click the first, choose the entry the card names, type over a placeholder or a number -- or press Show me, which does it with a
 #     pretend hand (a Ctrl badge on the cursor, the menu entries lit one after the other, the typing) and puts everything back.  YOU MUST SEE: the card turns green when the step is done; the next step starts from the
 #     model the menus wrote, also when you skipped the step before; a result is drawn (the lattice, the stress colours, the streamlines, the density, the red of a broken rule).  Every chapter ends with a card that says
-#     "Chapter N is done" with Continue and "Explore on my own"; "Explore on my own" shows the card that says where the tour is found again, and Help > Guided tour then goes on at the next chapter.  The place you were at is
+#     "Next up: chapter N" and what that chapter is about (the chapter that was finished is named in a small line only), with Continue and "Explore on my own"; "Explore on my own" shows the card that says where the tour is found again, and Help > Guided tour then goes on at the next chapter.  The place you were at is
 #     kept: quit in the middle of chapter 8, close FielDes, open it and choose Help > Guided tour: it opens in chapter 8 at the step you left.
 #     LOOK AT THE RIGHT EDGE OF THE CARD: on a card with all five buttons (Chapters, Quit the tour, Back, Show me, Skip step) the last button must end inside the card's border, also with a larger system font (Windows:
 #     Settings > Accessibility > Text size) -- the card is as wide as its row of buttons needs.  And in the build chapters the result is drawn ALONE: the beam, the analysis and the part are hidden (`# hidden: name`) as
@@ -197,5 +199,33 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     for the overhang.  (c) THE GUSSET.  The same T with `rounded_box((-18, -6, 16), (18, 6, 22), 0.3)` for the cap, through `manufacturing_optimization(part, constraints=[fff_constraint(nozzle=0.4, overhang=45)], max_change=0.25)`,
 #     then View > Bottom and View > Front.  YOU MUST SEE: the added gussets red under both ends of the cap, each one clean surface -- no ribs, no cream streaks --, a straight 45 degree line in the front view, and "Places still
 #     breaking a rule: 0" on the card.
+#
+# 36. THE TOUR, THE NIGHT'S PASS (open Help > Guided tour and go through what is new; each was done with real clicks in a window and looked at).  (a) A PLACEHOLDER TYPED OVER.  Right-click `drilled`, Operations > Offsets and
+#     walls > offset: the row `o = ...` is amber; click it and type `.5`.  YOU MUST SEE the call stay open in the code and in the tree, `o=.5` where the three dots were, and the step "Placeholders" turn green.
+#     (b) THE STATIC AND THE FLOW CHAPTERS (8, 9) take the faces from the viewport: right-click the left end of the beam, Select Surface, Select -- the face is lit in magenta and is `selection_1`; the same for the
+#     right end; then fixed, force, the material and static_analysis are made from the right-click menus with `beam` and the face selected.  YOU MUST SEE `fixed_1 = fixed(region=selection_1, body=None, ...)`: a face says where
+#     the support acts, so the call has no body (the menu writes it so).  (c) NEW STEPS: chapter 3 "A shape from math" (Parametric shapes > New 3D shape > low_level_body, then the radius changed to 8 + (x * 0.8).sin() * 1.2),
+#     "Points, edges and faces" (the corner of a body, before the snapping); chapter 5 starts with "Make a symmetry" (click in the viewport, Shift+S: `symmetry_1`, its card says In use) and "Copy or link" is in chapter 3; chapter
+#     7 has "Points for a foam", "The foam" (Engineering > Non-periodic lattices > random_points, then voronoi_lattice: about a hundred points, the foam drawn in 2 seconds), "A cell of your own" (Periodic lattices > Custom
+#     cells > custom_tpms), "Change the equation" and "Fill the block with it".  (d) THE CARDS.  The line with the place ("Chapter 1 of 12 · 6 / 6") is a handle: drag the card by it, it stays where you put it until the
+#     step changes; text of a card can be marked with the mouse and copied (Ctrl+C, or right-click on the marked text: Copy; the result card and the notes have Copy the text where you right-click a place that
+#     nothing answers: one row a line, "maximum von Mises stress 53.36 MPa"; right-click the red error banner of the viewport: Copy the error); a step whose model takes seconds says "FielDes is working on what this step
+#     shows. One moment." under its text, also while Show me does it.  (e) REAL CLICKS COUNT.  Chapter 2 "Standard views": click a point of the little axis in the corner -- the step turns green; "Make room for your
+#     work": click the viewport's button (top right), it goes out, the card says how to put it back, click the same button in its own window: green.  Chapter 12 "See it as the user will": click File in the menu bar --
+#     the arrow goes to the entry -- choose Preview as app: green (close the window that opens).  And chapter 12 "Send it as a file": File > Export as app...; cancel the window that asks where to save: green, and no
+#     question about saving the tour's model when the tour is left.  (f) LATTICES AND MATERIALS.  Right-click empty space > Engineering: Periodic lattices and Non-periodic lattices are there (not under Operations) and
+#     Materials has New material and New fluid together.
+#
+# 37. THE SOLVED PROBLEMS THAT COME WITH THE PROGRAM.  In a folder `seed-cache/result-cache` beside the program's `python` folder (made by scripts/make-seed-cache.ps1, copied by the build scripts): take the tour to chapter 8
+#     "Run the analysis" -> Show me, or do it by hand.  YOU MUST SEE the stress drawn at once, and in the console `[result cache] read the static analysis back (4.1 MB, 0.01 s, shipped with the program)`; the same
+#     for the flow of chapter 9.  Set FIELDES_NO_SEED=1 for the cold solve (the beam of chapter 8 about three seconds, the flow of chapter 9 about twenty -- the card says "FielDes is working on what this step
+#     shows. One moment." under its text, also while Show me does it).  The program carries eight solved problems (21.5 MB).
+#
+# 38. THE FOOT OF A PART ON INTEGER COORDINATES.  Paste into a new script: `view.set_bounds([-24, -12, -4], [24, 12, 28])`, `view.set_resolution(3)`, `stem = box((-6, -6, 0), (6, 6, 16))`, `cap = rounded_box((-18, -6, 16), (18, 6, 22), 0.3)`,
+#     `part = union(stem, cap)`, `result = manufacturing_optimization(part, constraints=[fff_constraint(nozzle=0.4, overhang=45)], remedies=['gaps'])`, and look at `result._preview` from the front (View > Front).
+#     YOU MUST SEE the stem's bottom corners square, as the box is.  (Before the fix of the mesher each bottom corner of the stem had a small wing, 0.75 mm sideways and 0.5 mm below the floor, on the picture only: the exported
+#     mesh, the numbers and the checks never had it.  Cause: the mesher placed the vertex of a cell at a corner that lies exactly on its grid from a sample whose derivative was float noise of 1e-8, normalised to a
+#     direction that means nothing and a plane 8000 mm away; such a sample no longer makes a plane.)  The same in the tour: chapter 11, "Let the tool fix it", Show me, View > Bottom and Front.
+#     `FIELDES_DC_TRACE=x,y,z,r` in the environment prints what the cells of the mesher within r of a point were given (for whoever meets another such place; nothing is printed without it).
 #
 print("Open one of the files listed above.")

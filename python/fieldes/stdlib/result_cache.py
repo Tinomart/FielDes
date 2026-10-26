@@ -90,6 +90,30 @@ def _paths(kind, ekey):
     return base + '.fdresult', base + '.json'
 
 
+def _seed_folder():
+    ''' The solved problems that come with the program: `seed-cache/result-cache` beside its `python` folder.  They are what the guided tour solves, so that the first time a chapter shows a
+        solved beam or flow it is read back from a file and not solved while the screen is empty.  They are read where they are (the program's folder may be read-only) and only when the
+        user's own folder has no file for the problem.  FIELDES_SEED_CACHE_DIR names another folder, FIELDES_NO_SEED=1 has none (to time a cold solve) '''
+    if os.environ.get('FIELDES_NO_SEED'):
+        return None
+    d = os.environ.get('FIELDES_SEED_CACHE_DIR')
+    if d:
+        return d
+    here = os.path.dirname(os.path.abspath(__file__))              # (<program>/python/fieldes/stdlib)
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(here))), 'seed-cache', 'result-cache')
+
+
+def _seeded(kind, ekey):
+    ''' (the data file, the head file) of the problem in the program's own folder, or None '''
+    seed = _seed_folder()
+    if not seed:
+        return None
+    base = os.path.join(seed, kind + '-' + _key(kind, ekey))
+    if os.path.exists(base + '.fdresult') and os.path.exists(base + '.json'):
+        return base + '.fdresult', base + '.json'
+    return None
+
+
 def _fs(path):
     return path.encode('utf-8')
 
@@ -104,10 +128,14 @@ def load(kind, ekey, what):
     if loader is None:
         return None
     data, head = _paths(kind, ekey)
+    shipped = False
     if not (os.path.exists(data) and os.path.exists(head)):
-        with _lock:
-            _counts['misses'] += 1
-        return None
+        seeded = _seeded(kind, ekey)
+        if seeded is None:
+            with _lock:
+                _counts['misses'] += 1
+            return None
+        (data, head), shipped = seeded, True
     try:
         with open(head, encoding='utf-8') as f:
             extras = json.load(f)
@@ -115,11 +143,14 @@ def load(kind, ekey, what):
         ptr = loader(_fs(data))
         if not ptr:
             raise OSError('not readable as written')
-        os.utime(head, None)                      # (used just now: kept longest)
+        try:
+            os.utime(head, None)                  # (used just now: kept longest)
+        except OSError:
+            pass                                  # (the program's own folder may not be written to)
         with _lock:
             _counts['hits'] += 1
-        _log('[result cache] read the %s back (%.1f MB, %.2f s)\n' % (
-            what, os.path.getsize(data) / 1048576.0, time.time() - t0))
+        _log('[result cache] read the %s back (%.1f MB, %.2f s%s)\n' % (
+            what, os.path.getsize(data) / 1048576.0, time.time() - t0, ', shipped with the program' if shipped else ''))
         return ptr, extras if isinstance(extras, dict) else {}
     except Exception as e:
         _log('[result cache] the file of the %s is not usable (%s): solving\n' % (what, e))

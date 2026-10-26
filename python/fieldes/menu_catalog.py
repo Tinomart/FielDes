@@ -877,10 +877,15 @@ def _regions(r, scale):
         c = [float(r.get(k, 0.0)) for k in ('x', 'y', 'z')]
         lo, hi = [v - scale for v in c], [v + scale for v in c]
     longest = max(hi[i] - lo[i] for i in range(3))
+    cell = _nice(longest / 10.0)
+    if r.get('name') in _FOAMS or r.get('name') == 'random_points':
+        # (a foam is made of the cells round points that do not repeat: a tenth of the block across would be a thousand points and a foam that takes minutes to draw -- a quarter or so of it
+        # is a hundred or so, drawn in a few seconds, and the spacing is a number to change)
+        cell = _nice(longest / 3.5)
 
     return {'es': _num(_nice(longest / 20.0)),
             # (a lattice's cells: a tenth of the model across, their members an eighth of that thick)
-            'cs': _num(_nice(longest / 10.0)), 'ct': _num(_nice(longest / 10.0) / 8.0)}
+            'cs': _num(cell), 'ct': _num(_nice(longest / 10.0) / 8.0)}
 
 
 def _stroke_text(name, places, smooth, r):

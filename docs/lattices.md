@@ -38,15 +38,15 @@ size of its region.
 
 ## In the menus and the model tree
 
-Lattices have two categories of their own in the right-click menus, under **Operations** (on a model, and on empty space): **Periodic lattices** and
+Lattices have two categories of their own in the right-click menus, under **Engineering** (on a model, and on empty space): **Periodic lattices** and
 **Non-periodic lattices**. Many operations have a counterpart in each, so the two kinds are never mixed up in one list.
 
-**Operations → Periodic lattices** lists the operations that fill a model with cells that repeat (`lattice`, `lattice_surface_conform`), and under them **every cell** the
+**Engineering → Periodic lattices** lists the operations that fill a model with cells that repeat (`lattice`, `lattice_surface_conform`), and under them **every cell** the
 library has, a menu for each family: *Strut cells*, *TPMS cells*, *Planar cells* and *Custom cells* (`cell_custom`, `cell_custom_truss`, `cell_custom_tpms`). A cell entry writes
 the call that makes the cell -- `cell_gyroid_1 = cell_periodic('gyroid')` -- and needs no model. Select a cell together with a body and choose
 *Periodic lattices* → `lattice`: the lattice is written with that cell (`lattice(part, cell_gyroid_1, ...)`); a field selected with them is its thickness.
 
-**Operations → Non-periodic lattices** lists what does not repeat: the three steps of a foam (`random_points`, which makes points in a model, then `voronoi_lattice` and
+**Engineering → Non-periodic lattices** lists what does not repeat: the three steps of a foam (`random_points`, which makes points in a model, then `voronoi_lattice` and
 `delaunay_lattice`, which are made of those points) and `surface_lattice`, a random net over the surface of a model. A foam is made around **points**, not of a cell: select a
 model and choose *Non-periodic lattices* → `random_points` (the points appear in the viewport, each as the dot of a gizmo), then select the points and choose `voronoi_lattice`
 or `delaunay_lattice`. The points know the model they were made in, so these two take the points and nothing else: with anything else selected they are greyed out.
@@ -168,7 +168,7 @@ net = surface_lattice(block, cell_size=6, thickness=1.0)
 inside = intersection(net, block)             # half of each beam is outside the body: this is the net inside it
 ```
 
-It is in the menus as **Operations → Non-periodic lattices → surface_lattice**. The graph behind it is `surface_graph(body, cell_size, pattern)` (see [Graphs](#graphs)).
+It is in the menus as **Engineering → Non-periodic lattices → surface_lattice**. The graph behind it is `surface_graph(body, cell_size, pattern)` (see [Graphs](#graphs)).
 
 ## Sizing: thickness, radius, density
 

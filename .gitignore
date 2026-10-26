@@ -12,6 +12,8 @@ __pycache__/
 *.pyc
 
 # FielDes caches and outputs
+# (the solved problems of the guided tour that the packages carry: made by scripts/make-seed-cache.ps1 for one version of the solvers)
+seed-cache/
 *.fieldes-cache.py
 *.fieldes-cache.trees/
 *.fieldes-tessellation/

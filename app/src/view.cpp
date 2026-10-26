@@ -35,6 +35,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QPushButton>
 #include <QSettings>
 #include <QWidgetAction>
+#include <QClipboard>
 #include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QMouseEvent>
@@ -2215,6 +2216,16 @@ void View::mousePressEvent(QMouseEvent* event)
 
     if (mouse.state == mouse.RELEASED)
     {
+        if (event->button() == Qt::RightButton && !m_errorText.isEmpty() && m_errorRect.contains(event->pos()))
+        {
+            // The error banner is painted, so its text cannot be selected: a right-click on it offers to copy it (the message of the interpreter, to look it up or to send it)
+            QMenu menu(this);
+            menu.addAction(T("Copy the error"), this, [this] { QGuiApplication::clipboard()->setText(m_errorText); });
+            menu.exec(event->globalPos());
+            press_pos = QPoint(-100000, -100000);
+            press_target = nullptr;
+            return;
+        }
         if (event->button() == Qt::LeftButton && !m_errorText.isEmpty() && m_errorRect.contains(event->pos()))
         {
             // The error banner: the editor goes to the line (the press is not a selection click)
@@ -4036,7 +4047,7 @@ void View::checkPrimitive(QAction* action, const QString& name, bool withBodies,
     if (withBodies && !m_scene->entryAllowed("primitive", name, atLine)) action->setEnabled(false);
 }
 
-void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain)
+void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double scale, int atLine, const QString& domain, const QStringList& only, const QStringList& skip)
 {
     // New material, New fluid, New support or load, New thermal condition, New flow condition: each a menu of its own, in the
     // order the catalog has them
@@ -4050,7 +4061,7 @@ void View::fillSimulationPrimitives(QMenu* menu, const QVector3D& point, double 
     {
         const auto p = v.toObject();
         const QString g = p["group"].toString();
-        if (isSimulationPrimitive(g) && p["domain"].toString() == domain) groups[g] << p;
+        if (isSimulationPrimitive(g) && p["domain"].toString() == domain && (only.isEmpty() || only.contains(g)) && !skip.contains(g)) groups[g] << p;
     }
     for (const QString& g : order)
     {
@@ -4366,7 +4377,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     const QVector3D flat = placementFlat(pos, flatScale);
     const QVector3D exact = placementExact(pos);
     // The basic things -- a 3D shape, a 2D shape, a line, a point, a surface, a field: the primitives -- are in a menu of their own, the more complicated shapes made with
-    // parameters in another, what is done to a model -- the operations, Lattice -- under Operations, and what is worked out about it -- the analyses -- under Engineering
+    // parameters in another, what is done to a model -- the operations -- under Operations, and what is worked out about it or made of it -- the analyses, the lattices -- under Engineering
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, exact, flat, scale, flatScale, atLine, true);
@@ -4386,28 +4397,23 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     else menu->deleteLater();
 }
 
-// What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected, and a
-// category for each kind of lattice -- periodic and non-periodic ones -- with what it makes and what it is made of
+// What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected
+// (the lattices are in the Engineering menu)
 void View::fillOperationsMenu(QMenu* ops, int line, const QVector3D& point, double scale, int atLine)
 {
+    Q_UNUSED(atLine);
     // Nothing is left out of it for want of a model: an operation with no model to work on -- the script has none, or nothing selected fits -- is written with a placeholder
     // (`...`) where the model goes, as the analyses of the Engineering menu are.  What has no meaning without a model -- center and bounding_box, which measure one -- is
     // in the menu of empty space only when the script has one
     if (line < 0 && (!m_scene || m_scene->hasModel())) addQuickOperations(ops, -1, point, scale);
     fillOperations(ops, line, point, scale);
-    // (a category for each kind of lattice -- the catalog lists them in the order they are shown: the label is in the language already, it comes from the library)
-    for (const auto s : m_catalog["sections"].toArray())
-    {
-        const auto section = s.toObject();
-        auto lattices = ops->addMenu(TypeIcons::icon(section["type"].toString("lattice")), section["label"].toString());
-        lattices->setToolTipsVisible(true);
-        fillLatticeMenu(lattices, point, scale, line < 0 ? atLine : line, section["name"].toString());
-    }
 }
 
 // What the Engineering menu holds: first the optimisation that designs for an analysis of any domain, on its own; then a category for each domain -- Structural, Thermal, Fluid -- each with the icon and the colour of its domain, each with what an analysis of it is
 // given (a support or a load, a thermal or a flow condition: a model of its own, no other model is needed for it) and the analyses and optimisations of it (they work on what is
-// selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there); then the materials, which an analysis of any domain takes
+// selected -- a part, its conditions, a material -- and write a placeholder for what is not: they are always there); a category for each kind of lattice -- periodic and
+// non-periodic ones -- with what it makes and what it is made of; the materials -- a material, which an analysis of any domain takes, and a fluid, the material of a flow -- in
+// one category; then what works over an analysis of any domain
 void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine)
 {
     static const QList<QPair<QString, QString>> categories = {
@@ -4420,12 +4426,25 @@ void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, do
     {
         auto sub = menu->addMenu(TypeIcons::icon("simulation", false, c.first), c.second);
         sub->setToolTipsVisible(true);
-        fillSimulationPrimitives(sub, point, scale, at, c.first);
+        fillSimulationPrimitives(sub, point, scale, at, c.first, QStringList(), QStringList{"Fluids"});      // (a fluid is with the materials)
         sub->addSeparator();
         fillOperations(sub, line, point, scale, true, c.first);
     }
-    menu->addSeparator();
-    fillSimulationPrimitives(menu, point, scale, at, QString());
+    // What an analysis is made of, in one place: New material -- of any domain -- and New fluid, which is the material of a flow
+    {
+        auto materials = menu->addMenu(TypeIcons::icon("material"), T("Materials"));
+        materials->setToolTipsVisible(true);
+        fillSimulationPrimitives(materials, point, scale, at, QString(), QStringList{"Materials"});
+        fillSimulationPrimitives(materials, point, scale, at, "fluid", QStringList{"Fluids"});
+    }
+    // (a category for each kind of lattice -- the catalog lists them in the order they are shown: the label is in the language already, it comes from the library)
+    for (const auto s : m_catalog["sections"].toArray())
+    {
+        const auto section = s.toObject();
+        auto lattices = menu->addMenu(TypeIcons::icon(section["type"].toString("lattice")), section["label"].toString());
+        lattices->setToolTipsVisible(true);
+        fillLatticeMenu(lattices, point, scale, at, section["name"].toString());
+    }
     menu->addSeparator();
     fillOperations(menu, line, point, scale, true, "-");       // (what works over an analysis of any domain)
 }
@@ -4512,8 +4531,8 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     // was clicked, a point exactly there), from its row in the model tree or from a line of the text editor (made at the middle of the model).  A menu has the
     // same categories wherever it comes from; what depends on the model is which of their entries are valid -- the selection decides that (a surface selected
     // makes `profile` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
-    // parameters in another, what is done to the model -- the operations on it and the lattice menu -- under Operations, and what is worked out about it -- the analyses --
-    // under Engineering; the quick ones (center, bounding_box) are below them
+    // parameters in another, what is done to the model -- the operations on it -- under Operations, and what is worked out about it or made of it -- the analyses and the
+    // lattices -- under Engineering; the quick ones (center, bounding_box) are below them
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, point, point, point, scale, scale, -1, true);
@@ -4876,6 +4895,29 @@ void View::standardView(int which)
         default:          d = y_up ? QVector3D(1, 1, 1)  : QVector3D(1, -1, 1); break;
     }
     camera.lookFrom(d);
+}
+
+bool View::triadTip(const QVector3D& dir, QPointF& tip) const
+{
+    for (const auto& h : triad_hits)
+        if ((h.second - dir).length() < 1e-3f)
+        {
+            tip = h.first;
+            return true;
+        }
+    return false;
+}
+
+bool View::onStandardSide()
+{
+    const QMatrix4x4 r = camera.rotation();
+    for (int i = 0; i < 3; ++i)
+    {
+        QVector3D d;
+        d[i] = 1;
+        if (std::fabs(r.map(d).z()) > 0.9995f) return true;
+    }
+    return false;
 }
 
 int View::triadHit(QPoint pos) const

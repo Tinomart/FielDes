@@ -9,13 +9,20 @@ of the License, or (at your option) any later version.
 #include <algorithm>
 
 #include <QAbstractButton>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QEvent>
+#include <QGuiApplication>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QRegularExpression>
 #include <QSettings>
+#include <QTextDocument>
 #include <QWidget>
 
 #include "fieldes/carddrag.hpp"
+#include "fieldes/i18n.hpp"
 
 namespace FielDes {
 
@@ -181,6 +188,39 @@ void CardController::restore()
 
 bool CardController::eventFilter(QObject* obj, QEvent* e)
 {
+    // The text of a card -- the numbers of a result, a note, an error -- is copied from a right-click on it that nothing in it answered: the text of its labels, line by line
+    // (a label of text that is meant to be selected is selected as any text is)
+    if (obj == m_card && e->type() == QEvent::ContextMenu)
+    {
+        QStringList lines;
+        for (QLabel* label : m_card->findChildren<QLabel*>())
+        {
+            if (!label->isVisibleTo(m_card)) continue;
+            QString t = label->text();
+            if (Qt::mightBeRichText(t))
+            {
+                // (the rows of a table, the lines and the paragraphs of a text: a line each; the cells of a row apart by a space; what a text is escaped with -- &nbsp;, &lt; -- as the characters it stands for.
+                // Stripped of its tags alone the numbers of a result came out as "maximum von Mises stress&nbsp;&nbsp;53.36&nbsp;MPamaximum displacement&nbsp;...", all in one line)
+                t.replace(QRegularExpression("</tr>|<br\\s*/?>|</p>|</div>|</li>|</h[1-6]>", QRegularExpression::CaseInsensitiveOption), "\n");
+                t.replace(QRegularExpression("</td>|</th>", QRegularExpression::CaseInsensitiveOption), " ");
+                t.remove(QRegularExpression("<[^>]*>"));
+                t.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&");
+                QStringList rows;
+                for (const QString& row : t.split('\n'))
+                    if (!row.simplified().isEmpty()) rows << row.simplified();
+                t = rows.join("\n");
+            }
+            t = t.trimmed();
+            if (!t.isEmpty()) lines << t;
+        }
+        if (!lines.isEmpty())
+        {
+            QMenu menu(m_card);
+            menu.addAction(T("Copy the text"), m_card, [lines] { QGuiApplication::clipboard()->setText(lines.join("\n")); });
+            menu.exec(static_cast<QContextMenuEvent*>(e)->globalPos());
+            return true;
+        }
+    }
     if (m_card->property("floating").toBool()) return false;       // (in a window of its own: the layout of that window places and sizes it)
     if (obj == m_card->parentWidget())
     {

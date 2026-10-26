@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QJsonArray>
@@ -2046,6 +2047,45 @@ Window::Window(Arguments args)
             loop.exec();
             std::cerr << "automation: render finished after " << total.elapsed() / 1000 << " s" << std::endl;
         });
+        // waitdemo [seconds]: wait until the "Show me" of the guided tour has finished and put everything back (at most that long; 300 s by default) -- the step is walked through as a hand does,
+        // the solve and the render it made are waited for, and then the next step may be asked for
+        a->add("waitdemo", [=](const QString& args){
+            const qint64 limit = (args.trimmed().isEmpty() ? 300 : args.trimmed().toInt()) * 1000;
+            QElapsedTimer total;
+            total.start();
+            QEventLoop loop;
+            QTimer poll;
+            QObject::connect(&poll, &QTimer::timeout, [&]() {
+                if (!(tour && tour->demoRunning()) || total.elapsed() > limit) loop.quit();
+            });
+            poll.start(200);
+            loop.exec();
+            std::cerr << "automation: the show was over after " << total.elapsed() / 1000 << " s" << std::endl;
+        });
+        // waitdemohold [seconds]: wait until what a "Show me" of the tour made is finished and on the screen (before it is put back), or until the show is over -- the moment for a grab or a dump
+        a->add("waitdemohold", [=](const QString& args){
+            const qint64 limit = (args.trimmed().isEmpty() ? 300 : args.trimmed().toInt()) * 1000;
+            QElapsedTimer total;
+            total.start();
+            QEventLoop loop;
+            QTimer poll;
+            QObject::connect(&poll, &QTimer::timeout, [&]() {
+                if (!(tour && tour->demoRunning()) || tour->demoHolding() || total.elapsed() > limit) loop.quit();
+            });
+            poll.start(100);
+            loop.exec();
+            std::cerr << "automation: the show is on the screen after " << total.elapsed() / 1000 << " s (holding=" << (tour && tour->demoHolding()) << ")" << std::endl;
+        });
+        // quit: the window closes as the user's does, with nothing asked about the script -- a window that has done its work ends itself (the launcher's cap is for the one that hangs)
+        a->add("quit", [=](const QString&){
+            editor->setModified(false);
+            QTimer::singleShot(0, this, [this] { close(); });
+        });
+        // closeasks: the window is closed as the user's hand closes it, and the question about unsaved work is asked if there is one (a question is read with `dialog text`, answered with `dialog cancel` or `accept`) --
+        // for the test that leaving the guided tour leaves nothing to save
+        a->add("closeasks", [=](const QString&){
+            QTimer::singleShot(200, this, [this] { close(); });
+        });
         a->add("cursor", [=](const QString& args){
             const auto p = args.split(' ');
             if (p.size() < 2) return;
@@ -2293,6 +2333,39 @@ Window::Window(Arguments args)
             if (p[0] == "release") *winGrab = nullptr;
             std::cerr << "automation: winmouse " << p[0].toStdString() << " reached " << target->metaObject()->className() << " " << target->objectName().toStdString() << std::endl;
         });
+        // winrclick <x> <y> [menu]: a right click at a place of the WINDOW, as a hand makes it -- the right button pressed and let go, then the context menu, to the widget that is on top there; the menu opens once
+        // this command is over, so that the commands after it (`popup dump`, `popup pick`, a picture) run while it is open.  `menu`: only the context menu, without the press and the release (which go on up to
+        // the viewport when nothing answers them, and open the viewport's own menu): what the widget under the place says to a request for its menu
+        a->add("winrclick", [=](const QString& args){
+            const auto p = args.split(' ', Qt::SkipEmptyParts);
+            if (p.size() < 2) return;
+            const QPoint at(p[0].toInt(), p[1].toInt());
+            QPointer<QWidget> target = childAt(at);
+            if (!target) target = this;
+            const QPoint local = target->mapFrom(this, at);
+            const QPoint global = target->mapToGlobal(local);
+            const bool menuOnly = p.size() > 2 && p[2] == "menu";
+            std::cerr << "automation: winrclick reached " << target->metaObject()->className() << " " << target->objectName().toStdString() << std::endl;
+            // (all of it once this command is over: a widget that answers the release of the button with a menu -- the error banner of the viewport -- keeps the loop of its menu in its own call, and the
+            // commands after this one would wait for the end of it)
+            QTimer::singleShot(100, this, [target, at, local, global, menuOnly] {
+                if (!target) return;
+                if (!menuOnly)
+                {
+                    QMouseEvent press(QEvent::MouseButtonPress, local, at, global, Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+                    QApplication::sendEvent(target, &press);
+                    QMouseEvent release(QEvent::MouseButtonRelease, local, at, global, Qt::RightButton, Qt::NoButton, Qt::NoModifier);
+                    QApplication::sendEvent(target, &release);
+                    if (!target) return;
+                }
+                QContextMenuEvent menu(QContextMenuEvent::Mouse, local, global, Qt::NoModifier);
+                QApplication::sendEvent(target, &menu);
+            });
+        });
+        // clipboard: what the clipboard holds, written to the log (the text that a "Copy the text" of a card put there)
+        a->add("clipboard", [=](const QString&){
+            std::cerr << "automation: clipboard: [" << QGuiApplication::clipboard()->text().toStdString() << "]" << std::endl;
+        });
         // viewwheel <x> <y> <delta> [shift|ctrl|shift+ctrl]: a turn of the mouse wheel over the viewport (120 is one notch), with Shift and/or Ctrl held when asked
         a->add("viewwheel", [=](const QString& args){
             const auto p = args.split(' ', Qt::SkipEmptyParts);
@@ -2375,6 +2448,44 @@ Window::Window(Arguments args)
             }
             QContextMenuEvent e(QContextMenuEvent::Mouse, pos, tree->viewport()->mapToGlobal(pos));
             QApplication::sendEvent(tree->viewport(), &e);
+        });
+        // treerpress <text prefix>: a right-click on the name of a model-tree row as a hand makes it -- the button goes down and comes up, and then the menu is asked for (`treerclick` is
+        // only the menu): what the press does to the selection is what a test of the menu has to see
+        a->add("treerpress", [=](const QString& args){
+            auto tree = view->scenePanel()->findChild<QTreeWidget*>();
+            if (!tree) return;
+            auto row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            tree->scrollToItem(row);
+            QApplication::processEvents();
+            row = findRow(args.trimmed());
+            if (!row) { std::cerr << "automation: no tree row " << args.toStdString() << "\n"; return; }
+            const QPoint pos(tree->columnViewportPosition(0) + tree->columnWidth(0) / 2, tree->visualItemRect(row).center().y());
+            auto send = [&](QEvent::Type t, Qt::MouseButton b, Qt::MouseButtons bs) {
+                QMouseEvent e(t, pos, tree->viewport()->mapToGlobal(pos), b, bs, Qt::NoModifier);
+                QApplication::sendEvent(tree->viewport(), &e);
+            };
+            send(QEvent::MouseButtonPress, Qt::RightButton, Qt::RightButton);
+            send(QEvent::MouseButtonRelease, Qt::RightButton, Qt::NoButton);
+            QContextMenuEvent e(QContextMenuEvent::Mouse, pos, tree->viewport()->mapToGlobal(pos));
+            QApplication::sendEvent(tree->viewport(), &e);
+        });
+        // typetext <text>: the keys of the text are pressed, one after the other, in the widget that has the keyboard -- as a hand types (the code editor takes them as its own: its brackets,
+        // its completion, what it does to the lines round the cursor)
+        a->add("typetext", [=](const QString& args){
+            QWidget* w = QApplication::focusWidget();
+            if (!w) { std::cerr << "automation: typetext: no widget has the keyboard\n"; return; }
+            for (const QChar c : args)
+            {
+                const int key = c.unicode() < 128 ? int(c.toUpper().unicode()) : 0;
+                QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, QString(c));
+                QApplication::sendEvent(w, &press);
+                QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, QString(c));
+                QApplication::sendEvent(w, &release);
+                QApplication::processEvents();
+                if (QWidget* now = QApplication::focusWidget()) w = now;
+            }
+            std::cerr << "automation: typetext " << args.size() << " keys to " << w->metaObject()->className() << "\n";
         });
         // exportmodel <variable> <mesh|fea|results|field> <path>: the same export as the menus, with the file given
         a->add("exportmodel", [=](const QString& args){
@@ -3740,6 +3851,9 @@ void Window::dropEvent(QDropEvent* event)
 
 QMessageBox::StandardButton Window::checkUnsaved()
 {
+    // While the guided tour is on, the document is the model it wrote there: nothing in it is the user's work, and a question about saving it -- asked when a step puts the tour's model back, after
+    // the Chapters menu went to another chapter -- would be a question about the tour's own lines.  (What the user had is asked about before the tour starts, while it does not own the document yet)
+    if (tour && tour->ownsDocument() && (filename.isEmpty() || filename.startsWith(":/"))) return QMessageBox::Ok;
     const QStringList others = editor->modifiedAuxiliary();
     if (!others.isEmpty() && !automated)
     {

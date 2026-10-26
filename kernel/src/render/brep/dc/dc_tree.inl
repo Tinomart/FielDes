@@ -11,6 +11,9 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <numeric>
 #include <functional>
 #include <limits>
+#include <mutex>
+#include <string>
+#include <array>
 
 #include <cmath>
 
@@ -775,6 +778,53 @@ void DCTree<N>::evalLeaf(Evaluator* eval,
         // this is the bottom of the recursion)
         findVertex(this->leaf->vertex_count);
 
+        {   // A test, nothing in a normal run: FIELDES_DC_TRACE=x,y,z,r says, for every leaf cell within r of the point, what its edges gave the QEF and where its vertex went
+            static const std::array<double, 4> trace = [] {
+                std::array<double, 4> t = {{0.0, 0.0, 0.0, -1.0}};
+                if (const char* s = std::getenv("FIELDES_DC_TRACE")) { std::sscanf(s, "%lf,%lf,%lf,%lf", &t[0], &t[1], &t[2], &t[3]); }
+                return t;
+            }();
+            if (trace[3] > 0)
+            {
+                bool near_it = true;
+                for (unsigned a = 0; a < N; ++a)
+                {
+                    near_it = near_it && trace[a] >= this->region.lower(a) - trace[3] && trace[a] <= this->region.upper(a) + trace[3];
+                }
+                if (near_it)
+                {
+                    static std::mutex traceLock;
+                    std::lock_guard<std::mutex> hold(traceLock);
+                    const Vec v = this->leaf->verts.col(this->leaf->vertex_count);
+                    bool inside_cell = true;
+                    double out_by = 0.0;
+                    for (unsigned a = 0; a < N; ++a)
+                    {
+                        const double w = this->region.upper(a) - this->region.lower(a);
+                        const double o = std::max(this->region.lower(a) - v(a), v(a) - this->region.upper(a));
+                        if (o > 0) { inside_cell = false; out_by = std::max(out_by, o / w); }
+                    }
+                    std::fprintf(stderr, "[dc] cell level %d lo (%.5f %.5f %.5f) hi (%.5f %.5f %.5f) corner mask %02x vertex (%.5f %.5f %.5f) %s edges %u\n",
+                                 int(this->region.level), this->region.lower(0), this->region.lower(1), this->region.lower(N > 2 ? 2 : 0),
+                                 this->region.upper(0), this->region.upper(1), this->region.upper(N > 2 ? 2 : 0), unsigned(this->leaf->corner_mask),
+                                 v(0), v(1), v(N > 2 ? 2 : 0), inside_cell ? "inside" : (std::string("OUTSIDE by ") + std::to_string(out_by) + " of the cell").c_str(), edge_count);
+                    for (unsigned i = 0; i < edge_count; ++i)
+                    {
+                        const auto* x = this->leaf->intersections[edges[i]];
+                        if (!x) { std::fprintf(stderr, "[dc]    edge %zu: none\n", size_t(edges[i])); continue; }
+                        const auto mp = x->normalized_mass_point();
+                        std::fprintf(stderr, "[dc]    edge %zu: at (%.5f %.5f %.5f) samples %.0f  AtA diag (%.3f %.3f %.3f) off (%.3f %.3f %.3f)  AtB (%.4f %.4f %.4f)\n", size_t(edges[i]),
+                                     mp(0), mp(1), mp(N > 2 ? 2 : 0), x->mass_point(N), x->AtA(0, 0), x->AtA(1, 1), x->AtA(N > 2 ? 2 : 0, N > 2 ? 2 : 0),
+                                     x->AtA(0, 1), x->AtA(0, N > 2 ? 2 : 0), x->AtA(1, N > 2 ? 2 : 0), x->AtB(0), x->AtB(1), x->AtB(N > 2 ? 2 : 0));
+                    }
+                    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> es(this->leaf->AtA);
+                    std::fprintf(stderr, "[dc]    cell QEF eigenvalues (%.4f %.4f %.4f) rank %u mass point (%.5f %.5f %.5f)\n", es.eigenvalues()(0), es.eigenvalues()(1), es.eigenvalues()(N > 2 ? 2 : 0),
+                                 this->leaf->rank, this->leaf->mass_point(0) / this->leaf->mass_point(N), this->leaf->mass_point(1) / this->leaf->mass_point(N),
+                                 this->leaf->mass_point(N > 2 ? 2 : 0) / this->leaf->mass_point(N));
+                }
+            }
+        }
+
         // Move on to the next vertex
         this->leaf->vertex_count++;
     }
@@ -790,6 +840,40 @@ void DCTree<N>::saveIntersection(const Vec& pos, const Vec& derivs,
     if (this->leaf->intersections[edge] == nullptr)
     {
         this->leaf->intersections[edge] = object_pool.next().next().get();
+    }
+    {   // A test, nothing in a normal run: FIELDES_DC_TRACE=x,y,z,r (see evalLeaf) says what every sample near the point gave: the derivative as the field returned it, its length, the value
+        static const std::array<double, 4> trace = [] {
+            std::array<double, 4> t = {{0.0, 0.0, 0.0, -1.0}};
+            if (const char* s = std::getenv("FIELDES_DC_TRACE")) { std::sscanf(s, "%lf,%lf,%lf,%lf", &t[0], &t[1], &t[2], &t[3]); }
+            return t;
+        }();
+        if (trace[3] > 0)
+        {
+            bool near_it = true;
+            for (unsigned a = 0; a < N; ++a) { near_it = near_it && std::fabs(pos(a) - trace[a]) <= trace[3]; }
+            if (near_it)
+            {
+                static std::mutex traceLock;
+                std::lock_guard<std::mutex> hold(traceLock);
+                std::fprintf(stderr, "[dc]  push at (%.5f %.5f %.5f) raw derivative (%.6g %.6g %.6g) length %.6g value %.6g\n",
+                             pos(0), pos(1), pos(N > 2 ? 2 : 0), derivs(0), derivs(1), derivs(N > 2 ? 2 : 0), derivs.norm(), value);
+            }
+        }
+    }
+    {
+        // A sample whose plane lies farther from it than the cell is wide says nothing about the surface in the cell.  The sample is the end of an edge of the cell that the search closed in on to a
+        // 1024th of the edge, so the field's value there divided by the length of its derivative -- how far the surface is along the derivative -- cannot be more than a cell.  A branch of the
+        // field with next to no slope (a derivative of 1e-8 a lattice read at a node gives, float noise: normalised it points anywhere) has a foot thousands of cells away, and that plane pulled
+        // the vertex of the cells round a corner that lies exactly on the grid -- the foot of the stem of a part on integer coordinates -- out to the end of its leash: a wedge as big as the cell
+        // (AtB of -5500 where the others had 12; seen with FIELDES_DC_TRACE).  Such a sample keeps its place in the mass point and gives no plane, as one whose derivative is nothing does
+        const double slope = derivs.norm();
+        double widest = 0.0;
+        for (unsigned a = 0; a < N; ++a) { widest = std::max(widest, this->region.upper(a) - this->region.lower(a)); }
+        if (slope > 1e-12 && std::fabs(value) > 2.0 * widest * slope)
+        {
+            this->leaf->intersections[edge]->push(pos, Vec::Zero(), value);
+            return;
+        }
     }
     this->leaf->intersections[edge]->push(pos, derivs, value);
 }
