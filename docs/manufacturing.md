@@ -60,6 +60,11 @@ clearance grows by 0.29 mm for every mm of the corner's radius, so a corner is m
 within its own noise -- the normal is the field's slope averaged over a step, and a normal 5 degrees off at a radius of 3 moves the ball by 0.26 mm -- and a corner there may or may not be marked, in stripes along the arc where it is (seen on pockets with corners of 1.8 and 2.7 mm). A normal that is a degree or two off -- the normal of a field made
 from a mesh -- does not mark a corner that is right (at the radius asked or more).
 
+**A limit of the picture: the colours are read at the corners of the mesh that is drawn, and a rule that looks at a normal does not judge the places near an edge** (the normal there is a mix of the
+two faces, not the lean of either). A part made of boxes with sharp edges has no corner inside its flat faces, so an overhang that is a whole flat face -- the underside of a box that hangs out --
+is **not coloured** although the report counts it (12 % of the surface, in the T of the guided tour): round the edges a little (`rounded_box`, `round_edges`) and the face is coloured red. A part
+with curved or rounded surfaces -- what an optimizer makes, an imported bracket with fillets -- is coloured as it should be. The numbers of the report are measured on the surface itself and are right either way.
+
 The **numbers** of the report -- how much of the surface breaks a rule, how badly, in which places -- are **measured**, on a few thousand points of the surface (`samples=`, 5000):
 random points near it, each moved onto it by Newton steps along the gradient. They are worked out a second way -- plain arithmetic on the values of the field at points along the lines
 each rule looks along -- which is a check of the colours: the fields and the numbers are made two ways. The points are never drawn and never used to build anything.

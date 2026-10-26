@@ -2355,7 +2355,6 @@ void ScenePanel::clearScene()
         saveExpandState();          // (of the file that is left: the editor does not know the new one yet)
     }
     m_expandState.clear();
-    m_foldsPending = false;
     m_sectionRename = SectionRename();
     m_startSectionRename = -1;
     rebuild();
@@ -3239,6 +3238,18 @@ void ScenePanel::rebuild()
             m_expandState.remove(p->data(COL_NAME, ROLE_KEY).toString());
         }
     }
+    // Nor is a row closed where the user is writing -- the text cursor is in the lines its fold would hide (a row nobody has chosen about: it
+    // closes with the first tree after the cursor has left)
+    if (m_writingIn && textMatchesScene())
+    {
+        for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+        {
+            QTreeWidgetItem* row = *i;
+            if (row->childCount() == 0 || row->isExpanded()) continue;
+            const int line = foldLineOf(row);
+            if (line >= 0 && !m_expandState.contains(row->data(COL_NAME, ROLE_KEY).toString()) && m_writingIn(line)) row->setExpanded(true);
+        }
+    }
     applyShowOnly();
 
     // Footer notes: analysis problems, truncated huge scripts
@@ -3356,7 +3367,7 @@ void ScenePanel::rebuild()
             break;
         }
     }
-    if (m_foldsPending) applyFolds();
+    applyFolds();
     // A section that was just written (a click on a gap between two rows): its name is typed in at once
     if (m_startSectionRename >= 0)
     {
@@ -3923,7 +3934,6 @@ void ScenePanel::showCached()
 {
     // A script was opened: what was collapsed in it when it was last open comes back (and the code editor's folds follow with its tree)
     loadExpandState();
-    m_foldsPending = true;
     if (!m_source || m_predicted || !m_scene["items"].toArray().isEmpty()) return;
     const QString text = m_source();
     if (text.trimmed().isEmpty()) return;
@@ -11273,24 +11283,30 @@ void ScenePanel::editorFolded(int line0, bool folded)
     }
 }
 
+bool ScenePanel::textMatchesScene() const
+{
+    // (a tree of an older text has other lines than the text that is in the editor now)
+    return m_source && m_scene["source_md5"].toString() == md5Hex(m_source());
+}
+
 void ScenePanel::applyFolds()
 {
-    // The folds that the saved state of a file asks for are set in the code editor, once, with the tree of the text that is in it (a tree
-    // of an older text has other lines)
+    // The code editor's folds are set to the rows of the tree, with every tree: the lines of a statement or of a section are folded where its row is
+    // closed and shown where it is open.  A model that is new, or whose file was just opened, has no choice of the user's: its row is closed (open
+    // where a placeholder is in it, or the user is writing), and so are its lines -- the tree and the code are one state, whichever of them was
+    // changed
     if (m_scene["items"].toArray().isEmpty() && m_scene["sections"].toArray().isEmpty()) return;
-    if (!m_source || m_scene["source_md5"].toString() != md5Hex(m_source())) return;
-    m_foldsPending = false;
+    if (!textMatchesScene()) return;
+    QSet<int> done;                 // (a line is set by its first row: the outermost)
     for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
     {
         QTreeWidgetItem* row = *i;
         if (row->childCount() == 0) continue;
         const int line = foldLineOf(row);
-        if (line < 0) continue;
-        const QString key = row->data(COL_NAME, ROLE_KEY).toString();
-        const bool holds = holdsPlaceholder(row);
-        if (!m_expandState.contains(key) && !holds) continue;       // (what the user did not choose stays as the editor has it: open)
+        if (line < 0 || done.contains(line)) continue;
+        done.insert(line);
         m_foldSyncing = true;
-        emit(foldRequested(line, !holds && !m_expandState.value(key)));
+        emit(foldRequested(line, !row->isExpanded()));
         m_foldSyncing = false;
     }
 }
@@ -11300,7 +11316,7 @@ void ScenePanel::loadExpandState()
     m_expandState.clear();
     const QString file = m_fileKey ? m_fileKey() : QString();
     if (file.isEmpty()) return;
-    QSettings settings("FielDes", "FielDes");
+    QSettings settings;
     const QJsonObject o = QJsonDocument::fromJson(settings.value(expandStorageKey(file)).toString().toUtf8()).object();
     for (const auto v : o["open"].toArray()) m_expandState[v.toString()] = true;
     for (const auto v : o["closed"].toArray()) m_expandState[v.toString()] = false;
@@ -11310,7 +11326,7 @@ void ScenePanel::saveExpandState()
 {
     const QString file = m_fileKey ? m_fileKey() : QString();
     if (file.isEmpty()) return;
-    QSettings settings("FielDes", "FielDes");
+    QSettings settings;
     const QString key = expandStorageKey(file);
     if (m_expandState.isEmpty())
     {

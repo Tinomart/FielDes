@@ -75,6 +75,10 @@ public:
      *  for it  */
     void setFileKeySource(std::function<QString()> f) { m_fileKey = f; }
 
+    /*  Whether the user is writing in the lines under the (0-based) line, the lines that a fold of it would hide: where they are writing,
+     *  nothing is closed  */
+    void setWritingSource(std::function<bool(int)> f) { m_writingIn = f; }
+
     /*  Whether the script has a model a menu operation can work on, and another one besides the model displayed
      *  by the (0-based) line `line0` (for the operations that combine two)  */
     bool hasModel() const;
@@ -850,8 +854,8 @@ protected:
     QHash<QString, bool> m_expandState;   // user's expand / collapse, by row key
     std::function<QString()> m_fileKey;
     QTimer m_expandSaveTimer;             // (what is collapsed is written a moment after it was changed)
-    bool m_foldsPending = false;          // (a file was opened: the folds its saved state asks for are set in the editor with its first tree)
-    bool m_foldSyncing = false;           // (a fold is being passed between the tree and the editor: its echo is not taken as a new one)
+    std::function<bool(int)> m_writingIn;
+    bool m_foldSyncing = false;          // (a fold is being passed between the tree and the editor: its echo is not taken as a new one)
     struct SectionRename { bool active = false; int line = 0, col = 0, length = 0; QString original, lead, current; };
     SectionRename m_sectionRename;        // (the name of a section being typed: where in its comment it is written)
     int m_startSectionRename = -1;        // (the 0-based line of a section just written: its name is typed in as soon as its row is there)
@@ -864,10 +868,13 @@ protected:
 
     /*  What is collapsed: a property of the file.  It is kept by the editor's key for the file and brought back when the file is opened;
      *  and it is tied to the code editor's folds in both directions -- the lines of a statement or of a section fold when its row closes,
-     *  and its row closes when they are folded.  A row that holds a placeholder is never closed (that is where the user has to write)  */
+     *  and its row closes when they are folded.  A row that holds a placeholder is never closed (that is where the user has to write), nor is one
+     *  that the user is writing in.  A model nobody has chosen about starts closed -- in the tree and in the code alike: after every tree the
+     *  editor's folds are set to the rows, so the two are one state  */
     void noteExpansion(QTreeWidgetItem* row, bool open);
     int foldLineOf(QTreeWidgetItem* row) const;
     bool holdsPlaceholder(QTreeWidgetItem* row) const;
+    bool textMatchesScene() const;
     void refoldInside(QTreeWidgetItem* row);
     void loadExpandState();
     void saveExpandState();

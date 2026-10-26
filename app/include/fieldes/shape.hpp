@@ -534,6 +534,11 @@ public:
     /*  The numbers of the symmetry an image is made in (fieldes.stdlib.symmetries.symmetry_image): the image's field has them, but a surface of an image is pulled by the numbers of the
         model it is the image of -- never by the symmetry's, which would move the planes and so every image of everything  */
     void setFrozenVars(const std::set<libfive::Tree::Id>& v) { m_frozenVars = v; }
+    /*  The direction of the axis the sides of this shape are pulled away from (fieldes.stdlib.cad: a threaded rod's; zero for a shape that has none): the flanks of a thread face up, down and
+        out, and a pull along each one's own normal would do something else on each -- a press on the side pulls the diameter along the radius, wherever it is  */
+    void setPullAxis(const QVector3D& a) { m_pullAxis = a; }
+    bool hasPullAxis() const { return m_pullAxis.lengthSquared() > 1e-12f; }
+    const QVector3D& pullAxis() const { return m_pullAxis; }
     /*  The numbers of every placement argument of the script, whichever shape it places (the same set is shared by all the shapes of a run): a shape made of a placed shape -- the extrusion of a
         rectangle that has a position= -- has them in its field, and a pull of one of its surfaces must change the handles, never the move, turn or scale of the shape inside it  */
     void setSceneGizmoVars(std::shared_ptr<const std::set<libfive::Tree::Id>> v) { m_sceneGizmoVars = std::move(v); }
@@ -1115,6 +1120,7 @@ protected:
 
     Gizmo m_gizmo;
     std::set<libfive::Tree::Id> m_frozenVars;
+    QVector3D m_pullAxis;
     std::shared_ptr<const std::set<libfive::Tree::Id>> m_sceneGizmoVars;
     bool m_symmetryImage = false;
     bool m_locked = false;

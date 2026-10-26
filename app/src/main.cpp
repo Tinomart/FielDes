@@ -197,6 +197,13 @@ int main(int argc, char** argv)
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashFilter);
 #endif
+    // The settings are kept in the registry (Windows) or the user's configuration folder -- unless FIELDES_SETTINGS_DIR names a folder: they are an .ini file in it then, and nothing of the user's is
+    // read or written (a test window has one of its own: the way it is opened, what it closed and the files it opened are not the user's)
+    if (qEnvironmentVariableIsSet("FIELDES_SETTINGS_DIR"))
+    {
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, qEnvironmentVariable("FIELDES_SETTINGS_DIR"));
+    }
     if (isCommandLine(argc, argv)) return runCommandLine(argc, argv);
     {   // Configure default OpenGL as 3.2 Core
         QSurfaceFormat format;

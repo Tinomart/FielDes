@@ -175,7 +175,8 @@ signals:
     /*  The text size was changed with the keys  */
     void fontSizeChanged(int size);
 
-    /*  The lines under a fold header (the 0-based line) were folded or unfolded: the model tree follows (see ScenePanel::editorFolded)  */
+    /*  The lines under a fold header (the 0-based line) were folded or unfolded: the model tree follows (see ScenePanel::editorFolded).  Not told when an edit breaks a fold (lines written into it):
+     *  that is no choice of the user's, and the next tree sets the folds to its rows again  */
     void foldToggled(int line0, bool folded);
 
     /*  A name defined in a library file (not the script) was requested */

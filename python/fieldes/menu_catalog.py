@@ -186,7 +186,8 @@ PRIMITIVES = [
     ('prism', '3D', 'prism(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}), {zm}, {zp})'),
     ('capsule', '3D', 'capsule({q}, {s}, ({x}, {y}, {zm}))'),
     ('tube', '3D', 'tube({h}, {q}, {s}, ({x}, {y}, {zm}))'),
-    ('threaded_rod', '3D', "threaded_rod('M8', {s}, ({x}, {y}, {zm}))"),
+    # (an M8 is 8 mm across whatever the view: its length is not a tenth of the view's span -- a few millimetres, zoomed in, and a flat disc with hardly a turn of thread -- but two and a half diameters, a rod)
+    ('threaded_rod', '3D', "threaded_rod('M8', 20, ({x}, {y}, {zm}))"),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
     ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),

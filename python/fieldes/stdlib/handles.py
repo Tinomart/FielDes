@@ -51,7 +51,24 @@ MODES = ('click', 'never', 'always')
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
 _CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key',
-            '_on')              # (`_on`: the body a point or an edge was made on -- corner_at(body, ...) -- which a snap sorts the features by: the copy a gizmo makes of the point is on it as well)
+            '_on',              # (`_on`: the body a point or an edge was made on -- corner_at(body, ...) -- which a snap sorts the features by: the copy a gizmo makes of the point is on it as well)
+            '_pull_axis')       # (`_pull_axis`: the direction of the axis the sides of a shape are pulled away from, as the shape is made: `_place` turns it with the shape)
+
+
+def _turned_axis(axis, rotate, scale):
+    ''' The direction `axis`, scaled as a placement scales a shape and turned as it turns it (x, then y, then z degrees: plain numbers, or the numbers the var()s have in the run), one long
+        again: the axis a shape's sides are pulled away from follows the shape (`_pull_axis`).  None when a number cannot be read '''
+    from fieldes.stdlib.curves import value_of
+    from fieldes.stdlib.symmetries import _turn_matrix
+    try:
+        s = [float(value_of(v)) for v in scale]
+        R = _turn_matrix(rotate)
+        d = [float(axis[i]) * s[i] for i in range(3)]
+        out = [sum(float(value_of(R[i][j])) * d[j] for j in range(3)) for i in range(3)]
+    except Exception:
+        return None
+    n = math.sqrt(sum(c * c for c in out))
+    return tuple(c / n for c in out) if n > 1e-12 else None
 
 
 def _is_number(v):
@@ -322,6 +339,9 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
     # what FielDes draws the gizmo from
     out._gizmo = (mode, tuple(float(v) for v in c), tuple(move), tuple(rotate), tuple(scale))
     _note_gizmo_vars(shape, move, rotate, scale)
+    # (the axis the sides of the shape are pulled away from is turned and scaled with it)
+    if getattr(shape, '_pull_axis', None) is not None:
+        out._pull_axis = _turned_axis(shape._pull_axis, rotate, scale)
     return out
 
 

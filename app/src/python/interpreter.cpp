@@ -2148,6 +2148,22 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        // The axis the sides of the model are pulled away from (`_pull_axis`, a direction: a threaded rod's -- the flanks of its thread face every way, and a pull of its side is wanted along the radius)
+        shape->setPullAxis(QVector3D());
+        if (PyObject_HasAttrString(obj, "_pull_axis"))
+        {
+            PyObject* ax = PyObject_GetAttrString(obj, "_pull_axis");
+            if (ax && PyTuple_Check(ax) && PyTuple_Size(ax) == 3)
+            {
+                const float x = float(PyFloat_AsDouble(PyTuple_GetItem(ax, 0)));
+                const float y = float(PyFloat_AsDouble(PyTuple_GetItem(ax, 1)));
+                const float z = float(PyFloat_AsDouble(PyTuple_GetItem(ax, 2)));
+                if (!PyErr_Occurred()) shape->setPullAxis(QVector3D(x, y, z));
+            }
+            Py_XDECREF(ax);
+            PyErr_Clear();
+        }
+
         // The numbers of the symmetry an image is made in (`_symmetry_vars`): the image's field has them, but a surface of it is pulled by the original's numbers only
         if (PyObject_HasAttrString(obj, "_symmetry_vars"))
         {

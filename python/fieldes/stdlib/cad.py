@@ -425,6 +425,9 @@ def _rod_of(spec, hand, cx, cy, z0, z1, anchor, major=None):
     r = ((X() - cx).square() + (Y() - cy).square()).sqrt()
     material = r - ((major - depth) * 0.5 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * (depth * 0.5))       # (negative in the thread)
     out = _own(material.max(_s(z0) - Z()).max(Z() - _s(z1)))
+    # (the flanks of a thread face up, down and out, and the side of the rod is pulled the same way wherever it is pressed: along the radius, away from this axis -- see View: the part of the
+    # normal that lies along the axis is not taken)
+    out._pull_axis = (0.0, 0.0, 1.0)
     width = _plain(major, 'diameter')
     _bounded(out, (cx - width / 2.0, cy - width / 2.0, z0), (cx + width / 2.0, cy + width / 2.0, z1))
     _parametric(out, [major, z0, z1], lambda v: _rod_of(spec, hand, cx, cy, v[1], v[2], anchor, v[0]))

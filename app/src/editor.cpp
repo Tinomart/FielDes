@@ -343,7 +343,7 @@ void Editor::showEvent(QShowEvent* event)
     QTimer::singleShot(0, this, [this] {
         if (m_terminalSized || !m_split || m_split->height() < 200) return;
         const int fallback = 8 * QFontMetrics(err_doc->defaultFont()).lineSpacing() + 40;
-        const int saved = QSettings("FielDes", "FielDes").value("terminal-height", fallback).toInt();
+        const int saved = QSettings().value("terminal-height", fallback).toInt();
         const int h = std::max(70, std::min(saved, m_split->height() / 2));
         m_split->setSizes({m_split->height() - h, h});
         m_terminalSized = true;
@@ -474,7 +474,7 @@ Editor::Editor(Language::Type language)
 
     {   // Inconsolata, the size remembered across runs; the output below the script a few points smaller
         QFont font("Inconsolata",
-                   QSettings("FielDes", "FielDes").value("editor-font-size", 11).toInt());
+                   QSettings().value("editor-font-size", 11).toInt());
         QFontMetrics fm(font);
         script->setTabStopDistance(fm.horizontalAdvance("  "));
         script_doc->setDefaultFont(font);
@@ -629,7 +629,7 @@ Editor::Editor(Language::Type language)
         m_split->setStretchFactor(1, 0);
         connect(m_split, &QSplitter::splitterMoved, this, [this] {
             if (!m_terminalSized || qEnvironmentVariableIsSet("FIELDES_AUTOMATION")) return;        // (a scripted test never changes the user's settings)
-            QSettings("FielDes", "FielDes").setValue("terminal-height", m_split->sizes().value(1));
+            QSettings().setValue("terminal-height", m_split->sizes().value(1));
         });
         layout->addWidget(m_split, 1);
     }
@@ -1266,7 +1266,7 @@ void Editor::setScript(const QString& s, bool reload, const QString& path)
 void Editor::saveBreakpoints()
 {
     if (m_breakpointsFrozen || m_breakpointPath.isEmpty() || !script) return;
-    QSettings settings("FielDes", "FielDes");
+    QSettings settings;
     const QString key = breakpointKey(m_breakpointPath);
     const QList<int> lines = script->breakpoints();
     if (lines.isEmpty())
@@ -1294,7 +1294,7 @@ void Editor::restoreBreakpoints()
 {
     m_breakpointsSaved.clear();
     if (m_breakpointPath.isEmpty()) return;
-    QSettings settings("FielDes", "FielDes");
+    QSettings settings;
     const QString text = settings.value(breakpointKey(m_breakpointPath)).toString();
     if (text.isEmpty()) return;
     const QJsonArray points = QJsonDocument::fromJson(text.toUtf8()).object().value("points").toArray();
@@ -1747,6 +1747,14 @@ void Editor::setFold(int line0, bool folded)
     int end = 0;
     if (line0 < 0 || !script->foldRange(line0, &end)) return;       // (a line with nothing under it to fold)
     if (script->isFolded(line0) != folded) script->setFolded(line0, folded);
+}
+
+bool Editor::writingIn(int line0) const
+{
+    int end = 0;
+    if (line0 < 0 || !script->hasFocus() || !script->foldRange(line0, &end)) return false;
+    const int at = script->textCursor().blockNumber();
+    return at > line0 && at <= end;
 }
 
 void Editor::goToSpan(int line0, int col0, int endLine0, int endCol0)

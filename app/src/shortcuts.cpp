@@ -39,7 +39,7 @@ QAction* Shortcuts::add(QAction* a, const QString& id,
     e.defaults = defaults;
     entries().append(e);
 
-    QSettings s("FielDes", "FielDes");
+    QSettings s;
     const QString key = "shortcuts/" + id;
     if (s.contains(key))
     {
@@ -63,7 +63,7 @@ QAction* Shortcuts::add(QAction* a, const QString& id,
 
 void Shortcuts::set(const QString& id, const QList<QKeySequence>& keys)
 {
-    QSettings s("FielDes", "FielDes");
+    QSettings s;
     for (auto& e : entries())
     {
         if (e.id == id && e.action)
@@ -86,7 +86,7 @@ void Shortcuts::set(const QString& id, const QList<QKeySequence>& keys)
 
 void Shortcuts::resetAll()
 {
-    QSettings s("FielDes", "FielDes");
+    QSettings s;
     s.remove("shortcuts");
     for (auto& e : entries())
     {

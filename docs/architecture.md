@@ -657,6 +657,8 @@ Nothing else is written outside the folders you choose (meshes exported by the s
 | `FIELDES_APPS_DIR` | folder the apps are unpacked into (default: the user's cache) |
 | `FIELDES_FIELD_CACHE_DIR` | folder of the field cache (default: `field-cache` beside the render cache) |
 | `FIELDES_SCENE_CACHE_DIR` | folder of the kept model trees (default: `scene-cache` beside the render cache) |
+| `FIELDES_TOUR_HOLD_MS` | how long the result of a tour step's *Show me* stays on show before everything is put back, in milliseconds (default 1500): a test window that takes pictures of the result sets it long |
+| `FIELDES_SETTINGS_DIR` | folder for the settings: they are an `.ini` file in it (`FielDes/FielDes.ini`), and nothing of the user's -- the registry, the configuration folder -- is read or written (a test window uses one of its own) |
 | `FIELDES_SHAPE_LOG`, `FIELDES_TREE_LOG` | files the tests read: per run, how many viewport shapes were kept / new (`View::setShapes`); and the model tree's rebuild phases, the edits it followed and their times (developer) |
 | `FIELDES_NO_EXACT_OFFSETS` | thicken, shell and offset an imported part with its own field instead of its exact distance |
 | `FIELDES_TESS_DEBUG`, `_TRACE`, `_QUALITY`, `_DUMP` | tessellator diagnostics (developer) |

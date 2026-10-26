@@ -975,9 +975,10 @@ void Script::validateFolds()
 {
     // Any hidden run must be exactly the body of the visible fold header
     // right before it; anything else (e.g. a programmatic edit that
-    // inserted lines into a folded region) is unhidden.
+    // inserted lines into a folded region) is unhidden.  (The model tree is not told: an edit is no choice of the user's about the row -- a model
+    // made from a menu gets its `handles(...)` line written under its call, into the lines that were just folded -- and the next tree sets the
+    // folds to its rows again, the new line folded with the others)
     bool changed = false;
-    QList<int> opened;              // (the headers whose folds were broken by an edit: the tree is told)
     QTextBlock b = document()->begin();
     while (b.isValid())
     {
@@ -1004,7 +1005,6 @@ void Script::validateFolds()
                 u.setVisible(true);
             }
             changed = true;
-            if (header.isValid()) opened << header.blockNumber();
         }
     }
     if (changed)
@@ -1013,7 +1013,6 @@ void Script::validateFolds()
         viewport()->update();
         m_gutter->update();
     }
-    for (const int line : opened) emit(foldToggled(line, false));
 }
 
 void Script::ensureBlockVisible(const QTextBlock& target)
@@ -1439,7 +1438,7 @@ void Script::zoomFont(int delta)
 {
     const int size = std::max(6, std::min(40, document()->defaultFont().pointSize() + delta));
     setFontSize(size);
-    QSettings("FielDes", "FielDes").setValue("editor-font-size", size);
+    QSettings().setValue("editor-font-size", size);
     emit(fontSizeChanged(size));
 }
 

@@ -1574,6 +1574,7 @@ Window::Window(Arguments args)
         connect(editor, &Editor::scriptLoaded, scene, &ScenePanel::showCached);
         // (what is collapsed in the tree is kept for the file, and tied to the code editor's folds in both directions)
         scene->setFileKeySource([this]{ return editor->foldKey(); });
+        scene->setWritingSource([this](int line0){ return editor->writingIn(line0); });
         connect(scene, &ScenePanel::foldRequested, editor, &Editor::setFold);
         connect(editor, &Editor::foldToggled, scene, &ScenePanel::editorFolded);
         connect(editor, &Editor::sceneChanged, this, &Window::onSceneChanged);
@@ -4129,7 +4130,7 @@ void Window::exportModel(const QString& var, const QString& kind, const QString&
         {".stl", "STL"}, {".obj", "OBJ"}, {".ply", "PLY"}, {".3mf", "3MF"}, {".glb", "glTF binary"}, {".gltf", "glTF"}, {".fbx", "FBX"},
         {".off", "OFF"}, {".dxf", "DXF"}, {".vti", "VTK image data"}, {".csv", "CSV"}, {".inp", "Abaqus / CalculiX"}, {".bdf", "Nastran"},
         {".msh", "Gmsh"}, {".vtu", "VTK"}, {".unv", "I-DEAS"}, {".txt", "text"}};
-    QSettings settings("FielDes", "FielDes");
+    QSettings settings;
     const QString folder = settings.value("export-folder", workingDirectory()).toString();
     const QString filter = T("%1 files (*%2)").arg(names.value(ext, ext.mid(1).toUpper()), ext);
     QString path = QFileDialog::getSaveFileName(this, T("Export %1").arg(var), QDir(folder).filePath(var + ext), filter);

@@ -129,7 +129,7 @@ bool Theme::anyCustom() { return !g_custom[slot(g_mode)].isEmpty(); }
 
 void Theme::load()
 {
-    QSettings s("FielDes", "FielDes");
+    QSettings s;
     g_mode = s.value("theme/mode", "light").toString() == "dark" ? Mode::Dark : Mode::Light;
     for (const Mode m : {Mode::Light, Mode::Dark})
     {
@@ -146,7 +146,7 @@ void Theme::load()
 void Theme::setMode(Mode m, bool save)
 {
     g_mode = m;
-    if (save) QSettings("FielDes", "FielDes").setValue("theme/mode", m == Mode::Dark ? "dark" : "light");
+    if (save) QSettings().setValue("theme/mode", m == Mode::Dark ? "dark" : "light");
     refresh();
 }
 
@@ -159,14 +159,14 @@ void Theme::setColor(const QString& key, const QColor& colour, bool save)
         return;
     }
     g_custom[slot(g_mode)].insert(key, colour);
-    if (save) QSettings("FielDes", "FielDes").setValue(settingsKey(g_mode, key), colour.name());
+    if (save) QSettings().setValue(settingsKey(g_mode, key), colour.name());
     refresh();
 }
 
 void Theme::resetColor(const QString& key, bool save)
 {
     g_custom[slot(g_mode)].remove(key);
-    if (save) QSettings("FielDes", "FielDes").remove(settingsKey(g_mode, key));
+    if (save) QSettings().remove(settingsKey(g_mode, key));
     refresh();
 }
 
@@ -175,7 +175,7 @@ void Theme::resetColors(bool save)
     g_custom[slot(g_mode)].clear();
     if (save)
     {
-        QSettings s("FielDes", "FielDes");
+        QSettings s;
         for (const Entry& e : table()) s.remove(settingsKey(g_mode, QString::fromLatin1(e.key)));
     }
     refresh();

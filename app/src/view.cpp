@@ -2572,6 +2572,16 @@ void View::mousePressEvent(QMouseEvent* event)
                         {drag_start.x(), drag_start.y(), drag_start.z()},
                         *df.second);
                 drag_dir = {norm.x(), norm.y(), norm.z()};
+                // A shape that has an axis (a threaded rod) is pulled along the radius when it is pressed on its side, whichever way the face under the hand looks: the flanks of a thread look up,
+                // down and out, and a pull along each one's own normal would be a different pull on each.  The part of the normal that lies along the axis is not taken; an end (all of whose
+                // normal is along the axis) keeps its own.  A flank is steep -- the normal of an ISO thread's flank is 63 degrees from the radius, only 0.45 of it across the axis -- so what
+                // counts as a side is a normal with at least 0.2 of it across the axis (an end has none)
+                if (drag_target->hasPullAxis())
+                {
+                    const QVector3D axis = drag_target->pullAxis().normalized();
+                    const QVector3D radial = drag_dir - axis * QVector3D::dotProduct(drag_dir, axis);
+                    if (radial.length() >= 0.2f * drag_dir.length()) drag_dir = radial;
+                }
 
                 mouse.state = mouse.DRAG_EVAL;
                 if (timing)

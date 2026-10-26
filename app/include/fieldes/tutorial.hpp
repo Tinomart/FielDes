@@ -57,8 +57,9 @@ public:
 
     /*  The welcome card: start the tour, or not (the first time FielDes runs)  */
     void offer();
-    /*  Starts the tour from its first step (loads its model first)  */
-    void start();
+    /*  Starts the tour (loads its model first) where it was left -- the step the user last was at, kept in the settings -- or at the first step of the first chapter when
+     *  it was never started.  `chapter` >= 0 starts that chapter at its first step instead  */
+    void start(int chapter = -1);
     /*  Ends it: `completed` is whether it was gone through to the end (the offer is not made again either way)  */
     void stop(bool completed);
 
@@ -66,6 +67,15 @@ public:
     int stepIndex() const { return m_index; }
     int stepCount() const;
     QString stepTitle() const;
+    /*  The tour is in twelve chapters, one after the other: each ends with a card that congratulates and asks whether to go on or to explore alone.  `chapter()` is the one
+     *  of the open step (-1: the welcome card and the card that says where the tour is found again); the first step of each is where the chapter menu of the card, and the
+     *  progress that is kept, go to  */
+    static int chapterCount();
+    int chapter() const;
+    int chapterStep(int chapter) const;             // the index of the first step of a chapter
+    void goToChapter(int chapter);
+    /*  After a chapter: the user explores alone -- the progress is kept at the next chapter, and the card that says where the tour is found again comes  */
+    void exploreAlone();
     bool stepDone() const { return m_done; }
     /*  Whether a "Show me" is running, or its result is still being shown (before everything is put back as it was)  */
     bool demoRunning() const { return m_demo; }
@@ -92,6 +102,13 @@ private:
     enum Place { Auto, Right, Left, Below, Above, Center, InsideTopRight, InsideBottom, InsideBottomLeft };
 
     void buildSteps();
+    QString chapterTitle(int chapter) const;
+    QString chapterLearned(int chapter) const;      // (what the chapter was about: the congratulation of its last card)
+    void saveProgress();                            // (the step that is open, and the chapters that are done, in the settings)
+    int resumeIndex() const;                        // (the step the tour was left at: the first of the first chapter when it never was)
+    void showChapters();                            // (the chapter menu of the card)
+    void ensureTourModel(std::function<void()> then);   // (the steps of the first chapters work on the tour's model: it is put in the editor when it is not there)
+    bool tourModelHere() const;
     void showStep();
     void showDoneLook(bool done);
     void refresh();                         // (where things are now: the target, the card, the arrow)
@@ -102,11 +119,12 @@ private:
     /*  Moves the pretend cursor, sending the mouse events a real hand would  */
     void fakeDrag(QWidget* target, const QPoint& from, const QPoint& to, int ms, std::function<void()> done,
                   Qt::KeyboardModifiers mods = Qt::NoModifier);
-    void fakeClick(QWidget* target, const QPoint& at, Qt::MouseButton button, std::function<void()> done);
+    void fakeClick(QWidget* target, const QPoint& at, Qt::MouseButton button, std::function<void()> done,
+                   Qt::KeyboardModifiers mods = Qt::NoModifier);
     void glide(const QPoint& from, const QPoint& to, int ms, std::function<void(QPoint)> each, std::function<void()> done);
     void after(int ms, std::function<void()> fn);
     /*  Types `text` over a range of the script, a character at a time  */
-    void typeOver(int line0, int col0, int col1, const QString& text, std::function<void()> done);
+    void typeOver(int line0, int col0, int col1, const QString& text, std::function<void()> done, int msPerCharacter = 120);
 
     QRect widgetRect(QWidget* w) const;     // (in the window's coordinates)
     QRect scriptLineRect(int line0) const;
@@ -145,6 +163,8 @@ private:
     QLabel* m_text = nullptr;
     QLabel* m_note = nullptr;
     QPushButton* m_skipTour = nullptr;
+    QPushButton* m_chapters = nullptr;
+    int m_modelTries = 0;                   // (how many times the tour's model was put in the editor for the step that is being opened: it is not asked for again and again)
     QPushButton* m_back = nullptr;
     QPushButton* m_show = nullptr;
     QPushButton* m_next = nullptr;

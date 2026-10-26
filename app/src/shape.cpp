@@ -2390,7 +2390,9 @@ void Shape::drawFlowLines(const QMatrix4x4& M)
     line_vao.release();
 
     // The particles: a short bright streak on every line every tenth of the longest line's time, released
-    // again at the seed when it has gone the whole line, moved on by advanceFlow
+    // again at the seed when it has gone the whole line, moved on by advanceFlow.  A streak is born at the seed
+    // (its head leaves it and the tail follows: it grows) and dies the same way at the end of the line: the head
+    // stops there and the tail runs on into it until the streak is gone -- not cut off whole when its head arrives
     const auto& lines = *currentLines();
     const float P = flow_period;
     std::vector<GLfloat> v;
@@ -2403,9 +2405,10 @@ void Shape::drawFlowLines(const QMatrix4x4& M)
             if (l.size() < 2) continue;
             const float T = l.back()[4];
             for (int j = 0; j < n; ++j)
+            for (int lap = 0; lap < 2; ++lap)       // (a streak at the end of the longest line is still being swallowed when the next one is released: its tail is in the lap before)
             {
-                const float tau = std::fmod(flow_time + j * S, P);
-                if (tau > T || tau <= 0) continue;
+                const float tau = std::fmod(flow_time + j * S, P) + lap * P;
+                if (tau <= 0 || tau - L >= T) continue;
                 const float t0 = tau - L;
                 float prev[3] = {0, 0, 0};
                 bool have = false;

@@ -92,13 +92,13 @@ QString chosen()
     // the old language here and ignore the new choice)
     const QString env = qEnvironmentVariable("FIELDES_LANGUAGE");
     if (!env.isEmpty()) return env;
-    const QString value = QSettings("FielDes", "FielDes").value("language", "system").toString();
+    const QString value = QSettings().value("language", "system").toString();
     return value.isEmpty() ? QString("system") : value;
 }
 
 void setChosen(const QString& code)
 {
-    QSettings("FielDes", "FielDes").setValue("language", code);
+    QSettings().setValue("language", code);
 }
 
 QString current()

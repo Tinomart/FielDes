@@ -183,6 +183,9 @@ public slots:
     /*  Folds or unfolds the lines under the (0-based) line of the rendered script, as the arrow in its gutter does (the model tree's rows
      *  are tied to these folds)  */
     void setFold(int line0, bool folded);
+    /*  Whether the user is writing in the lines under the (0-based) line, the lines that its fold would hide: the script has the keyboard and its
+     *  text cursor is in them (a model that is made from a menu is not written in: the cursor is not in the code)  */
+    bool writingIn(int line0) const;
 
     /*  Continues a script stopped at a breakpoint (does nothing otherwise)  */
     void continueRun();

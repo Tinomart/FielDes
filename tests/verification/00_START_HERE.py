@@ -33,8 +33,8 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     shapes.  Select a row and press Rename: its name is edited in place, type another and press Return: the note under the list says what the menus call it now, and the right-click menu
 #     Primitives shows the name; an empty name gives the library's own back.  "Add selection" puts a model of your own in the list of its kind, with "(yours)".
 #
-#  5. THE TOUR.  Help > Guided tour, to the step "Your primitives" (after "Make things"): the menu bar's Primitives menu is drawn with "Manage primitives..." framed; "Show me" opens the window on
-#     the selected model's kind and closes it again.
+#  5. THE TOUR, IN CHAPTERS (see item 34 for the whole of it).  Help > Guided tour, chapter 3, the step "Your primitives" (after "Make things"): the menu bar's Primitives menu is drawn with "Manage primitives..." framed; "Show me" opens
+#     the window on the selected model's kind and closes it again.
 #
 #  6. THE EXAMPLES.  File > Open example file: the files 00 .. 37 and the folders step and meshes -- no walkthroughs, no manufacturing folder, no verification folder (the known-answer problems are in tests/verification/known_answers).
 #     Run examples/33_manufacturing_optimization.py (about five minutes): the bracket as the optimizer made it (right) and its result for the printer (left), grey where it is as it was, red where
@@ -128,7 +128,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     at the middle of the circle, at the middle of the face, and on the SHARP corner and edge the rounding replaced, just outside the rounded block.  The cone `under` stands apex down below the drum, coaxial
 #     with it, its base touching the drum's bottom: it is the cone `funnel` placed (`position=`, `rotation=`) as S places it when the faces and the two centres of the circles are selected (item 31).
 #
-# 25. PLACEMENT IS ARGUMENTS.  Make a box (right-click empty space > New 3D shape > box) and click it in the model tree.  YOU MUST SEE: the box in the tree starts CLOSED; opened, its last rows are
+# 25. PLACEMENT IS ARGUMENTS.  Make a box (right-click empty space > New 3D shape > box) and click it in the model tree.  YOU MUST SEE: the box in the tree starts CLOSED, and its lines in the code editor start FOLDED with it (the gutter's arrow is closed: the tree and the code are one state; an object with a placeholder to fill in starts OPEN in both); opened, its last rows are
 #     `position`, `rotation`, `scale` and `alpha`, dimmed, each with its default; hover one: "position is not written in the call: it has its default, (0, 0, 0). Click to write it ...".  Click `position`:
 #     the call of the box gets its placement arguments and the number is selected in the code, ready to be typed over.  The gizmo is on the box; drag an arrow: the box moves and the numbers of
 #     `position=` change in the code.  There is NO `gizmo(...)` line anywhere in the script.  Type `alpha=0.4` into the call: the box is drawn see-through.  Ctrl+D on the box: the copy has its own placement.
@@ -170,8 +170,25 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #
 # 33. THE NEW BASE SHAPES ARE DRAGGABLE, FACE BY FACE.  Right-click empty space > Parametric shapes: capsule, tube, slot.  YOU MUST SEE: the capsule and the tube with the cube icon of a 3D shape and the slot with
 #     the square of a 2D shape, each with a gizmo (a capsule is a body, not a field).  Press the side of the capsule and drag: its radius changes and the ends stay round; press the tip of an end: its length changes (press it off the tip, on the round shoulder, and the pull goes along the surface's normal, as it does for every surface of the program: the capsule grows longer and wider together);
-#     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Parametric shapes) pulls by its side (the diameter: the pitch stays) and by its ends.
+#     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Parametric shapes) pulls by its side (the diameter: the pitch stays) and by its ends -- by its side the same wherever you press the thread (a crest, a root, a flank facing up or down, either side): the arrow of the pull points straight away from the axis, and the same drag gives the same new diameter.
 #     Each drag changes one number in the `handles(...)` line, never a scale.
+#
+# 34. THE GUIDED TOUR IN CHAPTERS.  Help > Guided tour (the first time: the welcome card).  YOU MUST SEE: the title of every card whole -- the place in the tour ("Chapter 1 of 12 · 2 / 7") is a small line ABOVE it --
+#     and a button "Chapters" on every card but the first and the last: it lists the twelve chapters (a tick for the done ones, the one you are in in bold) and goes to the one you choose.  Chapter 1 is the idea of
+#     FielDes (the script is the model, change a number, every shape is a field -- the section view --, a field instead of a number, what that means for design -- the point moves and the thickness with it --,
+#     a lattice that follows a field, an analysis as a field); chapter 2 the view (standard views, your own navigation, panes pulled out, the gizmo, the keys); chapter 3 the model tree, with the step "Snap one body
+#     onto another" (Show me: tip, then corner are selected, S: the peg stands on the corner, only its position changes); 4 work planes; 5 symmetry; 6 the special features in short (lattices, simulations, flows,
+#     manufacturing, apps -- each with a picture of its own); 7 to 12 build a lattice, a static analysis, a flow, a topology optimization, a manufacturing optimization and an app.
+#     WHAT TO DO IN 7 TO 12: do each step by hand -- select the models (Ctrl+click), right-click the first, choose the entry the card names, type over a placeholder or a number -- or press Show me, which does it with a
+#     pretend hand (a Ctrl badge on the cursor, the menu entries lit one after the other, the typing) and puts everything back.  YOU MUST SEE: the card turns green when the step is done; the next step starts from the
+#     model the menus wrote, also when you skipped the step before; a result is drawn (the lattice, the stress colours, the streamlines, the density, the red of a broken rule).  Every chapter ends with a card that says
+#     "Chapter N is done" with Continue and "Explore on my own"; "Explore on my own" shows the card that says where the tour is found again, and Help > Guided tour then goes on at the next chapter.  The place you were at is
+#     kept: quit in the middle of chapter 8, close FielDes, open it and choose Help > Guided tour: it opens in chapter 8 at the step you left.
+#     LOOK AT THE RIGHT EDGE OF THE CARD: on a card with all five buttons (Chapters, Quit the tour, Back, Show me, Skip step) the last button must end inside the card's border, also with a larger system font (Windows:
+#     Settings > Accessibility > Text size) -- the card is as wide as its row of buttons needs.  And in the build chapters the result is drawn ALONE: the beam, the analysis and the part are hidden (`# hidden: name`) as
+#     the next step needs the result seen, not a body drawn over it.
+#     IN YOUR LANGUAGE: Settings > Language (or the language of the computer): every card of the tour, the Chapters menu, the chapter-end cards and the buttons are in Spanish, French, German, Japanese,
+#     Chinese or Russian; the names of the code (fixed_1, static_analysis, app.number) stay as they are, and no button is cut off in any of them.
 #
 
 print("Open one of the files listed above.")

@@ -427,6 +427,12 @@ wide_rod, thin_rod = handles(rod, [10, 0, 10]), handles(rod, [6, 0, 10])
 check('threaded rod: the side pulled makes it wider (and narrower), and the thread keeps its profile', abs(crest_reach(rod) - 4.0) < 0.02 and abs(crest_reach(wide_rod) - 5.0) < 0.02 and abs(crest_reach(thin_rod) - 3.0) < 0.02,
       '{:.3f} {:.3f} {:.3f} (4, 5, 3)'.format(crest_reach(rod), crest_reach(wide_rod), crest_reach(thin_rod)))
 check('threaded rod: ... and the ends stay where they were', inside(wide_rod, (0, 0, 9.5)) and not inside(wide_rod, (0, 0, 10.5)) and inside(wide_rod, (0, 0, 0.5)) and not inside(wide_rod, (0, 0, -0.5)))
+# The flanks of the thread face up, down and out: the viewport pulls the side of the rod along the radius, wherever it is pressed, by the axis the rod names -- which a placement turns with it
+from fieldes.stdlib.placement import place as place_args
+check('threaded rod: it names its axis (z), the same after its side is pulled', getattr(rod, '_pull_axis', None) == (0.0, 0.0, 1.0) and getattr(wide_rod, '_pull_axis', None) == (0.0, 0.0, 1.0), str(getattr(rod, '_pull_axis', None)))
+turned_axis = getattr(place_args(rod, rotation=(90, 0, 0)), '_pull_axis', None)
+check('threaded rod: ... turned with it (a quarter turn about x lays the axis along y)', turned_axis is not None and abs(turned_axis[0]) < 1e-9 and abs(abs(turned_axis[1]) - 1.0) < 1e-9 and abs(turned_axis[2]) < 1e-9, str(turned_axis))
+check('threaded rod: ... and not by a move', getattr(place_args(rod, position=(5, 5, 5)), '_pull_axis', None) == (0.0, 0.0, 1.0))
 print(took())
 
 # ---------------------------------------------------------------- 17. a half space square to an axis is a body, and is drawn up to the boundary of the region
