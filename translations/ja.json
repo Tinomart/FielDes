@@ -145,8 +145,6 @@
  "the design reached the edge of its space: a larger one is being made, and the optimisation goes on in it": "設計が設計空間の端に達しました。より大きな空間を作成中で、最適化はその中で続きます",
  "Put %1 back where it was": "%1 を元の場所に戻す",
  "Pull %1 out into a window of its own": "%1 を独立したウィンドウに取り出す",
- "%1 is in a window of its own.": "%1 は独立したウィンドウにあります。",
- "Put it back": "元に戻す",
  "Remove": "削除",
  "Rename": "名前の変更",
  "Primitives": "プリミティブ",

@@ -24,8 +24,9 @@ namespace FielDes {
 /*
  *  Any major element of the window can be pulled out into a window of its own and put back: the viewport, the code editor, the console and output, the model tree and every card (the
  *  work plane, the symmetry, the section, the result ...).  `attach` gives an element a small button in its top right corner; pressed, it takes the element out of the window it is in -- a
- *  placeholder with a button to put it back stands in its place -- into a window of its own (owned by the main window: it closes with it, and it can be put on another screen); pressed
- *  again, or with that window closed, the element goes back to the place it came from, the sizes of the panes round it as they were.
+ *  nothing stands in its place, the panes round it take its room (a hidden, empty widget only holds the place it goes back to) -- into a window of its own (owned by the main window: it
+ *  closes with it, and it can be put on another screen); pressed again (its button is in its corner, in its window), or with that window closed, the element goes back to the place it came
+ *  from, the sizes of the panes round it as they were.
  *
  *  What a window of its own keeps: the shortcuts of the window it came from (the actions of the main window that work anywhere in it, and those of the element's parent), so that a key
  *  does what it did; its place and size (kept by the key); and, when the program ends with it pulled out, the fact that it was (the elements are put back first, and pulled out again at
@@ -37,7 +38,7 @@ namespace FielDes {
 class PopOut : public QObject
 {
 public:
-    /*  `target` gets the button.  `title` names it (the window's, the placeholder's, the tooltip's); `key` is its name in the settings and in the scripted tests.  `nextTo`: a widget
+    /*  `target` gets the button.  `title` names it (the window's, the tooltip's); `key` is its name in the settings and in the scripted tests.  `nextTo`: a widget
      *  of the element, in its top right corner (a close button), that the button stands to the left of  */
     static PopOut* attach(QWidget* target, const QString& title, const QString& key, QWidget* nextTo = nullptr);
 

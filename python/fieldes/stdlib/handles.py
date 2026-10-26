@@ -50,7 +50,8 @@ MODES = ('click', 'never', 'always')
 # features and name (roi_resolution, the model tree).  (Its own resolution is
 # not copied: roi_resolution sets it later, on the part, and FielDes reads it
 # from the part a placed shape was placed from.)
-_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key')
+_CARRIED = ('_step_metrics', '_part_name', '_step_ref', '_kind', 'xyz', '_point_pos', 'size', '_smooth', '_radius', '_linked', '_instance_of', '_no_handles', '_symmetry_def', '_drawn_key',
+            '_on')              # (`_on`: the body a point or an edge was made on -- corner_at(body, ...) -- which a snap sorts the features by: the copy a gizmo makes of the point is on it as well)
 
 
 def _is_number(v):

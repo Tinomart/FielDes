@@ -39,9 +39,10 @@ Everything else is in the viewport: the model tree, the section card, the legend
 
 *Primitives ▸ Manage primitives...* is where the list of primitives is yours. Select a model in the model tree and the dialog lists, for its kind (3D shapes, 2D shapes, lines, surfaces, fields: the kinds whose menu is a list; *New point* and a symmetry are single buttons with nothing nested under them, so they have no section and cannot be made primitives), every shape the menus have, built in or your own:
 a tick makes it a primitive (it is shown under *Primitives*), no tick puts it with the *Parametric shapes* -- a built-in primitive can be taken out of *Primitives* this way too. **Add selection** makes the selected model a primitive of your own, under the name you give it:
-everything of the script that the model is made of -- the models it uses, the functions and the variables it needs -- is kept with it, and picking it from any *Primitives* menu writes it into the script as a model of its own, with names the script does not have yet (a `size` that is
-already there becomes `size_2`: nothing in your script is overwritten). What you chose is kept in **one file of yours**, `primitives.json` in your data folder (`%APPDATA%\FielDes` on Windows, `~/.local/share/FielDes` on Linux), so your primitives are there in every script you open,
-whether or not the script you made them in still exists. A profile (a shape made of points) is a *Parametric shape*, not a primitive.
+everything of the script that the model is made of -- the models it uses, the functions and the variables it needs -- is kept in **a file of its own**, `<name>.py` in the `primitives` folder of your data folder (a function that makes the model: a block like any other, which the editor
+completes and goes to the definition of with Ctrl+click), and picking it from any *Primitives* menu writes **one line** into the script, `name_1 = name()`. The model is one object, in the script and in the model tree, and what it is made of stays in its file -- as the geometry of an imported part stays in the
+cache files of the import --; it is moved by its gizmo and its faces are dragged like those of any model. What you chose is kept in **one file of yours**, `primitives.json` in your data folder (`%APPDATA%\FielDes` on Windows, `~/.local/share/FielDes` on Linux), and the primitives in the folder `primitives` next to it,
+so your primitives are there in every script you open, whether or not the script you made them in still exists (a script that calls one needs its file, as a script that imports a file needs that file; removing a primitive deletes its file). A profile (a shape made of points) is a *Parametric shape*, not a primitive.
 
 ## The editor
 
@@ -635,7 +636,8 @@ left it and how large it was are remembered for the next start. A card you never
 
 Any major element of the window can be pulled out of it, to work on more than one screen: the **code editor**, the **console and output**, the **viewport**, the **model tree**, and the cards -- the **section**, the **field viewer**, the **work plane**, the **symmetry**,
 the **result** and the **live view** of an optimisation. Each has a small button in its **top right corner** (a card with a close button: just left of it). Pressed, it takes the element out into a window of its own, which can be put on another screen and sized like any window,
-and a **placeholder** with a *Put it back* button stands in its place (the panes round it keep their sizes). Pressed again, or with that window closed, the element goes back to where it came from.
+and **nothing stands in its place**: the panes round it take its room, so a window that is out saves the room it had (the viewport takes the whole width when the editor is out, the editor when the viewport is). Pressed again -- the button is in the corner of the
+element, in its window --, or with that window closed, the element goes back to where it came from, and the panes give the room back.
 
 - The window of an element keeps the **shortcuts** of the window it came from: the commands of the main window work in it, and so do the keys of the pane it belongs to.
 - Its **place and size are remembered**. When FielDes ends with elements pulled out they are put back first and **pulled out again at the next start**; the fact is cleared as it is read, so a start that crashed does not repeat itself.

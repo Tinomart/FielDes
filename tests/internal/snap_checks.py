@@ -228,6 +228,20 @@ if 'error' not in first:
         check('the centre of the cone\'s base is on the centre of the box\'s top', far(xyz(ns2['cone_centre']), (0, 0, 50)) < 0.2, str(tuple(round(v, 3) for v in xyz(ns2['cone_centre']))))
 print(took())
 
+# ---------------------------------------------------------------- 7. points that a gizmo has wrapped in place(...)
+stage('7. two points wrapped in place(...) -- FielDes does it when a point is selected -- are still on their bodies, and S goes by them')
+a7 = box((0, 0, 0), (10, 10, 10))
+b7 = box((30, 0, 0), (40, 10, 20))
+pa7 = corner_at(a7, (10, 10, 10))
+pb7 = corner_at(b7, (30, 0, 20))
+wa = place(pa7, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1))
+wb = place(pb7, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1))
+check('a point wrapped in place(...) says which body it is on (it was "none of the features says which body it is on")', snapping._body_key(snapping._describe(wa, 0)['body']) == snapping._body_key(a7))
+found7 = attempt('the snap by two wrapped points', lambda: snapping._placement([wa, wb]))
+if found7 is not None:
+    check('the first body is moved onto the second: corner onto corner, position (20, -10, 10)', all(abs(found7['position'][i] - e) < 1e-3 for i, e in enumerate((20.0, -10.0, 10.0))), str(found7['position']))
+print(took())
+
 print('=' * 70)
 print(('ALL CHECKS PASSED' if not failures else '{} check(s) failed'.format(len(failures))) + ' {}    total {:.1f} s'.format(failures if failures else '', time.time() - t_all))
 sys.exit(1 if failures else 0)

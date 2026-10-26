@@ -427,6 +427,11 @@ dm = run('default size', lambda: mesh_volume(box((0, 0, 0), (60, 40, 6))))
 if dm is not None:
     print(dm)
     check('default size: about 40 along the longest side', 1.2 < dm.element_size < 1.8, '{:.3f}'.format(dm.element_size))
+# (a fat body is held by the budget: a 10 mm cube is about 0.49 mm, 107,000 tetrahedra measured -- a mesh the viewer draws, with its quality numbers -- and not the 0.29 mm, half a million, that it was)
+from fieldes.stdlib.element_size import default_element_size
+cube_size = run('default size of a cube', lambda: default_element_size(box((0, 0, 0), (10, 10, 10)), (0, 0, 0), (10, 10, 10), 40.0, meshing.DEFAULT_ELEMENTS))
+check('default size: a cube is held by the budget of 100,000 tetrahedra (0.4 to 0.6 mm)', cube_size is not None and 0.4 < cube_size < 0.6 and meshing.DEFAULT_ELEMENTS <= meshing.MAX_DISPLAYED,
+      '{} mm, budget {}, drawn up to {}'.format(cube_size, meshing.DEFAULT_ELEMENTS, meshing.MAX_DISPLAYED))
 print(took())
 
 # ---------------------------------------------------------------- 11. what FielDes draws

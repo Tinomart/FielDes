@@ -184,7 +184,6 @@ PRIMITIVES = [
     ('torus', '3D', 'torus({h}, {q}, ({x}, {y}, {z}))'),
     ('pyramid', '3D', 'pyramid(({xm}, {ym}), ({xp}, {yp}), {zm}, {s})'),
     ('prism', '3D', 'prism(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}), {zm}, {zp})'),
-    ('half_space', '3D', 'half_space((0, 0, 1), ({x}, {y}, {z}))'),
     ('capsule', '3D', 'capsule({q}, {s}, ({x}, {y}, {zm}))'),
     ('tube', '3D', 'tube({h}, {q}, {s}, ({x}, {y}, {zm}))'),
     ('threaded_rod', '3D', "threaded_rod('M8', {s}, ({x}, {y}, {zm}))"),
@@ -477,10 +476,11 @@ PYTHON = [
 
 
 def _blocks():
-    ''' The custom blocks the menus offer (see fieldes.blocks): [{name, doc, operation, primitive}] '''
+    ''' The custom blocks the menus offer (see fieldes.blocks): [{name, doc, operation, primitive}].  (The primitives of the user's own are blocks too, but they are in the menus under their kind:
+        see user_primitives.catalog_entries) '''
     try:
         from fieldes import blocks
-        return [b for b in blocks.info() if b['operation'] or b['primitive']]
+        return [b for b in blocks.info() if (b['operation'] or b['primitive']) and not b.get('user')]
     except Exception:
         return []
 
@@ -1079,11 +1079,11 @@ def call(request):
                 return code
         raise ValueError(tr('the Python menu has no block called %s') % r['name'])
     if r.get('kind') == 'primitive':
-        # (a primitive of the user's own: the statements it is made of and its model, written again with names the script has not got)
+        # (a primitive of the user's own: ONE call of the function in its file -- `name_1 = name()` -- and not the statements it is made of: see user_primitives)
         from fieldes import user_primitives
         mine = user_primitives.find(r['name'])
         if mine is not None:
-            return user_primitives.insert_text(mine, r.get('var') or (r['name'] + '_1'), r.get('source') or '')
+            return '%s()' % mine['name']
     text = _call(r)
     head, marker, expression = text.rpartition(PRELUDE)
     from fieldes import completion

@@ -63,8 +63,10 @@ A value which is empty everywhere
 
 ### `half_space(norm, point=(0, 0, 0))`
 
-A plane which divides the world into inside and outside, defined by its
-normal and a single point on the plane
+The solid on one side of a plane, with no end: everything the normal `norm` points away from, the plane through `point` its only face (the field is the distance along `norm` from
+the plane, negative inside -- a true distance when `norm` is a unit vector).  It is no shape to look at on its own, and it is not in the menus: it is what `intersection(body, half_space(...))`
+and `difference` cut a body by, and a region -- of the `zones` of a mesh, of a support or a load -- that is everything on one side of a plane.  To cut a body by a plane from the menus use
+Operations > Combining > cut_plane
 
 ### `polygon(r, n, center=(0, 0))`
 
@@ -3703,7 +3705,7 @@ tetmesh.hpp), and what is asked of it afterwards is done to that mesh:
     element_size    a number (mm), or a field -- a body whose value at a point is the element size there, a function of a list of points that returns their sizes,
                     or graded_size(...).  The mesh starts at the largest size the field has and is refined where it asks for less: the longest edge of a tetrahedron
                     is bisected (with the tetrahedra round it, so the mesh stays conforming) until its edges are no longer than the size asked for there, and the new
-                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than half a million.
+                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than about a hundred thousand tetrahedra.
     element         'tet' (linear tetrahedra), 'tet10' (10-node tetrahedra), 'hex' (hexahedra: every tetrahedron cut into four -- the elements have the shape the
                     tetrahedra give them, which is not a hex-dominant mesh's, but they are hexahedra for a solver that needs them)
     boundary_layers inflation_layers(...): prism layers on the surface of a solid, growing into the fluid (the first height, the growth rate, the number of layers)
@@ -3819,7 +3821,7 @@ The inside of `body` as a mesh of elements (see the description of this module).
 
     mesh = mesh_volume(part, element_size=2.0)
 
-element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than half a million
+element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than about a hundred thousand tetrahedra
 element         'tet', 'tet10' or 'hex'
 boundary_layers inflation_layers(...): prisms on the surface of a solid
 zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases
@@ -3968,7 +3970,7 @@ about 1 % low, and a finer `element_size` (mm) is closer.  A mesh of this kind c
 
 A rod with a right-hand ISO thread (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine one) is the
 nominal diameter, the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of hole(..., kind='tapped', modeled=True) of the
-same screw.  Its handles pull its two ends.  Like a thread, it wants a fine mesh to draw
+same screw.  Its handles pull its side (the diameter: the pitch stays, and so does the profile of the thread) and its two ends.  Like a thread, it wants a fine mesh to draw
 
 ### `tube(outer_radius, inner_radius, height, base=(0, 0, 0))`
 

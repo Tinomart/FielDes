@@ -934,10 +934,30 @@ bool DCTree<N>::collectChildren(Evaluator* eval,
     // a leaf by erasing all of the child branches
     {
         bool collapsed = false;
+        // A cell on the boundary of the region that holds a surface which leaves through the boundary is not merged into one bigger than a few cells: the vertex of a big merged cell
+        // stands half a cell inside the boundary, so the surface would be drawn short of it by that much -- and an exactly flat surface (a plane that is square to an axis: its error
+        // is nothing at any size) merges all the way up to ONE cell, the root, which has no faces at all: the plane was drawn as nothing
+        const bool on_boundary = [&]{
+            if (this->region.level <= 2) {
+                return false;
+            }
+            const DCTree<N>* root = this;
+            while (root->parent != nullptr) {
+                root = root->parent;
+            }
+            for (unsigned a = 0; a < N; ++a) {
+                const double tol = 1e-9 * (root->region.upper(a) - root->region.lower(a));
+                if (this->region.lower(a) <= root->region.lower(a) + tol ||
+                    this->region.upper(a) >= root->region.upper(a) - tol) {
+                    return true;
+                }
+            }
+            return false;
+        }();
 #if LIBFIVE_LINEAR_ERROR
-        if (findVertex(this->leaf->vertex_count++) < max_err * max_err &&
+        if (!on_boundary && findVertex(this->leaf->vertex_count++) < max_err * max_err &&
 #else
-        if (findVertex(this->leaf->vertex_count++) < max_err &&
+        if (!on_boundary && findVertex(this->leaf->vertex_count++) < max_err &&
 #endif
             this->region.contains(vert(0), 1e-6))
         {

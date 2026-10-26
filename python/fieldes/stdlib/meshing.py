@@ -22,7 +22,7 @@ tetmesh.hpp), and what is asked of it afterwards is done to that mesh:
     element_size    a number (mm), or a field -- a body whose value at a point is the element size there, a function of a list of points that returns their sizes,
                     or graded_size(...).  The mesh starts at the largest size the field has and is refined where it asks for less: the longest edge of a tetrahedron
                     is bisected (with the tetrahedra round it, so the mesh stays conforming) until its edges are no longer than the size asked for there, and the new
-                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than half a million.
+                    vertices of the boundary are put on the surface.  Without one: about forty elements along the longest side, no more than about a hundred thousand tetrahedra.
     element         'tet' (linear tetrahedra), 'tet10' (10-node tetrahedra), 'hex' (hexahedra: every tetrahedron cut into four -- the elements have the shape the
                     tetrahedra give them, which is not a hex-dominant mesh's, but they are hexahedra for a solver that needs them)
     boundary_layers inflation_layers(...): prism layers on the surface of a solid, growing into the fluid (the first height, the growth rate, the number of layers)
@@ -73,7 +73,7 @@ ELEMENTS = ('tet', 'tet10', 'hex')
 _PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 # The hexahedron of the corner k of a tetrahedron: its three neighbours, in the order that makes the corner right-handed
 _HEX_AT = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
-DEFAULT_ELEMENTS = 500000           # the budget of tetrahedra of the default element size
+DEFAULT_ELEMENTS = 100000           # the budget of tetrahedra of the default element size: a plain cube takes about 20 s and its elements are drawn (the viewer draws up to MAX_DISPLAYED)
 
 
 class MeshError(RuntimeError):
@@ -1338,7 +1338,7 @@ def mesh_volume(body, element_size=None, element='tet', boundary_layers=None, zo
 
             mesh = mesh_volume(part, element_size=2.0)
 
-        element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than half a million
+        element_size    the element edge in mm, or a field (see graded_size); default: about 40 elements along the longest side, no more than about a hundred thousand tetrahedra
         element         'tet', 'tet10' or 'hex'
         boundary_layers inflation_layers(...): prisms on the surface of a solid
         zones           {name: region}: the patches of the boundary; the rest are `default_zone`; feature_angle (degrees) splits those at the creases

@@ -393,13 +393,17 @@ def sphere(radius, center=(0, 0, 0)):
 stdlib.half_space.argtypes = [tvec3, tvec3]
 stdlib.half_space.restype = libfive_tree
 def half_space(norm, point=(0, 0, 0)):
-    """ A plane which divides the world into inside and outside, defined by its
-        normal and a single point on the plane
+    """ The solid on one side of a plane, with no end: everything the normal `norm` points away from, the plane through `point` its only face (the field is the distance along `norm` from
+        the plane, negative inside -- a true distance when `norm` is a unit vector).  It is no shape to look at on its own, and it is not in the menus: it is what `intersection(body, half_space(...))`
+        and `difference` cut a body by, and a region -- of the `zones` of a mesh, of a support or a load -- that is everything on one side of a plane.  To cut a body by a plane from the menus use
+        Operations > Combining > cut_plane
     """
     args = [list([Shape.wrap(i) for i in norm]), list([Shape.wrap(i) for i in point])]
-    return Shape(stdlib.half_space(
+    out = Shape(stdlib.half_space(
         tvec3(*[a.ptr for a in args[0]]),
         tvec3(*[a.ptr for a in args[1]])))
+    out._kind = 'solid'                 # (a body, whatever axes its field depends on: a half space square to x or y is no 2D shape)
+    return out
 
 stdlib.cylinder_z.argtypes = [tfloat, tfloat, tvec3]
 stdlib.cylinder_z.restype = libfive_tree

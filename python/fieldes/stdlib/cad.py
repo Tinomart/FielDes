@@ -414,24 +414,27 @@ def hole(body, position, diameter=None, depth=None, direction=(0, 0, -1), kind='
     return difference(_s(body), hole_cutter(position, diameter, depth, direction, kind, head_diameter, head_depth, angle, screw, fit, pitch, thread_depth, modeled, hand))
 
 
-def _rod_of(spec, hand, cx, cy, z0, z1, anchor):
-    ''' A rod with the ISO thread of `spec` along the vertical line through (cx, cy), from the height z0 to z1: its numbers are the heights of its ends, so the handles pull an end each (the
-        diameter is the screw's, and is no number to pull).  `anchor` is where the thread starts, which an end that is pulled does not move '''
-    major, pitch = spec['diameter'], spec['pitch']
-    root = major - 1.2269 * pitch
+def _rod_of(spec, hand, cx, cy, z0, z1, anchor, major=None):
+    ''' A rod with the ISO thread of `spec` along the vertical line through (cx, cy), from the height z0 to z1: its numbers are its diameter and the heights of its ends, so the handles pull
+        the side of the rod (the diameter starts as the screw's; the pitch stays, and so does the profile of the thread, which is as deep as it was) and an end each.  `anchor` is where the
+        thread starts, which an end that is pulled does not move '''
+    pitch = spec['pitch']
+    if major is None:
+        major = spec['diameter']
+    depth = 1.2269 * pitch                                           # (from the crest of the thread to its root: the ISO profile)
     r = ((X() - cx).square() + (Y() - cy).square()).sqrt()
-    material = r - (root / 2.0 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * ((major - root) / 2.0))       # (negative in the thread)
+    material = r - ((major - depth) * 0.5 + _thread_flank(_thread_phase(pitch, hand, (cx, cy), anchor)) * (depth * 0.5))       # (negative in the thread)
     out = _own(material.max(_s(z0) - Z()).max(Z() - _s(z1)))
-    _bounded(out, (cx - major / 2.0, cy - major / 2.0, z0), (cx + major / 2.0, cy + major / 2.0, z1))
-    _parametric(out, [z0, z1], lambda v: _rod_of(spec, hand, cx, cy, v[0], v[1], anchor))
-    out._handles_ends_only = True
+    width = _plain(major, 'diameter')
+    _bounded(out, (cx - width / 2.0, cy - width / 2.0, z0), (cx + width / 2.0, cy + width / 2.0, z1))
+    _parametric(out, [major, z0, z1], lambda v: _rod_of(spec, hand, cx, cy, v[1], v[2], anchor, v[0]))
     return out
 
 
 def threaded_rod(screw, length, base=(0, 0, 0), pitch=None, hand='right'):
     ''' A rod with a right-hand ISO thread (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine one) is the
         nominal diameter, the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of hole(..., kind='tapped', modeled=True) of the
-        same screw.  Its handles pull its two ends.  Like a thread, it wants a fine mesh to draw '''
+        same screw.  Its handles pull its side (the diameter: the pitch stays, and so does the profile of the thread) and its two ends.  Like a thread, it wants a fine mesh to draw '''
     spec = screw_spec(screw, pitch)
     h = _positive(length, 'length')
     b = _xyz(base, 'base')

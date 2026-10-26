@@ -129,12 +129,13 @@ its own); see [Region and resolution](step-import.md#region-and-resolution).
 
 ## Primitives
 
-3D: `sphere`, `box`, `rounded_box`, `cylinder`, `cone`, `torus`, `pyramid`, `prism`, `half_space`; 2D: `circle`, `ring`, `rectangle`,
+3D: `sphere`, `box`, `rounded_box`, `cylinder`, `cone`, `torus`, `pyramid`, `prism`; 2D: `circle`, `ring`, `rectangle`,
 `rounded_rectangle`, `triangle`, `polygon`, and `profile` (any number of points: see [Profiles](profiles.md), which also has the 1D
 `curve`); `extrude` turns a 2D shape into a solid and `path_extrude` sweeps it along a curve; `text` makes lettering; `emptiness` is the empty
 shape. Free-form and analytic surfaces: `ellipsoid`, `elliptic_cylinder`, `hyperboloid`, `paraboloid`,
 `quadric`, `extruded_curve`, `revolved_curve`, `helical_curve`, `helical_sweep`, `helical_revolve`,
-`coil_spring`, `wave_block`.
+`coil_spring`, `wave_block`. `half_space(norm, point)` is the solid on one side of a plane, with no end: not a shape to look at, and not in the menus, but what `intersection` and `difference` cut a body by
+(Operations > Combining > cut_plane does that from the menus) and a region of a mesh zone, a support or a load.
 
 **Every shape has one primitive, with that shape and nothing else.** `box(a, b)` is the box between two opposite corners (a true distance
 outside it, which matters for offsets and analyses); there is no centred box, no cube, no mitered box -- a `box` is a box. The 3D shapes stand

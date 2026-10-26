@@ -145,8 +145,6 @@
  "the design reached the edge of its space: a larger one is being made, and the optimisation goes on in it": "проект достиг края своего пространства: создаётся большее, и оптимизация продолжится в нём",
  "Put %1 back where it was": "Вернуть %1 на место",
  "Pull %1 out into a window of its own": "Вынести %1 в отдельное окно",
- "%1 is in a window of its own.": "%1 находится в отдельном окне.",
- "Put it back": "Вернуть на место",
  "Remove": "Убрать",
  "Rename": "Переименовать",
  "Primitives": "Примитивы",

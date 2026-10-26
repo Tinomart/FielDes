@@ -46,7 +46,7 @@ mesh = mesh_volume(air, lambda points: [0.8 + 0.08 * (x + 10) for x, y, z in poi
 mesh = mesh_volume(air, 1.0 + 0.05 * distance_to_point((0, 0, 0)))            # a field made of the library's own
 ```
 
-Without one the default is about 40 elements along the longest side, no more than half a million. A graded mesh is made by bisecting, and bisection gives some poorer tetrahedra than
+Without one the default is about 40 elements along the longest side, no more than about a hundred thousand tetrahedra (a plain 10 mm cube: 107,000 tetrahedra, about 20 seconds; the elements are drawn and the quality numbers are made). Give `element_size` for a finer mesh. A graded mesh is made by bisecting, and bisection gives some poorer tetrahedra than
 a uniform lattice does, so the mesh is **mended** afterwards (`optimize=True`, the default), in two rounds of: the nodes on the surface that belong to poor tetrahedra move along the surface
 (toward the middle of their neighbours, and back onto the surface; a node on a crease stays), the interior nodes of poor tetrahedra move toward the middle of their neighbours -- `smooth=`
 rounds of it in each pass (6 by default) -- and edges and faces are swapped and interior nodes taken into a neighbour where that makes the worst tetrahedron round them better.

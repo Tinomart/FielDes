@@ -49,6 +49,25 @@ def folder():
     return os.path.join(os.path.dirname(os.path.dirname(here)), 'blocks')
 
 
+def user_folder():
+    ''' The folder of the primitives of the user's own (see fieldes.user_primitives): a file each, read as blocks too -- a script calls one like any other function, and the editor completes it
+        and goes to its definition -- but the menus list them under Primitives and not under Custom blocks '''
+    try:
+        from fieldes import user_primitives
+        return user_primitives.folder()
+    except Exception:
+        return ''
+
+
+def _folders():
+    return [f for f in (folder(), user_folder()) if f]
+
+
+def _is_user_file(path):
+    mine = user_folder()
+    return bool(mine) and os.path.normcase(os.path.dirname(os.path.abspath(path))) == os.path.normcase(os.path.abspath(mine))
+
+
 def _library():
     ''' What a block is written with: the library, as `from fieldes import *` gives it '''
     import fieldes
@@ -77,7 +96,7 @@ def _load(path):
             line = inspect.getsourcelines(value)[1]
         except (OSError, TypeError):
             line = 1
-        found[name] = {'fn': value, 'file': path, 'line': line}
+        found[name] = {'fn': value, 'file': path, 'line': line, 'user': _is_user_file(path)}
     return found
 
 
@@ -85,16 +104,16 @@ def refresh():
     ''' Reads the files of the folder that are new or have changed since they were read, forgets what is gone; True when
         anything changed '''
     with _LOCK:
-        d = folder()
         files = {}
-        if os.path.isdir(d):
-            for name in sorted(os.listdir(d)):
-                if name.endswith('.py') and not name.startswith('_'):
-                    p = os.path.join(d, name)
-                    try:
-                        files[p] = os.stat(p).st_mtime_ns
-                    except OSError:
-                        pass
+        for d in _folders():
+            if os.path.isdir(d):
+                for name in sorted(os.listdir(d)):
+                    if name.endswith('.py') and not name.startswith('_'):
+                        p = os.path.join(d, name)
+                        try:
+                            files[p] = os.stat(p).st_mtime_ns
+                        except OSError:
+                            pass
         changed = False
         for p in list(_FILES):
             if p not in files:
@@ -140,7 +159,7 @@ def names():
 
 
 def errors():
-    ''' [(file, what went wrong)] for the files that could not be read '''
+    ''' [(file, what went wrong)] for the files that could not be read (the blocks folder's and the folder of the user's own primitives) '''
     refresh()
     with _LOCK:
         return sorted(_ERRORS.items())
@@ -165,7 +184,7 @@ def info():
             out.append({'name': name, 'file': b['file'], 'line': b['line'], 'signature': str(sig), 'doc': doc,
                         'first': params[0].name if params else '', 'required': required,
                         'operation': bool(required) and len(required) == 1,
-                        'primitive': not required})
+                        'primitive': not required, 'user': bool(b.get('user'))})
     return out
 
 

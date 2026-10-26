@@ -105,7 +105,7 @@ A hole in any direction is `direction=(x, y, z)`; `position`, `diameter`, `depth
 | `capsule(radius, height, base=(0, 0, 0))` | a cylinder with a hemisphere on each end, standing along z; `height` is the whole length (at least twice the radius) -- its field is the exact distance to its surface | the side (the radius) and the two ends |
 | `tube(outer_radius, inner_radius, height, base=(0, 0, 0))` | a hollow cylinder along z | the outer wall, the bore, the two ends |
 | `slot(length, width, center=(0, 0))` | a 2D obround (a rectangle with a half circle on each short end), `length` along x; extrude it for a slot in a plate | the four sides: an end pulled makes it longer (the round end stays), a long side pulled makes it wider (both ends stay round) |
-| `threaded_rod(screw, length, base=(0, 0, 0))` | a rod with an ISO thread along z | the two ends (the diameter is the screw's) |
+| `threaded_rod(screw, length, base=(0, 0, 0))` | a rod with an ISO thread along z | the side (the diameter: the pitch stays, so the thread keeps its profile) and the two ends |
 
 Like the primitives (`box`, `cylinder`, `sphere` ...), each of these is **drag adjustable**: it is made of numbers that each stand for one face, so FielDes writes `handles(part, [...])` when you select
 it and a face you pull changes the number of that face -- and nothing else (a shape made of arithmetic on a field has no face numbers, and a pull could only scale it).

@@ -137,8 +137,8 @@ def kind_of(value):
     from fieldes.shape import Shape
     if isinstance(value, Shape):
         k = getattr(value, '_kind', None)
-        if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice', 'symmetry'):
-            return k
+        if k in ('point', 'points', 'surface', 'field', 'profile', 'curve', 'lattice', 'symmetry', 'solid'):
+            return k                    # ('solid' says it of a body whose field does not depend on z: a half space square to x is no 2D shape)
         if k == 'const':
             return 'field'
         for cls in type(value).__mro__:
@@ -156,7 +156,7 @@ def kind_of(value):
 def keep_kind(out, shape):
     ''' `out` is `shape` edited in a way that does not change what it is (a gizmo, handles): a 2D shape is still one,
         although its field now depends on z the way the edit is written (a rotation about x) '''
-    if kind_of(shape) in ('profile', 'lattice'):
+    if kind_of(shape) in ('profile', 'lattice') or getattr(shape, '_kind', None) == 'solid':
         out._kind = kind_of(shape)
 
 

@@ -189,22 +189,12 @@ void PopOut::placeButton()
 
 QWidget* PopOut::makePlaceholder()
 {
-    auto frame = new QFrame(m_parent);
-    frame->setObjectName("PopOutPlaceholder");
-    frame->setFrameShape(QFrame::StyledPanel);
-    frame->setMinimumSize(140, 80);
-    auto layout = new QVBoxLayout(frame);
-    auto label = new QLabel(T("%1 is in a window of its own.").arg(m_title), frame);
-    label->setAlignment(Qt::AlignCenter);
-    label->setWordWrap(true);
-    auto back = new QPushButton(T("Put it back"), frame);
-    back->setObjectName("PopOutBack");
-    layout->addStretch(1);
-    layout->addWidget(label);
-    layout->addWidget(back, 0, Qt::AlignHCenter);
-    layout->addStretch(1);
-    connect(back, &QPushButton::clicked, this, [this] { dock(); });
-    return frame;
+    // Nothing stands where the element was, and nothing says that it is out: the panes round it take its room (a window that is out saves the room it had).  This is only the PLACE it goes
+    // back to -- an empty widget that is hidden, which a splitter and a layout give no room -- so that it is put back where it was among the others
+    auto place = new QWidget(m_parent);
+    place->setObjectName("PopOutPlaceholder");
+    place->hide();
+    return place;
 }
 
 void PopOut::saveWindowGeometry() const
@@ -237,7 +227,20 @@ void PopOut::floatOut()
         m_placeholder = makePlaceholder();
         m_target->setParent(m_window);                    // (it leaves the splitter)
         splitter->insertWidget(m_index, m_placeholder);
-        if (m_sizes.size() == splitter->count()) splitter->setSizes(m_sizes);
+        if (m_sizes.size() == splitter->count())
+        {
+            // The room of the element goes to the panes round it, in the proportions they had: the place that is held for it is hidden and has none
+            double total = 0.0, kept = 0.0;
+            for (int i = 0; i < m_sizes.size(); ++i)
+            {
+                total += m_sizes[i];
+                if (i != m_index) kept += m_sizes[i];
+            }
+            QList<int> now;
+            for (int i = 0; i < m_sizes.size(); ++i)
+                now << (i == m_index ? 0 : kept > 0.0 ? int(m_sizes[i] * total / kept + 0.5) : m_sizes[i]);
+            splitter->setSizes(now);
+        }
     }
     else if (m_parent->layout())
     {

@@ -115,6 +115,19 @@ def _body_key(body):
         return id(body)
 
 
+def _on_of(feature):
+    ''' The body a point or an edge is on (`_on`).  A point that is selected is wrapped in `place(...)` by FielDes -- for its gizmo to move it --, and that copy is a new object: it keeps the
+        body (see handles._CARRIED), and when it does not, the one it was placed from says it '''
+    for _ in range(8):
+        body = getattr(feature, '_on', None)
+        if body is not None:
+            return body
+        feature = getattr(feature, '_placed_from', None)
+        if feature is None:
+            break
+    return None
+
+
 def _describe(feature, index):
     ''' What a feature gives to a snap: {kind: 'face' | 'edge' | 'point', body (the shape it is on, or None), at (a place: the point, or the middle of the face or edge), normal (a
         face: the way it faces, out of its body), axis (an edge: its direction)} '''
@@ -132,13 +145,13 @@ def _describe(feature, index):
         # an edge: a line through points -- the direction from the first to the last, and its middle
         first, last = _place(points[0], what), _place(points[-1], what)
         axis = _unit(tuple(last[i] - first[i] for i in range(3)), what)
-        return {'kind': 'edge', 'body': getattr(feature, '_on', None), 'at': tuple(0.5 * (first[i] + last[i]) for i in range(3)), 'axis': axis}
+        return {'kind': 'edge', 'body': _on_of(feature), 'at': tuple(0.5 * (first[i] + last[i]) for i in range(3)), 'axis': axis}
     try:
         at = _place(feature, what)
     except ValueError:
         raise ValueError('snap: %s is not something to snap by: a face (select_surface), an edge (edge_at) or a point (corner_at, edge_point_at, circle_center_at, face_center, point)'
                          % what)
-    return {'kind': 'point', 'body': getattr(feature, '_on', None), 'at': at}
+    return {'kind': 'point', 'body': _on_of(feature), 'at': at}
 
 
 def _anchor(group):

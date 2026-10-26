@@ -145,8 +145,6 @@
  "the design reached the edge of its space: a larger one is being made, and the optimisation goes on in it": "设计已到达其设计空间的边缘：正在创建更大的空间，优化将在其中继续",
  "Put %1 back where it was": "将%1放回原处",
  "Pull %1 out into a window of its own": "将%1拖出到单独的窗口",
- "%1 is in a window of its own.": "%1在单独的窗口中。",
- "Put it back": "放回",
  "Remove": "移除",
  "Rename": "重命名",
  "Primitives": "基本体",

@@ -403,9 +403,49 @@ check('slot: an end pulled makes it longer and keeps the round end and the width
 wider = handles(sl2, [-10, 10, -3, 5])
 check('slot: a long side pulled makes it wider, keeps the ends at their places and the ends round', inside(wider, (0, 4.5, 0)) and not inside(wider, (0, 5.3, 0)) and not inside(wider, (0, -3.3, 0)) and inside(wider, (-9.8, 1, 0)) and not inside(wider, (-10.2, 1, 0)) and not inside(wider, (-9.9, 4.9, 0)))
 rod = threaded_rod('M8', 10)
-check('threaded rod: two handles, the heights of its ends, and only the ends', handle_values(rod) == ['0.0', '10.0'] and getattr(rod, '_handles_ends_only', False), str(handle_values(rod)))
-longrod = handles(rod, [0, 15])
+check('threaded rod: three handles, its diameter and the heights of its ends', handle_values(rod) == ['8.0', '0.0', '10.0'] and not getattr(rod, '_handles_ends_only', False), str(handle_values(rod)))
+longrod = handles(rod, [8, 0, 15])
 check('threaded rod: the top end pulled makes it longer', inside(longrod, (0, 0, 14)) and not inside(longrod, (0, 0, 16)) and inside(longrod, (0, 0, 1)))
+
+
+def crest_reach(body):
+    ''' How far the thread reaches from the axis, along x: the most over one pitch (1.25) of heights '''
+    best = 0.0
+    for k in range(25):
+        lo, hi = 0.0, 12.0
+        for _ in range(30):
+            mid = 0.5 * (lo + hi)
+            if inside(body, (mid, 0, 2.0 + 1.25 * k / 25.0)):
+                lo = mid
+            else:
+                hi = mid
+        best = max(best, lo)
+    return best
+
+
+wide_rod, thin_rod = handles(rod, [10, 0, 10]), handles(rod, [6, 0, 10])
+check('threaded rod: the side pulled makes it wider (and narrower), and the thread keeps its profile', abs(crest_reach(rod) - 4.0) < 0.02 and abs(crest_reach(wide_rod) - 5.0) < 0.02 and abs(crest_reach(thin_rod) - 3.0) < 0.02,
+      '{:.3f} {:.3f} {:.3f} (4, 5, 3)'.format(crest_reach(rod), crest_reach(wide_rod), crest_reach(thin_rod)))
+check('threaded rod: ... and the ends stay where they were', inside(wide_rod, (0, 0, 9.5)) and not inside(wide_rod, (0, 0, 10.5)) and inside(wide_rod, (0, 0, 0.5)) and not inside(wide_rod, (0, 0, -0.5)))
+print(took())
+
+# ---------------------------------------------------------------- 17. a half space square to an axis is a body, and is drawn up to the boundary of the region
+stage('17. half_space: a 3D shape, and drawn')
+from fieldes.kinds import kind_of
+from fieldes.ffi import lib, libfive_region_t, libfive_interval_t
+from fieldes.stdlib.fields import render_mesh
+for axis, norm, point in (('z', (0, 0, 1), (0, 0, 3.37)), ('x', (1, 0, 0), (3.37, 0, 0)), ('y', (0, -1, 0), (0, 2.5, 0))):
+    plane = half_space(norm, point)
+    check('half_space square to {} is a 3D shape (a field that does not depend on z is not a 2D shape)'.format(axis), kind_of(plane) == 'solid', str(kind_of(plane)))
+    mesh = render_mesh(plane, libfive_region_t(*[libfive_interval_t(-20.0, 20.0) for _ in range(3)]), 2)
+    m = mesh.contents if mesh else None
+    pts = [(m.verts[i].x, m.verts[i].y, m.verts[i].z) for i in range(m.vert_count)] if m else []
+    across = [a for a in range(3) if (0, 1, 2)[a] != 'xyz'.index(axis)]
+    reach = min(max(abs(p[a]) for p in pts) for a in across) if len(pts) > 5 else 0.0
+    check('half_space square to {} is drawn (a mesh with faces, not one cell)'.format(axis), bool(m) and m.tri_count > 4, '{} vertices'.format(len(pts)))
+    check('and reaches the boundary of the region in both directions across it (within the cells of the boundary)', reach > 18.0, '{:.2f} of 20'.format(reach))
+    if mesh:
+        lib.libfive_mesh_delete(mesh)
 print(took())
 
 print('=' * 70)

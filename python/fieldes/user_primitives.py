@@ -6,11 +6,14 @@ is yours to change, from the Primitives menu of the menu bar:
 
     add         a Parametric shape (or any entry of the menus) to the list of Primitives
     remove      a primitive from the list: it is then offered with the Parametric shapes
-    add selection   the model that is selected in the model tree -- with every statement of the script that it is made of -- becomes a primitive of your own, under the name you give it:
-                    picking it from the menu writes it into the script again, as a model of its own, with names that do not collide with those of the script
+    add selection   the model that is selected in the model tree -- with every statement of the script that it is made of -- becomes a primitive of your own, under the name you give it.
+                    It is kept as a FILE of its own, `<name>.py` in the `primitives` folder of yours: a function that makes the model (`def name(): ... return model`), a block like any
+                    other (see blocks.py): scripts run it, the editor completes it, shows its call tip and goes to its definition.  Picking it from the menu writes ONE line, `name_1 = name()`:
+                    the model is one object, in the script and in the model tree, and what it is made of stays in its file -- as the geometry of an imported part stays in the cache files
+                    of the import.  The numbers it is made of are the numbers it had (a var() of the script it came from is its number now); the handles of the model in a script are its own
 
-What you choose is kept in ONE file of your own, `primitives.json`, in the folder that is yours -- `%APPDATA%\\FielDes` on Windows, `~/.local/share/FielDes` on Linux (the application sets
-FIELDES_USER_DIR) --, and is there in every script you open, whether or not the script you made a primitive in still exists.
+What you choose is kept in ONE file of your own, `primitives.json`, and the primitives themselves in the folder `primitives` next to it -- in the folder that is yours: `%APPDATA%\\FielDes` on
+Windows, `~/.local/share/FielDes` on Linux (the application sets FIELDES_USER_DIR) --, and are there in every script you open, whether or not the script you made a primitive in still exists.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -57,13 +60,22 @@ def path():
     return os.path.join(user_dir(), 'primitives.json')
 
 
+def folder():
+    ''' The folder of the primitives of the user's own: a file each (read as blocks: see fieldes.blocks) '''
+    return os.path.join(user_dir(), 'primitives')
+
+
+def _file(name):
+    return os.path.join(folder(), name + '.py')
+
+
 def _empty():
-    return {'added': [], 'removed': [], 'custom': [], 'labels': {}}
+    return {'added': [], 'removed': [], 'labels': {}}
 
 
 def load():
-    ''' What the user chose: {added: [names], removed: [names], custom: [{name, type, head, expr, names, main, doc}], labels: {name: the name the menus show}}.  A file that is not there, or
-        cannot be read, is no choices '''
+    ''' What the user chose: {added: [names], removed: [names], labels: {name: the name the menus show}}.  A file that is not there, or cannot be read, is no choices.  (A file of an older
+        FielDes kept the primitives of the user's own in it as well, `custom`, with the statements they are made of: each of those is written as a file of its own, once, and leaves it) '''
     p = path()
     try:
         stamp = (os.path.getmtime(p), os.path.getsize(p))
@@ -73,18 +85,27 @@ def load():
     if _CACHE['stamp'] == stamp and _CACHE['data'] is not None:
         return _CACHE['data']
     out = _empty()
+    old = None
     try:
         with open(p, encoding='utf-8') as f:
             raw = json.load(f)
         if isinstance(raw, dict):
             out['added'] = [str(n) for n in raw.get('added', []) if isinstance(n, str)]
             out['removed'] = [str(n) for n in raw.get('removed', []) if isinstance(n, str)]
-            out['custom'] = [c for c in raw.get('custom', []) if isinstance(c, dict) and isinstance(c.get('name'), str) and isinstance(c.get('expr'), str)]
             labels = raw.get('labels', {})
             if isinstance(labels, dict):
                 out['labels'] = {str(k): str(v) for k, v in labels.items() if isinstance(k, str) and isinstance(v, str) and v.strip()}
+            if 'custom' in raw:
+                old = [c for c in raw['custom'] if isinstance(c, dict) and isinstance(c.get('name'), str) and isinstance(c.get('expr'), str)] if isinstance(raw['custom'], list) else []
     except (OSError, ValueError):
         out = _empty()
+    if old is not None:
+        _migrate(old)
+        try:
+            save(out)                       # (the file without `custom`: what it held is in the folder now)
+        except OSError:
+            pass
+        return out
     _CACHE['stamp'], _CACHE['data'] = stamp, out
     return out
 
@@ -95,7 +116,7 @@ def save(data):
     os.makedirs(os.path.dirname(p), exist_ok=True)
     temp = p + '.tmp'
     with open(temp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=1, ensure_ascii=False)
+        json.dump({'added': data.get('added', []), 'removed': data.get('removed', []), 'labels': data.get('labels', {})}, f, indent=1, ensure_ascii=False)
     os.replace(temp, p)
     _CACHE['stamp'], _CACHE['data'] = None, None
 
@@ -106,25 +127,79 @@ def basic(builtin):
     return (set(builtin) - set(d['removed'])) | set(d['added'])
 
 
-def find(name):
-    for c in load()['custom']:
-        if c['name'] == name:
-            return c
-    return None
-
-
 def labels():
     ''' The names the user gave the shapes of the library: {function name: what the menus call it} '''
     return load()['labels']
 
 
+# ---------------------------------------------------------------------------
+# The primitives of the user's own: a file each, `<name>.py`, that starts with `#@ primitive: <the kind of model it makes>` and holds the function `<name>()`
+
+_SEEN = {}                 # path -> (stamp, entry): a file is read again when it has changed
+
+
+def _entry_of(p):
+    ''' {name, type, doc, file} of a file of the folder, or None when it is not a primitive (it does not start with `#@ primitive: <kind>`) '''
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _SEEN.get(p)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    entry = None
+    try:
+        with open(p, encoding='utf-8') as f:
+            text = f.read()
+        head = re.match(r'#@ primitive: (\w+)', text)
+        name = os.path.splitext(os.path.basename(p))[0]
+        if head is not None:
+            doc = ''
+            try:
+                for node in ast.parse(text).body:
+                    if isinstance(node, ast.FunctionDef) and node.name == name:
+                        doc = (ast.get_docstring(node) or '').strip().split('\n', 1)[0]
+                        break
+            except SyntaxError:
+                pass                    # (a file that does not read says so when a script runs it: see blocks.errors)
+            entry = {'name': name, 'type': head.group(1), 'doc': doc, 'file': p}
+    except OSError:
+        pass
+    _SEEN[p] = (stamp, entry)
+    return entry
+
+
+def entries():
+    ''' The primitives of the user's own: [{name, type, doc, file}] '''
+    d = folder()
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        if n.endswith('.py') and not n.startswith('_'):
+            e = _entry_of(os.path.join(d, n))
+            if e is not None:
+                out.append(e)
+    return out
+
+
+def find(name):
+    for e in entries():
+        if e['name'] == name:
+            return e
+    return None
+
+
 def catalog_entries():
     ''' The primitives of the user's own, as entries of the menu catalog '''
     out = []
-    for c in load()['custom']:
-        typ = c.get('type') or 'solid'
+    for c in entries():
+        typ = c['type'] or 'solid'
         out.append({'name': c['name'], 'group': GROUP_OF_TYPE.get(typ, 'Custom blocks'), 'type': typ, 'with_bodies': False, 'primitive': True, 'custom': True,
-                    'doc': c.get('doc') or '', 'label': c['name'].replace('_', ' ')})
+                    'doc': c['doc'], 'label': c['name'].replace('_', ' ')})
     return out
 
 
@@ -215,34 +290,98 @@ def renamed(text, mapping):
     return '\n'.join(lines)
 
 
-def _identifiers(source):
-    ''' Every name that is written in the script: what a made-up name must not be '''
+# ---------------------------------------------------------------------------
+# The file of a primitive
+
+def _plain_numbers(text):
+    ''' `text` with every var(5) written as 5: what a primitive is made of are the numbers it had, not the draggable numbers of the script it was made in (the model that a script has
+        of it gets its own, from its own handles) '''
+    return re.sub(r'\bvar\(\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*\)', r'\1', text or '')
+
+
+_PLACEMENT_DEFAULTS = {'position': (0.0, 0.0, 0.0), 'rotation': (0.0, 0.0, 0.0), 'scale': (1.0, 1.0, 1.0), 'alpha': 1.0}
+
+
+def _without_default_placement(expr):
+    ''' `expr` -- the call that makes a model -- less the placement arguments it carries at their defaults (position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1), alpha=1: what FielDes writes
+        into a call when it makes the model draggable): a primitive is what the model is made of, and the model that a script gets from it is placed by its own.  A placement that is not the
+        default stays: it is where the model was put '''
     try:
-        return {t.string for t in tokenize.generate_tokens(io.StringIO(source).readline) if t.type == tokenize.NAME}
-    except (tokenize.TokenError, IndentationError):
-        return set(re.findall(r'[A-Za-z_]\w*', source))
+        call = ast.parse(expr, mode='eval').body
+    except SyntaxError:
+        return expr
+    if not isinstance(call, ast.Call):
+        return expr
+    lines = expr.split('\n')
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line) + 1)
 
+    def offset(lineno, col):
+        text = lines[lineno - 1]
+        return starts[lineno - 1] + len(text.encode('utf-8')[:col].decode('utf-8', 'ignore'))
 
-def insert_text(custom, var, source):
-    ''' What picking the primitive writes: its statements and then its model, `var` the name of the model.  Every name the statements make is kept unless the script has it already --
-        then it gets a number, so that a primitive added twice, or into a script that has a `size` of its own, never overwrites anything '''
-    taken = _identifiers(source or '') | {var}
-    mapping = {custom['main']: var}
-    for n in custom.get('names', []):
-        if n == custom['main']:
+    cuts = []
+    for kw in call.keywords:
+        default = _PLACEMENT_DEFAULTS.get(kw.arg)
+        if default is None:
             continue
-        if n in taken:
-            k = 2
-            while '%s_%d' % (n, k) in taken:
-                k += 1
-            mapping[n] = '%s_%d' % (n, k)
-            taken.add(mapping[n])
-        else:
-            taken.add(n)
-    head = renamed(custom.get('head', ''), mapping)
-    expr = renamed(custom['expr'], mapping)
-    from fieldes.menu_catalog import PRELUDE
-    return (head + PRELUDE + expr) if head.strip() else expr
+        try:
+            value = ast.literal_eval(_plain_numbers(ast.get_source_segment(expr, kw.value)))
+        except (ValueError, SyntaxError, TypeError):
+            continue
+        if isinstance(value, (tuple, list)):
+            value = tuple(float(v) for v in value)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = float(value)
+        if value == default or (kw.arg == 'scale' and value == 1.0):
+            cuts.append((offset(kw.lineno, kw.col_offset), offset(kw.end_lineno, kw.end_col_offset)))
+    if not cuts:
+        return expr
+    out, last = '', 0
+    for a, b in cuts:
+        while b < len(expr) and expr[b] in ' \t\r\n,':          # (the comma after it, and the room before the next)
+            b += 1
+        out += expr[last:a]
+        last = b
+    out += expr[last:]
+    if out.endswith(')'):
+        body = out[:-1].rstrip()
+        out = (body[:-1] if body.endswith(',') else body) + ')'      # (nothing is left after the last argument but the bracket)
+    return out
+
+
+def function_text(name, typ, doc, head, expr):
+    ''' The text of the file of a primitive: `#@ primitive: <kind>` and the function `name()` that runs the statements the model is made of and returns it '''
+    doc = (doc or '').strip().split('\n', 1)[0] or 'Your own primitive, made from a model of a script (Primitives > Manage primitives).'
+    out = ['#@ primitive: %s' % typ, 'def %s():' % name, '    %r' % doc]
+    body = _plain_numbers(head)
+    if body.strip():
+        out.extend(('    ' + line) if line.strip() else '' for line in body.split('\n'))
+    out.append('    return ' + _plain_numbers(_without_default_placement(expr)))
+    return '\n'.join(out) + '\n'
+
+
+def _write_text(name, text):
+    ''' Writes the file of a primitive, through a temporary file; a text that is not Python is refused '''
+    compile(text, name + '.py', 'exec')
+    os.makedirs(folder(), exist_ok=True)
+    p = _file(name)
+    temp = p + '.tmp'
+    with open(temp, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+    os.replace(temp, p)
+
+
+def _migrate(old):
+    ''' The primitives an older FielDes kept in primitives.json -- {name, type, head, expr, doc} -- as files of their own (one that has a file already is left as it is) '''
+    for c in old:
+        try:
+            name = c['name']
+            if not os.path.exists(_file(name)):
+                _write_text(name, function_text(name, c.get('type') or 'solid', c.get('doc') or '', c.get('head') or '', c['expr']))
+        except (OSError, SyntaxError, ValueError):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +391,10 @@ def manage(arg):
     ''' JSON {op, ...} -> JSON.  ops:
           list {type}                    every entry of that kind of model (or of every kind): [{name, label, group, type, on, custom, builtin}]
           set {name, on}                 put a menu entry in the list of Primitives (on) or take it out of it
-          add {source, line, end_line, name, type, doc}   the model written there becomes a primitive of the user's own
-          remove {name}                  a primitive of the user's own is forgotten
-          rename {name, label}           a primitive of the user's own gets another name (a new one: it is what the menus call it, and what the model it writes is called after);
-                                         a shape of the library keeps its function and gets the name the menus show (an empty label: the library's name again)
+          add {source, line, end_line, name, type, doc}   the model written there becomes a primitive of the user's own: a file `<name>.py` of the folder of primitives
+          remove {name}                  a primitive of the user's own is forgotten (its file is deleted: a script that calls it needs the file)
+          rename {name, label}           a primitive of the user's own gets another name (a new one: it is what the menus call it, what its file and its function are called, and what the model
+                                         it writes is called after); a shape of the library keeps its function and gets the name the menus show (an empty label: the library's name again)
           kind {type}                    the section of the manager a model of that type of the model tree belongs to: {kind}
         {ok: false, error} where it cannot be done '''
     from fieldes import menu_catalog as M
@@ -286,23 +425,28 @@ def manage(arg):
             name = re.sub(r'\W+', '_', str(r.get('name') or '').strip()).strip('_')
             if not name or name[0].isdigit() or keyword.iskeyword(name):
                 raise ValueError('a primitive needs a name made of letters, digits and underscores')
-            if any(n == name for n, _g, _t in M.PRIMITIVES) or any(o[0] == name for o in M.OPERATIONS) or find(name):
-                raise ValueError('"%s" is the name of something the menus have already: choose another' % name)
+            if _taken(M, name):
+                raise ValueError('"%s" is the name of something the menus or the library have already: choose another' % name)
             head, main, expr, names = closure(r['source'], int(r['line']), int(r['end_line']))
-            typ = r.get('type') or 'solid'
-            d['custom'].append({'name': name, 'type': typ, 'head': head, 'main': main, 'expr': expr, 'names': names, 'doc': r.get('doc') or ''})
+            _write_text(name, function_text(name, r.get('type') or 'solid', r.get('doc') or 'The model %s of a script, made a primitive of your own' % main, head, expr))
         elif op == 'remove':
-            d['custom'] = [c for c in d['custom'] if c['name'] != r['name']]
+            mine = find(r['name'])
+            if mine is not None:
+                os.remove(mine['file'])
         elif op == 'rename':
             name, label = r['name'], str(r.get('label') or '').strip()
-            mine = next((c for c in d['custom'] if c['name'] == name), None)
+            mine = find(name)
             if mine is not None:
                 new = re.sub(r'\W+', '_', label).strip('_')
                 if not new or new[0].isdigit() or keyword.iskeyword(new):
                     raise ValueError('a primitive needs a name made of letters, digits and underscores')
-                if new != name and (any(n == new for n, _g, _t in M.PRIMITIVES) or any(o[0] == new for o in M.OPERATIONS) or any(c['name'] == new for c in d['custom'])):
-                    raise ValueError('"%s" is the name of something the menus have already: choose another' % new)
-                mine['name'] = new
+                if new != name and _taken(M, new):
+                    raise ValueError('"%s" is the name of something the menus or the library have already: choose another' % new)
+                if new != name:
+                    with open(mine['file'], encoding='utf-8') as f:
+                        text = f.read()
+                    _write_text(new, renamed(text, {name: new}))
+                    os.remove(mine['file'])
                 extra['label'] = new.replace('_', ' ')
             else:
                 if not any(n == name for n, _g, _t in M.PRIMITIVES):
@@ -318,6 +462,17 @@ def manage(arg):
         return json.dumps(dict({'ok': True, 'entries': _entries(M, r.get('type'))}, **extra))
     except Exception as e:
         return json.dumps({'ok': False, 'error': str(e)})
+
+
+def _taken(M, name):
+    ''' Whether `name` is the name of something already: an entry of the menus, a function of the library, a primitive of the user's own '''
+    if any(n == name for n, _g, _t in M.PRIMITIVES) or any(o[0] == name for o in M.OPERATIONS) or find(name) is not None:
+        return True
+    try:
+        import fieldes
+        return name in set(fieldes.__all__)
+    except Exception:
+        return False
 
 
 def _entries(M, typ):

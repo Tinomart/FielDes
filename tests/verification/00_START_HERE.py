@@ -135,9 +135,9 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #
 # 26. WINDOWS OF THEIR OWN.  Every major element has a small button at its top right: the code editor, the console and output, the model tree, the section, field and result cards, the work plane, the symmetry
 #     and the viewport.  Press the one of the model tree.  YOU MUST SEE: the tree in a window of its own (put it on another screen, if you have one); in the viewport the card is gone; its button now says it
-#     puts the tree back; press it, or close that window: the tree is where it was.  The same for the code editor (the editor's place in the window holds a placeholder with "Put it back" while it is out,
+#     puts the tree back; press it, or close that window: the tree is where it was.  The same for the code editor (while it is out the viewport takes the editor's room: no empty space is left in its place,
 #     and Ctrl+S, Ctrl+Return and the other keys still work in its window) and for the console and output.  THE VIEWPORT: press its button.  YOU MUST SEE: the model drawn in a window of its own, turned by Shift + left
-#     drag, zoomed by the wheel, selected by a click, with the cards that float over it; the main window shows the placeholder.  Put it back: the model is drawn there again, nothing lost.  Quit FielDes with
+#     drag, zoomed by the wheel, selected by a click, with the cards that float over it; in the main window the editor takes the whole width, with no empty space left where the viewport was.  Put it back: the model is drawn there again, nothing lost.  Quit FielDes with
 #     the tree pulled out and start it again: the tree is pulled out again, where you left it.  (If any element of these does not draw, take input, or come back cleanly, that is a defect to report.)
 #
 # 27. UNITS.  Settings > Units...: choose Length: in, Stress and pressure: psi, Temperature: F.  YOU MUST SEE: the ruler of the viewport in inches, the numbers of a result card and its colour bar in psi (open
@@ -170,7 +170,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #
 # 33. THE NEW BASE SHAPES ARE DRAGGABLE, FACE BY FACE.  Right-click empty space > Parametric shapes: capsule, tube, slot.  YOU MUST SEE: the capsule and the tube with the cube icon of a 3D shape and the slot with
 #     the square of a 2D shape, each with a gizmo (a capsule is a body, not a field).  Press the side of the capsule and drag: its radius changes and the ends stay round; press the tip of an end: its length changes (press it off the tip, on the round shoulder, and the pull goes along the surface's normal, as it does for every surface of the program: the capsule grows longer and wider together);
-#     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Primitives > Parametric shapes) pulls by its ends.
+#     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Parametric shapes) pulls by its side (the diameter: the pitch stays) and by its ends.
 #     Each drag changes one number in the `handles(...)` line, never a scale.
 #
 
