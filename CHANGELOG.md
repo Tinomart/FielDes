@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0
+## 1.1.0
 
 ### The CAD operations finished; Settings → Units; solvers of your own; a validation page
 
@@ -86,6 +86,8 @@
 - **The coefficients on the card of a flow design are the mean's.** The card showed the force of the mean over the places of the mesh lattice beside coefficients of the one flow that is drawn (a lift force of 4e-9 N beside a lift coefficient of 5e-12); both are of the mean now (`FlowTopologyResult.drag_coefficient`, `lift_coefficient`).
 - **`examples/35_thermal_topology_optimization.py`:** a plate that makes heat all through it and a sink on its edge, designed with `topology_optimization(thermal_analysis(...), ...)`: the tree of conductors from the sink, coloured by its density, iteration by iteration.
 - The examples (08, 10, 32, 33), the tests of the manufacturing work and of the parametric search, the tour and the documentation use the new calls.
+
+## 1.0.0
 
 ### The examples are for projects; the primitives can be renamed; a symmetry in the tree no longer hides the model; the printer's fin, slot and gusset
 

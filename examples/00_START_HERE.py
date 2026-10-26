@@ -1,7 +1,7 @@
 from fieldes import *
 view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 
-# START HERE: FIELDES 1.0.0.
+# START HERE: FIELDES 1.1.0.
 #
 # This file does nothing but say where everything is.  Everything below is a script you open in the window (File > Open example file, or drag it onto the window) and look at.  Look at the
 # picture first; the numbers are an aid.  The comment at the top of each script says what to look at.
