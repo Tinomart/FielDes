@@ -26,7 +26,7 @@ result                                               # displayed: the temperatur
 print(result.max_temperature)
 ```
 
-`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_volume`; give `element_size`, or give a mesh you made instead of a part), makes a `Problem` of the mesh, and calls the solver `name` with the problem and the parameters. What the solver gives back is displayed: the part is coloured by the first field it found, the other fields are behind the card's field list, and the elements behind the **Elements** button.
+`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_volume`; give `element_size`, or give a mesh you made instead of a part), makes a `Problem` of the mesh, and calls the solver `name` with the problem and the parameters. What the solver gives back is displayed: the part is drawn as its elements, each coloured by the first field the solver found (the value of the field in it); the other fields are behind the card's field list. The values of a solver written in Python are in its elements and nowhere else, so the result starts with the elements drawn; the **Elements** button turns them off, which leaves the plain body, in one colour.
 
 ## Settings > Solver
 

@@ -236,7 +236,7 @@ class SolverResult(object):
         return 'solve(%s): %d nodes, %d tetrahedra, %.2f s; %s' % (self.solver, len(self.problem.nodes), len(self.problem.tets), self.seconds, '; '.join(parts))
 
     def _display(self):
-        ''' The part coloured by the first field, the others behind the Elements button of the card: what FielDes draws for a result '''
+        ''' The part drawn as its elements, coloured by the first field (the others are in the card's list of fields): what FielDes draws for a result '''
         if self._shown is None:
             from fieldes.stdlib import meshing
             channels = []
@@ -247,8 +247,10 @@ class SolverResult(object):
                 lo, hi = min(values), max(values)
                 if not hi > lo:
                     hi = lo + 1.0
-                channels.append((name, '%s - per element, press Elements' % name, array('f', per).tobytes(), lo, hi, sum(values) / len(values)))
+                channels.append((name, '%s - per element' % name, array('f', per).tobytes(), lo, hi, sum(values) / len(values)))
             self._shown = meshing._display_of(self.problem.mesh, extra=channels)
+            # (the values of a solver are in its elements: a smooth surface has nothing of them to show, so the result starts with the elements drawn)
+            self._shown._elements_first = True
         return self._shown
 
 

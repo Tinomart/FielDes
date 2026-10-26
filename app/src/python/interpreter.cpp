@@ -2502,6 +2502,12 @@ void Interpreter::recordShape(
                         shape->setColorDetail(float(num("_color_detail", 0)));
                         // (why a result has no elements to show, when it has none: said on the card where their number stands)
                         shape->setElementNote(str("_fea_elements_note"));
+                        // (a result whose values are in its elements and nowhere else -- a solver written in Python: the smooth surface has no value of its own to show -- starts with the
+                        // elements drawn; the Elements button of the card, and the choice it made before, still decide)
+                        PyObject* first = PyObject_GetAttrString(obj, "_elements_first");
+                        if (first && PyObject_IsTrue(first) == 1 && shape->hasElements()) shape->setShowElements(true);
+                        Py_XDECREF(first);
+                        PyErr_Clear();
                     }
                 }
                 Py_XDECREF(fields);

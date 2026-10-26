@@ -146,7 +146,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #
 # 28. SOLVERS OF YOUR OWN.  Settings > Solver...: a list with the analyses that are built in (the equations are shown), the solvers of the library (`heat`, `elasticity`) and the files of your solvers folder.
 #     Select `heat`, press "Make an editable copy", name it `heat2`, change the conductivity in the editor, press "Save and check": "Saved and read: ..." shows.  In the script, `solve('heat2', part, ...)` draws the
-#     temperature of the copy like any result (docs/solvers.md has a first solver to start from).  A syntax error is shown by "Not saved -- ..." with its line and nothing is written; any other mistake leaves the file in the list as "(error)".  THE WAY BACK: change the equations, press "Save and check", then press
+#     temperature of the copy like any result (the part as its elements, each coloured by its temperature: the first example of docs/solvers.md gives a plate that is blue at its cold end and red at its hot one, 20 to 80, the card says "temperature - per element") (docs/solvers.md has a first solver to start from).  A syntax error is shown by "Not saved -- ..." with its line and nothing is written; any other mistake leaves the file in the list as "(error)".  THE WAY BACK: change the equations, press "Save and check", then press
 #     "Reset to default": a question, then the text the copy started with is in the editor (not yet saved: Ctrl+Z undoes it) and "Save and check" keeps it; "Previous version" puts back the text before the last save.
 #     "Reset to default" is grey only for a file that was put into the solvers folder by hand (it has no default of its own); a copy, a new solver and a file added with "Add from a file..." have one.  "Delete" asks first.
 #
