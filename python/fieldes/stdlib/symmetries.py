@@ -2,7 +2,7 @@
 Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `symmetry_images(shape, symmetry)`, ALL the images of a shape in it, as one model.
 
     mirror = symmetry_planes()                        # one plane, through the origin, the plane x = 0: a mirror
-    mirror = gizmo(mirror, move=(var(0), var(0), var(0)), rotate=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
+    mirror = symmetry_planes(position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
     leg = cylinder(5, 30, (40, 22, 0))                # the one you edit
     leg_images = symmetry_images(leg, mirror)         # all its images, one model: the leg as it looks in the mirror, left to right
 
@@ -560,7 +560,7 @@ def _distinct(shape, images, sym=None, numbers=None):
 
 def _carried_parts(shape):
     ''' The parts of a model that have points of their own to drag -- the profiles, the lines and the points it was made from, found through everything it was made from (see
-        made_from.py: `leg = path_extrude(leg_profile, leg_path)` was made from `leg_profile` and `leg_path`, and `leg = gizmo(leg, ...)` from the leg before it).  A part is a point,
+        made_from.py: `leg = path_extrude(leg_profile, leg_path)` was made from `leg_profile` and `leg_path`, and `leg = place(leg, ...)` from the leg before it).  A part is a point,
         or a model with points that can make itself again through other points (`_remake`: a curve, a profile); what it was made from is its points, not looked into.  The images
         of a model that is an image already are not looked into either: they bring their own '''
     from fieldes.shape import Shape

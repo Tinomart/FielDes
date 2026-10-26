@@ -6,21 +6,21 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 # This folder is not shipped.  What users get to build their projects on is `examples/`.  Here are the files that check the work: each one says WHAT TO DO and WHAT YOU MUST SEE, so that the
 # picture, and not a number, tells you whether it is right.  Look at the picture first.
 #
-#   walkthroughs/       six small scripts, one for each thing of the interface that is new (the faces of every primitive, Python in the model tree, the insertion point, Ctrl+E and the faces of an
-#                       extrusion, the part drawn turned, your own primitives).  Start with walkthroughs/00_START_HERE.py.
+#   walkthroughs/       seven small scripts, one for each thing of the interface that is new (the faces of every primitive, Python in the model tree, the insertion point, Ctrl+E and the faces of an
+#                       extrusion, the part drawn turned, your own primitives, the night of 2026-10-26).  Start with walkthroughs/00_START_HERE.py.
 #   manufacturing/      four showcases -- a 3D printer's job, a mill's, an injection mould's, the topology-optimized bracket -- each with the answers worked out by hand and the checks (one PASS or
 #                       FAIL line each) that the helper in `../kit` makes.  Start with manufacturing/00_START_HERE.py.
 #   known_answers/     four problems whose answer is known on paper (a cantilever beam, a plate with a hole, water in a channel, heat through a slab), each with the answer worked out in the file.
 #   ../internal/        about a hundred cases, each trying to break one thing on a part made for it.
 #
-# THESE ROUNDS (2026-10-21 and 2026-10-22): what to do, and what you must see.  Open the file named in each line (File > Open, or drag it onto the window).
+# THESE ROUNDS (2026-10-21 to 2026-10-26): what to do, and what you must see.  Open the file named in each line (File > Open, or drag it onto the window).
 #
 #  1. A SYMMETRY IN THE TREE.  Open examples/29_symmetry.py and click the row of the symmetry (`mirror`) in the model tree -- or take the guided tour (Help > Guided tour) to the step "A mirror" and click it
 #     there.  YOU MUST SEE: its planes drawn, the whole model still in the picture and the camera where it was.  (Before, a click on the row took the camera in on the few millimetres round the
 #     symmetry's centre and every model left the picture.)
 #
 #  2. THE WHEEL ON A POINT.  Open examples/26_profiles_and_sweeps.py, select nothing, put the mouse on the dot of one of the five points of the plate and turn the wheel with Shift held -- or Ctrl held.
-#     YOU MUST SEE: the first notch selects the point (its gizmo and the gold ring appear, and `gizmo(` is written under it); the next notches scale it, 10 % a notch, and the plate's outline follows
+#     YOU MUST SEE: the first notch selects the point (its gizmo and the gold ring appear, and `position=`, `rotation=` and `scale=` are written into its call); the next notches scale it, 10 % a notch, and the plate's outline follows
 #     (a spline point is rounder, a corner is not affected).  With the mouse on empty space the wheel zooms, as ever.
 #
 #  3. THE END FACES OF AN EXTRUSION.  Open walkthroughs/04_extrude_with_ctrl_e.py, click `extrude_2`, then press its TOP face (the flat end) and drag it up or down.  YOU MUST SEE: the length changes
@@ -99,8 +99,8 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 # 18. THE THEME, THE TERMINAL, THE BLOCKS.  Settings > Theme...: choose Dark (and Light again), change a colour by hand, Reset.  YOU MUST SEE: the editor, the trees, the dialogs and the output change at once, the
 #     defaults come back with Reset.  The terminal under the editor is there as soon as a file is open (output above, a `>>>` line at its foot; Ctrl+` puts the cursor in the line; drag the bar above the pane to make it higher or lower):
 #     type `1 + 1` and press Enter (2), `print("a")` (a), `undefined_name` (a traceback of your line only); Shift+Enter is a new line, Up and Down go
-#     through what you ran.  In the editor every object (its lines, its gizmo, its handles) is one block with its arrow, and every second block is a shade darker.  Click the arrow of the first line of an object (try one whose definition runs over several lines, one with a handles/gizmo statement, one that is hidden): YOU MUST SEE every line of that object go,
-#     the closing bracket of its definition, its handles(...) / gizmo(...) / lock(...) lines, the line that shows it (or its `# hidden:` line), and "... N lines" on its first line.  The next object stays where it is.
+#     through what you ran.  In the editor every object (its lines, its placement, its handles) is one block with its arrow, and every second block is a shade darker.  Click the arrow of the first line of an object (try one whose definition runs over several lines, one with a handles statement, one that is hidden): YOU MUST SEE every line of that object go,
+#     the closing bracket of its definition, its handles(...) / lock(...) lines, the line that shows it (or its `# hidden:` line), and "... N lines" on its first line.  The next object stays where it is.
 #
 # 19. THE ORTHOGRAPHIC VIEW IS THE DEFAULT.  Start FielDes with no settings file (a new user): the cube of any script has parallel edges, the top face of a cube in the iso view is an exact rhombus.
 #
@@ -126,6 +126,52 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     face only "Point at the centre of this face"; at the rim also "Point at the centre of the circle" and "Point on the edge"; at the rounded corner "Point at the rounded corner"; on the rounded edge "Point on
 #     the rounded edge" -- and picking one writes `circle_center_1 = circle_center_at(drum, (x, y, z))` (or `face_center(select_surface(...))`, or `corner_at(..., rounded=True)`) with a dot where it belongs:
 #     at the middle of the circle, at the middle of the face, and on the SHARP corner and edge the rounding replaced, just outside the rounded block.  The cone `under` stands apex down below the drum, coaxial
-#     with it, its base touching the drum's bottom: it was made by `snap(funnel, funnel_base, funnel_middle, drum_bottom, drum_middle)` with the two centres of the circles.
+#     with it, its base touching the drum's bottom: it is the cone `funnel` placed (`position=`, `rotation=`) as S places it when the faces and the two centres of the circles are selected (item 31).
+#
+# 25. PLACEMENT IS ARGUMENTS.  Make a box (right-click empty space > New 3D shape > box) and click it in the model tree.  YOU MUST SEE: the box in the tree starts CLOSED; opened, its last rows are
+#     `position`, `rotation`, `scale` and `alpha`, dimmed, each with its default; hover one: "position is not written in the call: it has its default, (0, 0, 0). Click to write it ...".  Click `position`:
+#     the call of the box gets its placement arguments and the number is selected in the code, ready to be typed over.  The gizmo is on the box; drag an arrow: the box moves and the numbers of
+#     `position=` change in the code.  There is NO `gizmo(...)` line anywhere in the script.  Type `alpha=0.4` into the call: the box is drawn see-through.  Ctrl+D on the box: the copy has its own placement.
+#
+# 26. WINDOWS OF THEIR OWN.  Every major element has a small button at its top right: the code editor, the console and output, the model tree, the section, field and result cards, the work plane, the symmetry
+#     and the viewport.  Press the one of the model tree.  YOU MUST SEE: the tree in a window of its own (put it on another screen, if you have one); in the viewport the card is gone; its button now says it
+#     puts the tree back; press it, or close that window: the tree is where it was.  The same for the code editor (the editor's place in the window holds a placeholder with "Put it back" while it is out,
+#     and Ctrl+S, Ctrl+Return and the other keys still work in its window) and for the console and output.  THE VIEWPORT: press its button.  YOU MUST SEE: the model drawn in a window of its own, turned by Shift + left
+#     drag, zoomed by the wheel, selected by a click, with the cards that float over it; the main window shows the placeholder.  Put it back: the model is drawn there again, nothing lost.  Quit FielDes with
+#     the tree pulled out and start it again: the tree is pulled out again, where you left it.  (If any element of these does not draw, take input, or come back cleanly, that is a defect to report.)
+#
+# 27. UNITS.  Settings > Units...: choose Length: in, Stress and pressure: psi, Temperature: F.  YOU MUST SEE: the ruler of the viewport in inches, the numbers of a result card and its colour bar in psi (open
+#     examples/05_static_analysis.py and run it), the value under the cursor and the work plane's step in inches; the script itself unchanged (a box of 10 is still 10 mm: 0.394 in on the ruler).  File >
+#     Export mesh writes the file in inches; The button "Millimetres, newtons, megapascals" puts everything back to mm, N, MPa, kg and C.  The dialog is as readable in the dark theme.
+#
+# 28. SOLVERS OF YOUR OWN.  Settings > Solver...: a list with the analyses that are built in (the equations are shown), the solvers of the library (`heat`, `elasticity`) and the files of your solvers folder.
+#     Select `heat`, press "Make an editable copy", name it `heat2`, change the conductivity in the editor, press "Save and check": "Saved and read: ..." shows.  In the script, `solve('heat2', part, ...)` draws the
+#     temperature of the copy like any result (docs/solvers.md has a first solver to start from).  A syntax error is shown by "Not saved -- ..." with its line and nothing is written; any other mistake leaves the file in the list as "(error)".  THE WAY BACK: change the equations, press "Save and check", then press
+#     "Reset to default": a question, then the text the copy started with is in the editor (not yet saved: Ctrl+Z undoes it) and "Save and check" keeps it; "Previous version" puts back the text before the last save.
+#     "Reset to default" is grey only for a file that was put into the solvers folder by hand (it has no default of its own); a copy, a new solver and a file added with "Add from a file..." have one.  "Delete" asks first.
+#
+# 29. VALIDATION AND ACCURACY.  Help > Validation and accuracy.  YOU MUST SEE: a window with the list of sections at the left (Static analysis, Modal analysis, Thermal, Fluid flow, the optimisations, ...,
+#     CAD operations and snapping, Solvers of your own, What is not validated) and the page at the right; a click on a section scrolls the page to it; the page is readable in both themes.
+#
+# 30. NAVIGATION.  Settings > Navigation > "Left drag turns": drag the left button on empty space.  YOU MUST SEE: the view turns (turntable); Alt + left drag pans; a click on a model still selects it; Ctrl + left
+#     drag draws the selection rectangle.  "Blender style": Shift + middle drag pans.  "Custom...": a window with a drop-down for turning, panning and zooming (a mouse button with Shift, Ctrl or Alt held);
+#     choose, press OK: the gestures you chose work, the ones you left on "None" stay as they are for everyone.  Back on "FielDes": the original gestures.
+#
+# 31. THE S KEY.  In walkthroughs/07 group F: select `funnel_base`, `funnel_middle` (on the cone), then `drum_bottom`, `drum_middle` (on the drum) in the model tree, in this order, and press S -- or right-click the
+#     bodies' faces (Select Surface) and the centres of the circles yourself and select those.  YOU MUST SEE: NOTHING NEW IS MADE -- no `snap_1`, no hidden cone: the call of `funnel` gets `position=(var(...), ...)` and
+#     `rotation=(var(...), ...)`, the cone is carried under the drum at once (the same mesh, displaced: no new calculation, no waiting), apex down, on the drum's axis, and the model tree selects `funnel` with its
+#     gizmo, whose arrows drag the numbers.  The faces and points you made on the cone moved with it: they are still on it.  Ctrl+Z puts the cone back in one step.  With only features of one body selected, a message
+#     says why nothing was done.  The same in walkthroughs/07 group A, where the bracket is snapped twice (the second on top of the first).
+#
+# 32. THE TREE AFTER THE LAST ROUND.  (a) Type `a = union(box_1, ...)` into the editor: the tree shows the statement with a placeholder row, as every other statement does; the Delete key and the bin of a row
+#     delete a statement that has a placeholder.  (b) Right-click a model > Operation > offset: the call is written with the model as a SHADOW (`# shadow: name`), and the model keeps its row; drag the model onto a
+#     placeholder instead and it moves inside.  (c) Right-click a model > Engineering > Mesh > mesh_volume: only the body is written, every other argument has its default.  (d) Select a flat face and press
+#     Ctrl+Shift+W: the work plane is made on it and the view turns to look straight at it.
+#
+# 33. THE NEW BASE SHAPES ARE DRAGGABLE, FACE BY FACE.  Right-click empty space > Parametric shapes: capsule, tube, slot.  YOU MUST SEE: the capsule and the tube with the cube icon of a 3D shape and the slot with
+#     the square of a 2D shape, each with a gizmo (a capsule is a body, not a field).  Press the side of the capsule and drag: its radius changes and the ends stay round; press an end: its length changes;
+#     the tube: the outer wall, the bore and each end move on their own; the slot: an end makes it longer and keeps the round end, a long side makes it wider.  `threaded_rod` (Primitives > Parametric shapes) pulls by its ends.
+#     Each drag changes one number in the `handles(...)` line, never a scale.
+#
 
 print("Open one of the files listed above.")

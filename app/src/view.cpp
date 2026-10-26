@@ -50,6 +50,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/i18n.hpp"
 #include "fieldes/carddrag.hpp"
 #include "fieldes/color.hpp"
+#include "fieldes/popout.hpp"
+#include "fieldes/units.hpp"
 #include "fieldes/view.hpp"
 #include "fieldes/typeicons.hpp"
 #include "fieldes/colormap.hpp"
@@ -126,6 +128,7 @@ View::View(QWidget* parent)
 
     // The model tree floats over the top-left corner of the viewport
     m_scene = new ScenePanel(this);
+    PopOut::attach(m_scene, T("Model tree"), "model-tree");
 
     // 2D overlays, below the model tree
     m_overlay = new ViewOverlay(this, [this](QPainter& p) { paintOverlay(p); });
@@ -135,8 +138,10 @@ View::View(QWidget* parent)
     // Analysis results: which field, how much deformation, elements
     m_resultPanel = new ResultPanel(this);
     m_resultPanel->hide();
+    PopOut::attach(m_resultPanel, T("Result"), "result");
     m_livePanel = new LivePanel(this);
     m_livePanel->hide();
+    PopOut::attach(m_livePanel, T("Live view"), "live-view");
     auto forResults = [this](auto fn, bool resample) {
         for (auto s : shapes) if (s->hasResult() || s->stepCount() > 0) fn(s);
         updateResultPanel();
@@ -258,6 +263,7 @@ View::View(QWidget* parent)
 
 View::~View()
 {
+    m_gl_ending = true;
     for (auto& kv : m_viewers)
     {
         kv.second->plane.generation++;
@@ -293,8 +299,25 @@ View::~View()
 }
 
 // A new result shape looks as the one before it did: what was chosen on the result card is kept, run after run and picture after picture
+void View::refreshGizmoModes()
+{
+    for (auto& s : shapes) applyViewerChoices(s);
+    update();
+}
+
 void View::applyViewerChoices(Shape* s) const
 {
+    // When the gizmo is shown is the state of the model tree's gizmo button (the script does not say): where the button was pressed it is that, else what the shape came with
+    if (m_scene)
+    {
+        const int m = m_scene->gizmoModeOfLine(s->sourceLine());
+        if (m >= 0)
+        {
+            const Shape::Gizmo::Mode mode = m == 1 ? Shape::Gizmo::NEVER : m == 2 ? Shape::Gizmo::ALWAYS : Shape::Gizmo::CLICK;
+            s->setGizmoMode(mode);
+            s->setOutlineMode(mode);
+        }
+    }
     if (s->hasFlowLines())
     {
         s->setOpacity(m_flowOpacity);
@@ -740,6 +763,40 @@ void View::initializeGL()
     background.initializeGL();
     bbox.initializeGL();
     busy.initializeGL();
+
+    // A viewport that is pulled out into a window of its own, or put back, is given a new graphics context: this one lets go of what it held when it ends
+    connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &View::releaseGL, Qt::DirectConnection);
+}
+
+void View::releaseGL()
+{
+    if (m_gl_ending) return;                           // (the destructor lets go of it all itself)
+    const bool needs_gl = (context() != QOpenGLContext::currentContext());
+    if (needs_gl) makeCurrent();
+    pick_fbo.reset();
+    auto release = [](Plane& plane) {
+        plane.tex.reset();
+        plane.colorTex.reset();
+        plane.lutTex.reset();
+        if (plane.vao.isCreated()) plane.vao.destroy();
+        if (plane.vbo.isCreated()) plane.vbo.destroy();
+        plane.dirty = true;                            // (sent to the graphics card again)
+    };
+    for (auto& kv : m_viewers) release(kv.second->plane);
+    release(m_sec);
+    for (auto s : findChildren<Shape*>()) s->freeGL();       // (their buffers are made again at the next draw)
+    arrow.releaseGL();                                       // (and the buffers of what the viewport draws itself)
+    glyphs.releaseGL();
+    axes.releaseGL();
+    background.releaseGL();
+    bbox.releaseGL();
+    busy.releaseGL();
+    for (QOpenGLShaderProgram** program : {&Shader::basic, &Shader::busy, &Shader::line, &Shader::slice})
+    {
+        delete *program;
+        *program = nullptr;
+    }
+    if (needs_gl) doneCurrent();
 }
 
 void View::redrawPicker()
@@ -1133,8 +1190,8 @@ void View::paintOverlay(QPainter& painter)
         QFont font = painter.font();
         font.setPointSizeF(9);
         painter.setFont(font);
-        const QString text = (probe_label.isEmpty() ? T("value") : probe_label) +
-                             ":  " + QString::number(probe_value, 'g', 5);
+        const QString text = (probe_label.isEmpty() ? T("value") : Units::shownLabel(probe_label)) +
+                             ":  " + QString::number(Units::shownValue(probe_label, probe_value), 'g', 5);
         const QFontMetrics fm(font);
         const QRectF box(probe_pos + QPointF(16, 12),
                          QSizeF(fm.horizontalAdvance(text) + 14, fm.height() + 8));
@@ -1152,9 +1209,9 @@ void View::paintOverlay(QPainter& painter)
         font.setFamily("Inconsolata");
         font.setPointSizeF(10.5);
         painter.setFont(font);
-        auto num = [](float v) { return QString::number(v, 'f', 3); };
-        const QString text = QString("X %1   Y %2   Z %3")
-            .arg(num(cursor_pos.x()), num(cursor_pos.y()), num(cursor_pos.z()));
+        auto num = [](float v) { return QString::number(v * float(Units::lengthScale()), 'f', Units::lengthDecimals(3)); };
+        const QString text = QString("X %1   Y %2   Z %3  %4")
+            .arg(num(cursor_pos.x()), num(cursor_pos.y()), num(cursor_pos.z()), Units::lengthLabel());
         const QFontMetrics fm(font);
         const QRectF box(8, height() - fm.height() - 14,
                          fm.horizontalAdvance(text) + 16, fm.height() + 8);
@@ -1444,11 +1501,12 @@ void View::drawScaleBar(QPainter& painter)
     const float units = 100.0f / (camera.getScale() * sx * width() / 2.0f);   // model units per 100 px
     if (!(units > 0) || !std::isfinite(units)) return;
     // A round length that is 80..200 px long
-    const float target = units * 1.4f;               // ~140 px
+    const float shown = units * float(Units::lengthScale());      // (the length is a round number of the unit chosen in Settings > Units: shown units per 100 px)
+    const float target = shown * 1.4f;               // ~140 px
     const float p10 = std::pow(10.0f, std::floor(std::log10(target)));
     float len = p10;
     for (float m : {1.0f, 2.0f, 5.0f, 10.0f}) if (p10 * m <= target) len = p10 * m;
-    const float px = 100.0f * len / units;
+    const float px = 100.0f * len / shown;
     QFont font = painter.font();
     font.setPointSizeF(8.5);
     painter.setFont(font);
@@ -1470,7 +1528,7 @@ void View::drawScaleBar(QPainter& painter)
         QString s = QString::number(v, 'g', 3);
         return s;
     };
-    const QString label = fmt(len) + " mm";
+    const QString label = fmt(len) + " " + Units::lengthLabel();
     painter.setPen(ink);
     painter.drawText(QRectF(x0 + px + 6, y - fm.height() / 2.0 - 1, fm.horizontalAdvance(label) + 4, fm.height()),
                      Qt::AlignLeft | Qt::AlignVCenter, label);
@@ -1551,7 +1609,7 @@ void View::drawLegends(QPainter& painter)
     const int barH = std::min(220, std::max(90, height() / 3));
     const int barW = 14;
     // (to the left of the result card, which has the bottom-right corner)
-    int right = (m_resultPanel && m_resultPanel->isVisible()) ? m_resultPanel->geometry().left() - 10 : width() - 14;
+    int right = (m_resultPanel && m_resultPanel->isVisible() && m_resultPanel->parentWidget() == this) ? m_resultPanel->geometry().left() - 10 : width() - 14;
 
     // (only selected surfaces shown: the key is called so)
     const QString bcTitle = (bcCategories.size() == 1 && bcCategories.contains(6)) ? "Selection" : "Boundary conditions";     // (the key of the legend: shown through T())
@@ -1595,9 +1653,10 @@ void View::drawLegends(QPainter& painter)
     }
     for (const auto& b : bars)
     {
-        auto num = [](float v) { return QString::number(v, 'g', 4); };
+        auto num = [&b](float v) { return QString::number(Units::shownValue(b.label, v), 'g', 4); };      // (in the units chosen in Settings > Units, as the label names them)
         const int ticks = 5;
-        int textW = fm.horizontalAdvance(b.label) + 16;   // (+ the close button)
+        const QString shownTitle = Units::shownLabel(b.label);
+        int textW = fm.horizontalAdvance(shownTitle) + 16;   // (+ the close button)
         for (int k = 0; k < ticks; k++)
         {
             textW = std::max(textW, barW + 8 + fm.horizontalAdvance(
@@ -1612,7 +1671,7 @@ void View::drawLegends(QPainter& painter)
 
         painter.setPen(QColor(0xee, 0xe8, 0xd5));
         painter.drawText(QRect(box.left() + 10, box.top() + 6, boxW - 20, fm.height()),
-                         Qt::AlignLeft | Qt::AlignVCenter, b.label);
+                         Qt::AlignLeft | Qt::AlignVCenter, shownTitle);
         bottom_items.push_back(QRectF(box));
 
         // Its close button (View > Show legends brings it back)
@@ -1694,10 +1753,10 @@ void View::updateResultPanel()
         return;
     }
     ResultPanel::State st;
-    for (const auto& c : r->channels()) st.labels << c.label;
+    for (const auto& c : r->channels()) st.labels << Units::shownLabel(c.label);
     st.current = r->channel();
-    st.lo = r->displayLo();
-    st.hi = r->displayHi();
+    st.lo = float(Units::shownValue(r->channelLabel(), r->displayLo()));      // (the colour bar in the units chosen in Settings > Units, as the label of the field names them)
+    st.hi = float(Units::shownValue(r->channelLabel(), r->displayHi()));
     st.map = r->colorMap();
     st.note = r->valueNote();
     st.noteHelp = r->valueNoteHelp();
@@ -1716,7 +1775,7 @@ void View::updateResultPanel()
     st.hasFlow = r->hasFlowLines();
     st.showFlow = r->showFlowLines();
     st.opacity = r->opacityValue();
-    st.keyResults = r->keyResults();
+    for (const QStringList& row : r->keyResults()) st.keyResults << Units::shownRow(row);
     // (the supports of a print are a body of the scene in amber: one more line of the legend of the geometry change, and no card of their own)
     // (its mesh, and not hasMesh(): that is true once the mesh is on the graphics card, at the next paint, and this runs when the mesh arrives)
     for (auto s : shapes) if (s->hasColorField() && s->getMesh() && s->colorMap() == "support") st.supports = true;
@@ -1735,6 +1794,13 @@ void View::updateResultPanel()
             s->setElementSection(section.enabled && section.clip, section.clipPlane(), section.wholeElements);
     }
     updateSectionElements();
+}
+
+void View::unitsChanged()
+{
+    updateResultPanel();          // (the labels and the numbers of the card and of its colour bar are made again in the units chosen)
+    if (m_overlay) m_overlay->update();
+    update();
 }
 
 void View::updateSectionElements()
@@ -1885,6 +1951,21 @@ void View::mouseMoveEvent(QMouseEvent* event)
         mouse.pos = event->pos();
         return;
     }
+    if (mouse.state == mouse.DRAG_RECT && m_navLeft != 0 && !rect_add && (event->pos() - rect_start).manhattanLength() >= 4)
+    {
+        // A plain left drag is a gesture of the view when the user gave it one (Settings ▸ Navigation): on empty space the rectangle becomes the turn, the pan or the zoom once the mouse has
+        // moved -- a click that does not move still selects, and Ctrl keeps the rectangle
+        if (m_navLeft == 1 && m_wp.open)
+        {
+            setWorkPlaneOpen(false);
+            emit(workPlaneTurnedAway());
+        }
+        mouse.state = m_navLeft == 1 ? mouse.DRAG_ROT : m_navLeft == 2 ? mouse.DRAG_PAN : mouse.DRAG_ZOOM;
+        press_pos = QPoint(-100000, -100000);       // (not a selection click)
+        press_target = nullptr;
+        m_overlay->update();
+        mouse.pos = rect_start;
+    }
     if (mouse.state == mouse.DRAG_RECT)
     {
         // (the selection rectangle grows with the mouse)
@@ -1957,6 +2038,13 @@ void View::mouseMoveEvent(QMouseEvent* event)
     {
         camera.panIncremental(event->pos() - mouse.pos);
         update();
+    }
+    else if (mouse.state == mouse.DRAG_ZOOM)
+    {
+        // (up zooms in, as the wheel's forward does)
+        camera.zoomIncremental(float(mouse.pos.y() - event->pos().y()) * 4.0f, rect().center());
+        update();
+        pick_timer.start();
     }
     else if (mouse.state == mouse.DRAG_EVAL)
     {
@@ -2212,17 +2300,8 @@ void View::mousePressEvent(QMouseEvent* event)
             press_target = nullptr;
             return;
         }
-        // The options for other hands (Settings ▸ Navigation): the Blender style pans with Shift + the middle button, the touchpad style with Alt + the left button
-        if ((m_navPreset == NAV_BLENDER && event->button() == Qt::MiddleButton && (event->modifiers() & Qt::ShiftModifier)) ||
-            (m_navPreset == NAV_TOUCHPAD && event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier)))
-        {
-            press_pos = QPoint(-100000, -100000);   // not a selection click
-            press_target = nullptr;
-            press_ctrl = false;
-            drag_target = nullptr;
-            mouse.state = mouse.DRAG_PAN;
-            return;
-        }
+        // The gestures the user chose (Settings ▸ Navigation): for each of turning, panning and zooming, a button and the keys held with it
+        if (navigationPress(event)) return;
         if ((event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)) ||
             event->button() == Qt::MiddleButton)
         {
@@ -2868,6 +2947,70 @@ bool View::planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const
     return false;
 }
 
+bool View::navigationPress(QMouseEvent* event)
+{
+    const int mods = int(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier));
+    for (int action = 0; action < 3; ++action)
+    {
+        const NavBinding& b = m_navBind[action];
+        if (b.button == 0 || b.button != int(event->button()) || b.modifiers != mods) continue;
+        if (action == 0 && m_wp.open)
+        {
+            setWorkPlaneOpen(false);
+            emit(workPlaneTurnedAway());                // (the grid and the drawing are gone without a word otherwise)
+        }
+        press_pos = QPoint(-100000, -100000);           // not a selection click
+        press_target = nullptr;
+        press_ctrl = false;
+        drag_target = nullptr;
+        mouse.state = action == 0 ? mouse.DRAG_ROT : action == 1 ? mouse.DRAG_PAN : mouse.DRAG_ZOOM;
+        return true;
+    }
+    return false;
+}
+
+QList<QPair<QString, QString>> View::navigationGestures()
+{
+    return {
+        {"none", T("None (what everyone has)")}, {"left", T("Left button")}, {"shift+left", T("Shift + left button")}, {"ctrl+left", T("Ctrl + left button")},
+        {"alt+left", T("Alt + left button")}, {"middle", T("Middle button")}, {"shift+middle", T("Shift + middle button")}, {"ctrl+middle", T("Ctrl + middle button")},
+        {"alt+middle", T("Alt + middle button")}, {"shift+right", T("Shift + right button")}, {"ctrl+right", T("Ctrl + right button")}, {"alt+right", T("Alt + right button")}};
+}
+
+void View::setNavigation(const QString& rotate, const QString& pan, const QString& zoom)
+{
+    const QString keys[3] = {rotate, pan, zoom};
+    m_navLeft = 0;
+    for (int i = 0; i < 3; ++i)
+    {
+        m_navKey[i] = keys[i].isEmpty() ? QString("none") : keys[i].toLower();
+        m_navBind[i] = NavBinding();
+        if (m_navKey[i] == "none") continue;
+        QStringList parts = m_navKey[i].split('+');
+        const QString button = parts.takeLast();
+        NavBinding b;
+        b.button = button == "left" ? int(Qt::LeftButton) : button == "middle" ? int(Qt::MiddleButton) : button == "right" ? int(Qt::RightButton) : 0;
+        for (const QString& p : parts)
+            b.modifiers |= p == "shift" ? int(Qt::ShiftModifier) : p == "ctrl" ? int(Qt::ControlModifier) : p == "alt" ? int(Qt::AltModifier) : 0;
+        if (b.button == int(Qt::LeftButton) && b.modifiers == 0)
+        {
+            m_navLeft = i + 1;                          // (a plain left drag: it is a click first, see mouseMoveEvent)
+            continue;
+        }
+        if (b.button == int(Qt::RightButton) && b.modifiers == 0) continue;     // (a right click opens the menu: it needs a key beside it to be a gesture)
+        m_navBind[i] = b;
+    }
+}
+
+void View::setNavigationPreset(int preset)
+{
+    m_navPreset = preset;
+    if (preset == NAV_BLENDER) setNavigation("middle", "shift+middle", "ctrl+middle");
+    else if (preset == NAV_TOUCHPAD) setNavigation("none", "alt+left", "none");
+    else if (preset == NAV_LEFT_TURN) setNavigation("left", "alt+left", "none");
+    else if (preset == NAV_DEFAULT) setNavigation("none", "none", "none");
+}
+
 void View::makeWorkPlane()
 {
     QVector3D o, u, v;
@@ -2896,7 +3039,13 @@ void View::announceWorkPlane()
 
 void View::setWorkPlaneOpen(bool open)
 {
-    if (open && !m_wp.exists) makeWorkPlane();
+    if (open && !m_wp.exists)
+    {
+        QVector3D o, u, v;
+        const bool fromSelection = planeOfSelection(o, u, v);
+        makeWorkPlane();
+        if (fromSelection) faceWorkPlane();                 // (a plane that is a surface's, a 2D shape's, the one of some points: the view turns to look at it)
+    }
     if (!open) m_wpPlaced.clear();
     // Opening it starts in Line: a click draws at once -- a view that opens and does nothing leaves the first thing to do a guess (a right click stops drawing)
     if (open && !m_wp.open) { m_wp.mode = 1; m_wpLastMode = 1; }
@@ -2929,9 +3078,13 @@ bool View::exitMode()
 void View::newWorkPlane()
 {
     m_wpPlaced.clear();
+    QVector3D o, u, v;
+    const bool fromSelection = planeOfSelection(o, u, v);
     makeWorkPlane();
     if (!m_wp.open) { m_wp.mode = 1; m_wpLastMode = 1; }                  // (opening it starts in Line, as setWorkPlaneOpen does)
     m_wp.open = true;
+    // A plane made on a surface (or on a 2D shape, or on some points) is a plane to draw on: the view turns to look at it, as W does.  One made from the view is where the view already is
+    if (fromSelection) faceWorkPlane();
     announceWorkPlane();
 }
 
@@ -3312,9 +3465,9 @@ void View::updateWorkPlaneCursor(QPoint pos)
     {
         m_wpCursor = snapToWorkPlane(hit, nullptr, &m_wpCursorSnapped);
         const QVector3D d = m_wpCursor - m_wp.origin();
-        auto number = [](double x) { return QString::number(std::fabs(x) < 5e-4 ? 0.0 : x, 'f', 3); };
+        auto number = [](double x) { return QString::number(std::fabs(x) < 5e-4 ? 0.0 : x * Units::lengthScale(), 'f', Units::lengthDecimals(3)); };
         emit(workPlaneReadout(T("On the plane: %1, %2").arg(number(QVector3D::dotProduct(d, m_wp.u)), number(QVector3D::dotProduct(d, m_wp.v)))
-                              + QString("   (x %1, y %2, z %3)").arg(number(m_wpCursor.x()), number(m_wpCursor.y()), number(m_wpCursor.z()))));
+                              + QString("   (x %1, y %2, z %3)  %4").arg(number(m_wpCursor.x()), number(m_wpCursor.y()), number(m_wpCursor.z()), Units::lengthLabel())));
         m_overlay->update();
     }
     else if (was)
@@ -4038,17 +4191,21 @@ void View::fillOperations(QMenu* menu, int line, const QVector3D& point, double 
     }
 }
 
-void View::addExportMenu(QMenu* menu, int line)
+void View::addExportEntries(QMenu* sub, int line)
 {
+    // What can be written of the model displayed on `line`: the entries of File > Export model (a file is not made by a menu of the viewport: that menu writes code)
     if (!m_scene) return;
     const QString type = m_scene->typeAtLine(line);
     const QStringList exports = m_scene->exportsAtLine(line);
     const bool shape = type == "solid" || type == "profile" || type == "surface" || type == "lattice";
     const bool simulation = type == "simulation";
     const bool field = type == "field";
-    if (!shape && !simulation && !field) return;
+    if (!shape && !simulation && !field)
+    {
+        sub->addAction(T("Nothing of this model can be written to a file"))->setEnabled(false);
+        return;
+    }
     const bool named = !m_scene->varAtLine(line).isEmpty();
-    auto sub = menu->addMenu(T("Export"));
     sub->setToolTipsVisible(true);
     auto add = [&](QMenu* into, const QString& text, const QString& kind, const QString& ext, bool enabled, const QString& why) {
         auto a = into->addAction(text, this, [=] { if (m_scene) m_scene->requestExport(line, kind, ext); });
@@ -4074,6 +4231,18 @@ void View::addExportMenu(QMenu* menu, int line)
         grid->setToolTip(T("The field sampled on a regular grid at the resolution of the scene, for other programs"));
         add(grid, T("VTK image data (.vti)"), "field", ".vti", true, QString());
         add(grid, T("CSV table (.csv)"), "field", ".csv", true, QString());
+    }
+    if (simulation && exports.contains("meshfile"))
+    {
+        // A mesh made by mesh_volume or mesh_surface: the file of another program, by the extension
+        auto file = sub->addMenu(T("Mesh file"));
+        file->setToolTipsVisible(true);
+        file->setToolTip(T("The mesh as it is, with its zones, for another program"));
+        static const QList<QPair<QString, QString>> formats = {
+            {"Gmsh (.msh)", ".msh"}, {"VTK (.vtu)", ".vtu"}, {"Abaqus / CalculiX (.inp)", ".inp"}, {"Nastran (.bdf)", ".bdf"}, {"I-DEAS (.unv)", ".unv"},
+            {"STL (.stl)", ".stl"}, {"OBJ (.obj)", ".obj"}};
+        for (const auto& f : formats) add(file, f.first, "meshfile", f.second, true, QString());
+        return;
     }
     if (simulation)
     {
@@ -4203,8 +4372,6 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto python = menu->addMenu(TypeIcons::icon("python"), T("Python"));
     python->setToolTipsVisible(true);
     fillPythonMenu(python, point, scale, atLine);
-    menu->addSeparator();
-    addImportEntry(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
     else menu->deleteLater();
 }
@@ -4251,14 +4418,6 @@ void View::fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, do
     fillSimulationPrimitives(menu, point, scale, at, QString());
     menu->addSeparator();
     fillOperations(menu, line, point, scale, true, "-");       // (what works over an analysis of any domain)
-}
-
-// The Import model... entry: a model can be brought in from a file whatever the menu is
-void View::addImportEntry(QMenu* menu)
-{
-    auto imp = menu->addAction(T("Import model..."), this, [=]{ emit(importRequested()); });
-    imp->setToolTip(T("A STEP file or a mesh (STL, OBJ, PLY, 3MF, glTF): each part is reconstructed or tessellated, "
-                    "whichever suits it."));
 }
 
 // What can be made, a menu for each kind of thing, each with its own icon: 3D shapes, 2D shapes, a point, surfaces, fields, and the custom blocks that need no model.
@@ -4363,8 +4522,6 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     menu->addSeparator();
     addQuickOperations(menu, line, point, scale);
     menu->addSeparator();
-    addImportEntry(menu);
-    menu->addSeparator();
     {
         // A resolution of its own for this model: the line is written under its definition (and the scene's resolution is its number)
         const QString type = m_scene ? m_scene->typeAtLine(line) : QString();
@@ -4377,7 +4534,8 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
             own->setToolTip(T("A resolution of its own is for a model that is drawn: a shape, a surface"));
         }
     }
-    addExportMenu(menu, line);
+    // (what makes a point, an edge or a face of the body -- Select Surface and the points -- stands together, below the rest)
+    menu->addSeparator();
     auto select = menu->addAction(T("Select Surface"), this, [=]{
         // (after this menu has closed: the menu of the surface selection takes its place)
         QTimer::singleShot(0, this, [=]{ showSelectMenu(globalPos, line, point); });
@@ -4409,14 +4567,12 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         const QVector3D cornerAt = corner ? place(found["corner"]) : point;
         const QVector3D edgeAt = edge ? place(found["edge"].toObject()["point"]) : point;
         // The middle of the face the click is on, as a point (the centre of a disc: the way to put two round parts on one axis)
-        menu->addSeparator();
         {
             auto f = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of this face"), this, [=]{ emit(featureRequested(line, point, "face_center")); });
             f->setToolTip(T("A point at the middle of the face of this body that the click is on: face_center(select_surface(body, (x, y, z))) -- the centre of a round face is the centre of its circle"));
         }
         if (corner || edge || roundedCorner || roundedEdge)
         {
-            menu->addSeparator();
             if (circle)
             {
                 auto c = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of the circle"), this, [=]{ emit(featureRequested(line, edgeAt, "circle_center")); });
@@ -4512,10 +4668,9 @@ void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)
         QSettings s;
         angle->setValue(s.value(angleKey(mode->currentData().toString()), defaultAngle(mode->currentData().toString())).toDouble());
     });
-    auto radius = new QDoubleSpinBox;
+    auto radius = new Units::LengthSpinBox;       // (a length in mm that is shown in the unit chosen in Settings > Units)
+    radius->setLengthDecimals(1);
     radius->setRange(0.0, 100000.0);
-    radius->setDecimals(1);
-    radius->setSuffix(T(" mm"));
     radius->setSpecialValueText(T("no limit"));
     radius->setValue(store.value("select/radius", 0.0).toDouble());
     radius->setToolTip(T("Stop this far from the click."));
@@ -5123,7 +5278,7 @@ void View::drawErrorBanner(QPainter& painter)
     const int h = fmHead.height() + fmBody.height() + fmHint.height() + 22;
     // (centred, but not under the model tree card on the left)
     int x = (width() - w) / 2;
-    if (m_scene && m_scene->isVisible()) x = std::max(x, m_scene->geometry().right() + 14);
+    if (m_scene && m_scene->isVisible() && m_scene->parentWidget() == this) x = std::max(x, m_scene->geometry().right() + 14);
     x = std::max(8, std::min(x, width() - w - 8));
     m_errorRect = QRect(x, 14, w, h);
     painter.setPen(QPen(red, 1.5));
@@ -6455,7 +6610,7 @@ bool View::groupOfPoints(const QList<Shape*>& members) const
     return true;
 }
 
-// The profiles and lines whose gizmo is shown (see groupGizmo), by the mode of the outline itself (`x = gizmo(x, mode=...)`, never until a line says otherwise): click while it
+// The profiles and lines whose gizmo is shown (see groupGizmo), by the mode of the outline itself (the mode of its gizmo button, never until it says otherwise): click while it
 // is selected as a whole, always.  An outline that is always shown but not selected has its gizmo only while nothing else is selected: the gizmo that its points share cannot be
 // shown beside the gizmo of another selection
 QList<const Shape*> View::outlinesWithGizmo() const

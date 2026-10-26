@@ -3,25 +3,24 @@ Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
 (its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
-its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, `gizmo(copy, move=..., rotate=...)`.
+its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, which drags the `position=` and `rotation=` of the copy's call.
 Nothing else is its own: no scale knobs (a scale the original has is part of that shape, and the copy has it too).  Its surfaces CAN be dragged, as the original's can,
 and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
 other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
 FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
 
-    plate_2 = instance(plate)  # shadow: plate
-    plate_2 = gizmo(
-        plate_2,
-        move=(var(0), var(0), var(0)),
-        rotate=(var(0), var(0), var(0)),
-    )
+    plate_2 = instance(
+        plate,
+        position=(var(0), var(0), var(0)),
+        rotation=(var(0), var(0), var(0)),
+    )  # shadow: plate
 
 The original is only REFERRED to: the mark `# shadow: plate` keeps it where it is in the model tree (a shadow of it is shown under the copy), whether it is
 locked or not -- taking the original into the copy would move its row away and make the copy look like what the original is made of.
 Every model is cloned the same way, `copy = instance(model)`: a model that is not a shape -- a material, the conditions or the result of an analysis, a lattice cell -- is its own value
-(no place to give it, nothing is solved again).  What is made of points -- a profile, a polyline, a spline -- is cloned like any shape: its copy is placed by its own gizmo, as the
-same outline through the images of the original's points (see gizmo()), so a point dragged, a number typed or a point added in the original changes every copy of it.
+(no place to give it, nothing is solved again).  What is made of points -- a profile, a polyline, a spline -- is cloned like any shape: its copy is placed by its own placement arguments, as the
+same outline through the images of the original's points, so a point dragged, a number typed or a point added in the original changes every copy of it.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -41,7 +40,7 @@ _NOT_TAKEN = ('ptr', '_gizmo', '_locked', '_placed_from', '_placed_parts', '_piv
 
 def instance(shape):
     ''' A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
-        moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  It cannot be scaled: its shape is the original's -- and so are the numbers its
+        moved and rotated, with its gizmo (the `position=` and `rotation=` of its call).  It cannot be scaled: its shape is the original's -- and so are the numbers its
         surfaces are pulled by, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
         locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D) '''
     if not isinstance(shape, Shape):
@@ -88,7 +87,7 @@ def instance(shape):
     out._no_handles = True          # (it has no handles() line of its own: it is pulled by the numbers of the original's)
     out._instance_of = shape
     if getattr(source, '_outline_gizmo', False):
-        # (what is made of points -- a profile, a line -- has a gizmo without numbers, because its points have them: a copy is placed by numbers of its own, which gizmo() applies
+        # (what is made of points -- a profile, a line -- has a gizmo without numbers, because its points have them: a copy is placed by numbers of its own, which place() applies
         # through the images of its points)
         out._no_gizmo = False
         out._outline_gizmo = False

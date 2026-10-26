@@ -46,11 +46,9 @@ plate
 # A path of four points, and the tube along it. The scale of a point is how thick the tube is there: the gizmo of q2 has a scale of 1.8.
 q1 = point(70, 5, 10)
 q1
-q2 = point(88, 24, 24)
-q2 = gizmo(
-    q2,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+q2 = point(88, 24, 24,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1.8), var(1.8), var(1.8)),
 )
 q2

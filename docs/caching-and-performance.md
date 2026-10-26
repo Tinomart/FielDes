@@ -85,7 +85,7 @@ again. A hit returns exactly what a run builds; nothing is sampled onto a grid.
 What is not kept this way:
 
 - a statement that calls something that reads or writes a file (`import_...`, `load...`, `read...`, `open`, `save...`,
-  `write...`, `export...`) or `var()`, `handles()`, `gizmo()` — a file may have changed (imports have their own cache next
+  `write...`, `export...`) or `var()`, `handles()`, the placement arguments — a file may have changed (imports have their own cache next
   to the file);
 - a statement that reads a function or module of your own (it has no content to compare);
 - a statement that took less than a quarter of a second (a file would be slower than the run).

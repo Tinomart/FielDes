@@ -9,7 +9,8 @@ Exporting: a body as a mesh file, an analysis as a finite-element model and as r
                                                     factor, drag ... as text)
     export_field(field, "stress.vti")               any field sampled on a regular grid: .vti (VTK image data), .csv
 
-Every file is in FielDes's own units: millimetres, newtons, megapascals (so a mass is in tonnes: N, mm, t, s, MPa is a consistent set).
+The files of an analysis are in FielDes's own units: millimetres, newtons, megapascals (so a mass is in tonnes: N, mm, t, s, MPa is a consistent set); only the
+key numbers of export_results(..., '.txt') are in the units of Settings > Units, each with its unit.  A mesh file (export_mesh) is in the length unit chosen there.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -21,6 +22,7 @@ import os
 import re
 from array import array
 
+from fieldes import units
 from fieldes.ffi import lib, libfive_interval_t, libfive_region_t
 from fieldes.i18n import tr as _tr
 from fieldes.shape import Shape
@@ -97,7 +99,7 @@ def _surface_arrays(shape, bounds, resolution):
     return xyz, tri
 
 
-def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, **options):
+def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, unit=None, **options):
     ''' Writes the surface of a body as a triangle mesh file, in the format of the file's extension:
 
             .stl (binary; ascii=True for text), .obj, .ply, .3mf, .glb, .gltf, .fbx (Autodesk FBX, ASCII 7.4: see fbx.py), .off, .dxf (3DFACE)
@@ -111,12 +113,14 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
         resolution  samples per mm of the mesh (the scene's resolution when it is not given: the one of the viewport)
         name        the object's name inside the file (the file's name)
         ascii       STL as text, not binary
+        unit        the length unit of the file: 'mm', 'cm', 'm', 'in', 'ft' or 'um'; the one chosen in Settings > Units when it is not given (millimetres by default)
 
-        Millimetres in every format that has no unit; the ones that state their unit (3MF, FBX, DXF) say millimetres (a glTF is in metres, Y up, as
-        glTF is).  Returns the path. '''
+        The coordinates are in that unit, and the formats that state their unit (3MF, FBX, DXF) say it (a glTF is in metres, Y up, as glTF is).  Returns the path. '''
     path = os.fspath(path)
     from fieldes.stdlib.meshing import Mesh
     if isinstance(part, Mesh):
+        if unit is not None and options.get('scale') is None:
+            options['scale'] = 1.0 / units.LENGTH[units.check_length(unit)]
         return part.export(path, **options)
     if options:
         raise TypeError('export_mesh() got unexpected keyword arguments: {} (they are for a mesh made by mesh_volume)'.format(', '.join(sorted(options))))
@@ -133,7 +137,7 @@ def export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False
         tri.extend(base + i for i in t)
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
-    meshfiles.write_mesh(path, xyz, tri, name=name, ascii=ascii)
+    meshfiles.write_mesh(path, xyz, tri, name=name, ascii=ascii, unit=unit)
     return path
 
 
@@ -622,7 +626,7 @@ _RESULT_NUMBERS = [
 def key_results(result, count=6):
     ''' The few numbers the result card shows on the screen: [(label, text, unit)] -- what result_summary lists, without the counts and times '''
     rows = []
-    for label, text, unit in result_summary(result):
+    for label, text, unit in result_summary(result, native=True):
         if label in (_tr('elements'), _tr('nodes'), _tr('iterations'), _tr('solver time')):
             continue
         # (a vector is its size on the card: the three components are in the text file)
@@ -673,10 +677,11 @@ def _text_of(v):
     return str(v)
 
 
-def result_summary(result):
+def result_summary(result, native=False):
     ''' The numbers of a result that matter, as [(label, text, unit)] in the order they are shown -- what the result card prints on the screen
         and what export_results(..., '.txt') writes.  Only what the result has: a static analysis its stress and safety factor, a flow its
-        forces and flows, a thermal analysis its temperatures ... '''
+        forces and flows, a thermal analysis its temperatures ...  The numbers are in the units chosen in Settings > Units (fieldes.units), each with its
+        unit; native=True: in millimetres, newtons and megapascals (the card converts them itself when it draws, so that a change of the units needs no new run) '''
     out = []
     seen = set()
     values = {}
@@ -714,7 +719,10 @@ def result_summary(result):
             if isinstance(v, (int, float, tuple, list)) and not (isinstance(v, (tuple, list)) and not v):
                 if isinstance(v, (list, tuple)) and len(v) > 12:
                     continue
-                out.append((label, _text_of(v), unit))
+                text = _text_of(v)
+                if not native:
+                    text, unit = units.convert_text(text, unit)
+                out.append((label, text, unit))
                 seen.add(name)
     return out
 

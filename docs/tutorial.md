@@ -82,7 +82,7 @@ script changes as you move. Any number you wrap in `var(...)` can be pulled this
 
 You do not have to write `var` yourself. Click a model in the viewport (or its row in the tree): FielDes gives it a
 **gizmo** — three arrows to move, three rings to rotate, three squares to scale, and a dot in the middle that moves it freely
-— and numbers on its surfaces to pull. What it adds is plain script (`plate = gizmo(plate, move=(var(0), ...))`).
+— and numbers on its surfaces to pull. What it adds is plain script (`position=(var(0), ...)` in the call of `plate`).
 
 Three keys (with the viewport focused) turn this on and off on the selected models:
 
@@ -220,7 +220,7 @@ A few words mean something particular in FielDes, and some mean something else i
 
 | Word | In FielDes |
 |---|---|
-| **Gizmo** | the tool that is drawn on a selected model: arrows move it, rings turn it, a ring (or knob) scales it -- it changes the model's place, turn and size, and is written into the script as `gizmo(...)`. In a drawing program the little squares of a selection are called *handles*; here they are the gizmo's. |
+| **Gizmo** | the tool that is drawn on a selected model: arrows move it, rings turn it, a ring (or knob) scales it -- it changes the model's place, turn and size, and is written into the script as the `position`, `rotation` and `scale` of its call. In a drawing program the little squares of a selection are called *handles*; here they are the gizmo's. |
 | **Handles** | pulling a **surface** of a shape directly, with no tool drawn: hover the surface and drag, and the numbers behind it (`handles(...)`) change. Every shape has them. See [Handles](handles.md). |
 | **Profile** | any 2D shape -- a circle, a rectangle, or `profile(points)`, which makes one of any outline you like (corners, spline points, round corners). `extrude` pulls it into a solid and `path_extrude` sweeps it along a line. |
 | **Copy / linked copy** | `Shift+D` writes the statements of a model again under new names; `Ctrl+D` makes `instance(model)`, which *is* the model -- it follows every change of its shape and has a place of its own; `Ctrl+D` clones every model this way -- a profile through the images of its points (its points are drawn on the clone and edit the original: change either and both change), a point, a material, an analysis as themselves. |
@@ -269,7 +269,7 @@ A few words mean something particular in FielDes, and some mean something else i
 | [Fields](fields.md) | the fields of the library, regressions, data as fields |
 | [Custom blocks](blocks.md) | your own functions in every script |
 | [Apps](apps.md) | a script as a program for other people: a form, a Run button, one `.fieldesapp` file |
-| [Handles](handles.md) | the gizmo, the handles on the surfaces, `gizmo()` and `handles()` |
+| [Handles](handles.md) | the gizmo, the placement arguments, the handles on the surfaces, `handles()` |
 | [Profiles](profiles.md) | 2D, 1D and 3D shapes made of points: `profile`, `curve`, `extrude`, `path_extrude` |
 | [Analysis](analysis.md) | static, modal, thermal, topology optimization, flow |
 | [Meshing](meshing.md) | a body as a mesh of elements for another program's solver: sizes, boundary layers, zones, quality, the files |

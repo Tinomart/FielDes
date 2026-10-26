@@ -81,7 +81,7 @@ The C API is `kernel/include/libfive.h`; the Python library calls it through `ct
 | `blocks.py` | The custom blocks: the files of the blocks folder, hot reload by modification time, what the editor and the menus are told about them |
 | `stdlib/lattices.py` | Lattices |
 | `stdlib/fea.py`, `thermal.py` | Analysis front ends |
-| `stdlib/handles.py` | `gizmo()`, `handles()`, `lock()` |
+| `stdlib/handles.py` | `handles()`, `lock()` (and `_place`, what the placement arguments of a call apply) |
 | `app.py`, `app_package.py`, `__main__.py` | FielDes apps: the `app.` inputs a script declares; reading the form out of the text of a script, bundling a `.fieldesapp`, opening one, checking the values, the command line (`run`, `export`, `info`, `--watch`); see [Apps](apps.md) |
 | `stdlib/content_cache.py` | Content-keyed caches |
 | `app_support.py`, `run_progress.py`, `runner.py` | What the application needs from Python: running a script statement by statement (with the blocks injected into its namespace), evaluating displays, the model tree's description (`scene_json`: items with their `type`, `inputs`, `owner`, ...), reporting progress |
@@ -164,7 +164,7 @@ distance on the first call:
 
 - `reconstruct` (and `import_model`, for the parts it reconstructs) gives it to every part (`cad_import._distance_getter`; fresh or from the cache).
 - The transforms (`move`, `rotate_*`, `scale_*`, `reflect_*`: `transforms._exact_follows`) give a copy the same
-  transform of that distance with the same numbers, so `gizmo()` (a gizmo and its `var()`s) and placement in a
+  transform of that distance with the same numbers, so the placement arguments (a gizmo and its `var()`s) and placement in a
   script keep it. (A transformed oracle holds its coordinate expressions itself: the evaluators hand it the
   `var()` values with `Oracle::setVar`, and `Shape::buildDeps` in the application looks inside oracles for the
   variables a shape depends on.) Other operations (union, difference, lattices, ...) give a shape without it: its
@@ -435,7 +435,7 @@ in (`meshContentKey`: each triangle from its smallest corner, the triangles sort
 changes the key is another one: a miss, the usual progressive render, and the new mesh is kept. The folder is
 limited to 4 GB (`FIELDES_RENDER_CACHE_MB`), oldest files first; `Settings → Clear the caches` empties it (and the field cache).
 The model tree's cache button writes and deletes the opt-out line `x = render_cache(x, False)` under the shape's definition
-(under its `handles()` and `gizmo()` calls) like every other button of the tree (`ScenePanel::toggleCache`; the script
+(under its `handles()` call) like every other button of the tree (`ScenePanel::toggleCache`; the script
 parser records the line as `cache_off`, an explicit `render_cache(x)` as `cache`).
 
 **Selecting several models.** The tree selects whole rows (`ExtendedSelection`: the view does Ctrl and Shift itself; an event
@@ -460,7 +460,7 @@ each model, gizmo or handles, which with several selected the tree's buttons sho
 **The multi-select state** (two or more models selected) is not a mode: `View::mousePressEvent` starts no surface drag, and
 `View::groupHandles` finds the shared gizmo -- all the selected shapes that have move numbers (`Shape::hasMoveVars`, in any mode)
 -- at the middle of their pivots. `ScenePanel::prepareMultiSelect` (after the selection has settled, `m_prepareTimer`) writes
-`x = gizmo(x, ..., mode=<its mode>)` for a selected model that has no numbers to move it by, never twice (the scene may be a run
+`position=`, `rotation=` and `scale=` (`ScenePanel::placementEdits`: into its call, or a `place(x, ...)` statement) for a selected model that has no numbers to move it by, never twice (the scene may be a run
 behind the text: `m_editPending`, and a check of the text); `stripLocked` deselects the locked models of a selection of
 several (`warnLockedMultiSelect`: the warning with a *do not show again* box in QSettings `hidden-messages/`, silent in
 automation and after a run), `updateMultiNote` says what the state is under the tree. The shared gizmo's arrows and the centre dot (grip kind 3, also on every single gizmo) are `HandleGrip`s with `group` set,
@@ -471,7 +471,7 @@ quiet)` from `setScene`).
 
 **Lock.** `lock(x)` (in `stdlib/handles.py`) returns a copy of `x` with `_locked = True`; the interpreter reads it into
 `Shape::setLocked`, which `hasGizmo()` (the gizmo) and `nativeDragOk()` (dragging a surface) respect. It is a call of its own,
-recorded by the scene parser as `locked`, so toggling the way of editing (`gizmo()`'s mode, `gizmo` or `handles`) and the lock
+recorded by the scene parser as `locked`, so toggling the way of editing (the gizmo mode, which the tree keeps by the name of the model, or `handles`) and the lock
 never write each other's calls. `ScenePanel::applyModes` and `applyLock` build one edit for all the selected models.
 
 The right-click in the viewport opens a menu (`View::showSurfaceMenu` on a model: Primitives, Parametric shapes, Operations (`View::fillOperationsMenu`), the quick operations, and Select Surface, which opens
@@ -671,3 +671,19 @@ importer and exact tessellator, mesh import, fields, lattices, FEA and thermal s
 model tree, section and result cards, handles, the new theme — is in the same files and folders under
 the same licences: `kernel/` and `python/` are MPL-2.0; `app/` is GPL-2.0-or-later. See
 [NOTICE](../NOTICE.md) for third-party components.
+
+## Placement, units, solvers, validation and the pop-out windows
+
+- **Placement** (`stdlib/placement.py`): every function that makes a model is wrapped (`install`, from the table `PLACEABLE`) so that it takes `position`, `rotation`, `scale` and `alpha` after its own arguments; the wrapper
+  applies them with `handles._place` (about the middle of the box, `var()` numbers draggable) and notes them on the shape (`_placement_args`), `place(x, ...)` does the same for a model that is not made by a call. `outline.py` describes
+  them for each model (`item['placement']`: the form -- call, statement, none --, the spans of the arguments) and adds four rows to its `args` (the ones not written are `default`); `ScenePanel::placementEdits` writes, removes and
+  moves them in the call (`appendCallArguments`, `removeCallArgument`) or in a `place` statement. The gizmo mode is UI state kept by the name of the model (`ScenePanel::m_gizmoModes`, `gizmoModesChanged` to the view); the gizmo itself
+  is the one it always was and drags the `var()` numbers of those arguments.
+- **Units** (`units.py`, `app/include/fieldes/units.hpp`): Python holds the tables and says, for every unit the program works in, how it is shown now (`units_set` in `app_support.py` answers the window with `table()`); `Units::setTable`
+  makes C++ convert what it draws (the ruler, the colour bars, the result card, the work plane's boxes). Mesh files take the length unit from the same place (`meshfiles.write_mesh(..., unit=)`).
+- **Solvers** (`stdlib/solvers.py`): a registry of Python solvers (`@solver`), the `solve()` call that meshes the part and hands the solver a `Problem`, `Sparse` and `tet_gradients`; the Settings > Solver dialog (`Window::openSolverDialog`)
+  lists the C++ analyses with their equations and edits the files of the solvers folder (`app_support.solvers_*`).
+- **Validation** (`docs/validation.md`): the page Help > Validation and accuracy shows (`Window::openValidation`: Qt's markdown, a list of its headings beside it).
+- **Pop-out windows** (`popout.hpp`, `popout.cpp`): `PopOut::attach(widget, title, key)` gives a widget a button at its top right that moves it into a window of its own (a child window of the main window) and back; a placeholder keeps its
+  place in a splitter or a layout; a card in a window has the property `floating`, which the card controller (`carddrag.cpp`) respects. The viewport is a `QOpenGLWidget`: a new window is a new graphics context, and `View::releaseGL`
+  (connected to `QOpenGLContext::aboutToBeDestroyed`) lets go of the buffers of every shape, the textures of the planes, the picking buffer and the programs, which `initializeGL` and the next draw make again.

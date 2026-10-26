@@ -27,10 +27,8 @@ beam = difference(box((0, 0, 0), (60, 20, 10)), cylinder(3, 20, (30, 10, -5)))
 beam = lock(beam)
 
 # The load point: a point with a gizmo.  Its dot is always there; click it and drag.
-pull = point(55, 10, 10)
-pull = gizmo(
-    pull,
-    move=(var(0), var(0), var(0)),
+pull = point(55, 10, 10,
+    position=(var(0), var(0), var(0)),
 )
 
 # The beam is held at its left end; the load pulls down where the point is (a block round it: the force is spread over the beam's surface in it)

@@ -27,8 +27,8 @@ __all__ = ['write_fbx', 'read_fbx']
 # ---------------------------------------------------------------------------
 # Writing
 
-def write_fbx(path, xyz, tri, name='mesh'):
-    ''' An ASCII FBX 7.4 file with one mesh: Z up, a unit of one millimetre (the scene's unit scale is 0.1 centimetre) '''
+def write_fbx(path, xyz, tri, name='mesh', unit_mm=1.0):
+    ''' An ASCII FBX 7.4 file with one mesh: Z up, a unit of `unit_mm` millimetres (one millimetre: the scene's unit scale is 0.1 centimetre) '''
     nv = len(xyz)
     verts = ','.join('%.9g' % v for v in xyz)
     # (a polygon's last index is stored negated, minus one: the end of the polygon)
@@ -56,8 +56,8 @@ GlobalSettings:  {
 		P: "CoordAxisSign", "int", "Integer", "",1
 		P: "OriginalUpAxis", "int", "Integer", "",2
 		P: "OriginalUpAxisSign", "int", "Integer", "",1
-		P: "UnitScaleFactor", "double", "Number", "",0.1
-		P: "OriginalUnitScaleFactor", "double", "Number", "",0.1
+		P: "UnitScaleFactor", "double", "Number", "",%(unit)s
+		P: "OriginalUnitScaleFactor", "double", "Number", "",%(unit)s
 	}
 }
 Documents:  {
@@ -122,7 +122,7 @@ Connections:  {
 	C: "OO",%(m)d,0
 	C: "OO",%(g)d,%(m)d
 }
-''' % {'g': geometry_id, 'm': model_id, 'name': name, 'nv': nv, 'ni': len(tri), 'verts': verts, 'indices': indices}
+''' % {'g': geometry_id, 'm': model_id, 'name': name, 'nv': nv, 'ni': len(tri), 'verts': verts, 'indices': indices, 'unit': '%.9g' % (unit_mm / 10.0)}
     with open(path, 'w', encoding='ascii') as f:
         f.write(text)
 

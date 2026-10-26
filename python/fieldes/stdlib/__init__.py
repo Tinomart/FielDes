@@ -6,7 +6,8 @@ from fieldes.stdlib.csg import *
 from fieldes.stdlib.shapes import *
 from fieldes.stdlib.text import *
 from fieldes.stdlib.transforms import *
-from fieldes.stdlib.handles import gizmo, handles, lock
+from fieldes.stdlib.handles import handles, lock
+from fieldes.stdlib.placement import place
 from fieldes.stdlib.instances import instance
 from fieldes.stdlib.symmetries import symmetry_planes, symmetry_image, symmetry_images, symmetry_count
 from fieldes.stdlib.render_cache import *
@@ -18,12 +19,12 @@ from fieldes.stdlib.mesh_import import *
 from fieldes.stdlib.importing import *
 from fieldes.stdlib.exporting import *
 from fieldes.stdlib.meshing import *
+from fieldes.stdlib.solvers import *
 from fieldes.stdlib.fea import *
 from fieldes.stdlib.optimization_measures import *
 from fieldes.stdlib.boundary_conditions import *
 from fieldes.stdlib.selection import *
 from fieldes.stdlib.features import *
-from fieldes.stdlib.snapping import *
 from fieldes.stdlib.thermal import *
 from fieldes.stdlib.fluid import *
 from fieldes.stdlib.parametric import *
@@ -48,6 +49,10 @@ _install_key_results()
 # What every operation does with a shape that has an excluded region (see fieldes.stdlib.excluded)
 import fieldes.stdlib.excluded as _excluded
 _excluded.install()
+
+# Every function that makes a model takes position=, rotation=, scale= and alpha= (see fieldes.stdlib.placement)
+from fieldes.stdlib.placement import install as _install_placement
+_install_placement(globals())
 
 # progress(fraction, text): your own long computations on the progress bar
 from fieldes.run_progress import progress

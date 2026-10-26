@@ -33,6 +33,8 @@ public:
 
     void draw(const QSize& size);
     void initializeGL();
+    /*  Lets go of the buffers of a graphics context that is ending (a viewport pulled out into a window of its own is given a new one)  */
+    void releaseGL() { if (vao.isCreated()) vao.destroy(); if (vbo.isCreated()) vbo.destroy(); }
 signals:
     void redraw();
 

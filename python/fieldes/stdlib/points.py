@@ -126,7 +126,7 @@ class Point(Shape):
 
     def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))
-        self._kind = 'point'                    # (an instance attribute: it goes with the point through gizmo() and the like)
+        self._kind = 'point'                    # (an instance attribute: it goes with the point through the placement and the like)
         self._smooth = None if smooth is None else bool(smooth)      # (what it is in a profile: a spline point or a corner; None: what the profile says)
         self._radius = radius                   # (what it is in a profile: a round corner of this radius -- a number or a var() -- or None: what the profile says)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
@@ -179,7 +179,7 @@ class Surface(Shape):
     def __init__(self, field):
         field = Shape.wrap(field)
         super().__init__(lib.libfive_tree_copy(field.ptr))
-        self._kind = 'surface'                  # (an instance attribute: it goes with the surface through gizmo() and the like)
+        self._kind = 'surface'                  # (an instance attribute: it goes with the surface through the placement and the like)
 
     def _display(self):
         # The field itself: the mesher finds where it is zero, and that is the sheet -- one layer of triangles, no thickness

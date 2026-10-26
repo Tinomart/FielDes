@@ -2,19 +2,14 @@
 
     Two ways of editing by dragging work together, and the first has priority where they meet:
 
-      the gizmo    the part's own move arrows, rotation rings and scale knobs: `gizmo()` writes, under the shape's
-                   definition,
+      the gizmo    the part's own move arrows, rotation rings and scale knobs.  They drag the placement arguments of the shape's
+                   call (see fieldes.stdlib.placement), which FielDes writes in the call when the shape is selected,
 
-                       part = gizmo(
-                           part,
-                           move=(var(0), var(0), var(0)),
-                           rotate=(var(0), var(0), var(0)),
-                           scale=(var(1), var(1), var(1)),
-                       )
+                       part = box(a, b, position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
 
-                   so what the gizmo does is ordinary script text, like any dragged var().  The shape is `part`
-                   scaled about its centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown
-                   is the `mode` of that call (the model tree's gizmo button, key E, goes through them):
+                   so what the gizmo does is ordinary script text, like any dragged var().  The shape is scaled about its
+                   centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown is the state of the model
+                   tree's gizmo button (key E), which is not in the script:
 
                        'click'   (the default) the gizmo is shown while the shape is selected, i.e. after you click it
                        'never'   it is never shown, so that it cannot get in the way
@@ -36,8 +31,8 @@
 
                    part = lock(part)
 
-    Nothing is stored anywhere but in the script: delete the `handles(...)` and `gizmo(...)` calls of a part
-    (FielDes's Reimport does) and it is the file's version again; the `lock(...)` call only keeps it from being
+    Nothing is stored anywhere but in the script: delete the `handles(...)` call of a part and the placement arguments of its
+    definition (FielDes's Reimport does) and it is the file's version again; the `lock(...)` call only keeps it from being
     dragged. '''
 import ctypes
 import math
@@ -47,7 +42,7 @@ from fieldes.ffi import lib
 from fieldes.shape import Shape
 from fieldes.stdlib.transforms import move as _move, rotate_x, rotate_y, rotate_z, scale_xyz, _lazy_once
 
-__all__ = ['gizmo', 'handles', 'lock']
+__all__ = ['handles', 'lock']
 
 MODES = ('click', 'never', 'always')
 
@@ -100,6 +95,12 @@ def _carry_prism(out, shape, guard=(), still=True):
     for name in _PRISM:
         setattr(out, name, getattr(shape, name))
     out._prism_guard = list(getattr(shape, '_prism_guard', [])) + [(v, float(x)) for v, x in guard]
+
+
+def _unplaced(shape):
+    ''' (the shape as it was before the placement arguments of its call placed it, the arguments), or (shape, None): handles() pulls the surfaces of the shape as it is made '''
+    from fieldes.stdlib.placement import unplaced
+    return unplaced(shape)
 
 
 def _carry(out, shape):
@@ -190,31 +191,26 @@ def _placed_frame(frame, about, move, rotate, scale):
     return tuple(tuple(Shape.wrap(c) for c in axis) for axis in (origin, turned(u), turned(v)))
 
 
-def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
-    ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
+def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None):
+    ''' Scales, rotates and moves a shape, with the gizmo FielDes shows on it: what the placement arguments of a call do (see fieldes.stdlib.placement).
 
         scale: (x, y, z) factors about the shape's centre, `rotate`: (x, y, z)
         rotations in degrees about the same centre (x first, then y, then z),
-        `move`: (x, y, z) translation.  Write the numbers as var(...) to drag
+        `move`: (x, y, z) translation.  The numbers are written as var(...) to drag
         them: FielDes's model tree does that for you.
         about: the centre (default: the middle of the shape's box)
         mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
         'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
         priority where it is shown.
-        A profile, a polyline or a spline has no numbers of its own -- its points do -- so `profile_1 = gizmo(profile_1, mode='click')` only says when the one gizmo of
-        its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).  With numbers it is
-        placed like any shape -- moved and turned about the middle of its points -- as the same outline through the images of its points: whatever is made of points
-        (it can make itself again through other points, `_remake`) is placed so, and what a linked copy of it, `instance(profile_1)`, is placed by.
+        A profile, a polyline or a spline is placed through its points -- moved and turned about the middle of them -- as the same outline through the images of its points:
+        whatever is made of points (it can make itself again through other points, `_remake`) is placed so, and what a linked copy of it, `instance(profile_1)`, is placed by.
         To make a shape undraggable, lock it: `shape = lock(shape)`. '''
     if mode is None:
         mode = 'click'
-    if mode in ('gizmo', 'handles'):
-        raise ValueError("gizmo(): mode='%s' is gone: a shape's surfaces can always be dragged now, and the gizmo's "
-                         "mode is 'click' (shown while the shape is selected: the default), 'never' or 'always'" % mode)
     if mode not in MODES:
-        raise ValueError("gizmo(): mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
+        raise ValueError("the gizmo's mode is 'click', 'never' or 'always' (a shape is locked with lock(shape))")
     if len(move) != 3 or len(rotate) != 3 or len(scale) != 3:
-        raise ValueError('gizmo(): move=, rotate= and scale= take three numbers each')
+        raise ValueError('position=, rotation= and scale= take three numbers each')
     if getattr(shape, '_outline_gizmo', False) and about is None and all(_is_number(v) for v in tuple(move) + tuple(rotate) + tuple(scale)) \
             and all(v == 0 for v in tuple(move) + tuple(rotate)) and all(v == 1 for v in scale):
         return _outlined(shape, mode)
@@ -222,7 +218,7 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         # A linked copy is only moved and rotated: its shape is its original's.  A scale of numbers other than 1 would make it another shape -- refused; scale numbers
         # that are var()s (an older gizmo line, or one written before the copy was known to be linked) mean 1, and are not offered to be dragged
         if any(_is_number(s) and s != 1 for s in scale):
-            raise ValueError('gizmo(): a linked copy (instance) can only be moved and rotated: its shape is its original\'s, so it is not scaled.  '
+            raise ValueError('a linked copy (instance) can only be moved and rotated: its shape is its original\'s, so it is not scaled.  '
                              'Leave scale= out; a copy that has a shape of its own is a copy of the statements (Shift+D in FielDes)')
         scale = (1, 1, 1)
     if all(_is_number(s) and s == 1 for s in scale) and callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
@@ -234,8 +230,8 @@ def gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, 
         nums = _var_numbers(list(move) + list(rotate) + list(scale))
         if nums is not None and all(n == 0 for n in nums[:6]) and all(n == 1 for n in nums[6:]):
             return shape
-        raise TypeError('gizmo(): a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
-                        'Place the part it was made from (gizmo() on that part) -- the result follows it.' % type(shape).__name__)
+        raise TypeError('a %s is the result of an analysis, not a shape: it has no surface of its own to move, rotate or scale. '
+                        'Place the part it was made from (its position=, rotation= and scale=) -- the result follows it.' % type(shape).__name__)
     # The pivot: where `about` says, else the middle of the shape as it was made (see _centre_of): plain numbers that no handle changes, so a side that is pulled moves that side
     # only, whatever the scale of the gizmo, and nothing jumps when the script is run again.  (It was an expression of the handle numbers once, so that the gizmo stayed at the middle of
     # the shape whatever side was pulled: with a scale other than 1 the middle moved with the pull, and the opposite side went along with it)
@@ -386,7 +382,7 @@ def _placed_outline(shape, move, rotate, mode, about=None):
 
 
 def _outlined(shape, mode):
-    ''' A profile, a polyline or a spline, with the mode of its gizmo (`profile_1 = gizmo(profile_1, mode='click')`).  It is the outline itself in every other way -- a copy with
+    ''' A profile, a polyline or a spline, with the mode of its gizmo (the state of the tree's button).  It is the outline itself in every other way -- a copy with
         its points, its face and its handles; a placed shape would be made again from a field and lose them --, because the gizmo of an outline has no numbers of its own: it
         moves, turns and scales the points the outline is made of (View::groupGizmo), and this only says when that gizmo is shown '''
     ptr = lib.libfive_tree_copy(shape.ptr)
@@ -402,8 +398,8 @@ def _outlined(shape, mode):
 
 
 def _note_gizmo_vars(shape, move, rotate, scale):
-    ''' The numbers of a gizmo() call are written to the list of the run (host.__gizmo_vars, made empty when a script starts): FielDes keeps every one of them out of a
-        surface pull.  A gizmo moves, turns and scales; the numbers a surface is pulled by are the handles -- and the gizmo() of a 2D shape that an extrusion is made of
+    ''' The numbers of the placement arguments are written to the list of the run (host.__gizmo_vars, made empty when a script starts): FielDes keeps every one of them out of a
+        surface pull.  A gizmo moves, turns and scales; the numbers a surface is pulled by are the handles -- and the placement of a 2D shape that an extrusion is made of
         has numbers in the extrusion's field too, which a pull of the extrusion's side would otherwise take instead of the handle (the whole part scaled, moved and turned:
         every other side went with it).  A point is the exception: the numbers of its gizmo are where it is, and the shapes made of points are pulled by them '''
     if hasattr(shape, 'xyz'):
@@ -425,7 +421,7 @@ def lock(shape):
         line is deleted.  It is the shape itself in every other way (its bounds, handles, colours and exact regions
         stay), and the way of editing it had (gizmo or handles) comes back when it is unlocked.
 
-        Write it under a shape's definition, with its gizmo() and handles() calls:
+        Write it under a shape's definition, after its handles() call:
 
             part = lock(part)
 
@@ -486,6 +482,7 @@ def _float32_text(v):
 
 
 def _handle_count(shape):
+    shape = _unplaced(shape)[0]                 # (the numbers of a shape's surfaces are the shape's own, not the numbers it is placed by)
     params = getattr(shape, '_handle_params', None)
     if params is not None:
         return len(params)                  # (a shape made of numbers of its own: those are its handles)
@@ -497,6 +494,7 @@ def _handle_count(shape):
 
 def handle_values(shape):
     ''' The numbers handles() makes variables, in its order, as the text to write them as '''
+    shape = _unplaced(shape)[0]
     params = getattr(shape, '_handle_params', None)
     if params is not None:
         return [_float32_text(struct.unpack('f', struct.pack('f', float(p)))[0]) for p in params]
@@ -581,20 +579,27 @@ def handles(shape, values=None, **removed):
         file) it raises ValueError: reimport the part.
 
         (This is what expose() was called.  The gizmo -- the arrows, rings and knobs
-        that move, turn and scale a shape -- is gizmo(shape, move=..., rotate=..., scale=...).) '''
+        that move, turn and scale a shape -- drags its position=, rotation= and scale=.)
+
+        A shape that is placed by the arguments of its call (see fieldes.stdlib.placement) has its surfaces pulled where it is made, and is placed again by the same
+        arguments: the numbers are those of the shape as it is made. '''
     if removed or values is None or isinstance(values, (str, bytes)):
         raise TypeError('handles(shape, [numbers]) makes the surfaces of a shape draggable: its second argument is the list of numbers that '
                         'place them (FielDes writes it when the shape is selected).  It does not take %s -- the gizmo, the arrows that move, '
-                        'turn and scale a shape, is gizmo(shape, move=(...), rotate=(...), scale=(...))'
+                        'turn and scale a shape, drags the position=, rotation= and scale= of its call'
                         % ('move=, rotate=, scale=, about= or mode=' if removed else 'no numbers'))
     if getattr(shape, '_linked', False):
         raise TypeError('handles(): a linked copy (instance) has no surfaces of its own to drag -- its shape is its original\'s: drag the original\'s surfaces, '
                         'and the copy follows')
+    inner, placed_by = _unplaced(shape)
+    if placed_by is not None:
+        from fieldes.stdlib.placement import _replace
+        return _replace(handles(inner, values), placed_by)
     values = list(values)
     n = _handle_count(shape)
     if len(values) != n:
         raise ValueError('handles(): the shape has %d numbers that place its surfaces, %d were given -- the part has changed since '
-                         '(Reimport it in the model tree).  (The gizmo is gizmo(shape, move=..., rotate=..., scale=...))' % (n, len(values)))
+                         '(Reimport it in the model tree)' % (n, len(values)))
     _follow_literals(shape, values)
     # (the wrapped numbers stay alive until the call has returned: plain numbers wrap to shapes
     # that would otherwise be freed with their pointers still in `arr`)
@@ -671,7 +676,7 @@ def _widen_box(out, shape, values):
         grow = sum(abs(a - b0) for a, b0 in zip(nums, orig))
         if grow > 1e-9:
             # (a 2D shape that lies in the plane z = 0 -- its box is flat -- stays in it: the numbers of its handles are positions and lengths in that plane, none of them takes it out of it.  A flat box that
-            # was made thick in z lost what the extrusion of it needs -- extrude() carries the box of the face along z only from a flat one -- and the extrusion, and the gizmo() of it, had its box SEARCHED for
+            # was made thick in z lost what the extrusion of it needs -- extrude() carries the box of the face along z only from a flat one -- and the extrusion, and its placement, had its box SEARCHED for
             # at every run: a second or two for each statement, and the whole run, with the viewport waiting for it, once the sides had been pulled)
             flat = abs(float(b[0][2])) < 1e-12 and abs(float(b[1][2])) < 1e-12
             grow_z = 0.0 if flat else grow

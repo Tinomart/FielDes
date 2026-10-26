@@ -56,7 +56,7 @@ public:
     void setSelections(SelectionLayer layer,
                        const QList<QTextEdit::ExtraSelection>& sels);
 
-    /*  Every object -- a top-level `name = call(...)` and the statements that go on with it: `name = gizmo(name, ...)`, `name = handles(...)`, the line that shows it -- is one block of
+    /*  Every object -- a top-level `name = call(...)` and the statements that go on with it: `name = handles(...)`, `name = lock(name)`, the line that shows it -- is one block of
      *  lines (the one that folds with its arrow, see foldRange); the blocks are told apart by a background that is a shade different for every second one, so that where one
      *  object's definition starts and ends is seen.  Done again a moment after the text changes, and when the theme does  */
     void updateBlockShading();

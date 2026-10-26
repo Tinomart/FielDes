@@ -193,8 +193,7 @@ def edit(arg):
     select = -1
     if isinstance(elt, ast.Name):
         indent = ' ' * owner.col_offset
-        block = ['%s = point(%s, %s, %s)' % (new, x, y, z),
-                 '%s = gizmo(' % new, '    %s,' % new, '    move=(var(0), var(0), var(0)),', '    rotate=(var(0), var(0), var(0)),',
+        block = ['%s = point(' % new, '    %s, %s, %s,' % (x, y, z), '    position=(var(0), var(0), var(0)),', '    rotation=(var(0), var(0), var(0)),',
                  '    scale=(var(1), var(1), var(1)),', ')', new]
         text = ''.join(indent + b + '\n' for b in block)
         edits.append([owner.lineno - 1, 0, owner.lineno - 1, 0, text])

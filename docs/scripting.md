@@ -74,8 +74,37 @@ sphere(r)
 The argument must be a constant (`var(3)`, `var(-2.5)`). Shapes made from `var()`s are dragged natively:
 the viewport finds the `var` numbers that place the surface under the cursor. For everything else —
 a part imported from STEP, a shape written with plain numbers — use [handles](handles.md):
-`gizmo(part, …)` (a gizmo) and `handles(part, [var(..), …])` (the surfaces of the part as draggable
-numbers), which the model tree writes for you; `lock(part)` makes a shape undraggable again.
+the placement arguments of the call (`position=`, `rotation=`, `scale=`: see below) and `handles(part, [var(..), …])`
+(the surfaces of the part as draggable numbers), which the model tree writes for you; `lock(part)` makes a shape undraggable again.
+
+## Placement: where an object is, how it is turned, how big and how see-through
+
+Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes four arguments after its own, named and in this order:
+
+| argument | what it says |
+|---|---|
+| `position=(x, y, z)` | mm: how far the object is moved from where its definition puts it (0 is where it is made) |
+| `rotation=(x, y, z)` | degrees: how it is turned about the middle of its box, x first, then y, then z |
+| `scale=(x, y, z)` or one number | factors: how big it is, about the middle of its box |
+| `alpha=` | 0 to 1: how solid it is drawn (1 is solid, 0 is not drawn); the object is the same in every other way |
+
+```python
+part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
+```
+
+None of them is needed: an object without them stands where its definition puts it. They are ordinary arguments of the call: **the model tree shows all four inside every object**, written or not (the ones that
+are not written are dimmed, with their defaults), a click on one writes it and selects its number in the code, and the **gizmo in the viewport drags** `position`, `rotation` and `scale`: when the object is selected,
+FielDes writes them with `var()` numbers (`position=(var(40), var(0), var(0))`) and a drag changes the numbers in the text. There is no separate gizmo statement and no gizmo argument; *when* the gizmo is shown
+is the state of the tree's gizmo button (key `E`), which is not in the script.
+
+What is not made by a call that takes them -- a part taken out of an imported model, a sum, a name given to another model -- is placed by `place`, which takes the same arguments and is written under its definition:
+
+```python
+part = place(part, position=(40, 0, 0))
+```
+
+A function that has an argument of that name of its own (`hole(position=...)`, `lattice(scale=...)`) keeps it and takes no placement arguments: a model it makes is placed with `place`. A profile, a polyline or a spline is
+placed through its points, which are what the gizmo drags. Copies: [`instance`](handles.md#copies-shiftd-and-ctrld) takes `position` and `rotation`.
 
 ## Viewport settings
 
@@ -135,31 +164,47 @@ follows it.
 
 ### Snapping a body onto another
 
-`snap(body, face, point, onto_face, onto_point, spin=0, gap=0)` moves `body` so that its `face` lies against `onto_face` -- the two faces facing each other, the direction in which the
-bodies do not go into one another -- and its `point` is at `onto_point`. The faces are surfaces from `select_surface(...)` (or just a direction, `(0, 0, 1)`), the points are `point(...)`s --
-a corner or an edge point from `corner_at(...)` / `edge_point_at(...)`, which the right-click menu of a body writes near its edges and corners
-(see [Selecting surfaces](selecting-surfaces.md#corners-and-edges)). `spin` (degrees) then turns the body about the normal of the contact, the one thing the two faces and the two points
-leave free, and `gap` (mm) leaves the faces that far apart. The other body is not given: only where its face is and which way it faces is read, so what you snap onto can be a body, a plane
-or a surface.
+A snap puts one body onto another. You give it the faces (`select_surface`), the edges (`edge_at`) and the points (`corner_at`, `edge_point_at`, `circle_center_at`, `face_center`, `point`) that were made on **two
+bodies**, in the order you select them, and the **first** body -- the one the first feature is on -- is moved onto the second. FielDes sorts them out itself:
+
+- **the faces:** the body is turned by the least turn that makes its face lie against the other body's face -- the two facing each other, the direction in which the bodies do not go into one another; with a second face on
+  each body, the turn about that contact lines them up as well (two flat faces of a box on the table's edge);
+- **no face on one of the bodies:** the edges are made parallel (the least turn), and a place is only moved;
+- **the points:** the body is moved so that its point is on the other body's point; a face or an edge that has no point of its own is met by its middle, so two faces alone meet middle to middle (a cone's base put on a cylinder's end, on its axis);
+- **a feature that is on no body** -- a `point(...)` of the scene -- is a place of the second body.
+
+**A snap is a move, so nothing new is made.** The move is written where the gizmo writes one -- into the body's own `position=` and `rotation=` (see [Placement](#placement-where-an-object-is-how-it-is-turned-how-big-and-how-see-through)),
+on top of the placement the body has -- so the mesh that is drawn is simply carried to its new place: no new model, no new calculation, and one undo takes it back. The numbers are `var()` numbers like the gizmo's, so the
+gizmo drags them afterwards: a clearance between the faces, or a turn about the line they touch along, is that drag (or typing the numbers).
 
 ```python
-foot = select_surface(bracket, seed=(0, 0, 0), angle=5)
-foot_corner = corner_at(bracket, (10, 10, 0))
-top = select_surface(plate, seed=(30, 20, 12), angle=5)
-hole_edge = edge_point_at(plate, (30, 20, 12))
-bracket = snap(bracket, foot, foot_corner, top, hole_edge)
+bracket = box((0, 0, 0), (20, 10, 5))
+plate = box((0, 0, 0), (60, 40, 10))
+foot = select_surface(bracket, seed=(10, 5, 0), angle=5)       # the bottom of the bracket
+foot_corner = corner_at(bracket, (0, 0, 0))                     # and its corner at the origin
+top = select_surface(plate, seed=(30, 20, 10), angle=5)        # the top of the plate
+plate_corner = corner_at(plate, (0, 0, 10))                     # and the plate's corner under it
 ```
 
-In FielDes, select the body, its face and its point, then the face and the point it goes onto (Ctrl + click, in that order) and choose **Operations → Moving → snap**: the call is written with them
-in their places, and a placeholder for what was not selected.
+Select `foot`, `foot_corner`, `top` and `plate_corner` (in this order) and press `S`: the call of the bracket reads
 
-The points can be any points: the **centre of a circular edge** (`circle_center_at`) or **of a face** (`face_center`) put two round parts on one axis, and the corner or edge a **rounding** replaced
-(`corner_at(..., rounded=True)`) works for a part whose edges are rounded:
+```python
+bracket = box((0, 0, 0), (20, 10, 5), position=(var(0), var(0), var(10)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
+```
+
+and the places of the faces and points that were made on the bracket move with it -- `seed=(10, 5, 10)`, `(0, 0, 10)` -- in the same edit, so they stay on the bracket (a place that is a name and not three numbers is left, and
+FielDes says so). A body that has an excluded part (see `exclude`) is moved as a whole, as it is by the gizmo.
+
+**In FielDes: select, then press S.** Make the faces, edges and points you want on the two bodies (right-click a body: *Select surface*, the corners and edges, the centre of a face or a circle, and the rounded corner or
+edge a rounding replaced -- see [Selecting surfaces](selecting-surfaces.md#corners-and-edges)), select all of them -- the ones on the body that moves first -- and press `S`. The points can be any points: the **centre of a circular
+edge** (`circle_center_at`) or **of a face** (`face_center`) put two round parts on one axis:
 
 ```python
 rim = circle_center_at(cylinder_part, (10, 0, 0))            # the centre of the bottom rim of a cylinder
 base = circle_center_at(cone_part, (55, 0, 0))               # the centre of the base of a cone
-cone_part = snap(cone_part, select_surface(cone_part, (42, 1, 0)), base, select_surface(cylinder_part, (3, 2, 0)), rim)   # the cone under the cylinder, on its axis
+cone_face = select_surface(cone_part, (42, 1, 0))
+cylinder_face = select_surface(cylinder_part, (3, 2, 0))
+# select cone_face, base, cylinder_face and rim, press S: the cone is placed under the cylinder, on its axis
 ```
 
 ## Arithmetic on fields
@@ -280,8 +325,13 @@ function of that script, or a module next to it: `from bracket import make_brack
 ## Units
 
 Everything is millimetres, except where the function says otherwise. A STEP file's own units are
-converted on import (`units='mm'` by default); STL/OBJ/PLY files are assumed to be millimetres
-(`file_units=`); analyses use N, mm and MPa, and thermal analyses W, mm and °C.
+converted on import (`units='mm'` by default); STL/OBJ/PLY files that do not say what their numbers mean are read in the length unit of **Settings → Units**
+(millimetres by default; `file_units=` says another); analyses use N, mm and MPa, and thermal analyses W, mm and °C.
+
+**Settings → Units** chooses the units numbers are *shown* in -- length (mm, cm, m, in, ft, µm), force (N, kN, lbf, kgf), stress and pressure (MPa, GPa, kPa, Pa, bar, psi, ksi), mass (kg, g, t, lb)
+and temperature (°C, K, °F) -- on the ruler, the cards and colour bars of results, the value under the cursor and the work plane, and the length unit **mesh files are written in** (`export_mesh(..., unit='in')`
+overrides it). The script itself, and the solvers, always work in mm, N, MPa, kg and °C, so a script means the same on every machine; `fieldes.units` converts between them
+(`units.convert(25.4, 'mm')` is `(1.0, 'in')` while inches are chosen).
 
 ## Errors, printing, long computations
 

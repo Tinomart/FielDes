@@ -129,16 +129,103 @@ if c is not None:
     check('centre of the area of an L-shaped face (11, 11), not the middle of its box (15, 15)', far(xyz(c), (11, 11, 5)) < 0.6, str(tuple(round(v, 3) for v in xyz(c))))
 print(took())
 
-# ---------------------------------------------------------------- 4. snap by these points
-stage('4. the bottom of a cylinder snapped onto the base of a cone')
+# ---------------------------------------------------------------- 4. snap by these points: the move is the body's own placement (position= and rotation=)
+import json
+import random
+
+from fieldes import app_support, runner
+from fieldes.stdlib import snapping
+from fieldes.stdlib.symmetries import _turn_matrix
+
+stage('4. the bottom of a cylinder snapped onto the base of a cone: the cone is placed, not remade')
 cyl_face = select_surface(cyl, (3, 2, 0))
 cone_face = select_surface(cn, (42, 1, 0))
 cyl_centre = circle_center_at(cyl, (10, 0, 0))
 cone_centre = circle_center_at(cn, (55, 0, 0))
-moved = snap(cn, cone_face, cone_centre, cyl_face, cyl_centre)
-check('the cone stands coaxial under the cylinder, base to base', inside(moved, (0, 0, -29)) and inside(moved, (14, 0, -1)) and not inside(moved, (16, 0, -1)) and not inside(moved, (0, 0, 1)) and not inside(moved, (0, 0, -31)))
-moved = snap(cn, cone_face, face_center(cone_face), cyl_face, face_center(cyl_face))
+found = snapping._placement([cone_face, cone_centre, cyl_face, cyl_centre])
+moved = place(cn, position=found['position'], rotation=found['rotation'])
+check('the cone stands coaxial under the cylinder, base to base', inside(moved, (0, 0, -29)) and inside(moved, (14, 0, -1)) and not inside(moved, (16, 0, -1)) and not inside(moved, (0, 0, 1)) and not inside(moved, (0, 0, -31)),
+      'position {} rotation {}'.format(found['position'], tuple(round(v, 4) for v in found['rotation'])))
+found = snapping._placement([cone_face, face_center(cone_face), cyl_face, face_center(cyl_face)])
+moved = place(cn, position=found['position'], rotation=found['rotation'])
 check('the same with the centres of the two faces', inside(moved, (0, 0, -29)) and inside(moved, (14, 0, -1)) and not inside(moved, (16, 0, -1)))
+print(took())
+
+# ---------------------------------------------------------------- 5. the angles of the rotation
+stage('5. the rotation= angles make the turn of the snap, whatever it is')
+worst = 0.0
+angles = [(0, 0, 0), (90, 0, 0), (0, 90, 0), (0, -90, 30), (10, 90, 0), (170, 45, -120)]
+rng = random.Random(7)
+angles += [(rng.uniform(-180, 180), rng.uniform(-90, 90), rng.uniform(-180, 180)) for _ in range(500)]
+for a in angles:
+    R = [[float(v) for v in row] for row in _turn_matrix(a)]
+    R2 = [[float(v) for v in row] for row in _turn_matrix(snapping._euler(R))]
+    worst = max(worst, max(abs(R[i][j] - R2[i][j]) for i in range(3) for j in range(3)))
+check('the angles written for any turn (also a quarter turn about y) make the same turn again', worst < 1e-9, 'worst difference {:.2e} over {} turns'.format(worst, len(angles)))
+print(took())
+
+# ---------------------------------------------------------------- 6. what S writes: the placement of the body, and the features made on it go with it
+stage('6. the script as S rewrites it: a snap, then a second snap of the body that is placed already')
+PLAIN = 'cn = cone(15, 30, (40, 0, 0))\n'
+PLACED = 'cn = cone(15, 30, (40, 0, 0), position=%s, rotation=%s)\n'
+SOURCE = ('from fieldes import *\n'
+          + PLAIN +
+          'cyl = cylinder(10, 20)\n'
+          'slab = box((-30, -30, 40), (30, 30, 50))\n'
+          'near_place = (55, 0, 0)\n'
+          'cone_face = select_surface(cn, seed=(42, 1, 0))\n'
+          'cone_centre = circle_center_at(cn, (var(55), var(0), 0))\n'
+          'cone_rim = edge_point_at(cn, near_place)\n'
+          'cyl_face = select_surface(cyl, (3, 2, 0))\n'
+          'cyl_centre = circle_center_at(cyl, (10, 0, 0))\n'
+          'slab_top = select_surface(slab, (0, 0, 50), angle=5)\n'
+          'slab_centre = face_center(slab_top)\n')
+
+
+def apply_edits(text, edits):
+    lines = text.split('\n')
+    for l0, c0, l1, c1, new in sorted(edits, reverse=True):
+        lines[l0] = lines[l0][:c0] + new + lines[l1][c1:]
+    return '\n'.join(lines)
+
+
+def run(text):
+    ns = {'var': lambda v: float(v)}            # (var() is the number itself outside the application, where nothing drags it)
+    exec(text, ns)
+    runner.last_globals = ns
+    return ns
+
+
+def ask(text, names, written):
+    return json.loads(app_support.snap_placement(json.dumps({'features': names, 'body': 'cn', 'written': written, 'source': text})))
+
+
+ns0 = run(SOURCE)
+first = ask(SOURCE, ['cone_face', 'cone_centre', 'cyl_face', 'cyl_centre'], [])
+check('the snap is worked out from the script (no error)', 'error' not in first, str(first.get('error', ''))[:160])
+check('the feature whose place is a name is reported, not guessed', first.get('left') == ['cone_rim'], str(first.get('left')))
+check('the places of the two features that are on the cone are rewritten (six numbers), no other', len(first.get('edits', [])) == 6 and all(e[0] in (5, 6) for e in first['edits']), str(first.get('edits'))[:200])
+if 'error' not in first:
+    # (the feature whose place is a name stayed where it was, as the answer says: on the moved cone it finds nothing, so the line is taken out of the script that is run)
+    B = apply_edits(SOURCE, first['edits']).replace(PLAIN, PLACED % (first['position'], first['rotation'])).replace('cone_rim = edge_point_at(cn, near_place)\n', '')
+    check('the var() form of a place is kept', 'circle_center_at(cn, (var(' in B, [l for l in B.split('\n') if l.startswith('cone_centre')][0])
+    ns1 = run(B)
+    check('the cone of the rewritten script stands under the cylinder, base to base', inside(ns1['cn'], (0, 0, -29)) and inside(ns1['cn'], (14, 0, -1)) and not inside(ns1['cn'], (16, 0, -1)) and not inside(ns1['cn'], (0, 0, 1)))
+    motion = snapping._motion([ns0['cone_face'], ns0['cone_centre'], ns0['cyl_face'], ns0['cyl_centre']])
+    want = snapping._moved(motion, xyz(face_center(ns0['cone_face'])))
+    got = xyz(face_center(ns1['cone_face']))
+    check('the face made on the cone is the same face of the moved cone (its centre went where the cone went)', far(got, want) < 0.6, '{} (expected {})'.format(tuple(round(v, 3) for v in got), tuple(round(v, 3) for v in want)))
+    check('the centre of the cone\'s base is on the centre of the cylinder\'s bottom', far(xyz(ns1['cone_centre']), (0, 0, 0)) < 0.2, str(tuple(round(v, 3) for v in xyz(ns1['cone_centre']))))
+    # the body is placed already: its numbers are written, the new ones are worked out on top of them
+    second = ask(B, ['cone_face', 'cone_centre', 'slab_top', 'slab_centre'], ['position', 'rotation'])
+    check('a snap of a body that is placed already is worked out (no error)', 'error' not in second, str(second.get('error', ''))[:160])
+    if 'error' not in second:
+        C = apply_edits(B, second['edits']).replace(PLACED % (first['position'], first['rotation']), PLACED % (second['position'], second['rotation']))
+        ns2 = run(C)
+        check('the cone, snapped a second time, lies on the top of the box (z 50 up to 80), apex up, coaxial',
+              inside(ns2['cn'], (0, 0, 79)) and inside(ns2['cn'], (14, 0, 51)) and not inside(ns2['cn'], (16, 0, 51)) and not inside(ns2['cn'], (0, 0, 49)) and not inside(ns2['cn'], (0, 0, 81)),
+              'position {} rotation {}'.format(second['position'], second['rotation']))
+        check('the centre of the cone\'s base is on the centre of the box\'s top', far(xyz(ns2['cone_centre']), (0, 0, 50)) < 0.2, str(tuple(round(v, 3) for v in xyz(ns2['cone_centre']))))
 print(took())
 
 print('=' * 70)

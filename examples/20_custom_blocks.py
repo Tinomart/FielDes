@@ -28,21 +28,19 @@ view.set_quality(8)
 plate = box((0, 0, 0), (90, 50, 6))
 drilled = perforate(plate, ramp(x_field(), (0, 90), (1.0, 3.5)), 10)      # the radius of the holes is a field
 drilled = handles(drilled, [var(45.0), var(45.0), var(25.0), var(25.0), var(3.0), var(3.0), var(5.0), var(5.0), var(-50000.0), var(50000.0)])
-drilled = gizmo(
+drilled = place(
     drilled,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 drilled
 
 support = bracket(40, 30, 4, 20)
-moved = move(support, (0, 60, 0))
-moved = handles(moved, [var(20.0), var(20.0), var(60.0), var(10.0), var(10.0), var(2.0), var(2.0), var(10.0), var(10.0), var(20.0), var(20.0), var(2.0), var(2.0), var(15.0), var(15.0), var(2.0), var(2.0), var(10.0), var(10.0), var(10.0), var(10.0), var(3.2), var(2.0), var(2.0), var(2.0), var(2.0), var(3.2)])
-moved = gizmo(
-    moved,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+moved = move(support, (0, 60, 0),
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
+moved = handles(moved, [var(20.0), var(20.0), var(60.0), var(10.0), var(10.0), var(2.0), var(2.0), var(10.0), var(10.0), var(20.0), var(20.0), var(2.0), var(2.0), var(15.0), var(15.0), var(2.0), var(2.0), var(10.0), var(10.0), var(10.0), var(10.0), var(3.2), var(2.0), var(2.0), var(2.0), var(2.0), var(3.2)])
 moved

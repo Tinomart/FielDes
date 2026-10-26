@@ -989,6 +989,35 @@ def feature_near(request):
         return '{}'
 
 
+def snap_placement(request):
+    ''' S: where the body the selected features are on has to be placed to be snapped onto the other (see fieldes.stdlib.snapping), as the numbers FielDes writes into its
+        `position=` and `rotation=`.  `request` is JSON {"features": [the names of the selected faces, edges and points in the order they were selected], "body": the name of the
+        body that moves (the first feature's), "written": [the placement arguments the call of the body has], "source": the script}.  The answer is JSON
+        {"position": "(var(x), var(y), var(z))", "rotation": "(var(x), var(y), var(z))" (the text of the two arguments, in mm and degrees), "scale": whether the call may be given a
+        scale, "edits": [[line0, col0, line1, col1, text]] (the places of the features that were made on the body, moved with it), "left": [the features on the body whose place is
+        not written as numbers]}, or {"error": why it cannot be done} '''
+    import json
+    from fieldes import runner
+    from fieldes.stdlib import snapping
+    req = json.loads(request)
+    gs = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+    names = [str(n) for n in req.get('features', [])]
+    try:
+        absent = [n for n in names + [req['body']] if n not in gs]
+        if absent:
+            raise ValueError('%s %s not in the last run of the script: run it again first' % (', '.join(absent), 'is' if len(absent) == 1 else 'are'))
+        found = snapping._placement([gs[n] for n in names], req.get('written') or ())
+        if snapping._body_key(gs[req['body']]) != snapping._body_key(found['body']):
+            raise ValueError('the first of the selected features is not on %s but on another body' % req['body'])
+        edits, left = snapping.feature_edits(req['source'], req['body'], found['motion'])
+    except ValueError as e:
+        return json.dumps({'error': str(e)})
+    def written(values):
+        # (as the gizmo's numbers are written: var() numbers, which its drag changes in the text)
+        return '(%s)' % ', '.join('var(%s)' % (('%.8f' % v).rstrip('0').rstrip('.') if abs(v) >= 5e-9 else '0') for v in values)
+    return json.dumps({'position': written(found['position']), 'rotation': written(found['rotation']), 'scale': found['scale'], 'edits': edits, 'left': left})
+
+
 def handles_text(name):
     ''' The statement that makes the surfaces of the shape a script variable holds (as of the last run)
         draggable -- "name = handles(name, [var(...), ...])" -- for FielDes to write under its definition.  It is ONE line, whatever the number of
@@ -1000,7 +1029,7 @@ def handles_text(name):
     shape = runner.last_globals.get(name)
     if not isinstance(shape, Shape):
         raise ValueError('%s is not a shape of the last run' % name)
-    # (the variable may hold the shape under a gizmo -- name = gizmo(name, ...): its own numbers are
+    # (the variable may hold the shape under a placement -- name = place(name, ...): its own numbers are
     # the shape it was made from, whose definition the numbers of its surfaces go under)
     while getattr(shape, '_gizmo', None) is not None and isinstance(getattr(shape, '_placed_from', None), Shape):
         shape = shape._placed_from
@@ -1345,6 +1374,81 @@ def _min_inputs(callee):
     return max(1, needed)
 
 
+PLACEMENT_ARGS = ('position', 'rotation', 'scale', 'alpha')
+
+
+def _keyword_span(kw):
+    ''' The span of a keyword argument, `name=value` (ast gives it a place of its own) '''
+    return [kw.lineno, _char_col(kw.lineno, kw.col_offset), kw.end_lineno, _char_col(kw.end_lineno, kw.end_col_offset)]
+
+
+def _is_placeable(callee):
+    ''' Whether calls of this function take the placement arguments (see fieldes.stdlib.placement) '''
+    return bool(getattr(callee, '_placeable', False))
+
+
+def _placement_args(call, first, src):
+    ''' The placement arguments written in a call: ({name: {span (of the value), arg_span (of `name=value`), text}}, whether a number of position, rotation or scale is a var()).
+        `first`: how many positional arguments are not placement (the call of `place` has one: what is placed) '''
+    args, numbers = {}, False
+    for i, a in enumerate(call.args[first:]):
+        if i < len(PLACEMENT_ARGS) and not isinstance(a, ast.Starred):
+            args[PLACEMENT_ARGS[i]] = {'span': _span(a), 'arg_span': _span(a), 'text': _short(src.segment(a), 80)}
+            numbers = numbers or (PLACEMENT_ARGS[i] != 'alpha' and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var' for n in ast.walk(a)))
+    for kw in call.keywords:
+        if kw.arg in PLACEMENT_ARGS:
+            args[kw.arg] = {'span': _span(kw.value), 'arg_span': _keyword_span(kw), 'text': _short(src.segment(kw.value), 80)}
+            numbers = numbers or (kw.arg != 'alpha' and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var' for n in ast.walk(kw.value)))
+    return args, numbers
+
+
+def _placement_of(value, gs, src):
+    ''' How the placement of a model is written in its definition `value` -- the call that makes it (the arguments position, rotation, scale and alpha, see
+        fieldes.stdlib.placement): {form: 'call' when the call has some, else 'none', placeable: whether this call can take them, call: the span of the call,
+        args: {name: {span, arg_span, text}}, has_numbers: whether the numbers of position, rotation or scale are var()s (the gizmo drags them)}.  A definition that is not a
+        call of a function that takes them is placed by a statement of `place` after it (see _placement_statement) '''
+    out = {'form': 'none', 'placeable': False, 'args': {}, 'has_numbers': False}
+    if not isinstance(value, ast.Call):
+        return out
+    f = value.func
+    callee = gs.get(f.id) if isinstance(f, ast.Name) else None
+    out['call'] = _span(value)
+    if not _is_placeable(callee):
+        return out
+    out['placeable'] = True
+    out['args'], out['has_numbers'] = _placement_args(value, len(value.args), src)
+    if out['args']:
+        out['form'] = 'call'
+    return out
+
+
+def _placement_statement(stmt, src):
+    ''' The statement `x = place(x, position=..., rotation=..., scale=..., alpha=...)` that places a model that is not made by a call that takes them: the same description as
+        _placement_of gives, with the lines of the statement '''
+    call = stmt.value
+    args, numbers = _placement_args(call, 1, src)
+    return {'form': 'statement', 'placeable': True, 'args': args, 'has_numbers': numbers, 'call': _span(call), 'line': stmt.lineno, 'end_line': stmt.end_lineno,
+            'text': src.segment(stmt)}
+
+
+_PLACEMENT_SHOWN = (('position', '(0, 0, 0)'), ('rotation', '(0, 0, 0)'), ('scale', '1'), ('alpha', '1'))
+
+
+def _placement_rows(placement, symmetry=False):
+    ''' The placement of a model as rows of the model tree: always the same four -- position, rotation, scale, alpha --, the ones the code writes with what they are written as,
+        the others with their defaults (`default`: the tree shows them dimmed, and a click writes them).  A symmetry has no scale '''
+    written = (placement or {}).get('args') or {}
+    rows = []
+    for name, default in _PLACEMENT_SHOWN:
+        if name == 'scale' and symmetry:
+            continue
+        if name in written:
+            rows.append({'param': name, 'text': written[name]['text'], 'span': written[name]['span'], 'kind': 'expression'})
+        else:
+            rows.append({'param': name, 'text': default, 'span': [], 'kind': 'expression', 'default': True})
+    return rows
+
+
 def _call_slots(value, gs, src):
     ''' What a call is given, argument by argument, and what it could be given: {params: [the names of the callee's
         parameters], args: {parameter: {span, text, list (a list written in the call: its `last` element's span, or none
@@ -1361,8 +1465,8 @@ def _call_slots(value, gs, src):
             for p in inspect.signature(callee).parameters.values():
                 if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
                     positional.append(p.name)
-                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
-                    params.append(p.name)
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and not (_is_placeable(callee) and p.name in PLACEMENT_ARGS):
+                    params.append(p.name)           # (the placement arguments are not for a model to be dropped on)
         except (TypeError, ValueError):
             pass
     given = {}
@@ -1387,7 +1491,7 @@ def _call_slots(value, gs, src):
             continue
         note(positional[i] if i < len(positional) else None, a)
     for kw in value.keywords:
-        if kw.arg:
+        if kw.arg and not (kw.arg in PLACEMENT_ARGS and _is_placeable(callee)):
             note(kw.arg, kw.value)
     out = {'params': params, 'args': given}
     if last is not None:
@@ -1425,6 +1529,8 @@ def export_model(arg):
         elif kind == 'field':
             host = E._host('__bounds', None)
             E.export_field(value, path, bounds=host)
+        elif kind == 'meshfile':
+            value.export(path)              # (a mesh of mesh_volume or mesh_surface: the file's format is its extension)
         else:
             raise ValueError('unknown kind of export %r' % kind)
     except Exception as e:
@@ -1515,7 +1621,7 @@ def _args_of(value, gs, by_name, src):
         if not isinstance(a, ast.Starred):
             add(positional[i] if i < len(positional) else None, a)
     for kw in value.keywords:
-        if kw.arg:
+        if kw.arg and not (kw.arg in PLACEMENT_ARGS and _is_placeable(callee)):       # (the placement arguments are rows of their own: see _placement_of)
             add(kw.arg, kw.value)
     return out
 
@@ -1846,3 +1952,197 @@ def profile_edit(arg):
     ''' The edits that put a point on the outline of a profile or a curve, or toggle one of its points between a corner and a spline point (see fieldes.profile_edit) '''
     from fieldes import profile_edit as _edit
     return _edit.edit(arg)
+
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# The solvers (Settings > Solver...): the analyses FielDes has built in, with their equations, and the solvers that are written in Python (see fieldes.stdlib.solvers)
+
+_BUILT_IN_SOLVERS = (
+    ('static_analysis', 'Static analysis (linear elasticity on tetrahedra)',
+     "# unknown: the displacement u at every node.  C: the material (Young's modulus, Poisson's ratio), f: the loads and the weight\n"
+     "strain = sym(grad(u))\n"
+     "stress = C(E, nu) : strain\n"
+     "div(stress) + f = 0          # in the part\n"
+     "u = 0                        # on a fixed support\n"
+     "stress . n = traction        # where a force acts\n"
+     "# solved in C++ by conjugate gradients on the linear (or 10-node) tetrahedra; safety factor = yield / von Mises"),
+    ('modal_analysis', 'Modal analysis (natural frequencies)',
+     "K u = omega**2 * M u          # K: the stiffness, M: the mass of the tetrahedra (consistent), u = 0 on a fixed support\n"
+     "frequency = omega / (2 * pi)  # Hz, the lowest `modes` of them (Lanczos)"),
+    ('thermal_analysis', 'Thermal analysis (steady heat conduction)',
+     "div(k * grad(T)) + q = 0      # in the part: k the conductivity (a number or a field), q the heat generation\n"
+     "T = T0                        # where a temperature is fixed\n"
+     "-k * dT/dn = flux             # where heat enters (heat_input)\n"
+     "-k * dT/dn = h * (T - T_ambient)   # where the surface is cooled (convection)\n"
+     "# solved in C++ on the tetrahedra; a topology design over it keeps the same equation"),
+    ('fluid_analysis', 'Fluid analysis (laminar, incompressible flow)',
+     "rho * (u . grad(u)) = -grad(p) + mu * laplace(u)     # momentum (left out for creeping flow: Stokes)\n"
+     "div(u) = 0                                           # incompressible\n"
+     "u = u_inlet on an inlet, u = 0 on a wall, p = p_outlet on an outlet\n"
+     "# solved in C++ on the tetrahedra of the fluid by Picard then Newton iterations; steady or in time (backward Euler)"),
+)
+
+
+def _sidecar(path, suffix):
+    ''' The text kept beside a solver file: the one it started with (`.default`: made, copied or added), or the one it had before the last save (`.bak`); '' when there is none '''
+    if not path:
+        return ''
+    try:
+        with open(path + suffix, encoding='utf-8') as f:
+            return f.read()
+    except OSError:
+        return ''
+
+
+def _write_text(path, text):
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+
+
+def _solver_entries(folder):
+    import inspect
+    import json
+    import os
+    from fieldes.stdlib import solvers
+    os.environ.setdefault('FIELDES_SOLVERS', folder)
+    errors = solvers._load_user()
+    out = []
+    for name, title, equation in _BUILT_IN_SOLVERS:
+        out.append({'name': name, 'kind': 'builtin', 'description': title, 'equation': equation, 'path': '', 'source': '', 'default': '', 'backup': '', 'editable': False})
+    for name in sorted(solvers._REGISTRY):
+        entry = solvers._REGISTRY[name]
+        path = entry.get('path') or ''
+        try:
+            source = open(path, encoding='utf-8').read() if path else inspect.getsource(inspect.getmodule(entry['function'])).split('# --- the solver the example is written for')[-1]
+        except (OSError, TypeError):
+            source = ''
+        out.append({'name': name, 'kind': 'user' if path else 'library', 'description': entry['description'], 'equation': entry['equation'], 'path': path, 'source': source,
+                    'default': _sidecar(path, '.default'), 'backup': _sidecar(path, '.bak'), 'editable': bool(path)})
+    for path, message in errors:
+        out.append({'name': os.path.basename(path), 'kind': 'broken', 'description': 'this file did not read', 'equation': message, 'path': path,
+                    'source': open(path, encoding='utf-8').read(), 'default': _sidecar(path, '.default'), 'backup': _sidecar(path, '.bak'), 'editable': True})
+    return json.dumps(out)
+
+
+def solvers_folder(arg):
+    ''' The folder of the solvers that are the user's (made when something is written to it) '''
+    from fieldes.stdlib import solvers
+    return solvers._folder()
+
+
+def solvers_list(arg):
+    ''' The solvers for the dialog of Settings > Solver...: JSON {folder} -> JSON [{name, kind (builtin, library, user, broken), description, equation, path, source, default (the text it started with), backup (the text before the last save), editable}] '''
+    import json
+    req = json.loads(arg)
+    return _solver_entries(req.get('folder', ''))
+
+
+_SOLVER_TEMPLATE = '''from fieldes.stdlib.solvers import solver, Sparse, tet_gradients
+
+
+@solver('%(name)s', description='%(description)s',
+        equation="%(equation)s")
+def %(name)s(problem, fixed=(), conductivity=1.0, source=0.0):
+    # problem.nodes: [(x, y, z), ...]    problem.tets: [(a, b, c, d), ...]    problem.nodes_in(region): the nodes of a body or a face
+    # What is returned: the fields found, one number for each node -- and, if you like, a second dictionary of numbers.
+    nodes, tets = problem.nodes, problem.tets
+    K = Sparse(len(nodes))
+    load = [0.0] * len(nodes)
+    for tet in tets:
+        volume, g = tet_gradients(*[nodes[i] for i in tet])
+        for a in range(4):
+            load[tet[a]] += source * volume / 4.0
+            for b in range(4):
+                K.add(tet[a], tet[b], conductivity * volume * (g[a][0] * g[b][0] + g[a][1] * g[b][1] + g[a][2] * g[b][2]))
+    given = {}
+    for region, value in fixed:
+        for i in problem.nodes_in(region):
+            given[i] = value
+    return {'temperature': K.solve(load, given)}
+'''
+
+
+def solvers_template(arg):
+    ''' The source of a new solver, to start from: JSON {name} -> its text (the solver `heat`, steady conduction, under that name) '''
+    import json
+    req = json.loads(arg)
+    name = ''.join(c if (c.isalnum() or c == '_') else '_' for c in (req.get('name') or 'my_solver')) or 'my_solver'
+    if name[0].isdigit():
+        name = '_' + name
+    if req.get('copy_of'):
+        # (a copy of a solver of the library, under a name of its own: the same equations to change)
+        import inspect
+        import re
+        from fieldes.stdlib import solvers
+        entry = solvers._REGISTRY.get(req['copy_of'])
+        if entry is not None and not entry.get('path'):
+            source = inspect.getsource(entry['function'])
+            source = re.sub(r"@solver\(\s*'[^']*'", "@solver('%s'" % name, source, count=1)
+            source = re.sub(r"def\s+%s\(" % re.escape(entry['function'].__name__), 'def %s(' % name, source, count=1)
+            return 'import math\n\nfrom fieldes.stdlib.solvers import solver, Sparse, tet_gradients\n\n\n' + source
+    return _SOLVER_TEMPLATE % {'name': name, 'description': 'My solver: steady heat conduction to change', 'equation': 'div(conductivity * grad(T)) + source = 0'}
+
+
+def solvers_save(arg):
+    ''' Writes a solver file into the solvers folder and reads it: JSON {folder, file, source, default (given when the solver is new, copied or added: the text it can be reset to)} ->
+        JSON {ok, error, path, names} (the solvers the file registers).  A text with a syntax error is not written; the text a file had before is kept as `<file>.bak` '''
+    import json
+    import os
+    from fieldes.stdlib import solvers
+    req = json.loads(arg)
+    folder = req['folder']
+    file = os.path.basename(req['file'])
+    if not file.endswith('.py'):
+        file += '.py'
+    try:
+        compile(req['source'], file, 'exec')
+    except SyntaxError as e:
+        return json.dumps({'ok': False, 'error': 'line %s: %s' % (e.lineno, e.msg), 'path': '', 'names': []})
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, file)
+    # What was there is kept: the text before this save as `<file>.bak` (the Previous version), and, once, the text a solver started with as `<file>.default` (Reset to default)
+    try:
+        with open(path, encoding='utf-8') as f:
+            before = f.read()
+    except OSError:
+        before = None
+    if before is not None and before != req['source']:
+        _write_text(path + '.bak', before)
+    if isinstance(req.get('default'), str) and not os.path.exists(path + '.default'):
+        _write_text(path + '.default', req['default'])
+    _write_text(path, req['source'])
+    os.environ['FIELDES_SOLVERS'] = folder
+    before = set(solvers._REGISTRY)
+    errors = [e for e in solvers._load_user() if e[0] == path]
+    if errors:
+        return json.dumps({'ok': False, 'error': errors[0][1].strip().splitlines()[-1], 'path': path, 'names': []})
+    names = sorted(k for k, e in solvers._REGISTRY.items() if e.get('path') == path)
+    if not names:
+        return json.dumps({'ok': False, 'error': 'the file registers no solver: a function with the decorator @solver(\'name\') does', 'path': path, 'names': []})
+    return json.dumps({'ok': True, 'error': '', 'path': path, 'names': names})
+
+
+def solvers_delete(arg):
+    ''' Deletes a solver file of the solvers folder: JSON {path} -> JSON {ok} '''
+    import json
+    import os
+    req = json.loads(arg)
+    path = req['path']
+    try:
+        os.remove(path)
+        for suffix in ('.default', '.bak'):             # (what was kept beside the file goes with it)
+            if os.path.exists(path + suffix):
+                os.remove(path + suffix)
+    except OSError as e:
+        return json.dumps({'ok': False, 'error': str(e)})
+    return json.dumps({'ok': True, 'error': ''})
+
+
+def units_set(arg):
+    ''' Settings > Units: chooses the units numbers are shown and mesh files are written in (arg: {"choice": {"length": "in", "stress": "psi"}}; what is not given is its
+        default) and answers what the window needs: {"choice", "options" (what can be chosen, with how each is shown), "table" (how each unit of the program is shown)} '''
+    from fieldes import units
+    request = json.loads(arg) if arg else {}
+    units.configure(request.get('choice'))
+    return json.dumps({'choice': units.current(), 'options': units.options(), 'table': units.table()})

@@ -57,6 +57,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "fieldes/i18n.hpp"
 #include "fieldes/editor.hpp"
+#include "fieldes/popout.hpp"
 #include "fieldes/script.hpp"
 #include "fieldes/findbar.hpp"
 #include "fieldes/color.hpp"
@@ -226,6 +227,9 @@ QWidget* Editor::buildTerminal()
     h->addStretch(1);
     h->addWidget(m_fixButton, 0, Qt::AlignVCenter);
     h->addWidget(m_controls, 0, Qt::AlignVCenter);
+    auto popoutRoom = new QWidget;                   // (the corner of the console is for the button that pulls it out into a window: the buttons stay clear of it)
+    popoutRoom->setFixedWidth(26);
+    h->addWidget(popoutRoom);
     v->addWidget(header);
 
     err->setMinimumHeight(0);
@@ -275,6 +279,7 @@ QWidget* Editor::buildTerminal()
     r->addWidget(prompt, 0, Qt::AlignTop);
     r->addWidget(m_consoleInput, 1);
     v->addWidget(row);
+    PopOut::attach(m_terminal, T("Console and output"), "terminal");
     return m_terminal;
 }
 

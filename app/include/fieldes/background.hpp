@@ -33,11 +33,18 @@ class Background : public QOpenGLFunctions
 public:
     void draw();
     void initializeGL();
+    /*  Lets go of the buffers of a graphics context that is ending (a viewport pulled out into a window of its own is given a new one)  */
+    void releaseGL() { if (vao.isCreated()) vao.destroy(); if (vbo.isCreated()) vbo.destroy(); delete program; program = nullptr; ready = false; failed = false; }
 
 protected:
+    /*  Makes the buffers and the program in the context that is current: what an earlier context left in them goes first  */
+    void build();
     QOpenGLBuffer vbo;
     QOpenGLVertexArrayObject vao;
-    QOpenGLShaderProgram program;
+    // (made again for each graphics context: a program remembers the context it was first made in, and its shaders removed and added again in another one do not link -- measured in a viewport pulled
+    // out into a window of its own, where the backdrop was black: "did not link", with nothing in the log)
+    QOpenGLShaderProgram* program = nullptr;
     bool ready = false;
+    bool failed = false;                   // (the program did not link in this context: it is not tried again at every frame)
 };
 } // namespace FielDes

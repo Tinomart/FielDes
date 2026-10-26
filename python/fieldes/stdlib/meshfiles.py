@@ -15,6 +15,9 @@ into it, counter-clockwise seen from outside.  Each format is written as its own
     .off   Object File Format               millimetres by convention
     .dxf   AutoCAD DXF, 3DFACE entities     states its unit ($INSUNITS 4: millimetres)
 
+The coordinates are written in the length unit chosen in Settings > Units (write_mesh(..., unit='in') says another; millimetres by default); the formats that state their
+unit say it, and a glTF is in metres whatever is chosen.
+
 and read back by the importers: STL, OBJ, PLY, 3MF and glTF by mesh_import.py, OFF, DXF (3DFACE and polyface meshes) and FBX here and in fbx.py.
 
 This Source Code Form is subject to the terms of the Mozilla Public
@@ -29,6 +32,8 @@ import struct
 import zipfile
 import zlib
 from array import array
+
+from fieldes import units as _units
 
 __all__ = ['write_mesh', 'MESH_WRITE_FORMATS', 'MESH_READ_FORMATS']
 
@@ -172,11 +177,11 @@ def write_ply(path, xyz, tri, name='fieldes'):
 # ---------------------------------------------------------------------------
 # 3MF
 
-def write_3mf(path, xyz, tri, name='fieldes'):
+def write_3mf(path, xyz, tri, name='fieldes', unit='mm'):
     verts = ''.join('<vertex x="%s" y="%s" z="%s"/>' % (_num(xyz[i]), _num(xyz[i + 1]), _num(xyz[i + 2])) for i in range(0, len(xyz), 3))
     tris = ''.join('<triangle v1="%d" v2="%d" v3="%d"/>' % (tri[t], tri[t + 1], tri[t + 2]) for t in range(0, len(tri), 3))
     model = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-             '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+             '<model unit="' + _units.threemf_unit(unit) + '" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
              '<metadata name="Application">FielDes</metadata>'
              '<resources><object id="1" type="model" name="%s"><mesh><vertices>%s</vertices><triangles>%s</triangles></mesh></object></resources>'
              '<build><item objectid="1"/></build></model>' % (_clean_name(name), verts, tris))
@@ -326,8 +331,8 @@ def read_off(path):
 # ---------------------------------------------------------------------------
 # DXF
 
-def write_dxf(path, xyz, tri, name='fieldes'):
-    out = ['0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n',
+def write_dxf(path, xyz, tri, name='fieldes', unit='mm'):
+    out = ['0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n9\n$INSUNITS\n70\n%d\n0\nENDSEC\n' % _units.dxf_unit(unit),
            '0\nSECTION\n2\nENTITIES\n']
     layer = _clean_name(name)
     for t in range(0, len(tri), 3):
@@ -436,13 +441,18 @@ def read_dxf(path):
 
 # ---------------------------------------------------------------------------
 
-def write_mesh(path, xyz, tri, name=None, ascii=False):
-    ''' Writes a mesh in the format of the file's extension (see the top of this file) '''
+def write_mesh(path, xyz, tri, name=None, ascii=False, unit=None):
+    ''' Writes a mesh in the format of the file's extension (see the top of this file), in the length unit `unit` ('mm', 'cm', 'm', 'in', 'ft' or 'um'): the one
+        chosen in Settings > Units when it is not given.  `xyz` is in millimetres '''
     path = os.fspath(path)
     ext = os.path.splitext(path)[1].lower()
     name = name or os.path.splitext(os.path.basename(path))[0]
     if len(tri) % 3 or len(xyz) % 3:
         raise ValueError('a mesh is flat lists of x, y, z and of triangle corners')
+    unit = _units.export_unit() if unit is None else _units.check_length(unit)
+    if unit != 'mm' and ext not in ('.glb', '.gltf'):         # (a glTF is in metres whatever is chosen: that is what glTF is)
+        factor = 1.0 / _units.LENGTH[unit]
+        xyz = array('f', (v * factor for v in xyz))
     if ext == '.stl':
         write_stl(path, xyz, tri, name, ascii)
     elif ext == '.obj':
@@ -450,7 +460,7 @@ def write_mesh(path, xyz, tri, name=None, ascii=False):
     elif ext == '.ply':
         write_ply(path, xyz, tri, name)
     elif ext == '.3mf':
-        write_3mf(path, xyz, tri, name)
+        write_3mf(path, xyz, tri, name, unit)
     elif ext == '.glb':
         write_glb(path, xyz, tri, name)
     elif ext == '.gltf':
@@ -458,10 +468,10 @@ def write_mesh(path, xyz, tri, name=None, ascii=False):
     elif ext == '.off':
         write_off(path, xyz, tri, name)
     elif ext == '.dxf':
-        write_dxf(path, xyz, tri, name)
+        write_dxf(path, xyz, tri, name, unit)
     elif ext == '.fbx':
         from fieldes.stdlib import fbx
-        fbx.write_fbx(path, xyz, tri, _clean_name(name))
+        fbx.write_fbx(path, xyz, tri, _clean_name(name), _units.LENGTH[unit])
     else:
         raise ValueError('cannot write {!r}: the mesh formats are {}'.format(ext, ', '.join(MESH_WRITE_FORMATS)))
     return path

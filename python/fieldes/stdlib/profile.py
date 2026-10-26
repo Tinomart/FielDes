@@ -42,8 +42,8 @@ class Profile(Shape):
     ''' A 2D shape made of points (see `profile`).  .points are the points it was made from, .plane the plane it lies in -- (origin, u, v), three numbers each --
         .smooth the default of its points, .profile2d the same field in the coordinates of its plane (x along u, y along v) '''
     _kind = 'profile'
-    _no_gizmo = True                # (no gizmo() line with numbers of its own: its points have them, and the viewport shares them -- View::groupGizmo -- to move, turn and scale it)
-    _outline_gizmo = True           # (the model tree's gizmo button gives it a line without numbers, `x = gizmo(x, mode=...)`: when that shared gizmo is shown, off until said otherwise)
+    _no_gizmo = True                # (no placement arguments of its own: its points have the numbers, and the viewport shares them -- View::groupGizmo -- to move, turn and scale it)
+    _outline_gizmo = True           # (the model tree's gizmo button says when that shared gizmo is shown: off until said otherwise)
 
     def _remake(self, points, improper=False):
         ''' The same outline through other points (the images of its points in a symmetry: see symmetries.symmetry_images) -- the other way round for a mirror image, which turns
@@ -250,7 +250,7 @@ def extrude(shape, a, b):
                     out._bounds_loose = True
     # A straight extrusion of a profile of points is a PRISM: the viewport draws it from the numbers of the points and of a and b at every render -- as it draws the face of
     # the profile -- so that it follows a point while the point is dragged, with no script run and no field meshed.  `_prism_guard` are the numbers (var()s) that must still
-    # be what they were for the shape to be nothing but that prism: handles() and gizmo() add theirs (a pulled face, a placed shape make it something else)
+    # be what they were for the shape to be nothing but that prism: handles() and the placement add theirs (a pulled face, a placed shape make it something else)
     if getattr(shape, '_ctrl_pos', None) and plane is not None and getattr(shape, '_profile_face', None) is None and isinstance(shape, Profile):
         out._prism_pos = shape._ctrl_pos
         out._prism_rot = shape._ctrl_rot
@@ -289,7 +289,7 @@ def extrude(shape, a, b):
             count = len(params)
             out._handle_params = [float(x) for x in params] + [float(x) for x in ends]
             out._handle_rebuild = lambda v: extrude(rebuild(list(v[:count])), v[count], v[count + 1])
-    # A 2D shape that has numbers of its own already -- a handles() and a gizmo() line, written when it was selected -- is placed by them: they are in the field of its extrusion, and the sides of the
+    # A 2D shape that has numbers of its own already -- a handles() line and the placement arguments, written when it was selected -- is placed by them: they are in the field of its extrusion, and the sides of the
     # extrusion are pulled by the handles (a pull never changes a gizmo's numbers).  What they do not reach are the two ENDS, a and b: those are the numbers of the extrusion, handles(extrusion, [a, b]),
     # made again of the shape as it is (the same 2D shape, with its numbers)
     if plane is None and getattr(out, '_handle_params', None) is None and _has_handles_of_its_own(shape):
@@ -306,7 +306,7 @@ def extrude(shape, a, b):
 
 
 def _has_handles_of_its_own(shape):
-    ''' Whether a 2D shape was given numbers to pull its sides by (handles()): the shape that handles() made, or the one that gizmo() placed after that '''
+    ''' Whether a 2D shape was given numbers to pull its sides by (handles()): the shape that handles() made, or the one that its placement arguments placed after that '''
     for _ in range(8):
         if shape is None:
             return False

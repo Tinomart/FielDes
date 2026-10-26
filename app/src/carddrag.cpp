@@ -47,11 +47,13 @@ void CardController::tameLabels()
     }
 }
 
-bool CardController::moved(const QWidget* card) { return card->property("userMoved").toBool(); }
+// (a card in a window of its own -- see popout.hpp -- is where the window's layout puts it: for everything that places a card by hand it is as if it had been placed by the user)
+bool CardController::moved(const QWidget* card) { return card->property("userMoved").toBool() || card->property("floating").toBool(); }
 bool CardController::sized(const QWidget* card) { return card->property("userSized").toBool(); }
 
 void CardController::collapse(QWidget* card, bool collapsed, int collapsedHeight)
 {
+    if (card->property("floating").toBool()) return;
     if (!sized(card)) return;                           // (a card that was never sized fits its contents by itself)
     if (collapsed)
     {
@@ -179,6 +181,7 @@ void CardController::restore()
 
 bool CardController::eventFilter(QObject* obj, QEvent* e)
 {
+    if (m_card->property("floating").toBool()) return false;       // (in a window of its own: the layout of that window places and sizes it)
     if (obj == m_card->parentWidget())
     {
         if (e->type() == QEvent::Resize) layoutInParent();

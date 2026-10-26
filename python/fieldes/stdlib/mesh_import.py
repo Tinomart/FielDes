@@ -31,6 +31,7 @@ import sys
 import zlib
 from array import array
 
+from fieldes import units as _units
 from fieldes.ffi import lib, libfive_mesh_import_info_t
 from fieldes.shape import Shape
 from fieldes.stdlib import cad_import as _cad
@@ -466,7 +467,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
 
         units       the units of your script ('mm', 'cm', 'm', 'in', ...)
         file_units  what the numbers in the file mean.  STL, OBJ, PLY and OFF
-                    files don't say (millimetres are assumed); 3MF, FBX and
+                    files don't say (the length unit of Settings > Units is assumed: millimetres by default); 3MF, FBX and
                     DXF files do (a DXF only when it has $INSUNITS) and glTF
                     is in metres, which is used unless this overrides it
         rev         not used by the import itself: changing it makes FielDes
@@ -490,7 +491,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
     key = None
     try:
         st = os.stat(path)
-        key = (os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns, units, file_units, rev)
+        key = (os.path.normcase(os.path.abspath(path)), st.st_size, st.st_mtime_ns, units, file_units, rev, _units.import_mm())
     except OSError:
         pass
     if key is not None:
@@ -527,7 +528,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
     if file_units is not None:
         file_mm = _cad._target_mm(file_units)
     else:
-        file_mm = declared_mm if declared_mm is not None else 1.0
+        file_mm = declared_mm if declared_mm is not None else _units.import_mm()
     target_mm = _cad._target_mm(units)
     scale = 1.0 if (file_mm is None or target_mm is None) else file_mm / target_mm
 
@@ -555,7 +556,7 @@ def _import_mesh(path, units='mm', file_units=None, rev=None):
         note += '; units from the file ({:g} mm per unit)'.format(declared_mm)
     size = max(hi[i] - lo[i] for i in range(3))
     unit_name = units if units not in (None, 'file') else 'units'
-    if target_mm is not None and file_units in (None, 'mm') and declared_mm is None \
+    if target_mm is not None and file_units in (None, 'mm') and declared_mm is None and file_mm == 1.0 \
             and size * target_mm < 2.0:
         note += ('; only {:.3g} {} across: metres or inches? '
                  'Pass file_units="m" or "in"').format(size, unit_name)

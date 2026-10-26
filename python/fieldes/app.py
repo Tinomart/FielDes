@@ -398,7 +398,7 @@ def viewport(models=None, *more, labels=True):
 
         `models` is a dict of name -> model (the name is drawn over the model, in the style of the labels of boundary conditions), or a list of
         models (no names); the models after it (`more`) are shown without a name.  A condition (`force(...)`, `fixed(...)`) is a model: it is
-        drawn on the body as in the editor.  Whatever a model has numbers to drag -- `gizmo()`, `handles()`, `var()` -- the person can drag,
+        drawn on the body as in the editor.  Whatever a model has numbers to drag -- the `position`, `rotation` and `scale` of its call, `handles()`, `var()` -- the person can drag,
         unless it is `lock()`ed: click a model to select it and its gizmo shows; there is no model tree and no menu.  A model that is dragged
         writes its new numbers into the script the app runs, which runs again for the picture (with app.running() False), and the numbers are
         there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it

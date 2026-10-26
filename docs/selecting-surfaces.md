@@ -131,7 +131,7 @@ closely it is looked at**: a smooth surface -- a sphere, the side of a cylinder,
 with the script, from the place it was given and the body as it is then, so the point or line **follows the body** when the body is changed, as long as the edge or corner is still near that place.
 
 What comes back are the ordinary things -- a `point` (a corner of a `profile`, the end of a `polyline`, a place for a gizmo) and a `polyline` -- so they are selected, moved, used as the
-points of a work plane or of a `snap`, and listed in the model tree like any other. The functions can also be written by hand: `corner_at(shape, near, scale=None, bounds=None)`, `edge_point_at(...)`,
+points of a work plane or of a [snap](scripting.md#snapping-a-body-onto-another) (`S`), and listed in the model tree like any other. The functions can also be written by hand: `corner_at(shape, near, scale=None, bounds=None)`, `edge_point_at(...)`,
 `edge_at(...)`; `scale` is how far round `near` is looked, in mm (by default 3 % of the body), and a `ValueError` says that there is no corner or edge within it (or that the edge curves, for `edge_at`).
 
 **Circles, faces and roundings.** `circle_center_at(shape, near)` reads the circular edge nearest `near` at several places round it -- a first circle from two points a little way along the edge, then

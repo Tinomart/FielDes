@@ -975,7 +975,7 @@ void Tutorial::buildSteps()
         s.aim = aimRow({"drilled"});
         s.place = Right;
         s.closeRows = true;
-        s.undone = true;                                // (the gizmo line that selecting writes goes with the step)
+        s.undone = true;                                // (the position, rotation and scale that selecting writes into the call go with the step)
         s.showView = true;
         s.enter = [scene] { scene()->showSettings(false); scene()->clearSelection(); };
         s.done = [scene] { return scene()->selectionKeys().contains("shape:drilled"); };
@@ -993,8 +993,8 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("The gizmo");
         s.text = T("A selected model has a gizmo. Drag an arrow to move the model.");
-        s.hint = T("The gizmo is a line of the script too (gizmo): its numbers change as you drag. Or press Show me.");
-        s.code = linesWith("gizmo\\(|^\\s+(move|rotate|scale)=\\(");
+        s.hint = T("The gizmo moves the model by its position, which is written in the call of the model (position=): its numbers change as you drag. Or press Show me.");
+        s.code = linesWith("position=|rotation=|scale=");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.closeRows = true;
@@ -1003,16 +1003,16 @@ void Tutorial::buildSteps()
             selectAgain({"drilled"}, 12);               // (once it is in the tree: a step reached by a jump or with Back may find the tree of another model)
         };
         s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
-        // (done when the numbers of the gizmo's move are not the ones it was written with: the model was moved by its arrow, or a plane square)
+        // (done when the numbers of the position are not the ones it was written with: the model was moved by its arrow, or a plane square)
         s.done = [this] {
-            static const QRegularExpression move(R"(move=\(\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\))");
+            static const QRegularExpression move(R"(position=\(\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\)\s*,\s*var\(([^)]*)\))");
             const auto m = move.match(m_editor->getScript());
             if (!m.hasMatch()) return false;
             for (int i = 1; i <= 3; ++i)
                 if (std::abs(m.captured(i).trimmed().toDouble()) > 0.05) return true;
             return false;
         };
-        s.doneNote = T("Nice. The model moved, and the numbers of the gizmo line changed with it.");
+        s.doneNote = T("Nice. The model moved, and the numbers of its position changed with it.");
         s.show = [this](std::function<void()> over) {
             QPoint p;
             if (!m_view->gizmoGripPoint(0, 0, p)) { over(); return; }
@@ -1429,7 +1429,7 @@ void Tutorial::buildSteps()
         Step s;
         s.title = T("Move the point");
         s.text = T("swell is the distance from the point anchor. Drag the arrows of anchor and watch where the growth is.");
-        s.hint = T("A point is a dot, the middle point of a gizmo: click it, and its gizmo shows. The gizmo is a line of the script too (gizmo). Or press Show me.");
+        s.hint = T("A point is a dot, the middle point of a gizmo: click it, and its gizmo shows. Its position is written in the call of the point (position=). Or press Show me.");
         s.code = linesWith("^anchor\\b|^swell =");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
@@ -1445,7 +1445,7 @@ void Tutorial::buildSteps()
         };
         s.point = [this] { QPoint p; return m_view->gizmoGripPoint(0, 0, p) ? m_view->mapTo(m_window, p) : QPoint(); };
         s.done = [this] {
-            static const QRegularExpression re(R"(^anchor = gizmo\(\s*anchor,\s*move=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
+            static const QRegularExpression re(R"(^anchor = point\([^)]*?position=\(var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\), var\(\s*(-?[\d.e+-]+)\s*\))",
                                                QRegularExpression::MultilineOption);
             const auto m = re.match(m_editor->getScript());
             return m.hasMatch() && (std::abs(m.captured(1).toDouble()) + std::abs(m.captured(2).toDouble()) + std::abs(m.captured(3).toDouble())) > 1e-6;
@@ -1850,20 +1850,19 @@ void Tutorial::buildSteps()
     }
     // 25b-25h: a symmetry (a model of its own: a table top, one leg, a mirror of two planes through the axis of the table, and the images of the leg written under it)
     auto symmetryModel = []() {
-        return QString("mirror = symmetry_planes(planes=2, kind='axis', centre=(0, 0, 0), axis=(0, 0, 1), first=(0, 1, 0))\n"
-                       "mirror = gizmo(\n    mirror,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n)\n"
+        return QString("mirror = symmetry_planes(\n    planes=2,\n    kind='axis',\n    centre=(0, 0, 0),\n    axis=(0, 0, 1),\n    first=(0, 1, 0),\n"
+                       "    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n)\n"
                        "mirror\n\n"
                        "top = box((-40, -26, 30), (40, 26, 36))\n"
                        "top\n\n"
-                       "leg = cylinder(4, 30, (32, 18, 0))\n"
+                       "leg = cylinder(\n    4,\n    30,\n    (32, 18, 0),\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
                        "leg = handles(leg, [var(32), var(18), var(4), var(30), var(0)])\n"
-                       "leg = gizmo(\n    leg,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
                        "leg\n"
                        "leg_images = symmetry_images(leg, mirror)  # shadow: leg, mirror\n"
                        "leg_images");
     };
-    // (what a step that edits the leg compares: its numbers -- the handles that pull its surfaces and the gizmo that moves it)
-    auto legSignature = [statementAt]() { return statementAt("leg = handles(").text + "\n" + statementAt("leg = gizmo(").text; };
+    // (what a step that edits the leg compares: its numbers -- the handles that pull its surfaces and the position, rotation and scale in its call that the gizmo drags)
+    auto legSignature = [statementAt]() { return statementAt("leg = handles(").text + "\n" + statementAt("leg = cylinder(").text; };
     auto symmetryEnter = [this, scene, symmetryModel](const QStringList& select) {
         while (auto m = QApplication::activePopupWidget()) m->close();
         useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) + symmetryModel());
@@ -2252,7 +2251,7 @@ void Tutorial::goTo(int index, bool viaBack)
         if (old.leave) old.leave();
         if (old.undone && m_editor->getScript() != m_stepScript)
         {
-            m_view->scenePanel()->clearSelection();         // (a model that stays selected would write its gizmo line again)
+            m_view->scenePanel()->clearSelection();         // (a model that stays selected would write its placement arguments again)
             useScript(m_stepScript, false);
         }
         // The steps of a group work on models of their own: when the group is left the user's model is back

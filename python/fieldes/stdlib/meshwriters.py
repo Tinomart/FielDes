@@ -14,7 +14,7 @@ The files a mesh (see meshing.py) is written to, for the solvers and viewers tha
     'obj'       .obj   the boundary faces, one group for every zone
 
 The format is found from the ending of the path ('.msh' is Gmsh: ask for 'fluent' with format='fluent'), and a path ending in 'polyMesh' is OpenFOAM's.  Options:
-scale (a factor for the coordinates: 0.001 for a solver that works in metres), zones=False (without the zones), boundary=True (VTK: the faces too),
+scale (a factor for the coordinates: 0.001 for a solver that works in metres; without it the length unit chosen in Settings > Units, millimetres by default), zones=False (without the zones), boundary=True (VTK: the faces too),
 patch_types={'inlet': 'patch', 'sym': 'symmetryPlane'} (OpenFOAM: the type of a patch; 'wall' for the names that start with wall, 'symmetryPlane' for those that
 have symmetry in them, 'patch' for the rest), boundary_types={'inlet': 'velocity-inlet'} (Fluent: the type of a zone: velocity-inlet, pressure-outlet, wall,
 symmetry ...; wall for the names that start with wall, pressure-outlet for outlet, velocity-inlet for inlet).
@@ -28,6 +28,7 @@ import re
 import struct
 from array import array
 
+from fieldes import units as _units
 from fieldes.stdlib.meshing import (CORNERS, EDGES, FACES, NODES, SOLIDS, SURFACES, MeshError, _centroid, _cell_volume, _polygon_area_vector)
 
 __all__ = []
@@ -50,7 +51,7 @@ def write_mesh(mesh, path, format=None, **options):
             ', '.join(FORMATS), format or os.path.splitext(path)[1]))
     if not mesh.node_count:
         raise MeshError('the mesh has no nodes')
-    scale = float(options.get('scale', 1.0))
+    scale = float(options['scale']) if options.get('scale') is not None else _units.export_scale()
     volume = any(mesh.cell_count(k) for k in SOLIDS)
     if fmt in ('fluent', 'openfoam') and not volume:
         raise MeshError('{} is a mesh of cells: this one is a surface'.format(fmt))

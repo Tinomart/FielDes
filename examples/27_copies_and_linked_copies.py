@@ -33,24 +33,18 @@ lug_2
 bolt = cylinder(3, 12, (20, 30, 4))
 bolt = handles(bolt, [var(20.0), var(30.0), var(3.0), var(4.0), var(16.0)])
 bolt
-bolt_2 = instance(bolt)  # shadow: bolt
-bolt_2 = gizmo(
-    bolt_2,
-    move=(var(15), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
-)
+bolt_2 = instance(bolt,
+    position=(var(15), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
+)  # shadow: bolt
 bolt_2
-bolt_3 = instance(bolt)  # shadow: bolt
-bolt_3 = gizmo(
-    bolt_3,
-    move=(var(30), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
-)
+bolt_3 = instance(bolt,
+    position=(var(30), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
+)  # shadow: bolt
 bolt_3
-bolt_4 = instance(bolt)  # shadow: bolt
-bolt_4 = gizmo(
-    bolt_4,
-    move=(var(45), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
-)
+bolt_4 = instance(bolt,
+    position=(var(45), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
+)  # shadow: bolt
 bolt_4

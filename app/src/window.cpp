@@ -19,11 +19,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include <QSignalBlocker>
 #include <QActionGroup>
+#include <QAbstractTextDocumentLayout>
 #include <QDockWidget>
 #include <QAbstractButton>
 #include <QRadioButton>
 #include <QSlider>
 #include <QComboBox>
+#include <QFormLayout>
+#include <QInputDialog>
+#include <QListWidget>
+#include <QPlainTextEdit>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QPainter>
@@ -37,7 +42,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDropEvent>
 #include <QRegularExpression>
 #include <QContextMenuEvent>
+#include <QScrollBar>
 #include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTreeWidget>
 #include <QLineEdit>
 #include <QPointer>
@@ -78,7 +86,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QUrl>
-#include <memory>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
@@ -104,6 +111,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "fieldes/section.hpp"
 #include "fieldes/shape.hpp"
 #include "fieldes/shortcuts.hpp"
+#include "fieldes/popout.hpp"
+#include "fieldes/units.hpp"
 #include "fieldes/view.hpp"
 
 #include "libfive.h"
@@ -341,6 +350,14 @@ static QString guideHtml()
     return h;
 }
 
+// The close button in the corner of a card (every card that has one names it ...Close): the pop-out button of the card stands to the left of it
+static QWidget* closeButtonOf(QWidget* card)
+{
+    for (QToolButton* b : card->findChildren<QToolButton*>())
+        if (b->objectName().endsWith("Close")) return b;
+    return nullptr;
+}
+
 Window::Window(Arguments args)
     : QMainWindow()
     , view(new View)
@@ -384,6 +401,9 @@ Window::Window(Arguments args)
     }
     editor->setMinimumWidth(320);
     setCentralWidget(layout);
+    // Every major element can be pulled out into a window of its own and put back (popout.hpp): the code editor and the viewport here, the console in the editor, the cards in the viewport
+    PopOut::attach(editor, T("Code editor"), "editor");
+    PopOut::attach(view, T("Viewport"), "viewport");
 
     // Sync document modification state with window
     connect(editor, &Editor::modificationChanged,
@@ -527,6 +547,23 @@ Window::Window(Arguments args)
     Shortcuts::add(export_action, "file.export-stl",
                    {QKeySequence(Qt::Key_F7), QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_E)});
     connect(export_action, &QAction::triggered, this, &Window::onExport);
+
+    // The files that the selected model can be written to: a mesh of its surface, a field on a grid, the finite-element model and the results of an analysis, a mesh for another
+    // solver.  (A file is made here, in the File menu: the right-click menus of the viewport write code)
+    auto export_model_menu = file_menu->addMenu(T("Export model"));
+    export_model_menu->setToolTipsVisible(true);
+    export_model_menu->setToolTip(T("What can be written of the selected model to a file: a mesh of its surface, a field on a grid, the finite-element model and the results of an "
+                                    "analysis, a mesh for another solver"));
+    connect(export_model_menu, &QMenu::aboutToShow, this, [this, export_model_menu] {
+        export_model_menu->clear();
+        const int line = view->scenePanel()->selectedModelLine();
+        if (line < 0)
+        {
+            export_model_menu->addAction(T("Select a model first"))->setEnabled(false);
+            return;
+        }
+        view->addExportEntries(export_model_menu, line);
+    });
 
     auto export_app_action = file_menu->addAction(T("Export as app..."));
     export_app_action->setToolTip(T("Bundle this script, its custom blocks and the files it needs into one .fieldesapp file: whoever opens it sees a form of the inputs the script declares (app.number, app.file, ...), a Run button and the files that were made"));
@@ -718,6 +755,16 @@ Window::Window(Arguments args)
         theme_action->setToolTip(T("Light or dark, and the colours of the window and the editor chosen by hand"));
         Shortcuts::add(theme_action, "settings.theme", {});
         connect(theme_action, &QAction::triggered, this, [this] { openThemeDialog(); });
+        // (the equations of the analyses, and the solvers of your own)
+        auto solver_action = settings_menu->addAction(T("Solver..."));
+        solver_action->setToolTip(T("The equations the analyses solve, written as Python; add a solver of your own, or change the equations of a copy of one"));
+        Shortcuts::add(solver_action, "settings.solver", {});
+        connect(solver_action, &QAction::triggered, this, [this] { openSolverDialog(); });
+        // (the units numbers are shown in -- the ruler, the cards of results, the work plane -- and the length unit mesh files are written in)
+        auto units_action = settings_menu->addAction(T("Units..."));
+        units_action->setToolTip(T("The units numbers are shown in -- length, force, stress, mass, temperature -- and the length unit mesh files are written in"));
+        Shortcuts::add(units_action, "settings.units", {});
+        connect(units_action, &QAction::triggered, this, [this] { openUnitsDialog(); });
     }
 
     auto autoload_action = settings_menu->addAction(T("Automatically reload changes"));
@@ -908,9 +955,68 @@ Window::Window(Arguments args)
         QAction* nav_default = nav(T("FielDes (default)"), T("Shift + left drag or the middle button turns the view, right drag pans, the wheel zooms"), "default", View::NAV_DEFAULT);
         QAction* nav_blender = nav(T("Blender style"), T("The default, and Shift + the middle button pans"), "blender", View::NAV_BLENDER);
         QAction* nav_touchpad = nav(T("Touchpad"), T("The default, and Alt + left drag pans (no right or middle button needed)"), "touchpad", View::NAV_TOUCHPAD);
+        QAction* nav_left = nav(T("Left drag turns"), T("A drag of the left button on empty space turns the view; Alt + left drag pans.  A click still selects, and Ctrl + drag still draws the rectangle"), "leftturn", View::NAV_LEFT_TURN);
+        QAction* nav_custom = nav(T("Custom..."), T("Choose the gesture of each: turning the view, panning it, zooming it"), "custom", View::NAV_CUSTOM);
+        nav_custom->setCheckable(true);
         settings_menu->addMenu(nav_menu);
+        // The gestures of the custom set: three dropdowns, each a mouse button and the keys held with it
+        auto customNavigation = [this](bool apply) {
+            const QString saved = settings.value("navigation-custom", "none;none;none").toString();
+            const QStringList keys = saved.split(';');
+            if (apply)
+            {
+                view->setNavigation(keys.value(0), keys.value(1), keys.value(2));
+                return;
+            }
+            auto dialog = new QDialog(this);
+            dialog->setObjectName("NavigationDialog");
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setWindowTitle(T("Navigation"));
+            auto layout = new QFormLayout(dialog);
+            const auto gestures = View::navigationGestures();
+            QComboBox* boxes[3];
+            const QString names[3] = {T("Turn the view"), T("Pan the view"), T("Zoom the view")};
+            for (int i = 0; i < 3; ++i)
+            {
+                boxes[i] = new QComboBox(dialog);
+                boxes[i]->setObjectName(QString("NavigationBox%1").arg(i));
+                int at = 0;
+                for (int k = 0; k < gestures.size(); ++k)
+                {
+                    boxes[i]->addItem(gestures[k].second, gestures[k].first);
+                    if (gestures[k].first == view->navigationName(i)) at = k;
+                }
+                boxes[i]->setCurrentIndex(at);
+                layout->addRow(names[i], boxes[i]);
+            }
+            auto note = new QLabel(T("A gesture is a drag of a mouse button with the keys held.  What is not chosen stays as it is for everyone: right drag pans, Shift + left drag and the middle button turn, the wheel zooms.  "
+                                     "With the left button turning, a click still selects and Ctrl + drag draws the selection rectangle."), dialog);
+            note->setWordWrap(true);
+            note->setMinimumWidth(380);
+            layout->addRow(note);
+            auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+            layout->addRow(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+            connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, boxes] {
+                const QString rotate = boxes[0]->currentData().toString(), pan = boxes[1]->currentData().toString(), zoom = boxes[2]->currentData().toString();
+                view->setNavigation(rotate, pan, zoom);
+                if (!qEnvironmentVariableIsSet("FIELDES_AUTOMATION"))
+                {
+                    settings.setValue("navigation-custom", rotate + ";" + pan + ";" + zoom);
+                    settings.setValue("navigation", "custom");
+                }
+                dialog->accept();
+            });
+            dialog->open();
+        };
+        connect(nav_custom, &QAction::triggered, this, [this, nav_custom, customNavigation] {
+            // (the radio of the menu says Custom: the dialog chooses the gestures)
+            nav_custom->setChecked(true);
+            customNavigation(false);
+        });
         const QString chosen = settings.value("navigation", "default").toString();
-        (chosen == "blender" ? nav_blender : chosen == "touchpad" ? nav_touchpad : nav_default)->setChecked(true);
+        if (chosen == "custom") { view->setNavigationPreset(View::NAV_CUSTOM); customNavigation(true); }
+        (chosen == "blender" ? nav_blender : chosen == "touchpad" ? nav_touchpad : chosen == "leftturn" ? nav_left : chosen == "custom" ? nav_custom : nav_default)->setChecked(true);
     }
 
     view_menu->addSeparator();
@@ -926,6 +1032,7 @@ Window::Window(Arguments args)
 
     {   // Section view / field viewer: a card floating in the viewport
         auto panel = new SectionPanel(view);
+        PopOut::attach(panel, T("Section"), "section", closeButtonOf(panel));
         panel->hide();
 
         connect(panel, &SectionPanel::settingsChanged, view, &View::setSection);
@@ -937,6 +1044,7 @@ Window::Window(Arguments args)
         // views are separate: the section view is switched on by the user and cuts models, the field viewer is there while a
         // field is selected; each has its own plane in the viewport, and each card hears only its own plane
         auto fieldPanel = new FieldPanel(view);
+        PopOut::attach(fieldPanel, T("Field viewer"), "field-viewer", closeButtonOf(fieldPanel));
         fieldPanel->hide();
         fieldPanel->stackBelow(panel);
         connect(fieldPanel, &FieldPanel::settingsChanged, view, &View::setFieldView);
@@ -1013,6 +1121,7 @@ Window::Window(Arguments args)
 
     {   // The work plane: a plane to put points in, with a grid.  Single keys like the standard views: they act while the viewport has the keyboard
         auto panel = new WorkPlanePanel(view);
+        PopOut::attach(panel, T("Work plane"), "work-plane", closeButtonOf(panel));
         panel->hide();
         auto openAction = view_menu->addAction(T("Work plane"));
         openAction->setCheckable(true);
@@ -1054,6 +1163,8 @@ Window::Window(Arguments args)
             if (plane.open) panel->raise();
         });
         connect(view, &View::workPlaneReadout, panel, &WorkPlanePanel::setReadout);
+        connect(this, &Window::unitsChanged, panel, &WorkPlanePanel::refreshUnits);
+        connect(this, &Window::unitsChanged, view, [this] { view->unitsChanged(); });
         // Turning the view leaves the work plane view (the plane is parallel to the view it was opened in): the status bar says so and how to come back, with the keys as they are bound now
         connect(view, &View::workPlaneTurnedAway, this, [=] {
             const auto keyOf = [](const QString& id) {
@@ -1082,6 +1193,7 @@ Window::Window(Arguments args)
     {   // The symmetry: a model of the script (`mirror = symmetry_planes(...)`) that is selected in the model tree; what is made while it is in use is made at its images too.
         // Shift+S, a single key like the work plane's: it acts while the viewport has the keyboard (in the script editor it is a letter)
         auto panel = new SymmetryPanel(view);
+        PopOut::attach(panel, T("Symmetry"), "symmetry", closeButtonOf(panel));
         panel->hide();
         auto symAction = view_menu->addAction(T("Symmetry in use or not"));
         symAction->setToolTip(T("Use the symmetry that is selected, or stop: what you make is made at its images across the planes too, and the images follow it.  With no symmetry in the "
@@ -1201,6 +1313,15 @@ Window::Window(Arguments args)
         view->addAction(dup);
         auto scene = view->scenePanel();
         connect(dup, &QAction::triggered, scene, &ScenePanel::duplicateSelected);
+    }
+
+    {   // S: snaps the first body onto the second by the faces, edges and points that are selected on them.  A key of the viewport and the model tree only, so it never eats typing in the editor
+        auto snapAction = view_menu->addAction(T("Snap: put the first body onto the second by the selected faces, edges and points"));
+        Shortcuts::add(snapAction, "view.snap", {QKeySequence(Qt::Key_S)});
+        snapAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(snapAction);
+        auto scene = view->scenePanel();
+        connect(snapAction, &QAction::triggered, scene, &ScenePanel::snapSelected);
     }
 
     {   // Copy and paste of models: Ctrl+C and Ctrl+V with the viewport or the model tree focused (a text field of the
@@ -1373,6 +1494,10 @@ Window::Window(Arguments args)
     auto ref_action = help_menu->addAction(T("Shape reference"));
     Shortcuts::add(ref_action, "help.shape-reference", {QKeySequence(Qt::Key_F1)});
     connect(ref_action, &QAction::triggered, editor, &Editor::onShowDocs);
+    auto validation_action = help_menu->addAction(T("Validation and accuracy"));
+    validation_action->setToolTip(T("What every kind of analysis was checked against, and the accuracy that was found"));
+    Shortcuts::add(validation_action, "help.validation", {});
+    connect(validation_action, &QAction::triggered, this, [this] { openValidation(); });
 
     {   // The top dock: New (a plus), Open and Import as large icons at the very left, then the menus
         auto holder = new QWidget;
@@ -1523,6 +1648,7 @@ Window::Window(Arguments args)
         connect(scene, &ScenePanel::focusRequested, view, &View::focusOn);
         // (the gizmo of a model that is selected is drawn at once, before the script has run with its numbers)
         connect(scene, &ScenePanel::provisionalGizmo, view, &View::setProvisionalGizmo);
+        connect(scene, &ScenePanel::gizmoModesChanged, view, &View::refreshGizmoModes);
         connect(view, &View::provisionalPressed, scene, &ScenePanel::prepareNow);
         // Selecting in the viewport leaves the keyboard where it is: in the viewport, so that the keys that work on
         // the selection (E, R, G, H, I) go on working, and never in the editor
@@ -1673,6 +1799,9 @@ Window::Window(Arguments args)
         setFilename(args.filename);
     }
     if (offerTour) QTimer::singleShot(900, tour, &Tutorial::offer);
+    // The units numbers are shown in (Settings > Units): what was chosen the last time, given to Python and to what draws.  A scripted test runs on the defaults
+    QTimer::singleShot(0, this, [this] { applyUnits(automated ? QJsonObject() : Units::saved()); });
+    QTimer::singleShot(0, this, [] { PopOut::restoreFloating(); });
 
     // Scripted GUI checks (developer facility; see automation.hpp)
     const QString automation_file = qEnvironmentVariable("FIELDES_AUTOMATION");
@@ -1716,7 +1845,7 @@ Window::Window(Arguments args)
         // about: Help > About (the dialog opens once this command is over, so that the commands after it -- a picture of it with grabpopups -- run while it is open)
         a->add("about", [=](const QString&){ QTimer::singleShot(200, this, [this]{ onAbout(); }); });
         // dialog <text|grab <file>|accept|cancel>: the question that is open (a message box of the program, asked while the drop of a drag or any other action waits for the answer: run with
-        // FIELDES_SHOW_DIALOGS=1 so that it is asked), read, photographed, or answered as a hand does -- `accept` presses its default button, `cancel` its Cancel
+        // FIELDES_SHOW_DIALOGS=1 so that it is asked), read, photographed, or answered as a hand does -- `accept` presses its default button (a question that has none: its Yes, else its Ok), `cancel` its Cancel
         a->add("dialog", [=](const QString& args){
             auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
             const QString verb = args.section(' ', 0, 0).trimmed(), rest = args.section(' ', 1).trimmed();
@@ -1727,7 +1856,15 @@ Window::Window(Arguments args)
                 return;
             }
             if (verb == "grab") { box->grab().save(rest); return; }
-            if (verb == "accept") { if (auto b = box->defaultButton()) b->click(); else box->accept(); return; }
+            if (verb == "accept")
+            {
+                // (a Yes / No question has no default button set: QDialog::accept() on it answers nothing -- the program reads that as "no" -- so the button that says yes is pressed)
+                if (auto b = box->defaultButton()) b->click();
+                else if (auto yes = box->button(QMessageBox::Yes)) yes->click();
+                else if (auto ok = box->button(QMessageBox::Ok)) ok->click();
+                else box->accept();
+                return;
+            }
             if (verb == "cancel") { if (auto b = box->button(QMessageBox::Cancel)) b->click(); else box->reject(); return; }
             std::cerr << "automation: dialog <text|grab|accept|cancel>" << std::endl;
         });
@@ -1823,7 +1960,38 @@ Window::Window(Arguments args)
         // navigation <default|blender|touchpad>: the mouse gestures of the view (Settings > Navigation), without writing the choice into the settings
         a->add("navigation", [=](const QString& what){
             const QString w = what.trimmed();
-            view->setNavigationPreset(w == "blender" ? View::NAV_BLENDER : w == "touchpad" ? View::NAV_TOUCHPAD : View::NAV_DEFAULT);
+            view->setNavigationPreset(w == "blender" ? View::NAV_BLENDER : w == "touchpad" ? View::NAV_TOUCHPAD : w == "leftturn" ? View::NAV_LEFT_TURN : View::NAV_DEFAULT);
+        });
+        // units [<length> [<force> [<stress> [<mass> [<temperature>]]]]]: the units numbers are shown in (Settings > Units), set as the dialog sets them but without writing the choice into the
+        // settings: `units in N psi kg F`; `units default` (or none) is the units the program works in
+        a->add("units", [=](const QString& args){
+            QJsonObject choice;
+            const QStringList given = args.split(' ', Qt::SkipEmptyParts);
+            const QStringList quantities = Units::quantities();
+            if (!(given.size() == 1 && given[0] == "default"))
+                for (int i = 0; i < given.size() && i < quantities.size(); ++i) choice[quantities[i]] = given[i];
+            applyUnits(choice, false);
+        });
+        // solver <name>: the dialog of Settings > Solver opened (when it is not), with the solver of that name chosen in its list
+        a->add("solver", [=](const QString& name){
+            if (!m_solverDialog) openSolverDialog();
+            auto list = m_solverDialog ? m_solverDialog->findChild<QListWidget*>("SolverList") : nullptr;
+            for (int i = 0; list && i < list->count(); ++i)
+                if (list->item(i)->text().startsWith(name.trimmed() + " ")) { list->setCurrentRow(i); return; }
+            std::cerr << "automation: no solver called " << name.trimmed().toStdString() << std::endl;
+        });
+        // press <objectName>: a button of a window of the program (SolverReset, SolverPrevious, SolverSave ... of the solver dialog) clicked, as a hand does.  The click is made a moment LATER, from the
+        // event loop: a button that asks a question (Reset to default) runs a loop of its own until it is answered, and clicked inside this verb -- or inside the processEvents that follows every
+        // verb -- it would hold the automation file at that line for good, so that the `dialog accept` under it was never read.  Put a `wait` under `press`
+        a->add("press", [=](const QString& name){
+            for (QWidget* w : QApplication::topLevelWidgets())
+                if (auto b = w->findChild<QAbstractButton*>(name.trimmed()))
+                {
+                    QPointer<QAbstractButton> button(b);
+                    QTimer::singleShot(300, b, [button]{ if (button) button->click(); });
+                    return;
+                }
+            std::cerr << "automation: no button called " << name.trimmed().toStdString() << std::endl;
         });
         // projection <perspective|orthographic>: the camera's projection (View > Projection), without writing the choice into the settings: a picture of a thin layer is read with no perspective
         a->add("projection", [=](const QString& what){
@@ -1844,6 +2012,9 @@ Window::Window(Arguments args)
         });
         // panels on|off: the model tree over the viewport shown or hidden, for pictures of the part that nothing covers.  The setting of the user's window (View > Model tree) is not touched: it is the panel only
         a->add("panels", [=](const QString& what){ view->scenePanel()->setVisible(what.trimmed().toLower() != "off"); });
+        // popout <key>: an element of the window is pulled out into a window of its own, or put back (popout.hpp); popouts: which are, and which there are
+        a->add("popout", [=](const QString& what){ if (auto p = PopOut::find(what.trimmed())) p->toggle(); else std::cerr << "automation: popout: no element called " << what.trimmed().toStdString() << "\n"; });
+        a->add("popouts", [=](const QString&){ std::cerr << "automation: popouts there " << PopOut::keys().join(",").toStdString() << " out " << PopOut::floatingKeys().join(",").toStdString() << "\n"; });
         // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
         a->add("focusstate", [=](const QString&){
             const auto cue = findChild<FocusCue*>();
@@ -3485,6 +3656,7 @@ void Window::closeEvent(QCloseEvent* event)
         closing = event->isAccepted();
         if (closing)
         {
+            PopOut::dockAll(!automated);          // (what is pulled out goes back first: the window's geometry and splitter are saved as one window, and are pulled out again at the next start)
             if (!automated)
             {
                 settings.setValue("window-geometry", saveGeometry());
@@ -3953,7 +4125,7 @@ void Window::exportModel(const QString& var, const QString& kind, const QString&
     static const QHash<QString, QString> names = {
         {".stl", "STL"}, {".obj", "OBJ"}, {".ply", "PLY"}, {".3mf", "3MF"}, {".glb", "glTF binary"}, {".gltf", "glTF"}, {".fbx", "FBX"},
         {".off", "OFF"}, {".dxf", "DXF"}, {".vti", "VTK image data"}, {".csv", "CSV"}, {".inp", "Abaqus / CalculiX"}, {".bdf", "Nastran"},
-        {".msh", "Gmsh"}, {".vtu", "VTK"}, {".txt", "text"}};
+        {".msh", "Gmsh"}, {".vtu", "VTK"}, {".unv", "I-DEAS"}, {".txt", "text"}};
     QSettings settings("FielDes", "FielDes");
     const QString folder = settings.value("export-folder", workingDirectory()).toString();
     const QString filter = T("%1 files (*%2)").arg(names.value(ext, ext.mid(1).toUpper()), ext);
@@ -4027,6 +4199,407 @@ void Window::applyTheme()
     Theme::apply(*qApp);
     editor->applyTheme();
     if (m_themeDialog && m_themeRefresh) m_themeRefresh();
+}
+
+void Window::openSolverDialog()
+{
+    if (m_solverDialog)
+    {
+        m_solverDialog->raise();
+        m_solverDialog->activateWindow();
+        return;
+    }
+    auto dialog = new QDialog(this);
+    dialog->setObjectName("SolverDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(T("Solver"));
+    dialog->resize(1000, 640);
+    m_solverDialog = dialog;
+    const QString folder = editor->callSupport("solvers_folder", QString(), nullptr);
+    auto layout = new QVBoxLayout(dialog);
+    auto note = new QLabel(T("The analyses FielDes has built in are solved in C++: their equations are shown here.  Your own solvers are Python files in the solvers folder -- a function that is given "
+                             "the mesh and gives back fields, run by solve('name', part, ...).  Add a file, write a new one, or make a copy of the solver of the library and change its equations."), dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto split = new QSplitter(Qt::Horizontal, dialog);
+    auto list = new QListWidget(split);
+    list->setObjectName("SolverList");
+    list->setMinimumWidth(250);
+    auto right = new QWidget(split);
+    auto rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    auto title = new QLabel(right);
+    title->setObjectName("SolverTitle");
+    title->setWordWrap(true);
+    title->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    title->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    rightLayout->addWidget(title);
+    auto equation = new QPlainTextEdit(right);
+    equation->setObjectName("SolverEquation");
+    equation->setReadOnly(true);
+    equation->setMaximumHeight(170);
+    equation->setLineWrapMode(QPlainTextEdit::NoWrap);
+    equation->setPlaceholderText(T("The equations"));
+    rightLayout->addWidget(equation);
+    auto source = new QPlainTextEdit(right);
+    source->setObjectName("SolverSource");
+    source->setLineWrapMode(QPlainTextEdit::NoWrap);
+    source->setPlaceholderText(T("The Python file of the solver"));
+    {
+        QFont mono("Consolas");
+        mono.setStyleHint(QFont::Monospace);
+        equation->setFont(mono);
+        source->setFont(mono);
+    }
+    rightLayout->addWidget(source, 1);
+    auto status = new QLabel(right);
+    status->setObjectName("SolverStatus");
+    status->setWordWrap(true);
+    rightLayout->addWidget(status);
+    split->addWidget(list);
+    split->addWidget(right);
+    split->setStretchFactor(1, 1);
+    layout->addWidget(split, 1);
+    auto buttons = new QHBoxLayout;
+    auto newButton = new QPushButton(T("New solver..."), dialog);
+    auto fileButton = new QPushButton(T("Add from a file..."), dialog);
+    auto copyButton = new QPushButton(T("Make an editable copy"), dialog);
+    auto saveButton = new QPushButton(T("Save and check"), dialog);
+    auto deleteButton = new QPushButton(T("Delete"), dialog);
+    auto resetButton = new QPushButton(T("Reset to default"), dialog);
+    auto previousButton = new QPushButton(T("Previous version"), dialog);
+    auto folderButton = new QPushButton(T("Open the folder"), dialog);
+    auto closeButton = new QPushButton(T("Close"), dialog);
+    newButton->setObjectName("SolverNew");
+    saveButton->setObjectName("SolverSave");
+    resetButton->setObjectName("SolverReset");
+    previousButton->setObjectName("SolverPrevious");
+    resetButton->setToolTip(T("Put back the text this solver started with -- the library's, the template's, or the file as you added it -- in the editor.  Nothing is written until Save and check, and Ctrl+Z brings back what was there"));
+    previousButton->setToolTip(T("Put the text this file had before the last save in the editor.  Nothing is written until Save and check"));
+    for (auto b : {newButton, fileButton, copyButton, saveButton, resetButton, previousButton, deleteButton, folderButton}) buttons->addWidget(b);
+    buttons->addStretch(1);
+    buttons->addWidget(closeButton);
+    layout->addLayout(buttons);
+    connect(closeButton, &QPushButton::clicked, dialog, &QDialog::close);
+
+    auto entries = std::make_shared<QJsonArray>();
+    auto ask = [this](const QString& function, const QJsonObject& request) {
+        QString error;
+        const QString out = editor->callSupport(function, QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+        return qMakePair(out, error);
+    };
+    auto showCurrent = [=] {
+        const int row = list->currentRow();
+        const QJsonObject e = (row >= 0 && row < entries->size()) ? entries->at(row).toObject() : QJsonObject();
+        const QString kind = e["kind"].toString();
+        title->setText(e.isEmpty() ? QString() : "<b>" + e["name"].toString().toHtmlEscaped() + "</b> &nbsp; " + e["description"].toString().toHtmlEscaped() +
+                       (kind == "builtin" ? " &nbsp; <i>" + T("built in, solved in C++").toHtmlEscaped() + "</i>"
+                        : kind == "library" ? " &nbsp; <i>" + T("of the library: make a copy to change it").toHtmlEscaped() + "</i>"
+                        : kind == "broken" ? " &nbsp; <i>" + T("did not read").toHtmlEscaped() + "</i>" : QString()));
+        equation->setPlainText(e["equation"].toString());
+        source->setPlainText(e["source"].toString());
+        const bool editable = e["editable"].toBool();
+        source->setReadOnly(!editable);
+        source->setVisible(kind != "builtin");
+        saveButton->setEnabled(editable);
+        deleteButton->setEnabled(editable);
+        copyButton->setEnabled(kind == "library");
+        resetButton->setEnabled(editable && !e["default"].toString().isEmpty());
+        previousButton->setEnabled(editable && !e["backup"].toString().isEmpty());
+        // (a built-in analysis has no Python file to show: its equations take the room of the pane)
+        const bool builtin = kind == "builtin";
+        equation->setMaximumHeight(builtin ? QWIDGETSIZE_MAX : 170);
+        rightLayout->setStretchFactor(equation, builtin ? 1 : 0);
+    };
+    auto refresh = [=](const QString& select) {
+        QJsonObject request{{"folder", folder}};
+        const auto done = ask("solvers_list", request);
+        list->blockSignals(true);
+        list->clear();
+        *entries = QJsonDocument::fromJson(done.first.toUtf8()).array();
+        int at = 0;
+        for (int k = 0; k < entries->size(); ++k)
+        {
+            const QJsonObject e = entries->at(k).toObject();
+            const QString kind = e["kind"].toString();
+            list->addItem(e["name"].toString() + (kind == "builtin" ? "  (C++)" : kind == "library" ? "  (library)" : kind == "broken" ? "  (error)" : "  (yours)"));
+            if (e["name"].toString() == select) at = k;
+        }
+        list->blockSignals(false);
+        list->setCurrentRow(entries->isEmpty() ? -1 : at);
+        showCurrent();
+    };
+    connect(list, &QListWidget::currentRowChanged, dialog, [=](int) { status->clear(); showCurrent(); });
+    auto write = [=](const QString& file, const QString& text, bool starting = false) {
+        QJsonObject request{{"folder", folder}, {"file", file}, {"source", text}};
+        if (starting) request["default"] = text;                // (a solver that is new, copied or added: this is the text it can be reset to)
+        const auto done = ask("solvers_save", request);
+        const QJsonObject r = QJsonDocument::fromJson(done.first.toUtf8()).object();
+        if (r["ok"].toBool())
+        {
+            status->setStyleSheet(QString());
+            status->setText(T("Saved and read: %1").arg(r["names"].toVariant().toStringList().join(", ")));
+            refresh(r["names"].toArray().isEmpty() ? QString() : r["names"].toArray().at(0).toString());
+            return true;
+        }
+        status->setStyleSheet("color: #dc322f;");
+        status->setText(T("Not saved -- %1").arg(r["error"].toString().isEmpty() ? done.second : r["error"].toString()));
+        return false;
+    };
+    connect(newButton, &QPushButton::clicked, dialog, [=] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(dialog, T("New solver"), T("The name of the solver (letters, digits and _):"), QLineEdit::Normal, "my_solver", &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        const auto template_ = ask("solvers_template", QJsonObject{{"name", name}});
+        QString file = name;
+        file.replace(QRegularExpression("[^A-Za-z0-9_]"), "_");
+        write(file + ".py", template_.first, true);
+    });
+    connect(fileButton, &QPushButton::clicked, dialog, [=] {
+        const QString path = QFileDialog::getOpenFileName(dialog, T("Add a solver"), workingDirectory(), T("Python files (*.py)"));
+        if (path.isEmpty()) return;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) { status->setText(T("The file cannot be read.")); return; }
+        write(QFileInfo(path).fileName(), QString::fromUtf8(f.readAll()), true);
+    });
+    connect(copyButton, &QPushButton::clicked, dialog, [=] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= entries->size()) return;
+        const QString from = entries->at(row).toObject()["name"].toString();
+        bool ok = false;
+        const QString name = QInputDialog::getText(dialog, T("A copy"), T("The name of the copy:"), QLineEdit::Normal, from + "_2", &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        const auto copied = ask("solvers_template", QJsonObject{{"name", name}, {"copy_of", from}});
+        QString file = name;
+        file.replace(QRegularExpression("[^A-Za-z0-9_]"), "_");
+        write(file + ".py", copied.first, true);
+    });
+    connect(saveButton, &QPushButton::clicked, dialog, [=] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= entries->size()) return;
+        const QJsonObject e = entries->at(row).toObject();
+        if (!e["editable"].toBool()) return;
+        write(QFileInfo(e["path"].toString()).fileName(), source->toPlainText());
+    });
+    // The text goes into the editor as an edit of it (Ctrl+Z brings back what was there); the file is written by Save and check only
+    auto putInEditor = [=](const QString& text) {
+        QTextCursor cursor(source->document());
+        cursor.beginEditBlock();
+        cursor.select(QTextCursor::Document);
+        cursor.insertText(text);
+        cursor.endEditBlock();
+    };
+    connect(resetButton, &QPushButton::clicked, dialog, [=] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= entries->size()) return;
+        const QJsonObject e = entries->at(row).toObject();
+        const QString text = e["default"].toString();
+        if (!e["editable"].toBool() || text.isEmpty()) return;
+        if (source->toPlainText() == text)
+        {
+            status->setStyleSheet(QString());
+            status->setText(T("It is the default already."));
+            return;
+        }
+        if (QMessageBox::question(dialog, T("Reset to default"), T("Put the default of %1 back in the editor?\nWhat is there now is replaced (Ctrl+Z brings it back); the file is changed when you press Save and check.").arg(e["name"].toString())) != QMessageBox::Yes) return;
+        putInEditor(text);
+        status->setStyleSheet(QString());
+        status->setText(T("The default is in the editor.  Save and check keeps it."));
+    });
+    connect(previousButton, &QPushButton::clicked, dialog, [=] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= entries->size()) return;
+        const QJsonObject e = entries->at(row).toObject();
+        const QString text = e["backup"].toString();
+        if (!e["editable"].toBool() || text.isEmpty()) return;
+        putInEditor(text);
+        status->setStyleSheet(QString());
+        status->setText(T("The previous version is in the editor.  Save and check keeps it."));
+    });
+    connect(deleteButton, &QPushButton::clicked, dialog, [=] {
+        const int row = list->currentRow();
+        if (row < 0 || row >= entries->size()) return;
+        const QJsonObject e = entries->at(row).toObject();
+        if (!e["editable"].toBool()) return;
+        if (QMessageBox::question(dialog, T("Delete the solver"), T("Delete the file of %1?").arg(e["name"].toString())) != QMessageBox::Yes) return;
+        ask("solvers_delete", QJsonObject{{"path", e["path"].toString()}});
+        refresh(QString());
+    });
+    connect(folderButton, &QPushButton::clicked, dialog, [=] {
+        QDir().mkpath(folder);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    });
+    refresh(QString());
+    dialog->show();
+}
+
+void Window::openValidation()
+{
+    if (m_validationDialog)
+    {
+        m_validationDialog->raise();
+        m_validationDialog->activateWindow();
+        return;
+    }
+    // The page is docs/validation.md, beside the program (in a build tree, in the docs of the repository)
+    const QDir app(QCoreApplication::applicationDirPath());
+    QString path;
+    for (const QString& candidate : {app.filePath("docs/validation.md"), app.filePath("../docs/validation.md"), app.filePath("../../docs/validation.md")})
+        if (QFileInfo::exists(candidate)) { path = candidate; break; }
+    QString content;
+    if (!path.isEmpty())
+    {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly)) content = QString::fromUtf8(file.readAll());
+    }
+    auto dialog = new QDialog(this);
+    dialog->setObjectName("ValidationDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(T("Validation and accuracy"));
+    dialog->resize(1100, 760);
+    m_validationDialog = dialog;
+    auto layout = new QVBoxLayout(dialog);
+    auto split = new QSplitter(Qt::Horizontal, dialog);
+    auto sections = new QListWidget(split);
+    sections->setObjectName("ValidationSections");
+    sections->setMinimumWidth(200);
+    sections->setMaximumWidth(340);
+    auto text = new QTextBrowser(split);
+    text->setObjectName("ValidationText");
+    text->setOpenLinks(false);
+    if (content.isEmpty())
+    {
+        text->setPlainText(T("The validation page is not here: %1").arg(app.filePath("docs/validation.md")));
+    }
+    else
+    {
+        text->setMarkdown(content);
+    }
+    split->addWidget(sections);
+    split->addWidget(text);
+    split->setStretchFactor(1, 1);
+    split->setSizes({250, 850});
+    layout->addWidget(split, 1);
+    auto buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+    layout->addWidget(buttons);
+
+    // The headings of the page: the list on the left, and the links of the page that point at one (#static-analysis)
+    struct Heading { QString title; int level; int position; };
+    auto headings = std::make_shared<QList<Heading>>();
+    for (QTextBlock block = text->document()->begin(); block.isValid(); block = block.next())
+    {
+        const int level = block.blockFormat().headingLevel();
+        if (level < 1 || block.text().trimmed().isEmpty()) continue;
+        headings->append({block.text().trimmed(), level, block.position()});
+        auto item = new QListWidgetItem(QString(2 * (level - 1), QChar(' ')) + block.text().trimmed(), sections);
+        item->setData(Qt::UserRole, headings->size() - 1);
+    }
+    auto goTo = [=](int index) {
+        if (index < 0 || index >= headings->size()) return;
+        const QTextBlock block = text->document()->findBlock(headings->at(index).position);
+        const QRectF where = text->document()->documentLayout()->blockBoundingRect(block);
+        text->verticalScrollBar()->setValue(int(where.top()));
+    };
+    connect(sections, &QListWidget::itemClicked, dialog, [=](QListWidgetItem* item) { goTo(item->data(Qt::UserRole).toInt()); });
+    auto slug = [](const QString& title) {
+        QString out;
+        for (const QChar ch : title.toLower())
+        {
+            if (ch.isLetterOrNumber()) out += ch;
+            else if (ch == QChar(' ') || ch == QChar('-')) out += QChar('-');
+        }
+        return out;
+    };
+    connect(text, &QTextBrowser::anchorClicked, dialog, [=](const QUrl& url) {
+        const QString target = url.toString();
+        if (target.startsWith('#'))
+        {
+            for (int k = 0; k < headings->size(); ++k)
+                if (slug(headings->at(k).title) == target.mid(1)) { goTo(k); return; }
+            return;
+        }
+        if (url.scheme() == "http" || url.scheme() == "https") QDesktopServices::openUrl(url);
+    });
+    dialog->show();
+}
+
+bool Window::applyUnits(const QJsonObject& choice, bool persist)
+{
+    QString error;
+    const QString out = editor->callSupport("units_set", QString::fromUtf8(QJsonDocument(QJsonObject{{"choice", choice}}).toJson(QJsonDocument::Compact)), &error);
+    const QJsonObject state = QJsonDocument::fromJson(out.toUtf8()).object();
+    if (state.isEmpty())
+    {
+        statusBar()->showMessage(T("The units could not be set: %1").arg(error), 8000);
+        return false;
+    }
+    m_unitsState = state;
+    Units::setTable(state["table"].toObject());
+    if (persist && !automated) Units::save(state["choice"].toObject());       // (a scripted test never changes the user's settings)
+    emit(unitsChanged());
+    return true;
+}
+
+void Window::openUnitsDialog()
+{
+    if (m_unitsDialog)
+    {
+        m_unitsDialog->raise();
+        m_unitsDialog->activateWindow();
+        return;
+    }
+    if (m_unitsState.isEmpty() && !applyUnits(QJsonObject())) return;         // (what can be chosen is for Python to say)
+    auto dialog = new QDialog(this);
+    dialog->setObjectName("UnitsDialog");
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(T("Units"));
+    m_unitsDialog = dialog;
+    auto layout = new QVBoxLayout(dialog);
+    auto note = new QLabel(T("Scripts and solvers always work in millimetres, newtons, megapascals, kilograms and degrees Celsius, so that a script means the same on every machine.  "
+                             "The units chosen here are the ones numbers are shown in -- the ruler, the cards and colour bars of results, the work plane, the value under the cursor -- "
+                             "and the length unit mesh files are written in (and read in, when the file does not say)."), dialog);
+    note->setWordWrap(true);
+    note->setMinimumWidth(440);
+    layout->addWidget(note);
+    auto form = new QFormLayout;
+    layout->addLayout(form);
+    const QJsonObject options = m_unitsState["options"].toObject();
+    const QJsonObject choice = m_unitsState["choice"].toObject();
+    const QList<QPair<QString, QString>> rows = {{"length", T("Length")}, {"force", T("Force")}, {"stress", T("Stress and pressure")},
+                                                 {"mass", T("Mass")}, {"temperature", T("Temperature")}};
+    auto combos = std::make_shared<QList<QComboBox*>>();
+    auto keys = std::make_shared<QStringList>();
+    for (const auto& row : rows)
+    {
+        auto combo = new QComboBox(dialog);
+        combo->setObjectName("Units_" + row.first);
+        for (const QJsonValue& v : options[row.first].toArray())
+            combo->addItem(v.toArray().at(1).toString(), v.toArray().at(0).toString());
+        combo->setCurrentIndex(std::max(0, combo->findData(choice[row.first].toString())));
+        form->addRow(row.second, combo);
+        combos->append(combo);
+        keys->append(row.first);
+    }
+    auto apply = [=] {
+        QJsonObject chosen;
+        for (int k = 0; k < combos->size(); ++k) chosen[keys->at(k)] = combos->at(k)->currentData().toString();
+        applyUnits(chosen, true);
+    };
+    for (QComboBox* combo : *combos)
+        connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), dialog, [=](int) { apply(); });
+    auto buttons = new QHBoxLayout;
+    auto reset = new QPushButton(T("Millimetres, newtons, megapascals"), dialog);
+    reset->setObjectName("UnitsReset");
+    reset->setToolTip(T("Back to the units the program works in"));
+    auto closeButton = new QPushButton(T("Close"), dialog);
+    buttons->addWidget(reset);
+    buttons->addStretch(1);
+    buttons->addWidget(closeButton);
+    layout->addLayout(buttons);
+    connect(reset, &QPushButton::clicked, dialog, [=] { for (QComboBox* combo : *combos) combo->setCurrentIndex(0); });
+    connect(closeButton, &QPushButton::clicked, dialog, &QDialog::close);
+    dialog->show();
 }
 
 void Window::openThemeDialog()

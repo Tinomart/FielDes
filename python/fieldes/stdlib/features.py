@@ -535,7 +535,9 @@ def corner_at(shape, near, scale=None, bounds=None, rounded=False):
         found = _rounded_feature(values, near, scale, size, 'corner')
     if found is None:
         raise ValueError('corner_at: no corner of the body near (%.4g, %.4g, %.4g): three faces that meet at sharp angles within %.3g mm of it' % (near + (scale,)))
-    return point(*_clean(found['point']))
+    out = point(*_clean(found['point']))
+    out._on = shape                     # (the body it is on: what a snap -- the S key -- sorts the features by)
+    return out
 
 
 def edge_point_at(shape, near, scale=None, bounds=None, rounded=False):
@@ -549,7 +551,9 @@ def edge_point_at(shape, near, scale=None, bounds=None, rounded=False):
         found = _rounded_feature(values, near, scale, size, 'edge')
     if found is None:
         raise ValueError('edge_point_at: no edge of the body near (%.4g, %.4g, %.4g): two faces that meet at a sharp angle within %.3g mm of it' % (near + (scale,)))
-    return point(*_clean(found['point']))
+    out = point(*_clean(found['point']))
+    out._on = shape
+    return out
 
 
 def edge_at(shape, near, scale=None, bounds=None):
@@ -564,7 +568,9 @@ def edge_at(shape, near, scale=None, bounds=None):
     if found['straight'] is None:
         raise ValueError('edge_at: the edge near (%.4g, %.4g, %.4g) curves, so it is not a line: edge_point_at gives a point of it' % near)
     a, b = found['straight']
-    return polyline([point(*_clean(a)), point(*_clean(b))])
+    out = polyline([point(*_clean(a)), point(*_clean(b))])
+    out._on = shape
+    return out
 
 
 def _rounded_feature(values, near, scale, size, kind):
@@ -594,7 +600,9 @@ def circle_center_at(shape, near, scale=None, bounds=None):
     found = _find_circle(surface, near, r)
     if found is None:
         raise ValueError('circle_center_at: no circular edge of the body near (%.4g, %.4g, %.4g): an edge that is a circle within %.3g mm of it' % (near + (scale,)))
-    return point(*_clean(found[0]))
+    out = point(*_clean(found[0]))
+    out._on = shape
+    return out
 
 
 def face_center(face):
@@ -604,12 +612,18 @@ def face_center(face):
     xyz = getattr(face, 'sample_points', None)
     if not xyz:
         from fieldes.stdlib.measure import center
-        return center(face)
-    n = len(xyz) // 3
-    return point(*_clean((sum(xyz[0::3]) / n, sum(xyz[1::3]) / n, sum(xyz[2::3]) / n)))
+        out = center(face)
+    else:
+        n = len(xyz) // 3
+        out = point(*_clean((sum(xyz[0::3]) / n, sum(xyz[1::3]) / n, sum(xyz[2::3]) / n)))
+    try:
+        out._on = getattr(face, 'shape', None)          # (the body the face is on: what a snap -- the S key -- sorts the features by)
+    except AttributeError:
+        pass
+    return out
 
 
-# (a line like the one a Curve is: it has no gizmo() line with numbers of its own -- its points have them -- and a gizmo mode only.  The model tree decides this from what the call is
+# (a line like the one a Curve is: it has no placement arguments of its own -- its points have them -- and a gizmo mode only.  The model tree decides this from what the call is
 # when the entry that made the line selects it, before the run that says what the line is has been answered: without these two the tree wrote the gizmo with numbers, which hid the
 # line (windows t347 and t351: a line along a box edge, made by the menu, was not drawn))
 edge_at._makes_no_gizmo = True

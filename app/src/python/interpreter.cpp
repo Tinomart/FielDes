@@ -756,7 +756,7 @@ void Interpreter::evaluate(QString script, bool resuming)
             PyObject_SetAttrString(host_mod, "__resync", fresh_resync);
             Py_DECREF(fresh_resync);
         }
-        // (the numbers of the gizmo() calls of this run: see fieldes.stdlib.handles._note_gizmo_vars and sceneGizmoIds)
+        // (the numbers of the placement arguments of this run: see fieldes.stdlib.handles._note_gizmo_vars and sceneGizmoIds)
         {
             const auto fresh_gizmos = PyList_New(0);
             PyObject_SetAttrString(host_mod, "__gizmo_vars", fresh_gizmos);
@@ -1356,7 +1356,7 @@ void Interpreter::publishPartial(PyObject* snapshot, PyObject* linesList, int ru
     emit(partialResult(out));
 }
 
-// The numbers of every gizmo() call of the run (fieldes.stdlib.handles notes them in host.__gizmo_vars): a surface pull never changes one of them, whichever shape the surface
+// The numbers of every placement argument (`position=`, `rotation=`, `scale=`) of the run (fieldes.stdlib.handles notes them in host.__gizmo_vars): a surface pull never changes one of them, whichever shape the surface
 // belongs to.  The same set for every shape of a run, made again when the list has grown; the list is held, so that no other list can take its place
 static std::shared_ptr<const std::set<libfive::Tree::Id>> sceneGizmoIds()
 {
@@ -1598,7 +1598,7 @@ void Interpreter::recordShape(
                 {
                     shape->setNoPaint(!face);
                     shape->setControls(std::move(points), cd && PyObject_IsTrue(cd) == 1, cl && PyObject_IsTrue(cl) == 1, face);
-                    // When the gizmo of the outline is shown (`x = gizmo(x, mode=...)`: the gizmo of its points, shared); never when no such line is there
+                    // When the gizmo of the outline is shown (the mode of its gizmo button in the tree: the gizmo of its points, shared); never until the button says otherwise
                     if (PyObject_HasAttrString(obj, "_outline_mode"))
                     {
                         PyObject* om = PyObject_GetAttrString(obj, "_outline_mode");
@@ -1913,7 +1913,7 @@ void Interpreter::recordShape(
         }
 
         {
-            // The box the script says the shape fills (`_bounds`: the primitives know it from their numbers, and handles() and gizmo() carry it, widened by what was pulled).  It sizes the
+            // The box the script says the shape fills (`_bounds`: the primitives know it from their numbers, and handles() and the placement arguments carry it, widened by what was pulled).  It sizes the
             // shape, for its resolution, where the quick search for its box finds none -- a shape made with var()s (Shape::setScriptBox)
             PyObject* box = PyObject_GetAttrString(obj, "_bounds");
             if (box && PyTuple_Check(box) && PyTuple_Size(box) == 2)
@@ -1939,8 +1939,8 @@ void Interpreter::recordShape(
 
         // A thin part meshed on its own (fieldes.stdlib.cad_import):
         // (box lo, box hi, resolution, cube side, thinnest feature)
-        // (a part placed with gizmo() has the hint of the part it was placed from)
-        // (a part edited with handles() and placed with gizmo() is two steps from the part)
+        // (a part placed by position=, rotation= or scale= has the hint of the part it was placed from)
+        // (a part edited with handles() and placed by its placement arguments is two steps from the part)
         PyObject* hintOwner = obj;
         Py_INCREF(hintOwner);
         for (int depth = 0; hintOwner && depth < 8 && !PyObject_HasAttrString(hintOwner, "_render_hint") &&
@@ -1974,7 +1974,7 @@ void Interpreter::recordShape(
         Py_XDECREF(hintOwner);
         PyErr_Clear();
 
-        // A resolution of its own (fieldes.stdlib.custom_resolution): the number the scene's resolution is, for this body alone.  A body placed with gizmo() or edited with handles() has
+        // A resolution of its own (fieldes.stdlib.custom_resolution): the number the scene's resolution is, for this body alone.  A body placed by its placement arguments or edited with handles() has
         // the one of the body it was made from
         {
             PyObject* owner = obj;
@@ -2139,6 +2139,15 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
+        // How solid the model is drawn (fieldes.stdlib.placement, `alpha=`): 0 to 1, 1 when the call does not say
+        if (PyObject_HasAttrString(obj, "_alpha"))
+        {
+            PyObject* al = PyObject_GetAttrString(obj, "_alpha");
+            if (al && PyFloat_Check(al)) shape->setOpacity(float(PyFloat_AsDouble(al)));
+            Py_XDECREF(al);
+            PyErr_Clear();
+        }
+
         // The numbers of the symmetry an image is made in (`_symmetry_vars`): the image's field has them, but a surface of it is pulled by the original's numbers only
         if (PyObject_HasAttrString(obj, "_symmetry_vars"))
         {
@@ -2159,7 +2168,7 @@ void Interpreter::recordShape(
             PyErr_Clear();
         }
 
-        // The numbers of the gizmo() calls of the script: no surface of this shape is pulled by one of them (see sceneGizmoIds)
+        // The numbers of the placement arguments of the script: no surface of this shape is pulled by one of them (see sceneGizmoIds)
         shape->setSceneGizmoVars(sceneGizmoIds());
 
         // An image of another model in a symmetry (`_symmetry_of`)

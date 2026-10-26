@@ -132,7 +132,7 @@ public slots:
 
 public:
     /*  The mouse gestures the view has beside the ones everyone has (see setNavigationPreset)  */
-    enum NavigationPreset { NAV_DEFAULT, NAV_BLENDER, NAV_TOUCHPAD };
+    enum NavigationPreset { NAV_DEFAULT, NAV_BLENDER, NAV_TOUCHPAD, NAV_LEFT_TURN, NAV_CUSTOM };
     /*  Union of the displayed shapes' mesh bounds; false if none yet  */
     bool meshBounds(QVector3D& lo, QVector3D& hi) const;
 
@@ -183,12 +183,14 @@ public:
 
 public slots:
 
-    /*  The gizmo of the selected model, at once.  The gizmo is made of numbers in the script (a `gizmo(...)` line), which a model gets
+    /*  The gizmo of the selected model, at once.  The gizmo is made of numbers in the script (its `position=`, `rotation=` and `scale=` arguments), which a model gets
      *  when it is selected, and the script has to run for them to exist: that takes a moment.  Until then the gizmo is drawn from where
      *  the model is (`pivot`: the middle of its box, the same point the real one has), a little transparent, so that it is there the
      *  moment the model is selected.  Pressing it before it is ready does not lose the press: the drag starts as soon as the real
      *  gizmo is there, if the button is still down.  `lines0` are the script lines the model is shown by  */
     void setProvisionalGizmo(bool on, QVector3D pivot, QList<int> lines0);
+    /*  The gizmo buttons of the model tree were pressed: the shapes take the modes they say (ScenePanel::gizmoModeOfLine)  */
+    void refreshGizmoModes();
 
     /*  Zoom to the script's bounds the next time they arrive (e.g. after
      *  an import changed the region of interest)  */
@@ -210,6 +212,8 @@ public slots:
 
     /*  The work plane (see workplane.hpp): a plane to put points in, with a grid.  Its view is opened and closed with Shift+W (a plane is made when there is
      *  none), a new plane -- the plane of the selected 2D shape, or parallel to the view through the origin -- is Ctrl+Shift+W, and W turns the camera to face it  */
+    /*  Settings > Units was changed: what shows numbers -- the ruler, the colour bars, the card of a result -- is drawn again in the units chosen  */
+    void unitsChanged();
     const WorkPlane& workPlane() const { return m_wp; }
     void setWorkPlaneOpen(bool open);
     /*  Escape: one step out of the special mode the viewport is in, the innermost first -- the line being drawn on the work plane is dropped, then the kind of drawing that is on is
@@ -300,7 +304,14 @@ public slots:
     void setHighRotSensitivity() { camera.setRotationSensitivity(720); }
     /*  Mouse gestures for other hands, an OPTION beside the ones everyone has (right drag pans, the wheel zooms, Shift + left drag and the middle button turn): the Blender style
         also pans with Shift + the middle button, the touchpad style with Alt + the left button.  The default is NAV_DEFAULT, and stays it  */
-    void setNavigationPreset(int preset) { m_navPreset = preset; }
+    void setNavigationPreset(int preset);
+    /*  The gestures of the view, by name: for turning it, panning it and zooming it by dragging, a mouse button and the keys held with it ("none", "left", "shift+left", "ctrl+left",
+     *  "alt+left", "middle", "shift+middle", "ctrl+middle", "alt+middle", "shift+right", "ctrl+right", "alt+right").  A gesture that is given to an action is that action's whatever it did
+     *  before; the ones that are not given stay as everyone has them.  A plain left drag turns (or pans, or zooms) on empty space, and a click that does not move still selects  */
+    void setNavigation(const QString& rotate, const QString& pan, const QString& zoom);
+    QString navigationName(int action) const { return m_navKey[action]; }          // (0 turn, 1 pan, 2 zoom)
+    /*  The gestures a dropdown offers: the name and the words  */
+    static QList<QPair<QString, QString>> navigationGestures();
     void setZoomCursorCentric() { zoom_cursor_centric = true; }
     void setZoomSceneCentric() { zoom_cursor_centric = false; }
     void zoomTo() { camera.zoomTo(settings.min, settings.max); }
@@ -476,6 +487,10 @@ protected slots:
 
 protected:
     void initializeGL() override;
+    /*  The graphics context of the viewport is ending (it is pulled out into a window of its own, or put back: a new window is a new context): what the graphics card held for it --
+     *  the buffers of every shape, the textures of the planes, the picking buffer, the programs -- is let go of, and made again at the next paint  */
+    void releaseGL();
+    bool m_gl_ending = false;           // (the viewport is being destroyed: the context ending then is the destructor's to deal with)
     void paintGL() override;
     void resizeGL(int width, int height) override;
 
@@ -602,7 +617,6 @@ protected:
     /*  What the Engineering menu holds: a category for each domain (Structural, Thermal, Fluid, each with the icon and the colour of its domain), each with what an analysis of
      *  it is given and its analyses and optimisations; then the materials, which an analysis of any domain takes  */
     void fillEngineeringMenu(QMenu* menu, int line, const QVector3D& point, double scale, int atLine);
-    void addImportEntry(QMenu* menu);
     /*  The "New ..." entries of the menus of empty space and of a model: `basic` the primitives, else the Parametric shapes (all the rest).  `point` is where a shape is made, `exact` where a point is
      *  (under the cursor, as it is)  */
     void addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D& exact, const QVector3D& flat, double scale, double flatScale, int atLine, bool basic);
@@ -713,7 +727,7 @@ protected:
     Camera camera;
 
     struct {
-        enum { RELEASED, DRAG_ROT, DRAG_PAN, DRAG_EVAL, DRAG_RECT } state = RELEASED;
+        enum { RELEASED, DRAG_ROT, DRAG_PAN, DRAG_EVAL, DRAG_RECT, DRAG_ZOOM } state = RELEASED;
         QPoint pos;
     } mouse;
 
@@ -747,6 +761,11 @@ protected:
 
     bool zoom_cursor_centric = true;
     int m_navPreset = NAV_DEFAULT;
+    struct NavBinding { int button = 0; int modifiers = 0; };       // (a mouse button and the keys held with it: none is button 0)
+    NavBinding m_navBind[3];                                        // (turn, pan, zoom)
+    QString m_navKey[3] = {QStringLiteral("none"), QStringLiteral("none"), QStringLiteral("none")};
+    int m_navLeft = 0;                                              // (what a plain left drag does on empty space: 0 nothing of the kind, 1 turn, 2 pan, 3 zoom)
+    bool navigationPress(QMouseEvent* event);
     bool zoom_on_next_settings = false;
 
     /*  Framebuffer to render pick data  */
@@ -815,7 +834,6 @@ protected:
     void addQuickOperations(QMenu* menu, int line, const QVector3D& point, double scale);
     /*  The Export submenu of the menu of a model: its mesh in every mesh format, a field on a grid, an analysis as a finite-element model and as results
      *  -- what the model can be exported as; the window asks where the file goes  */
-    void addExportMenu(QMenu* menu, int line);
 public:
     void setLiveSettings(std::function<QString()> probe) { m_liveSettings = std::move(probe); }
     /*  Where a field viewer gets the exact distance of an imported part (asked for by FieldSource::exactKey, from the sampling's own thread)  */
@@ -841,6 +859,9 @@ private:
 
 public:
     ScenePanel* scenePanel() const { return m_scene; }
+    /*  The entries of File > Export model: what can be written of the model displayed on `line` (0-based) to a file -- a mesh of its surface, a field on a grid, the finite-element
+     *  model and the results of an analysis, a mesh for another solver.  A file is not made by a menu of the viewport: those write code  */
+    void addExportEntries(QMenu* into, int line);
     const Settings& renderSettings() const { return settings; }
     /*  The menu of the viewport for the model displayed by a (0-based) line, opened at `globalPos` from outside the viewport
      *  (a right-click in the text editor or the model tree): as if that model had been right-clicked there.  A line that

@@ -7,7 +7,8 @@ code, and the same code however it was asked for.  This module is that one way. 
     * what the call cannot do without and was not given is a placeholder, `...`, written after the argument's name (`region=...`: the run
       stops there until it is written, and the name says what goes there);
     * every other argument it was not given is written with its default, as a keyword -- so that what exists is in front of you,
-      and what is not needed can be read, kept or deleted;
+      and what is not needed can be read, kept or deleted -- except for a function that says it is meant to be called short (`_short_call`: a mesh, where nearly
+      everything is a default that nobody needs to see);
     * the arguments are laid out ONE TO A LINE, always, whenever the call has two or more (the one exception is `handles`, whose numbers nobody edits by hand:
       one long line); a call inside it, a list or a position stays on one line when it fits (88 columns) and is laid out the same way when it does not.
 
@@ -122,6 +123,8 @@ def _complete_call_node(call):
     for p in sig.parameters.values():
         if p.kind == p.VAR_KEYWORD or p.name.startswith('_') or p.name == 'self':
             continue
+        if p.name in ('position', 'rotation', 'scale', 'alpha') and getattr(_library()[call.func.id], '_placeable', False):
+            continue                    # (the placement arguments are the gizmo's: they are written when it is used, not by the completion)
         if p.kind == p.VAR_POSITIONAL:
             if not given_pos and not needs and p.name not in bound.arguments:
                 new_pos.append(ast.Constant(value=Ellipsis))                      # (at least one: the placeholder says so)
@@ -134,6 +137,8 @@ def _complete_call_node(call):
                 new_pos.append(hole)
             else:
                 added[p.name] = ast.keyword(arg=p.name, value=hole)               # (the name says what goes there)
+        elif getattr(_library()[call.func.id], '_short_call', False):
+            continue                    # (a function that is meant to be called with what it needs alone -- a mesh -- is not written with every default)
         else:
             text = _default_source(p.default)
             if text is None:

@@ -3,7 +3,7 @@
 Every public function and class of the FielDes library, generated from its docstrings
 (`python scripts/gen_reference.py`).  `from fieldes import *` brings all of them in.
 
-Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Snapping a body onto another](#snapping-a-body-onto-another) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Meshing for the solver of another program](#meshing-for-the-solver-of-another-program) | [CAD operations: turning, mirroring, patterns, revolving, holes, measuring](#cad-operations-turning-mirroring-patterns-revolving-holes-measuring) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
+Contents: [Primitive shapes](#primitive-shapes) | [Combining shapes (CSG)](#combining-shapes-csg) | [Moving, rotating, scaling, deforming](#moving-rotating-scaling-deforming) | [Placement: where an object is, how it is turned, how big and how see-through](#placement-where-an-object-is-how-it-is-turned-how-big-and-how-see-through) | [Text](#text) | [Importing models](#importing-models) | [The region and resolution of imported models](#the-region-and-resolution-of-imported-models) | [Triangle meshes](#triangle-meshes) | [Exporting files](#exporting-files) | [Handles: editing shapes by dragging](#handles-editing-shapes-by-dragging) | [Linked copies](#linked-copies) | [Symmetry](#symmetry) | [Points and surfaces](#points-and-surfaces) | [Lines and curves: 1D shapes made of points](#lines-and-curves-1d-shapes-made-of-points) | [Profiles and extrusions](#profiles-and-extrusions) | [Measuring a body](#measuring-a-body) | [Fields](#fields) | [Regressions and data](#regressions-and-data) | [Surfaces and offsets](#surfaces-and-offsets) | [Lattices](#lattices) | [Lattices that follow a surface](#lattices-that-follow-a-surface) | [Selecting surfaces](#selecting-surfaces) | [Corners and edges of a body](#corners-and-edges-of-a-body) | [Structural analysis and topology optimization](#structural-analysis-and-topology-optimization) | [Seeing the boundary conditions](#seeing-the-boundary-conditions) | [Thermal analysis and thermal topology optimization](#thermal-analysis-and-thermal-topology-optimization) | [Fluid flow analysis](#fluid-flow-analysis) | [Meshing for the solver of another program](#meshing-for-the-solver-of-another-program) | [CAD operations: turning, mirroring, patterns, revolving, holes, measuring](#cad-operations-turning-mirroring-patterns-revolving-holes-measuring) | [Solvers of your own](#solvers-of-your-own) | [Units](#units) | [Parametric optimization](#parametric-optimization) | [Manufacturing: the constraints](#manufacturing-the-constraints) | [Manufacturing: the check](#manufacturing-the-check) | [Manufacturing: the shell that changes the part](#manufacturing-the-shell-that-changes-the-part) | [Excluding regions from an analysis](#excluding-regions-from-an-analysis) | [Telling fields from numbers](#telling-fields-from-numbers) | [The shape class](#the-shape-class) | [Progress of a long step](#progress-of-a-long-step) | [Caching](#caching) | [Keeping rendered meshes (render cache)](#keeping-rendered-meshes-render-cache) | [A resolution of its own for one body](#a-resolution-of-its-own-for-one-body) | [FielDes apps: the inputs of a script](#fieldes-apps-the-inputs-of-a-script)
 
 ## Primitive shapes
 
@@ -402,6 +402,53 @@ Twirls the shape in the y axis about the (optional) center point
 
 Twirls the shape in the z axis about the (optional) center point
 
+## Placement: where an object is, how it is turned, how big and how see-through
+
+Placement: where an object is, how it is turned, how big it is and how see-through.
+
+Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes four arguments after its own, named and in this order:
+
+    position   (x, y, z) in mm: how far the object is moved from where its definition puts it (0 is where it is made)
+    rotation   (x, y, z) in degrees: how it is turned about the middle of its box, x first, then y, then z
+    scale      (x, y, z) factors, or one number: how big it is, about the middle of its box
+    alpha      0 to 1: how solid it is drawn (1 is solid, 0 is not drawn): the object is the same in every other way
+
+They are ordinary arguments of the call.  FielDes's model tree shows them inside every object, a click on one selects its number in the code, and the gizmo in the
+viewport drags the first three: when the object is selected, FielDes writes them with `var()` numbers (`position=(var(40), var(0), var(0))`) and a drag changes the
+numbers in the text.  None of them is needed: an object without them stands where its definition puts it.
+
+    part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
+
+What is not made by a call -- a part taken out of an imported model, a name given to another, a sum -- is placed by `place`, which takes the same arguments:
+
+    part = place(part, position=(40, 0, 0))
+
+A shape that is made of points (a profile, a polyline, a spline) is placed through its points, which are what the gizmo drags.
+
+The arguments are given to every function that makes a model by `install`: a function that has an argument of that name of its own (`hole(position=...)`, `lattice(scale=...)`)
+keeps it and has no placement arguments -- a model it makes is placed with `place`.
+
+### `install(namespace)`
+
+Gives the functions of PLACEABLE the placement arguments, in `namespace` (what `from fieldes import *` brings in)
+
+### `place(value, position=None, rotation=None, scale=None, alpha=None)`
+
+`value` placed: moved by `position` (x, y, z), turned by `rotation` (x, y, z degrees) and scaled by `scale` (x, y, z factors, or one number), all about the middle
+of its box, and drawn as solid as `alpha` (0 to 1) says.
+
+This is what the placement arguments of every model's call do: `box(a, b, position=(10, 0, 0))` is `place(box(a, b), position=(10, 0, 0))`.  It is written for what is
+not made by a call -- a part taken out of an imported model, `part = place(part, position=(10, 0, 0))`.  FielDes's gizmo drags the numbers of either:
+write them as `var(...)` (the model tree does that when the model is selected).
+
+### `takes_placement(function)`
+
+Whether a function's calls take the placement arguments (what the model tree asks to know whether a model's placement is written in its call)
+
+### `unplaced(shape)`
+
+(the object as it was before the placement arguments placed it, the arguments), or (shape, None) for an object that was not placed by them
+
 ## Text
 
 Python library of FielDes, built on the libfive CAD kernel
@@ -467,7 +514,7 @@ import normally.
 
 units       the units of your script ('mm', 'cm', 'm', 'in'...): a STEP file declares its own (each part
             its own; the numbers are converted), 'file' gives the first declared one
-file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
+file_units  what the numbers of a mesh file mean (the length unit of Settings > Units -- 'mm' by default -- if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
             with $INSUNITS do, glTF is metres) -- for mesh files only
 rev         a number that is part of what an import is kept by: another one imports again ("Reimport" in FielDes)
 cache       an import is kept in files next to the STEP file (<file>.fieldes-cache.py, ...-tessellation):
@@ -666,7 +713,8 @@ Exporting: a body as a mesh file, an analysis as a finite-element model and as r
                                                     factor, drag ... as text)
     export_field(field, "stress.vti")               any field sampled on a regular grid: .vti (VTK image data), .csv
 
-Every file is in FielDes's own units: millimetres, newtons, megapascals (so a mass is in tonnes: N, mm, t, s, MPa is a consistent set).
+The files of an analysis are in FielDes's own units: millimetres, newtons, megapascals (so a mass is in tonnes: N, mm, t, s, MPa is a consistent set); only the
+key numbers of export_results(..., '.txt') are in the units of Settings > Units, each with its unit.  A mesh file (export_mesh) is in the length unit chosen there.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -710,7 +758,7 @@ reads them for a laser or a router, or to see the stack.  It is not G-code and t
 
 Millimetres.  Returns the path and writes nothing it could not read from the field.
 
-### `export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, **options)`
+### `export_mesh(part, path, bounds=None, resolution=None, name=None, ascii=False, unit=None, **options)`
 
 Writes the surface of a body as a triangle mesh file, in the format of the file's extension:
 
@@ -725,9 +773,9 @@ bounds      ((x0, y0, z0), (x1, y1, z1)) the region meshed; the body's own exten
 resolution  samples per mm of the mesh (the scene's resolution when it is not given: the one of the viewport)
 name        the object's name inside the file (the file's name)
 ascii       STL as text, not binary
+unit        the length unit of the file: 'mm', 'cm', 'm', 'in', 'ft' or 'um'; the one chosen in Settings > Units when it is not given (millimetres by default)
 
-Millimetres in every format that has no unit; the ones that state their unit (3MF, FBX, DXF) say millimetres (a glTF is in metres, Y up, as
-glTF is).  Returns the path.
+The coordinates are in that unit, and the formats that state their unit (3MF, FBX, DXF) say it (a glTF is in metres, Y up, as glTF is).  Returns the path.
 
 ### `export_print(result, path, bounds=None, resolution=None)`
 
@@ -758,11 +806,12 @@ with the even-odd rule, so that a hole is a hole).  Read from the body's field, 
 
 The few numbers the result card shows on the screen: [(label, text, unit)] -- what result_summary lists, without the counts and times
 
-### `result_summary(result)`
+### `result_summary(result, native=False)`
 
 The numbers of a result that matter, as [(label, text, unit)] in the order they are shown -- what the result card prints on the screen
 and what export_results(..., '.txt') writes.  Only what the result has: a static analysis its stress and safety factor, a flow its
-forces and flows, a thermal analysis its temperatures ...
+forces and flows, a thermal analysis its temperatures ...  The numbers are in the units chosen in Settings > Units (fieldes.units), each with its
+unit; native=True: in millimetres, newtons and megapascals (the card converts them itself when it draws, so that a change of the units needs no new run)
 
 ## Handles: editing shapes by dragging
 
@@ -770,19 +819,14 @@ Handles and the gizmo: edit a shape -- an imported part too -- by dragging in Fi
 
 Two ways of editing by dragging work together, and the first has priority where they meet:
 
-  the gizmo    the part's own move arrows, rotation rings and scale knobs: `gizmo()` writes, under the shape's
-               definition,
+  the gizmo    the part's own move arrows, rotation rings and scale knobs.  They drag the placement arguments of the shape's
+               call (see fieldes.stdlib.placement), which FielDes writes in the call when the shape is selected,
 
-                   part = gizmo(
-                       part,
-                       move=(var(0), var(0), var(0)),
-                       rotate=(var(0), var(0), var(0)),
-                       scale=(var(1), var(1), var(1)),
-                   )
+                   part = box(a, b, position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)), scale=(var(1), var(1), var(1)))
 
-               so what the gizmo does is ordinary script text, like any dragged var().  The shape is `part`
-               scaled about its centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown
-               is the `mode` of that call (the model tree's gizmo button, key E, goes through them):
+               so what the gizmo does is ordinary script text, like any dragged var().  The shape is scaled about its
+               centre, rotated (x, then y, then z; degrees) and moved.  When the gizmo is shown is the state of the model
+               tree's gizmo button (key E), which is not in the script:
 
                    'click'   (the default) the gizmo is shown while the shape is selected, i.e. after you click it
                    'never'   it is never shown, so that it cannot get in the way
@@ -804,31 +848,13 @@ gizmo nor by its handles, and keeps its gizmo mode, which comes back when it is 
 
                part = lock(part)
 
-Nothing is stored anywhere but in the script: delete the `handles(...)` and `gizmo(...)` calls of a part
-(FielDes's Reimport does) and it is the file's version again; the `lock(...)` call only keeps it from being
+Nothing is stored anywhere but in the script: delete the `handles(...)` call of a part and the placement arguments of its
+definition (FielDes's Reimport does) and it is the file's version again; the `lock(...)` call only keeps it from being
 dragged. 
 
 ### `forget_literals()`
 
 A script was opened: the numbers the last run saw in the calls of the old one say nothing about this one
-
-### `gizmo(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None, mode=None)`
-
-Scales, rotates and moves a shape, with the gizmo FielDes shows on it.
-
-scale: (x, y, z) factors about the shape's centre, `rotate`: (x, y, z)
-rotations in degrees about the same centre (x first, then y, then z),
-`move`: (x, y, z) translation.  Write the numbers as var(...) to drag
-them: FielDes's model tree does that for you.
-about: the centre (default: the middle of the shape's box)
-mode: when FielDes shows the gizmo: 'click' (the default) while the shape is selected, 'never', or
-'always'.  The shape's own surfaces (see handles()) can be dragged whatever the mode, and the gizmo has
-priority where it is shown.
-A profile, a polyline or a spline has no numbers of its own -- its points do -- so `profile_1 = gizmo(profile_1, mode='click')` only says when the one gizmo of
-its points is shown (it is shown while the outline is selected, 'always', or never: the default of an outline that has no such line).  With numbers it is
-placed like any shape -- moved and turned about the middle of its points -- as the same outline through the images of its points: whatever is made of points
-(it can make itself again through other points, `_remake`) is placed so, and what a linked copy of it, `instance(profile_1)`, is placed by.
-To make a shape undraggable, lock it: `shape = lock(shape)`.
 
 ### `handle_values(shape)`
 
@@ -849,7 +875,10 @@ shape has a different number of them (the part was changed in the STEP
 file) it raises ValueError: reimport the part.
 
 (This is what expose() was called.  The gizmo -- the arrows, rings and knobs
-that move, turn and scale a shape -- is gizmo(shape, move=..., rotate=..., scale=...).)
+that move, turn and scale a shape -- drags its position=, rotation= and scale=.)
+
+A shape that is placed by the arguments of its call (see fieldes.stdlib.placement) has its surfaces pulled where it is made, and is placed again by the same
+arguments: the numbers are those of the shape as it is made.
 
 ### `lock(shape)`
 
@@ -857,7 +886,7 @@ that move, turn and scale a shape -- is gizmo(shape, move=..., rotate=..., scale
 line is deleted.  It is the shape itself in every other way (its bounds, handles, colours and exact regions
 stay), and the way of editing it had (gizmo or handles) comes back when it is unlocked.
 
-Write it under a shape's definition, with its gizmo() and handles() calls:
+Write it under a shape's definition, after its handles() call:
 
     part = lock(part)
 
@@ -869,25 +898,24 @@ Linked copies: `instance(shape)`.
 
 A linked copy IS another shape -- the same field, so the same surfaces, sizes, colours and every other property -- and it follows it: change the original
 (its numbers, its definition, anything it is made of) and the copy changes with it.  What a copy has of its own is only WHERE it is: its POSITION and its ROTATION are
-its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, `gizmo(copy, move=..., rotate=...)`.
+its own, not the original's -- moving or turning the original does not move or turn the copy, and the other way round -- with its gizmo, which drags the `position=` and `rotation=` of the copy's call.
 Nothing else is its own: no scale knobs (a scale the original has is part of that shape, and the copy has it too).  Its surfaces CAN be dragged, as the original's can,
 and they are linked: both are pulled by the numbers of the original's `handles(...)`, so dragging a surface of the copy moves the original's and every other copy's, and the
 other way round.  (A copy that has a shape of its own is another thing: copy the model's statements instead -- Shift+D in FielDes.)
 
 FielDes writes one with Ctrl+D (or Operations > Repeating > instance):
 
-    plate_2 = instance(plate)  # shadow: plate
-    plate_2 = gizmo(
-        plate_2,
-        move=(var(0), var(0), var(0)),
-        rotate=(var(0), var(0), var(0)),
-    )
+    plate_2 = instance(
+        plate,
+        position=(var(0), var(0), var(0)),
+        rotation=(var(0), var(0), var(0)),
+    )  # shadow: plate
 
 The original is only REFERRED to: the mark `# shadow: plate` keeps it where it is in the model tree (a shadow of it is shown under the copy), whether it is
 locked or not -- taking the original into the copy would move its row away and make the copy look like what the original is made of.
 Every model is cloned the same way, `copy = instance(model)`: a model that is not a shape -- a material, the conditions or the result of an analysis, a lattice cell -- is its own value
-(no place to give it, nothing is solved again).  What is made of points -- a profile, a polyline, a spline -- is cloned like any shape: its copy is placed by its own gizmo, as the
-same outline through the images of the original's points (see gizmo()), so a point dragged, a number typed or a point added in the original changes every copy of it.
+(no place to give it, nothing is solved again).  What is made of points -- a profile, a polyline, a spline -- is cloned like any shape: its copy is placed by its own placement arguments, as the
+same outline through the images of the original's points, so a point dragged, a number typed or a point added in the original changes every copy of it.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -896,7 +924,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 ### `instance(shape)`
 
 A linked copy of `shape`: the very same shape -- its surfaces, sizes, colours and properties are the original's, and change with it -- that can only be
-moved and rotated, with its gizmo (`gizmo(copy, move=..., rotate=...)`).  It cannot be scaled: its shape is the original's -- and so are the numbers its
+moved and rotated, with its gizmo (the `position=` and `rotation=` of its call).  It cannot be scaled: its shape is the original's -- and so are the numbers its
 surfaces are pulled by, so dragging a surface of the copy or of the original moves both.  FielDes writes it with Ctrl+D, holding the original as a reference (`# shadow: original`: the original keeps its own row in the model tree,
 locked or not).  A copy that has a shape of its own is a copy of the statements instead (Shift+D)
 
@@ -905,7 +933,7 @@ locked or not).  A copy that has a shape of its own is a copy of the statements 
 Symmetry: `symmetry_planes(...)`, a model that is a set of mirror planes, and `symmetry_images(shape, symmetry)`, ALL the images of a shape in it, as one model.
 
     mirror = symmetry_planes()                        # one plane, through the origin, the plane x = 0: a mirror
-    mirror = gizmo(mirror, move=(var(0), var(0), var(0)), rotate=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
+    mirror = symmetry_planes(position=(var(0), var(0), var(0)), rotation=(var(0), var(0), var(0)))        # moved and turned with its gizmo, like any model
     leg = cylinder(5, 30, (40, 22, 0))                # the one you edit
     leg_images = symmetry_images(leg, mirror)         # all its images, one model: the leg as it looks in the mirror, left to right
 
@@ -2894,49 +2922,6 @@ The corner or edge nearest `near` that can be found (see the module), or None: {
 'straight': the two ends of the edge when it is a straight line, or None}.  `values(points)` is the field at many points (a list of floats), `scale` how many mm
 about thirty pixels span there (the neighbourhood that is looked in), `size` the size of the body.  `kind` ('corner' / 'edge') asks for that kind only
 
-## Snapping a body onto another
-
-Snapping one body onto another: the face and the point you chose on each.
-
-    from fieldes import *
-
-    foot = select_surface(bracket, seed=(0, 0, 0), angle=5)            # a face of the bracket
-    foot_corner = corner_at(bracket, (10, 10, 0))                       # and a corner of it
-    top = select_surface(plate, seed=(30, 20, 12), angle=5)            # a face of the plate
-    hole_edge = edge_point_at(plate, (30, 20, 12))                     # and a point of an edge of it
-
-    bracket = snap(bracket, foot, foot_corner, top, hole_edge)          # displayed: the bracket, standing on the plate with its corner on that point
-
-`snap(body, face, point, onto_face, onto_point)` moves `body` so that its `face` lies against `onto_face` -- the two faces facing each other, which is the direction in which the
-bodies do not go into one another -- and its `point` is at `onto_point`.  The faces are surfaces picked with `select_surface` (a flat face, or a gently curved one: it is
-the way the face faces on the average that counts), or just a direction: a vector `(0, 0, 1)` is the way a face of the other body faces.  The points are points: `point(...)`,
-a corner or an edge point from `corner_at` / `edge_point_at`, a place for a gizmo.  The other body is not given: where it is and which way it faces is all that is read of it,
-so it can be anything -- a body, a surface, a plane of the scene.
-
-    spin    degrees: the body turned about the line the two faces touch along (its normal), after it is in place -- the one thing the two faces and the two points leave free
-    gap     mm: the faces are left this far apart (a clearance; negative: pressed into one another)
-
-In FielDes, select the body, then its face and its point, then the face and the point it goes onto (Ctrl + click, in this order) and choose **Operations > Moving > snap**: the call
-is written with them in their places.  What is not selected is a placeholder in the call.
-
-The body is turned by the least turn that makes its face face away from the other one, about the point it is placed by, and then moved: so with the faces already facing each other
-it is only moved.  What comes back is the moved body, a shape like any other.  It is made with `move` and `rotate_*`, so a body that has an excluded part (see `exclude`) is moved
-as a whole, and a gizmo or `handles` of the body is left in the script after the snap, not before it.
-
-This Source Code Form is subject to the terms of the Mozilla Public
-License, v. 2.0. If a copy of the MPL was not distributed with this file,
-You can obtain one at http://mozilla.org/MPL/2.0/.
-
-### `snap(body, face, point, onto_face, onto_point, spin=0.0, gap=0.0)`
-
-`body` moved so that its `face` lies against `onto_face` and its `point` is at `onto_point` (see the module): the least turn that makes the two faces face each other, then
-a move.
-
-face, onto_face     the faces: surfaces from select_surface(...), or the directions they face (x, y, z)
-point, onto_point   the places: point(...), corner_at(...), edge_point_at(...), or (x, y, z)
-spin                degrees: the body turned about the normal of the contact, once it is in place (default 0)
-gap                 mm: the faces are left this far apart (default 0)
-
 ## Structural analysis and topology optimization
 
 Static finite element analysis (linear elasticity) of FielDes shapes.
@@ -3847,7 +3832,8 @@ bounds         ((x0, y0, z0), (x1, y1, z1)): the box to mesh in, when the body's
 
 ## CAD operations: turning, mirroring, patterns, revolving, holes, measuring
 
-The operations of a CAD program, on bodies that are fields: turning, mirroring, patterns, revolving, cutting by a plane, holes, a few more shapes, and measuring.
+The operations of a CAD program, on bodies that are fields: turning, mirroring, patterns, revolving, cutting by a plane, holes (simple, counterbored, countersunk,
+tapped, with the sizes of the screws), a few more shapes, and measuring.
 
     from fieldes import *
 
@@ -3857,13 +3843,16 @@ The operations of a CAD program, on bodies that are fields: turning, mirroring, 
     ring = circular_pattern(blade, count=6, axis=(0, 0, 1), center=(0, 0, 0))     # six blades round an axis
     wheel = revolve(profile, angle=270, axis_point=(0, 0), axis_direction=(0, 1))   # a 2D profile revolved about a line of its plane
     top, bottom = split(block, normal=(0, 0, 1), point=(0, 0, 5))           # a body cut by a plane into its two sides
-    plate = hole(plate, position=(10, 10, 4), diameter=5, kind='countersink', head_diameter=10)     # a hole from the top face down
+    plate = hole(plate, position=(10, 10, 4), screw='M6', kind='counterbore')      # a hole for an M6 socket head screw, from the top face down
+    tapped = hole(plate, position=(30, 10, 4), screw='M6', kind='tapped', modeled=True)       # an M6 thread, modelled
     part = union(capsule(3, 20), tube(8, 6, 12))                            # a capsule, a tube
     print(surface_area(part), section_area(part, (0, 0, 1), (0, 0, 5)), distance_between(a, b), interference(a, b))
 
-Every function takes plain numbers for its places, directions and angles (a point of the script, which has .x .y .z, is taken for a position) and returns a body
-that is made of the ones it was given by the fields' own arithmetic, so what comes out is a body like any other: it can be meshed, offset, shelled, exported and measured.
-Lengths are in mm and angles in degrees.
+Every function takes numbers for its places, directions, sizes and angles -- plain numbers, or var() numbers, which a gizmo or a handle drags -- (a point of the script, which
+has .x .y .z, is taken for a position) and returns a body that is made of the ones it was given by the fields' own arithmetic, so what comes out is a body like any other: it
+can be meshed, offset, shelled, exported and measured, and it is a BODY in the model tree (a 3D shape, with a gizmo; `slot` is a 2D shape).  The shapes made here -- capsule, tube,
+slot, threaded_rod -- are drag adjustable like the primitives: each is made of numbers that stand for ONE face, so the handles pull a face each (see "More shapes").  Lengths are in mm and angles in degrees.
+A count is a whole number, and so is a direction that a hole is drilled in (a number, not a var()).
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -3876,12 +3865,14 @@ high sides, 'center' their middles, 'above' puts the body on the high side of `t
 
 ### `capsule(radius, height, base=(0, 0, 0))`
 
-A cylinder with a hemisphere on each end, standing along z on `base`: `height` is the whole length, so it is at least twice the radius
+A cylinder with a hemisphere on each end, standing along z on `base`: `height` is the whole length, so it is at least twice the radius.  A body: the distance to its
+surface is exact.  Its handles are its radius (the side) and the heights of its two ends
 
 ### `circular_pattern(shape, count, axis=(0, 0, 1), center=(0, 0, 0), angle=360.0)`
 
-`count` copies of the body round the line through `center` with the direction `axis`, as one body.  With the whole turn (`angle` 360, the default) the copies
-are evenly spread and the last one is not on the first; with less, the first is where the body is and the last `angle` degrees from it
+`count` copies of the body round the line through `center` with the direction `axis`, as one body: the union of the copies, which is exact everywhere.  With the whole
+turn (`angle` 360, the default) the copies are evenly spread and the last one is not on the first; with less (a number, or a var(), which always means this), the first
+is where the body is and the last `angle` degrees from it
 
 ### `cut_plane(shape, normal=(0, 0, 1), point=(0, 0, 0), keep='above')`
 
@@ -3891,21 +3882,27 @@ on the other side (`keep='below'`)
 ### `distance_between(a, b, element_size=None)`
 
 The shortest distance (mm) between the surfaces of two bodies, 0 when they touch or overlap.  The surface of each is meshed (the default size is a fortieth of the longest
-side of the two) and the closest pair of vertices is found; then that pair is improved by going from one surface to the other along the gradient of the field (the way to the nearest
-point of a surface that is a distance field, which is exact for a plane and a sphere), until the distance stops getting shorter.  It takes seconds for two bodies with
-a hundred thousand vertices between them
+side of the two); the closest pairs of vertices in up to eight different places are found, and each is improved by going from one surface to the other along the gradient of the
+field (the way to the nearest point of a surface that is a distance field, which is exact for a plane and a sphere), until the distance stops getting shorter; the shortest
+of them is the distance.  So a body that comes near the other in several places is measured at each, and not only at the place whose vertices happen to be closest.  It takes
+seconds for two bodies with a hundred thousand vertices between them
 
-### `hole(body, position, diameter, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0)`
+### `hole(body, position, diameter=None, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0, screw=None, fit='medium', pitch=None, thread_depth=None, modeled=False, hand='right')`
 
 The body with a hole in it: it starts on the surface at `position` and goes `depth` into the body along `direction` (the default goes down; through everything
-when `depth` is None), `diameter` wide; `kind` 'counterbore' or 'countersink' adds the step or the cone at the mouth (see hole_cutter)
+when `depth` is None), `diameter` wide, or the size of the screw: `hole(plate, (10, 10, 4), screw='M6', kind='counterbore')`.  `kind` is 'simple', 'counterbore',
+'countersink' or 'tapped' (see hole_cutter, which says it all)
 
-### `hole_cutter(position, diameter, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0)`
+### `hole_cutter(position, diameter=None, depth=None, direction=(0, 0, -1), kind='simple', head_diameter=None, head_depth=None, angle=90.0, screw=None, fit='medium', pitch=None, thread_depth=None, modeled=False, hand='right')`
 
 The shape of a hole, to subtract from a body (hole does that): it starts on the surface at `position` and goes `depth` into the body along `direction` (through
 everything when `depth` is None), `diameter` wide.  `kind` is 'simple', 'counterbore' (a wider, flat-bottomed step at the mouth: `head_diameter` across,
-`head_depth` deep) or 'countersink' (a cone at the mouth that opens to `head_diameter` at the surface, `angle` degrees across: 90 for a metric screw).  Use it for
-a pattern of holes: union the cutters, subtract the union once
+`head_depth` deep), 'countersink' (a cone at the mouth that opens to `head_diameter` at the surface, `angle` degrees across: 90 for a metric screw) or 'tapped'
+(the hole of a thread).  `screw='M6'` gives the sizes from the screw: the clearance hole for it (`fit` 'medium' or 'close'; for a tapped hole the tap drill), and for a
+counterbore or a countersink the head's room (a socket head and 1 mm, 0.5 mm deeper than it; a flat head) -- anything given as well is used instead.  A tapped hole is the tap
+drill alone (what a drawing shows as a cosmetic thread), or with `modeled=True` the thread itself, an ISO profile of right-hand turns (`hand='left'`) over `thread_depth`
+(default the depth of the hole, else three diameters); a thread wants a fine mesh to draw (a pitch every 8 cells at least).  `position`, `diameter`, `depth` and the head sizes may be
+var() numbers; `direction` is a number.  Use the cutter for a pattern of holes: union the cutters, subtract the union once
 
 ### `interference(a, b)`
 
@@ -3913,28 +3910,39 @@ The volume (mm^3) that two bodies have in common, by sampling (about 1 % off for
 
 ### `linear_pattern(shape, count, step)`
 
-`count` copies of the body in a row, the first where the body is and each one `step` (x, y, z) from the one before, as one body
+`count` copies of the body in a row, the first where the body is and each one `step` (x, y, z) from the one before, as one body: the union of the copies, which is exact
+everywhere.  `step` may be var() numbers
 
 ### `mirror(shape, normal=(1, 0, 0), point=(0, 0, 0))`
 
 The body and its mirror image in the plane through `point` that is square to `normal`, as one body (a part that is made on one side of its plane of symmetry,
-then mirrored).  Where the body crosses the plane the two halves fuse
+then mirrored).  Where the body crosses the plane the two halves fuse.  A plain operation, a finished body with no link to the original -- a symmetry
+(symmetry_planes) is the live version, whose images follow every edit
 
 ### `reflect(shape, normal=(1, 0, 0), point=(0, 0, 0))`
 
-The mirror image of the body in the plane through `point` that is square to `normal`: the body itself is gone, only its image is left.  (mirror keeps both)
+The mirror image of the body in the plane through `point` that is square to `normal`: the body itself is gone, only its image is left.  (mirror keeps both.)
+It is a plain operation on one body, with no link to it: for an image that follows the original as you edit it, use a symmetry (symmetry_planes, Shift+S)
 
 ### `revolve(profile, angle=360.0, axis_point=(0, 0), axis_direction=(0, 1))`
 
 The body that a 2D profile makes by turning about a line in its own plane (the plane of x and y: the profile is what a 2D shape is at z = 0).  The line goes through
-`axis_point` (x, y) and has the direction `axis_direction` (x, y); with the default it is the y axis.  `angle` is how far it turns, 360 for a body of revolution.
-With less than the whole turn the profile must lie on the right of the axis (seen along its direction: x > 0 for the y axis), and it turns from the plane of the
-profile toward z.  revolve_y is this for the whole turn about a line parallel to y
+`axis_point` (x, y) and has the direction `axis_direction` (x, y); with the default it is the y axis.  `angle` is how far it turns, 360 for a body of revolution; with
+less, the part of the profile on the right of the axis (seen along its direction: x > 0 for the y axis) turns from the plane of the profile toward +z, and the part on
+the left turns the same way round the axis (so toward -z): a profile may lie on either side, or on both.  The angle, the point and the profile's numbers may be var()
+(a var() angle always makes a turn that stops at the angle, 360 included).  revolve_y is this for the whole turn about a line parallel to y
 
 ### `rotate(shape, axis=(0, 0, 1), angle=0.0, center=(0, 0, 0))`
 
 The body turned by `angle` degrees about the line through `center` with the direction `axis` (the right-hand rule: the thumb along the axis, the fingers the
-way it turns).  rotate_x, rotate_y and rotate_z are this about an axis of the coordinates, in radians
+way it turns).  rotate_x, rotate_y and rotate_z are this about an axis of the coordinates, in radians.  Each number may be a var()
+
+### `screw_spec(screw, pitch=None)`
+
+What a metric screw ('M6') asks of the holes for it, in mm, as a dictionary: diameter, pitch, tap_drill (the hole a thread is cut in: the nominal diameter less the pitch),
+minor_diameter (of the thread in the nut: 1.0825 pitches less than the nominal), clearance_close and clearance_medium (the hole the screw passes through, ISO 273),
+head_diameter and head_height (a socket head cap screw, ISO 4762) and countersink_diameter (a 90 degree flat head: 2.24 times the nominal plus 0.4).  `pitch` says a
+fine thread (M8 with pitch 1): the tap drill and the minor diameter follow it
 
 ### `section_area(shape, normal=(0, 0, 1), point=(0, 0, 0), resolution=300)`
 
@@ -3944,7 +3952,8 @@ of the section: about 0.5 % off for 300
 ### `slot(length, width, center=(0, 0))`
 
 A 2D slot (an obround: a rectangle with a half circle on each short end), `length` long in x and `width` across, about `center` (x, y); `length` is the whole length,
-so it is at least the width.  Extrude it for a slot in a plate
+so it is at least the width.  Extrude it for a slot in a plate.  Its handles are its four sides: an end pulled makes it longer and keeps the round end, a long side pulled makes it
+wider and keeps both ends round
 
 ### `split(shape, normal=(0, 0, 1), point=(0, 0, 0))`
 
@@ -3955,9 +3964,241 @@ The body cut in two by the plane through `point` that is square to `normal`: (th
 The area of the surface of a body (mm^2), from a mesh of triangles on its surface: with the default size (a fortieth of the body's longest side) a sphere's is
 about 1 % low, and a finer `element_size` (mm) is closer.  A mesh of this kind cuts the corners of curves, so the area is always a little low
 
+### `threaded_rod(screw, length, base=(0, 0, 0), pitch=None, hand='right')`
+
+A rod with a right-hand ISO thread (`hand='left'` for a left-hand one) along its whole length, standing along z on `base`: the screw (`screw='M8'`, `pitch` for a fine one) is the
+nominal diameter, the thread has the ISO profile (the root at the diameter 1.2269 pitches under the nominal).  It fits the hole of hole(..., kind='tapped', modeled=True) of the
+same screw.  Its handles pull its two ends.  Like a thread, it wants a fine mesh to draw
+
 ### `tube(outer_radius, inner_radius, height, base=(0, 0, 0))`
 
-A hollow cylinder (a pipe), standing along z on `base`: `outer_radius` and `inner_radius` are its two radii
+A hollow cylinder (a pipe), standing along z on `base`: `outer_radius` and `inner_radius` are its two radii.  Its handles are its outer wall, its bore and its two ends
+
+## Solvers of your own
+
+Your own solvers: write the equations of a problem in Python, and FielDes meshes the part, runs them, and draws the result.
+
+    from fieldes import *
+
+    plate = box((0, 0, 0), (60, 20, 3))
+    cold = box((-1, -1, -1), (1, 21, 4))                    # where the plate is held at 20 degrees
+    hot = box((59, -1, -1), (61, 21, 4))                    # and where it is at 80
+
+    result = solve('heat', plate, fixed=[(cold, 20), (hot, 80)], conductivity=0.2)
+    result                                                  # displayed: the temperature of the plate, with the elements behind it (the Elements button)
+    print(result.max_temperature)
+
+`solve(name, part, element_size=None, **parameters)` meshes `part` with tetrahedra (`mesh_volume`, `element_size` as there; or give it a mesh you made), makes a `Problem` of the
+mesh and calls the solver `name` with the problem and the parameters.  The solver gives back the fields it found -- one number at every node of the mesh -- and, if it likes,
+some numbers.  The result is displayed like the result of any analysis: coloured by the field, with the mesh behind it.
+
+A solver is a function with a decorator, in a file of the solvers folder (Settings > Solver... opens it, and edits the files):
+
+    from fieldes.stdlib.solvers import solver, Sparse, tet_gradients
+
+    @solver('heat', description='Steady heat conduction',
+            equation='div(conductivity * grad(T)) + source = 0')
+    def heat(problem, fixed=(), conductivity=1.0, source=0.0):
+        K = Sparse(len(problem.nodes))
+        load = [0.0] * len(problem.nodes)
+        for tet in problem.tets:
+            volume, g = tet_gradients(*[problem.nodes[i] for i in tet])
+            for a in range(4):
+                load[tet[a]] += source * volume / 4.0
+                for b in range(4):
+                    K.add(tet[a], tet[b], conductivity * volume * (g[a][0] * g[b][0] + g[a][1] * g[b][1] + g[a][2] * g[b][2]))
+        values = {}
+        for region, value in fixed:
+            for i in problem.nodes_in(region):
+                values[i] = value
+        return {'temperature': K.solve(load, values)}
+
+What a solver is given:
+
+    problem.nodes           [(x, y, z), ...]: every node of the mesh
+    problem.tets            [(a, b, c, d), ...]: the nodes of every tetrahedron
+    problem.nodes_in(region)    the nodes that lie in a body, on a surface selection or on a field that is at most zero there (`tolerance=` mm beyond it)
+    problem.boundary_nodes()    the nodes on the surface of the part
+    problem.element_size    about how large an element is, mm
+    problem.mesh, problem.body, problem.parameters
+
+The tools it can use (they are plain Python: nothing here needs a library that is not there):
+
+    tet_gradients(p0, p1, p2, p3)       the volume of a tetrahedron and the gradients of its four linear shape functions
+    Sparse(n)                           a matrix of n rows: .add(i, j, value), .multiply(x), .solve(b, fixed={node: value}) -- conjugate gradients, with the fixed nodes taken out
+
+What it gives back: a dictionary of fields `{'temperature': [one number for each node]}`, or `(fields, numbers)` with `numbers = {'max_temperature': 80.0}`.  Both are the result's: a field is
+`result.fields['temperature']` and `result.temperature`; a number is `result.max_temperature`.  The solver `heat` here is the one the example is written for: copy it, change its
+equation -- the conductivity as a function of the temperature, a source that depends on where it is -- and it is yours: `conductivity` and `source` may be functions
+`f(T, x, y, z)`, and the temperature is then found by iterating (see below).  The solver `elasticity` is the equations of the static analysis in Python
+(`solve('elasticity', part, fixed=[(face, (0, 0, 0))], forces=[(end, (0, 0, -500))], young=210000)`): `young` may be a function of the strain, `gravity` a body force; copy it
+to change the law of the material, the loads, or the equations themselves.
+
+It is Python, so it is as slow as Python is: a mesh of a few thousand nodes is a second or two, a hundred thousand is not for this.  The analyses FielDes has built in -- static, modal,
+thermal, fluid -- are made in C++ and are for that.
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `Problem`
+
+What a solver is given (see the module): the mesh as lists, and the ways to find the nodes of a region
+
+#### `Problem.boundary_nodes(self)`
+
+The nodes on the surface of the part
+
+#### `Problem.nodes_in(self, region, tolerance=None)`
+
+The nodes that lie in `region` -- a body, a surface selection, or a field that is at most zero there -- or within `tolerance` mm of it (default a twentieth of an element)
+
+#### `Problem.per_tet(self, values)`
+
+The mean of a nodal field over each tetrahedron
+
+### `SolverResult`
+
+What `solve` gives back: `fields` (a number for each node, by name) and `numbers`, each also an attribute by its name (`result.temperature`, `result.max_temperature`)
+
+### `Sparse`
+
+A square matrix of n rows that is mostly zeros: .add(i, j, value) puts a number in (it adds to what is there), .multiply(x) is the matrix times a list, and .solve(b, fixed) finds
+x with A x = b for a symmetric matrix, with some of the x given -- `fixed` is {index: value} -- by conjugate gradients
+
+#### `Sparse.add(self, i, j, value)`
+
+*(no description yet)*
+
+#### `Sparse.multiply(self, x)`
+
+*(no description yet)*
+
+#### `Sparse.solve(self, b, fixed=None, tolerance=1e-09, iterations=None)`
+
+x with A x = b, and x[i] = value for every i in `fixed`: the unknowns are the others, which conjugate gradients with a diagonal preconditioner finds (the matrix is symmetric
+and positive definite once enough nodes are fixed)
+
+### `elasticity(problem, fixed=(), forces=(), young=210000.0, poisson=0.3, gravity=None, density=7.85e-09, iterations=20)`
+
+Static elasticity with small strains, linear tetrahedra.  fixed=[(region, (ux, uy, uz)), ...]: where the displacement is given (mm; None for a direction that is free, a single
+number for all three).  forces=[(region, (fx, fy, fz)), ...]: the total force (N) on a region, shared by the area of the surface it is on.  young (MPa): a number, or a function
+f(equivalent_strain, x, y, z) -- the stiffness of the material where the strain is that, found by iterating (the secant modulus: the stiffness of the last iteration is the
+next one's).  poisson.  gravity=(gx, gy, gz) in mm/s2 with density in t/mm3 (steel 7.85e-9).  Gives the fields von_mises (MPa), displacement (mm) and ux, uy, uz, and the numbers
+max_von_mises and max_displacement
+
+### `heat(problem, fixed=(), conductivity=1.0, source=0.0, iterations=25)`
+
+Steady heat conduction.  fixed=[(region, temperature), ...]: where the temperature is given.  conductivity (W/mm/K) and source (W/mm3): a number, or a function f(T, x, y, z) of the
+temperature and the place -- then the temperature is found by iterating: the conductivity of the last one is the next one's, until the temperature stops changing
+
+### `solve(name, part, element_size=None, **parameters)`
+
+Runs the solver `name` on `part` (see the module): the part is meshed with tetrahedra -- `element_size` as in mesh_volume, or give `part` as a mesh you made -- and the
+solver is called with the problem and `parameters`.  Returns a SolverResult
+
+### `solver(name, description='', equation='')`
+
+A decorator: the function is the solver `name` -- `solve(name, part, ...)` runs it.  `description` is a line about it, `equation` the equations it solves, in a line of Python, for
+the list of solvers (Settings > Solver...)
+
+### `solver_names()`
+
+The names of the solvers `solve` can run: the ones in this module and the ones of the solvers folder
+
+### `tet_gradients(p0, p1, p2, p3)`
+
+(volume, [g0, g1, g2, g3]) of the tetrahedron with these corners: the gradients of the four linear shape functions (each is 1 at its corner and 0 at the others)
+
+## Units
+
+Units: what the program shows its numbers in, and what the files it writes are in.
+
+A script and the solvers have ONE set of units and Settings > Units does not change it: lengths in millimetres, forces in newtons, stresses and pressures in
+megapascals, masses in kilograms, temperatures in degrees Celsius (so that a script means the same on every machine).  The choice made there is about the
+other side of the numbers:
+
+    shown      the ruler, the key numbers of a result and its colour bars, the value under the cursor, the work plane and the radius of a surface selection
+    written    export_mesh() and Mesh.export() write their coordinates in the length unit (`scale=` of Mesh.export and `unit=` of export_mesh override it);
+               the formats that state their unit (3MF, DXF, FBX) say it
+    read       a mesh file that does not say what its numbers mean (STL, OBJ, PLY, OFF) is read in the length unit, unless import_model(..., file_units=...)
+               says otherwise
+
+Files of the analyses (export_fea, export_results, export_field) stay in millimetres, newtons and megapascals: a solver reads a consistent set, and the
+file says nothing about its units.  The key numbers of export_results(..., '.txt') are in the shown units, each with its unit written next to it.
+
+    from fieldes import units
+    units.configure({'length': 'in', 'stress': 'psi'})     # the rest stay at their defaults
+    units.convert(25.4, 'mm')                              # (1.0, 'in')
+    units.convert(6.894757, 'MPa')                         # (1000.0, 'psi')
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this file,
+You can obtain one at http://mozilla.org/MPL/2.0/.
+
+### `check_length(unit)`
+
+A name of a length unit; raises ValueError when it is not one
+
+### `configure(choice=None)`
+
+Chooses the units numbers are shown and files are written in.  Whatever `choice` leaves out is its default (so configure() resets).
+Raises ValueError for a quantity or a unit that is not known.  Returns the choice
+
+### `conversion(native)`
+
+How a number in a unit the program works in is shown now: (scale, offset, label) -- shown = number * scale + offset -- or None for a unit that is
+not converted (a count, a time, a frequency).  The units that are converted are those of NATIVE: lengths (mm, mm^2, mm^3, mm/s, mm^3/s), stress and
+pressure (MPa), force (N), the product of force and length (N mm), mass (kg) and temperature (C)
+
+### `convert(value, native)`
+
+(the number as it is shown, the unit as it is shown) for a number in a unit the program works in; the number itself for a unit that is not converted
+
+### `convert_text(text, native)`
+
+The same for a number written as text -- '12.5', or '(1, 2, 3)' for a vector --: (text, unit) as they are shown.  A text that is no number stays as it is,
+with its own unit
+
+### `current()`
+
+The units chosen: {'length': 'mm', 'force': 'N', 'stress': 'MPa', 'mass': 'kg', 'temperature': 'C'}
+
+### `dxf_unit(unit)`
+
+The $INSUNITS code of a DXF file for a length unit (4 millimetres, 1 inches ...)
+
+### `export_scale()`
+
+The factor the coordinates of a file are multiplied by to be in the length unit chosen: 1 for millimetres, 0.001 for metres
+
+### `export_unit()`
+
+The name of the length unit files are written in (the one chosen)
+
+### `import_mm()`
+
+Millimetres in the unit a mesh file is read in when it does not say (the length unit chosen)
+
+### `length_mm()`
+
+Millimetres in one unit of the length chosen
+
+### `options()`
+
+What can be chosen: {quantity: [(name, how it is shown)]} -- the order is the order of the menus
+
+### `shown_name(unit)`
+
+A unit as it is written on a screen: um is the micrometre sign, C and F carry a degree sign
+
+### `table()`
+
+conversion() of every unit of NATIVE, as {unit: {'scale', 'offset', 'label'}}: what the window is given to convert what it draws
+
+### `threemf_unit(unit)`
+
+What a 3MF file calls a length unit ('millimeter', 'inch' ...)
 
 ## Parametric optimization
 
@@ -4751,7 +4992,7 @@ again (see the module).  Every shape is kept by default; `render_cache(shape, Fa
 `render_cache(shape)` keeps it however quickly it was meshed.  Returns the shape itself in every
 other way: it keeps its bounds, handles, colours and exact regions.
 
-Write it as the last line of a shape's definition, after gizmo() and handles():
+Write it as the last line of a shape's definition, after its placement and handles():
 
     part = render_cache(part)
 
@@ -4922,7 +5163,7 @@ locked -- drag by their gizmo and their handles.  Write it as a statement of its
 
 `models` is a dict of name -> model (the name is drawn over the model, in the style of the labels of boundary conditions), or a list of
 models (no names); the models after it (`more`) are shown without a name.  A condition (`force(...)`, `fixed(...)`) is a model: it is
-drawn on the body as in the editor.  Whatever a model has numbers to drag -- `gizmo()`, `handles()`, `var()` -- the person can drag,
+drawn on the body as in the editor.  Whatever a model has numbers to drag -- the `position`, `rotation` and `scale` of its call, `handles()`, `var()` -- the person can drag,
 unless it is `lock()`ed: click a model to select it and its gizmo shows; there is no model tree and no menu.  A model that is dragged
 writes its new numbers into the script the app runs, which runs again for the picture (with app.running() False), and the numbers are
 there when Run is pressed.  A point is its dot: always drawn, click it to select it.  A **field** among them has an icon (with its name over it) at the place of the object it

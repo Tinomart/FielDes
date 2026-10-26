@@ -42,11 +42,8 @@ mirror = symmetry_planes(
     axis=(0, 0, 1),
     first=(0, 1, 0),
     copies=3,
-)
-mirror = gizmo(
-    mirror,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
 )
 mirror
 
@@ -56,43 +53,33 @@ top
 
 # One leg.  Its path is a spline of five points, drawn with the symmetry off: the leg is swept along it, and the images of the leg bring it along.  The scale of a point
 # (the gold ring) is how thick the leg is there.
-leg_path_p1 = point(14.9, 30.6, 0)
-leg_path_p1 = gizmo(
-    leg_path_p1,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_path_p1 = point(14.9, 30.6, 0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_path_p1
-leg_path_p2 = point(14.8, 23.7, 6)
-leg_path_p2 = gizmo(
-    leg_path_p2,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_path_p2 = point(14.8, 23.7, 6,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(0.65), var(0.65), var(0.65)),
 )
 leg_path_p2
-leg_path_p3 = point(17.9, 22.9, 15)
-leg_path_p3 = gizmo(
-    leg_path_p3,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_path_p3 = point(17.9, 22.9, 15,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(0.9), var(0.9), var(0.9)),
 )
 leg_path_p3
-leg_path_p4 = point(17.4, 18, 27)
-leg_path_p4 = gizmo(
-    leg_path_p4,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_path_p4 = point(17.4, 18, 27,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1.2), var(1.2), var(1.2)),
 )
 leg_path_p4
-leg_path_p5 = point(14.3, 12.5, 35.5)
-leg_path_p5 = gizmo(
-    leg_path_p5,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_path_p5 = point(14.3, 12.5, 35.5,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1.3), var(1.3), var(1.3)),
 )
 leg_path_p5
@@ -104,35 +91,27 @@ leg_path
 
 # The profile of the leg: a profile of four spline points, an oval round the foot of the path.  The sweep starts at the profile: the first point of the path is put at the
 # middle of it, so the profile is where the leg stands.
-leg_profile_p1 = point(18.5, 30.6, 0)
-leg_profile_p1 = gizmo(
-    leg_profile_p1,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_profile_p1 = point(18.5, 30.6, 0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p1
-leg_profile_p2 = point(14.9, 33.4, 0)
-leg_profile_p2 = gizmo(
-    leg_profile_p2,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_profile_p2 = point(14.9, 33.4, 0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p2
-leg_profile_p3 = point(11.3, 30.6, 0)
-leg_profile_p3 = gizmo(
-    leg_profile_p3,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_profile_p3 = point(11.3, 30.6, 0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p3
-leg_profile_p4 = point(14.9, 27.8, 0)
-leg_profile_p4 = gizmo(
-    leg_profile_p4,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+leg_profile_p4 = point(14.9, 27.8, 0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg_profile_p4
@@ -147,11 +126,8 @@ leg = path_extrude(
     leg_profile,
     leg_path,
     twist=0,
-)
-leg = gizmo(
-    leg,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 leg

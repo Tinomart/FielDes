@@ -18,6 +18,8 @@ class QToolButton;
 
 namespace FielDes {
 
+namespace Units { class LengthSpinBox; }
+
 /*
  *  The work plane: a plane to put points in.  It is a tool of the viewport, not a model of the script -- what is put on it is
  *  written into the script as the points' own numbers, and the plane itself is not.  While its view is open the plane is drawn
@@ -57,6 +59,8 @@ public slots:
     void setPlane(const WorkPlane& plane, float step);
     /*  Where the cursor is on the plane (empty: not on it)  */
     void setReadout(const QString& text);
+    /*  The units were changed (Settings > Units): the boxes of the step and the offset show them in the unit chosen  */
+    void refreshUnits();
 
 signals:
     void optionsChanged(bool grid, bool snap, bool snapPoints, float spacing);
@@ -82,8 +86,8 @@ protected:
     QToolButton* m_auto;
     QToolButton* m_modes[3];            // (line, spline, point: what a click puts down -- none on: not drawing)
     QLabel* m_hint = nullptr;           // (what a click does now)
-    QDoubleSpinBox* m_step;
-    QDoubleSpinBox* m_offset;
+    Units::LengthSpinBox* m_step;
+    Units::LengthSpinBox* m_offset;
     QLabel* m_info;
     QLabel* m_readout;
     bool m_collapsed = false;

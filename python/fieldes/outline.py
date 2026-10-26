@@ -50,7 +50,7 @@ _KIND_KEYS = ('model', 'result', 'type', 'shown', 'no_gizmo', 'outline', 'condit
 _NOT_MODELS = {
     'print', 'len', 'range', 'int', 'float', 'str', 'list', 'dict', 'tuple', 'set', 'sum', 'min', 'max', 'abs', 'round', 'sorted',
     'enumerate', 'zip', 'open', 'map', 'filter', 'any', 'all', 'bool', 'type', 'isinstance', 'input', 'var', 'roi', 'roi_resolution',
-    'progress', 'handles', 'gizmo', 'lock', 'render_cache', 'custom_resolution', 'export_stl', 'export_mesh', 'export_step',
+    'progress', 'handles', 'place', 'lock', 'render_cache', 'custom_resolution', 'export_stl', 'export_mesh', 'export_step',
     'export_fea', 'export_results', 'export_field', 'result_summary',
     'mass_properties', 'volume_of', 'field_range', 'find_extent', 'evaluate', 'sample_grid',
 }
@@ -309,6 +309,12 @@ def exports_of(value):
             pass
     except Exception:
         pass
+    try:
+        from fieldes.stdlib import meshing
+        if isinstance(value, meshing.Mesh):
+            out.append('meshfile')              # (a mesh made by mesh_volume or mesh_surface: Gmsh, VTK, Abaqus, Nastran, I-DEAS, STL and OBJ files)
+    except Exception:
+        pass
     return out
 
 
@@ -442,7 +448,7 @@ def finish(source, gs, out):
                             pass
                     shapes = [] if facts.get('failed') else _display_shapes(v)
                     if shapes and isinstance(v, Shape):
-                        # (the box a statement was given when it ran is the box of the shape then: the statements after it -- handles(), gizmo() --
+                        # (the box a statement was given when it ran is the box of the shape then: the statements after it -- handles(), place() --
                         # move and stretch it, and the model is what they have made of it.  A box that is kept from before would leave a model that
                         # was moved out of the render region, which is made to hold the models by it, cut off)
                         final = getattr(v, '_bounds', None)
@@ -1217,10 +1223,10 @@ def outline_json(arg):
             items.append(item)
             continue
 
-        # --- "x = gizmo(x, ...)" / "x = handles(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the shape x
+        # --- "x = place(x, ...)" / "x = handles(x, [...])" / "x = render_cache(x)" / "x = lock(x)": what edits the shape x
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name) and \
                 isinstance(stmt.value, ast.Call) and \
-                A._short_name(A._call_name(stmt.value)) in ('gizmo', 'handles', 'render_cache', 'lock', 'custom_resolution') and \
+                A._short_name(A._call_name(stmt.value)) in ('place', 'handles', 'render_cache', 'lock', 'custom_resolution') and \
                 stmt.value.args and isinstance(stmt.value.args[0], ast.Name) and \
                 stmt.value.args[0].id == stmt.targets[0].id and stmt.targets[0].id in by_name:
             target = by_name[stmt.targets[0].id]
@@ -1254,18 +1260,9 @@ def outline_json(arg):
                 target['handles'] = {'line': line, 'end_line': end, 'call': A._span(stmt.value), 'text': A._short(src.segment(stmt), 60)}
                 target['has_var'] = True
                 continue
-            mode, mode_span = None, None
-            for kw in stmt.value.keywords:
-                if kw.arg == 'mode' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                    mode, mode_span = kw.value.value, A._span(kw.value)
-            if mode not in ('click', 'never', 'always'):
-                mode = 'click'
-            target['gizmo'] = {
-                'line': line, 'end_line': end, 'mode': mode, 'mode_span': mode_span,
-                'call': A._span(stmt.value), 'text': src.segment(stmt),
-                'has_scale': any(kw.arg == 'scale' for kw in stmt.value.keywords),
-                'has_numbers': any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'var'
-                                   for n in ast.walk(stmt.value))}
+            # (`place(x, position=..., ...)`: the placement of a model that is not made by a call that takes the arguments -- a part of an import, a sum, a name for another)
+            target['placement'] = A._placement_statement(stmt, src)
+            target['gizmo'] = target['placement']           # (the statement of the placement, like handles, lock and render_cache: its lines go with the model's)
             continue
 
         # --- assignments of models (and of parts taken from an import list)
@@ -1306,6 +1303,12 @@ def outline_json(arg):
                         item['min_inputs'] = A._min_inputs(ns.get(callee))
                     item['slots'] = A._call_slots(stmt.value, ns, src)
                     item['args'] = A._args_of(stmt.value, ns, by_name, src)
+                    # (position, rotation, scale and alpha in the call; a `place` statement after it replaces this.  Only a name that is made by the call alone has them in it: not `a, b = f()`
+                    # nor `a = b = f()`)
+                    if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                        item['placement'] = A._placement_of(stmt.value, ns, src)
+                    else:
+                        item['placement'] = {'form': 'none', 'placeable': False, 'args': {}, 'has_numbers': False}
                     # `x = result.von_mises`: a property taken out of a model (the property drawer writes them).  It is made of the model, but does not
                     # own it: the model stays where it is, and the property row holds a reference to it
                     node = stmt.value
@@ -1418,6 +1421,11 @@ def outline_json(arg):
             item['args'] = A._args_of(stmt.value, ns, by_name, src)
             item['points'] = A._points_of(stmt.value, ns) if isinstance(stmt.value, ast.Call) else []
             item['callee'] = A._callee_name(stmt.value)
+            # placeholders: `...` written where an argument goes -- the same rows as for a statement that has a name (the statement does not run, nor does what is made from it)
+            if _holes(stmt):
+                spans = sorted(A._span(n) for n in ast.walk(stmt.value) if isinstance(n, ast.Constant) and n.value is Ellipsis)
+                item['hole'] = True
+                item['holes'] = [dict(_hole_info(stmt.value, s), span=s) for s in spans]
             glyph = _glyph_of(item['callee'], stmt.value)
             if glyph:
                 item['glyph'] = glyph
@@ -1481,12 +1489,12 @@ def outline_json(arg):
             it['mode'], it['mode_explicit'] = 'click', False
         elif 'var' in it:
             it['visible'] = 'display_line' in it
-            h = it.get('gizmo')
-            if h:
-                it['mode'], it['mode_explicit'] = h['mode'], True
-            else:
-                # (the gizmo of a profile, a polyline or a spline starts off: it is there when the tree's gizmo button, or a gizmo() line, says so)
-                it['mode'], it['mode_explicit'] = ('never' if it.get('outline') else 'click'), False
+            # (when the gizmo is shown is the state of the tree's gizmo button, not a line of the script: 'click' to start with, and for a profile, a polyline or a spline --
+            # whose gizmo is the shared one of its points -- 'never'; the application keeps what the button says)
+            it['mode'], it['mode_explicit'] = ('never' if it.get('outline') else 'click'), False
+            # The placement is always in the tree, inside the model: position, rotation, scale and alpha, the ones written as they are written and the others with their defaults
+            if it['kind'] == 'shape' and not it.get('no_gizmo') and it.get('placement') is not None:
+                it['args'] = list(it.get('args', [])) + A._placement_rows(it['placement'], it.get('type') == 'symmetry')
 
     items.sort(key=lambda it: it['line'])
     for it in items:

@@ -7,6 +7,7 @@ as published by the Free Software Foundation; either version 2
 of the License, or (at your option) any later version.
 */
 #include "fieldes/focuscue.hpp"
+#include "fieldes/popout.hpp"
 
 #include <QApplication>
 #include <QEvent>
@@ -76,7 +77,7 @@ void FocusCue::paintEvent(QPaintEvent*)
 {
     if (m_current < 0 || m_current >= m_panes.size() || !m_panes[m_current].widget) return;
     const QWidget* pane = m_panes[m_current].widget;
-    if (!pane->isVisible()) return;
+    if (!pane->isVisible() || PopOut::isFloating(pane)) return;               // (a pane in a window of its own has no place in this one)
     const QRect r(pane->mapTo(parentWidget(), QPoint(0, 0)), pane->size());
     QPainter painter(this);
     // (two pixels, inside the pane: a colour that stands out on the light editor and on the dark viewport alike, and that the tour's yellow and green are not)

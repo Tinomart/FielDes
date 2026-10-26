@@ -32,6 +32,8 @@ public:
     void draw(QMatrix4x4 M, QVector3D pos, float scale,
               QVector3D norm, QColor color);
     void initializeGL(int res=32);
+    /*  Lets go of the buffers of a graphics context that is ending (a viewport pulled out into a window of its own is given a new one)  */
+    void releaseGL() { if (vao.isCreated()) vao.destroy(); if (vbo.isCreated()) vbo.destroy(); }
 
 protected:
     QOpenGLBuffer vbo;
@@ -49,6 +51,8 @@ class Glyphs : public QOpenGLFunctions
 {
 public:
     void initializeGL();
+    /*  Lets go of the buffers of a graphics context that is ending (a viewport pulled out into a window of its own is given a new one)  */
+    void releaseGL() { if (vao.isCreated()) vao.destroy(); if (vbo.isCreated()) vbo.destroy(); }
 
     /*  An arrow of this length along `dir`; `pos` is its tip when tipAtPos, else its tail  */
     void drawArrow(const QMatrix4x4& M, QVector3D pos, float length, QVector3D dir, QColor color, bool tipAtPos);

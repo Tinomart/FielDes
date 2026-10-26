@@ -21,11 +21,9 @@ view.set_quality(8)
 
 # 1. A plate, grown more near the anchor.  The anchor is a point: anything that wants a coordinate takes it.
 plate = box((0, 0, 0), (60, 40, 6))
-anchor = point(52, 8, 6)
-anchor = gizmo(
-    anchor,
-    move=(var(0), var(-2.37372), var(0)),
-    rotate=(var(0), var(0), var(0)),
+anchor = point(52, 8, 6,
+    position=(var(0), var(-2.37372), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
 anchor
@@ -38,25 +36,21 @@ post = cylinder(10, 30, (105, 20, 0))
 block = box((80, 8, 0), (140, 32, 10))
 blend = ramp(x_field(), (80, 140), (0.5, 8.0))
 cells = ramp(x_field(), (160, 220), (16.0, 6.0))
-joined = smooth_union(post, block, blend)
-joined = handles(joined, [var(105.0), var(20.0), var(10.0), var(30.0), var(0.0), var(110.0), var(30.0), var(20.0), var(12.0), var(5.0), var(5.0), var(80.0), var(10.0)])
-joined = gizmo(
-    joined,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+joined = smooth_union(post, block, blend,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
+joined = handles(joined, [var(105.0), var(20.0), var(10.0), var(30.0), var(0.0), var(110.0), var(30.0), var(20.0), var(12.0), var(5.0), var(5.0), var(80.0), var(10.0)])
 joined
 # 3. A lattice whose cell size is a field.  Big cells where the field is large, small ones where it is small;
 #    a graded cell size blends lattices a factor of two apart, so it can change by a factor of up to 16.
 core = box((160, 0, 0), (220, 40, 30))
-foam = lattice(core, cell_periodic('gyroid'), cell_size=cells, thickness=1.0)
-foam = handles(foam, [var(0.5), var(160.0), var(1.0), var(0.5), var(1.0), var(1.0), var(0.5), var(2.0), var(1.0), var(190.0), var(30.0), var(20.0), var(20.0), var(15.0), var(15.0)])
-foam = gizmo(
-    foam,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+foam = lattice(core, cell_periodic('gyroid'), cell_size=cells, thickness=1.0,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
+foam = handles(foam, [var(0.5), var(160.0), var(1.0), var(0.5), var(1.0), var(1.0), var(0.5), var(2.0), var(1.0), var(190.0), var(30.0), var(20.0), var(20.0), var(15.0), var(15.0)])
 foam
 

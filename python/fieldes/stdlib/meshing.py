@@ -1501,8 +1501,9 @@ def _display_tets(mesh):
     return tets, owner, first
 
 
-def _display_of(mesh):
-    ''' The body coloured by a field with the cells of the mesh behind it: what a displayed Mesh is to the viewer (see interpreter.cpp: _color_fields, _fea_mesh) '''
+def _display_of(mesh, extra=None):
+    ''' The body coloured by a field with the cells of the mesh behind it: what a displayed Mesh is to the viewer (see interpreter.cpp: _color_fields, _fea_mesh).  `extra`: fields of
+        the result of a solver (see solvers.py) -- (name, label, the value of each tetrahedron as 32-bit floats, lowest, highest, mean) -- which come before the measures of the mesh '''
     from fieldes.ffi import lib as _lib
     from fieldes.shape import field_shape
     from fieldes.stdlib.fea import colored
@@ -1521,6 +1522,10 @@ def _display_of(mesh):
         if ntets > MAX_DISPLAYED:
             note = '{:,} cells: more than the {:,} that are drawn, so the elements are not shown'.format(ntets, MAX_DISPLAYED)
         else:
+            for name, label, data, lo, hi, mean in (extra or ()):
+                constant = body * 0.0 + float(mean)
+                channels.append((name, label, field_shape(_lib.libfive_tree_copy(constant.ptr)), lo, hi))
+                values.append(data)
             q = _measure(mesh, False, 150000, collect=True)
             labels = (('size', 'Element size (mm)'), ('skewness', 'Skewness (0 regular, 1 degenerate)'), ('aspect_ratio', 'Aspect ratio'),
                       ('orthogonal_quality', 'Orthogonal quality (1 best)'), ('volume_ratio', 'Volume ratio to the neighbours'))
@@ -1878,3 +1883,9 @@ def _tet_min_dihedral(P, ids):
         c_ = max(-1.0, min(1.0, normals[0][0] * normals[1][0] + normals[0][1] * normals[1][1] + normals[0][2] * normals[1][2]))
         best = min(best, math.degrees(math.acos(c_)))
     return best
+
+
+# (what the model tree and the completion write for a mesh is `mesh_volume(body)`: everything else has a default that does the usual thing -- the size from the geometry, tetrahedra,
+# the layers and zones only when they are asked for -- and nothing of it needs to be in front of somebody who wants to see a mesh and write it)
+mesh_volume._short_call = True
+mesh_surface._short_call = True

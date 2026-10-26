@@ -87,6 +87,14 @@ protected slots:
      *  what is open as they are chosen.  `applyTheme` puts the colours as they are now on everything that was made with the colours of before (the application's palette and style
      *  sheet, the editor)  */
     void openThemeDialog();
+    /*  Settings > Solver...: the analyses FielDes has built in with their equations, and the solvers of the user -- Python files that are given the mesh and give back fields  */
+    void openSolverDialog();
+    /*  Settings > Units...: the units numbers are shown in (length, force, stress, mass, temperature) and the length unit mesh files are written in.  `applyUnits` makes
+     *  fieldes.units and what draws use a choice (`persist`: and keeps it for the next run); it says whether Python took it  */
+    void openUnitsDialog();
+    /*  Help > Validation and accuracy: what every kind of analysis was checked against and the accuracy that was found (docs/validation.md, beside the program), with its sections in a list  */
+    void openValidation();
+    bool applyUnits(const QJsonObject& choice, bool persist = false);
     void applyTheme();
     /*  Help > Report a bug: opens a new issue on GitHub in the browser, filled in with the version, the system and the graphics driver; the script goes only when the user asks for it  */
     void onReportBug(bool=false);
@@ -122,6 +130,8 @@ protected slots:
 signals:
     void exportDone();
     void setAutoload(bool);
+    /*  The units numbers are shown in were changed  */
+    void unitsChanged();
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -195,6 +205,10 @@ protected:
     View* view;
     QPointer<PrimitivesDialog> m_primitivesDialog;
     QPointer<QDialog> m_themeDialog;
+    QPointer<QDialog> m_solverDialog;
+    QPointer<QDialog> m_unitsDialog;
+    QPointer<QDialog> m_validationDialog;
+    QJsonObject m_unitsState;          // (what fieldes.units answered the last time: the choice, what can be chosen, how the units are shown)
     QPointer<QAction> m_sectionToggle;                 // (View > Section view: Escape closes it when nothing else is to be left first)
     std::function<void()> m_themeRefresh;              // (the swatches of the theme dialog, made again when the colours changed from anywhere)
     Tutorial* tour=nullptr;

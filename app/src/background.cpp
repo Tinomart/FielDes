@@ -19,6 +19,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include "fieldes/background.hpp"
 
+#include <iostream>
+
 namespace FielDes {
 
 // (the viewport's backdrop: dark teal, a little lighter than the cards on it)
@@ -28,6 +30,17 @@ namespace FielDes {
 void Background::initializeGL()
 {
     initializeOpenGLFunctions();
+    build();
+}
+
+void Background::build()
+{
+    // (the buffers and the program of a context that ended are not those of this one: whatever is there is let go of first, and the program is made new)
+    if (vao.isCreated()) vao.destroy();
+    if (vbo.isCreated()) vbo.destroy();
+    delete program;
+    program = new QOpenGLShaderProgram;
+    ready = false;
 
     {
         // Data is arranged  x   y   z   r   g   b
@@ -59,25 +72,38 @@ void Background::initializeGL()
     }
 
     // (nothing but the position and the colour: no uniform, nothing to read that another draw could have left set)
-    program.addShaderFromSourceCode(QOpenGLShader::Vertex,
+    program->addShaderFromSourceCode(QOpenGLShader::Vertex,
         "#version 150\n"
         "in vec3 vertex_position;\n"
         "in vec3 vertex_color;\n"
         "out vec3 sky;\n"
         "void main() { sky = vertex_color; gl_Position = vec4(vertex_position.xy, 0.0, 1.0); }\n");
-    program.addShaderFromSourceCode(QOpenGLShader::Fragment,
+    program->addShaderFromSourceCode(QOpenGLShader::Fragment,
         "#version 150\n"
         "in vec3 sky;\n"
         "out vec4 fragColor;\n"
         "void main() { fragColor = vec4(sky, 1.0); }\n");
-    program.bindAttributeLocation("vertex_position", 0);
-    program.bindAttributeLocation("vertex_color", 1);
-    ready = program.link();
+    program->bindAttributeLocation("vertex_position", 0);
+    program->bindAttributeLocation("vertex_color", 1);
+    ready = program->link();
+    if (!ready) std::cerr << "[background] the backdrop's program did not link: " << program->log().toStdString() << std::endl;
 }
 
 void Background::draw()
 {
-    if (!ready) return;
+    if (!ready)
+    {
+        if (failed) return;
+        // (the graphics context was replaced -- the viewport was pulled out into a window of its own or put back -- and nothing made the backdrop again for this one: it is made now, in the context that is drawing)
+        std::cerr << "[background] made again at the draw" << std::endl;
+        initializeOpenGLFunctions();
+        build();
+        if (!ready)
+        {
+            failed = true;
+            return;
+        }
+    }
     // (the state a quad over the whole of the view needs, set here and not taken from whatever the last draw left)
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -86,11 +112,11 @@ void Background::draw()
     glDisable(GL_STENCIL_TEST);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-    program.bind();
+    program->bind();
     vao.bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     vao.release();
-    program.release();
+    program->release();
 }
 
 }   // namespace FielDes

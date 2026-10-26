@@ -2,9 +2,13 @@
 # faces, rounded corners and edges).  About one minute to draw.
 # Six groups of models, one under the other (y = -120 to +210).  Open the file (File > Open, or drag it onto the window), turn the view a little (Shift + left drag) and look at each group: WHAT TO DO, WHAT YOU MUST SEE.
 #
-#  A  SNAP (y = -20 .. 20).  WHAT TO DO: nothing; read `snapped = snap(bracket, foot_face, foot, top_face, hole)`: the bracket, by the face and the point of its foot, onto the plate by the face and the point `hole`.
-#     YOU MUST SEE: the grey plate with two brackets on it -- one standing on its foot on the point (0, 0, 0), one lying on its side on the point (10, 10, 0) -- each touching the plate and not
-#     entering it, and the bracket of the script, unmoved, at the right of the plate.
+#  A  SNAP (y = -20 .. 20).  WHAT TO DO: in the model tree select `foot_face`, then `foot`, then `top_face`, then `hole` (Ctrl+click, in this order: the face and the corner of the bracket, then the face of
+#     the plate and a point of the scene) and press S.  YOU MUST SEE: no new model and no hidden body -- the call `bracket = box(...)` gets `position=(var(...), ...)` and `rotation=(var(...), ...)` (and a scale), the
+#     bracket at the right is carried onto the plate at once (no new calculation: it is the same mesh, displaced), standing on its foot with its corner on `hole`, and one Ctrl+Z puts it back.  The places `foot_face` and
+#     `foot` were made at are moved with it (their `seed=` and the place of `corner_at` change in the same edit), so they are still on the bracket.  Then, with the bracket where it is now, select `side_face`, `side_corner`,
+#     `top_face`, `hole_2` and press S again: the bracket now lies on its side with its corner on `hole_2`, its numbers rewritten on top of the first move.  Already in the script, for you to compare with: the grey plate
+#     with two brackets on it -- `bracket_on_foot` (its corner on the point (-15, -10, 0)) and `bracket_on_side` (lying on its side, its corner on the point (0, 10, 0)) -- written as S writes them; each touches the
+#     plate and does not enter it.  The unmoved `bracket` stands at the right of the plate.
 #
 #  B  CORNERS AND EDGES (y = 60 .. 98).  WHAT TO DO: right-click the block near its upper right corner, then near the middle of one of its top edges, then the top rim of the cylinder (the peg); the sphere and a flat
 #     face of the block as well.  YOU MUST SEE: at the corner "Point at the corner"; at the edge "Point on the edge" and "Line along the edge"; at the rim "Point on the edge" and "Point at the centre of the circle" (a circle is
@@ -29,8 +33,8 @@
 #     front upper corner (x = 110, y = 170), then in the middle of its upper front edge.  YOU MUST SEE: on the top face "Point at the centre of this face" and nothing else; at the rim of the bottom also "Point at the
 #     centre of the circle"; at the corner "Point at the rounded corner"; on the edge "Point on the rounded edge".  The dots already in the script: `drum_middle` at the middle of the drum's bottom circle,
 #     `funnel_middle` at the middle of the cone's base, `face_dot` at the middle of the drum's top, `soft_corner` and `soft_edge` on the SHARP corner and edge that the rounding replaced (just outside the block).
-#     The cone `under` hangs below the drum, apex down, on its axis, its base against the drum's bottom: it is the cone at the right (`funnel`) moved by
-#     `snap(funnel, funnel_base, funnel_middle, drum_bottom, drum_middle)`.
+#     The cone `under` hangs below the drum, apex down, on its axis, its base against the drum's bottom: it is what S writes for the cone at the right (`funnel`) when you select `funnel_base`, `funnel_middle`,
+#     `drum_bottom` and `drum_middle` in this order -- try it on `funnel`: its call gets `position=` and `rotation=`, nothing else is made, and `funnel` goes under the drum where `under` already is.
 from fieldes import *
 
 view.set_bounds([-45, -135, -25], [115, 215, 45], auto_scale=False)
@@ -46,14 +50,15 @@ bracket
 top_face = select_surface(plate, seed=(0, 0, 0), angle=10)
 foot_face = select_surface(bracket, seed=(35, 0, -5), angle=10)
 side_face = select_surface(bracket, seed=(40, 0, 2), angle=10)
-hole = point(0, 0, 0)
-hole_2 = point(10, 10, 0)
-foot = point(35, 0, -5)
-side_point = point(40, 0, 2)
-snapped = snap(bracket, foot_face, foot, top_face, hole)
-snapped
-snapped_2 = snap(bracket, side_face, side_point, top_face, hole_2)
-snapped_2
+foot = corner_at(bracket, (30, -5, -5))
+side_corner = corner_at(bracket, (40, 5, -5))
+hole = point(-15, -10, 0)
+hole_2 = point(0, 10, 0)
+# what S writes for these two snaps, on two copies of the bracket (the bracket's own call is only given position= and rotation=; nothing else is made)
+bracket_on_foot = box((30, -5, -5), (40, 5, 10), position=(var(-45), var(-5), var(5)), rotation=(var(0), var(0), var(0)))
+bracket_on_foot
+bracket_on_side = box((30, -5, -5), (40, 5, 10), position=(var(-27.5), var(5), var(2.5)), rotation=(var(0), var(-90), var(0)))
+bracket_on_side
 
 # B -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 block = box((0, 60, 0), (20, 80, 20))
@@ -110,7 +115,7 @@ funnel_middle = circle_center_at(funnel, (55, 190, 0))
 funnel_middle
 face_dot = face_center(select_surface(drum, seed=(0, 190, 30), angle=10))
 face_dot
-under = snap(funnel, funnel_base, funnel_middle, drum_bottom, drum_middle)
+under = cone(15, 30, (40, 190, 0), position=(var(-40), var(0), var(-20)), rotation=(var(0), var(180), var(0)))
 under
 soft = rounded_box((70, 170, 0), (110, 210, 40), 0.25)
 soft

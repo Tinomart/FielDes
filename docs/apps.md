@@ -113,7 +113,7 @@ app.viewport({'Beam': body, 'Load point': pull}, support, load)
   mouse works as in the editor (rotate, pan, zoom, the standard views of the triad).
 - **The names** are drawn over the models, in the style of the labels of boundary conditions (a small card, over the top of the model; over a point, over its dot).
   `labels=False` leaves them out.
-- **Dragging.** Click a model to select it: its gizmo shows, and its surfaces can be pulled as in the editor, **if the model has numbers to drag** -- `gizmo(...)`,
+- **Dragging.** Click a model to select it: its gizmo shows, and its surfaces can be pulled as in the editor, **if the model has numbers to drag** -- the `position=`, `rotation=` and `scale=` of its call,
   `handles(...)` or `var()`s -- **and is not locked**. `part = lock(part)` is the creator's switch: a locked model can be looked at and selected, never moved. There is
   no model tree and no context menu, and nothing else can be changed in the picture. What is dragged is written into the numbers of the app's script (the person never
   sees them), and the script runs again for the picture, so everything that depends on them follows -- the arrows of a load, a region, a lattice. **Reset the picture** (under

@@ -136,8 +136,8 @@ HINTS = {
 # rotates it), in the horizontal plane at the place of the click
 def _gizmoed_point(name, x, y, z):
     ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged) '''
-    return ('%s = point(%s, %s, %s)\n%s = gizmo(\n    %s,\n    move=(var(0), var(0), var(0)),\n    rotate=(var(0), var(0), var(0)),\n'
-            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name, name, name))
+    return ('%s = point(\n    %s, %s, %s,\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n'
+            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name))
 
 
 def _points(*places, base='{var}'):
@@ -187,6 +187,7 @@ PRIMITIVES = [
     ('half_space', '3D', 'half_space((0, 0, 1), ({x}, {y}, {z}))'),
     ('capsule', '3D', 'capsule({q}, {s}, ({x}, {y}, {zm}))'),
     ('tube', '3D', 'tube({h}, {q}, {s}, ({x}, {y}, {zm}))'),
+    ('threaded_rod', '3D', "threaded_rod('M8', {s}, ({x}, {y}, {zm}))"),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
     ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),
@@ -366,8 +367,6 @@ OPERATIONS = [
     ('move', 'Moving', 'move({body}, ({dx}, {dy}, {dz}))', False),
     ('rotate_z', 'Moving', 'rotate_z({body}, {angle_rad})', False),
     ('scale_xyz', 'Moving', 'scale_xyz({body}, ({sx}, {sy}, {sz}))', False),
-    # Snapping a body onto another: the body, a face and a point of it, then the face and the point it goes onto, as they were selected (see _build_operation)
-    ('snap', 'Moving', 'snap({body}{others})', 'optional'),
     # CAD operations (see fieldes.stdlib.cad): turned about any axis, mirrored in any plane, patterns, revolved, cut by a plane, a hole
     ('rotate', 'Moving', 'rotate({body}, (0, 0, 1), {angle})', False),
     ('reflect', 'Moving', 'reflect({body})', False),
@@ -438,6 +437,7 @@ OPERATIONS = [
     # Meshing: the body as a mesh of elements for the solver of another program (its own category of the Engineering menu)
     ('mesh_volume', 'Simulations', 'mesh_volume({body})', 'optional'),
     ('mesh_surface', 'Simulations', 'mesh_surface({body})', 'optional'),
+    ('solve', 'Simulations', "solve('heat', {body})", 'optional'),
     # What works over an analysis of any domain, and so is in no category of the Engineering menu: it is given the result of an analysis (a simulation) and
     # finds the best numbers for the var()s the model is made of
     ('parametric_optimization', 'Simulations', 'parametric_optimization({body})', False),
@@ -771,21 +771,6 @@ def _build_operation(name, v, others):
         if info.get('type') in _SHAPES or not info.get('type') and body:
             var = v.get('var') or '%s_1' % name
             return '%s_points = random_points(%s, spacing=%s)\n%s_points%s%s(%s_points)' % (var, body, v.get('cs', 8), var, PRELUDE, name, var)
-    if name == 'snap':
-        # (the body, then a face and a point of it, then the face and the point it goes onto: the faces and the points are taken in the order they were selected, and what was not
-        # selected is a placeholder -- the arguments after the first gap are named, as the completion writes them)
-        faces = [o['name'] for o in others if o.get('type') == 'surface']
-        points = [o['name'] for o in others if o.get('type') == 'point']
-        args, named = [body], False
-        for argument, given in zip(('face', 'point', 'onto_face', 'onto_point'), (faces[:1], points[:1], faces[1:2], points[1:2])):
-            if given and not named:
-                args.append(given[0])
-            elif given:
-                args.append('%s=%s' % (argument, given[0]))
-            else:
-                named = True
-                args.append('%s=...' % argument)
-        return 'snap(%s)' % ', '.join(args)
     if name == 'texture':
         # (a surface, a field or a body that is selected with the body is where the texture goes)
         regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]

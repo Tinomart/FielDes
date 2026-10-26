@@ -7,7 +7,7 @@ operation, a library one or a block of your own, has it.  What looks for the par
 carry them with its images (see `symmetries.symmetry_images`) walks this record.
 
 The statements are run by `runner` (the application and its command line), by `app_package` (an app) and by `scripts/run_example.py`: each calls `reads` before a statement
-runs -- it may give one of the names it reads a new value, as `leg = gizmo(leg, ...)` does -- and `note` after it.
+runs -- it may give one of the names it reads a new value, as `leg = place(leg, ...)` does -- and `note` after it.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,

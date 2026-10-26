@@ -852,7 +852,7 @@ std::unique_ptr<libfive::Mesh> Shape::sweepMesh(const SweepNumbers& in)
                 highest, longest, worst, out->verts[tri[0]].x(), out->verts[tri[0]].y(), out->verts[tri[0]].z(), out->verts[tri[1]].x(), out->verts[tri[1]].y(), out->verts[tri[1]].z(),
                 out->verts[tri[2]].x(), out->verts[tri[2]].y(), out->verts[tri[2]].z(), E, pieces);
     }
-    // Placed by the gizmo: scaled about its point, turned about x, then y, then z (degrees), then moved -- as `gizmo()` places a shape
+    // Placed by the gizmo: scaled about its point, turned about x, then y, then z (degrees), then moved -- as the placement arguments place a shape
     if (in.placed)
     {
         const Eigen::Matrix3d R = (Eigen::AngleAxisd(in.rotate.z() * M_PI / 180.0, Vec::UnitZ()) * Eigen::AngleAxisd(in.rotate.y() * M_PI / 180.0, Vec::UnitY()) *
@@ -1235,7 +1235,7 @@ QMatrix4x4 Shape::gizmoOrientation() const
 
 QMatrix4x4 Shape::gizmoMatrix(const QVector3D& move, const QVector3D& rotate, const QVector3D& scale) const
 {
-    // What gizmo() does to a shape (fieldes.stdlib.handles): scaled about its centre, turned about it (x, then y, then z), moved
+    // What the placement arguments do to a shape (fieldes.stdlib.handles): scaled about its centre, turned about it (x, then y, then z), moved
     QMatrix4x4 A;
     A.translate(m_gizmo.about + move);
     A *= gizmoRotation(rotate);
@@ -2949,7 +2949,7 @@ bool Shape::updateFrom(const Shape* other)
     // (the same tree: only whether its gizmo is shown, and its pivot,
     // can differ, and whether it is locked)
     m_gizmo = other->m_gizmo;
-    m_outlineMode = other->m_outlineMode;           // (when the gizmo of a profile or a line is shown: `x = gizmo(x, mode=...)` changes nothing in its tree)
+    m_outlineMode = other->m_outlineMode;           // (when the gizmo of a profile or a line is shown: the mode of its gizmo button changes nothing in its tree)
     m_editLine = other->m_editLine;                 // (the line of the outline an image is an image of: what pressing its outline edits)
     m_editMap = other->m_editMap;
     m_editReversed = other->m_editReversed;
@@ -3948,6 +3948,7 @@ libfive::Tree::Id Shape::getUniqueId(
 QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tree>& canonical)
 {
     QString key = colorKey();
+    if (opacity < 0.999f) key += QString("|alpha%1").arg(int(opacity * 1000));        // (the same geometry drawn see-through -- alpha= -- is another shape)
     if (!m_prism_points.empty())
     {
         const auto pid = [&](const libfive::Tree& t) { return t.is_valid() ? quintptr(t.cooptimize(canonical).id()) : quintptr(0); };
@@ -4466,7 +4467,7 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
             color_evals.resize(std::max(color_evals.size(), T));
             std::atomic<size_t> next{0}, done{0};
             auto work = [&](size_t t) {
-                // (with the script's numbers: a colour field may hold var()s -- a selection on a part placed with gizmo())
+                // (with the script's numbers: a colour field may hold var()s -- a selection on a part placed by its placement arguments)
                 if (!color_evals[t]) color_evals[t].reset(new libfive::ArrayEvaluator(color_field, vars));
                 auto& e = *color_evals[t];
                 for (size_t b; (b = next.fetch_add(1)) < batches; )

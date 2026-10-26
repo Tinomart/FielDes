@@ -16,14 +16,14 @@ from fieldes import *
 
 post = box((0, 0, 0), (10, 10, 30))
 plate = box((-20, -20, 30), (30, 30, 35))
-part = union(post, plate)
-part = handles(part, [var(5.0), var(5.0), var(5.0), var(5.0), var(15.0), var(15.0), var(5.0), var(25.0), var(5.0), var(25.0), var(32.5), var(2.5)])
-part = gizmo(
-    part,
-    move=(var(0), var(0), var(0)),
-    rotate=(var(0), var(0), var(0)),
+part = union(
+    post,
+    plate,
+    position=(var(0), var(0), var(0)),
+    rotation=(var(0), var(0), var(0)),
     scale=(var(1), var(1), var(1)),
 )
+part = handles(part, [var(5.0), var(5.0), var(5.0), var(5.0), var(15.0), var(15.0), var(5.0), var(25.0), var(5.0), var(25.0), var(32.5), var(2.5)])
 part
 free = manufacturing_constraint(overhang=45, build_direction=None)
 res = manufacturing_optimization(part, constraints=[free], max_change=0.9)

@@ -202,7 +202,7 @@ def import_model(path, units='mm', file_units=None, rev=None, cache=True, thresh
 
         units       the units of your script ('mm', 'cm', 'm', 'in'...): a STEP file declares its own (each part
                     its own; the numbers are converted), 'file' gives the first declared one
-        file_units  what the numbers of a mesh file mean ('mm' if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
+        file_units  what the numbers of a mesh file mean (the length unit of Settings > Units -- 'mm' by default -- if it does not say: STL, OBJ, PLY and OFF do not; 3MF, FBX and DXF
                     with $INSUNITS do, glTF is metres) -- for mesh files only
         rev         a number that is part of what an import is kept by: another one imports again ("Reimport" in FielDes)
         cache       an import is kept in files next to the STEP file (<file>.fieldes-cache.py, ...-tessellation):

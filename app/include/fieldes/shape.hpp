@@ -389,7 +389,7 @@ public:
     void setResolutionOverride(float res) { m_res_override = res > 0 ? res : 0.0f; }
     float resolutionOverride() const { return m_res_override; }
 
-    /*  The box the script says the shape fills (its `_bounds`: told by the primitives, which know it from their numbers, and carried through handles() and gizmo(), widened by
+    /*  The box the script says the shape fills (its `_bounds`: told by the primitives, which know it from their numbers, and carried through handles() and the placement arguments, widened by
      *  the numbers that were pulled).  It sizes the shape, for its resolution, when the quick search for its box (measureExtent) runs out of its time -- a shape made with
      *  var()s, a primitive that has been given handles, always does -- see autoResolution  */
     void setScriptBox(QVector3D lo, QVector3D hi);
@@ -468,8 +468,10 @@ public:
         bool dotOnly = false;
     };
     void setGizmo(const Gizmo& h) { m_gizmo = h; }
-    /*  When the gizmo of a profile, a polyline or a spline is shown (`x = gizmo(x, mode='click')`, which has no numbers: the outline's gizmo is the shared one of its points,
-        see View::groupGizmo).  NEVER until a line says otherwise  */
+    /*  When the gizmo is shown, as the model tree's gizmo button says (the script does not): see ScenePanel::gizmoModeOfLine  */
+    void setGizmoMode(Gizmo::Mode m) { m_gizmo.mode = m; }
+    /*  When the gizmo of a profile, a polyline or a spline is shown (the mode of its gizmo button, which has no numbers: the outline's gizmo is the shared one of its points,
+        see View::groupGizmo).  NEVER until the button says otherwise  */
     void setOutlineMode(Gizmo::Mode m) { m_outlineMode = m; }
     Gizmo::Mode outlineMode() const { return m_outlineMode; }
     /*  An outline that is an IMAGE of another -- a placed copy (`instance(x)`, then its own gizmo), an image in a symmetry: the line of the outline it is an image of, which is what editing it
@@ -509,7 +511,7 @@ public:
     bool hasGizmo() const;
     void setActiveCopy(bool on) { m_activeCopy = on; }
     bool activeCopy() const { return m_activeCopy; }
-    /*  Has a number that moves it (`gizmo(x, move=(var, ...))`), in whatever mode, and is not locked: the shared
+    /*  Has a number that moves it (`position=(var, ...)`), in whatever mode, and is not locked: the shared
      *  gizmo of a multi-selection can move it, whatever its own gizmo mode is  */
     bool hasMoveVars() const;
     /*  The numbers now (constants and unknown ones as 0; a scale as 1)  */
@@ -532,8 +534,8 @@ public:
     /*  The numbers of the symmetry an image is made in (fieldes.stdlib.symmetries.symmetry_image): the image's field has them, but a surface of an image is pulled by the numbers of the
         model it is the image of -- never by the symmetry's, which would move the planes and so every image of everything  */
     void setFrozenVars(const std::set<libfive::Tree::Id>& v) { m_frozenVars = v; }
-    /*  The numbers of every gizmo() call of the script, whichever shape it places (the same set is shared by all the shapes of a run): a shape made of a placed shape -- the extrusion of a
-        rectangle that has a gizmo() line -- has them in its field, and a pull of one of its surfaces must change the handles, never the move, turn or scale of the shape inside it  */
+    /*  The numbers of every placement argument of the script, whichever shape it places (the same set is shared by all the shapes of a run): a shape made of a placed shape -- the extrusion of a
+        rectangle that has a position= -- has them in its field, and a pull of one of its surfaces must change the handles, never the move, turn or scale of the shape inside it  */
     void setSceneGizmoVars(std::shared_ptr<const std::set<libfive::Tree::Id>> v) { m_sceneGizmoVars = std::move(v); }
     /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
     void setSymmetryImage(bool v) { m_symmetryImage = v; }

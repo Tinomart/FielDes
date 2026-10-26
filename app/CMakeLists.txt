@@ -33,6 +33,7 @@ set(SRCS
     src/fileassoc.cpp
     src/findbar.cpp
     src/focuscue.cpp
+    src/popout.cpp
     src/i18n.cpp
     src/icons.cpp
     src/language.cpp

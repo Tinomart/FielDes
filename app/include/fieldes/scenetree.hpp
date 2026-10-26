@@ -365,6 +365,8 @@ signals:
     /*  The selected model has no gizmo yet (it gets its numbers when the script has run): where it will be, so that the view can
      *  draw it at once (see View::setProvisionalGizmo); `on` false when there is none to show  */
     void provisionalGizmo(bool on, QVector3D pivot, QList<int> lines0);
+    /*  The modes of the gizmo buttons changed (gizmoModeOfLine): the view shows or hides the gizmos at once  */
+    void gizmoModesChanged();
 
     /*  The fields among the selected models (they are not drawn: the field viewer shows them), by their keys -- a variable's name,
      *  or "line:N" for a field that is only displayed -- in the order selected; empty when the selection holds none.  Emitted when
@@ -597,7 +599,7 @@ protected:
      *  (or the import statement's own variable); empty if the part is not
      *  in the script as a variable  */
     QJsonObject gizmoTarget(const QJsonObject& imp, int part) const;
-    /*  How a shape or part is edited by dragging in the view: the gizmo (gizmo()) or
+    /*  How a shape or part is edited by dragging in the view: the gizmo (its placement arguments) or
      *  the handles on its surfaces (its var()s, or handles()'s).  The button toggles
      *  between them; setMode writes one into the script.  Whether it can be dragged at all is a
      *  switch of its own, the lock (`x = lock(x)`)  */
@@ -612,11 +614,34 @@ protected:
     void applyModes(const QList<QJsonObject>& targets, const QString& mode, bool quiet = false);
     void applyLock(const QList<QJsonObject>& targets, bool lock);
     void applyCache(const QList<QJsonObject>& targets, bool on);
-    /*  Which imports the edits of applyModes need (written once, not once for each model)  */
+    /*  Which imports the edits need (written once, not once for each model): `place` for a model that is placed by a statement  */
     struct ModeImports { bool gizmo = false, handles = false; };
-    /*  The edits that give one model a mode; false (and the reason) when it cannot have it  */
-    bool modeEdits(const QJsonObject& target, const QString& mode, QList<TextEdit>& edits, ModeImports& imports,
-                   QString* why);
+    /*  The placement of a model -- position, rotation, scale, alpha (fieldes.stdlib.placement) -- written in the call that makes it, or in `x = place(x, ...)` under it when the
+     *  call does not take them: the arguments in `set` (name, text) are written, the names in `remove` are taken away.  False when the text is not what the rows say  */
+    bool placementEdits(const QJsonObject& target, const QList<QPair<QString, QString>>& set, const QStringList& remove, QList<TextEdit>& edits, ModeImports& imports,
+                        const QString& before = QString());
+public:
+    /*  The mode of the gizmo button of the model displayed on the (0-based) line: 0 click, 1 never, 2 always, -1 when the button was never pressed.  It is the state of the button --
+     *  the script does not say it --, kept by the name of the model; the view asks for it when it makes a shape  */
+    int gizmoModeOfLine(int line0) const;
+    /*  S: the selected faces, edges and points -- made on two bodies -- are snapped: the body of the first is moved onto the other by its own `position=` and `rotation=` (as the gizmo
+     *  moves it), and the places the faces and points on it were made at go with it  */
+    void snapSelected();
+    /*  The (0-based) line that displays the first selected model, or -1 when no model is selected: what File > Export model works on  */
+    int selectedModelLine() const;
+
+protected:
+    /*  The body a feature (a face, an edge, a point) is on: what it is made of, followed through the features made of features; empty when it is on none  */
+    QString bodyOfFeature(const QJsonObject& item, int depth = 0) const;
+    /*  Arguments added to the call at `call` ([line, column, end line, end column] as the outline gives it), before its closing parenthesis, laid out as FielDes lays calls out  */
+    void appendCallArguments(const QJsonArray& call, const QStringList& args, QList<TextEdit>& edits) const;
+    /*  An argument taken out of its call: its comma goes with it, and the line it has to itself  */
+    void removeCallArgument(const QJsonArray& span, QList<TextEdit>& edits) const;
+    /*  Whether the numbers of a model's gizmo are written in the script: its position, rotation or scale is made of var()s  */
+    static bool placementHasNumbers(const QJsonObject& target);
+    /*  A click on a placement row that is not written (or the number of the gizmo of a model that has none): the model is made ready for its gizmo, and the argument is selected
+     *  in the code once the script has run  */
+    void writePlacement(const QJsonObject& target, const QString& argument);
     /*  A displayed expression such as sphere(3) is given a name (`sphere_1 = sphere(3)`, and a line showing it),
      *  and `mode` -- "click", "never", "always", "lock" or "cache" -- is applied to the new variable once the script has
      *  run again; false if it cannot be named  */
@@ -629,10 +654,10 @@ protected:
      *  its gizmo and handles lines) when it is turned on, deleted when it is turned off  */
     void toggleCache(const QJsonObject& target);
     void setCacheButton(QTreeWidgetItem* row, const QJsonObject& target);
-    /*  A part back to what the file says: its gizmo() and handles() lines are deleted and the
+    /*  A part back to what the file says: its placement arguments and handles() lines are deleted and the
      *  import is read again (reimport)  */
     void reimportPart(const QJsonObject& imp, int part);
-    /*  Deletes a shape's gizmo() line: back to where it was defined  */
+    /*  Deletes a shape's placement arguments: back to where it was defined  */
     void removeGizmo(const QJsonObject& target);
     /*  The delete button: the statements of a row's item (and the lines that show, hide and edit it) go
      *  from the script; asks first if the rest of the script still uses its name  */
@@ -642,7 +667,7 @@ protected:
     void deleteItems(const QList<QJsonObject>& items);
     /*  The edit deleting whole lines a..b (0-based), newline included  */
     TextEdit deleteLines(int a, int b) const;
-    /*  Back to the file: deletes the import's cache and the gizmo() and handles() lines
+    /*  Back to the file: deletes the import's cache and the placement arguments and handles() lines
      *  of its parts (after asking, if `ask`), then runs the script again  */
     void resetImport(const QJsonObject& imp, bool ask);
     QStringList visibleRoiExprs(int skipImportLine, int* endLine) const;
@@ -776,6 +801,12 @@ protected:
     QVector3D m_workPlaneOrigin, m_workPlaneU, m_workPlaneV;
     float m_workPlaneStep = 0;
     int m_selectNewTries = 0;
+    QPair<QString, QString> m_selectArg;            // (a placement argument written by a click, to select in the code once the script has run: the model's name, the argument)
+    int m_selectArgTries = 0;
+    QHash<QString, QString> m_gizmoModes;           // (the state of the gizmo buttons, by the name of the model: click, never, always)
+    QHash<int, int> m_modeByLine;                   // (the same by the line that displays the model, for the view)
+    void patchGizmoModes();
+    void announceGizmoModes();
     /*  Isolation: the keys of the models that were shown before, the one isolated, whether it is on  */
     bool m_isolated = false;
     QSet<QString> m_isolateRestore;

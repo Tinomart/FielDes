@@ -35,6 +35,8 @@ public:
      *  include the marker's scale  */
     void drawMarker(QMatrix4x4 M);
     void initializeGL();
+    /*  Lets go of the buffers of a graphics context that is ending (a viewport pulled out into a window of its own is given a new one)  */
+    void releaseGL() { if (solid_vao.isCreated()) solid_vao.destroy(); if (solid_vbo.isCreated()) solid_vbo.destroy(); if (wire_vao.isCreated()) wire_vao.destroy(); if (wire_vbo.isCreated()) wire_vbo.destroy(); }
 
 protected:
     void bindShader(QMatrix4x4 M);

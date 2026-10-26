@@ -80,7 +80,7 @@ QString assignedName(const QString& text)
 // argument to a line -- `name = handles(` and `name,` under it -- so the first argument may be on the next line)
 QString setupOf(const QTextBlock& block)
 {
-    static const QRegularExpression head(R"(^([A-Za-z_]\w*)\s*=\s*(?:handles|gizmo|lock|render_cache|custom_resolution)\(\s*([A-Za-z_]\w*)?)");
+    static const QRegularExpression head(R"(^([A-Za-z_]\w*)\s*=\s*(?:handles|place|lock|render_cache|custom_resolution)\(\s*([A-Za-z_]\w*)?)");
     static const QRegularExpression first(R"(^\s*([A-Za-z_]\w*)\s*[,)])");
     // (and `name` on a line of its own: the line that shows the model goes on with it too -- or `# hidden: name`, the line that says the model is not shown)
     static const QRegularExpression bare(R"(^(?:#\s*hidden:\s?)*([A-Za-z_]\w*)\s*(?:#.*)?$)");
@@ -679,7 +679,7 @@ bool Script::isBlankOrComment(const QTextBlock& b) const
 
 int Script::objectEnd(const QTextBlock& b) const
 {
-    // An object is a top-level `name = <call>(...)` and the statements that go on with the same name (`name = gizmo(name, ...)`, `name = handles(...)`, `name`, ...), to the end of their brackets
+    // An object is a top-level `name = <call>(...)` and the statements that go on with the same name (`name = handles(...)`, `name = lock(name)`, `name`, ...), to the end of their brackets
     if (!b.isValid() || indentOf(b) != 0) return -1;
     const QString text = b.text();
     const QString name = assignedName(text);
@@ -827,7 +827,7 @@ bool Script::foldRange(int blockNum, int* endOut) const
         }
 
         // A model and its setup are one block: the definition of a variable folds together with the statements that go on with it
-        // (`x = handles(x, ...)`, `x = gizmo(x, ...)`, `x = lock(x)` ...), and those have no arrow of their own
+        // (`x = handles(x, ...)`, `x = lock(x)` ...), and those have no arrow of their own
         if (indentOf(b) == 0)
         {
             const QString setupName = setupOf(b);

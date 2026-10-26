@@ -23,6 +23,7 @@ of the License, or (at your option) any later version.
 
 #include "fieldes/carddrag.hpp"
 #include "fieldes/i18n.hpp"
+#include "fieldes/units.hpp"
 #include "fieldes/workplane.hpp"
 
 namespace FielDes {
@@ -87,7 +88,7 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
     : QFrame(parent),
       m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget),
       m_grid(new QToolButton), m_snap(new QToolButton), m_snapPoints(new QToolButton), m_auto(new QToolButton),
-      m_step(new QDoubleSpinBox), m_offset(new QDoubleSpinBox), m_info(new QLabel), m_readout(new QLabel)
+      m_step(new Units::LengthSpinBox), m_offset(new Units::LengthSpinBox), m_info(new QLabel), m_readout(new QLabel)
 {
     setObjectName("WorkPlanePanel");
     setAttribute(Qt::WA_StyledBackground, true);
@@ -200,26 +201,24 @@ WorkPlanePanel::WorkPlanePanel(QWidget* parent)
     m_auto->setChecked(true);
     m_auto->setText(T("Auto"));
     m_auto->setToolTip(T("The grid's step from how large the picture is"));
-    m_step->setDecimals(4);
+    m_step->setLengthDecimals(4);
     m_step->setRange(1e-4, 1e6);
     m_step->setValue(1);
     m_step->setKeyboardTracking(false);
     m_step->setButtonSymbols(QDoubleSpinBox::NoButtons);
     m_step->setFixedWidth(74);
     m_step->setEnabled(false);
-    m_step->setSuffix(" mm");
     m_step->setToolTip(T("The step of the grid"));
     auto stepRow = new QHBoxLayout;
     stepRow->addWidget(label(T("Grid step")));
     stepRow->addWidget(m_auto);
     stepRow->addWidget(m_step, 1);
     m_offset->setObjectName("workPlaneOffset");
-    m_offset->setDecimals(3);
+    m_offset->setLengthDecimals(3);
     m_offset->setRange(-1e6, 1e6);
     m_offset->setKeyboardTracking(false);
     m_offset->setButtonSymbols(QDoubleSpinBox::NoButtons);
     m_offset->setFixedWidth(74);
-    m_offset->setSuffix(" mm");
     m_offset->setToolTip(T("How far the plane is moved along its normal"));
     auto offsetRow = new QHBoxLayout;
     offsetRow->addWidget(label(T("Offset")));
@@ -336,6 +335,13 @@ void WorkPlanePanel::setPlane(const WorkPlane& plane, float step)
     auto number = [](float x) { return QString::number(std::fabs(x) < 5e-5f ? 0.0 : double(x), 'g', 4); };
     m_info->setText(T("Normal (%1, %2, %3), through (%4, %5, %6)")
                         .arg(number(n.x()), number(n.y()), number(n.z()), number(o.x()), number(o.y()), number(o.z())));
+}
+
+void WorkPlanePanel::refreshUnits()
+{
+    QSignalBlocker a(m_step), b(m_offset);
+    m_step->refreshUnit();
+    m_offset->refreshUnit();
 }
 
 void WorkPlanePanel::setReadout(const QString& text)

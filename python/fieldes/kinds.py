@@ -56,6 +56,7 @@ DOMAINS = {
     'fluid':      ('Fluid',      '#6f86f2', '#a1b0f7'),
     'manufacturing': ('Manufacturing', '#46c37b', '#86d9a8'),
     'mesh':       ('Mesh',       '#b07fe0', '#cfb0ee'),
+    'custom':     ('Your solver', '#c586c0', '#dcb0d8'),
 }
 
 # The domain of what a function makes (an analysis, a condition), by its name: the one list the menus, the model tree and the icons read it from
@@ -69,6 +70,7 @@ DOMAIN_OF_FUNCTION = {
     'manufacturing_analysis': 'manufacturing', 'manufacturing_optimization': 'manufacturing',
     'manufacturing_constraint': 'manufacturing', 'fff_constraint': 'manufacturing', 'cnc_constraint': 'manufacturing', 'molding_constraint': 'manufacturing',
     'mesh_volume': 'mesh', 'mesh_surface': 'mesh',
+    'solve': 'custom',
 }
 
 # ... and of a value, by its class (a subclass is of its parent's domain)
@@ -81,6 +83,7 @@ _DOMAIN_OF_CLASS = {
     '_Inlet': 'fluid', '_Outlet': 'fluid', '_Wall': 'fluid', '_Slip': 'fluid',
     'ManufacturingConstraint': 'manufacturing', 'ManufacturingAnalysis': 'manufacturing', 'ManufacturingResult': 'manufacturing',
     'Mesh': 'mesh',
+    'SolverResult': 'custom',
 }
 
 
@@ -115,6 +118,7 @@ _BY_CLASS = {
     'LatticeCell': 'cell', 'CellMap': 'cell', 'LatticeGraph': 'cell', 'PointSet': 'points',
     'SurfaceSelection': 'surface',
     'Regression': 'field', 'FieldFit': 'field',
+    'SolverResult': 'simulation',
 }
 
 
