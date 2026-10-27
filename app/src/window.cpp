@@ -1757,6 +1757,8 @@ Window::Window(Arguments args)
             return libfive::Tree(reinterpret_cast<const libfive::Tree::Data*>(address));
         });
         connect(view, &View::createRequested, scene, &ScenePanel::createFromMenu);
+        connect(view, &View::previewRequested, scene, &ScenePanel::previewFromMenu);
+        connect(scene, &ScenePanel::previewReady, view, &View::setPreviewMesh);
         connect(view, &View::importRequested, this, [this] { onImportModel(); });
         // A right-click in the text editor, or in the model tree, opens the viewport's menu for the model of that line / row
         connect(editor, &Editor::objectMenuRequested, view, &View::showMenuForLine);

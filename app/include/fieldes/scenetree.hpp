@@ -192,6 +192,8 @@ public slots:
      *  or "operation" (on the model displayed by the (0-based) line `line0`, or, for a negative line, the
      *  selected model; written under its definition)  */
     void createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation = -1);
+    // What an entry of a menu would make, where it would make it, meshed coarsely by the library, for the see-through preview of the entry the mouse is over (nothing is written): previewReady
+    void previewFromMenu(QString kind, QString name, QVector3D point, double scale);
     /*  The work plane, while its view is open: what the menu makes at a place is made in its axes (a profile's points are in the plane, not horizontal); `step` is
         the grid the places snap to, 0 when they do not  */
     void setWorkPlane(bool active, QVector3D origin, QVector3D u, QVector3D v, float step);
@@ -325,6 +327,7 @@ public slots:
     void setCacheStates(const QHash<int, QString>& states);
 
 signals:
+    void previewReady(QVector<float> vertices, QVector<int> triangles);       // (the coarse mesh of what the entry under the mouse would make: x, y, z, ... and the corners of its triangles; empty: nothing to show)
     /*  The symmetry model that is selected (its lines, 0-based; none: no symmetry), whether it is another one than before (which is to use it), and its name  */
     void activeSymmetryChanged(QList<int> lines0, bool chosen, QString name);
     /*  Scroll the editor to a (0-based) line and flash it  */
@@ -800,6 +803,7 @@ protected:
     QStringList m_selectNewMore;                 // (a duplicate of several models: the other copies, selected with the last one)
     bool m_workPlaneActive = false;
     QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
+    QSet<QString> m_previewSlow;               // (the entries whose preview took longer than a moment: not asked for again -- the limit of a preview is how long it takes)
     QJsonObject m_symmetryRequest;             // (the symmetry as the library takes it: the centre, and every image as a mirror and a turn; empty while it is off)
     QString m_activeSymVar;                    // (the symmetry model that is selected: what is made is made with its images while it is in use)
     QJsonObject m_symdefRequest;               // (the planes of a symmetry that is being made: planes, kind, centre, axis, first)

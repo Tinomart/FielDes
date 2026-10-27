@@ -264,6 +264,8 @@ public slots:
     QVector3D snapPlace(QPoint pos, const Shape* exclude = nullptr, bool toPoints = true) const;
     QVector3D snapNodeAlongRay(QPoint pos, bool* hit = nullptr) const;
     bool surfacePointAt(QPoint pos, QVector3D& point) const;
+    // The coarse mesh of what the entry of a menu under the mouse would make (x, y, z, ... and the corners of its triangles), drawn see-through where it would be made; empty takes it away
+    void setPreviewMesh(QVector<float> vertices, QVector<int> triangles);
     /*  The step of a turn in degrees: the card's, for the turns of the mode and for the Shift gizmo  */
     float angleStep() const { return qMax(0.1f, m_snap.angle); }
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
@@ -508,6 +510,8 @@ signals:
      *  selected one; `scale` is how many mm about a hundred pixels span at that place
      */
     void createRequested(QString kind, QString name, QVector3D point, double scale, int line0, int generation);
+    // The mouse has been on an entry of a menu that makes a model for a moment: what it would make, and where (asks for the see-through preview, see setPreviewMesh)
+    void previewRequested(QString kind, QString name, QVector3D point, double scale);
 
     /*  "Import model..." was chosen in the menu of empty space: the window asks for the file  */
     void importRequested();
@@ -716,6 +720,8 @@ protected:
     void syncSnapWithWorkPlane();
     void drawSnapGrid(QPainter& painter);
     void drawSnapMark(QPainter& painter);
+    void watchPreview(QMenu* menu);
+    void clearPreview();
     /*  The lattice of the snapping mode as a picture of the viewport (transparent, in device pixels): false when its lines are too fine to draw from here.  The lattice is seen out to the
      *  viewing distance of the card -- measured from the viewer, in the units of the view, so that it is the same picture whatever the zoom and wherever the view is panned  */
     bool renderSnapLattice(QImage& image, qreal ratio, int& stride) const;
@@ -735,6 +741,13 @@ protected:
     struct SnapMark { bool valid = false; QVector3D at; bool onPoint = false; };
     SnapMark m_snapMark;
     bool m_snapMarkHeld = false;                    // (a menu that puts something down at the mark is open: the mark stays)
+    Shape* m_ghost = nullptr;                       // (the see-through preview of the entry of a menu that the mouse is over: a shape like any other, with the mesh of what the entry would make)
+    bool m_ghostOn = false;
+    QTimer m_previewTimer;                          // (the mouse has to stay on an entry for a moment: passing over it is not asking for it)
+    bool m_previewTimerReady = false;
+    QString m_previewKind, m_previewName;
+    QVector3D m_previewPoint;
+    double m_previewScale = 1.0;
     void setSnapMark(const QVector3D& at, bool onPoint);
     void clearSnapMark();
     void updateSnapHover(QPoint pos);

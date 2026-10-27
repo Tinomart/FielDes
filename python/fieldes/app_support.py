@@ -574,6 +574,68 @@ def menu_call(request):
     return catalog.call(request)
 
 
+def preview_mesh(request):
+    ''' A coarse mesh of what a context-menu entry would make where the mouse is, for the see-through preview of the entry that is under it.  `request` is the one
+        of menu_call (the same entry, place and size).  The call is evaluated on its own: an entry that is made of models of the script, or whose call is not
+        complete (a placeholder where the user has to say something), has nothing to evaluate and raises -- it is not previewed.  What is meshed is the shape, at a
+        resolution that follows how long a first, coarse mesh took: what renders quickly is shown, whatever it is made of, and what does not is not (the limit is
+        the time it takes, not a list of entries).  JSON {"v": [x, y, z, ...], "t": [a, b, c, ...], "ms": the time}, or an empty string when there is nothing to show '''
+    import time
+    started = time.perf_counter()
+    req = json.loads(request) if isinstance(request, str) else request
+    from fieldes import menu_catalog as catalog
+    # (what is not drawn as a body when it is made -- a field, a symmetry, a point, a surface, a material, the conditions of an analysis -- has no shape to show)
+    for n, group, _ in catalog.PRIMITIVES:
+        if n == req.get('name') and (group in ('Fields', 'Symmetry', 'Points', 'Surfaces', 'Materials', 'Fluids') or n in catalog.BODY_CONDITIONS):
+            return ''
+    text = catalog.call(req).split('\n#@@@#\n')[0]
+    head, _marker, expression = text.rpartition(catalog.PRELUDE)
+    namespace = {}
+    exec('from fieldes import *', namespace)
+    if head.strip():
+        exec(head, namespace)           # (a function or the points that the call is made of)
+    shape = eval(expression.strip(), namespace)
+    if not hasattr(shape, 'get_mesh'):
+        return ''
+    centre = [float(req.get(k, 0.0)) for k in ('x', 'y', 'z')]
+    reach = 2.5 * max(float(req.get('scale', 1.0)), 1e-6)
+    # (a coarse mesh first, twelve cells across the region that the size of the click says: how long it takes says whether a finer one is worth it.  A shape that is larger than the region touches
+    # its sides and is cut open there -- the region is made larger, twice at most and with cells of the same size, and a shape that is still not inside it is not shown: what is many times larger
+    # than what the click is about would be drawn as a few huge faces over the whole picture)
+    cell = 2.0 * reach / 12.0
+    resolution = 1.0 / cell
+    inside = False
+    for _ in range(3):
+        lo, hi = [c - reach for c in centre], [c + reach for c in centre]
+        first = time.perf_counter()
+        verts, tris = shape.get_mesh(lo, hi, resolution=resolution)
+        coarse = time.perf_counter() - first
+        if coarse > 0.25:
+            return ''                   # (too slow to be shown as the mouse passes over an entry)
+        if not tris:
+            return ''
+        margin = 0.5 * cell
+        touches = any(min(v[i] for v in verts) < lo[i] + margin or max(v[i] for v in verts) > hi[i] - margin for i in range(3))
+        if not touches:
+            inside = True
+            break
+        reach *= 2.0
+    if not inside:
+        return ''
+    if tris and coarse < 0.05:
+        cells = 40.0 if coarse < 0.01 else 24.0
+        try:
+            finer_verts, finer_tris = shape.get_mesh(lo, hi, resolution=cells / (2 * reach))
+            if len(finer_tris) <= 30000:
+                verts, tris = finer_verts, finer_tris
+        except Exception:
+            pass
+    if not tris:
+        return ''
+    return json.dumps({'v': [round(c, 4) for v in verts for c in v], 't': [i for t in tris for i in t],
+                       'ms': int((time.perf_counter() - started) * 1000)}, separators=(',', ':'))
+
+
 def complete_call(request):
     ''' The call of a function as the completion writes it, complete and laid out (see fieldes.completion): `request` is JSON {name, column, indent} '''
     from fieldes import completion

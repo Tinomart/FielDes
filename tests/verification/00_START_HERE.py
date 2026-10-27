@@ -271,5 +271,9 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     Move it over empty space: the ring is on the node the cursor is nearest to on the screen, one of the rows near you as well as one near the model, and the node that is marked stays marked while the cursor is near it (it does not jump from
 #     row to row with every pixel).  Right-click there (empty space or the surface of a model, Primitives > New 3D shape > sphere): the sphere is made on that node, its numbers are the ring's numbers (with auto scale on, the region grows to hold it);
 #     the lattice is a readable slice round the place you look at, with a fainter stretch toward you, so that you can tell the grid, the model and the mark apart at a glance; the mark is a small ring with a cross, and while the right-click menu is open it stays where the sphere will be.
+#     (k) THE PREVIEW OF A MENU ENTRY.  Right-click empty space, open Primitives > New 3D shape and rest the mouse on `sphere` for a moment: the sphere it would make is shown, see-through and shaded like any body (no wireframe, no edges), where it would be made -- on the snapping mode's node when
+#     that is on -- and goes when the mouse leaves the entry or the menu closes.  The same on `box`, `cylinder`, `cone`, `torus` and on the entries of Parametric shapes: any entry whose call needs nothing of the script and renders quickly shows its shape; one that is made of
+#     models of the script (an operation) shows nothing, and one that takes longer than a moment is not shown.  Try `rounded_box`, `capsule`, `tube` and `threaded_rod` under Parametric shapes > New 3D shape (a shape larger than the first guess is shown whole), and
+#     a field (`radial_field`), a point, and a cell of the lattice menus (`gyroid`): they have no body to show, so nothing is shown.
 #
 print("Open one of the files listed above.")

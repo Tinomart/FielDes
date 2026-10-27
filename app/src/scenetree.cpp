@@ -8063,6 +8063,53 @@ void ScenePanel::createPlaced(QString name, QList<QVector3D> points, bool smooth
     m_placed = QJsonArray();
 }
 
+void ScenePanel::previewFromMenu(QString kind, QString name, QVector3D point, double scale)
+{
+    const QVector<float> none;
+    if (!m_support || (kind != "primitive" && kind != "operation") || m_previewSlow.contains(name))
+    {
+        emit previewReady(none, QVector<int>());
+        return;
+    }
+    // The same request the entry would make (menu_call), for the place and the size it would be made at, and no model: an entry that is made of models, or that is not complete
+    // without a number of the user's, has nothing to show and the library says so -- every other entry is shown if it is quick to mesh (preview_mesh)
+    QJsonObject request;
+    request["kind"] = kind;
+    request["name"] = name;
+    request["x"] = point.x();
+    request["y"] = point.y();
+    request["z"] = point.z();
+    request["scale"] = scale;
+    if (kind == "primitive" && m_source) request["source"] = m_source();
+    request["body"] = QString();
+    request["other"] = QString();
+    request["var"] = freeName(name);
+    request["indent"] = 0;
+    QElapsedTimer clock;
+    clock.start();
+    QString error;
+    const QString answer = m_support("preview_mesh", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    if (clock.elapsed() > 400) m_previewSlow.insert(name);
+    static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
+    if (timing)
+        std::fprintf(stderr, "[preview] %s: %lld ms, %s%s\n", name.toUtf8().constData(), static_cast<long long>(clock.elapsed()),
+                     answer.isEmpty() ? "nothing to show" : "shown", error.isEmpty() ? "" : (" (" + error.left(120) + ")").toUtf8().constData());
+    if (answer.isEmpty())
+    {
+        emit previewReady(none, QVector<int>());
+        return;
+    }
+    const QJsonObject doc = QJsonDocument::fromJson(answer.toUtf8()).object();
+    const QJsonArray v = doc["v"].toArray(), t = doc["t"].toArray();
+    QVector<float> vertices;
+    QVector<int> triangles;
+    vertices.reserve(v.size());
+    triangles.reserve(t.size());
+    for (const auto x : v) vertices.append(float(x.toDouble()));
+    for (const auto i : t) triangles.append(i.toInt());
+    emit previewReady(vertices, triangles);
+}
+
 void ScenePanel::createFromMenu(QString kind, QString name, QVector3D point, double scale, int line0, int generation)
 {
     if (!m_support) return;

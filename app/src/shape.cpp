@@ -3317,6 +3317,14 @@ void Shape::adoptMeshFromSource()
     emit(gotMesh());
 }
 
+void Shape::setPictureMesh(std::shared_ptr<libfive::Mesh> picture, float alpha)
+{
+    mesh = std::move(picture);
+    mesh_verts = mesh ? mesh->verts.size() : 0;
+    gl_ready = false;                       // (the next draw gives the new mesh to the graphics card)
+    setOpacity(alpha);
+}
+
 void Shape::draw(const QMatrix4x4& M)
 {
     if (mesh && !gl_ready)

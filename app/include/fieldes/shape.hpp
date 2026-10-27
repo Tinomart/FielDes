@@ -312,6 +312,12 @@ public:
     float opacityValue() const { return opacity; }
 
     /*
+     *  A shape that is only a picture: this mesh, drawn as any body is -- the same colour, the same lighting -- and as solid as `alpha` says (the see-through preview of what an entry of
+     *  a menu would make, drawn where the mouse is).  It has no field of its own to mesh; an empty `picture` shows nothing
+     */
+    void setPictureMesh(std::shared_ptr<libfive::Mesh> picture, float alpha);
+
+    /*
      *  Bounds of the current mesh (empty region if not meshed yet)
      */
     const libfive::Region<3>& getMeshBounds() const { return mesh_bounds; }

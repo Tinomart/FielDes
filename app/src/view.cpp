@@ -1010,6 +1010,8 @@ void View::paintGL()
             if (!s->noPaint()) s->draw(m);
             if (onTheSurface) glDisable(GL_POLYGON_OFFSET_FILL);
         }
+        // The preview of what the entry of a menu under the mouse would make: a shape like any other, drawn see-through with the translucent ones (its nearest layer, then in colour over it)
+        if (pass >= 1 && m_ghost && m_ghostOn) m_ghost->draw(m);
         if (pass == 2)
         {
             glDepthMask(GL_TRUE);
@@ -3696,6 +3698,81 @@ void View::drawSnapMark(QPainter& painter)
     painter.restore();
 }
 
+// The entries of a menu that make a model carry what they make and where (addCreateEntries): the mouse on one of them for a moment asks for its preview, an entry that carries nothing -- or the menu closing -- takes it away
+void View::watchPreview(QMenu* menu)
+{
+    if (!m_previewTimerReady)
+    {
+        m_previewTimerReady = true;
+        m_previewTimer.setSingleShot(true);
+        m_previewTimer.setInterval(160);
+        connect(&m_previewTimer, &QTimer::timeout, this, [this]{ emit(previewRequested(m_previewKind, m_previewName, m_previewPoint, m_previewScale)); });
+    }
+    QList<QMenu*> all;
+    all << menu;
+    all << menu->findChildren<QMenu*>();
+    for (QMenu* m : all)
+    {
+        connect(m, &QMenu::hovered, this, [this](QAction* a) {
+            if (!a || !a->property("previewName").isValid())
+            {
+                clearPreview();
+                return;
+            }
+            m_previewKind = a->property("previewKind").toString();
+            m_previewName = a->property("previewName").toString();
+            m_previewPoint = a->property("previewPoint").value<QVector3D>();
+            m_previewScale = a->property("previewScale").toDouble();
+            if (m_ghostOn)
+            {
+                m_ghostOn = false;
+                update();
+            }
+            m_previewTimer.start();
+        });
+    }
+    connect(menu, &QMenu::aboutToHide, this, [this]{ clearPreview(); });
+}
+
+void View::clearPreview()
+{
+    m_previewTimer.stop();
+    if (!m_ghostOn) return;
+    m_ghostOn = false;
+    if (m_ghost) m_ghost->setPictureMesh(nullptr, 1.0f);
+    update();
+}
+
+// What the entry of a menu under the mouse would make, as a shape of the program's own -- the colour and lighting of any body --, drawn see-through where it would be made (see paintGL)
+void View::setPreviewMesh(QVector<float> vertices, QVector<int> triangles)
+{
+    const int points = vertices.size() / 3, faces = triangles.size() / 3;
+    if (points <= 0 || faces <= 0)
+    {
+        clearPreview();
+        return;
+    }
+    if (!m_ghost)
+    {
+        m_ghost = new Shape(libfive::Tree::X(), std::map<libfive::Tree::Id, float>());
+        m_ghost->setParent(this);
+        m_ghost->setNoPaint(false);
+    }
+    auto picture = std::make_shared<libfive::Mesh>();
+    picture->verts.resize(size_t(points));
+    for (int i = 0; i < points; ++i) picture->verts[size_t(i)] = Eigen::Vector3f(vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]);
+    picture->branes.reserve(size_t(faces));
+    for (int f = 0; f < faces; ++f)
+    {
+        const int a = triangles[3 * f], b = triangles[3 * f + 1], c = triangles[3 * f + 2];
+        if (a < 0 || b < 0 || c < 0 || a >= points || b >= points || c >= points) continue;
+        picture->branes.push_back(Eigen::Matrix<uint32_t, 3, 1>(uint32_t(a), uint32_t(b), uint32_t(c)));
+    }
+    m_ghost->setPictureMesh(picture, 0.55f);
+    m_ghostOn = true;
+    update();
+}
+
 QVector3D View::snapToWorkPlane(const QVector3D& p, const Shape* exclude, bool* snapped, bool toPoints) const
 {
     if (snapped) *snapped = false;
@@ -4690,6 +4767,11 @@ void View::fillLatticeMenu(QMenu* menu, const QVector3D& point, double scale, in
             auto action = sub->addAction(TypeIcons::icon("cell", false, QString(), name), label, this,
                                          [=]{ emit(createRequested("primitive", name, point, scale, line, -1)); });
             action->setToolTip(T("A new cell: %1 -- a lattice operation takes it as its cell").arg(name));
+            // (a cell is a shape: the mouse on its entry for a moment shows it, see-through, where it would be made)
+            action->setProperty("previewKind", QStringLiteral("primitive"));
+            action->setProperty("previewName", name);
+            action->setProperty("previewPoint", QVariant::fromValue(point));
+            action->setProperty("previewScale", scale);
             checkPrimitive(action, name, false, line);
         }
     }
@@ -4963,6 +5045,7 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto python = menu->addMenu(TypeIcons::icon("python"), T("Python"));
     python->setToolTipsVisible(true);
     fillPythonMenu(python, point, scale, atLine);
+    watchPreview(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
     else
     {
@@ -5060,6 +5143,11 @@ void View::addCreateEntries(QMenu* menu, const QVector3D& point, const QVector3D
                 auto action = into->addAction(TypeIcons::icon(p["type"].toString(type), false, QString(), name), p["label"].toString(name),
                                               this, [=]{ emit(createRequested("primitive", name, at, size, atLine, -1)); });
                 if (p.contains("doc") && !p["doc"].toString().isEmpty()) action->setToolTip(p["doc"].toString());
+                // (what it makes and where: the mouse on the entry for a moment shows it see-through, see watchPreview)
+                action->setProperty("previewKind", QStringLiteral("primitive"));
+                action->setProperty("previewName", name);
+                action->setProperty("previewPoint", QVariant::fromValue(at));
+                action->setProperty("previewScale", size);
                 checkPrimitive(action, name, false, atLine);
                 return action;
             };
@@ -5222,6 +5310,7 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         menu->addSeparator();
         menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); });
     }
+    watchPreview(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
     else
     {
