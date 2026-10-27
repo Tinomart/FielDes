@@ -20,6 +20,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #pragma once
 
 #include <QPolygonF>
+#include <QImage>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QMutex>
@@ -252,7 +253,7 @@ public slots:
     /*  The render's progress bar with its label (bottom right of the viewport), in the viewport's pixels: empty when no picture is being drawn  */
     QRect renderBarRect() const { return m_renderBarArea.toAlignedRect(); }
     void setSnapMode(bool on);
-    void setSnapOptions(bool show, float spacing, float angle, int reach, bool snapPoints);
+    void setSnapOptions(bool show, float spacing, float angle, int distance, bool snapPoints);
     /*  The step of the grid now (the one the card gives, or what automatic works out to from how large the picture is)  */
     float snapStep() const;
     /*  Whether what is moved is snapped just now: the mode is on, the work plane view is not open, and Alt is not held  */
@@ -710,7 +711,21 @@ protected:
     void announceSnap();
     void syncSnapWithWorkPlane();
     void drawSnapGrid(QPainter& painter);
+    /*  The lattice of the snapping mode as a picture of the viewport (transparent, in device pixels): false when its lines are too fine to draw from here.  The lattice is seen out to the
+     *  viewing distance of the card -- measured from the viewer, in the units of the view, so that it is the same picture whatever the zoom and wherever the view is panned  */
+    bool renderSnapLattice(QImage& image, qreal ratio, int& stride) const;
+    QImage m_snapImage;                      // (the lattice as it was drawn last: the cursor moves over it all the time, the camera does not)
+    QMatrix4x4 m_snapImageM;                 // (the camera it was drawn for)
+    float m_snapImageStep = 0;               // (and the step, the viewing distance, the size of the viewport and its pixel ratio)
+    int m_snapImageDistance = 0;
+    QSize m_snapImageSize;
+    qreal m_snapImageRatio = 0;
+    bool m_snapImageKept = false;            // (the numbers above are those of a picture that was made: it is made again only when one of them changes)
+    bool m_snapImageDrawn = false;           // (and the lattice was drawn in it)
+    int m_snapImageStride = 1;               // (every how manieth line of the lattice was drawn: 1 all of them, 5 every fifth -- when the lines would be too close to see -- the label says so)
     bool altHeld() const;
+    /*  The dot of a point that is within a few pixels of `p` on the screen (not `exclude`, the one that is moved): where it is  */
+    bool pointNear(const QVector3D& p, const Shape* exclude, QVector3D& where) const;
     /*  A move of `distance` along the unit vector `dir` from `from`, snapped: along an axis of the world the place it lands on is a line of the grid, any other way the distance is whole steps  */
     float snappedAlong(const QVector3D& from, const QVector3D& dir, float distance) const;
     bool planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const;

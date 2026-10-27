@@ -3232,8 +3232,10 @@ void Tutorial::buildSteps()
     }
     // (the block, faint, with a cell of one's own and the lattice made with it, as the menus write them: 0 the block, 1 the strut cell -- a beam from a corner to the middle, mirrored --, 2 the lattice that
     // fills the block with it, 3 the cell with a node in the middle of an edge and a beam to it.  The cell size is a tenth of the block across, rounded to 1, 2 or 5, and the beams an eighth of that)
-    auto cellModel = [foamHead](int stage) {
-        QString s = foamHead + "part = box((-10, -10, 0), (10, 10, 14), alpha=0.2)\npart\n";
+    // (a flat bar, 40 across: the menu writes a cell of 5 and beams of 0.625 for it -- eight cells along it, two across, beams of three samples at 5 to the mm.  A block 20 across got cells of 2 and beams of
+    // 0.25 -- one sample, in ten times ten times seven cells: a noise, not a picture)
+    auto cellModel = [](int stage) {
+        QString s = tourHeader("[-24, -9, -4], [24, 9, 14]", 5) + "part = box((-20, -5, 0), (20, 5, 10), alpha=0.2)\npart\n";
         if (stage >= 1)
         {
             const QString nodes = stage >= 3 ? "{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0), 'e': (0.5, 0, 0)}" : "{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}";
@@ -3241,7 +3243,7 @@ void Tutorial::buildSteps()
             s += "\ncell_custom_truss_1 = cell_custom_truss(\n    " + nodes + ",\n    " + beams + ",\n    mirror='xyz',\n)\ncell_custom_truss_1\n";
         }
         if (stage >= 2)
-            s += "\nlattice_1 = lattice(\n    part,\n    cell_custom_truss_1,\n    cell_size=2,\n    thickness=0.25,\n    radius=None,\n    density=None,\n    style='sheet',\n    offset=None,\n    skin=0.0,\n"
+            s += "\nlattice_1 = lattice(\n    part,\n    cell_custom_truss_1,\n    cell_size=5,\n    thickness=0.625,\n    radius=None,\n    density=None,\n    style='sheet',\n    offset=None,\n    skin=0.0,\n"
                  "    region='volume',\n    depth=None,\n    cell_map=None,\n    node_radius=None,\n    blend=0.0,\n    skin_blend=0.0,\n    wall=None,\n    axis='z',\n)  # shadow: part, cell_custom_truss_1\nlattice_1\n";
         return s;
     };

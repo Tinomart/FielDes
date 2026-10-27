@@ -56,7 +56,8 @@ struct SnapGrid
     bool show = true;               // the lattice is drawn
     float spacing = 0;              // the step of the lattice in mm; 0: automatic, from how large the picture is
     float angle = 5.0f;             // the step of a turn in degrees: every turn while the mode is on, and the turn of the Shift gizmo whether it is on or not
-    int reach = 8;                  // how many steps of the lattice are drawn round the place the view looks at: the distance it can be seen from
+    int distance = 115;             // the viewing distance of the lattice, in per cent of the distance from the viewer to the place the view looks at: the lattice is seen out to there and fades out towards it
+                                    // (a share of the way to what you look at, and not millimetres: the picture of it is the same at every zoom and every pan)
     bool snapPoints = true;         // what is put down or pulled also goes onto the points that are there
 };
 
@@ -112,7 +113,7 @@ protected:
 
 /*
  *  The card of the snapping mode, in the viewport's top-right corner like the work plane's: whether the lattice is drawn, its step (automatic or a number, halved and doubled with
- *  a click), the step of a turn, how far the lattice reaches, and whether the points that are there are snapped to as well
+ *  a click), the step of a turn, the viewing distance of the lattice, and whether the points that are there are snapped to as well
  */
 class GridPanel : public QFrame
 {
@@ -127,7 +128,7 @@ public slots:
     void refreshUnits();
 
 signals:
-    void optionsChanged(bool show, float spacing, float angle, int reach, bool snapPoints);
+    void optionsChanged(bool show, float spacing, float angle, int distance, bool snapPoints);
     void closeRequested();
 
 protected:
@@ -146,7 +147,7 @@ protected:
     QToolButton* m_double;
     Units::LengthSpinBox* m_step;
     QDoubleSpinBox* m_angle;
-    QSpinBox* m_reach;
+    QSpinBox* m_distance;
     QLabel* m_hint;
     bool m_collapsed = false;
     bool m_updating = false;

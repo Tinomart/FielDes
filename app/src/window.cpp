@@ -1211,9 +1211,9 @@ Window::Window(Arguments args)
         // (only while the viewport itself has the keyboard, not its cards: Tab moves from box to box in them)
         snapAction->setShortcutContext(Qt::WidgetShortcut);
         view->addAction(snapAction);
-        // (what the card says is kept: the grid, the step of the turn and how far the lattice reaches are the same the next time FielDes opens)
+        // (what the card says is kept: the grid, the step of the turn and the viewing distance of the lattice are the same the next time FielDes opens)
         view->setSnapOptions(settings.value("snap/show", true).toBool(), settings.value("snap/spacing", 0.0).toFloat(), settings.value("snap/angle", 5.0).toFloat(),
-                             settings.value("snap/reach", 8).toInt(), settings.value("snap/points", true).toBool());
+                             settings.value("snap/distance", 115).toInt(), settings.value("snap/points", true).toBool());
         connect(snapAction, &QAction::toggled, this, [=](bool on) { view->setSnapMode(on); });
         connect(view, &View::snapChanged, this, [=] {
             const SnapGrid grid = view->snapGrid();
@@ -1225,13 +1225,13 @@ Window::Window(Arguments args)
             panel->setVisible(grid.on);
             if (grid.on) panel->raise();
         });
-        connect(panel, &GridPanel::optionsChanged, this, [=](bool show, float spacing, float angle, int reach, bool snapPoints) {
+        connect(panel, &GridPanel::optionsChanged, this, [=](bool show, float spacing, float angle, int distance, bool snapPoints) {
             settings.setValue("snap/show", show);
             settings.setValue("snap/spacing", double(spacing));
             settings.setValue("snap/angle", double(angle));
-            settings.setValue("snap/reach", reach);
+            settings.setValue("snap/distance", distance);
             settings.setValue("snap/points", snapPoints);
-            view->setSnapOptions(show, spacing, angle, reach, snapPoints);
+            view->setSnapOptions(show, spacing, angle, distance, snapPoints);
         });
         connect(panel, &GridPanel::closeRequested, this, [=] { view->setSnapMode(false); });
         connect(this, &Window::unitsChanged, panel, &GridPanel::refreshUnits);

@@ -384,7 +384,7 @@ GridPanel::GridPanel(QWidget* parent)
     : QFrame(parent),
       m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget),
       m_show(new QToolButton), m_snapPoints(new QToolButton), m_auto(new QToolButton), m_half(new QToolButton), m_double(new QToolButton),
-      m_step(new Units::LengthSpinBox), m_angle(new QDoubleSpinBox), m_reach(new QSpinBox), m_hint(new QLabel)
+      m_step(new Units::LengthSpinBox), m_angle(new QDoubleSpinBox), m_distance(new QSpinBox), m_hint(new QLabel)
 {
     setObjectName("GridPanel");
     setAttribute(Qt::WA_StyledBackground, true);
@@ -434,28 +434,25 @@ GridPanel::GridPanel(QWidget* parent)
     m_show->setObjectName("gridShow");
     m_show->setCheckable(true);
     m_show->setChecked(true);
-    m_show->setText(T("Grid"));
+    m_show->setText(T("Show grid"));
     m_show->setToolTip(T("Draw the grid: a lattice of lines in the whole space, faint with distance"));
     m_snapPoints->setObjectName("gridSnapPoints");
     m_snapPoints->setCheckable(true);
     m_snapPoints->setChecked(true);
-    m_snapPoints->setText(T("To points"));
-    m_snapPoints->setToolTip(T("A model put down or pulled out also lands on the points that are already there, when it is near one"));
+    m_snapPoints->setText(T("Snap to points"));
+    m_snapPoints->setToolTip(T("A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid"));
+    // (the two switches side by side, each with its own name: a row of its own with a label over a single switch says nothing)
     auto showRow = new QHBoxLayout;
-    showRow->addWidget(label(T("Show")));
     showRow->addWidget(m_show);
+    showRow->addWidget(m_snapPoints);
     showRow->addStretch();
-    auto snapRow = new QHBoxLayout;
-    snapRow->addWidget(label(T("Snap")));
-    snapRow->addWidget(m_snapPoints);
-    snapRow->addStretch();
 
     // The step of the grid: automatic, from how large the picture is, or a number -- halved and doubled with a click
     m_auto->setObjectName("gridAuto");
     m_auto->setCheckable(true);
     m_auto->setChecked(true);
     m_auto->setText(T("Auto"));
-    m_auto->setToolTip(T("The grid's step from how large the picture is"));
+    m_auto->setToolTip(T("The grid's step from the size of the region that is drawn: a round number, the same however you zoom"));
     m_step->setObjectName("gridStep");
     m_step->setLengthDecimals(4);
     m_step->setRange(1e-4, 1e6);
@@ -509,18 +506,20 @@ GridPanel::GridPanel(QWidget* parent)
     }
     presetRow->addStretch();
 
-    m_reach->setObjectName("gridReach");
-    m_reach->setRange(2, 10);
-    m_reach->setValue(8);
-    m_reach->setSuffix(" " + T("steps"));
-    m_reach->setKeyboardTracking(false);
-    m_reach->setButtonSymbols(QSpinBox::NoButtons);
-    m_reach->setFixedWidth(70);
-    m_reach->setToolTip(T("How far the grid is drawn round the place you look at, in steps: the farther lines are left out, so that a far row does not distract"));
-    auto reachRow = new QHBoxLayout;
-    reachRow->addWidget(label(T("Distance")));
-    reachRow->addWidget(m_reach);
-    reachRow->addStretch();
+    // The viewing distance of the lattice: how far from the viewer it can be seen -- a share of the distance to the place the view looks at, so that it is the same at every zoom and every pan
+    m_distance->setObjectName("gridDistance");
+    m_distance->setRange(105, 400);
+    m_distance->setSingleStep(5);
+    m_distance->setValue(115);
+    m_distance->setSuffix(" %");
+    m_distance->setKeyboardTracking(false);
+    m_distance->setButtonSymbols(QSpinBox::NoButtons);
+    m_distance->setFixedWidth(70);
+    m_distance->setToolTip(T("The viewing distance of the grid: how far from you it can be seen, in per cent of the distance from you to the place you look at. It fades out towards that distance and nothing past it is drawn -- the same at every zoom and every pan"));
+    auto distanceRow = new QHBoxLayout;
+    distanceRow->addWidget(label(T("Distance")));
+    distanceRow->addWidget(m_distance);
+    distanceRow->addStretch();
 
     m_hint->setObjectName("GridHint");
     m_hint->setWordWrap(true);
@@ -535,8 +534,7 @@ GridPanel::GridPanel(QWidget* parent)
     body->addLayout(stepRow);
     body->addLayout(angleRow);
     body->addLayout(presetRow);
-    body->addLayout(reachRow);
-    body->addLayout(snapRow);
+    body->addLayout(distanceRow);
     body->addWidget(m_hint);
 
     auto layout = new QVBoxLayout(this);
@@ -564,7 +562,7 @@ GridPanel::GridPanel(QWidget* parent)
     });
     connect(m_step, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { emitOptions(); });
     connect(m_angle, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { emitOptions(); });
-    connect(m_reach, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) { emitOptions(); });
+    connect(m_distance, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) { emitOptions(); });
     // (half and double are of the step that is shown: when it was automatic it becomes a number of its own, the one the automatic step worked out to, halved or doubled)
     connect(m_half, &QToolButton::clicked, this, [this] {
         const double v = m_step->value();
@@ -583,7 +581,7 @@ GridPanel::GridPanel(QWidget* parent)
 void GridPanel::emitOptions()
 {
     if (m_updating) return;
-    emit(optionsChanged(m_show->isChecked(), m_auto->isChecked() ? 0.0f : float(m_step->value()), float(m_angle->value()), m_reach->value(), m_snapPoints->isChecked()));
+    emit(optionsChanged(m_show->isChecked(), m_auto->isChecked() ? 0.0f : float(m_step->value()), float(m_angle->value()), m_distance->value(), m_snapPoints->isChecked()));
 }
 
 void GridPanel::setGrid(const SnapGrid& grid, float step, bool suspended)
@@ -591,14 +589,14 @@ void GridPanel::setGrid(const SnapGrid& grid, float step, bool suspended)
     Q_UNUSED(suspended);
     m_updating = true;
     {
-        QSignalBlocker a(m_show), b(m_snapPoints), c(m_auto), d(m_step), e(m_angle), f(m_reach);
+        QSignalBlocker a(m_show), b(m_snapPoints), c(m_auto), d(m_step), e(m_angle), f(m_distance);
         m_show->setChecked(grid.show);
         m_snapPoints->setChecked(grid.snapPoints);
         m_auto->setChecked(grid.spacing <= 0);
         m_step->setEnabled(grid.spacing > 0);
         m_step->setValue(grid.spacing > 0 ? grid.spacing : std::max(1e-4f, step));
         m_angle->setValue(grid.angle);
-        m_reach->setValue(grid.reach);
+        m_distance->setValue(grid.distance);
     }
     m_updating = false;
 }
