@@ -2662,7 +2662,9 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
     if (event->button() == Qt::LeftButton) m_leftDown = false;
-    clearSnapMark();                                          // (what was being moved has landed: the mark of where it landed goes, and the hover brings its own back)
+    // (what was being moved has landed: the mark of where it landed goes, and the hover brings its own back -- not on a right click, which opens the menu that puts something down at the mark:
+    // the mark stays there until the menu is closed, 2026-10-27, the user: "the snap cursor disappears when you right click to place, that is unacceptable")
+    if (event->button() == Qt::LeftButton) clearSnapMark();
     if (m_pullShape)
     {
         Shape* shape = m_pullShape;
@@ -3168,11 +3170,11 @@ void View::setWorkPlaneOffset(float offset)
 float View::snapStep() const
 {
     if (m_snap.spacing > 0) return m_snap.spacing;
-    // Automatic: a round number from the size of the region that is drawn -- a fifth of its longest side: a step that is big enough to snap to and to SEE (a tenth was a grid of tiny cells, 2026-10-27, the user: "the grid looks way too small") -- and NOT from the zoom.  A grid has
+    // Automatic: a round number from the size of the region that is drawn -- a tenth of its longest side: a step that is big enough to snap to and to see -- and NOT from the zoom.  A grid has
     // a size of its own: zooming in shows fewer of its lines, bigger, and does not change where they are, or what everything snaps to
     const QVector3D lo = settings.min, hi = settings.max;
     const float extent = (hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z()) ? std::max({hi.x() - lo.x(), hi.y() - lo.y(), hi.z() - lo.z()}) : 100.0f;
-    return roundStep(extent / 5.0);
+    return roundStep(extent / 10.0);
 }
 
 bool View::altHeld() const
@@ -3340,6 +3342,7 @@ void View::setSnapMark(const QVector3D& at, bool onPoint)
 
 void View::clearSnapMark()
 {
+    if (m_snapMarkHeld) return;                 // (a menu is open that puts something down at the mark: it stays where that will be)
     m_snapStickValid = false;
     if (!m_snapMark.valid) return;
     m_snapMark.valid = false;
@@ -3453,51 +3456,36 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
 
     // The lattice is seen out to the viewing distance of the card, a share of the way from the viewer to the place looked at (1 is that place: the card's 115 % is fifteen hundredths of the way
     // farther on), and fades steadily out into that distance: the lines nearest the viewer are the strongest and the thinnest-drawn farthest, so that of two lines next to each other the nearer
-    // one is told by its tone and its width.  A short stretch of rows in front of the place looked at is seen too -- the rows near the viewer are big and few --, which fades in, so that the
-    // lattice does not start with an edge and does not lie over a model at full strength.  It is not thicker than its nodes can be told from each other and be counted: what the viewer sees
-    // between the two limits is a pyramid of the picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that would be more than `cap` nodes
-    // both limits are brought in -- at the place looked at there are always a few rows
+    // one is told by its tone and its width.  It is not thicker than its nodes can be told from each other and be counted: what the viewer sees between the two limits is a pyramid of the
+    // picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that would be more than `cap` nodes both limits are brought in -- at the place looked
+    // at there are always a few rows
     float hFar = float(m_snap.distance) / 100.0f - 1.0f;
     // (and at least about four rows deep however far the view is zoomed in: a step that is wider than the slice would leave nothing of the lattice to see or to snap to)
     hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
-    // The near side reaches out toward the viewer, to a quarter of the way to the place looked at (nothing nearer is a line of the picture): the lattice is everywhere, near the viewport as far from it
-    // (2026-10-27, the user: "the grid stops too far away from the viewport")
-    // (only a few rows of it, though: five in front of the place looked at, as many as the eye can tell apart -- thirty rows of lines on top of each other were a haze in which nothing could be told from anything,
-    // 2026-10-27, the user: "you can't tell what is where at all")
-    float hNear = std::min(0.75f, 5.0f * stepV / eyeV);
-    auto nodesIn = [&](float sFar, float sNear) {
-        const float b = 1.0f + sFar * hFar, a = 1.0f - sNear * hNear;
+    // The slice is as it was -- a little in front of the place looked at to a share behind it -- and read as it was: that is what could be read (2026-10-27, the user, of a deeper slab: "the previous version
+    // looked way better and way way more readable ... I would have only tweaked it a little bit so that you can select some stuff closer to the viewport camera").  What is added toward the viewer,
+    // so that something can be put down nearer to it, is the same rows as before and then a stretch of fainter ones that fade in from the nearest limit
+    float hOld = std::min(0.4f * hFar, 0.5f);
+    float hNear = std::max(hOld, std::min(2.0f * hFar, 0.5f));
+    auto nodesIn = [&](float s) {
+        const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
     };
-    if (nodesIn(1.0f, 1.0f) > float(cap))
+    if (nodesIn(1.0f) > float(cap))
     {
         float lo = 0.0f, hi = 1.0f;
-        if (nodesIn(1.0f, 0.0f) <= float(cap))
+        for (int i = 0; i < 30; ++i)
         {
-            // (the near rows are most of the count -- the cross-section of the view grows with the distance --: they are brought in first, and the far side stays as the card asked)
-            for (int i = 0; i < 30; ++i)
-            {
-                const float mid = 0.5f * (lo + hi);
-                (nodesIn(1.0f, mid) > float(cap) ? hi : lo) = mid;
-            }
-            hNear *= lo;
+            const float mid = 0.5f * (lo + hi);
+            (nodesIn(mid) > float(cap) ? hi : lo) = mid;
         }
-        else
-        {
-            // (and when the place looked at and what lies behind it are too much already, both limits come in together)
-            hNear = std::min(0.4f * hFar, 0.5f);
-            for (int i = 0; i < 30; ++i)
-            {
-                const float mid = 0.5f * (lo + hi);
-                (nodesIn(mid, mid) > float(cap) ? hi : lo) = mid;
-            }
-            hFar *= lo;
-            hNear *= lo;
-            // (fewer than two rows across what is left of the slice: the lines are too fine to draw from here.  A slice that is thin only because the view is zoomed in is drawn: it holds what rows it holds)
-            if ((hFar + hNear) * eyeV < 2.0f * stepV) return false;
-        }
+        hFar *= lo;
+        hNear *= lo;
+        hOld *= lo;
+        // (fewer than two rows across what is left of the slice: the lines are too fine to draw from here.  A slice that is thin only because the view is zoomed in is drawn: it holds what rows it holds)
+        if ((hFar + hNear) * eyeV < 2.0f * stepV) return false;
     }
-    float tLimit = 1.0f + hFar, tNear = 1.0f - hNear;
+    float tLimit = 1.0f + hFar, tNear = 1.0f - hNear, tOld = 1.0f - hOld;
 
     const QMatrix4x4 V = camera.view(), M = camera.M();
     const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
@@ -3505,24 +3493,16 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     struct Node { int i, j, k; QPointF at; float f; };
     std::unordered_map<qint64, Node> nodes;
     auto keyOf = [](int i, int j, int k) { return (qint64(i + 1048576) << 42) | (qint64(j + 1048576) << 21) | qint64(k + 1048576); };
-    // (how strong a line is at a distance t from the viewer, 1 being the place the view looks at: it falls steadily from the nearest limit to 0 at the far one -- the distance fog -- and fades in
-    // over the first eighth of the way, so that the nearest rows do not start with an edge)
+    // (how strong a line is at a distance t from the viewer, 1 being the place the view looks at: from where the slice began, in front of that place, it falls steadily to 0 at the far limit -- the distance
+    // fog --; the rows that are added in front of it fade in from the nearest limit to that strength, so that the lattice does not start with an edge)
     auto strength = [&](float t) {
-        // (the nearer a line the stronger: from the nearest rows, 1, to the place looked at, 0.85, and from there to nothing at the far limit; fading in over the first eighth, so that the nearest
-        // rows do not start with an edge)
-        const float total = std::max(1e-3f, tLimit - tNear);
-        const float rise = std::min(1.0f, std::max(0.0f, (t - tNear) / (0.125f * total)));
-        float s;
-        if (t <= 1.0f)
+        if (t < tOld)
         {
-            s = 1.0f - 0.15f * std::min(1.0f, (t - tNear) / std::max(1e-3f, 1.0f - tNear));
+            const float v = std::min(1.0f, std::max(0.0f, (t - tNear) / std::max(1e-3f, tOld - tNear)));
+            return v * v * (3.0f - 2.0f * v);
         }
-        else
-        {
-            const float u = std::min(1.0f, (t - 1.0f) / std::max(1e-3f, tLimit - 1.0f));
-            s = 0.85f * (1.0f - u) * (1.0f - u);
-        }
-        return s * rise * rise * (3.0f - 2.0f * rise);
+        const float u = std::min(1.0f, (t - tOld) / std::max(1e-3f, tLimit - tOld));
+        return (1.0f - u) * (1.0f - u);
     };
     auto collect = [&]() {
         nodes.clear();
@@ -3570,18 +3550,15 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         if (!collect()) return false;
         if (nodes.size() <= size_t(cap) * 3 / 2) break;
-        tLimit = 1.0f + (tLimit - 1.0f) * 0.9f;
-        tNear = 1.0f - (1.0f - tNear) * 0.7f;               // (the near side first, as above)
-        if (attempt >= 12 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
+        tLimit = 1.0f + (tLimit - 1.0f) * 0.8f;
+        tNear = 1.0f - (1.0f - tNear) * 0.8f;
+        tOld = 1.0f - (1.0f - tOld) * 0.8f;
+        if (attempt >= 8 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
     }
-    // (the rows that are drawn, kept: a click and a move go to a node between these two limits -- see snapNodeAlongRay)
-    m_snapSlabNear = tNear;
-    m_snapSlabFar = tLimit;
+    // (the rows that are drawn, kept: a click and a move go to a node between these two limits -- see snapNodeAlongRay -- and a node that is too faint to be drawn is not one of them)
+    m_snapSlabNear = tNear + 0.17f * (tOld - tNear);
+    m_snapSlabFar = tOld + 0.75f * (tLimit - tOld);
     m_snapSlabValid = true;
-    // (how many rows deep the slice is: a lattice seen through a dozen rows is already a haze, and one seen through thirty would cover the model, so what is drawn gets the fainter the more rows
-    // there are -- the ink in the picture stays that of about a dozen -- and the lines never go out altogether)
-    const float rowsDeep = (tLimit - tNear) * eyeV / stepV;
-    const float tone = rowsDeep > 12.0f ? std::max(0.3f, 12.0f / rowsDeep) : 1.0f;
 
     // (eight steps of the fog, from the nearest to the farthest: tone, width and colour all fade, so that of two lines next to each other the nearer one is told at once)
     constexpr int kBands = 8;
@@ -3617,7 +3594,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         // (the near lines are a lighter violet and the far ones a deeper one, as well as fainter and thinner)
         const double k = double(b) / double(kBands - 1);
-        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), int(float(kAlpha[b]) * tone)), kWidth[b]));
+        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), kAlpha[b]), kWidth[b]));
         p.drawLines(bands[b]);
     }
     const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
@@ -3625,7 +3602,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         for (int b = 0; b < kBands; ++b)
         {
-            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), int(float(kAxisAlpha[b]) * std::max(tone, 0.55f))), 2.0 - 0.6 * double(b) / double(kBands - 1)));
+            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), kAxisAlpha[b]), 2.0 - 0.6 * double(b) / double(kBands - 1)));
             p.drawLines(axes[a][b]);
         }
     }
@@ -4953,6 +4930,13 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     auto menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->setToolTipsVisible(true);
+    // The mark shows where what the menu makes will be put, for as long as the menu is open
+    if (atLine < 0 && snapActive())
+    {
+        setSnapMark(point, false);
+        m_snapMarkHeld = true;
+        connect(menu, &QMenu::aboutToHide, this, [this]{ m_snapMarkHeld = false; clearSnapMark(); });
+    }
     // The field the field viewer shows (the disc is not a model that can be right-clicked: this is its menu): a body from it at once
     if (activeFieldOpen() && m_scene)
     {
@@ -4980,7 +4964,12 @@ void View::showEmptyMenu(QPoint globalPos, QPoint pos, int atLine)
     python->setToolTipsVisible(true);
     fillPythonMenu(python, point, scale, atLine);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
-    else menu->deleteLater();
+    else
+    {
+        menu->deleteLater();
+        m_snapMarkHeld = false;                     // (no menu: nothing puts anything down at the mark)
+        clearSnapMark();
+    }
 }
 
 // What the Operations menu holds, on a model (`line` >= 0) or on empty space: the operations -- offsets and walls, rounding, moving ... -- on the model that is selected
@@ -5121,6 +5110,12 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     // lattices -- under Engineering; the quick ones (center, bounding_box) are below them
     // (the snapping mode: what is made from the surface goes to the node nearest the place that was clicked -- where the mark was -- and not exactly onto the surface)
     const QVector3D place = (onSurface && snapActive()) ? snapPoint(point, nullptr, false) : point;
+    if (onSurface && snapActive())
+    {
+        setSnapMark(place, false);                  // (and the mark shows it for as long as the menu is open)
+        m_snapMarkHeld = true;
+        connect(menu, &QMenu::aboutToHide, this, [this]{ m_snapMarkHeld = false; clearSnapMark(); });
+    }
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
     addCreateEntries(primitives, place, place, place, scale, scale, -1, true);
@@ -5228,7 +5223,12 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); });
     }
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);
-    else menu->deleteLater();
+    else
+    {
+        menu->deleteLater();
+        m_snapMarkHeld = false;                     // (no menu: nothing puts anything down at the mark)
+        clearSnapMark();
+    }
 }
 
 void View::showSelectMenu(QPoint globalPos, int line, const QVector3D& point)

@@ -734,6 +734,7 @@ protected:
     mutable bool m_snapStickValid = false;
     struct SnapMark { bool valid = false; QVector3D at; bool onPoint = false; };
     SnapMark m_snapMark;
+    bool m_snapMarkHeld = false;                    // (a menu that puts something down at the mark is open: the mark stays)
     void setSnapMark(const QVector3D& at, bool onPoint);
     void clearSnapMark();
     void updateSnapHover(QPoint pos);
