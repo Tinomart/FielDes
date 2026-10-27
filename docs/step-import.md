@@ -50,8 +50,6 @@ space in the viewport, or drop a file on the window. FielDes adds to the script,
 ```python
 # Imported model: bracket.step
 bracket = import_model(r"C:\cad\bracket.step")
-view.set_bounds(*roi(bracket))
-view.set_resolution(roi_resolution(bracket))
 view.set_quality(8)
 ```
 

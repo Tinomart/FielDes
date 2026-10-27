@@ -557,6 +557,10 @@ public:
     /*  An image of a model in a symmetry: the images of one statement (`x_images = symmetry_images(x, mirror)`) are shapes of their own on one line of the script, and one selection  */
     void setSymmetryImage(bool v) { m_symmetryImage = v; }
     bool isSymmetryImage() const { return m_symmetryImage; }
+    /*  The symmetry an image is made in (the tree of the symmetry model, `_symmetry_source`; null when the shape is no image): what binds a body to a symmetry.  The planes of a symmetry that is not in use
+        are drawn for as long as a body is bound to them, and for no other reason -- the symmetry that is only selected is not  */
+    void setSymmetrySource(libfive::Tree::Id of) { m_symmetrySourceId = of; }
+    libfive::Tree::Id symmetrySource() const { return m_symmetrySourceId; }
     /*  A shape that is another one, moved or mirrored: the image of a model in a symmetry (its mesh is the model's through the symmetry's map), a linked copy (`instance`: the
         model's through the move and turn of the copy).  While a surface of the model is pulled the shape does not mesh its own field -- it is the same shape -- it takes the model's
         mesh, level by level, as it is made.  `setFollows` says which tree it is the image of (the script knows), `linkSource` which shape of the scene that is (null when it is not
@@ -1135,6 +1139,7 @@ protected:
     QVector3D m_pullAxis;
     std::shared_ptr<const std::set<libfive::Tree::Id>> m_sceneGizmoVars;
     bool m_symmetryImage = false;
+    libfive::Tree::Id m_symmetrySourceId = libfive::Tree::Id();
     bool m_locked = false;
     bool m_linked = false;
     SymmetryDef m_symDef;

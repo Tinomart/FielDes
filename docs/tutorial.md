@@ -190,7 +190,7 @@ def perforate(body, hole_radius=2.0, spacing=10.0):
     return difference(body, holes)
 ```
 
-**Settings → Blocks folder…** chooses the folder; save the file and the scripts that use it run again. Models made by a block
+**Settings → Show the blocks folder** opens the folder; save the file and the scripts that use it run again. Models made by a block
 carry a small **f** in the tree. See [Custom blocks](blocks.md).
 
 ## 7. Real parts and real analysis
@@ -239,6 +239,7 @@ A few words mean something particular in FielDes, and some mean something else i
 | left-drag a rectangle, `Ctrl`+click, `Shift`+click (tree) | select |
 | right-click | make things / operate on a model |
 | `E` `R` `V` `C` `I` `D` (viewport focused) | gizmo mode, lock, show / hide, render cache, isolate, delete |
+| `O` (viewport focused, a model and a point selected) | the point becomes the model's origin (where its gizmo is, what it turns and scales about); the model stays where it is |
 | `Shift+D` / `Ctrl+D` (viewport focused) | copy the selected models / link them (`instance`: a copy that follows the original, moved and rotated only) |
 | `Esc` | cancel a slow render |
 | `Shift+X` (viewport focused), `Ctrl+Shift+T` | the section card, the model tree |

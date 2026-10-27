@@ -299,4 +299,22 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     lattices > point_cloud: `point_cloud([point_1, point_2, ...])` is written (the points are dragged to the places wanted by their gizmos and the cloud follows); select the cloud and choose voronoi_lattice: a foam around exactly those points, clipped by the box
 #     that holds them (`point_cloud(points, body=part)` clips it by a body).  The rim of the tour's foam call has `frame=False` and `voronoi_lattice` has `clip=True`, as the menu writes them.
 #
+# 42. THE LAST ROUND (2026-10-28; none of it was seen in a window of the maintainer's before this file was written -- look at each).  (a) HANDLE SNAPPING: `sphere(8, (0, 0, 0))`, press Tab (snapping mode); the card has a button
+#     **Snap handles**, on.  Click the sphere, drag a surface of it by its handle: YOU MUST SEE the number of its `handles(...)` line go in whole steps of the grid and the violet mark where it lands; press the button off and the
+#     same drag is free; Alt held still moves freely.  (b) THE ORIGIN: `box((0, 0, 0), (20, 10, 6))` and a point at a corner (right-click the box close to a corner > Point at the corner); select the box, Ctrl+click the point, press `O`:
+#     YOU MUST SEE the box not move, `origin=(20, 10, 6)` and a `position=` in its call, its gizmo at the corner; turn it with the gizmo and it turns about the corner.  Ctrl+Z puts it back in one step.  A selection of two models
+#     says so.  (c) Ctrl+Shift+S, with the cursor over the viewport: a new `symmetry_planes(...)` is in the script with its centre where the cursor was, and it is the one in use (what you make now has images); File > Save As still
+#     works from the menu.  (d) THE BLOCKS FOLDER IS EMPTY in a build (Settings > Show the blocks folder shows nothing: no sample blocks, no README); File > Save as custom block: a window asks for the name, with the model's name and `_block` in it; type another and press OK: that file is in the blocks folder and that name is in the right-click menu
+#     under New custom block.  (e) THE TOUR: chapter 3 "One model, two places": the dragged row (knob) has a dashed outline and one curved arrow goes to capped; chapter 4 shows the name that was typed in the last two block steps;
+#     chapter 5 "Draw on a work plane": the plane's card reads normal (0, 0, 1); chapter 6 starts with the table top only; chapter 9 "Change the load" and chapter 10 "Change the post" start with only the result shown and, while
+#     the solve runs, everything but the bar is dimmed -- and ONLY while it runs: a plain render of the script (a typed number, a step change) leaves the screen alone; chapter 10 has the steps "Select the four walls"
+#     and "Walls that slide" BEFORE "Choose the fluid": the four wall faces are selected with Select Surface one after the other (selection_3 to selection_6) and the VIEW TURNS BY ITSELF to the next wall each time one is made
+#     (top, front, bottom, back; the arrow points at where to click), `slip_1` is made of the four rows at once in the menu,
+#     and "Solve the flow" selects `slip_1` with the other models (nothing is typed over a placeholder, no `faces` or `sides` model is in the script) -- and the flow that comes out has the slip all round the channel, only the post sticking; jump straight to "Solve the flow" with the chapter menu: the script is complete and has no NameError; in the trees of chapters 9 and 10 the beam / the slab has a
+#     row of its own and the `selection_N` rows are last; the buttons of the card have no box round them; in chapter 7 click Next and Back between "Flows" and "Manufacturing" several times: no frame of another model between them.
+#     (f) SYMMETRY PLANES ARE OBJECT BOUND: make two symmetries and images of a body in the first (`leg_images = symmetry_images(leg, symmetry_1)`); switch the symmetry off (Shift+S): the planes of `symmetry_1` stay in the picture,
+#     pale, whichever symmetry is selected; the planes of `symmetry_2`, which has no body, do not; delete the images: no planes are drawn.  (g) A THREADED ROD from the menu (right-click empty space > Primitives > 3D > threaded_rod)
+#     is about as wide and as high as a cylinder made the same way beside it (`threaded_rod('M6', 10, ...)` at the default size).  NOT FIXED, NOT KNOWN: the threaded rod "spasms" while it is dragged (the user, 2026-10-28) -- drag it by the
+#     gizmo and by a handle and look.
+#
 print("Open one of the files listed above.")

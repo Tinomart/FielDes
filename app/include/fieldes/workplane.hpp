@@ -59,6 +59,7 @@ struct SnapGrid
     int distance = 135;             // the viewing distance of the lattice, in per cent of the distance from the viewer to the place the view looks at: the lattice is seen out to there and fades out towards it
                                     // (a share of the way to what you look at, and not millimetres: the picture of it is the same at every zoom and every pan)
     bool snapPoints = true;         // what is put down or pulled also goes onto the points that are there
+    bool snapHandles = true;        // a surface that is dragged by its handle (a number of the script that places it) goes to the lines of the grid while it is pulled
 };
 
 /*
@@ -128,7 +129,7 @@ public slots:
     void refreshUnits();
 
 signals:
-    void optionsChanged(bool show, float spacing, float angle, int distance, bool snapPoints);
+    void optionsChanged(bool show, float spacing, float angle, int distance, bool snapPoints, bool snapHandles);
     void closeRequested();
 
 protected:
@@ -142,6 +143,7 @@ protected:
     QWidget* m_body;
     QToolButton* m_show;
     QToolButton* m_snapPoints;
+    QToolButton* m_snapHandles;
     QToolButton* m_auto;
     QToolButton* m_half;
     QToolButton* m_double;

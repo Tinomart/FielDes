@@ -302,8 +302,8 @@ static QString guideHtml()
     h += "</ul>";
 
     h += "<h2>" + T("Custom blocks") + "</h2><ul>";
-    h += li(T("Put a <code>.py</code> file in the <b>blocks folder</b> (Settings &rarr; Blocks folder... chooses it; "
-              "<i>Show the blocks folder</i> opens it) and every function in it is there in every script, with its call tip "
+    h += li(T("Put a <code>.py</code> file in the <b>blocks folder</b> (<i>Show the blocks folder</i> in the Settings menu "
+              "opens it) and every function in it is there in every script, with its call tip "
               "and completion: <code>def perforate(body, hole_radius=2.0): ...</code>. Save the file and the scripts that "
               "use it run again. A block whose first argument is a model is in <b>Operations &rarr; Custom blocks</b>."));
     h += "</ul>";
@@ -540,7 +540,8 @@ Window::Window(Arguments args)
     connect(save_action, &QAction::triggered, this, &Window::onSave);
 
     auto save_as_action = file_menu->addAction(T("Save As..."));
-    Shortcuts::add(save_as_action, "file.save-as", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)});
+    // (Ctrl+Shift+S makes a new symmetry at the cursor now -- View > New symmetry at the cursor --; Save As is in the menu, and its shortcut can be set in Settings > Shortcuts)
+    Shortcuts::add(save_as_action, "file.save-as", {});
     connect(save_as_action, &QAction::triggered, this, &Window::onSaveAs);
 
     // The script as a block of one's own: a function in a file of the blocks folder, so that the whole model is one call in any script and an entry of the right-click menus
@@ -621,11 +622,11 @@ Window::Window(Arguments args)
             d.exec();
         });
         settings_menu->addSeparator();
-        // The custom blocks: the files of one folder become functions in every script
-        auto blocks_action = settings_menu->addAction(T("Blocks folder..."));
-        blocks_action->setToolTip(T("The folder whose Python files are your custom blocks: every function in them is there in every script"));
-        connect(blocks_action, &QAction::triggered, this, [this]{ chooseBlocksFolder(); });
+        // The custom blocks: the files of one folder become functions in every script.  ONE entry for that folder: it opens it (the user, 2026-10-27 and 28: "What the hell is block folder and show block folder.
+        // What is the difference?" and "it makes no sense that there is a blocks and a custom blocks folder. One of those serves no purpose and should be removed" -- the entry that chose another folder
+        // is gone; FIELDES_BLOCKS names another one)
         auto show_blocks = settings_menu->addAction(T("Show the blocks folder"));
+        show_blocks->setToolTip(T("Open the folder whose Python files are your custom blocks: every function in them is there in every script"));
         connect(show_blocks, &QAction::triggered, this, [this]{
             if (m_blocksFolder.isEmpty()) watchBlocks();
             QDir().mkpath(m_blocksFolder);
@@ -1214,7 +1215,7 @@ Window::Window(Arguments args)
         view->addAction(snapAction);
         // (what the card says is kept: the grid, the step of the turn and the viewing distance of the lattice are the same the next time FielDes opens)
         view->setSnapOptions(settings.value("snap/show", true).toBool(), settings.value("snap/spacing", 0.0).toFloat(), settings.value("snap/angle", 5.0).toFloat(),
-                             settings.value("snap/distance2", 135).toInt(), settings.value("snap/points", true).toBool());      // (distance2: the viewing distance that reaches farther back than the first, 115 %, did -- a number of the first kind is not read)
+                             settings.value("snap/distance2", 135).toInt(), settings.value("snap/points", true).toBool(), settings.value("snap/handles", true).toBool());      // (distance2: the viewing distance that reaches farther back than the first, 115 %, did -- a number of the first kind is not read)
         connect(snapAction, &QAction::toggled, this, [=](bool on) { view->setSnapMode(on); });
         connect(view, &View::snapChanged, this, [=] {
             const SnapGrid grid = view->snapGrid();
@@ -1226,13 +1227,14 @@ Window::Window(Arguments args)
             panel->setVisible(grid.on);
             if (grid.on) panel->raise();
         });
-        connect(panel, &GridPanel::optionsChanged, this, [=](bool show, float spacing, float angle, int distance, bool snapPoints) {
+        connect(panel, &GridPanel::optionsChanged, this, [=](bool show, float spacing, float angle, int distance, bool snapPoints, bool snapHandles) {
             settings.setValue("snap/show", show);
             settings.setValue("snap/spacing", double(spacing));
             settings.setValue("snap/angle", double(angle));
             settings.setValue("snap/distance2", distance);
             settings.setValue("snap/points", snapPoints);
-            view->setSnapOptions(show, spacing, angle, distance, snapPoints);
+            settings.setValue("snap/handles", snapHandles);
+            view->setSnapOptions(show, spacing, angle, distance, snapPoints, snapHandles);
         });
         connect(panel, &GridPanel::closeRequested, this, [=] { view->setSnapMode(false); });
         connect(this, &Window::unitsChanged, panel, &GridPanel::refreshUnits);
@@ -1250,6 +1252,12 @@ Window::Window(Arguments args)
         symAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         view->addAction(symAction);
         connect(symAction, &QAction::triggered, this, [=] { view->toggleSymmetry(); });
+        // (a new symmetry where the cursor is: the window's own shortcut, like the new work plane's -- it types nothing, so it needs no focus in the viewport)
+        auto newSymAction = view_menu->addAction(T("New symmetry at the cursor"));
+        newSymAction->setToolTip(T("Make a new symmetry at the cursor and use it: what you make is made at its images too"));
+        Shortcuts::add(newSymAction, "view.symmetry-new", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)});
+        newSymAction->setShortcutContext(Qt::WindowShortcut);
+        connect(newSymAction, &QAction::triggered, this, [=] { view->newSymmetryAtCursor(); view->setFocus(Qt::OtherFocusReason); });
         auto scene = view->scenePanel();
         connect(scene, &ScenePanel::activeSymmetryChanged, view, [=](QList<int> lines, bool chosen, QString) { view->setActiveSymmetry(lines, chosen); });
         connect(view, &View::symmetryChanged, scene, &ScenePanel::setSymmetry);
@@ -1333,6 +1341,16 @@ Window::Window(Arguments args)
         view->addAction(isolate);
         auto scene = view->scenePanel();
         connect(isolate, &QAction::triggered, scene, &ScenePanel::toggleIsolation);
+    }
+
+    {   // O: the point that is selected with a model becomes its origin, a single key like the others (the viewport or the model tree has the focus, so it never eats typing)
+        auto origin = view_menu->addAction(T("Set the origin of the selected model to the selected point"));
+        origin->setToolTip(T("Select a model and a point and press O: the point becomes the origin of the model -- the point it turns and scales about, where its gizmo is -- and the model stays where it is"));
+        Shortcuts::add(origin, "view.origin", {QKeySequence(Qt::Key_O)});
+        origin->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        view->addAction(origin);
+        auto scene = view->scenePanel();
+        connect(origin, &QAction::triggered, scene, &ScenePanel::setOriginFromSelection);
     }
 
     {   // Delete: D and the Delete key, single keys like the others (the viewport or the model tree has the focus, so they never eat typing)
@@ -5004,7 +5022,6 @@ void Window::importModel(const QString& path)
     const QString nativePath = QDir::toNativeSeparators(fi.absoluteFilePath());
     QStringList code;
     code << "" << "# Imported model: " + fi.fileName();
-    QString roiExpr;
     if (mesh)
     {
         // STL / OBJ / PLY files carry no units: say so explicitly, so it's
@@ -5018,74 +5035,17 @@ void Window::importModel(const QString& path)
     {
         code << QString("%1 = import_model(r\"%2\")").arg(name, nativePath);
     }
-    roiExpr = name;
     m_pendingImport = name;   // part display lines follow once evaluated
 
-    // Region of interest over every import in the script plus this one
-    const auto sceneDoc = QJsonDocument::fromJson(m_lastScene.toUtf8()).object();
-    QStringList rois;
-    for (const auto v : sceneDoc["items"].toArray())
-    {
-        const auto it = v.toObject();
-        if (it["kind"].toString() == "import" && it.contains("roi_expr"))
-            rois << it["roi_expr"].toString();
-    }
-    rois << roiExpr;
-    const QString roiArgs = rois.join(", ");
-
-    // The existing render-region statements move below the new import
-    // (they must come after every model they refer to): drop them, found
-    // by their exact statement spans when known, else by a single-line match
+    // The region and the resolution are not written: the region grows with the models (ScenePanel::fitRegion) and every model is meshed at the scene's resolution scaled by its own size
+    // (auto_scale), so `view.set_bounds(*roi(...))` and `view.set_resolution(roi_resolution(...))` served nothing (the user, 2026-10-28: "When importing a model this code about the ROI and res
+    // should no longer be written. That is all automatic anyway and this serves no purpose"), and what the script says about them stays as it is.  The quality is written when the script has
+    // none: without one the default-quality warning would show
     QVector<bool> drop(lines.size(), false);
-    const auto sceneSettings = sceneDoc["settings"].toObject();
-    for (const QString fn : {QString("set_bounds"), QString("set_resolution")})
+    if (!QRegularExpression(R"(^\s*view\.set_quality\()", QRegularExpression::MultilineOption).match(script).hasMatch() &&
+        !QRegularExpression(R"(\bview\.quality\b)").match(script).hasMatch())
     {
-        const auto span = sceneSettings[fn].toObject()["span"].toArray();
-        if (span.size() == 4)
-        {
-            for (int i = span[0].toInt() - 1; i <= span[2].toInt() - 1 && i < lines.size(); ++i)
-                drop[i] = true;
-        }
-        else
-        {
-            const QRegularExpression re("^\\s*view\\." + fn + "\\(.*\\)\\s*$");
-            for (int i=0; i < lines.size(); ++i)
-                if (re.match(lines[i]).hasMatch()) drop[i] = true;
-        }
-    }
-    code << "view.set_bounds(*roi(" + roiArgs + "), auto_scale=True)";       // (written out although it is the default: what the script does is in the script)
-    code << "view.set_resolution(roi_resolution(" + roiArgs + "))";
-
-    // The quality statement moves along with them (keeping its value), so
-    // the render settings stay together; without one the default-quality
-    // warning would show
-    QString quality = "view.set_quality(8)";
-    const auto qspan = sceneSettings["set_quality"].toObject()["span"].toArray();
-    if (qspan.size() == 4)
-    {
-        QStringList text;
-        for (int i = qspan[0].toInt() - 1; i <= qspan[2].toInt() - 1 && i < lines.size(); ++i)
-        {
-            text << lines[i];
-            drop[i] = true;
-        }
-        quality = text.join('\n').trimmed();
-    }
-    else
-    {
-        const QRegularExpression re(R"(^\s*view\.set_quality\(.*\)\s*$)");
-        for (int i=0; i < lines.size(); ++i)
-        {
-            if (re.match(lines[i]).hasMatch())
-            {
-                quality = lines[i].trimmed();
-                drop[i] = true;
-            }
-        }
-    }
-    if (qspan.size() == 4 || !QRegularExpression(R"(\bview\.quality\b)").match(script).hasMatch())
-    {
-        code << quality;
+        code << "view.set_quality(8)";
     }
 
     // The one import a script needs
@@ -5141,10 +5101,31 @@ void Window::watchImports(const QString& sceneJson)
 void Window::saveAsCustomBlock(bool quiet)
 {
     QString why;
-    const QString answer = editor->callSupport("save_as_block", editor->getScript(), &why);
+    const QString script = editor->getScript();
+    // The name of the block is asked for (the user, 2026-10-28: "Save as custom block should prompt the user to insert a file name"): it is the name of the file in the blocks folder and of the function
+    // that makes the model, and it is the name the right-click menu lists.  The one the script suggests -- the model's name and _block -- stands in the field.  The tour saves its block quietly, under that name
+    QString name;
+    if (!quiet)
+    {
+        const QJsonObject ask{{"source", script}, {"suggest", true}};
+        const QJsonObject suggested = QJsonDocument::fromJson(editor->callSupport("block_save", QString::fromUtf8(QJsonDocument(ask).toJson(QJsonDocument::Compact)), &why).toUtf8()).object();
+        if (suggested.contains("error"))
+        {
+            QMessageBox::warning(this, T("Save as custom block"), suggested["error"].toString());
+            return;
+        }
+        bool ok = false;
+        name = QInputDialog::getText(this, T("Save as custom block"),
+                                     T("The name of the block: the name of its file in the blocks folder, and of the function that makes the model"),
+                                     QLineEdit::Normal, suggested["name"].toString(), &ok).trimmed();
+        if (!ok) return;
+    }
+    const QJsonObject request{{"source", script}, {"name", name}};
+    const QString answer = editor->callSupport("block_save", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &why);
     const QJsonObject r = QJsonDocument::fromJson(answer.toUtf8()).object();
     if (r.contains("path"))
     {
+        setProperty("lastBlockName", r["name"].toString());          // (the guided tour shows the name that was saved under)
         if (!quiet) statusBar()->showMessage(T("Saved as the custom block %1: %2").arg(r["name"].toString(), QDir::toNativeSeparators(r["path"].toString())), 12000);
         watchBlocks();
         view->reloadMenuCatalog();          // (the menus are read once: the block is in them from now on, without waiting for the folder's watcher)
@@ -5175,16 +5156,6 @@ void Window::setBlocksFolder(const QString& path)
     editor->callSupport("set_blocks_folder", path, nullptr);
     watchBlocks();
     editor->onTextChangedDebounce();
-}
-
-void Window::chooseBlocksFolder()
-{
-    if (m_blocksFolder.isEmpty()) watchBlocks();
-    const QString chosen = QFileDialog::getExistingDirectory(this, T("Blocks folder: the Python files in it are your custom blocks"),
-                                                             m_blocksFolder);
-    if (chosen.isEmpty()) return;
-    setBlocksFolder(chosen);
-    statusBar()->showMessage(T("Blocks folder: %1").arg(chosen), 6000);
 }
 
 void Window::onSceneChanged(QString json)

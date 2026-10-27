@@ -131,8 +131,11 @@ if ($Package) {
     } else {
         Write-Warning 'seed-cache/ is not there: the tour solves its beam and its flow the first time it shows them (run scripts/make-seed-cache.ps1 first).'
     }
-    # The custom blocks folder (the sample blocks; the user's own blocks go here or in a folder of their choice)
-    Mirror (Join-Path $Source 'blocks') (Join-Path $PackageDir 'blocks') @('/XD', '__pycache__')
+    # The custom blocks folder: EMPTY.  The user's own blocks go here (or in a folder of their choice); a build ships none of its own -- the user, 2026-10-28: "A new build should have an empty custom blocks
+    # folder".  It is made here and not copied from the repository, which does not keep a folder with no file in it; mirroring an empty folder onto it empties it if an earlier package left files there
+    $emptyBlocks = Join-Path ([IO.Path]::GetTempPath()) 'fieldes-empty-blocks'
+    New-Item -ItemType Directory -Force $emptyBlocks | Out-Null
+    Mirror $emptyBlocks (Join-Path $PackageDir 'blocks') @()
     # 5. The MSVC runtime, so it runs without the VC++ redistributable installed
     $crt = Get-ChildItem (Join-Path $vsRoot 'VC\Redist\MSVC') -Directory |
         ForEach-Object { Join-Path $_.FullName 'x64\Microsoft.VC143.CRT' } | Where-Object { Test-Path $_ } | Select-Object -Last 1

@@ -2257,6 +2257,8 @@ def _frame_graph(body, spacing, seed, bounds):
     for (p, q, n), ok, g in zip(pieces, which, normals):
         if ok and g is not None and n[0] * g[0] + n[1] * g[1] + n[2] * g[2] < 0.82:
             sharp.append((p, q))
+    # (the outline of a face is an edge only where the surface has a crease: the outline of a plane that only touches a thin round face is a line along it, and no edge -- see _on_a_crease)
+    sharp = [(p, q) for p, q in sharp if _on_a_crease(body, p, q, spacing, unit)]
     nodes, beams, index, kept = [], [], {}, []
     grain = 0.02 * spacing
     for p, q in sharp:
@@ -2471,6 +2473,32 @@ def _follow_crease(body, c, na, nb, w, sign, spacing, unit, blocks, lo, hi):
     return line, 'long'
 
 
+def _on_a_crease(body, a, b, spacing, unit):
+    ''' Whether the beam from a to b of the frame runs along a crease of the surface of the body: at places along it (one in each spacing, twelve at most) the surface a little way to one side of it and a little way
+        to the other, in the surface across the beam, has normals that are more than 35 degrees apart.  A beam that lies on a smooth round face has none of that: it is a place where two face tests agreed by chance -- the line
+        where a plane only touches a thin cylinder, a trace that went on along the surface after the crease was lost -- and is not a beam of the frame (the user, 2026-10-28, of a cylinder of radius 0.1 with points
+        0.1 apart: "it put a line through there at some spot, where there isnt an edge, that seems to be a tangent of the actual edge").  At least half of the places have to show a crease '''
+    t = _v_unit(_v_sub(b, a))
+    if t is None:
+        return False
+    n = max(1, min(12, int(math.ceil(math.dist(a, b) / spacing))))
+    mids, normals = _on_surface(body, [_v_add(a, _v_sub(b, a), (k + 0.5) / n) for k in range(n)], unit)
+    reach = 0.15 * spacing
+    probes, usable = [], []
+    for m, g in zip(mids, normals):
+        w = None if g is None else _v_unit(_v_cross(g, t))
+        usable.append(w is not None)
+        w = w if w is not None else (1.0, 0.0, 0.0)
+        probes.extend((_v_add(m, w, reach), _v_add(m, w, -reach)))
+    _pts, nn = _on_surface(body, probes, unit)
+    hits = 0
+    for k in range(n):
+        g1, g2 = nn[2 * k], nn[2 * k + 1]
+        if usable[k] and g1 is not None and g2 is not None and _v_dot(g1, g2) < _CREASE_COS:
+            hits += 1
+    return 2 * hits >= n
+
+
 def _round_creases(body, skin, fine, spacing, kept, lo, hi):
     ''' The creases of the body that no flat face has the outline of -- the edge between two round faces -- followed along the surface: [(points, closed)], polylines.  They begin at places found between neighbouring
         points of the skin (_crease_seeds), run both ways from each (_follow_crease) and stop at a beam that is there: the beams of the edges of flat faces (`kept`) and the creases that were followed before '''
@@ -2506,6 +2534,10 @@ def _round_creases(body, skin, fine, spacing, kept, lo, hi):
             continue
         line = [line[i] for i in _simplify(line, 0.005 * spacing, closed)]          # (no more than 0.005 of a spacing off: a ring of a few millimetres is round, not a polygon of beams)
         if len(line) < 2 or sum(math.dist(a, b) for a, b in zip(line, line[1:])) < 0.5 * spacing:
+            continue
+        # (a trace that does not run along a crease is no beam of the frame: see _on_a_crease)
+        segs = list(zip(line, line[1:])) + ([(line[-1], line[0])] if closed and len(line) > 2 else [])
+        if 2 * sum(1 for a, b in segs if _on_a_crease(body, a, b, spacing, unit)) < len(segs):
             continue
         trail(near, line, closed)
         out.append((line, closed))

@@ -79,7 +79,7 @@ the placement arguments of the call (`position=`, `rotation=`, `scale=`: see bel
 
 ## Placement: where an object is, how it is turned, how big and how see-through
 
-Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes four arguments after its own, named and in this order:
+Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes five arguments after its own (the fifth, `origin`, is written only when it is set), named and in this order:
 
 | argument | what it says |
 |---|---|
@@ -87,6 +87,7 @@ Every object that is made by a call -- a shape, the result of an operation, a co
 | `rotation=(x, y, z)` | degrees: how it is turned about the middle of its box, x first, then y, then z |
 | `scale=(x, y, z)` or one number | factors: how big it is, about the middle of its box |
 | `alpha=` | 0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least); the object is the same in every other way |
+| `origin=(x, y, z)` | mm, in the place its definition puts it: **the origin of the object** -- the point it is turned and scaled about and where its gizmo is. Not written: the middle of its box. FielDes writes it when you select the object and a point and press **O**: the point becomes the origin and the object stays where it is (`position` is made up for it when the object is turned or scaled) |
 
 ```python
 part = box((0, 0, 0), (20, 10, 5), position=(40, 0, 0), rotation=(0, 0, 30), alpha=0.5)
@@ -320,7 +321,7 @@ twisted
 ## Your own functions: custom blocks
 
 A function of your own that is there in every script — without importing it — is a **block**: put it in a `.py` file of the blocks
-folder (Settings → Blocks folder…). See [Custom blocks](blocks.md). (A function you need in one script only is an ordinary
+folder (Settings → Show the blocks folder). See [Custom blocks](blocks.md). (A function you need in one script only is an ordinary
 function of that script, or a module next to it: `from bracket import make_bracket`.)
 
 ## Units

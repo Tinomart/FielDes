@@ -3022,8 +3022,8 @@ void ScenePanel::rebuild()
             if (t == "arg")
             {
                 const QJsonObject a = pit["args"].toArray()[c->data(COL_NAME, ROLE_PART).toInt()].toObject();
-                // (the placement rows stand together, after the other arguments and in one order -- position, rotation, scale, alpha -- whichever of them the call writes)
-                static const QStringList placement = {"position", "rotation", "scale", "alpha"};
+                // (the placement rows stand together, after the other arguments and in one order -- position, rotation, scale, alpha, origin -- whichever of them the call writes)
+                static const QStringList placement = {"position", "rotation", "scale", "alpha", "origin"};
                 const int k = placement.indexOf(a["param"].toString());
                 return k >= 0 ? (qint64(1) << 39) + k : positionOf(a["span"].toArray());
             }
@@ -3153,6 +3153,15 @@ void ScenePanel::rebuild()
             if (m_selectOrder.contains(key)) restore << row;
             sectionRows << row;
         }
+        // The faces that select_surface makes (selection_1, selection_2 ...) are listed after the other rows of the top level, in the order of the script among themselves: a face is made of a model and read
+        // by the conditions, and it is not one of the things an analysis takes, so it stands apart at the bottom, and the models, the conditions and the material above it are one block that can be selected
+        // from the top to the bottom (the user, 2026-10-28: "I would put all of the surfaces on the bottom when ordering it").  Only the tree is ordered so: the script keeps its order, a condition needs
+        // the face above it
+        std::stable_partition(topRows.begin(), topRows.end(), [&](QTreeWidgetItem* r) {
+            if (nested.contains(r)) return true;
+            const QJsonObject o = r->data(COL_NAME, ROLE_ITEM).toJsonObject();
+            return !(o["callee"].toString() == "select_surface" && o.contains("var"));
+        });
         QList<QTreeWidgetItem*> top;
         int s = -1;
         QTreeWidgetItem* in = nullptr;
@@ -5223,6 +5232,55 @@ void ScenePanel::snapSelected()
     if (!stay.isEmpty()) notify(T("%1 stay where they were: their place is not written as numbers, so they did not go with the body.").arg(stay.join(", ")));
 }
 
+// O: with a model and a point selected, the point is the new origin of the model (the user, 2026-10-28: "If you select an object and a point, you set the new origin of an object to that point (while the object
+// stays in place)").  The origin is the point the model is turned and scaled about and where its gizmo sits: `origin=` of its call.  The program of the script works the numbers out (origin_placement): the
+// position is made up for when the model is turned or scaled, so that it does not move
+void ScenePanel::setOriginFromSelection()
+{
+    if (deferEdit([this] { setOriginFromSelection(); }, T("setting the origin of a model"))) return;
+    QJsonObject body, point;
+    int bodies = 0, points = 0;
+    for (const Model& m : selectedModels())
+    {
+        // (a point of any kind: one made by point(...), and one found on a body -- corner_at, circle_center_at ... -- as the one in the user's picture, 2026-10-28: a model and the corner_at point on it)
+        if (m.item["type"].toString() == "point") { point = m.item; ++points; }
+        else { body = m.item; ++bodies; }
+    }
+    if (bodies != 1 || points != 1)
+    {
+        notify(T("Origin: select one model and one point. The point becomes the origin of the model -- the point it turns and scales about, where its gizmo is -- and the model stays where it is."));
+        return;
+    }
+    const QString name = body["var"].toString(body["label"].toString());
+    if (!body.contains("var") || !point.contains("var") || body["failed"].toBool() || body["reassigned"].toBool() || body.contains("locked") || linkedModel(body) || symmetryModel(body) || symmetryImageModel(body) || !m_support)
+    {
+        notify(T("%1 cannot be changed: it is locked, it did not run, or it is a copy or the image of a symmetry.").arg(name));
+        return;
+    }
+    QJsonObject request;
+    request["body"] = body["var"].toString();
+    request["point"] = point["var"].toString();
+    QString error;
+    const QString answer = m_support("origin_placement", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    const QJsonObject doc = QJsonDocument::fromJson(answer.toUtf8()).object();
+    if (doc.isEmpty() || doc.contains("error"))
+    {
+        notify(doc.contains("error") ? doc["error"].toString() : error.isEmpty() ? T("The origin could not be worked out.") : error);
+        return;
+    }
+    QList<QPair<QString, QString>> set;
+    set << qMakePair(QString("origin"), doc["origin"].toString());
+    if (doc["position_changed"].toBool()) set << qMakePair(QString("position"), doc["position"].toString());
+    QList<TextEdit> edits;
+    ModeImports imports;
+    m_lineMismatch.clear();
+    if (!placementEdits(body, set, QStringList(), edits, imports) || !m_lineMismatch.isEmpty()) { refuseOutOfDate(); return; }
+    if (imports.gizmo) addImportIfMissing(edits, "place", "placement");
+    m_selectNew = body["var"].toString();                  // (the model is selected again when the script has run: its gizmo is at the new origin)
+    m_selectNewTries = 0;
+    emit(editScript(edits, "Origin of " + body["var"].toString()));
+}
+
 void ScenePanel::deleteSelected()
 {
     QList<QJsonObject> items;
@@ -6920,6 +6978,21 @@ QJsonObject ScenePanel::featuresNear(int line0, QVector3D point, double reach) c
     QString error;
     const QString text = m_support("feature_near", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
     return QJsonDocument::fromJson(text.toUtf8()).object();
+}
+
+std::function<QJsonObject()> ScenePanel::featuresNearJob(int line0, QVector3D point, double reach) const
+{
+    QJsonObject target;
+    QString source;
+    int after = 0;
+    if (!m_support || !resolveModel(line0, &target, &source, &after) || !target.contains("var")) return std::function<QJsonObject()>();
+    const QJsonObject request{{"var", target["var"].toString()}, {"point", QJsonArray{point.x(), point.y(), point.z()}}, {"reach", reach}};
+    const QString text = QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact));
+    const auto support = m_support;             // (a copy: the thread does not read the panel)
+    return [support, text]() {
+        QString error;
+        return QJsonDocument::fromJson(support("feature_near", text, &error).toUtf8()).object();
+    };
 }
 
 void ScenePanel::addFeature(int line0, QVector3D click, QString kind)

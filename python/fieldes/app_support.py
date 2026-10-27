@@ -680,7 +680,7 @@ def reformat_call(request):
 
 
 def set_blocks_folder(path):
-    ''' The folder of the custom blocks (Settings > Blocks folder); an empty path is the default one next to FielDes.
+    ''' The folder of the custom blocks (FIELDES_BLOCKS, or `blocks` next to FielDes: Settings > Show the blocks folder opens it); an empty path is the default one next to FielDes.
         Returns the folder in use '''
     import os
     from fieldes import blocks
@@ -981,10 +981,19 @@ def blocks_files(_arg=''):
     return '\n'.join(out)
 
 
-def save_as_block(source):
+def block_save(request):
+    ''' File > Save as custom block, with the name the user typed: `request` is JSON {"source": the script, "name": the name asked for ("" = the one the script suggests), "suggest": true to only say
+        what the name would be}.  The answer is the one of save_as_block; with "suggest" it is {"name"} and nothing is written '''
+    import json
+    r = json.loads(request)
+    return save_as_block(r.get('source', ''), name=r.get('name') or None, suggest=bool(r.get('suggest')))
+
+
+def save_as_block(source, name=None, suggest=False):
     ''' File > Save as custom block: the script as a function in a file of the blocks folder (see fieldes.blocks), so that the whole model is one call in any script and an entry of the right-click
         menus.  The statements that make the model are the body; the imports of the library, the settings of the view and the lines that only show a name are not; the model that is shown (the last
-        name on a line of its own) is what the function returns.  A block this made earlier is updated, any other file is left alone.  JSON: {"path", "name"} or {"error"} '''
+        name on a line of its own) is what the function returns.  A block this made earlier is updated, any other file is left alone.  The name of the block -- its file and its function -- is the one the
+        user typed (a word of letters, digits and underscores), or the name of the model with _block after it.  JSON: {"path", "name"} or {"error"} '''
     import ast
     import json
     import os
@@ -1022,10 +1031,18 @@ def save_as_block(source):
     while body and not body[-1].strip():
         del body[-1]
     text = re.sub(r'\bvar\(\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*\)', r'\1', '\n'.join(body))      # (a number dragged with a gizmo is a number in a block)
-    name = re.sub(r'\W+', '_', result).strip('_') or 'model'
-    if name[0].isdigit():
+    suggested = re.sub(r'\W+', '_', result).strip('_') or 'model'
+    if suggested[0].isdigit():
+        suggested = 'm_' + suggested
+    suggested += '_block'
+    if suggest:
+        return json.dumps({'name': suggested})
+    # (the name the user typed: every run of anything but a letter, a digit or an underscore becomes an underscore, and a name that starts with a digit or is nothing gets the suggestion's way out)
+    name = re.sub(r'\W+', '_', name).strip('_') if name else ''
+    if not name:
+        name = suggested
+    elif name[0].isdigit():
         name = 'm_' + name
-    name += '_block'
     marker = '# Saved from a script by File > Save as custom block.'
     try:
         folder = blocks.folder()
@@ -1047,7 +1064,7 @@ def save_as_block(source):
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(code)
     except OSError as e:
-        return json.dumps({'error': 'The block could not be written: %s.  Settings > Blocks folder... chooses another folder.' % (e,)})
+        return json.dumps({'error': 'The block could not be written: %s.  The environment variable FIELDES_BLOCKS names another folder.' % (e,)})
     return json.dumps({'path': path, 'name': name})
 
 
@@ -1166,6 +1183,53 @@ def snap_placement(request):
         # (as the gizmo's numbers are written: var() numbers, which its drag changes in the text)
         return '(%s)' % ', '.join('var(%s)' % (('%.8f' % v).rstrip('0').rstrip('.') if abs(v) >= 5e-9 else '0') for v in values)
     return json.dumps({'position': written(found['position']), 'rotation': written(found['rotation']), 'scale': found['scale'], 'edits': edits, 'left': left})
+
+
+def origin_placement(request):
+    ''' O: a point of the scene made the origin of a model -- the point it is turned and scaled about and where its gizmo is (`origin=`, see fieldes.stdlib.placement) -- while the model stays where it is.
+        `request` is JSON {"body": the name of the model, "point": the name of the point}.  A model is placed by  p -> c + R S (p - c) + m  (c the origin, S the scale, R the rotation, m the position):
+        with the origin c' at the point P the gizmo is at, c' + m' = P, and the model stays where it is when  m' = (R S)^-1 (m + (I - R S)(c - P)) -- the position the model has now when it is neither turned nor
+        scaled.  The answer is JSON {"origin": "(x, y, z)", "position": "(var(x), var(y), var(z))", "position_changed": whether the position has to be written again}, or {"error": why not} '''
+    import json
+    from fieldes import runner
+    req = json.loads(request)
+    gs = runner.last_globals if isinstance(runner.last_globals, dict) else {}
+    try:
+        body, point = gs.get(req['body']), gs.get(req['point'])
+        absent = [n for n, v in ((req['body'], body), (req['point'], point)) if v is None]
+        if absent:
+            raise ValueError('%s %s not in the last run of the script: run it again first' % (', '.join(absent), 'is' if len(absent) == 1 else 'are'))
+        xyz = getattr(point, 'xyz', None)
+        if xyz is None:
+            raise ValueError('%s is not a point' % req['point'])
+        from fieldes.stdlib.curves import value_of
+        from fieldes.stdlib.snapping import _numbers, _pivot
+        from fieldes.stdlib.symmetries import _turn_matrix
+        P = tuple(float(value_of(v)) for v in xyz)
+        args = getattr(body, '_placement_args', None)
+        parts = getattr(body, '_placed_parts', None)
+        if args is not None and parts is not None:
+            m, r = _numbers(args[0], (0.0, 0.0, 0.0)), _numbers(args[1], (0.0, 0.0, 0.0))
+            s = args[2]
+            s = (1.0, 1.0, 1.0) if s is None else (tuple(float(value_of(s)) for _ in range(3)) if not isinstance(s, (tuple, list)) else _numbers(s, (1.0, 1.0, 1.0)))
+            c = tuple(float(v) for v in parts[1])
+        else:
+            m, r, s, c = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), tuple(float(v) for v in _pivot(body))
+        if any(abs(v) < 1e-9 for v in s):
+            raise ValueError('%s is scaled to nothing in one direction: it has no origin to change' % req['body'])
+        R = [[float(v) for v in row] for row in _turn_matrix(r)]
+        A = [[R[i][j] * s[j] for j in range(3)] for i in range(3)]
+        d = [c[i] - P[i] for i in range(3)]
+        rhs = [m[i] + d[i] - sum(A[i][j] * d[j] for j in range(3)) for i in range(3)]
+        # (A = R S with R a turn: its inverse is S^-1 R^T)
+        m2 = [sum(R[j][i] * rhs[j] for j in range(3)) / s[i] for i in range(3)]
+        o2 = [P[i] - m2[i] for i in range(3)]
+    except (ValueError, TypeError, KeyError) as e:
+        return json.dumps({'error': str(e)})
+    def num(v):
+        return ('%.8f' % v).rstrip('0').rstrip('.') if abs(v) >= 5e-9 else '0'
+    changed = any(abs(m2[i] - m[i]) > 1e-7 for i in range(3))
+    return json.dumps({'origin': '(%s)' % ', '.join(num(v) for v in o2), 'position': '(%s)' % ', '.join('var(%s)' % num(v) for v in m2), 'position_changed': changed})
 
 
 def handles_text(name):
@@ -1524,7 +1588,7 @@ def _min_inputs(callee):
     return max(1, needed)
 
 
-PLACEMENT_ARGS = ('position', 'rotation', 'scale', 'alpha')
+PLACEMENT_ARGS = ('position', 'rotation', 'scale', 'alpha', 'origin')
 
 
 def _keyword_span(kw):
@@ -1596,6 +1660,8 @@ def _placement_rows(placement, symmetry=False):
             rows.append({'param': name, 'text': written[name]['text'], 'span': written[name]['span'], 'kind': 'expression'})
         else:
             rows.append({'param': name, 'text': default, 'span': [], 'kind': 'expression', 'default': True})
+    if 'origin' in written:                  # (the fifth argument is a row only when it is written: the middle of the box is what it is without it)
+        rows.append({'param': 'origin', 'text': written['origin']['text'], 'span': written['origin']['span'], 'kind': 'expression'})
     return rows
 
 

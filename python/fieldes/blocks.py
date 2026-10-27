@@ -18,7 +18,7 @@ function is.  A block is written with the whole library at hand (no imports need
 before it.  Its docstring's first line is what the call tip and the menus say about it.  Save the file and the scripts that use it
 run again; the editor completes it, shows its call tip and goes to its definition (Ctrl+click).
 
-The folder is the one chosen in Settings > Blocks folder; by default `blocks` next to FielDes (and the python folder).  A block
+The folder is the one FIELDES_BLOCKS names; by default `blocks` next to FielDes (and the python folder), which Settings > Show the blocks folder opens.  A block
 that has no required argument but the first is offered in the right-click menus: in "Operations" under Custom blocks
 when its first argument is the model to work on, in "Parametric shapes > New custom block" when it needs none.
 

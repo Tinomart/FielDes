@@ -121,6 +121,9 @@ public:
 
     /*  Whether the script is being run now  */
     bool scriptRunning() const { return m_scriptRunning; }
+    /*  Whether a long operation of the script is going on -- a solver of an analysis ("Newton iteration 5, residual ..."), an optimisation, a meshing of the fluid, anything that says what it
+     *  is doing in the run bar -- and not only the statements being evaluated (a run whose bar stays empty): the guided tour dims everything but the bar while a solve runs, not at every render  */
+    bool operationRunning() const;
     /*  The row of the console's header that holds the progress bar and what it counts, while a script runs (for the guided tour)  */
     QWidget* runRow() const { return m_runRow; }
 

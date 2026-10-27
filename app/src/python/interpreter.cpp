@@ -2252,6 +2252,8 @@ void Interpreter::recordShape(
             };
             if (const auto of = treeOf("_symmetry_of")) shape->setFollows(Shape::FOLLOW_IMAGE, of);
             else if (const auto copyOf = treeOf("_instance_of")) shape->setFollows(Shape::FOLLOW_COPY, copyOf);
+            // (the symmetry the image is made in: the planes of that symmetry are the mark that the body is bound to it)
+            shape->setSymmetrySource(treeOf("_symmetry_source"));
         }
 
         // A model the app's viewport shows, and the name it was given there (fieldes.app.viewport)

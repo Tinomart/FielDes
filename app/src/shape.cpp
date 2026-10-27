@@ -2969,6 +2969,7 @@ bool Shape::updateFrom(const Shape* other)
     m_frozenVars = other->m_frozenVars;
     m_sceneGizmoVars = other->m_sceneGizmoVars;
     m_symmetryImage = other->m_symmetryImage;
+    m_symmetrySourceId = other->m_symmetrySourceId;
     m_sourceId = other->m_sourceId;
     m_followId = other->m_followId;
     m_followKind = other->m_followKind;

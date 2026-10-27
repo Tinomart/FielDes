@@ -799,6 +799,12 @@ QString progressText(const QString& english)
 
 }   // namespace
 
+bool Editor::operationRunning() const
+{
+    // (the statement that has begun clears what the last one said; an operation says what it does for as long as it lives, so an empty text is a statement that is only being evaluated)
+    return m_scriptRunning && !m_terminating && !libfive::run_progress::current().detail.empty();
+}
+
 void Editor::onSpinner()
 {
     // The script's progress, small, where the result goes.  The script runs
@@ -1003,12 +1009,17 @@ void Editor::onInterpreterDone(Result r)
         // through those edits are the right ones, and the run's places are of another text (see varSpans)
         if (r.script == script_doc->toPlainText()) setVarSpans(r.vars);
 
-        // (a number edited in the call of a shape that was dragged is the number it has: the list of numbers under the call follows it)
+        // (a number edited in the call of a shape that was dragged is the number it has: the list of numbers under the call follows it; so does the place that a point on a body is made at -- a corner
+        // that a pulled face took away from it).  What the run asked to be written goes with the edit that the run was of -- the drag, the typed number -- as one step of undo: an undo that took only the
+        // follow would leave the text as the run asked it to be written again, and one could not go back past it
         if (!r.resync.isEmpty() && r.script == script_doc->toPlainText())
         {
             QList<TextEdit> follow;
             for (const auto& e : r.resync) follow << TextEdit{e.line0, e.col0, e.line1, e.col1, e.text};
-            QTimer::singleShot(0, this, [this, follow] { applyEdits(follow, "Follow the number you changed"); });
+            QTimer::singleShot(0, this, [this, follow] {
+                m_liveRevision = script_doc->revision();
+                applyEditsLive(follow, "Follow the number you changed");
+            });
         }
 
         m_errorLine0 = -1;

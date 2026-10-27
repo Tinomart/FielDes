@@ -1534,7 +1534,9 @@ def outline_json(arg):
         ''' the names a row reads, except the ones it holds by reference (`# shadow:`) or takes a property of: neither makes the model a child '''
         if is_block:
             return set(row.get('reads', ()))
-        return set(d for d in row.get('deps', []) if d not in row.get('shadows', ()) and d != row.get('attribute_of'))
+        # (a face made by select_surface does not hold the body it is made of: the body is the model, the face is made of it -- the beam was listed inside selection_1 in the tour, with no row of its own,
+        # the user, 2026-10-28: "you nested the beam inside of one of the surfaces for some reason")
+        return set(d for d in row.get('deps', []) if d not in row.get('shadows', ()) and d != row.get('attribute_of') and d != row.get('part_name'))
 
     for index, (uline, user, user_block) in enumerate(rows):
         group = [(user, user_block)]

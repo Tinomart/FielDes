@@ -2084,6 +2084,15 @@ void View::mouseMoveEvent(QMouseEvent* event)
             drag_dir * QVector3D::dotProduct(cursor_pos - drag_start, n2) /
             QVector3D::dotProduct(drag_dir, n2);
 
+        // The snapping mode, with Snap handles on: the surface that is pulled goes to the lines of the grid -- the point of it that was pressed, moved along the pull, lands on a line of the grid (a node, when
+        // the pull is along an axis), or in whole steps of it along a pull that is not (the user, 2026-10-28: "Snapping needs to work for handle dragging as well, this should also be a toggable option")
+        if (snapActive() && m_snap.snapHandles && drag_dir.lengthSquared() > 1e-12f)
+        {
+            const QVector3D dir = drag_dir.normalized();
+            cursor_pos = drag_start + dir * snappedAlong(drag_start, dir, QVector3D::dotProduct(cursor_pos - drag_start, dir));
+            setSnapMark(cursor_pos, false);                          // (where the pressed point of the surface lands: marked)
+        }
+
         static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
         QElapsedTimer clock;
         if (timing) clock.start();
@@ -3403,13 +3412,14 @@ void View::setSnapMode(bool on)
     announceSnap();
 }
 
-void View::setSnapOptions(bool show, float spacing, float angle, int distance, bool snapPoints)
+void View::setSnapOptions(bool show, float spacing, float angle, int distance, bool snapPoints, bool snapHandles)
 {
     m_snap.show = show;
     m_snap.spacing = spacing > 0 ? spacing : 0;
     m_snap.angle = std::max(0.1f, std::min(180.0f, angle));
     m_snap.distance = std::max(105, std::min(400, distance));
     m_snap.snapPoints = snapPoints;
+    m_snap.snapHandles = snapHandles;
     announceSnap();
 }
 
@@ -4348,6 +4358,21 @@ void View::toggleSymmetry()
     setSymmetryInUse(!m_symInUse);
 }
 
+void View::newSymmetryAtCursor()
+{
+    // Ctrl+Shift+S makes a new symmetry where the cursor is, and uses it (the user, 2026-10-28: "I want ctrl+shift+s to create a new symmetry at the cursor position when entering symmetry mode"): the point of
+    // the ray under the cursor that a new model would be put at, as the right-click menu finds it -- the middle of the view when the cursor is somewhere else --, its axis and its first plane those of a new symmetry
+    // (the work plane's while its view is open).  The new model is selected, which is to use it, whether there was a symmetry before or not
+    QPoint pos = mapFromGlobal(QCursor::pos());
+    if (!rect().contains(pos)) pos = rect().center();
+    QVector3D point;
+    double scale = 10;
+    placementAt(pos, point, scale);
+    Symmetry s = newSymmetryHere();
+    s.centre = point;
+    emit(symmetryCreateRequested(s));
+}
+
 void View::refreshSymmetry()
 {
     Symmetry now;
@@ -4594,29 +4619,30 @@ static void drawTurns(QPainter& painter, const std::function<QPointF(const QVect
 
 void View::drawSymmetry(QPainter& painter)
 {
-    // A symmetry that is not in use is drawn pale only while a body is bound to it -- an image made in a symmetry is in the scene --: the planes are then the mark that those bodies are symmetry
-    // bound.  With no body bound the symmetry that is off is not drawn at all: it is only the one that Shift+S would turn on again, and its planes in the picture were of no use (the user,
-    // 2026-10-27: "I like having a small indicator that shows that these bodies are symmetry bound. Having only the current symmetry though is useless ... should just be hidden completely").
-    // Its row and its card are still there
-    if (!m_symExists) return;
-    if (!m_symInUse)
-    {
-        bool bound = false;
-        for (const Shape* s : shapes) bound = bound || s->isSymmetryImage();
-        if (!bound) return;
-    }
+    // The planes of a symmetry are drawn for the bodies that are bound to it -- an image made in it is in the scene --: pale when it is not in use, as the mark that those bodies are symmetry bound,
+    // and as they are while it is in use.  It is the symmetry the BODIES are made in that is drawn, whichever one is selected: a symmetry with no body bound that is off is not drawn at all -- it is
+    // only the one that Shift+S would turn on again, and its planes in the picture were of no use (the user, 2026-10-27: "I like having a small indicator that shows that these bodies are symmetry
+    // bound. Having only the current symmetry though is useless ... should just be hidden completely", and 2026-10-28: "I said it should be object bound and right now it is still just making the
+    // current symmetry see through").  Its row and its card are still there
+    std::set<libfive::Tree::Id> bound;
+    for (const Shape* s : shapes)
+        if (s->isSymmetryImage() && s->symmetrySource()) bound.insert(s->symmetrySource());
+    const Shape* active = m_symExists ? symmetryShape() : nullptr;
     const QColor ink(211, 54, 130);            // (magenta: not the red and green of the plane's own axes, nor the blue of the grid)
     auto to = [this](const QVector3D& p) { return toScreen(p); };
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing);
-    if (m_symExists)
+    for (const Shape* sym : shapes)
     {
-        Symmetry now = symmetryOf(symmetryShape());
+        if (!sym->isSymmetry()) continue;
+        const bool inUse = sym == active && m_symInUse;
+        if (!inUse && !bound.count(sym->sourceId())) continue;
+        Symmetry now = symmetryOf(sym);
         // How far the planes reach: about five hundred pixels' worth of the world at the centre, so that they are as large as the picture whatever the zoom (a plane seen edge
         // on, in the work plane's view, is a line that spans the picture)
         const float reach = std::max(1e-3f, float(scaleAt(toScreen(now.centre).toPoint(), now.centre)) * 5.0f);
-        if (now.kind == Symmetry::Turn) drawTurns(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
-        else drawPlanes(painter, to, now, reach, ink, m_symInUse ? 1.0 : 0.3, !m_symInUse);
+        if (now.kind == Symmetry::Turn) drawTurns(painter, to, now, reach, ink, inUse ? 1.0 : 0.3, !inUse);
+        else drawPlanes(painter, to, now, reach, ink, inUse ? 1.0 : 0.3, !inUse);
         // (the middle: a cross, small -- the gizmo of the model is what moves it)
         const QPointF c0 = toScreen(now.centre);
         painter.setPen(QPen(ink, 1.6));
@@ -5394,12 +5420,21 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         select->setToolTip(T("The selection spreads from the place you click on the surface, so it is started by right-clicking "
                            "the surface in the viewport."));
     }
+    auto tail = std::make_shared<QList<QPointer<QAction>>>();           // (what stands below what the search puts in: the separator and Delete, taken out and put back below it)
     if (onSurface && m_scene)
     {
         // Near an edge or a corner of the body (the library looks at the surface round the click -- about thirty pixels -- and says what is there, so a click on a face or a smooth
         // surface offers nothing): a point exactly at the corner, a point on the edge, the edge as a line.  They are written under the body as `corner_at(...)`, `edge_point_at(...)`,
         // `edge_at(...)`, like a selected surface is
-        const QJsonObject found = m_scene->featuresNear(line, point, 0.3 * scale);
+        // The middle of the face the click is on, as a point (the centre of a disc: the way to put two round parts on one axis): it needs nothing from the search, so it is there at once
+        {
+            auto f = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of this face"), this, [=]{ emit(featureRequested(line, point, "face_center")); });
+            f->setToolTip(T("A point at the middle of the face of this body that the click is on: face_center(select_surface(body, (x, y, z))) -- the centre of a round face is the centre of its circle"));
+        }
+        // (the search runs on a thread of its own, and what it finds is put into the menu, above Delete, when it is done: the menu opens at once, however long the field of the body takes to
+        // read -- the user, 2026-10-28: "try threading, so it doesnt freeze the program")
+        const auto offer = [=](const QJsonObject& found) {
+        for (const auto& a : *tail) if (a) menu->removeAction(a);
         const bool corner = found["corner"].isArray(), edge = found["edge"].isObject();
         // (a circular edge has a centre, and a rounding has the corner or the edge it replaced: where the flat faces round it would meet)
         const bool circle = found["circle"].isObject();
@@ -5413,11 +5448,6 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
         };
         const QVector3D cornerAt = corner ? place(found["corner"]) : point;
         const QVector3D edgeAt = edge ? place(found["edge"].toObject()["point"]) : point;
-        // The middle of the face the click is on, as a point (the centre of a disc: the way to put two round parts on one axis)
-        {
-            auto f = menu->addAction(TypeIcons::icon("point"), T("Point at the centre of this face"), this, [=]{ emit(featureRequested(line, point, "face_center")); });
-            f->setToolTip(T("A point at the middle of the face of this body that the click is on: face_center(select_surface(body, (x, y, z))) -- the centre of a round face is the centre of its circle"));
-        }
         if (corner || edge || roundedCorner || roundedEdge)
         {
             if (circle)
@@ -5451,11 +5481,25 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
                 }
             }
         }
+        for (const auto& a : *tail) if (a) menu->addAction(a);
+        };
+        const auto job = m_scene->featuresNearJob(line, point, 0.3 * scale);
+        if (job)
+        {
+            // (the watcher belongs to the menu: a menu that is closed before the answer comes takes it away, and the answer is dropped)
+            auto* watcher = new QFutureWatcher<QJsonObject>(menu);
+            connect(watcher, &QFutureWatcher<QJsonObject>::finished, menu, [=] {
+                const QJsonObject found = watcher->result();
+                watcher->deleteLater();
+                offer(found);
+            });
+            watcher->setFuture(QtConcurrent::run(job));
+        }
     }
     if (m_scene)
     {
-        menu->addSeparator();
-        menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); });
+        tail->append(menu->addSeparator());
+        tail->append(menu->addAction(T("Delete"), this, [=]{ m_scene->deleteByLine(line); }));
     }
     watchPreview(menu);
     if (keepCategoriesWithValidEntries(menu)) menu->popup(globalPos);

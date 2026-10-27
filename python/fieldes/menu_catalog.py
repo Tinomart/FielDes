@@ -187,8 +187,10 @@ PRIMITIVES = [
     ('prism', '3D', 'prism(({xm}, {ym}), ({xp}, {ym}), ({x}, {yp}), {zm}, {zp})'),
     ('capsule', '3D', 'capsule({q}, {s}, ({x}, {y}, {zm}))'),
     ('tube', '3D', 'tube({h}, {q}, {s}, ({x}, {y}, {zm}))'),
-    # (an M8 is 8 mm across whatever the view: its length is not a tenth of the view's span -- a few millimetres, zoomed in, and a flat disc with hardly a turn of thread -- but two and a half diameters, a rod)
-    ('threaded_rod', '3D', "threaded_rod('M8', 20, ({x}, {y}, {zm}))"),
+    # (a thread has the sizes of a standard screw, so its diameter is the screw nearest to what the other shapes are -- see _screw_for -- and its length is the size of the click, as the cylinder's height is: made
+    # from the menu it stands as high as the cylinder beside it.  The user, 2026-10-28: "The threaded rod is still BY FAR the largest primitive and should be set in line with the other ones": it was an M8 of
+    # 20 mm whatever the view)
+    ('threaded_rod', '3D', "threaded_rod('M{screw}', {s}, ({x}, {y}, {zm}))"),
     ('low_level_body', '3D', _LOW_LEVEL_BODY),
     ('circle', '2D', 'circle({h}, ({x}, {y}))'),
     ('rectangle', '2D', 'rectangle(({xm}, {ym}), ({xp}, {yp}))'),
@@ -1009,6 +1011,14 @@ def _default_stroke_template(name, values, r):
     return _stroke_text(name, places, False, r)
 
 
+def _screw_for(size):
+    ''' The nominal diameter of the standard screw (M2 ... M24, see fieldes.stdlib.cad) nearest, on a logarithmic scale, to six tenths of `size`: the rod of a size is as wide as a bolt beside the cylinder of
+        that size (whose diameter is the size), and the capsule (a sixth of it) -- not a rod that is wider than they are '''
+    from fieldes.stdlib.cad import _SCREWS
+    sizes = sorted(float(name[1:]) for name in _SCREWS)
+    return min(sizes, key=lambda d: abs(math.log(d / (0.6 * size))))
+
+
 def _values(r):
     ''' What the templates are filled from: the place, the size, the models, and the boxes and numbers worked out from them '''
     name = r['name']
@@ -1031,6 +1041,7 @@ def _values(r):
         'x': _num(x), 'y': _num(y), 'z': _num(z), 's': _num(s), 'h': _num(h), 't': _num(s / 10.0), 'q': _num(s / 6.0),
         'xm': _num(x - h), 'xp': _num(x + h), 'ym': _num(y - h), 'yp': _num(y + h), 'zm': _num(z - h), 'zp': _num(z + h),
         'body': r.get('body', ''), 'other': r.get('other', ''), 'var': r.get('var') or (name + '_1'),
+        'screw': _num(_screw_for(s)),
     }
     values['others'] = ', ' + values['other'] if values['other'] else ''       # (for a call that may have no other model)
     values.update(_regions(r, s))

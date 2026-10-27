@@ -104,7 +104,10 @@ if [ "$PACKAGE" = 1 ]; then
     mkdir -p "$OUT/examples"
     rsync -a --exclude '__pycache__' --include 'step/PivotBearingSupportBracket.STEP' --exclude 'step/*.s*p' --exclude 'step/*.STEP' --exclude 'step/*.STP' --exclude '*.fieldes-cache.*' \
           --exclude 'meshes' "$SRC/examples/" "$OUT/examples/"
-    rsync -a "$SRC/blocks" "$SRC/docs" "$SRC/translations" "$OUT/"
+    rsync -a "$SRC/docs" "$SRC/translations" "$OUT/"
+    # (the custom blocks folder is EMPTY in a build: the user's own blocks go there -- the user, 2026-10-28: "A new build should have an empty custom blocks folder".  It is made here and not copied, because
+    # the repository does not keep a folder with no file in it)
+    mkdir -p "$OUT/blocks"
     # (the solved problems of the guided tour, made by scripts/make-seed-cache.ps1 from the solvers that are packaged: not in git, a file is made for one version of the solvers)
     if [ -d "$SRC/seed-cache" ]; then
         rsync -a "$SRC/seed-cache" "$OUT/"

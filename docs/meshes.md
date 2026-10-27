@@ -18,8 +18,6 @@ FielDes models with fields, and moves between fields and triangle meshes in both
 bracket = import_model(r"C:\models\bracket.stl", file_units="mm")
 bracket_0 = bracket[0][0]
 bracket_0
-view.set_bounds(*roi(bracket))
-view.set_resolution(roi_resolution(bracket))
 view.set_quality(8)
 ```
 

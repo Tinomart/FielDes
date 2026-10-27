@@ -19,8 +19,8 @@ drilled = perforate(plate, 2.5, 10)
 drilled
 ```
 
-That is all there is to it: no import, no registration, no manifest. (`examples/20_custom_blocks.py` uses the four blocks of
-`blocks/sample_blocks.py`.)
+That is all there is to it: no import, no registration, no manifest. (`examples/20_custom_blocks.py` writes its four blocks in the script itself, so it
+runs as it is.)
 
 - [The folder](#the-folder)
 - [What a block is](#what-a-block-is)
@@ -32,8 +32,8 @@ That is all there is to it: no import, no registration, no manifest. (`examples/
 ## The folder
 
 The blocks folder is `blocks` next to FielDes (the repository's `blocks/` in a checkout, `blocks` in the portable folder). It
-comes with `sample_blocks.py` (four blocks to start from) and a `README.md`. **Settings → Blocks folder…** chooses another
-folder — one you keep in a shared place, say — and **Settings → Show the blocks folder** opens it in the file manager. The
+comes empty: the blocks you save are the ones in it. **Settings → Show the blocks folder** opens it in the file manager; the environment
+variable `FIELDES_BLOCKS` names another folder — one you keep in a shared place, say. There is one blocks folder, and it is where **File → Save as custom block** writes. The
 choice is remembered; the environment variable `FIELDES_BLOCKS` sets it for runs outside the application
 (`scripts/run_example.py` reads the folder too).
 

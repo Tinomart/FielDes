@@ -97,8 +97,6 @@ every script.
 ```python
 # Imported model: part.step
 part = import_model(r"C:\path\to\part.step")
-view.set_bounds(*roi(part))
-view.set_resolution(roi_resolution(part))
 view.set_quality(8)
 ```
 

@@ -383,7 +383,7 @@ void WorkPlanePanel::place()
 GridPanel::GridPanel(QWidget* parent)
     : QFrame(parent),
       m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget),
-      m_show(new QToolButton), m_snapPoints(new QToolButton), m_auto(new QToolButton), m_half(new QToolButton), m_double(new QToolButton),
+      m_show(new QToolButton), m_snapPoints(new QToolButton), m_snapHandles(new QToolButton), m_auto(new QToolButton), m_half(new QToolButton), m_double(new QToolButton),
       m_step(new Units::LengthSpinBox), m_angle(new QDoubleSpinBox), m_distance(new QSpinBox), m_hint(new QLabel)
 {
     setObjectName("GridPanel");
@@ -441,10 +441,16 @@ GridPanel::GridPanel(QWidget* parent)
     m_snapPoints->setChecked(true);
     m_snapPoints->setText(T("Snap to points"));
     m_snapPoints->setToolTip(T("A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid"));
-    // (the two switches side by side, each with its own name: a row of its own with a label over a single switch says nothing)
+    m_snapHandles->setObjectName("gridSnapHandles");
+    m_snapHandles->setCheckable(true);
+    m_snapHandles->setChecked(true);
+    m_snapHandles->setText(T("Snap handles"));
+    m_snapHandles->setToolTip(T("A surface that you drag by its handle goes to the lines of the grid while you pull it"));
+    // (the switches side by side, each with its own name: a row of its own with a label over a single switch says nothing)
     auto showRow = new QHBoxLayout;
     showRow->addWidget(m_show);
     showRow->addWidget(m_snapPoints);
+    showRow->addWidget(m_snapHandles);
     showRow->addStretch();
 
     // The step of the grid: automatic, from how large the picture is, or a number -- halved and doubled with a click
@@ -556,6 +562,7 @@ GridPanel::GridPanel(QWidget* parent)
     connect(m_close, &QToolButton::clicked, this, &GridPanel::closeRequested);
     connect(m_show, &QToolButton::toggled, this, [this] { emitOptions(); });
     connect(m_snapPoints, &QToolButton::toggled, this, [this] { emitOptions(); });
+    connect(m_snapHandles, &QToolButton::toggled, this, [this] { emitOptions(); });
     connect(m_auto, &QToolButton::toggled, this, [this](bool on) {
         m_step->setEnabled(!on);
         emitOptions();
@@ -581,7 +588,7 @@ GridPanel::GridPanel(QWidget* parent)
 void GridPanel::emitOptions()
 {
     if (m_updating) return;
-    emit(optionsChanged(m_show->isChecked(), m_auto->isChecked() ? 0.0f : float(m_step->value()), float(m_angle->value()), m_distance->value(), m_snapPoints->isChecked()));
+    emit(optionsChanged(m_show->isChecked(), m_auto->isChecked() ? 0.0f : float(m_step->value()), float(m_angle->value()), m_distance->value(), m_snapPoints->isChecked(), m_snapHandles->isChecked()));
 }
 
 void GridPanel::setGrid(const SnapGrid& grid, float step, bool suspended)
@@ -589,9 +596,10 @@ void GridPanel::setGrid(const SnapGrid& grid, float step, bool suspended)
     Q_UNUSED(suspended);
     m_updating = true;
     {
-        QSignalBlocker a(m_show), b(m_snapPoints), c(m_auto), d(m_step), e(m_angle), f(m_distance);
+        QSignalBlocker a(m_show), b(m_snapPoints), c(m_auto), d(m_step), e(m_angle), f(m_distance), g(m_snapHandles);
         m_show->setChecked(grid.show);
         m_snapPoints->setChecked(grid.snapPoints);
+        m_snapHandles->setChecked(grid.snapHandles);
         m_auto->setChecked(grid.spacing <= 0);
         m_step->setEnabled(grid.spacing > 0);
         m_step->setValue(grid.spacing > 0 ? grid.spacing : std::max(1e-4f, step));

@@ -253,7 +253,7 @@ public slots:
     /*  The render's progress bar with its label (bottom right of the viewport), in the viewport's pixels: empty when no picture is being drawn  */
     QRect renderBarRect() const { return m_renderBarArea.toAlignedRect(); }
     void setSnapMode(bool on);
-    void setSnapOptions(bool show, float spacing, float angle, int distance, bool snapPoints);
+    void setSnapOptions(bool show, float spacing, float angle, int distance, bool snapPoints, bool snapHandles);
     /*  The step of the grid now (the one the card gives, or what automatic works out to from how large the picture is)  */
     float snapStep() const;
     /*  Whether what is moved is snapped just now: the mode is on, the work plane view is not open, and Alt is not held  */
@@ -284,6 +284,8 @@ public slots:
     void setActiveSymmetry(QList<int> lines0, bool chosen);
     void setSymmetryInUse(bool on);
     void toggleSymmetry();
+    /*  Ctrl+Shift+S: a NEW symmetry whose centre is the point under the cursor (the middle of the view when the cursor is not over it), used at once  */
+    void newSymmetryAtCursor();
     Symmetry newSymmetryHere() const;                    // (what a new symmetry is: on the work plane while its view is open, else the mirror x = 0)
     void setSymmetryKind(int kind);
     void setSymmetryCount(int count);

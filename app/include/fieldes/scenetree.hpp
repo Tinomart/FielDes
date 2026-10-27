@@ -247,6 +247,9 @@ public slots:
     /*  D: the selected models are deleted from the script (their definitions and the lines that show, hide, edit and
      *  lock them), as one undoable step; it asks once if the rest of the script still uses their names  */
     void deleteSelected();
+    /*  O: the point that is selected with a model becomes the model's origin -- the point it turns and scales about, where its gizmo is (`origin=` of its call) -- and the model stays where it is (the
+     *  position is made up for when it is turned or scaled: origin_placement of the library)  */
+    void setOriginFromSelection();
 
     /*  Ctrl+E: the selected 2D shape is pulled into a solid -- the Extruding > extrude entry of the menus, written under it (`extrude(shape, 0, size)`, the size a round number of the
      *  shape's own size) -- or a word of why not (the selection is not something a 2D shape was meant)  */
@@ -316,6 +319,9 @@ public slots:
     /*  What the library finds near a place on the model displayed by `line0`, for the menu of a right click: {"corner": [x, y, z] or null, "edge": {"point", "straight"} or null}
         (the neighbourhood is `reach` mm); empty when the model is no variable or the search cannot be done  */
     QJsonObject featuresNear(int line0, QVector3D point, double reach) const;
+    // The same search as a job for a thread of its own: everything that reads the window is read here, and the function that is returned only asks the library (an empty one when the model is not
+    // one the library can be asked about).  The right-click menu opens at once and puts what the job found into itself when it is done
+    std::function<QJsonObject()> featuresNearJob(int line0, QVector3D point, double reach) const;
 
     /*  The model displayed by the (0-based) line `line0` is given a resolution of its own: the line `x = custom_resolution(x, number)` is
      *  written under its definition (the number: the scene's resolution)  */

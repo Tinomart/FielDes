@@ -1,11 +1,13 @@
 ''' Placement: where an object is, how it is turned, how big it is and how see-through.
 
-    Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes four arguments after its own, named and in this order:
+    Every object that is made by a call -- a shape, the result of an operation, a copy, a lattice -- takes five arguments after its own, named and in this order (the fifth is written when it is set):
 
         position   (x, y, z) in mm: how far the object is moved from where its definition puts it (0 is where it is made)
         rotation   (x, y, z) in degrees: how it is turned about the middle of its box, x first, then y, then z
         scale      (x, y, z) factors, or one number: how big it is, about the middle of its box
         alpha      0 to 1: how solid it is drawn (1 is solid, 0 is a ghost, 5 % solid at the least): the object is the same in every other way
+        origin     (x, y, z) in mm, in the place its definition puts it: the point it is turned and scaled about and where its gizmo is.  Not given: the middle of its box.  FielDes writes it when the
+                   key O makes a point of the scene the origin of the selected model, and moves `position` to make up for it when the model is turned or scaled, so that the model stays where it is
 
     They are ordinary arguments of the call.  FielDes's model tree shows them inside every object, a click on one selects its number in the code, and the gizmo in the
     viewport drags the first three: when the object is selected, FielDes writes them with `var()` numbers (`position=(var(40), var(0), var(0))`) and a drag changes the
@@ -28,7 +30,7 @@ from fieldes.shape import Shape
 
 __all__ = ['place']
 
-PLACEMENT = ('position', 'rotation', 'scale', 'alpha')
+PLACEMENT = ('position', 'rotation', 'scale', 'alpha', 'origin')
 
 # The functions that make a model, by the module they are written in: they are given the placement arguments (see `install`).  A function that makes something that is not a model
 # (a number, a result, a condition, a selection) is not here
@@ -66,7 +68,7 @@ def _vec(value, name, default):
             return (value, value, value)
         raise TypeError('%s= is three numbers (x, y, z), not %r' % (name, value))
     values = tuple(value)
-    if len(values) == 2 and name == 'position':
+    if len(values) == 2 and name in ('position', 'origin'):
         values = values + (0.0,)
     if len(values) != 3:
         raise ValueError('%s= is three numbers (x, y, z), not %d of them' % (name, len(values)))
@@ -104,13 +106,14 @@ def _copy_of(shape):
     return out
 
 
-def _apply(shape, position=None, rotation=None, scale=None, alpha=None):
+def _apply(shape, position=None, rotation=None, scale=None, alpha=None, origin=None):
     ''' `shape` placed by the arguments: moved, turned and scaled about the middle of its box (as the gizmo does), and drawn as solid as `alpha` says '''
-    if position is None and rotation is None and scale is None and alpha is None:
+    if position is None and rotation is None and scale is None and alpha is None and origin is None:
         return shape
-    if position is not None or rotation is not None or scale is not None:
+    if position is not None or rotation is not None or scale is not None or origin is not None:
         from fieldes.stdlib.handles import _place
-        out = _place(shape, move=_vec(position, 'position', (0, 0, 0)), rotate=_vec(rotation, 'rotation', (0, 0, 0)), scale=_vec(scale, 'scale', (1, 1, 1)))
+        out = _place(shape, move=_vec(position, 'position', (0, 0, 0)), rotate=_vec(rotation, 'rotation', (0, 0, 0)), scale=_vec(scale, 'scale', (1, 1, 1)),
+                     about=None if origin is None else _vec(origin, 'origin', (0, 0, 0)))
     else:
         out = _copy_of(shape)
     a = _alpha_value(alpha)
@@ -119,7 +122,7 @@ def _apply(shape, position=None, rotation=None, scale=None, alpha=None):
             out._alpha = a
         except AttributeError:
             raise TypeError('alpha=: a %s has no surface to draw see-through' % type(shape).__name__)
-    out._placement_args = (position, rotation, scale, alpha)
+    out._placement_args = (position, rotation, scale, alpha, origin)
     return out
 
 
@@ -137,14 +140,14 @@ def unplaced(shape):
     return shape, None
 
 
-def place(value, position=None, rotation=None, scale=None, alpha=None):
+def place(value, position=None, rotation=None, scale=None, alpha=None, origin=None):
     ''' `value` placed: moved by `position` (x, y, z), turned by `rotation` (x, y, z degrees) and scaled by `scale` (x, y, z factors, or one number), all about the middle
         of its box, and drawn as solid as `alpha` (0 to 1) says.
 
         This is what the placement arguments of every model's call do: `box(a, b, position=(10, 0, 0))` is `place(box(a, b), position=(10, 0, 0))`.  It is written for what is
         not made by a call -- a part taken out of an imported model, `part = place(part, position=(10, 0, 0))`.  FielDes's gizmo drags the numbers of either:
         write them as `var(...)` (the model tree does that when the model is selected). '''
-    return _apply(value, position, rotation, scale, alpha)
+    return _apply(value, position, rotation, scale, alpha, origin)
 
 
 def _wrap(fn):
@@ -164,7 +167,7 @@ def _wrap(fn):
         out = fn(*args, **kwargs)
         if not given:
             return out
-        return _apply(out, given.get('position'), given.get('rotation'), given.get('scale'), given.get('alpha'))
+        return _apply(out, given.get('position'), given.get('rotation'), given.get('scale'), given.get('alpha'), given.get('origin'))
 
     parameters = list(signature.parameters.values())
     extra = [inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None) for name in PLACEMENT]

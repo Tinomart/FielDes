@@ -32,7 +32,7 @@ A primitive made from the viewport's right-click menu is selected as it is made,
 
 **Keys.** With the viewport (or the model tree) focused, `E` sets the gizmo mode of the selected models (round click,
 never, always), `R` locks or unlocks them, `V` shows or hides them, `C` turns their render cache on or off, `I`
-isolates them and `D` deletes them (**View → Edit mode**). Click a model first to select it; a click in the viewport
+isolates them and `D` deletes them (**View → Edit mode**). **`O` sets an origin**: select a model and a point (a `point` of the scene, a dot in the viewport) and press `O` -- the point becomes the **origin of the model**, the point it is turned and scaled about and where its gizmo sits, and the model stays exactly where it is (it is written as `origin=` in its call, and its `position=` is made up for it when the model is turned or scaled). With anything else selected `O` says what it needs and changes nothing. Click a model first to select it; a click in the viewport
 leaves the keyboard in the viewport, so the keys keep working, and a click on empty space deselects everything. They
 can be rebound in **Settings → Keyboard shortcuts**.
 

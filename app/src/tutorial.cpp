@@ -105,7 +105,9 @@ public:
 
     QVector<QRect> holes;
     QVector<QRect> frames;                              // (glowing frames without dimming: the line, the field, the row)
-    QVector<QRect> lit;                                 // (not dimmed, and nothing to click: the lines of the script the step is about)
+    QVector<QRect> sources;                             // (the row that is dragged: a thin dashed outline, no glow -- it is not a second thing to select)
+    double arrowBulge = 0;                              // (how far the arrow's curve bulges to the side; 0: a little, by its length)
+    QVector<QRect> lit;                               // (not dimmed, and nothing to click: the lines of the script the step is about)
     QVector<QPair<QRect, double>> changes;              // (lines of the script that were just changed, and how much they still glow)
     QPixmap menuPic;                                    // (a menu the step is about, drawn as it opens)
     QRect menuRect;
@@ -194,6 +196,14 @@ protected:
             p.setPen(QPen(line, 2));
             p.drawRoundedRect(r, 4, 4);
         }
+        for (const QRect& h : sources)
+        {
+            QColor line = accent;
+            line.setAlpha(int(170 + 60 * pulse));
+            p.setPen(QPen(line, 1.5, Qt::DashLine));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(QRectF(h).adjusted(-2, -1, 2, 1), 4, 4);
+        }
         flash = std::max(0.0, flash - 0.06);
 
         if (arrow)
@@ -205,7 +215,7 @@ protected:
             if (len > 18)
             {
                 const QPointF u = d / len, n(-u.y(), u.x());
-                const QPointF mid = (a + b) / 2 + n * std::min(40.0, len * 0.14);
+                const QPointF mid = (a + b) / 2 + n * (arrowBulge != 0 ? arrowBulge : std::min(40.0, len * 0.14));
                 QPainterPath curve(a);
                 curve.quadTo(mid, b - u * 6);
                 QPen pen(accent, 3.2, Qt::SolidLine, Qt::RoundCap);
@@ -310,6 +320,8 @@ struct Tutorial::Step
     std::function<QRect()> aim;                         // what the arrow ends at, and is framed: a row of the tree (the arrow ends at its edge that faces
                                                         // the card, so it never crosses what it points at)
     std::function<QVector<QRect>()> aims;               // every row of the tree the step asks the user to select, all of them framed (a step that needs four clicks shows four frames; the arrow ends at `aim`, the first)
+    bool dragFocus = false;                             // `focus` is the row that is dragged onto `aim`: a thin dashed outline and ONE curved arrow from it to the target, not two equal frames (the user, 2026-10-27 and 28, of the step
+                                                        // "One model, two places": "this does not require you to select both of those object, being confusing to the user")
     std::function<QRect()> cardNear;                    // the card stands beside this (default: everything the user may touch in the step)
     bool closeRows = false;                             // the tree shows only what the step is about: every row with rows under it is closed ...
     QStringList openRows;                               // ... except these models
@@ -322,6 +334,8 @@ struct Tutorial::Step
     std::function<void()> enter;
     std::function<void()> leave;                        // what the step wrote into the script for itself goes when it is left
     std::function<bool()> done;                         // what the step asks of the user is done
+    std::function<void()> watch;                        // looked at on every tick while the step is under way (not while a Show me runs): what the step does by itself as the user goes on -- the view
+                                                        // that turns to the next face to select once the one before is made
     std::function<void()> onDone;                       // what is put in order once it is: the card turns green, and this runs once (a selection that the user's own action left over, say)
     std::function<void(std::function<void()>)> show;    // "Show me": the program does it, once, and says when it is over
     QString showLabel = T("Show me");
@@ -351,7 +365,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
         "#TourCard { background: #0d3a4a; border: 2px solid #ffcc33; border-radius: 10px; }"
         "#TourCard[done=\"true\"] { border: 2px solid #82cc58; }"
         "#TourCard QLabel { color: #eee8d5; background: transparent; }"
-        "#TourCard QPushButton { color: #eee8d5; background: rgba(147, 161, 161, 40); border: 1px solid rgba(147, 161, 161, 110);"
+        "#TourCard QPushButton { outline: none; color: #eee8d5; background: rgba(147, 161, 161, 40); border: 1px solid rgba(147, 161, 161, 110);"
         "  border-radius: 6px; padding: 5px 12px; font-size: 9.5pt; }"
         "#TourCard QPushButton:hover { background: rgba(147, 161, 161, 90); }"
         "#TourCard QPushButton:disabled { color: #6c8a93; border-color: rgba(147, 161, 161, 50); }"
@@ -428,6 +442,9 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
     buttons->addWidget(m_next);
     col->addLayout(buttons);
     for (auto b : {m_back, m_show, m_next}) b->setCursor(Qt::PointingHandCursor);
+    // (the buttons of the card are clicked, not tabbed to: one that had the keyboard was drawn with a dark focus box round it -- the user, 2026-10-28: "this ugly weird box around every single one of these that
+    // shouldn't be there" --, and the keys belong to the viewport and the editor, not to the card)
+    for (auto b : {m_chapters, m_skipTour, m_back, m_show, m_next, m_examples}) b->setFocusPolicy(Qt::NoFocus);
     connect(m_chapters, &QPushButton::clicked, this, [this] { showChapters(); });
     connect(m_skipTour, &QPushButton::clicked, this, [this] { skip(); });
     connect(m_back, &QPushButton::clicked, this, [this] { back(); });
@@ -480,6 +497,7 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
             if (calculating && working) m_calcSeen = true;          // (the bar of the calculation is framed while a Show me waits for it, as it is when the user does it)
             return;
         }
+        if (s.watch) s.watch();
         if (s.done && s.done())
         {
             // (a step that starts a calculation is done when the calculation has finished: the call is written a moment before the run begins, and the card must not say "Nice" over a bar that has
@@ -1188,7 +1206,18 @@ void Tutorial::buildSteps()
                 hideCursor();
                 auto root = qobject_cast<QMenu*>(openMenu());
                 if (!root) { over(); return; }
-                (*walk)(root, root, QStringList{entry}, [this, over] { after(1500, over); });
+                // (the corners and edges near the click are looked for on a thread of its own, and their entries are put into the menu when it is done: the entry is waited for, up to ten seconds)
+                const QPointer<QMenu> menu(root);
+                auto tries = std::make_shared<int>(0);
+                auto choose = std::make_shared<std::function<void()>>();
+                *choose = [this, walk, entry, over, menu, tries, choose] {
+                    if (!menu) { over(); return; }
+                    bool there = false;
+                    for (QAction* a : menu->actions()) there = there || QString(a->text()).remove('&') == entry;
+                    if (!there && ++*tries < 40) { after(250, *choose); return; }
+                    (*walk)(menu.data(), menu.data(), QStringList{entry}, [this, over] { after(1500, over); });
+                };
+                (*choose)();
             });
         });
     };
@@ -1580,7 +1609,7 @@ void Tutorial::buildSteps()
         s.title = T("Snap to a grid");
         s.text = T("For exact places, press Tab with the viewport in front: a grid appears, a card sets it, and everything you move snaps to it. Press Tab now.");
         s.hint = T("In this mode a model dragged by its arrows goes from grid point to grid point, and every turn is made in steps of angle -- the same steps as the Shift gizmo. "
-                   "Hold Alt to move freely for a moment; Tab again leaves the mode. A work plane view has a grid of its own: snapping is off while it is open. Or press Show me.");
+                   "Hold Alt to move freely for a moment; Tab again leaves the mode. A work plane view has a grid of its own: snapping is off while it is open. A surface dragged by its handle snaps too (Snap handles on the card turns that off). Or press Show me.");
         s.holes = holesOf(viewWidget);
         s.place = InsideBottom;
         s.closeRows = true;
@@ -1917,6 +1946,10 @@ void Tutorial::buildSteps()
         // (the step is about the GAP above drilled -- the thin place between two rows where the + in a circle shows --, not about the row: the frame and the arrow are at the gap, so that
         // nothing says "click drilled")
         s.aim = [this, scene]() -> QRect {
+            // (once the section is there the gap is gone: "drilled" stands under the new row, and a frame and an arrow at the place of the gap crossed the field where its name is typed -- the user,
+            // 2026-10-28, of this step: "this is still visually broken")
+            static const QRegularExpression made(R"(^\s*#\s*SECTION\b)", QRegularExpression::MultilineOption);
+            if (made.match(m_editor->getScript()).hasMatch()) return QRect();
             const QRect r = scene()->visibleRowRect("drilled", m_window);
             const QPoint c = scene()->sectionGapPoint("drilled", m_window);
             if (r.isEmpty() || c.isNull()) return QRect();
@@ -2027,6 +2060,7 @@ void Tutorial::buildSteps()
         s.holes = holesOf(panelWidget);
         s.focus = aimRow({"swell"});
         s.aim = aimRow({"grown"});
+        s.dragFocus = true;
         s.place = Right;
         s.group = "field";
         s.closeRows = true;
@@ -2130,6 +2164,7 @@ void Tutorial::buildSteps()
         s.holes = holesOf(panelWidget);
         s.focus = aimRow({"knob"});
         s.aim = aimRow({"capped"});
+        s.dragFocus = true;
         s.place = Right;
         s.group = "reference";
         s.closeRows = true;
@@ -2274,6 +2309,9 @@ void Tutorial::buildSteps()
             scene()->clearSelection();
             m_view->setWorkPlaneOpen(false);
             m_view->standardView(View::VIEW_TOP);              // (the plane that opens is parallel to the view: the one the points go on)
+            // (the plane is kept between two openings: one made earlier, from another view, came back turned -- normal (0.67, -0.59, 0.45) in the picture of the user, 2026-10-27: "why the hell is the
+            // workplane rotated right now" --, and the camera is still turning to the top view here, so the plane is not asked of it: it is the pad's own, flat, through the origin)
+            m_view->setWorkPlaneFrame(QVector3D(0, 0, 0), QVector3D(1, 0, 0), QVector3D(0, 1, 0));
             m_view->setFocus(Qt::OtherFocusReason);            // (Shift+W acts while the viewport has the keyboard)
         };
         s.done = [this] { return m_editor->getScript().contains("profile("); };
@@ -2651,7 +2689,7 @@ void Tutorial::buildSteps()
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) +
-                      "top = box((-40, -26, 30), (40, 26, 36))\ntop\n\nleg = cylinder(4, 30, (32, 18, 0))\nleg");
+                      "top = box((-40, -26, 30), (40, 26, 36))\ntop");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
             m_view->setFocus(Qt::OtherFocusReason);            // (Shift+S acts while the viewport has the keyboard: in the script it is a letter)
@@ -2692,7 +2730,7 @@ void Tutorial::buildSteps()
             {
                 // (the step before was skipped, or the tour was started here: the table, and the symmetry as one key makes it)
                 useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) +
-                          "top = box((-40, -26, 30), (40, 26, 36))\ntop\n\nleg = cylinder(4, 30, (32, 18, 0))\nleg");
+                          "top = box((-40, -26, 30), (40, 26, 36))\ntop");
                 scene()->clearSelection();
                 m_view->standardView(View::VIEW_ISO);
                 after(1200, [this] { if (!m_editor->getScript().contains("symmetry_planes(")) m_view->toggleSymmetry(); });
@@ -2879,14 +2917,20 @@ void Tutorial::buildSteps()
         currentChapter = 3;
         Step s;
         s.title = T("Save it as a block");
-        s.text = T("A model you made can become a block of your own. Click File, then Save as custom block: the script is saved as a function, drilled_block, in a file of the blocks folder -- "
-                   "the whole model, in one call.");
+        // (a window asks for the name -- the user, 2026-10-28: "Save as custom block should prompt the user to insert a file name. That is also something that should then be shown in the tutorial and for the
+        // user to see the actual name that they typed in": the next steps show the name that was typed)
+        s.text = T("A model you made can become a block of your own. Click File, then Save as custom block: a window asks for its name -- the name of its file in the blocks folder and of the function "
+                   "that makes the model. Type a name, or keep the one it suggests, and press OK: the whole model is saved, in one call.");
         s.hint = T("A block is a Python function in a file of the blocks folder. Every function in that folder is there in every script, and in the right-click menu. Saving again updates the file.");
         s.menuTitle = "File";
         s.menuEntry = "Save as custom block";
         s.place = Right;
         s.needsTourModel = true;
-        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        s.enter = [this] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            m_window->setProperty("lastBlockName", QVariant());         // (the name that is saved under from now on is the one the user types)
+        };
+        s.done = [this] { return !m_window->property("lastBlockName").toString().isEmpty(); };
         s.doneNote = T("Nice. The model is saved as a block: a file in the blocks folder.");
         add(s);
     }
@@ -2894,14 +2938,20 @@ void Tutorial::buildSteps()
         currentChapter = 3;
         Step s;
         s.title = T("Your file is in the folder");
-        s.text = T("The block is a file. Click Settings, then Show the blocks folder: the folder opens, and drilled_block.py is in it. Close that window to come back.");
-        s.hint = T("The file is plain Python, and can be edited. Settings ▸ Blocks folder... chooses another folder: every Python file in it is a set of blocks.");
+        // (the name the user typed in the step before)
+        const QString fileText = T("The block is a file. Click Settings, then Show the blocks folder: the folder opens, and %1.py is in it. Close that window to come back.");
+        s.text = fileText.arg(QString("drilled_block"));
+        s.textNow = [this, fileText] {
+            const QString n = m_window->property("lastBlockName").toString();
+            return n.isEmpty() ? QString() : fileText.arg(n);
+        };
+        s.hint = T("The file is plain Python, and can be edited: every Python file in this folder is a set of blocks.");
         s.menuTitle = "Settings";
         s.menuEntry = "Show the blocks folder";
         s.place = Right;
         s.needsTourModel = true;
         s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
-        s.doneNote = T("Nice. drilled_block.py is a file of its own: the block is saved.");
+        s.doneNote = T("Nice. The block is a file of its own: it is saved.");
         add(s);
     }
     {
@@ -2911,21 +2961,30 @@ void Tutorial::buildSteps()
         // (the block is saved by the step before this one; a tour that skipped it, or was started at this step, saves it here: the same file, for the same model -- so that the entry the step
         // asks for is in the menu.  And then the model is taken away again: the viewport is empty, and the drilled plate is what the user makes from the menu -- the user, 2026-10-27, of this step:
         // "this should be an empty viewport that only gets the drilled wall, by the user selecting it")
+        // (the name the user typed when the block was saved, which the step before showed: the menu lists it, and the call that makes the model is its name)
+        auto blockName = [this]() {
+            const QString n = m_window->property("lastBlockName").toString();
+            return n.isEmpty() ? QString("drilled_block") : n;
+        };
         s.enter = [this] {
             ensureTourModel([this] {
-                QMetaObject::invokeMethod(m_window, "saveAsCustomBlock", Q_ARG(bool, true));
+                // (the block is saved by the step before, under the name that was typed; a tour that skipped it, or was started here, saves it under the name the script suggests)
+                if (m_window->property("lastBlockName").toString().isEmpty())
+                    QMetaObject::invokeMethod(m_window, "saveAsCustomBlock", Q_ARG(bool, true));
                 useScript(tourHeader(QString()));
                 m_view->scenePanel()->clearSelection();
             });
         };
-        s.text = T("The block is an entry of the right-click menu. Right-click the empty space of the viewport and choose Parametric shapes ▸ New custom block ▸ drilled_block: the model is made again, from the block.");
-        s.hint = T("A block is a function: drilled_block() makes the whole model. A block that takes a model is under Operations ▸ Custom blocks. Or press Show me.");
+        const QString menuText = T("The block is an entry of the right-click menu. Right-click the empty space of the viewport and choose Parametric shapes ▸ New custom block ▸ %1: the model is made again, from the block.");
+        s.text = menuText.arg(QString("drilled_block"));
+        s.textNow = [menuText, blockName] { return menuText.arg(blockName()); };
+        s.hint = T("A block is a function: calling it makes the whole model. A block that takes a model is under Operations ▸ Custom blocks. Or press Show me.");
         buildLook(s);
-        s.code = linesWith("^\\w+ = drilled_block");
-        s.done = [made] { return made("drilled_block"); };
+        s.code = [linesWith, blockName]() { return linesWith("^\\w+ = " + QRegularExpression::escape(blockName()) + "\\b")(); };
+        s.done = [made, blockName] { return made(blockName()); };
         s.doneNote = T("Nice. One call makes the whole model: a block of your own.");
         s.show = [=](std::function<void()> over) {
-            showPick({}, {T("Parametric shapes"), T("New custom block"), "drilled_block"}, over);
+            showPick({}, {T("Parametric shapes"), T("New custom block"), blockName()}, over);
         };
         add(s);
     }
@@ -3174,8 +3233,22 @@ void Tutorial::buildSteps()
             if (std::fabs(it.next().captured(1).toDouble() - x) < 1.5) return true;
         return false;
     };
+    // (the same for a face on another side of a body: a select_surface of `body` whose seed has `value` for its coordinate `axis` (0 x, 1 y, 2 z), give or take a millimetre or two)
+    auto seedAt = [this](const QString& body, int axis, double value) {
+        const QString number = "-?[\\d.]+(?:e[+-]?\\d+)?";
+        QString coordinates;
+        for (int k = 0; k < 3; ++k)
+            coordinates += QString(k ? "\\s*,\\s*" : "") + (k == axis ? "(" + number + ")" : number);
+        const QRegularExpression re("select_surface\\(" + QRegularExpression::escape(body) + ",\\s*seed=\\(\\s*" + coordinates + "\\s*\\)");
+        auto it = re.globalMatch(m_editor->getScript());
+        while (it.hasNext())
+            if (std::fabs(it.next().captured(1).toDouble() - value) < 1.5) return true;
+        return false;
+    };
     // (the sides the camera looks from, to see the face at the left end of a bar along x -- it faces -x -- and the one at its right end; a little from the front and from above, so that the bar is seen)
     const QVector3D leftEnd(-1, -1, 0.7f), rightEnd(1, -1, 0.7f);
+    // (and from above, to see the face at the top of a body and the one at its front: a little from the front, so that its depth is seen; and from below and behind, to see the bottom and the back)
+    const QVector3D fromAbove(-0.2f, -0.5f, 1.0f), fromBelow(0.2f, 0.5f, -1.0f);
     // (the row of a model of the tree the step is about: the arrow ends at it)
     auto rowAim = [aimRow](const QString& name) { return aimRow({name}); };
     // (the placeholder, once there is one; else the row of the model the menu was chosen on)
@@ -3632,7 +3705,14 @@ void Tutorial::buildSteps()
             ensureModel(made("static_analysis"), beamModel(6, "(0, 0, -100)", "None"));
             openCall("force");
             after(500, [=] { hideModel("beam"); });             // (the beam that is still shown is drawn over its analysis: the stress is drawn on its own)
+            // (the analysis is isolated, as the step before left it -- the user, 2026-10-28, of this step: "the analysis is not isolated, like was performed in the last step": the conditions and the
+            // faces were drawn over the stress once the step's own model had been put there.  Once the result is there and drawn it is isolated; the step's leave puts everything back)
+            (*whenResult)([made] { return made("static_analysis"); }, [scene] {
+                scene()->clearSelection();
+                if (!scene()->isolated() && scene()->selectModel("static_analysis_1")) scene()->toggleIsolation();
+            }, 0);
         };
+        s.leave = unisolate;
         s.done = [flatCall] {
             static const QRegularExpression re(R"(vector=\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\))");
             const auto m = re.match(flatCall("force"));
@@ -3648,30 +3728,37 @@ void Tutorial::buildSteps()
     // ---- Chapter 10: a flow
     const QString flowHead = tourHeaderFixed("[-4, -4, -4], [44, 24, 14]");
     // (the channel as the menus write it, stage by stage, in the order of the static analysis: 0 the post and the water around it, 1 with the face the water comes in at selected, 2 the inlet, 3 with the face it
-    // leaves at selected, 4 the outlet, 5 the fluid, 6 solved, 7 solved with everything shown as the menus leave it.  A face is what a right-click on the water ▸ Select Surface writes: the flat face under
-    // the click, made of the field of the water)
+    // leaves at selected, 4 the outlet, 5 with the top and the front of the water selected, 6 with the bottom and the back as well, 7 the slip made of the four, 8 the fluid, 9 solved with everything shown as
+    // the menus leave it.  A face is what a right-click on the water ▸ Select Surface writes: the flat face under the click, made of the field of the water)
     auto flowModel = [flowHead](int stage, const QString& speed, const QString& boundaries, const QString& radius) {
-        // (the post is drawn, and the water round it faint while its ends are picked on it; once the flow is solved the water is not drawn at all: a faint box over the result of the flow turns it brown.  faces and
-        // sides are the boxes that say where the water slides along -- the top and the bottom of the channel, and its two sides -- as in example 16)
-        const bool quiet = stage == 6;
+        // (the post is drawn, and the water round it faint while its ends are picked on it; once the flow is solved the water is not drawn at all: a faint box over the result of the flow turns it brown)
+        // (the stages: 0 the post and the water, 1 the face the water comes in at, 2 the inlet, 3 the face it leaves at, 4 the outlet, 5 the top and the front of the water, 6 the bottom and the back as well,
+        // 7 the slip made of the four, 8 the fluid, 9 analysed)
+        // (nothing is made for the user that the menus do not write: every model is one that a step of the chapter makes by hand, and the slip is above the fluid and the flow, so that the flow -- which the
+        // menu writes under the last model it takes -- never stands above a model it names.  Every surface that is in no region is a wall at rest: the slip has to go ROUND THE WHOLE CHANNEL, the top, the
+        // bottom and both sides, for the flow to be the one of a free channel with only the post sticking -- the user, 2026-10-28: "Slip has to be surrounding the entire channel")
+        const bool quiet = stage == 9;
         const QString hidden = quiet ? "# hidden: " : QString();
-        // (the boxes of the slips are the first lines: every model that the menus write comes under the model it is made from, and the flow is made from the post -- a flow written above the line that
-        // makes `faces` stopped with "name 'faces' is not defined" when the user typed the boundaries over its placeholder, as the step asks)
-        QString s = flowHead + "faces = union(box((-1, -1, -1), (41, 21, 0.01)), box((-1, -1, 9.99), (41, 21, 11)))\n"
-                               "sides = union(box((-1, -1, -1), (41, 0.01, 11)), box((-1, 19.99, -1), (41, 21, 11)))\n\n"
-                    "post = cylinder(" + radius + ", 12, (14, 10, -1))\npost\nslab = box((0, 0, 0), (40, 20, 10)" + QString(!quiet ? ", alpha=0.15" : "") + ")\n" +
+        QString s = flowHead + "post = cylinder(" + radius + ", 12, (14, 10, -1))\npost\nslab = box((0, 0, 0), (40, 20, 10)" + QString(!quiet ? ", alpha=0.15" : "") + ")\n" +
                     QString(!quiet ? "slab\n" : "");
         // (the faces of the water are right under it, above the conditions made of them: the rows that the flow takes are then the post, the water and one block under the faces)
         if (stage >= 1) s += "selection_1 = select_surface(slab, seed=(0.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_1\n";
         if (stage >= 3) s += "selection_2 = select_surface(slab, seed=(40.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_2\n";
+        if (stage >= 5) s += "selection_3 = select_surface(slab, seed=(28.0, 5.0, 10.0), angle=10)\n" + hidden + "selection_3\n"
+                             "selection_4 = select_surface(slab, seed=(28.0, 0.0, 5.0), angle=10)\n" + hidden + "selection_4\n";
+        if (stage >= 6) s += "selection_5 = select_surface(slab, seed=(28.0, 15.0, 0.0), angle=10)\n" + hidden + "selection_5\n"
+                             "selection_6 = select_surface(slab, seed=(28.0, 20.0, 5.0), angle=10)\n" + hidden + "selection_6\n";
         if (stage >= 2) s += "inlet_1 = inlet(\n    region=selection_1,\n    body=None,\n    velocity=None,\n    speed=" + speed + ",\n    flow_rate=None,\n    profile='uniform',\n)  # shadow: selection_1\ninlet_1\n";
         if (stage >= 4) s += "outlet_1 = outlet(\n    region=selection_2,\n    body=None,\n    pressure=0.0,\n)  # shadow: selection_2\noutlet_1\n";
-        if (stage >= 5) s += "water_1 = Fluid(\n    'water',\n    1e-09,\n    1e-09,\n)\n";
-        if (stage == 5) s += "water_1\n";
-        if (stage >= 6)
+        // (the water slides along the four walls: one condition made of the four faces that were selected, as the menu writes it for several regions)
+        if (stage >= 7)
+            s += "slip_1 = slip(\n    region=[selection_3, selection_4, selection_5, selection_6],\n    body=None,\n)  # shadow: selection_3, selection_4, selection_5, selection_6\nslip_1\n";
+        if (stage >= 8) s += "water_1 = Fluid(\n    'water',\n    1e-09,\n    1e-09,\n)\n";
+        if (stage == 8) s += "water_1\n";
+        if (stage >= 9)
             s += "fluid_analysis_1 = fluid_analysis(\n    post,\n    slab,\n    inlets=[inlet_1],\n    outlets=[outlet_1],\n    boundaries=" + boundaries +
                  ",\n    fluid=water_1,\n    element_size=None,\n    bounds=None,\n    gravity=None,\n    stokes=False,\n    tolerance=1e-05,\n    relaxation=1.0,\n    cache=True,\n"
-                 "    time=None,\n    store_every=1,\n)  # shadow: post, slab, inlet_1, outlet_1, water_1\nfluid_analysis_1\nwater_1\n";
+                 "    time=None,\n    store_every=1,\n)  # shadow: post, slab, inlet_1, outlet_1, slip_1, water_1\nfluid_analysis_1\nwater_1\n";
         return s;
     };
     {
@@ -3751,12 +3838,102 @@ void Tutorial::buildSteps()
     {
         currentChapter = 9;
         Step s;
+        s.title = T("Select the four walls");
+        // (a wall the water slides along is a boundary condition like the inlet and the outlet, so it is made the same way, by the user, before the fluid: its face is selected by hand and the condition is
+        // made of that face -- the user, 2026-10-28: "I asked for it to be done like the other boundary conditions, by selecting surfaces manually ... those steps should come obviously before creating the
+        // fluid, as they are boundary conditions, just like inlet and outlet", and "They can easily make it from scratch, that's how the program was designed")
+        s.text = T("The water slides along the walls of the channel instead of sticking to them: along the top, the bottom and both sides, all the way round -- only the post is a wall that it sticks to. "
+                   "Each of those faces has to be a model of its own, like the two ends. Right-click the top of the water, the faint box, choose Select Surface and press Select: the face under your click is "
+                   "selection_3. The view turns to the next wall each time one is made -- the front, the bottom, the back -- and the arrow shows where to click: selection_4 to selection_6.");
+        s.hint = T("selection_3 = select_surface(slab, seed=..., angle=10): a face of the water, found from its field. The view turns to the next wall by itself. Or press Show me.");
+        buildLook(s);
+        s.group = "flow";
+        s.code = linesWith("^selection_[3456] =");
+        // (the four walls, in the order they are asked for, each with where on it the arrow points and the side the camera looks from, straight at it: the top, the front, the bottom, the back.  `axis` and
+        // `at` say which seed a face has once it is selected.  Once a wall is made the view turns to the next -- the user, 2026-10-28: "Just in one step have the user select all 4, every time one is created
+        // rotate and have them select the next")
+        struct Wall { int axis; double at; QVector3D seed, from; };
+        const QVector<Wall> walls = {
+            {2, 10.0, QVector3D(28, 5, 10), QVector3D(-0.15f, -0.25f, 1.0f)},
+            {1, 0.0, QVector3D(28, 0, 5), QVector3D(0.0f, -1.0f, 0.15f)},
+            {2, 0.0, QVector3D(28, 15, 0), QVector3D(0.15f, 0.25f, -1.0f)},
+            {1, 20.0, QVector3D(28, 20, 5), QVector3D(0.0f, 1.0f, 0.15f)},
+        };
+        auto nextWall = [seedAt, walls]() {
+            for (int k = 0; k < walls.size(); ++k)
+                if (!seedAt("slab", walls[k].axis, walls[k].at)) return k;
+            return int(walls.size());
+        };
+        auto turned = std::make_shared<int>(-1);                 // (the wall the view was last turned to)
+        s.point = [this, nextWall, walls] {
+            const int k = std::min(nextWall(), int(walls.size()) - 1);
+            return m_view->mapTo(m_window, m_view->screenPoint(walls[k].seed));
+        };
+        s.enter = [=] {
+            *turned = -1;
+            ensureModel(made("outlet"), flowModel(4, "5", QString(), "3"), fromAbove);
+        };
+        s.watch = [=] {
+            const int k = nextWall();
+            if (k >= walls.size() || k == *turned) return;
+            *turned = k;
+            m_view->lookFrom(walls[k].from);
+        };
+        s.done = [nextWall, walls] { return nextWall() >= walls.size(); };
+        s.doneNote = T("Nice. The four walls of the water are selection_3 to selection_6.");
+        s.show = [=](std::function<void()> over) {
+            // (the view turns to each wall, and the face is picked there, as a hand does it)
+            auto pick = std::make_shared<std::function<void(int)>>();
+            *pick = [=](int k) {
+                if (k >= walls.size()) { over(); return; }
+                m_view->lookFrom(walls[k].from);
+                after(1200, [=] { pickFace(walls[k].seed, [=] { (*pick)(k + 1); }); });
+            };
+            (*pick)(0);
+        };
+        add(s);
+    }
+    {
+        currentChapter = 9;
+        Step s;
+        s.title = T("Walls that slide");
+        // (one slip that goes all round the channel: the four faces are selected, and the condition is made of them at once)
+        s.text = T("The same way as the inlet and the outlet, for all four walls at once: click selection_3, hold Ctrl and click selection_4, selection_5 and selection_6, right-click one of them and "
+                   "choose Engineering ▸ Fluid ▸ New flow condition ▸ slip. One slip, all round the channel.");
+        s.hint = T("A slip is a wall the water slides along: nothing flows through it, and it does not drag. A wall that is not named is one the water sticks to. Or press Show me.");
+        buildLook(s);
+        s.group = "flow";
+        s.aim = rowAim("selection_3");
+        s.aims = aimRows({"selection_3", "selection_4", "selection_5", "selection_6"});
+        s.code = callLines("slip");
+        s.enter = [=] {
+            ensureModel(seedAt("slab", 2, 10.0) && seedAt("slab", 1, 0.0) && seedAt("slab", 2, 0.0) && seedAt("slab", 1, 20.0), flowModel(6, "5", QString(), "3"), fromAbove);
+        };
+        // (done when the slips name the four walls -- one slip of the four, or one for each)
+        s.done = [this] {
+            const QString script = m_editor->getScript();
+            for (const char* n : {"selection_3", "selection_4", "selection_5", "selection_6"})
+            {
+                const QRegularExpression re(QString("=\\s*slip\\((?:[^()]|\\n)*\\b%1\\b").arg(n));
+                if (!re.match(script).hasMatch()) return false;
+            }
+            return true;
+        };
+        s.doneNote = T("Nice. The water slides along all four walls: one slip, all round the channel.");
+        s.show = [=](std::function<void()> over) {
+            showPick({"selection_3", "selection_4", "selection_5", "selection_6"}, {T("Engineering"), T("Fluid"), T("New flow condition"), "slip"}, over);
+        };
+        add(s);
+    }
+    {
+        currentChapter = 9;
+        Step s;
         s.title = T("Choose the fluid");
         s.text = T("The channel is full of water, and a fluid says what that is. Right-click the empty space of the viewport and choose Engineering ▸ Materials ▸ New fluid ▸ water.");
         s.hint = T("A fluid is a model, with its density and its viscosity. Or press Show me.");
         buildLook(s);
         s.group = "flow";
-        s.enter = [=] { ensureModel(made("outlet"), flowModel(4, "5", QString(), "3")); };
+        s.enter = [=] { ensureModel(made("slip"), flowModel(7, "5", QString(), "3")); };
         s.done = [made] { return made("Fluid"); };
         s.doneNote = T("Nice. water_1 is the fluid.");
         s.show = [=](std::function<void()> over) {
@@ -3768,10 +3945,10 @@ void Tutorial::buildSteps()
         currentChapter = 9;
         Step s;
         s.title = T("Solve the flow");
-        s.text = T("Select post, then Ctrl+click slab, inlet_1, outlet_1 and water_1, right-click post and choose Engineering ▸ Fluid ▸ fluid_analysis. The call has a placeholder for the "
-                   "boundaries: type [slip(faces), slip(sides)] over it. faces and sides are boxes that mark the top and the bottom of the channel and its two sides, and a slip is a plane the "
-                   "water slides along: the flow is two-dimensional, as in the examples. The streams are drawn with the water round the post, and it tints them: click fluid_analysis_1 in the "
-                   "model tree and press I, so that only the flow is shown.");
+        // (the slip is selected with the others and the menu puts it into the boundaries of the call: nothing is typed over a placeholder -- the user, 2026-10-28: "telling the user again to type down code. If they
+        // created the slip conditions manually, then they can just select them")
+        s.text = T("Select post, then Ctrl+click slab, inlet_1, outlet_1, slip_1 and water_1, right-click post and choose Engineering ▸ Fluid ▸ fluid_analysis. The streams are drawn with the water round "
+                   "the post, and it tints them: click fluid_analysis_1 in the model tree and press I, so that only the flow is shown.");
         s.hint = T("Everything that is not named is a wall at rest; walls, slips, inlets and outlets are the boundaries of a flow. The flow is solved in a few seconds. Or press Show me.");
         buildLook(s);
         s.group = "flow";
@@ -3781,22 +3958,20 @@ void Tutorial::buildSteps()
             return madeAndFilled("fluid_analysis") ? after() : before();
         };
         s.aims = [=]() -> QVector<QRect> {
-            std::function<QVector<QRect>()> before = aimRows({"post", "slab", "inlet_1", "outlet_1", "water_1"}), after = aimRows({"fluid_analysis_1"});
+            std::function<QVector<QRect>()> before = aimRows({"post", "slab", "inlet_1", "outlet_1", "slip_1", "water_1"}), after = aimRows({"fluid_analysis_1"});
             return madeAndFilled("fluid_analysis") ? after() : before();
         };
         s.calculates = true;
         s.code = callLines("fluid_analysis");
-        // (the model of the step is its own, as for the beam: the faces under the water, the boxes of the slips first)
-        s.enter = [=] { ensureModel(false, flowModel(5, "5", QString(), "3")); };
+        // (the model of the step is its own, as for the beam: every model of the chapter up to the fluid, the slip above the line the flow is written at)
+        s.enter = [=] { ensureModel(false, flowModel(8, "5", QString(), "3")); };
         s.done = [madeAndFilled, scene] { return madeAndFilled("fluid_analysis") && scene()->isolated(); };
         s.doneNote = T("Nice. Only the flow is shown: the streams go round the post, and the colours are the speed. Press I again to bring the other models back.");
         s.leave = unisolate;
         s.show = [=](std::function<void()> over) {
-            showPick({"post", "slab", "inlet_1", "outlet_1", "water_1"}, {T("Engineering"), T("Fluid"), "fluid_analysis"}, [=] {
+            showPick({"post", "slab", "inlet_1", "outlet_1", "slip_1", "water_1"}, {T("Engineering"), T("Fluid"), "fluid_analysis"}, [=] {
                 after(1800, [=] {
-                    fillDots("fluid_analysis", "[slip(faces), slip(sides)]", [=] {
-                        showThenIsolate([madeAndFilled] { return madeAndFilled("fluid_analysis"); }, "fluid_analysis_1", over);
-                    }, 70);
+                    showThenIsolate([madeAndFilled] { return madeAndFilled("fluid_analysis"); }, "fluid_analysis_1", over);
                 });
             });
         };
@@ -3813,7 +3988,15 @@ void Tutorial::buildSteps()
         s.group = "flow";
         s.calculates = true;
         s.code = linesWith("^post =");
-        s.enter = [=] { ensureModel(made("fluid_analysis"), flowModel(6, "5", "[slip(faces), slip(sides)]", "3")); };
+        s.enter = [=] {
+            ensureModel(made("fluid_analysis"), flowModel(9, "5", "[slip_1]", "3"));
+            // (the flow is isolated, as the step before left it: the faces, the conditions and the water are not drawn over the streams)
+            (*whenResult)([made] { return made("fluid_analysis"); }, [scene] {
+                scene()->clearSelection();
+                if (!scene()->isolated() && scene()->selectModel("fluid_analysis_1")) scene()->toggleIsolation();
+            }, 0);
+        };
+        s.leave = unisolate;
         s.done = [callAt] {
             static const QRegularExpression re(R"(cylinder\(\s*(\d+\.?\d*))");
             const auto m = re.match(callAt("cylinder").text);
@@ -4460,6 +4643,7 @@ void Tutorial::goTo(int index, bool viaBack)
     }
     m_modelTries = 0;
     endDemo();                              // (what a "Show me" did is undone before the step changes)
+    bool toShowcase = false;                // (from one showcase to the next: see below)
     if (m_index >= 0 && m_index < m_steps->size())
     {
         const Step& old = (*m_steps)[m_index];
@@ -4472,7 +4656,7 @@ void Tutorial::goTo(int index, bool viaBack)
         // The steps of a group work on models of their own: when the group is left the user's model is back -- except from one showcase to the next, each of which puts a model of its own there at
         // once: the user's model back for the moment between them was a picture of a model that neither shows (the user, 2026-10-27: "in the transition from 4 to 5 there is a weird visual
         // glitch going on with the whole thing spazzing out for like a frame").  It comes back when a step that is no showcase is reached, or when the tour ends
-        const bool toShowcase = (*m_steps)[index].group.startsWith("showcase") && old.group.startsWith("showcase");
+        toShowcase = (*m_steps)[index].group.startsWith("showcase") && old.group.startsWith("showcase");
         if (!old.group.isEmpty() && old.group != (*m_steps)[index].group && m_hasGroup && !toShowcase)
         {
             restore(m_groupBefore);
@@ -4496,7 +4680,13 @@ void Tutorial::goTo(int index, bool viaBack)
     // (Back, or forward again): the step asks for something to be done, and it can be done again
     if (index >= 1 && index < m_entry.size())
     {
-        if (m_hasEntry[index]) restore(m_entry[index]);
+        // (a showcase puts a model of its own there at once, when its step opens: the state it was entered from, put back first, was one more frame of a model that neither shows, drawn before it -- the user,
+        // 2026-10-28, of the step from "Flows" to "Manufacturing": "Transition 3 to 4 here still spaz out for one frame when clicking back and next ... This was also an old fix".  The same as going forward
+        // from one showcase to the next, which did not put the user's model back either)
+        if (m_hasEntry[index])
+        {
+            if (!toShowcase) restore(m_entry[index]);
+        }
         else
         {
             m_entry[index] = capture();
@@ -4927,10 +5117,16 @@ void Tutorial::refresh()
         fl->update();
     }
     layer->frames.clear();
+    layer->sources.clear();
+    QRect dragFrom;                         // (a drag step: the row that is dragged, which the arrow starts at)
     if (s.focus)
     {
         const QRect f = s.focus();
-        if (!f.isEmpty()) layer->frames << f;
+        if (!f.isEmpty())
+        {
+            if (s.dragFocus && !aimRect.isEmpty()) { layer->sources << f; dragFrom = f; }
+            else layer->frames << f;
+        }
     }
     if (!aimRect.isEmpty()) layer->frames << aimRect;
     for (const QRect& r : aimAll)
@@ -4957,11 +5153,19 @@ void Tutorial::refresh()
                 if (!drawn.isEmpty()) bar = QRect(m_view->mapTo(m_window, drawn.topLeft()), drawn.size()).adjusted(-6, -4, 6, 4);
             }
             if (!bar.isEmpty()) m_calcBarRect = bar;
-            const bool running = m_editor->scriptRunning() || m_view->isRendering();
+            // (the solve itself and nothing else -- the user, 2026-10-28, of a screen that went dark at every render: "I MEANT ONLY WHEN THE FLOW ANALYSIS IS RUNNING": a script that is only evaluated, a
+            // result that is drawn, a picture that is made again do not dim anything)
+            const bool running = m_editor->operationRunning();
             if (running && !m_calcBarRect.isNull())
             {
                 calcOnly = true;
                 layer->frames.clear();
+                layer->sources.clear();
+                // (the panes the step lets the user act in are holes in the dimming, drawn with a glowing edge: the tree, the editor and the viewport stayed lit and framed while the bar ran -- the user, 2026-10-28, of
+                // "Change the post": "while the calculation is running, only the calculation should be highlighted, everything else greyed out ... this obviously goes for all simulation tutorials".  They are dimmed
+                // like the rest for as long as the calculation runs; the mouse mask (m_holes) is not touched)
+                layer->holes.clear();
+                dragFrom = QRect();
                 layer->lit << m_calcBarRect;
                 layer->frames << m_calcBarRect;
                 layer->arrow = false;
@@ -5008,7 +5212,17 @@ void Tutorial::refresh()
         const QRect view = widgetRect(m_view);
         if (!view.isEmpty()) layer->lit << view;
     }
-    if (arrow)
+    layer->arrowBulge = 0;
+    if (!dragFrom.isEmpty())
+    {
+        // A drag: ONE arrow, from the row that is dragged to the row it goes onto, curving out at the right edge of the rows and ending in the head at the target (the arrow from the card would only
+        // point at the target again, and two equal frames read as "select both")
+        layer->arrow = true;
+        layer->arrowFrom = QPoint(dragFrom.right() + 3, dragFrom.center().y());
+        layer->arrowTo = QPoint(aimRect.right() + 3, aimRect.center().y());
+        layer->arrowBulge = layer->arrowTo.y() > layer->arrowFrom.y() ? -30.0 : 30.0;
+    }
+    else if (arrow)
     {
         // from the edge of the card that is nearest to what it points at
         const QRect c = m_card->geometry();
