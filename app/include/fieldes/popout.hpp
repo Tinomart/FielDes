@@ -8,6 +8,8 @@ of the License, or (at your option) any later version.
 */
 #pragma once
 
+#include <functional>
+
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -52,6 +54,11 @@ public:
     static bool isFloating(const QWidget* w);
 
     bool floating() const { return !m_window.isNull(); }
+    /*  The window the element is in while it is pulled out (null otherwise)  */
+    QWidget* window() const { return m_window; }
+    /*  Called with the window of an element that is about to be put back, before it is hidden and deleted: a card that stands in it (the guided tour's) goes back to the
+     *  main window first, or it would be deleted with the window  */
+    static void setDockHook(std::function<void(QWidget*)> hook);
     const QString& key() const { return m_key; }
     void toggle();
     void floatOut();

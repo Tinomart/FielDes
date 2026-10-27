@@ -1142,6 +1142,7 @@ void View::paintOverlay(QPainter& painter)
     {
         drawSectionHandle(painter);
     }
+    drawSnapGrid(painter);
     drawWorkPlane(painter);
     drawSymmetry(painter);
     drawFieldIcons(painter);
@@ -1419,6 +1420,7 @@ void View::drawRenderProgress(QPainter& painter)
             std::cerr << "[bar-render] " << std::fixed << QDateTime::currentMSecsSinceEpoch() / 1000.0
                       << " done after " << m_renderClock.elapsed() / 1000.0 << " s\n";
         m_renderActive = false;
+        m_renderBarArea = QRectF();
         return;
     }
     if (!m_renderActive)
@@ -1480,6 +1482,7 @@ void View::drawRenderProgress(QPainter& painter)
         if (top >= area.bottom()) break;
         bar.moveBottom(top - 8);
     }
+    m_renderBarArea = QRectF(std::min(bar.left(), bar.right() - textW), bar.top() - fm.height() - 3, std::max(w, textW), fm.height() + 3 + h);
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(255, 255, 255, 50));
     painter.drawRoundedRect(bar, 2, 2);
@@ -1862,6 +1865,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             if (ringPoint(event->pos(), m_pullHit, m_pullNormal, at))
             {
                 if (m_wp.open && m_wp.exists && std::fabs(QVector3D::dotProduct(m_pullNormal, m_wp.normal())) > 0.999f) at = snapToWorkPlane(at);
+                else at = snapPoint(at);                    // (the snapping mode: a node of the grid, or a point that is there; unchanged when it is off)
                 m_pullLast = at;
                 setPullVirtual(at);
                 m_overlay->update();
@@ -1890,6 +1894,12 @@ void View::mouseMoveEvent(QMouseEvent* event)
                 {
                     d = snapToWorkPlane(m_faceRef + d, nullptr, nullptr, false) - m_faceRef;        // (the grid only: its own points are what is moving)
                     d -= m_wp.normal() * QVector3D::dotProduct(d, m_wp.normal());                    // (in the plane: the noise of the ray is not a move out of it)
+                }
+                if (snapActive() && m_faceHasRef)
+                {
+                    // The snapping mode: the point of the face that is kept on the grid goes to a line of it -- along what a wall faces when it only moves that way
+                    if (!m_faceWallDir.isNull()) d = m_faceWallDir.normalized() * snappedAlong(m_faceRef, m_faceWallDir.normalized(), QVector3D::dotProduct(d, m_faceWallDir.normalized()));
+                    else d = snapPoint(m_faceRef + d, nullptr, false) - m_faceRef;
                 }
                 std::map<libfive::Tree::Id, float> numbers;
                 for (const FaceVar& v : m_faceVars) numbers[v.id] = v.value0 + d[v.axis];
@@ -3045,6 +3055,7 @@ void View::makeWorkPlane()
 
 void View::announceWorkPlane()
 {
+    syncSnapWithWorkPlane();                // (the work plane view has a grid of its own: the snapping mode is off while it is open, and back when it is left)
     // Drawing shows the crosshair; not drawing (the select mode, or the view closed) the usual pointer, and nothing of the cursor on the plane
     const bool drawing = m_wp.open && m_wp.exists && m_wp.mode != 0;
     if (!drawing && m_wpCursorValid)
@@ -3143,6 +3154,207 @@ void View::setWorkPlaneOffset(float offset)
     announceWorkPlane();
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// The snapping mode (Tab): a grid of the whole space that everything that is moved goes to, and a step of angle that every turn goes to
+
+float View::snapStep() const
+{
+    if (m_snap.spacing > 0) return m_snap.spacing;
+    // from how large the picture is: a line about every 25 pixels, at a round number (as the work plane's grid is)
+    return roundStep(scaleAt(rect().center(), QVector3D(0, 0, 0)) / 4.0);
+}
+
+bool View::altHeld() const
+{
+    return bool(QGuiApplication::queryKeyboardModifiers() & Qt::AltModifier);
+}
+
+bool View::snapActive() const
+{
+    return m_snap.on && !(m_wp.open && m_wp.exists) && !altHeld();
+}
+
+QVector3D View::snapPoint(const QVector3D& p, const Shape* exclude, bool toPoints) const
+{
+    if (!snapActive()) return p;
+    if (toPoints && m_snap.snapPoints)
+    {
+        // The point that is there: its dot, when it is within a few pixels
+        const QPointF at = toScreen(p);
+        double best = 10.0 * 10.0;
+        bool found = false;
+        QVector3D where;
+        for (const Shape* s : shapes)
+        {
+            QVector3D q;
+            if (s == exclude || !s->isPoint() || !s->dotPosition(q)) continue;
+            const QPointF d = toScreen(q) - at;
+            const double distance = d.x() * d.x() + d.y() * d.y();
+            if (distance < best) { best = distance; where = q; found = true; }
+        }
+        if (found) return where;
+    }
+    const float step = snapStep();
+    return QVector3D(std::round(p.x() / step) * step, std::round(p.y() / step) * step, std::round(p.z() / step) * step);
+}
+
+float View::snappedAlong(const QVector3D& from, const QVector3D& dir, float distance) const
+{
+    const float step = snapStep();
+    for (int a = 0; a < 3; ++a)
+    {
+        if (std::fabs(std::fabs(dir[a]) - 1.0f) < 1e-3f)
+        {
+            // (an arrow along an axis of the world: the coordinate it lands on is a line of the grid)
+            const float sign = dir[a] > 0 ? 1.0f : -1.0f;
+            const float before = from[a];
+            return (std::round((before + sign * distance) / step) * step - before) * sign;
+        }
+    }
+    return std::round(distance / step) * step;
+}
+
+void View::announceSnap()
+{
+    emit(snapChanged());
+    m_overlay->update();
+}
+
+void View::setSnapMode(bool on)
+{
+    // (the work plane view has a grid of its own to snap to: the mode is not turned on while that view is open)
+    if (on && m_wp.open && m_wp.exists)
+    {
+        announceSnap();
+        return;
+    }
+    m_snapResume = false;
+    m_snap.on = on;
+    announceSnap();
+}
+
+void View::setSnapOptions(bool show, float spacing, float angle, int reach, bool snapPoints)
+{
+    m_snap.show = show;
+    m_snap.spacing = spacing > 0 ? spacing : 0;
+    m_snap.angle = std::max(0.1f, std::min(180.0f, angle));
+    m_snap.reach = std::max(2, std::min(10, reach));
+    m_snap.snapPoints = snapPoints;
+    announceSnap();
+}
+
+void View::syncSnapWithWorkPlane()
+{
+    const bool plane = m_wp.open && m_wp.exists;
+    if (plane && m_snap.on)
+    {
+        m_snapResume = true;
+        m_snap.on = false;
+        announceSnap();
+    }
+    else if (!plane && m_snapResume)
+    {
+        m_snapResume = false;
+        m_snap.on = true;
+        announceSnap();
+    }
+}
+
+void View::drawSnapGrid(QPainter& painter)
+{
+    if (!m_snap.on || (m_wp.open && m_wp.exists)) return;
+    painter.save();
+    // (violet: the selection is amber, the gizmo red, green and blue, a selected surface magenta and the work plane blue -- the snapping mode has a colour of its own, which shows on a selected model too)
+    const QColor amber(176, 130, 255);
+    if (m_snap.show)
+    {
+        const float step = snapStep();
+        const int n = std::max(2, std::min(10, m_snap.reach));
+        // The lattice is drawn round the place the view looks at -- the node nearest the middle of the picture, in the plane through the origin that faces the viewer -- as far as
+        // `n` steps: the lines are fainter the farther they are, and nothing past that is drawn, so that the rows that shrink in the distance do not distract
+        const QVector3D c = placeOnRay(rect().center());
+        const int cx = int(std::lround(c.x() / step)), cy = int(std::lround(c.y() / step)), cz = int(std::lround(c.z() / step));
+        const int side = 2 * n + 1;
+        auto at = [&](int i, int j, int k) { return size_t((i + n) + side * ((j + n) + side * (k + n))); };
+        std::vector<QPointF> screen(size_t(side) * side * side);
+        std::vector<char> inside(screen.size(), 0);
+        const int r2 = n * n;
+        for (int k = -n; k <= n; ++k)
+        {
+            for (int j = -n; j <= n; ++j)
+            {
+                for (int i = -n; i <= n; ++i)
+                {
+                    if (i * i + j * j + k * k > r2) continue;
+                    inside[at(i, j, k)] = 1;
+                    screen[at(i, j, k)] = toScreen(QVector3D(float(cx + i) * step, float(cy + j) * step, float(cz + k) * step));
+                }
+            }
+        }
+        constexpr int kBands = 6;
+        static const int kAlpha[kBands] = {120, 96, 74, 52, 34, 18};
+        QVector<QLineF> bands[kBands];
+        QVector<QLineF> axes[3];
+        for (int k = -n; k <= n; ++k)
+        {
+            for (int j = -n; j <= n; ++j)
+            {
+                for (int i = -n; i <= n; ++i)
+                {
+                    if (!inside[at(i, j, k)]) continue;
+                    const QPointF a = screen[at(i, j, k)];
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        const int i2 = i + (axis == 0), j2 = j + (axis == 1), k2 = k + (axis == 2);
+                        if (i2 > n || j2 > n || k2 > n || !inside[at(i2, j2, k2)]) continue;
+                        const QLineF line(a, screen[at(i2, j2, k2)]);
+                        // (a line of the grid that is an axis of the world -- the other two coordinates 0 -- is drawn in the colour of its axis)
+                        const int wx = cx + i, wy = cy + j, wz = cz + k;
+                        const bool onAxis = (axis == 0 && wy == 0 && wz == 0) || (axis == 1 && wx == 0 && wz == 0) || (axis == 2 && wx == 0 && wy == 0);
+                        if (onAxis)
+                        {
+                            axes[axis] << line;
+                            continue;
+                        }
+                        const float f = 0.5f * (std::sqrt(float(i * i + j * j + k * k)) + std::sqrt(float(i2 * i2 + j2 * j2 + k2 * k2))) / float(n);
+                        bands[std::min(kBands - 1, int(f * kBands))] << line;
+                    }
+                }
+            }
+        }
+        painter.setRenderHint(QPainter::Antialiasing);
+        for (int b = 0; b < kBands; ++b)
+        {
+            if (bands[b].isEmpty()) continue;
+            painter.setPen(QPen(QColor(amber.red(), amber.green(), amber.blue(), kAlpha[b]), 1.0));
+            painter.drawLines(bands[b]);
+        }
+        const QColor axisColor[3] = {QColor(220, 50, 47, 170), QColor(116, 184, 31, 170), QColor(38, 139, 210, 170)};
+        for (int a = 0; a < 3; ++a)
+        {
+            if (axes[a].isEmpty()) continue;
+            painter.setPen(QPen(axisColor[a], 1.6));
+            painter.drawLines(axes[a]);
+        }
+    }
+    // The mode is a mode: a frame round the viewport says so, and a line says what it snaps to
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(amber.red(), amber.green(), amber.blue(), 150), 2.0));
+    painter.drawRect(rect().adjusted(1, 1, -2, -2));
+    QFont font = painter.font();
+    font.setPointSizeF(8.5);
+    painter.setFont(font);
+    const QString text = T("Snapping: grid %1 mm, turns %2°").arg(QString::number(double(snapStep()), 'g', 4), QString::number(double(angleStep()), 'g', 4));
+    const QFontMetrics fm(font);
+    const QRectF box(QPointF(10, height() - 12 - fm.height() - 8), QSizeF(fm.horizontalAdvance(text) + 12, fm.height() + 6));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(22, 76, 94, 215));
+    painter.drawRoundedRect(box, 4, 4);
+    painter.setPen(amber);
+    painter.drawText(box, Qt::AlignCenter, text);
+    painter.restore();
+}
+
 QVector3D View::snapToWorkPlane(const QVector3D& p, const Shape* exclude, bool* snapped, bool toPoints) const
 {
     if (snapped) *snapped = false;
@@ -3234,7 +3446,7 @@ void View::placementAt(QPoint pos, QVector3D& point, double& scale) const
         scale = scaleAt(pos, point);
         return;
     }
-    point = placeOnRay(pos);
+    point = snapPoint(placeOnRay(pos), nullptr, false);          // (the snapping mode: what a click puts down goes to a node of the grid)
     scale = scaleAt(pos, point);
     // Nothing outside the render region is drawn: a primitive whose place is outside it goes to the nearest place
     // that is inside (half its size in from the edge), so it is always seen
@@ -4511,7 +4723,7 @@ QVector3D View::placementExact(QPoint pos) const
         QVector3D hit;
         if (ringPoint(pos, m_wp.origin(), m_wp.normal(), hit)) return snapToWorkPlane(hit);
     }
-    return placeOnRay(pos);
+    return snapPoint(placeOnRay(pos));                    // (the snapping mode: a node of the grid, or a point that is there)
 }
 
 void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface)
@@ -6784,6 +6996,11 @@ bool View::shiftHeld() const
     return m_shiftForced || (QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier);
 }
 
+bool View::shiftWasDown() const
+{
+    return m_shiftWas || (!m_shiftForced && (QGuiApplication::queryKeyboardModifiers() & Qt::ShiftModifier));
+}
+
 QPolygonF View::planeSquare(const QVector3D& pivot, float length, int normal) const
 {
     const int b = (normal + 1) % 3, c = (normal + 2) % 3;
@@ -6805,6 +7022,7 @@ bool View::eventFilter(QObject* watched, QEvent* event)
     if (type == QEvent::KeyPress || type == QEvent::KeyRelease || type == QEvent::WindowDeactivate || type == QEvent::ApplicationStateChange)
     {
         const bool now = shiftHeld();
+        if (now && !m_shiftForced && type == QEvent::KeyPress) m_shiftWas = true;
         if (now != m_shiftSeen)
         {
             m_shiftSeen = now;
@@ -8294,12 +8512,13 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     m_overlay->update();
 }
 
-// The turn of a ring as it is applied: with Shift held -- the Shift gizmo -- in whole steps of 5 degrees.  `absolute`: the angle that results is a multiple of the step (`start` is
+// The turn of a ring as it is applied: with Shift held -- the Shift gizmo -- or in the snapping mode in whole steps of the angle step (5 degrees to start with).  `absolute`: the angle that results is a multiple of the step (`start` is
 // the number the ring turns from), else the turn itself is (a group of points, each with an angle of its own, keep their differences)
 float View::snappedTurn(float turn, float start, bool absolute) const
 {
-    if (!shiftHeld()) return turn;
-    const float step = 5.0f;
+    // (the snapping mode turns in steps as well, without Shift; the step is the card's -- 5 degrees until it is changed -- for both)
+    if (!shiftHeld() && !snapActive()) return turn;
+    const float step = angleStep();
     return absolute ? std::round((start + turn) / step) * step - start : std::round(turn / step) * step;
 }
 
@@ -8463,6 +8682,8 @@ void View::dragGizmo(QPoint pos)
                 distance = std::round((before + distance) / step) * step - before;
             }
         }
+        // The snapping mode: along an axis of the world the place it lands on is a line of the grid, any other way the move is whole steps
+        if (snapActive()) distance = snappedAlong(gizmo_pivot, gizmo_arrow, distance);
         for (const auto& v : gizmo_vars)
             numbers[v.id] = v.value0 + distance * (v.mapped ? QVector3D::dotProduct(v.w, gizmo_arrow) : v.weight);
         applyGizmoNumbers(numbers);
@@ -8478,6 +8699,25 @@ void View::dragGizmo(QPoint pos)
         {
             d = snapToWorkPlane(gizmo_pivot + d, gizmo_active.shape) - gizmo_pivot;
             d -= m_wp.normal() * QVector3D::dotProduct(d, m_wp.normal());                        // (in the plane: the noise of the ray is not a move out of it)
+        }
+        else if (snapActive())
+        {
+            // The snapping mode: the place it goes to is a node of the grid -- with a square of the gizmo along a plane of the world, a node of the lines of that plane, the way out of it kept
+            QVector3D target = gizmo_pivot + d;
+            int keep = -1;
+            if (gizmo_active.kind == 4)
+            {
+                for (int a = 0; a < 3; ++a)
+                {
+                    if (std::fabs(std::fabs(QVector3D::dotProduct(free_normal, unitAxis(a))) - 1.0f) < 1e-3f) keep = a;
+                }
+            }
+            const float step = snapStep();
+            for (int a = 0; a < 3; ++a)
+            {
+                if (a != keep) target[a] = std::round(target[a] / step) * step;
+            }
+            d = target - gizmo_pivot;
         }
         std::map<libfive::Tree::Id, float> numbers;
         for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + (v.mapped ? QVector3D::dotProduct(v.w, d) : d[v.axis]);

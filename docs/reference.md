@@ -1067,7 +1067,9 @@ images of a profile or a line in a symmetry, and of a placed copy of one (see ha
 
 A plane through `point`, positive on the side `normal` points to: a surface
 
-### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None)`
+### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None)`
+
+`influence` is how far the point reaches, in mm -- a number or a `var()`: the RADIUS of the field round it, when the point is given to `distance_to_point` or `radial_field` (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone, and those fields are the plain distance from it.
 
 A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
 In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
@@ -1469,9 +1471,9 @@ Distance to an infinite line through `point` along `direction`
 Signed distance to a plane: positive on the side the normal points to (the point's and the normal's
 coordinates may be fields: a plane that moves or tilts from place to place)
 
-### `distance_to_point(p)`
+### `distance_to_point(p, radius=None)`
 
-Euclidean distance to a point (its coordinates may be fields: a point that is where a field says)
+Euclidean distance to a point (its coordinates may be fields: a point that is where a field says).  With a `radius` -- or the influence of the point that is given, `point(x, y, z, influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point), 0 on it, positive outside: a sphere's value, as a field.  A point that says no influence, and no radius, is the plain distance from it
 
 ### `distance_to_points(points)`
 
@@ -1711,9 +1713,9 @@ axis, pi/2 at its equator (spherical coordinates)
 The first field to the power of the next: (a ** b) ** ... at every point (NaN where a negative value meets a
 fractional power)
 
-### `radial_field(center=(0, 0, 0), axis='z')`
+### `radial_field(center=(0, 0, 0), axis='z', radius=None)`
 
-Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields
+Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields.  With a `radius` -- or the influence of the point that is given as the centre, `point(x, y, z, influence=r)` -- it is the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside
 
 ### `ramp(field, input_range, output_range, clamped=True)`
 

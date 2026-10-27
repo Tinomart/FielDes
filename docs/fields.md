@@ -88,7 +88,7 @@ Both are in the right-click menu of the viewport: *Primitives → New point* and
 | | |
 |---|---|
 | `x_field()`, `y_field()`, `z_field()` | the coordinates (mm) |
-| `radial_field(center, axis)` | distance from an axis (cylindrical radius) |
+| `radial_field(center, axis, radius=None)` | distance from an axis (cylindrical radius); with a radius -- or the influence of a point given as the centre -- the distance from the tube of that radius round the axis: negative inside it |
 | `angle_field(center, axis)` | angle around an axis, −π..π |
 | `polar_field(center, axis)` | angle from an axis, 0..π (spherical coordinates) |
 
@@ -98,7 +98,7 @@ Both are in the right-click menu of the viewport: *Primitives → New point* and
 
 | | |
 |---|---|
-| `distance_to_point(p)`, `distance_to_points(points)` | Euclidean distance to a point / the nearest of several |
+| `distance_to_point(p, radius=None)`, `distance_to_points(points)` | Euclidean distance to a point / the nearest of several; with a radius -- or the influence of the point, `point(x, y, z, influence=r)`, which is the radius in mm -- the distance from the **sphere** of that radius round the point: negative inside it (-r at the point), 0 on it, positive outside, a sphere's value as a field |
 | `distance_to_line(point, direction)`, `distance_to_segment(a, b)`, `distance_to_polyline(points, closed)` | to lines and curves |
 | `distance_to_plane(point, normal)` | signed distance to a plane |
 | `distance_to_surface(shape)` | unsigned distance to a shape's surface |

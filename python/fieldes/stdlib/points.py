@@ -124,11 +124,12 @@ class Point(Shape):
         bounds of what is made of it: nothing of the ball is painted.) '''
     _kind = 'point'
 
-    def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
+    def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))
         self._kind = 'point'                    # (an instance attribute: it goes with the point through the placement and the like)
         self._smooth = None if smooth is None else bool(smooth)      # (what it is in a profile: a spline point or a corner; None: what the profile says)
         self._radius = radius                   # (what it is in a profile: a round corner of this radius -- a number or a var() -- or None: what the profile says)
+        self._influence = influence             # (how far the point reaches -- a number or a var() -- or None: it does not say.  The radius of the field round it: distance_to_point, radial_field)
         self._point_pos = _position_of(self.xyz)    # (where the viewport draws its dot: the middle point of a gizmo, always there)
         res, lo, hi = _view()
         radius = max(max(hi[i] - lo[i] for i in range(3)) / 120.0, 2.0 / res)
@@ -186,8 +187,11 @@ class Surface(Shape):
         return _as(self, self)
 
 
-def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
+def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None):
     ''' A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
+        `influence` is how far the point reaches, in mm -- a number or a var(): the RADIUS of the field round it, when a point is given to `distance_to_point` or `radial_field`
+        (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone,
+        and those fields are the plain distance from it.
         In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
         its gizmo's rotation gives) and a corner when False; None (the default): what the profile says.  In a `profile` it can also be a ROUND corner, `radius=r`: an exact arc
         of that radius, tangent to both edges, takes the place of the corner (the scale of its gizmo multiplies the radius; a spline point has no radius).  A double click on its
@@ -202,7 +206,11 @@ def point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None):
         if smooth:
             raise ValueError('point(..., smooth=True, radius=%g): a spline point has no radius, because the curve goes smoothly through it and there is no corner to round -- '
                              'a point is a corner (smooth=False), a spline point (smooth=True) or a round corner (radius=r: a corner with a radius)' % value)
-    return Point(x, y, z, smooth, radius)
+    if influence is not None:
+        value = float(influence(0.0, 0.0, 0.0)) if isinstance(influence, Shape) else float(influence)
+        if value < 0:
+            raise ValueError('point(..., influence=%g): an influence is not negative -- it is how far the point reaches, the radius of the field round it' % value)
+    return Point(x, y, z, smooth, radius, influence)
 
 
 def image_dot(source, xyz, rows, about, shift=(0.0, 0.0, 0.0), frozen=()):
@@ -211,7 +219,7 @@ def image_dot(source, xyz, rows, about, shift=(0.0, 0.0, 0.0), frozen=()):
         `source` that all of those change -- the numbers of `source`'s gizmo are what it is dragged by, taken back through the map (the viewport does it: `_symmetry`) --, so that the
         original and everything that is an image of it change together.  `frozen` are the numbers of the map itself (a gizmo's): a drag of the dot never changes them.  The dots of the
         images of a profile or a line in a symmetry, and of a placed copy of one (see handles.gizmo), are these '''
-    out = Point(xyz[0], xyz[1], xyz[2], smooth=getattr(source, '_smooth', None), radius=getattr(source, '_radius', None))
+    out = Point(xyz[0], xyz[1], xyz[2], smooth=getattr(source, '_smooth', None), radius=getattr(source, '_radius', None), influence=getattr(source, '_influence', None))
     out._kind = getattr(source, '_kind', 'point')
     out._symmetry_linear = rows
     g = getattr(source, '_gizmo', None)
@@ -240,13 +248,13 @@ def plane(point=(0, 0, 0), normal=(0, 0, 1)):
 def sphere_surface(radius=10.0, center=(0, 0, 0)):
     ''' The surface of a sphere (without its inside): a surface, negative inside '''
     from fieldes.stdlib.fields import distance_to_point
-    return Surface(distance_to_point(center) - radius)
+    return Surface(distance_to_point(center, 0.0) - radius)             # (the plain distance: the radius is the sphere's own, not the influence of a centre that is a point)
 
 
 def cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0)):
     ''' The surface of an infinite cylinder along an axis: a surface, negative inside '''
     from fieldes.stdlib.fields import radial_field
-    return Surface(radial_field(center, axis) - radius)
+    return Surface(radial_field(center, axis, 0.0) - radius)
 
 
 def wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0):

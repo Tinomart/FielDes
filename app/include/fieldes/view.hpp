@@ -158,6 +158,10 @@ public:
     QString hoverDescription(QPoint pos) const;
     /*  Holds Shift down for the gizmo (for scripted tests: the events sent from a script do not change the keyboard)  */
     void holdShift(bool on);
+    /*  Whether a real Shift key has been down since `clearShiftWas` -- or is down now; the automation's holdShift does not count (for the guided tour: the step about the Shift gizmo
+     *  is done when the user holds Shift)  */
+    bool shiftWasDown() const;
+    void clearShiftWas() { m_shiftWas = false; }
 
     /*  Where a point of the model is in the widget (for the guided tour)  */
     QPoint screenPoint(const QVector3D& p) const { return toScreen(p).toPoint(); }
@@ -239,6 +243,24 @@ public slots:
     void cycleWorkPlaneMode();
     /*  The plane set to a frame at once: its origin and its two axes (for scripted tests)  */
     void setWorkPlaneFrame(const QVector3D& origin, const QVector3D& u, const QVector3D& v);
+    /*  The snapping mode (see workplane.hpp, SnapGrid): Tab in the viewport turns it on and off.  While it is on everything that is moved -- a model by an arrow or a square of its gizmo,
+     *  a face or a point that is pulled, what a click puts down -- goes to a node of a grid of the whole space, every turn goes to a multiple of the angle step, and the grid is drawn
+     *  as a faint lattice round the place the view looks at.  It is off while the work plane view is open (the plane has a grid of its own) and comes back when that is left;
+     *  holding Alt moves things freely for as long as it is held  */
+    const SnapGrid& snapGrid() const { return m_snap; }
+    bool snapMode() const { return m_snap.on; }
+    /*  The render's progress bar with its label (bottom right of the viewport), in the viewport's pixels: empty when no picture is being drawn  */
+    QRect renderBarRect() const { return m_renderBarArea.toAlignedRect(); }
+    void setSnapMode(bool on);
+    void setSnapOptions(bool show, float spacing, float angle, int reach, bool snapPoints);
+    /*  The step of the grid now (the one the card gives, or what automatic works out to from how large the picture is)  */
+    float snapStep() const;
+    /*  Whether what is moved is snapped just now: the mode is on, the work plane view is not open, and Alt is not held  */
+    bool snapActive() const;
+    /*  `p` moved to the nearest node of the grid -- or onto a point that is there, when `toPoints` and one is within a few pixels --; unchanged when nothing is snapped just now  */
+    QVector3D snapPoint(const QVector3D& p, const Shape* exclude = nullptr, bool toPoints = true) const;
+    /*  The step of a turn in degrees: the card's, for the turns of the mode and for the Shift gizmo  */
+    float angleStep() const { return qMax(0.1f, m_snap.angle); }
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
         into a profile), or a point of its own.  Nothing of a line or a spline is written until it ends: `finishPlacement` ends it (closed: a profile; open: the line or the
         spline), `cancelPlacement` drops it, `undoPlacedPoint` takes the last point back  */
@@ -360,6 +382,8 @@ signals:
     void symmetryNotice(QString text);
     /*  Where the cursor is on the plane, in its coordinates (empty: not on it)  */
     void workPlaneReadout(QString text);
+    /*  The snapping mode changed (on or off, its options): for its card and its menu entry  */
+    void snapChanged();
     /*  A line or a spline was put down (or a profile: closed): its name in the library (`profile`, `polyline`, `spline`), its points, and whether the outline is smooth  */
     void placementFinished(QString name, QList<QVector3D> points, bool smooth);
 
@@ -680,6 +704,15 @@ protected:
     bool m_wpCursorSnapped = false;
     void makeWorkPlane();
     void announceWorkPlane();
+    QRectF m_renderBarArea;                  // (where the render's progress bar and its label were drawn last, in the viewport's pixels; empty when no render is going on: the tour frames them while a calculation goes on)
+    SnapGrid m_snap;                         // (the snapping mode: see snapGrid)
+    bool m_snapResume = false;               // (the mode was on when the work plane view opened: it comes back when that is left)
+    void announceSnap();
+    void syncSnapWithWorkPlane();
+    void drawSnapGrid(QPainter& painter);
+    bool altHeld() const;
+    /*  A move of `distance` along the unit vector `dir` from `from`, snapped: along an axis of the world the place it lands on is a line of the grid, any other way the distance is whole steps  */
+    float snappedAlong(const QVector3D& from, const QVector3D& dir, float distance) const;
     bool planeOfSelection(QVector3D& origin, QVector3D& u, QVector3D& v) const;
     void planeOfView(QVector3D& origin, QVector3D& u, QVector3D& v) const;
     void updateWorkPlaneCursor(QPoint pos);
@@ -1127,6 +1160,7 @@ protected:
     QTimer m_wheelPendingTimer;
     bool m_shiftSeen = false;            // (what the last key event said, to redraw the gizmo when it changes)
     bool m_shiftForced = false;          // (the automation holds Shift: synthetic events do not change the keyboard)
+    bool m_shiftWas = false;             // (a real Shift key went down since the tour last asked: see shiftWasDown)
     /*  The square, on the screen, of the plane whose normal is the axis `normal`, at the gizmo's pivot (axes `normal`+1 and `normal`+2 span it)  */
     QPolygonF planeSquare(const QVector3D& pivot, float length, int normal) const;
     bool eventFilter(QObject* watched, QEvent* event) override;

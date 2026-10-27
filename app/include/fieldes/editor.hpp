@@ -121,6 +121,8 @@ public:
 
     /*  Whether the script is being run now  */
     bool scriptRunning() const { return m_scriptRunning; }
+    /*  The row of the console's header that holds the progress bar and what it counts, while a script runs (for the guided tour)  */
+    QWidget* runRow() const { return m_runRow; }
 
     /*  Writes down the script's breakpoints, with the text on their lines, for when its file is opened again.  Done at every
      *  change of them and of the text, and at the end of the program  */

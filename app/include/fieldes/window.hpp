@@ -191,6 +191,9 @@ protected:
     QStringList m_blocksChanged;
     QString m_blocksFolder;
     void watchBlocks();
+    /*  File > Save as custom block: the script as a function in a file of the blocks folder.  `quiet`: no message and no question -- the tour's step that asks for the block in the menu saves the
+     *  block it asked for before, whether or not the step before it was done  */
+    Q_INVOKABLE void saveAsCustomBlock(bool quiet = false);
     void chooseBlocksFolder();
     void setBlocksFolder(const QString& path);
 

@@ -285,10 +285,18 @@ void PopOut::floatOut()
     placeButton();
 }
 
+static std::function<void(QWidget*)> g_dockHook;
+
+void PopOut::setDockHook(std::function<void(QWidget*)> hook)
+{
+    g_dockHook = std::move(hook);
+}
+
 void PopOut::dock()
 {
     if (!floating()) return;
     QWidget* window = m_window;
+    if (g_dockHook) g_dockHook(window);
     const bool wantVisible = !m_target->isHidden();
     saveWindowGeometry();
     m_target->setProperty("floating", false);

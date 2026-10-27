@@ -901,6 +901,76 @@ def blocks_files(_arg=''):
     return '\n'.join(out)
 
 
+def save_as_block(source):
+    ''' File > Save as custom block: the script as a function in a file of the blocks folder (see fieldes.blocks), so that the whole model is one call in any script and an entry of the right-click
+        menus.  The statements that make the model are the body; the imports of the library, the settings of the view and the lines that only show a name are not; the model that is shown (the last
+        name on a line of its own) is what the function returns.  A block this made earlier is updated, any other file is left alone.  JSON: {"path", "name"} or {"error"} '''
+    import ast
+    import json
+    import os
+    import re
+    from fieldes import blocks
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return json.dumps({'error': 'The script has an error in line %s: fix it first.' % (e.lineno,)})
+    lines = source.split('\n')
+    drop = set()
+    shown = last = None
+    for node in tree.body:
+        span = range(node.lineno - 1, node.end_lineno)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if getattr(node, 'module', None) == 'fieldes' or 'fieldes' in [a.name for a in node.names]:
+                drop.update(span)
+        elif isinstance(node, ast.Expr):
+            v = node.value
+            if isinstance(v, ast.Name):
+                shown = v.id
+                drop.update(span)
+            elif isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute) and isinstance(v.func.value, ast.Name) and v.func.value.id == 'view':
+                drop.update(span)
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    last = t.id
+    result = shown or last
+    if not result:
+        return json.dumps({'error': 'The script makes no model: there is nothing to save as a block.'})
+    body = [lines[i] for i in range(len(lines)) if i not in drop and not re.match(r'\s*#\s*hidden:', lines[i])]
+    while body and (not body[0].strip() or body[0].lstrip().startswith('#')):
+        del body[0]
+    while body and not body[-1].strip():
+        del body[-1]
+    text = re.sub(r'\bvar\(\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*\)', r'\1', '\n'.join(body))      # (a number dragged with a gizmo is a number in a block)
+    name = re.sub(r'\W+', '_', result).strip('_') or 'model'
+    if name[0].isdigit():
+        name = 'm_' + name
+    name += '_block'
+    marker = '# Saved from a script by File > Save as custom block.'
+    try:
+        folder = blocks.folder()
+        os.makedirs(folder, exist_ok=True)
+        base, k = name, 1
+        while True:
+            path = os.path.join(folder, name + '.py')
+            if not os.path.exists(path):
+                break
+            with open(path, encoding='utf-8') as f:
+                first = f.readline()
+            if first.startswith(marker):
+                break                                       # (a block this made earlier: it is updated)
+            k += 1
+            name = '%s_%d' % (base, k)
+        indented = '\n'.join(('    ' + l) if l.strip() else '' for l in text.split('\n'))
+        code = ('%s  Edit it as you like: every function in a file of this folder is a block, and is there in every script.\n'
+                'def %s():\n    \'\'\' %s, saved from a script: one call makes the whole model \'\'\'\n%s\n    return %s\n') % (marker, name, result, indented, result)
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(code)
+    except OSError as e:
+        return json.dumps({'error': 'The block could not be written: %s.  Settings > Blocks folder... chooses another folder.' % (e,)})
+    return json.dumps({'path': path, 'name': name})
+
+
 def blocks_used(source):
     ''' '1' when the script uses a custom block (one of the folder now, or one that was there: its file may be gone or
         broken), else '': a script that does is run again when a block file changes '''

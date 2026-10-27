@@ -13,6 +13,9 @@ of the License, or (at your option) any later version.
 
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QEasingCurve>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -304,6 +307,7 @@ struct Tutorial::Step
     std::function<QRect()> focus;                       // a frame inside the hole: the line, the field
     std::function<QRect()> aim;                         // what the arrow ends at, and is framed: a row of the tree (the arrow ends at its edge that faces
                                                         // the card, so it never crosses what it points at)
+    std::function<QVector<QRect>()> aims;               // every row of the tree the step asks the user to select, all of them framed (a step that needs four clicks shows four frames; the arrow ends at `aim`, the first)
     std::function<QRect()> cardNear;                    // the card stands beside this (default: everything the user may touch in the step)
     bool closeRows = false;                             // the tree shows only what the step is about: every row with rows under it is closed ...
     QStringList openRows;                               // ... except these models
@@ -325,6 +329,9 @@ struct Tutorial::Step
     int chapter = -1;                                   // the chapter the step is in (0-based; the welcome card and the exit card are in none)
     bool chapterEnd = false;                            // the card that ends a chapter: it congratulates, and asks whether to go on or to explore alone
     bool needsTourModel = false;                        // the step works on the model of the tour (plate, drilled, hole): it is put in the editor when it is not there
+    std::function<QWidget*()> floatHome;                // the window a pane the step is about was pulled out into: the card stands there while it is out (null: in the main window)
+    std::function<QRect()> floatAim;                    // the button the step is about in that window (that window's coordinates): framed, and the arrow goes to it
+    bool calculates = false;                            // the step starts a calculation: it is done when the calculation has finished (the bar of the run is framed while it goes on)
 };
 
 Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::function<bool()> loadTour, QObject* parent)
@@ -416,10 +423,13 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
         // (a model that is still being made says so: a solved beam, a flow, a printer's result take seconds, and until they are drawn the viewport shows nothing or what was there before)
         const bool working = m_editor->scriptRunning() || m_view->isRendering();
         m_busyTicks = working ? m_busyTicks + 1 : 0;
-        if (m_busyTicks >= 6 && !m_noteBusy && !s.welcome && !s.exitCard)
+        // (the step starts a calculation and its call is there: what is running now is that calculation -- not the picture drawn again for a row that was selected)
+        const bool calculating = s.calculates && s.done && s.done();
+        if (m_busyTicks >= (calculating ? 1 : 6) && !m_noteBusy && !s.welcome && !s.exitCard)
         {
             m_noteBusy = true;
-            m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") + T("FielDes is working on what this step shows. One moment."));
+            m_note->setText(s.hint + (s.hint.isEmpty() ? "" : "\n") +
+                            (calculating ? T("FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.") : T("FielDes is working on what this step shows. One moment.")));
             m_note->setStyleSheet("font-size: 9pt; color: #93a1a1;");
             m_note->setVisible(true);
         }
@@ -430,9 +440,20 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
             m_note->setVisible(!s.hint.isEmpty());
         }
         // (what a "Show me" does is not the user's work: the step is not done by it -- but a Show me that waits for a solve says so as well, the flow of chapter 9 takes twenty seconds)
-        if (m_demo) return;
+        if (m_demo)
+        {
+            if (calculating && working) m_calcSeen = true;          // (the bar of the calculation is framed while a Show me waits for it, as it is when the user does it)
+            return;
+        }
         if (s.done && s.done())
         {
+            // (a step that starts a calculation is done when the calculation has finished: the call is written a moment before the run begins, and the card must not say "Nice" over a bar that has
+            // not moved.  A result that is read back from the cache is there at once: the step does not wait for a bar that never moves)
+            if (s.calculates)
+            {
+                if (working) { m_calcSeen = true; m_calcTicks = 0; return; }
+                if (!m_calcSeen && ++m_calcTicks < 12) return;
+            }
             m_done = true;
             showDoneLook(true);
             m_note->setText(s.doneNote);
@@ -449,10 +470,26 @@ Tutorial::Tutorial(QMainWindow* window, View* view, Editor* editor, std::functio
         m_layer->update();
     });
     buildSteps();
+    // (a chapter was put in after the third: the place in the tour and the chapters that are done, kept as numbers, move one on)
+    {
+        QSettings st;
+        if (st.contains("tour/chapter") && st.value("tour/chapters", 12).toInt() == 12)
+        {
+            auto shifted = [](int c) { return c >= 3 ? c + 1 : c; };
+            st.setValue("tour/chapter", shifted(st.value("tour/chapter").toInt()));
+            QStringList done;
+            for (const QString& d : st.value("tour/chaptersDone").toStringList()) done << QString::number(shifted(d.toInt()));
+            st.setValue("tour/chaptersDone", done);
+        }
+        st.setValue("tour/chapters", chapterCount());
+    }
+    // (a pane that is put back takes its window with it: the card that stands in that window goes back to this one first)
+    PopOut::setDockHook([this](QWidget* w) { if (m_card && m_card->parentWidget() == w) setCardHome(nullptr); });
 }
 
 Tutorial::~Tutorial()
 {
+    PopOut::setDockHook(nullptr);
     delete m_steps;
 }
 
@@ -556,6 +593,12 @@ Tutorial::State Tutorial::capture() const
 
 void Tutorial::restore(const State& state)
 {
+    // (what a step isolated -- the I key -- is shown again first: the state that is put back is the one before it)
+    if (auto panel = m_view->scenePanel(); panel && panel->isolated())
+    {
+        panel->clearSelection();
+        panel->toggleIsolation();
+    }
     const QString now = m_editor->getScript();
     if (now != state.script)
     {
@@ -789,10 +832,26 @@ void Tutorial::buildSteps()
         return [this, scene, prefixes]() -> QRect {
             for (const QString& p : prefixes)
             {
-                const QRect r = scene()->visibleRowRect(p, m_window);
+                // (a row that is inside another -- a model is held by the first model that uses it, and its row is in that one's, closed -- is opened to: the step asks for it, and it is
+                // not there to click until it is in view)
+                QRect r = scene()->visibleRowRect(p, m_window);
+                if (r.isEmpty()) r = scene()->rowRect(p, m_window);
                 if (!r.isEmpty()) return r;
             }
             return QRect();
+        };
+    };
+    // (the rows of the tree a step asks the user to select -- every one that is in view: each is framed, so that the user sees every click the step needs and not only the first)
+    auto aimRows = [this, scene](QStringList prefixes) {
+        return [this, scene, prefixes]() -> QVector<QRect> {
+            QVector<QRect> out;
+            for (const QString& p : prefixes)
+            {
+                QRect r = scene()->visibleRowRect(p, m_window);
+                if (r.isEmpty()) r = scene()->rowRect(p, m_window);              // (a row inside another, closed, is opened: see aimRow)
+                if (!r.isEmpty() && !out.contains(r)) out << r;
+            }
+            return out;
         };
     };
     auto treeNear = [this, scene]() -> QRect { return widgetRect(scene()); };
@@ -1325,6 +1384,15 @@ void Tutorial::buildSteps()
         };
         s.aim = popRect;
         s.holes = [popRect]() -> QVector<QRect> { const QRect r = popRect(); return r.isEmpty() ? QVector<QRect>() : QVector<QRect>{r}; };
+        // (once the viewport is out, the user is looking at its window: the card goes there, and the frame and the arrow are at the button of THAT window that puts it back)
+        s.floatHome = []() -> QWidget* { PopOut* p = PopOut::find("viewport"); return p && p->floating() ? p->window() : nullptr; };
+        s.floatAim = [this]() -> QRect {
+            PopOut* p = PopOut::find("viewport");
+            QWidget* w = p && p->floating() ? p->window() : nullptr;
+            auto* b = m_view->findChild<QToolButton*>("PopOutButton");
+            if (!w || !b || !b->isVisible() || !w->isAncestorOf(b)) return QRect();
+            return QRect(b->mapTo(w, QPoint(0, 0)), b->size()).adjusted(-3, -3, 3, 3);
+        };
         auto viewOut = []() { PopOut* p = PopOut::find("viewport"); return p && p->floating(); };
         // (the viewport starts where it belongs; once it has been out, the card says how to put it back, and the step is done when it is back)
         s.enter = [this] {
@@ -1448,8 +1516,14 @@ void Tutorial::buildSteps()
             while (auto m = QApplication::activePopupWidget()) m->close();
             m_view->holdShift(false);
             m_view->standardView(View::VIEW_ISO);   // (seen from the side: a view dead on the z axis hides the squares that lie along it)
+            m_view->clearShiftWas();
             selectAgain({"drilled"}, 12);           // (the model of the gizmo's step, selected again once it is in the tree)
         };
+        // (done when the user holds Shift -- the arrows turn into flat squares and the scale squares into the one ring, which is what the card asks.  The keys are the user's in this step:
+        // the tour eats the keys of a step that is not about typing, and the Shift would never reach the viewport)
+        s.keys = true;
+        s.done = [this] { return m_view->shiftWasDown(); };
+        s.doneNote = T("Nice. With Shift down the arrows are flat squares and the three scale squares are one ring.");
         s.show = [this](std::function<void()> over) {
             m_busy = true;
             static_cast<TourLayer*>(m_layer)->cursorKey = "Shift";
@@ -1460,6 +1534,38 @@ void Tutorial::buildSteps()
             });
         };
         s.leave = [this] { m_view->holdShift(false); };
+        add(s);
+    }
+    // The snapping mode: Tab turns on a grid that everything that is moved goes to, and a step for every turn (the Shift gizmo turns in the same steps)
+    {
+        Step s;
+        s.title = T("Snap to a grid");
+        s.text = T("For exact places, press Tab with the viewport in front: a grid appears, a card sets it, and everything you move snaps to it. Press Tab now.");
+        s.hint = T("In this mode a model dragged by its arrows goes from grid point to grid point, and every turn is made in steps of angle -- the same steps as the Shift gizmo. "
+                   "Hold Alt to move freely for a moment; Tab again leaves the mode. A work plane view has a grid of its own: snapping is off while it is open. Or press Show me.");
+        s.holes = holesOf(viewWidget);
+        s.place = InsideBottom;
+        s.closeRows = true;
+        s.undone = true;
+        s.keys = true;                  // (the keys are the user's: the Tab must reach the viewport)
+        s.enter = [this] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            m_view->setSnapMode(false);
+            m_view->standardView(View::VIEW_ISO);
+            selectAgain({"drilled"}, 12);               // (the model of the gizmo's step, selected again once it is in the tree: it has arrows to drag on the grid)
+        };
+        s.done = [this] { return m_view->snapMode(); };
+        s.doneNote = T("Nice. Drag an arrow of the gizmo: the model goes from grid point to grid point. Tab leaves the mode again.");
+        s.show = [this](std::function<void()> over) {
+            m_busy = true;
+            static_cast<TourLayer*>(m_layer)->cursorKey = "Tab";
+            setCursor(m_view->mapTo(m_window, QPoint(m_view->width() / 2, m_view->height() / 2)));
+            after(600, [this, over] {
+                m_view->setSnapMode(true);
+                after(3200, [this, over] { m_view->setSnapMode(false); m_busy = false; hideCursor(); static_cast<TourLayer*>(m_layer)->cursorKey.clear(); over(); });
+            });
+        };
+        s.leave = [this] { m_view->setSnapMode(false); };
         add(s);
     }
     // 8: what a call is made of: its arguments are rows of the tree -- models (its children) and numbers; a number among them is typed over in the code, and the model is seen to change
@@ -1770,7 +1876,14 @@ void Tutorial::buildSteps()
         s.hint = T("A section is a comment, # SECTION name: it folds in the code editor too. Double-click a section's name to rename it. Or press Show me.");
         s.code = linesWith("^\\s*#\\s*SECTION\\b");
         s.holes = holesOf(panelWidget);
-        s.aim = aimRow({"drilled"});
+        // (the step is about the GAP above drilled -- the thin place between two rows where the + in a circle shows --, not about the row: the frame and the arrow are at the gap, so that
+        // nothing says "click drilled")
+        s.aim = [this, scene]() -> QRect {
+            const QRect r = scene()->visibleRowRect("drilled", m_window);
+            const QPoint c = scene()->sectionGapPoint("drilled", m_window);
+            if (r.isEmpty() || c.isNull()) return QRect();
+            return QRect(r.left() + 2, c.y() - 5, std::max(8, r.width() - 4), 10);
+        };
         s.place = Right;
         s.keys = true;
         s.closeRows = true;
@@ -2045,6 +2158,7 @@ void Tutorial::buildSteps()
         s.code = linesWith("^(base|peg|corner|tip) =");
         s.holes = both;
         s.aim = aimRow({"tip"});
+        s.aims = aimRows({"tip", "corner"});
         s.cardNear = [this]() { return widgetRect(m_view); };
         s.place = InsideBottomLeft;
         s.showView = true;
@@ -2082,7 +2196,7 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
-    currentChapter = 3;                     // (chapter 4: work planes, 2D shapes, paths and extrusions)
+    currentChapter = 4;                     // (chapter 4: work planes, 2D shapes, paths and extrusions)
     // The model of the steps on profiles: four points and the profile through them (`smooth`: the corner at the top right is a spline point)
     auto profileModel = [](bool smooth) {
         return QString("a = point(-20, -12, 0)\na\nb = point(20, -12, 0)\nb\n") +
@@ -2305,18 +2419,23 @@ void Tutorial::buildSteps()
     {
         Step s;
         s.title = T("Sweep a shape along a line");
-        s.text = T("A line can guide a shape: the shape is swept along it. Select profile (the circle) and route (the line) -- Ctrl+click the second -- then right-click one of them and "
-                   "choose Operations ▸ Extruding ▸ path_extrude. Then play: drag a point of the line and the tube bends; the gold ring of a point makes the tube thicker there.");
-        s.hint = T("path_extrude(profile, route): the circle is the start of the tube, and the line runs through the middle of it. Or press Show me.");
+        s.text = T("A line can guide a shape: the shape is swept along it. Select profile (the circle) and route (the line) -- Ctrl+click the second -- then press Ctrl+E. "
+                   "(The same from the menu: right-click one of them and choose Operations ▸ Extruding ▸ path_extrude.) Then play: drag a point of the line and the tube bends; "
+                   "the gold ring of a point makes the tube thicker there.");
+        s.hint = T("Ctrl+E and the menu write the same line, path_extrude(profile, route): the circle is the start of the tube, and the line runs through the middle of it. Or press Show me.");
         s.code = linesWith("^(profile|route|path_extrude_1) =");
+        s.aim = aimRow({"profile"});
+        s.aims = aimRows({"profile", "route"});
         s.holes = both;
         s.cardNear = treeNear;
         s.place = Right;
         s.group = "line";
         s.closeRows = true;
+        s.keys = true;                     // (Ctrl+E is a key of the viewport and the tree: the tour would eat it in a step that is not about typing)
         s.enter = [this, scene, lineModel] {
             while (auto m = QApplication::activePopupWidget()) m->close();
-            useScript(tourHeader(QString()) + lineModel(false) + "\nprofile = circle(4, (-25, -12))\nprofile");
+            // (the region holds the whole line and the tube round it, as written: not fitted to the circle alone, which shows the circle and little else)
+            useScript(tourHeaderFixed("[-34, -20, -8], [34, 16, 22]") + lineModel(false) + "\nprofile = circle(4, (-25, -12))\nprofile");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
         };
@@ -2394,17 +2513,21 @@ void Tutorial::buildSteps()
         add(s);
     }
     // 25b-25h: a symmetry (a model of its own: a table top, one leg, a mirror of two planes through the axis of the table, and the images of the leg written under it)
-    auto symmetryModel = []() {
-        return QString("mirror = symmetry_planes(\n    planes=2,\n    kind='axis',\n    centre=(0, 0, 0),\n    axis=(0, 0, 1),\n    first=(0, 1, 0),\n"
-                       "    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n)\n"
-                       "mirror\n\n"
-                       "top = box((-40, -26, 30), (40, 26, 36))\n"
-                       "top\n\n"
-                       "leg = cylinder(\n    4,\n    30,\n    (32, 18, 0),\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
-                       "leg = handles(leg, [var(32), var(18), var(4), var(30), var(0)])\n"
-                       "leg\n"
-                       "leg_images = symmetry_images(leg, mirror)  # shadow: leg, mirror\n"
-                       "leg_images");
+    // (the table: the mirror and the top, and -- `legs` -- the leg and its images; the step that is about making a leg starts without it)
+    auto symmetryModel = [](bool legs = true) {
+        QString s = QString("mirror = symmetry_planes(\n    planes=2,\n    kind='axis',\n    centre=(0, 0, 0),\n    axis=(0, 0, 1),\n    first=(0, 1, 0),\n"
+                            "    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n)\n"
+                            "mirror\n\n"
+                            "top = box((-40, -26, 30), (40, 26, 36))\n"
+                            "top");
+        if (legs)
+            s += QString("\n\n"
+                         "leg = cylinder(\n    4,\n    30,\n    (32, 18, 0),\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n    scale=(var(1), var(1), var(1)),\n)\n"
+                         "leg = handles(leg, [var(32), var(18), var(4), var(30), var(0)])\n"
+                         "leg\n"
+                         "leg_images = symmetry_images(leg, mirror)  # shadow: leg, mirror\n"
+                         "leg_images");
+        return s;
     };
     // (what a step that edits the leg compares: its numbers -- the handles that pull its surfaces and the position, rotation and scale in its call that the gizmo drags)
     auto legSignature = [statementAt]() { return statementAt("leg = handles(").text + "\n" + statementAt("leg = cylinder(").text; };
@@ -2424,7 +2547,7 @@ void Tutorial::buildSteps()
     };
     // 25a: a symmetry is made with one key: with none in the script, Shift+S makes a mirror and uses it
     {
-        currentChapter = 4;                 // (chapter 5: symmetry)
+        currentChapter = 5;                 // (chapter 5: symmetry)
         Step s;
         s.title = T("Make a symmetry");
         s.text = T("A symmetry is made with one key. Click in the viewport and press Shift+S: with no symmetry in the script, FielDes makes a mirror -- one plane through the middle of the model -- "
@@ -2462,13 +2585,13 @@ void Tutorial::buildSteps()
     }
     // 25b: a symmetry is a model, and the one that is selected is the one in use
     {
-        currentChapter = 4;                 // (chapter 5: symmetry -- the three steps that follow are in it)
+        currentChapter = 5;                 // (chapter 5: symmetry -- the three steps that follow are in it)
         Step s;
         s.title = T("A mirror");
-        s.text = T("A symmetry is a model: mirror planes through a centre. Click mirror in the tree: its planes are drawn, and it is the symmetry in use. Then right-click empty space in the "
-                   "viewport and choose Primitives ▸ New 3D shape ▸ box: the box is made once, and one line under it holds all its images.");
-        s.hint = T("box_1_images = symmetry_images(box_1, mirror): the images are not models of their own, so nothing is written twice. Or press Show me.");
-        s.code = linesWith("^mirror\\b|^box_\\d+\\w* =|^box_\\d+_images");
+        s.text = T("A symmetry is a model: mirror planes through a centre. Click mirror in the tree: its planes are drawn, and it is the symmetry in use. Then make a table leg: right-click empty "
+                   "space under one corner of the table in the viewport and choose Primitives ▸ New 3D shape ▸ cylinder. The leg is made once, and one line under it holds all its images -- the other legs.");
+        s.hint = T("cylinder_1_images = symmetry_images(cylinder_1, mirror): the images are not models of their own, so nothing is written twice. Or press Show me.");
+        s.code = linesWith("^mirror\\b|^cylinder_\\d+\\w* =|^\\w+_\\d+_images");
         s.holes = both;
         s.aim = aimRow({"mirror"});
         s.cardNear = treeNear;
@@ -2476,22 +2599,34 @@ void Tutorial::buildSteps()
         s.group = "symmetry";
         s.closeRows = true;
         s.showView = true;
-        s.enter = [symmetryEnter] { symmetryEnter(QStringList()); };
-        // (the box made while mirror is the one in use: it is written with its images under it)
+        // (the table without its legs: the user makes one, and sees the mirror make the rest)
+        s.enter = [this, scene, symmetryModel] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader("[-50, -35, -5], [50, 35, 45]", 3) + symmetryModel(false));
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+        };
+        // (a shape made while mirror is the one in use is written with its images under it)
         s.done = [this] {
-            static const QRegularExpression re(R"(^box_\d+\w* = symmetry_images\()", QRegularExpression::MultilineOption);
+            static const QRegularExpression re(R"(^\w+_images = symmetry_images\()", QRegularExpression::MultilineOption);
             return re.match(m_editor->getScript()).hasMatch();
         };
-        s.doneNote = T("Nice. One box, and its images under it.");
+        s.doneNote = T("Nice. One leg, and the others are its images.");
         s.show = [this, clickRow](std::function<void()> over) {
-            // (mirror is clicked; then the box is made at a free place of the viewport, as the menu of empty space makes it, and its images with it)
+            // (mirror is clicked; then a cylinder is made under the corner of the table that is nearest the eye, as the menu of empty space makes it, and its images with it)
             clickRow("mirror", [this, over] {
                 after(1200, [this, over] {
-                    const QPoint at(m_view->width() / 4, m_view->height() * 3 / 4);
+                    QPoint at(m_view->width() / 4, m_view->height() * 3 / 4);
+                    for (const QVector3D corner : {QVector3D(32, 18, 0), QVector3D(-32, 18, 0), QVector3D(32, -18, 0), QVector3D(-32, -18, 0)})
+                    {
+                        const QPoint p = m_view->screenPoint(corner);
+                        if (p.y() > at.y() || at == QPoint(m_view->width() / 4, m_view->height() * 3 / 4)) at = p;
+                    }
+                    at.setY(at.y() - 8);
                     m_busy = true;
                     setCursor(m_view->mapTo(m_window, at));
                     after(900, [this, at, over] {
-                        m_view->createAt("box", at);
+                        m_view->createAt("cylinder", at);
                         after(1500, [this, over] { m_busy = false; hideCursor(); over(); });
                     });
                 });
@@ -2561,14 +2696,100 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
+    // ---- Chapter 4: import and export (after the chapter that makes and edits models): a part comes in from a file, a model goes out as a mesh, and a model is saved as a block of one's own -- the file is in
+    // the blocks folder, and the block is an entry of the right-click menu
+    {
+        currentChapter = 3;
+        Step s;
+        s.title = T("Bring a part in");
+        s.text = T("A part can come from a file. Click File, then Import model...: a window asks for the file, and opens in the folder of the example parts. Choose PivotBearingSupportBracket.STEP and press Open.");
+        s.hint = T("STEP files and meshes (STL, OBJ, 3MF ...) come in. The part is rebuilt from the file's own surfaces: it is a model like any other, with a line in the script that says where the file is.");
+        s.menuTitle = "File";
+        s.menuEntry = "Import model...";
+        s.place = Right;
+        s.group = "import";
+        s.enter = [this] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            useScript(tourHeader("[-60, -60, -20], [60, 60, 60]", 4));
+            m_view->scenePanel()->clearSelection();
+            // (the window of Import model opens in the folder of the example parts: the part the step asks for is there)
+            m_window->setProperty("tourImportDir", QDir(QCoreApplication::applicationDirPath()).filePath("examples/step"));
+        };
+        s.leave = [this] { m_window->setProperty("tourImportDir", QVariant()); };
+        s.done = [this] { return m_editor->getScript().contains("import_model("); };
+        s.doneNote = T("Nice. The bracket is in the script: a model like any other.");
+        add(s);
+    }
+    {
+        currentChapter = 3;
+        Step s;
+        s.title = T("Send a model out");
+        s.text = T("A model leaves FielDes as a file, too. Click File, then Export mesh...: it writes what is shown as a mesh -- an STL for a printer or a slicer, an OBJ ... A window asks where to save it: "
+                   "save it, or cancel it.");
+        s.hint = T("File ▸ Export model writes what the selected model can be: a mesh of its surface, a field on a grid, the model for another solver. The mesh is made from the model only for the file.");
+        s.menuTitle = "File";
+        s.menuEntry = "Export mesh...";
+        s.place = Right;
+        s.group = "import";
+        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        add(s);
+    }
+    {
+        currentChapter = 3;
+        Step s;
+        s.title = T("Save it as a block");
+        s.text = T("A model you made can become a block of your own. Click File, then Save as custom block: the script is saved as a function, drilled_block, in a file of the blocks folder -- "
+                   "the whole model, in one call.");
+        s.hint = T("A block is a Python function in a file of the blocks folder. Every function in that folder is there in every script, and in the right-click menu. Saving again updates the file.");
+        s.menuTitle = "File";
+        s.menuEntry = "Save as custom block";
+        s.place = Right;
+        s.needsTourModel = true;
+        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        s.doneNote = T("Nice. The model is saved as a block: a file in the blocks folder.");
+        add(s);
+    }
+    {
+        currentChapter = 3;
+        Step s;
+        s.title = T("Your file is in the folder");
+        s.text = T("The block is a file. Click Settings, then Show the blocks folder: the folder opens, and drilled_block.py is in it. Close that window to come back.");
+        s.hint = T("The file is plain Python, and can be edited. Settings ▸ Blocks folder... chooses another folder: every Python file in it is a set of blocks.");
+        s.menuTitle = "Settings";
+        s.menuEntry = "Show the blocks folder";
+        s.place = Right;
+        s.needsTourModel = true;
+        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        s.doneNote = T("Nice. drilled_block.py is a file of its own: the block is saved.");
+        add(s);
+    }
+    {
+        currentChapter = 3;
+        Step s;
+        s.title = T("It is in the menu now");
+        // (the block is saved by the step before this one; a tour that skipped it, or was started at this step, saves it here: the same file, for the same model -- so that the entry the step
+        // asks for is in the menu)
+        s.enter = [this] { ensureTourModel([this] { QMetaObject::invokeMethod(m_window, "saveAsCustomBlock", Q_ARG(bool, true)); }); };
+        s.text = T("The block is an entry of the right-click menu. Right-click the empty space of the viewport and choose Parametric shapes ▸ New custom block ▸ drilled_block: the model is made again, from the block.");
+        s.hint = T("A block is a function: drilled_block() makes the whole model. A block that takes a model is under Operations ▸ Custom blocks. Or press Show me.");
+        buildLook(s);
+        s.needsTourModel = true;
+        s.code = linesWith("^\\w+ = drilled_block");
+        s.done = [made] { return made("drilled_block"); };
+        s.doneNote = T("Nice. One call makes the whole model: a block of your own.");
+        s.show = [=](std::function<void()> over) {
+            showPick({}, {T("Parametric shapes"), T("New custom block"), "drilled_block"}, over);
+        };
+        add(s);
+    }
     // 26a: lattices, in short (chapter 6: what else FielDes does; chapter 7 builds one)
     {
-        currentChapter = 5;
+        currentChapter = 6;
         Step s;
         s.title = T("Lattices");
         s.text = T("A lattice fills a body with a pattern that repeats: struts, like this octet lattice, or smooth surfaces such as the gyroid. It is light and still stiff, and the thickness "
                    "of its walls can be a field. There are cells of many kinds, and lattices that do not repeat.")
-                 + "\n\n" + T("Chapter 7 builds one from the right-click menu.");
+                 + "\n\n" + T("Chapter 8 builds one from the right-click menu.");
         s.hint = T("Engineering ▸ Periodic lattices and Non-periodic lattices hold them. The example 23_lattice_gallery shows one of every kind.");
         s.holes = bothAndScript;
         s.cardNear = [this]() { return widgetRect(m_view); };
@@ -2589,18 +2810,20 @@ void Tutorial::buildSteps()
     }
     // 26b: simulations and optimisations: what they are, shown running (a model of its own: a beam, held at one end and pulled at the other, being optimised)
     {
-        currentChapter = 5;                 // (chapter 6: the special features, in short)
+        currentChapter = 6;                 // (chapter 6: the special features, in short)
         Step s;
         s.title = T("Simulations and optimization");
         s.text = T("FielDes runs simulations -- static, modal, thermal, fluid -- and optimizations as lines of the script. Watch one: this beam is held at its left end and pulled down at the "
                    "right, and the optimization takes away the material that carries nothing, one step after the other.")
-                 + "\n\n" + T("Chapters 8 to 10 build an analysis and an optimization of your own from the right-click menus; File ▸ Open example file has more.");
+                 + "\n\n" + T("Chapters 9 to 11 build an analysis and an optimization of your own from the right-click menus; File ▸ Open example file has more.");
         s.hint = T("The bar under the code shows the step it is at, and the picture follows. 05_static_analysis, 06_modal_analysis, 07_thermal_analysis, 08_topology_optimization and 16_fluid_flow show how.");
         s.holes = bothAndScript;
         s.cardNear = [this]() { return widgetRect(m_view); };
         s.place = InsideBottomLeft;
         s.group = "optimization";
         s.closeRows = true;
+        // (cache=False in the call: this step is there to show the optimization RUNNING -- the part being found, one step after the other --, so it is never read back from a solved problem, the
+        // user's own or the ones that come with the program)
         s.enter = [this, scene] {
             while (auto m = QApplication::activePopupWidget()) m->close();
             useScript(tourHeader("[-5, -10, -10], [65, 30, 20]", 2) +
@@ -2608,7 +2831,7 @@ void Tutorial::buildSteps()
                       "support = fixed(box((-1, -1, -1), (1, 21, 11)))\n"
                       "load = force(box((59, -1, -1), (61, 21, 11)), (0, 0, -300))\n"
                       "stress = static_analysis(beam, supports=[support], loads=[load], material=steel, element_size=2.5)\n"
-                      "opt = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'])\n"
+                      "opt = topology_optimization(stress, constraints=[minimize('compliance'), 'volume_fraction <= 0.4'], cache=False)\n"
                       "opt");
             scene()->clearSelection();
             m_view->standardView(View::VIEW_ISO);
@@ -2617,12 +2840,12 @@ void Tutorial::buildSteps()
     }
     // 26c: a flow, in short (the water of the model of chapter 9, solved)
     {
-        currentChapter = 5;
+        currentChapter = 6;
         Step s;
         s.title = T("Flows");
         s.text = T("FielDes solves how a fluid moves, too. Here water comes in at the left, flows round a post and leaves at the right: the lines are the streams, the colours the speed -- "
                    "a field again. It is solved on a mesh that follows the surface of the water, in a few seconds.");
-        s.hint = T("Chapter 9 builds this flow, step by step. The examples 16_fluid_flow and 17_flow_topology_optimization show more.");
+        s.hint = T("Chapter 10 builds this flow, step by step. The examples 16_fluid_flow and 17_flow_topology_optimization show more.");
         s.holes = bothAndScript;
         s.cardNear = [this]() { return widgetRect(m_view); };
         s.place = InsideBottomLeft;
@@ -2647,12 +2870,12 @@ void Tutorial::buildSteps()
     }
     // 26d: manufacturing, in short (a part that a printer cannot print, made printable)
     {
-        currentChapter = 5;
+        currentChapter = 6;
         Step s;
         s.title = T("Manufacturing");
         s.text = T("A part is not finished when it is drawn: it has to be made. A 3D printer cannot print a cap that hangs 12 mm out over nothing. manufacturing_analysis colours the places where "
                    "the rules of a process are broken, and manufacturing_optimization changes the part until they are kept.")
-                 + "\n\n" + T("Chapter 11 builds this.");
+                 + "\n\n" + T("Chapter 12 builds this.");
         s.hint = T("The example 33_manufacturing_optimization does it for a real bracket, for a printer, a mill and a mould.");
         s.holes = bothAndScript;
         s.cardNear = [this]() { return widgetRect(m_view); };
@@ -2676,17 +2899,33 @@ void Tutorial::buildSteps()
     }
     // 26e: apps, in short (a script that someone who never opens the editor can run)
     {
-        currentChapter = 5;
+        currentChapter = 6;
         Step s;
         s.title = T("Apps");
         s.text = T("A FielDes app is a script that someone who never opens the editor can run. You say which numbers, texts or files they may choose -- app.number and the like -- and FielDes shows "
-                   "them as a form with a Run button. File ▸ Export as app... makes one file to send.")
-                 + "\n\n" + T("Chapter 12 makes one.");
-        s.hint = T("The examples 24_app_bracket_maker and 25_app_beam_load_case are apps.");
+                   "them as a form with a Run button. The script here is an example that comes with FielDes, 25_app_beam_load_case: click File, then Preview as app, and you see what the person "
+                   "who gets it sees.")
+                 + "\n\n" + T("Chapter 13 makes one.");
+        s.hint = T("The app opens in a window of its own: drag the load point along the beam, choose the force and the material, and press Run. Close the window when you have seen it. "
+                   "The examples 24_app_bracket_maker and 25_app_beam_load_case are apps.");
         s.menuTitle = "File";
-        s.menuEntry = "Export as app...";
+        s.menuEntry = "Preview as app";
         s.place = Right;
-        s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
+        s.group = "showcase_app";
+        s.closeRows = true;
+        // (the model of the step is a real app of the examples folder, with its inputs and its viewport: what Preview as app opens is a FielDes app, not a plate)
+        s.enter = [this, scene] {
+            while (auto m = QApplication::activePopupWidget()) m->close();
+            QFile f(QDir(QCoreApplication::applicationDirPath()).filePath("examples/25_app_beam_load_case.py"));
+            QString text;
+            if (f.open(QIODevice::ReadOnly | QIODevice::Text)) text = QString::fromUtf8(f.readAll());
+            if (text.trimmed().isEmpty())
+                text = "from fieldes import *\n\napp.title('Plate with a hole', 'Choose the size of the hole', '1.0')\nradius = app.number('Hole radius', 5, min=2, max=12, unit='mm')\n\n"
+                       "plate = box((-30, -20, 0), (30, 20, 6))\nhole = cylinder(radius, 40, (0, 0, -10))\ndrilled = difference(plate, hole)\ndrilled";
+            useScript(text, false);
+            scene()->clearSelection();
+            m_view->standardView(View::VIEW_ISO);
+        };
         add(s);
     }
     // 27: the property tab of a result (a model of its own: one beam, held at one end and pulled at the other)
@@ -2767,7 +3006,7 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
-    // ---- Chapters 7 to 12: each builds a small version of one of the special features with the right-click menus, step by step.  The models are what the menus write, so that a step
+    // ---- Chapters 8 to 13: each builds a small version of one of the special features with the right-click menus, step by step.  The models are what the menus write, so that a step
     // starts from the same model whether the user did the step before or not: a step that finds what it needs missing puts it there
     // (`from`: the side the camera looks at the model from, when the step is about a place that has to face the user -- a face that is right-clicked; else the standard view from the corner)
     auto ensureModel = [this, scene](bool have, const QString& text, const QVector3D& from = QVector3D()) {
@@ -2798,15 +3037,54 @@ void Tutorial::buildSteps()
         };
     };
 
-    // ---- Chapter 7: a lattice
+    // (the step after a result: the result is drawn with the models it was made from, and they cover it -- the user isolates it, as the I key does: only the selected model is shown, the others are
+    // hidden with a `# hidden:` line, and the key brings them back.  The step puts them back when it is left)
+    auto isolateStep = [this, scene, clickRow, rowAim, buildLook](const QString& title, const QString& text, const QString& row, const QString& group, std::function<void()> enter) {
+        Step s;
+        s.title = title;
+        s.text = text;
+        s.hint = T("The I key shows only the models that are selected: the others are hidden with a # hidden: line in the script, and the key brings them back. Or press Show me.");
+        buildLook(s);
+        s.group = group;
+        s.aim = rowAim(row);
+        s.enter = enter;
+        s.done = [scene] { return scene()->isolated(); };
+        s.doneNote = T("Nice. Only the result is shown. Press I again to bring the other models back.");
+        s.leave = [scene] {
+            if (scene()->isolated())
+            {
+                scene()->clearSelection();
+                scene()->toggleIsolation();
+            }
+        };
+        s.show = [this, scene, clickRow, row](std::function<void()> over) {
+            clickRow(row, [this, scene, over] {
+                after(900, [this, scene, over] {
+                    m_busy = true;
+                    static_cast<TourLayer*>(m_layer)->cursorKey = "I";
+                    after(800, [this, scene, over] {
+                        scene()->toggleIsolation();
+                        static_cast<TourLayer*>(m_layer)->cursorKey.clear();
+                        m_busy = false;
+                        over();
+                    });
+                });
+            });
+        };
+        return s;
+    };
+
+    // ---- Chapter 8: a lattice
     const QString latticeHead = tourHeader("[-30, -22, -8], [30, 22, 10]", 6);
     auto latticeModel = [latticeHead](bool built) {
         QString s = latticeHead + "part = box((-24, -16, -5), (24, 16, 5), alpha=0.2)\npart\nwalls = ramp(x_field(), (-24, 24), (1.0, 2.6))\nwalls\n";
-        if (built) s += "\nlattice_1 = lattice(part, cell_periodic('gyroid'), cell_size=12, thickness=walls)  # shadow: part, walls\nlattice_1\n";
+        // (the call as the menu writes it: one argument to a line, every argument the call has; the cell size is a tenth of the block across, rounded to 1, 2 or 5 -- 48 mm is 5)
+        if (built) s += "\nlattice_1 = lattice(\n    part,\n    cell_periodic('gyroid'),\n    cell_size=5,\n    thickness=walls,\n    radius=None,\n    density=None,\n    style='sheet',\n    offset=None,\n    skin=0.0,\n"
+                        "    region='volume',\n    depth=None,\n    cell_map=None,\n    node_radius=None,\n    blend=0.0,\n    skin_blend=0.0,\n    wall=None,\n    axis='z',\n)  # shadow: part, walls\nlattice_1\n";
         return s;
     };
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("Fill a block with a lattice");
         s.text = T("part is a block (drawn faint), and walls is a field: thin at the left, thick at the right. In the model tree click part, then hold Ctrl and click walls: both rows "
@@ -2816,6 +3094,7 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "lattice";
         s.aim = rowAim("part");
+        s.aims = aimRows({"part", "walls"});
         s.enter = [=] { ensureModel(hasLines({"part =", "walls ="}), latticeModel(false)); };
         s.done = [made] { return made("lattice"); };
         s.doneNote = T("Nice. Every cell of the lattice follows the field.");
@@ -2825,7 +3104,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("Choose another cell");
         s.text = T("The call that was written says which cell the lattice is made of: cell_periodic('gyroid'). Change gyroid to schwarz_p -- another smooth surface -- or to octet, for struts.");
@@ -2850,7 +3129,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("Make the cells smaller");
         s.text = T("cell_size says how long one cell is. Make the number smaller -- half of what it is, say -- and the block holds more cells, each with finer walls.");
@@ -2882,18 +3161,22 @@ void Tutorial::buildSteps()
         add(s);
     }
 
-    // ---- Chapter 7, going on: a lattice that does not repeat -- a foam, made around points -- and a cell of one's own
+    // ---- Chapter 8, going on: a lattice that does not repeat -- a foam, made around points -- and a cell of one's own
     // (a block of 20 x 20 x 14: the foam and a lattice of a cell that is an equation draw in seconds in it -- in 28 x 28 x 20 the lattice of the diamond's cell took 50 s)
     const QString foamHead = tourHeader("[-14, -14, -4], [14, 14, 18]", 4);
-    // (the block, faint, and what the steps made of it: 0 the block, 1 the points a foam is made around, 2 the foam)
+    // (the block, faint, and what the steps made of it: 0 the block, 1 the points a foam is made around as the menu writes them, 2 the foam, 3 the same with surface=True -- some of the points ON the surface of
+    // the block, so that the foam has a skin)
     auto foamModel = [foamHead](int stage) {
         QString s = foamHead + "part = box((-10, -10, 0), (10, 10, 14), alpha=0.2)\npart\n";
-        if (stage >= 1) s += "\nrandom_points_1 = random_points(part, spacing=5)  # shadow: part\nrandom_points_1\n";
-        if (stage >= 2) s += "\nvoronoi_lattice_1 = voronoi_lattice(random_points_1)  # shadow: random_points_1\nvoronoi_lattice_1\n";
+        // (the calls as the menu writes them: one argument to a line, every argument the call has)
+        if (stage >= 1) s += QString("\nrandom_points_1 = random_points(\n    part,\n    spacing=5,\n    randomness=0.5,\n    min_distance=None,\n    max_distance=None,\n    seed=1,\n    bounds=None,\n"
+                                     "    surface=%1,\n)  # shadow: part\nrandom_points_1\n").arg(stage >= 3 ? "True" : "False");
+        if (stage >= 2) s += "\nvoronoi_lattice_1 = voronoi_lattice(\n    random_points_1,\n    thickness=None,\n    radius=None,\n    density=None,\n    skin=0.0,\n    blend=0.0,\n    skin_blend=0.0,\n"
+                             "    body=None,\n)  # shadow: random_points_1\nvoronoi_lattice_1\n";
         return s;
     };
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("Points for a foam");
         s.text = T("A foam does not repeat: it is made around points. Right-click part and choose Engineering ▸ Non-periodic lattices ▸ random_points: points are spread through the block, "
@@ -2911,7 +3194,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("The foam");
         s.text = T("Now the foam. Right-click random_points_1 in the model tree and choose Engineering ▸ Non-periodic lattices ▸ voronoi_lattice: the beams of the foam run along the "
@@ -2922,87 +3205,120 @@ void Tutorial::buildSteps()
         s.aim = rowAim("random_points_1");
         s.enter = [=] { ensureModel(made("random_points"), foamModel(1)); };
         s.done = [made] { return made("voronoi_lattice"); };
-        s.doneNote = T("Nice. A foam that does not repeat.");
+        s.doneNote = T("Nice. A foam that does not repeat. Look at its surface: the block cuts the cells off there, and they are open.");
         s.show = [=](std::function<void()> over) {
             showPick({"random_points_1"}, {T("Engineering"), T("Non-periodic lattices"), "voronoi_lattice"}, over);
         };
         add(s);
     }
-    // (the block, faint, with a cell of one's own and the lattice made with it: 0 the block, 1 the cell the menu writes, 2 the cell with the diamond's equation)
+    {
+        currentChapter = 7;
+        Step s;
+        s.title = T("A skin for the foam");
+        s.text = T("Look at the surface of the foam: the block cuts its cells off, so they are open there and the foam has no skin. In the call of random_points_1 change surface=False to surface=True: "
+                   "points are put on the surface too, and the foam gets a clean net of beams all over it.");
+        s.hint = T("The call is open in the tree and the code. Or press Show me.");
+        buildLook(s);
+        s.group = "foam";
+        s.openRows = QStringList{"random_points_1"};
+        s.code = callLines("random_points");
+        s.enter = [=] { ensureModel(made("voronoi_lattice"), foamModel(2)); openCall("random_points"); };
+        s.done = [callAt] { return callAt("random_points").text.contains(QRegularExpression(R"(surface\s*=\s*True)")); };
+        s.doneNote = T("Nice. The points reach the surface: the foam has a skin now.");
+        s.show = [=](std::function<void()> over) {
+            typeInCall("random_points", R"(surface=(False))", "True", over);
+        };
+        add(s);
+    }
+    // (the block, faint, with a cell of one's own and the lattice made with it, as the menus write them: 0 the block, 1 the strut cell -- a beam from a corner to the middle, mirrored --, 2 the lattice that
+    // fills the block with it, 3 the cell with a node in the middle of an edge and a beam to it.  The cell size is a tenth of the block across, rounded to 1, 2 or 5, and the beams an eighth of that)
     auto cellModel = [foamHead](int stage) {
         QString s = foamHead + "part = box((-10, -10, 0), (10, 10, 14), alpha=0.2)\npart\n";
-        if (stage == 1) s += "\ncell_custom_tpms_1 = cell_custom_tpms(lambda a, b, c: a.sin() * b.cos() + b.sin() * c.cos() + c.sin() * a.cos())\ncell_custom_tpms_1\n";
-        if (stage >= 2) s += "\ncell_custom_tpms_1 = cell_custom_tpms(lambda a, b, c: a.cos() * b.cos() * c.cos() - a.sin() * b.sin() * c.sin())\ncell_custom_tpms_1\n";
+        if (stage >= 1)
+        {
+            const QString nodes = stage >= 3 ? "{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0), 'e': (0.5, 0, 0)}" : "{'c': (0.5, 0.5, 0.5), 'o': (0, 0, 0)}";
+            const QString beams = stage >= 3 ? "[('c', 'o'), ('o', 'e')]" : "[('c', 'o')]";
+            s += "\ncell_custom_truss_1 = cell_custom_truss(\n    " + nodes + ",\n    " + beams + ",\n    mirror='xyz',\n)\ncell_custom_truss_1\n";
+        }
+        if (stage >= 2)
+            s += "\nlattice_1 = lattice(\n    part,\n    cell_custom_truss_1,\n    cell_size=2,\n    thickness=0.25,\n    radius=None,\n    density=None,\n    style='sheet',\n    offset=None,\n    skin=0.0,\n"
+                 "    region='volume',\n    depth=None,\n    cell_map=None,\n    node_radius=None,\n    blend=0.0,\n    skin_blend=0.0,\n    wall=None,\n    axis='z',\n)  # shadow: part, cell_custom_truss_1\nlattice_1\n";
         return s;
     };
     {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("A cell of your own");
-        s.text = T("Cells can be your own too. Right-click the empty space of the viewport and choose Engineering ▸ Periodic lattices ▸ Custom cells ▸ custom_tpms: the menu writes a cell "
-                   "from an equation of three phases, a, b and c -- here the gyroid's.");
-        s.hint = T("A cell is a model of its own, with its own row in the tree. custom_truss makes a cell from beams between nodes, and custom from any geometry. Or press Show me.");
+        s.text = T("Cells can be your own too. Right-click the empty space of the viewport and choose Engineering ▸ Periodic lattices ▸ Custom cells ▸ custom_truss: the menu writes a cell "
+                   "made of beams between nodes -- here the diagonals of the cube: one beam from a corner to the middle, mirrored into all the corners.");
+        s.hint = T("A cell is a model of its own, with its own row in the tree. custom_tpms makes a cell from an equation, and custom from any geometry. Or press Show me.");
         buildLook(s);
         s.group = "cell";
         s.enter = [=] { ensureModel(false, cellModel(0)); };
-        s.done = [made] { return made("cell_custom_tpms"); };
-        s.doneNote = T("Nice. cell_custom_tpms_1 is a cell: an equation.");
+        s.done = [made] { return made("cell_custom_truss"); };
+        s.doneNote = T("Nice. cell_custom_truss_1 is a cell: nodes and the beams between them.");
         s.show = [=](std::function<void()> over) {
-            showPick({}, {T("Engineering"), T("Periodic lattices"), T("Custom cells"), "custom_tpms"}, over);
+            showPick({}, {T("Engineering"), T("Periodic lattices"), T("Custom cells"), "custom_truss"}, over);
         };
         add(s);
     }
     {
-        currentChapter = 6;
-        Step s;
-        s.title = T("Change the equation");
-        s.text = T("The cell is the equation in its line. Change it to the diamond's: a.cos() * b.cos() * c.cos() - a.sin() * b.sin() * c.sin().");
-        s.hint = T("a, b and c are the phases of the cell, 2π along each side of it. Any surface that repeats can be written this way. Or press Show me.");
-        buildLook(s);
-        s.group = "cell";
-        s.openRows = QStringList{"cell_custom_tpms_1"};
-        s.code = callLines("cell_custom_tpms");
-        s.enter = [=] {
-            ensureModel(made("cell_custom_tpms"), cellModel(1));
-            openCall("cell_custom_tpms");
-            m_baselineText = flatCall("cell_custom_tpms");
-        };
-        s.done = [flatCall, balanced, callAt, this] {
-            const QString flat = flatCall("cell_custom_tpms");
-            return !flat.isEmpty() && balanced(callAt("cell_custom_tpms").text) && flat != m_baselineText;
-        };
-        s.doneNote = T("Nice. The same call, another surface.");
-        s.show = [=](std::function<void()> over) {
-            typeInCall("cell_custom_tpms", R"(lambda a, b, c:\s*(.+)\)\s*$)", "a.cos() * b.cos() * c.cos() - a.sin() * b.sin() * c.sin()", over);
-        };
-        add(s);
-    }
-    {
-        currentChapter = 6;
+        currentChapter = 7;
         Step s;
         s.title = T("Fill the block with it");
-        s.text = T("Click part, hold Ctrl and click cell_custom_tpms_1, right-click part and choose Engineering ▸ Periodic lattices ▸ lattice: the block is filled with your cell.");
-        s.hint = T("The lattice is written with the cell you selected: lattice(part, cell_custom_tpms_1, ...). Or press Show me.");
+        s.text = T("Click part, hold Ctrl and click cell_custom_truss_1, right-click part and choose Engineering ▸ Periodic lattices ▸ lattice: the block is filled with your cell.");
+        s.hint = T("The lattice is written with the cell you selected: lattice(part, cell_custom_truss_1, ...). Or press Show me.");
         buildLook(s);
         s.group = "cell";
         s.aim = rowAim("part");
-        s.enter = [=] { ensureModel(made("cell_custom_tpms"), cellModel(2)); };
+        s.aims = aimRows({"part", "cell_custom_truss_1"});
+        s.enter = [=] { ensureModel(made("cell_custom_truss"), cellModel(1)); };
         s.done = [made] { return made("lattice"); };
         s.doneNote = T("Nice. The block is filled with your own cell.");
         s.show = [=](std::function<void()> over) {
-            showPick({"part", "cell_custom_tpms_1"}, {T("Engineering"), T("Periodic lattices"), "lattice"}, over);
+            showPick({"part", "cell_custom_truss_1"}, {T("Engineering"), T("Periodic lattices"), "lattice"}, over);
+        };
+        add(s);
+    }
+    {
+        currentChapter = 7;
+        Step s;
+        s.title = T("Add a beam");
+        s.text = T("The block is made of your cell, so a change in the cell changes every cell of the block. In the call of cell_custom_truss_1 add a node 'e': (0.5, 0, 0) -- the middle of an edge -- to the nodes, "
+                   "and a beam ('o', 'e') to the beams, and watch the block.");
+        s.hint = T("A cell is its nodes and the beams between them, on a cube from 0 to 1: the nodes are the first brackets of the call, the beams the second, each beam a pair of node names. Or press Show me.");
+        buildLook(s);
+        s.group = "cell";
+        s.openRows = QStringList{"cell_custom_truss_1"};
+        s.code = callLines("cell_custom_truss");
+        s.enter = [=] {
+            ensureModel(made("lattice"), cellModel(2));
+            openCall("cell_custom_truss");
+            m_baselineText = flatCall("cell_custom_truss");
+        };
+        s.done = [flatCall, balanced, callAt, this] {
+            const QString flat = flatCall("cell_custom_truss");
+            return !flat.isEmpty() && balanced(callAt("cell_custom_truss").text) && flat != m_baselineText;
+        };
+        s.doneNote = T("Nice. The same call, a cell with another beam: every cell of the block has it.");
+        s.show = [=](std::function<void()> over) {
+            // (the node first, then the beam: typed into the call a character at a time)
+            typeInCall("cell_custom_truss", R"('o': \(0, 0, 0\)()\})", ", 'e': (0.5, 0, 0)", [=] {
+                typeInCall("cell_custom_truss", R"(\('c', 'o'\)()\])", ", ('o', 'e')", over);
+            });
         };
         add(s);
     }
 
-    // ---- Chapter 8: a static analysis
+    // ---- Chapter 9: a static analysis
     const QString beamHead = tourHeader("[-5, -12, -12], [65, 22, 20]", 4);
     // (the beam as the menus write it, stage by stage: 0 the beam, 1 with the face at its left end selected, 2 held there, 3 with the face at its right end selected, 4 pulled there, 5 with its material,
     // 6 analysed.  A face is what a right-click on the beam ▸ Select Surface writes: the flat face under the click, made of the field of the beam)
     auto beamModel = [beamHead](int stage, const QString& vector, const QString& elementSize) {
         // (the beam and the faces are hidden once it is analysed: they are drawn over its own analysis, and the stress is seen on the part that is left uncovered only -- the example files hide the body the same way)
-        const QString hidden = stage >= 6 ? "# hidden: " : QString();
-        QString s = beamHead + "beam = box((0, 0, 0), (60, 10, 8))\n" + QString(stage >= 6 ? "# hidden: beam\n" : "beam\n");
+        // (stage 7 is stage 6 as the menus leave it, with nothing hidden: the beam and the faces are drawn over the analysis, as they are for the user who made it)
+        const QString hidden = stage == 6 ? "# hidden: " : QString();
+        QString s = beamHead + "beam = box((0, 0, 0), (60, 10, 8))\n" + QString(stage == 6 ? "# hidden: beam\n" : "beam\n");
         if (stage >= 1) s += "selection_1 = select_surface(beam, seed=(0.0, 5.0, 4.0), angle=10)\n" + hidden + "selection_1\n";
         // (a support or a load made from a face is written as the menu writes it: the face says where it acts, and has no body in it -- `body=None`, a shadow of the face alone -- so that what the user makes
         // and what the tour starts the next step from are the same problem, and the solved problem that comes with the program is the one the user asks for)
@@ -3017,7 +3333,7 @@ void Tutorial::buildSteps()
         return s;
     };
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Select the end that is held");
         s.text = T("To hold a beam at one end, that end has to be a model of its own. Right-click the left end of the beam in the viewport, choose Select Surface and press Select: "
@@ -3035,25 +3351,25 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Hold one end");
-        s.text = T("Now say what happens at that face. Click beam in the model tree, hold Ctrl and click selection_1, right-click beam and choose "
+        s.text = T("Now say what happens at that face. Click selection_1 in the model tree, right-click it and choose "
                    "Engineering ▸ Structural ▸ New support or load ▸ fixed. The beam is held there: its left end cannot move.");
-        s.hint = T("The first model selected is the body, the others are where the support acts. Or press Show me.");
+        s.hint = T("The face says where the support acts, and that is all the call needs: the beam does not have to be selected too. Or press Show me.");
         buildLook(s);
         s.group = "static";
-        s.aim = rowAim("beam");
+        s.aim = rowAim("selection_1");
         s.enter = [=] { ensureModel(made("select_surface"), beamModel(1, QString(), QString()), leftEnd); };
         s.done = [made] { return made("fixed"); };
         s.doneNote = T("Nice. A support is a model like any other: fixed_1.");
         s.show = [=](std::function<void()> over) {
-            showPick({"beam", "selection_1"}, {T("Engineering"), T("Structural"), T("New support or load"), "fixed"}, over);
+            showPick({"selection_1"}, {T("Engineering"), T("Structural"), T("New support or load"), "fixed"}, over);
         };
         add(s);
     }
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Select the end that is pulled");
         s.text = T("The same for the other end. Right-click the right end of the beam in the viewport, choose Select Surface and press Select: that face is selection_2.");
@@ -3069,28 +3385,28 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Pull the other end");
-        s.text = T("Now the load. Click beam, hold Ctrl and click selection_2, right-click beam and choose Engineering ▸ Structural ▸ New support or load ▸ force. The force has a placeholder "
+        s.text = T("Now the load. Click selection_2, right-click it and choose Engineering ▸ Structural ▸ New support or load ▸ force. The force has a placeholder "
                    "where its vector goes: click the amber row and type (0, 0, -100) over the three dots -- 100 N, downwards.");
         s.hint = T("The vector is the force in newtons: x, y and z. Or press Show me.");
         buildLook(s);
         s.group = "static";
-        s.aim = holeOrRow("beam");
+        s.aim = holeOrRow("selection_2");
         s.code = callLines("force");
         s.enter = [=] { ensureModel(seedNear("beam", 60.0), beamModel(3, QString(), QString()), rightEnd); };
         s.done = [madeAndFilled] { return madeAndFilled("force"); };
         s.doneNote = T("Nice. The beam is pulled at its right end.");
         s.show = [=](std::function<void()> over) {
-            showPick({"beam", "selection_2"}, {T("Engineering"), T("Structural"), T("New support or load"), "force"}, [=] {
+            showPick({"selection_2"}, {T("Engineering"), T("Structural"), T("New support or load"), "force"}, [=] {
                 after(1800, [=] { fillDots("force", "(0, 0, -100)", over, 80); });
             });
         };
         add(s);
     }
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Choose a material");
         s.text = T("A part is made of something. Right-click the empty space of the viewport and choose Engineering ▸ Materials ▸ New material ▸ aluminium. A material is a model too: its stiffness, "
@@ -3107,7 +3423,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Run the analysis");
         s.text = T("Everything is there. Select beam, then Ctrl+click fixed_1, force_1 and aluminium_1, right-click beam and choose Engineering ▸ Structural ▸ static_analysis. "
@@ -3116,25 +3432,31 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "static";
         s.aim = rowAim("beam");
+        s.aims = aimRows({"beam", "fixed_1", "force_1", "aluminium_1"});
+        s.calculates = true;
         s.enter = [=] { ensureModel(made("Material"), beamModel(5, "(0, 0, -100)", QString())); };
         s.done = [made] { return made("static_analysis"); };
-        s.doneNote = T("Nice. The stress is a field on the beam, drawn in colour. Click the eye of beam: it is drawn over its own analysis.");
+        s.doneNote = T("Nice. The stress is a field on the beam, drawn in colour -- under the beam and the faces, which cover it. The next step shows it alone.");
         s.show = [=](std::function<void()> over) {
-            showPick({"beam", "fixed_1", "force_1", "aluminium_1"}, {T("Engineering"), T("Structural"), "static_analysis"}, [=] {
-                after(2500, [=] { hideModel("beam"); });        // (the stress is drawn on its own: the eye of the beam is clicked)
-                over();
-            });
+            showPick({"beam", "fixed_1", "force_1", "aluminium_1"}, {T("Engineering"), T("Structural"), "static_analysis"}, over);
         };
         add(s);
     }
+    currentChapter = 8;
+    add(isolateStep(T("See the stress alone"),
+                    T("The stress is drawn under the beam and the faces, and they cover it. Click static_analysis_1 in the model tree and press I: only the result is shown. Press I again to bring the others back."),
+                    "static_analysis_1", "static",
+                    [=] { ensureModel(made("static_analysis"), beamModel(7, "(0, 0, -100)", "None")); }));
     {
-        currentChapter = 7;
+        currentChapter = 8;
         Step s;
         s.title = T("Change the load");
-        s.text = T("A load is a number, and the analysis follows it. In force_1, change the vector from (0, 0, -100) to (0, 0, -300): three times the force, three times the stress.");
+        s.text = T("A load is a number and a direction, and the analysis follows both. In force_1, change the vector from (0, 0, -100) to (0, 100, 0): the same force, sideways instead of down. "
+                   "The beam is analysed again, and the stress moves to another side of it.");
         s.hint = T("The call is open in the tree and the code. The beam is analysed again in a moment. Or press Show me.");
         buildLook(s);
         s.group = "static";
+        s.calculates = true;
         s.openRows = QStringList{"force_1"};
         s.code = callLines("force");
         s.enter = [=] {
@@ -3145,33 +3467,35 @@ void Tutorial::buildSteps()
         s.done = [flatCall] {
             static const QRegularExpression re(R"(vector=\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\))");
             const auto m = re.match(flatCall("force"));
-            return m.hasMatch() && (m.captured(1).toDouble() != 0 || m.captured(2).toDouble() != 0 || m.captured(3).toDouble() != -100);
+            return m.hasMatch() && (m.captured(1).toDouble() != 0 || m.captured(2).toDouble() != 0);
         };
-        s.doneNote = T("Nice. The analysis ran again: the stress is higher.");
+        s.doneNote = T("Nice. The beam was analysed again: the stress is on another side of it now.");
         s.show = [=](std::function<void()> over) {
-            typeInCall("force", R"(vector=\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*(-?[\d.]+)\s*\))", "-300", over);
+            typeInCall("force", R"(vector=\(\s*(-?[\d.]+\s*,\s*-?[\d.]+\s*,\s*-?[\d.]+)\s*\))", "0, 100, 0", over);
         };
         add(s);
     }
 
-    // ---- Chapter 9: a flow
+    // ---- Chapter 10: a flow
     const QString flowHead = tourHeaderFixed("[-4, -4, -4], [44, 24, 14]");
-    // (the channel as the menus write it, stage by stage: 0 the post and the water around it, 1 the fluid, 2 with the face the water comes in at selected, 3 the inlet, 4 with the face it leaves at selected, 5 the
-    // outlet, 6 solved.  A face is what a right-click on the water ▸ Select Surface writes: the flat face under the click, made of the field of the water)
+    // (the channel as the menus write it, stage by stage, in the order of the static analysis: 0 the post and the water around it, 1 with the face the water comes in at selected, 2 the inlet, 3 with the face it
+    // leaves at selected, 4 the outlet, 5 the fluid, 6 solved, 7 solved with everything shown as the menus leave it.  A face is what a right-click on the water ▸ Select Surface writes: the flat face under
+    // the click, made of the field of the water)
     auto flowModel = [flowHead](int stage, const QString& speed, const QString& boundaries, const QString& radius) {
         // (the post is drawn, and the water round it faint while its ends are picked on it; once the flow is solved the water is not drawn at all: a faint box over the result of the flow turns it brown.  faces and
         // sides are the boxes that say where the water slides along -- the top and the bottom of the channel, and its two sides -- as in example 16)
-        const QString hidden = stage >= 6 ? "# hidden: " : QString();
-        QString s = flowHead + "post = cylinder(" + radius + ", 12, (14, 10, -1))\npost\nslab = box((0, 0, 0), (40, 20, 10)" + QString(stage < 6 ? ", alpha=0.15" : "") + ")\n" +
-                    QString(stage < 6 ? "slab\n" : "") +
+        const bool quiet = stage == 6;
+        const QString hidden = quiet ? "# hidden: " : QString();
+        QString s = flowHead + "post = cylinder(" + radius + ", 12, (14, 10, -1))\npost\nslab = box((0, 0, 0), (40, 20, 10)" + QString(!quiet ? ", alpha=0.15" : "") + ")\n" +
+                    QString(!quiet ? "slab\n" : "") +
                     "faces = union(box((-1, -1, -1), (41, 21, 0.01)), box((-1, -1, 9.99), (41, 21, 11)))\n"
                     "sides = union(box((-1, -1, -1), (41, 0.01, 11)), box((-1, 19.99, -1), (41, 21, 11)))\n";
-        if (stage >= 1) s += "water_1 = Fluid(\n    'water',\n    1e-09,\n    1e-09,\n)\n";
-        if (stage >= 1 && stage < 6) s += "water_1\n";
-        if (stage >= 2) s += "selection_1 = select_surface(slab, seed=(0.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_1\n";
-        if (stage >= 3) s += "inlet_1 = inlet(\n    region=selection_1,\n    body=None,\n    velocity=None,\n    speed=" + speed + ",\n    flow_rate=None,\n    profile='uniform',\n)  # shadow: selection_1\ninlet_1\n";
-        if (stage >= 4) s += "selection_2 = select_surface(slab, seed=(40.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_2\n";
-        if (stage >= 5) s += "outlet_1 = outlet(\n    region=selection_2,\n    body=None,\n    pressure=0.0,\n)  # shadow: selection_2\noutlet_1\n";
+        if (stage >= 1) s += "selection_1 = select_surface(slab, seed=(0.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_1\n";
+        if (stage >= 2) s += "inlet_1 = inlet(\n    region=selection_1,\n    body=None,\n    velocity=None,\n    speed=" + speed + ",\n    flow_rate=None,\n    profile='uniform',\n)  # shadow: selection_1\ninlet_1\n";
+        if (stage >= 3) s += "selection_2 = select_surface(slab, seed=(40.0, 10.0, 5.0), angle=10)\n" + hidden + "selection_2\n";
+        if (stage >= 4) s += "outlet_1 = outlet(\n    region=selection_2,\n    body=None,\n    pressure=0.0,\n)  # shadow: selection_2\noutlet_1\n";
+        if (stage >= 5) s += "water_1 = Fluid(\n    'water',\n    1e-09,\n    1e-09,\n)\n";
+        if (stage == 5) s += "water_1\n";
         if (stage >= 6)
             s += "fluid_analysis_1 = fluid_analysis(\n    post,\n    slab,\n    inlets=[inlet_1],\n    outlets=[outlet_1],\n    boundaries=" + boundaries +
                  ",\n    fluid=water_1,\n    element_size=None,\n    bounds=None,\n    gravity=None,\n    stokes=False,\n    tolerance=1e-05,\n    relaxation=1.0,\n    cache=True,\n"
@@ -3179,41 +3503,24 @@ void Tutorial::buildSteps()
         return s;
     };
     {
-        currentChapter = 8;
-        Step s;
-        s.title = T("Choose the fluid");
-        s.text = T("A channel of water, with a post standing in it: post is the body, and slab is the water around it, drawn faint. "
-                   "Right-click the empty space of the viewport and choose Engineering ▸ Materials ▸ New fluid ▸ water.");
-        s.hint = T("A fluid is a model, with its density and its viscosity. Or press Show me.");
-        buildLook(s);
-        s.group = "flow";
-        s.enter = [=] { ensureModel(hasLines({"post =", "slab ="}), flowModel(0, QString(), QString(), "3")); };
-        s.done = [made] { return made("Fluid"); };
-        s.doneNote = T("Nice. water_1 is the fluid.");
-        s.show = [=](std::function<void()> over) {
-            showPick({}, {T("Engineering"), T("Materials"), T("New fluid"), "water"}, over);
-        };
-        add(s);
-    }
-    {
-        currentChapter = 8;
+        currentChapter = 9;
         Step s;
         s.title = T("Select where the water comes in");
-        s.text = T("The water comes in at one end of the channel, and that face has to be a model of its own. Right-click the left end of the water, the faint box, choose Select Surface and "
-                   "press Select: the face under your click is selection_1.");
+        s.text = T("A channel of water, with a post standing in it: post is the body, and slab is the water around it, drawn faint. The water comes in at one end of the channel, and that face has to be a model "
+                   "of its own. Right-click the left end of the water, the faint box, choose Select Surface and press Select: the face under your click is selection_1.");
         s.hint = T("selection_1 = select_surface(slab, seed=..., angle=10): a face of the water, found from its field. The view is turned so that the left end is in front. Or press Show me.");
         buildLook(s);
         s.group = "flow";
         s.code = linesWith("^selection_1 =");
         s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(0, 10, 5))); };       // (the middle of the face at the left end of the water)
-        s.enter = [=] { ensureModel(made("Fluid"), flowModel(1, QString(), QString(), "3"), leftEnd); };
+        s.enter = [=] { ensureModel(hasLines({"post =", "slab ="}), flowModel(0, QString(), QString(), "3"), leftEnd); };
         s.done = [seedNear] { return seedNear("slab", 0.0); };
         s.doneNote = T("Nice. The face is a model: selection_1.");
         s.show = [=](std::function<void()> over) { pickFace(QVector3D(0, 10, 5), over); };
         add(s);
     }
     {
-        currentChapter = 8;
+        currentChapter = 9;
         Step s;
         s.title = T("Where the water comes in");
         s.text = T("Click slab in the model tree, hold Ctrl and click selection_1, right-click slab and choose Engineering ▸ Fluid ▸ New flow condition ▸ inlet. Then type the speed over the "
@@ -3222,8 +3529,9 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "flow";
         s.aim = holeOrRow("slab");
+        s.aims = aimRows({"slab", "selection_1"});
         s.code = callLines("inlet");
-        s.enter = [=] { ensureModel(seedNear("slab", 0.0), flowModel(2, QString(), QString(), "3"), leftEnd); };
+        s.enter = [=] { ensureModel(seedNear("slab", 0.0), flowModel(1, QString(), QString(), "3"), leftEnd); };
         s.done = [madeAndFilled] { return madeAndFilled("inlet"); };
         s.doneNote = T("Nice. The water comes in at the left face.");
         s.show = [=](std::function<void()> over) {
@@ -3234,7 +3542,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 8;
+        currentChapter = 9;
         Step s;
         s.title = T("Select where it leaves");
         s.text = T("The same for the other end. Right-click the right end of the water, choose Select Surface and press Select: that face is selection_2.");
@@ -3243,14 +3551,14 @@ void Tutorial::buildSteps()
         s.group = "flow";
         s.code = linesWith("^selection_2 =");
         s.point = [this] { return m_view->mapTo(m_window, m_view->screenPoint(QVector3D(40, 10, 5))); };      // (the middle of the face at the right end of the water)
-        s.enter = [=] { ensureModel(madeAndFilled("inlet"), flowModel(3, "5", QString(), "3"), rightEnd); };
+        s.enter = [=] { ensureModel(madeAndFilled("inlet"), flowModel(2, "5", QString(), "3"), rightEnd); };
         s.done = [seedNear] { return seedNear("slab", 40.0); };
         s.doneNote = T("Nice. The other end is selection_2.");
         s.show = [=](std::function<void()> over) { pickFace(QVector3D(40, 10, 5), over); };
         add(s);
     }
     {
-        currentChapter = 8;
+        currentChapter = 9;
         Step s;
         s.title = T("Where it leaves");
         s.text = T("The same way as the inlet: click slab, Ctrl+click selection_2, right-click slab and choose Engineering ▸ Fluid ▸ New flow condition ▸ outlet.");
@@ -3258,8 +3566,9 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "flow";
         s.aim = rowAim("slab");
+        s.aims = aimRows({"slab", "selection_2"});
         s.code = callLines("outlet");
-        s.enter = [=] { ensureModel(seedNear("slab", 40.0), flowModel(4, "5", QString(), "3"), rightEnd); };
+        s.enter = [=] { ensureModel(seedNear("slab", 40.0), flowModel(3, "5", QString(), "3"), rightEnd); };
         s.done = [made] { return made("outlet"); };
         s.doneNote = T("Nice. The water leaves at the right face.");
         s.show = [=](std::function<void()> over) {
@@ -3268,7 +3577,23 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 8;
+        currentChapter = 9;
+        Step s;
+        s.title = T("Choose the fluid");
+        s.text = T("The channel is full of water, and a fluid says what that is. Right-click the empty space of the viewport and choose Engineering ▸ Materials ▸ New fluid ▸ water.");
+        s.hint = T("A fluid is a model, with its density and its viscosity. Or press Show me.");
+        buildLook(s);
+        s.group = "flow";
+        s.enter = [=] { ensureModel(made("outlet"), flowModel(4, "5", QString(), "3")); };
+        s.done = [made] { return made("Fluid"); };
+        s.doneNote = T("Nice. water_1 is the fluid.");
+        s.show = [=](std::function<void()> over) {
+            showPick({}, {T("Engineering"), T("Materials"), T("New fluid"), "water"}, over);
+        };
+        add(s);
+    }
+    {
+        currentChapter = 9;
         Step s;
         s.title = T("Solve the flow");
         s.text = T("Select post, then Ctrl+click slab, inlet_1, outlet_1 and water_1, right-click post and choose Engineering ▸ Fluid ▸ fluid_analysis. The call has a placeholder for the "
@@ -3278,10 +3603,12 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "flow";
         s.aim = holeOrRow("post");
+        s.aims = aimRows({"post", "slab", "inlet_1", "outlet_1", "water_1"});
+        s.calculates = true;
         s.code = callLines("fluid_analysis");
-        s.enter = [=] { ensureModel(made("outlet"), flowModel(5, "5", QString(), "3")); };
+        s.enter = [=] { ensureModel(made("Fluid"), flowModel(5, "5", QString(), "3")); };
         s.done = [madeAndFilled] { return madeAndFilled("fluid_analysis"); };
-        s.doneNote = T("Nice. The streams go round the post; the colours are the speed.");
+        s.doneNote = T("Nice. The streams go round the post; the colours are the speed. The next step shows them alone.");
         s.show = [=](std::function<void()> over) {
             showPick({"post", "slab", "inlet_1", "outlet_1", "water_1"}, {T("Engineering"), T("Fluid"), "fluid_analysis"}, [=] {
                 after(1800, [=] { fillDots("fluid_analysis", "[slip(faces), slip(sides)]", over, 70); });
@@ -3289,14 +3616,20 @@ void Tutorial::buildSteps()
         };
         add(s);
     }
+    currentChapter = 9;
+    add(isolateStep(T("See the flow alone"),
+                    T("The streams are drawn with the water round the post, and it tints them. Click fluid_analysis_1 in the model tree and press I: only the flow is shown. Press I again to bring the others back."),
+                    "fluid_analysis_1", "flow",
+                    [=] { ensureModel(made("fluid_analysis"), flowModel(7, "5", "[slip(faces), slip(sides)]", "3")); }));
     {
-        currentChapter = 8;
+        currentChapter = 9;
         Step s;
         s.title = T("Change the post");
         s.text = T("Make the post wider: in its line, change the radius, 3, to 5. The water has to go round more, and the flow is solved again.");
         s.hint = T("Nothing else is touched: the conditions and the analysis follow the post. Or press Show me.");
         buildLook(s);
         s.group = "flow";
+        s.calculates = true;
         s.code = linesWith("^post =");
         s.enter = [=] { ensureModel(made("fluid_analysis"), flowModel(6, "5", "[slip(faces), slip(sides)]", "3")); };
         s.done = [callAt] {
@@ -3311,39 +3644,43 @@ void Tutorial::buildSteps()
         add(s);
     }
 
-    // ---- Chapter 10: a topology optimization
+    // ---- Chapter 11: a topology optimization
     const QString topologyCall = QString("topology_optimization_1 = topology_optimization(\n    static_analysis_1,\n    constraints=[minimize('compliance'), 'volume_fraction <= 0.4'],\n"
                                          "    iterations=None,\n    filter_radius=None,\n    keep=None,\n    avoid=None,\n    grow=False,\n    grow_limit=None,\n    extrude=None,\n    penalty=3.0,\n"
                                          "    sharpness=16.0,\n    symmetry='auto',\n    tolerance=1e-05,\n    cache=True,\n)  # shadow: static_analysis_1\ntopology_optimization_1\n");
     {
-        currentChapter = 9;
+        currentChapter = 10;
         Step s;
         s.title = T("Find the lightest shape");
-        s.text = T("The beam of chapter 8, analysed. An optimization asks where material can be taken away without losing stiffness. Select static_analysis_1, right-click it and choose "
+        s.text = T("The beam of chapter 9, analysed. An optimization asks where material can be taken away without losing stiffness. Select static_analysis_1, right-click it and choose "
                    "Engineering ▸ topology_optimization. Then type over the placeholder what it should do: [minimize('compliance'), 'volume_fraction <= 0.4'].");
         s.hint = T("Compliance is how much the beam bends: minimizing it makes the beam as stiff as it can be, in 40 % of the material. The optimizer decides how dense the material is at "
                    "every place -- a field. Or press Show me.");
         buildLook(s);
         s.group = "topology";
         s.aim = holeOrRow("static_analysis_1");
+        s.calculates = true;
         s.code = callLines("topology_optimization");
         s.enter = [=] { ensureModel(made("static_analysis"), beamModel(6, "(0, 0, -100)", "3")); };
         s.done = [madeAndFilled] { return madeAndFilled("topology_optimization"); };
-        s.doneNote = T("Nice. The red is where material stays; the blue is where it was taken away. Click the eye of static_analysis_1 to see the optimized part alone.");
+        s.doneNote = T("Nice. The red is where material stays; the blue is where it was taken away. The next step shows the optimized part alone.");
         s.show = [=](std::function<void()> over) {
             showPick({"static_analysis_1"}, {T("Engineering"), "topology_optimization"}, [=] {
                 after(1800, [=] {
-                    fillDots("topology_optimization", "[minimize('compliance'), 'volume_fraction <= 0.4']", [=] {
-                        after(1500, [=] { hideModel("static_analysis_1"); });       // (the stress of the analysis is drawn over the density of the optimization)
-                        over();
-                    }, 70);
+                    fillDots("topology_optimization", "[minimize('compliance'), 'volume_fraction <= 0.4']", over, 70);
                 });
             });
         };
         add(s);
     }
+    currentChapter = 10;
+    add(isolateStep(T("See the optimized part alone"),
+                    T("The optimization is drawn with the analysis and the beam it comes from, and they cover it. Click topology_optimization_1 in the model tree and press I: only the optimized part is shown. "
+                      "Press I again to bring the others back."),
+                    "topology_optimization_1", "topology",
+                    [=] { ensureModel(madeAndFilled("topology_optimization"), beamModel(7, "(0, 0, -100)", "3") + topologyCall); }));
     {
-        currentChapter = 9;
+        currentChapter = 10;
         Step s;
         s.title = T("Allow less material");
         s.text = T("Ask for less: in the call of topology_optimization_1, change the 0.4 in 'volume_fraction <= 0.4' to 0.25 -- a quarter of the material. The optimizer runs again.");
@@ -3351,6 +3688,7 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "topology";
         s.openRows = QStringList{"topology_optimization_1"};
+        s.calculates = true;
         s.code = callLines("topology_optimization");
         s.enter = [=] {
             const bool have = madeAndFilled("topology_optimization");
@@ -3371,7 +3709,7 @@ void Tutorial::buildSteps()
         add(s);
     }
 
-    // ---- Chapter 11: a manufacturing optimization
+    // ---- Chapter 12: a manufacturing optimization
     const QString mfgHead = tourHeader("[-24, -12, -4], [24, 12, 28]", 5);
     // (the part as the menus write it, stage by stage: 0 the part, 1 with the rule of a printer, 3 with the analysis)
     auto mfgModel = [mfgHead](int stage, const QString& overhang) {
@@ -3381,10 +3719,13 @@ void Tutorial::buildSteps()
             s += "\nfff_constraint_1 = fff_constraint(\n    nozzle=0.4,\n    build_direction=(0, 0, 1),\n    overhang=" + overhang + ",\n    max_bridge=20.0,\n    region=None,\n)\nfff_constraint_1\n";
         if (stage >= 3)
             s += "manufacturing_analysis_1 = manufacturing_analysis(\n    part,\n    constraints=[fff_constraint_1],\n    samples=5000,\n    keep=None,\n)  # shadow: part, fff_constraint_1\nmanufacturing_analysis_1\n";
+        if (stage >= 4)
+            s += "manufacturing_optimization_1 = manufacturing_optimization(\n    part,\n    constraints=[fff_constraint_1],\n    keep=None,\n    remedies=None,\n    max_change=0.25,\n    max_support_height=None,\n"
+                 "    verify=False,\n    samples=2500,\n    show_turned=True,\n)  # shadow: part, fff_constraint_1\nmanufacturing_optimization_1\n";
         return s;
     };
     {
-        currentChapter = 10;
+        currentChapter = 11;
         Step s;
         s.title = T("The rules of a printer");
         s.text = T("A part with a cap that hangs out 12 mm on both sides. A process has rules: a 3D printer needs walls thicker than its nozzle, and cannot print a wall that leans too far over "
@@ -3402,7 +3743,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 10;
+        currentChapter = 11;
         Step s;
         s.title = T("How far it may lean");
         s.text = T("overhang=None means no limit on how far a wall may lean over the layer below. Say how far a printer can go: change None to 45, degrees.");
@@ -3423,7 +3764,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 10;
+        currentChapter = 11;
         Step s;
         s.title = T("See where it breaks the rule");
         s.text = T("Select part, then Ctrl+click fff_constraint_1, right-click part and choose Engineering ▸ Manufacturing ▸ manufacturing_analysis. The part is coloured: red where "
@@ -3432,35 +3773,40 @@ void Tutorial::buildSteps()
         buildLook(s);
         s.group = "manufacturing";
         s.aim = rowAim("part");
+        s.aims = aimRows({"part", "fff_constraint_1"});
+        s.calculates = true;
         s.enter = [=] {
             static const QRegularExpression re(R"(overhang=(\d+\.?\d*)[,)])");
             ensureModel(re.match(flatCall("fff_constraint")).hasMatch(), mfgModel(1, "45"));
             m_view->standardView(View::VIEW_BOTTOM);            // (the red is under the cap: the part is seen from below)
         };
         s.done = [made] { return made("manufacturing_analysis"); };
-        s.doneNote = T("Nice. The underside of the cap is red: a printer would let the plastic drop. Click the eye of part: it is drawn over its own analysis.");
+        s.doneNote = T("Nice. The underside of the cap is red: a printer would let the plastic drop. The next step shows the part alone.");
         s.show = [=](std::function<void()> over) {
-            showPick({"part", "fff_constraint_1"}, {T("Engineering"), T("Manufacturing"), "manufacturing_analysis"}, [=] {
-                after(3500, [=] { hideModel("part"); });            // (the result is the part coloured: the part itself is drawn over it)
-                over();
-            });
+            showPick({"part", "fff_constraint_1"}, {T("Engineering"), T("Manufacturing"), "manufacturing_analysis"}, over);
         };
         add(s);
     }
+    currentChapter = 11;
+    add(isolateStep(T("See the analysis alone"),
+                    T("The analysis is the part coloured, and the part itself is drawn over it. Click manufacturing_analysis_1 in the model tree and press I: only the analysis is shown. Press I again to bring the others back."),
+                    "manufacturing_analysis_1", "manufacturing",
+                    [=] { ensureModel(made("manufacturing_analysis"), mfgModel(3, "45")); m_view->standardView(View::VIEW_BOTTOM); }));
     {
-        currentChapter = 10;
+        currentChapter = 11;
         Step s;
         s.title = T("Let the tool fix it");
-        s.text = T("The analysis and the part are hidden now. Select part and fff_constraint_1 again, right-click part and choose Engineering ▸ Manufacturing ▸ manufacturing_optimization. It changes the part "
+        s.text = T("Now let the tool fix it. Select part and fff_constraint_1 again, right-click part and choose Engineering ▸ Manufacturing ▸ manufacturing_optimization. It changes the part "
                    "until the rule is kept, and says what it changed.");
         s.hint = T("The result's card lists what was added and what was cut. The tool never changes more than max_change of the part. Or press Show me.");
         buildLook(s);
         s.group = "manufacturing";
         s.aim = rowAim("part");
+        s.aims = aimRows({"part", "fff_constraint_1"});
+        s.calculates = true;
         s.enter = [=] {
             ensureModel(made("manufacturing_analysis"), mfgModel(3, "45"));
-            m_view->standardView(View::VIEW_BOTTOM);
-            after(500, [=] { hideModel("manufacturing_analysis_1"); hideModel("part"); });         // (the script of the step has run once: the lines that show the analysis and the part are there)
+            m_view->standardView(View::VIEW_BOTTOM);         // (the script of the step has run once: the lines that show the analysis and the part are there)
         };
         s.done = [made] { return made("manufacturing_optimization"); };
         s.doneNote = T("Nice. The part keeps the rule now.");
@@ -3470,13 +3816,20 @@ void Tutorial::buildSteps()
         add(s);
     }
 
-    // ---- Chapter 12: a FielDes app
+    currentChapter = 11;
+    add(isolateStep(T("See the printable part alone"),
+                    T("The new part is drawn with the part and the analysis it comes from, and they cover it. Click manufacturing_optimization_1 in the model tree and press I: only the new part is shown. "
+                      "Press I again to bring the others back."),
+                    "manufacturing_optimization_1", "manufacturing",
+                    [=] { ensureModel(made("manufacturing_optimization"), mfgModel(4, "45")); m_view->standardView(View::VIEW_BOTTOM); }));
+
+    // ---- Chapter 13: a FielDes app
     const QString appHead = tourHeader("[-35, -25, -8], [35, 25, 30]", 4);
     auto appModel = [appHead](const QString& size) {
         return appHead + "app.title('Block maker', 'A block of the size you choose', '1.0')\nsize = " + size + "\nblock = box((-size, -12, 0), (size, 12, 10))\nblock";
     };
     {
-        currentChapter = 11;
+        currentChapter = 12;
         Step s;
         s.title = T("An input instead of a number");
         s.text = T("This script makes a block as wide as size says. To let someone who never opens the editor choose the width, write the number as an input: in the size line, replace 24 "
@@ -3504,7 +3857,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 11;
+        currentChapter = 12;
         Step s;
         s.title = T("See it as the user will");
         s.text = T("Click File, then Preview as app: it opens the form the way the person who gets the app sees it -- a window with the input, a Run button and the result. Change the number there and press Run.");
@@ -3517,7 +3870,7 @@ void Tutorial::buildSteps()
         add(s);
     }
     {
-        currentChapter = 11;
+        currentChapter = 12;
         Step s;
         s.title = T("Send it as a file");
         s.text = T("Click File, then Export as app...: it bundles the script, the blocks it uses and the files it needs into one .fieldesapp file. Whoever receives it double-clicks it, fills in the form "
@@ -3528,18 +3881,6 @@ void Tutorial::buildSteps()
         s.place = Right;
         s.group = "app";
         s.enter = [] { while (auto m = QApplication::activePopupWidget()) m->close(); };
-        add(s);
-    }
-    // 22
-    {
-        currentChapter = 5;
-        Step s;
-        s.title = T("Custom function from block");
-        s.text = T("A Python file in the blocks folder is a block: its functions work in every script, like the built-in ones.");
-        s.hint = T("Settings ▸ Blocks folder chooses the folder. The right-click menu lists them under Parametric shapes ▸ New custom block.");
-        s.menuTitle = "Settings";
-        s.menuEntry = "Blocks folder...";
-        s.place = Right;
         add(s);
     }
     // 26: the keys worth knowing (at the end: they are of what the steps before showed)
@@ -3653,7 +3994,7 @@ void Tutorial::buildSteps()
 ////////////////////////////////////////////////////////////////////////////////
 // Chapters, and where the user was
 
-int Tutorial::chapterCount() { return 12; }
+int Tutorial::chapterCount() { return 13; }
 
 QString Tutorial::chapterTitle(int c) const
 {
@@ -3662,15 +4003,16 @@ QString Tutorial::chapterTitle(int c) const
     case 0: return T("How FielDes works: the script and fields");
     case 1: return T("Navigation, gizmos and shortcuts");
     case 2: return T("Modelling with objects and the model tree");
-    case 3: return T("Work planes, 2D shapes, paths and extrusions");
-    case 4: return T("Symmetry");
-    case 5: return T("The special features, in short");
-    case 6: return T("Build a lattice");
-    case 7: return T("Build a static analysis");
-    case 8: return T("Build a flow analysis");
-    case 9: return T("Build a topology optimization");
-    case 10: return T("Build a manufacturing optimization");
-    case 11: return T("Build a FielDes app");
+    case 3: return T("Import and export");
+    case 4: return T("Work planes, 2D shapes, paths and extrusions");
+    case 5: return T("Symmetry");
+    case 6: return T("The special features, in short");
+    case 7: return T("Build a lattice");
+    case 8: return T("Build a static analysis");
+    case 9: return T("Build a flow analysis");
+    case 10: return T("Build a topology optimization");
+    case 11: return T("Build a manufacturing optimization");
+    case 12: return T("Build a FielDes app");
     }
     return QString();
 }
@@ -3684,16 +4026,18 @@ QString Tutorial::chapterAbout(int c) const
                      "the panes out into windows of their own, and move and reshape models with the gizmo and by dragging their surfaces.");
     case 2: return T("A model lives in three places at once: the viewport, the model tree and the code. You will make models from the right-click menu, write a shape of your own as a formula, "
                      "rename and arrange the models in the tree, make points and faces on a body, snap one body onto another, copy or link a model, and see that a change in one place shows in the other two.");
-    case 3: return T("You will draw on a work plane: a 2D shape from points and curves, and a path to follow. Then you turn them into bodies by extruding them along a line or sweeping them along a path.");
-    case 4: return T("Model one half and let a symmetry make the rest. You make a mirror with one key, model on it, edit the original and watch the images follow, and switch the symmetry off and on again.");
-    case 5: return T("A quick look at what else FielDes does, one short step each: lattices, simulations, flows, manufacturing and apps. The chapters after it build a small version of each yourself.");
-    case 6: return T("You will fill a block with a lattice from the right-click menus: choose a cell, let a field set the thickness of its walls, and watch every cell follow. Then a foam "
+    case 3: return T("You will bring a part in from a STEP file and send a model out as a mesh. Then you save a model as a custom block of your own, find its file in the blocks folder, and find the block "
+                     "in the right-click menu.");
+    case 4: return T("You will draw on a work plane: a 2D shape from points and curves, and a path to follow. Then you turn them into bodies by extruding them along a line or sweeping them along a path.");
+    case 5: return T("Model one half and let a symmetry make the rest. You make a mirror with one key, model on it, edit the original and watch the images follow, and switch the symmetry off and on again.");
+    case 6: return T("A quick look at what else FielDes does, one short step each: lattices, simulations, flows, manufacturing and apps. The chapters after it build a small version of each yourself.");
+    case 7: return T("You will fill a block with a lattice from the right-click menus: choose a cell, let a field set the thickness of its walls, and watch every cell follow. Then a foam "
                      "that does not repeat, made around random points, and a cell of your own, written as an equation.");
-    case 7: return T("You will hold a beam at one end, pull on the other, and let FielDes solve for the stress and the displacement. Then you read the result the way an engineer does.");
-    case 8: return T("You will put a post in a channel, say where the water comes in and where it leaves, and solve the flow round the post: streamlines coloured by speed.");
-    case 9: return T("You will let an optimizer take material away from a beam while it stays as stiff as it can, and look at the density it leaves: where the material stays, and where it goes.");
-    case 10: return T("You will check a part against the rules of a 3D printer, see where it breaks them, and let the tool add what the printer needs so that the part can be printed.");
-    case 11: return T("You will turn a number of your model into the input of an app, preview the app, and export it, so that someone else can use your model without ever seeing the code.");
+    case 8: return T("You will hold a beam at one end, pull on the other, and let FielDes solve for the stress and the displacement. Then you read the result the way an engineer does.");
+    case 9: return T("You will put a post in a channel, say where the water comes in and where it leaves, and solve the flow round the post: streamlines coloured by speed.");
+    case 10: return T("You will let an optimizer take material away from a beam while it stays as stiff as it can, and look at the density it leaves: where the material stays, and where it goes.");
+    case 11: return T("You will check a part against the rules of a 3D printer, see where it breaks them, and let the tool add what the printer needs so that the part can be printed.");
+    case 12: return T("You will turn a number of your model into the input of an app, preview the app, and export it, so that someone else can use your model without ever seeing the code.");
     }
     return QString();
 }
@@ -3888,6 +4232,7 @@ void Tutorial::stop(bool completed)
     m_tick.stop();
     m_layer->hide();
     m_blocker->hide();
+    setCardHome(nullptr);                   // (the card is in this window again before it is hidden: a window of a pane that was pulled out takes what stands in it with it)
     m_card->hide();
     hideCursor();
     while (auto m = QApplication::activePopupWidget()) m->close();
@@ -4056,6 +4401,9 @@ void Tutorial::showStep()
     m_note->setVisible(!s.hint.isEmpty());
     m_noteBusy = false;
     m_busyTicks = 0;
+    m_calcSeen = false;
+    m_calcTicks = 0;
+    m_calcBarRect = QRect();
     {
         // (the chapter and the step in it: "Chapter 3 of 12  ·  4 / 15"; the card that ends a chapter says the chapter only)
         QString counter;
@@ -4215,8 +4563,12 @@ void Tutorial::refresh()
         m_blocker->setGeometry(m_window->rect());
         m_layer->setGeometry(m_window->rect());
     }
+    // (a step about a pane that was pulled out into a window of its own: the card stands in that window, where the user is looking, and not behind it in this one)
+    QWidget* home = s.floatHome ? s.floatHome() : nullptr;
+    setCardHome(home);
     // The menu this step is about, drawn where it opens, with its entry framed; the button that opens it is framed too
     m_menuRect = QRect();
+    m_menuButtonRect = QRect();
     QRect entryRect, buttonRect;
     if (!s.menuTitle.isEmpty())
     {
@@ -4228,6 +4580,7 @@ void Tutorial::refresh()
             QMenu* menu = a->menu();
             const QRect g = m_window->menuBar()->actionGeometry(a);
             buttonRect = QRect(m_window->menuBar()->mapTo(m_window, g.topLeft()), g.size());
+            m_menuButtonRect = buttonRect;
             m_menuRect = QRect(m_window->menuBar()->mapTo(m_window, g.bottomLeft()), menu->size());
             for (QAction* item : menu->actions())
             {
@@ -4268,9 +4621,12 @@ void Tutorial::refresh()
     for (const QRect& h : holes) target = target.isNull() ? h : target.united(h);
     // What the card must not cover: the row the step points at, and the lines of the script it is about
     const QRect aimRect = s.aim ? s.aim() : QRect();
+    const QVector<QRect> aimAll = s.aims ? s.aims() : QVector<QRect>();
     const QVector<int> codeLines = s.code ? s.code() : QVector<int>();
     QVector<QRect> keep;
     if (!aimRect.isEmpty()) keep << aimRect;
+    for (const QRect& r : aimAll)
+        if (!r.isEmpty() && r != aimRect) keep << r;
     {
         Script* sc = m_editor->scriptWidget();
         if (sc && sc->isVisible())
@@ -4293,7 +4649,7 @@ void Tutorial::refresh()
         if (!entryRect.isNull())
         {
             // (the arrow shows where to click: the button of the menu, and the right edge of the entry once the menu is open)
-            to = QApplication::activePopupWidget() ? QPoint(entryRect.right() + 3, entryRect.center().y()) : QPoint(buttonRect.center().x(), buttonRect.bottom() + 3);
+            to = QApplication::activePopupWidget() ? QPoint(entryRect.right() + 3, entryRect.center().y()) : QPoint(buttonRect.center().x(), buttonRect.bottom() + 1);
             arrow = true;
         }
         else if (!aimRect.isEmpty())
@@ -4321,6 +4677,28 @@ void Tutorial::refresh()
         }
     }
     layer->arrow = arrow;
+    // (in the window of the pane: the button that puts it back is framed, and the arrow goes from the card to it)
+    if (home && m_floatLayer)
+    {
+        auto fl = static_cast<TourLayer*>(m_floatLayer.data());
+        const QRect aim = s.floatAim ? s.floatAim() : QRect();
+        fl->setGeometry(home->rect());
+        fl->dim = false;
+        fl->accent = m_done ? kDone : kAmber;
+        fl->frames.clear();
+        fl->arrow = !aim.isEmpty();
+        if (!aim.isEmpty())
+        {
+            fl->frames << aim;
+            const QRect c = m_card->geometry();
+            fl->arrowTo = QPoint(aim.center().x(), aim.bottom() + 5);
+            fl->arrowFrom = QPoint(std::max(c.left() + 20, std::min(c.right() - 20, aim.center().x())), c.top());
+        }
+        fl->show();
+        fl->raise();
+        m_card->raise();
+        fl->update();
+    }
     layer->frames.clear();
     if (s.focus)
     {
@@ -4328,12 +4706,32 @@ void Tutorial::refresh()
         if (!f.isEmpty()) layer->frames << f;
     }
     if (!aimRect.isEmpty()) layer->frames << aimRect;
+    for (const QRect& r : aimAll)
+        if (!r.isEmpty() && r != aimRect) layer->frames << r;
     {
         // The script is the other half of what is drawn: the lines the step is about stay lit and framed, and the lines that
         // were just changed or moved -- by typing, by a drag in the viewport or in the tree -- glow for a moment and fade
         trackChanges();
         layer->lit.clear();
         layer->changes.clear();
+        // The bar of a calculation: lit and framed while the run goes on, and the same place -- green, with the card -- once it is over
+        if (s.calculates)
+        {
+            QWidget* runRow = m_editor->runRow();
+            QRect bar = runRow && runRow->isVisible() ? widgetRect(runRow) : QRect();
+            if (bar.isEmpty())
+            {
+                // (the script has run -- it was read back, or it was quick -- and the result is being drawn: the bar of the picture, bottom right of the viewport, is the one that shows how far it is)
+                const QRect drawn = m_view->renderBarRect();
+                if (!drawn.isEmpty()) bar = QRect(m_view->mapTo(m_window, drawn.topLeft()), drawn.size()).adjusted(-6, -4, 6, 4);
+            }
+            if (!bar.isEmpty()) m_calcBarRect = bar;
+            if (!m_calcBarRect.isNull() && (m_calcSeen || m_done))
+            {
+                layer->lit << m_calcBarRect;
+                layer->frames << m_calcBarRect;
+            }
+        }
         Script* script = m_editor->scriptWidget();
         if (script && script->isVisible())
         {
@@ -4392,6 +4790,33 @@ void Tutorial::refresh()
     m_card->raise();
 }
 
+void Tutorial::setCardHome(QWidget* home)
+{
+    QWidget* want = home ? home : static_cast<QWidget*>(m_window);
+    if (m_card->parentWidget() != want)
+    {
+        const bool shown = m_card->isVisible();
+        m_card->setParent(want);
+        m_cardMoved = false;                // (a card dragged in one window has no place in the other)
+        if (shown || home) m_card->show();
+        m_card->raise();
+    }
+    if (home)
+    {
+        if (!m_floatLayer || m_floatLayer->parentWidget() != home)
+        {
+            if (m_floatLayer) m_floatLayer->deleteLater();
+            m_floatLayer = new TourLayer(home);
+        }
+    }
+    else if (m_floatLayer)
+    {
+        m_floatLayer->hide();
+        m_floatLayer->deleteLater();
+        m_floatLayer = nullptr;
+    }
+}
+
 void Tutorial::updateMask()
 {
     QRegion region(m_blocker->rect());
@@ -4413,7 +4838,20 @@ void Tutorial::layoutCard(const QRect& hole, const QVector<QRect>& keepClear)
     const int wrapped = m_card->layout()->hasHeightForWidth() ? m_card->layout()->totalHeightForWidth(cardWidth) : 0;
     m_card->resize(cardWidth, std::max(wrapped, m_card->sizeHint().height()));
     const Step& s = (*m_steps)[m_index];
-    const QRect win = m_window->rect();
+    // (the window the card stands in: this one, or the window of a pane that was pulled out)
+    QWidget* parentWin = m_card->parentWidget() ? m_card->parentWidget() : m_window;
+    const QRect win = parentWin->rect();
+    // (in the window of a pane that was pulled out: under the button the step is about, at the right edge -- where the user is looking)
+    if (parentWin != m_window && !m_cardMoved)
+    {
+        const QRect aim = s.floatAim ? s.floatAim() : QRect();
+        QRect c(QPoint(0, 0), m_card->size());
+        c.moveTopRight(QPoint(win.right() - 16, aim.isNull() ? 56 : aim.bottom() + 44));
+        c.moveLeft(std::max(8, std::min(win.right() - c.width() - 8, c.left())));
+        c.moveTop(std::max(8, std::min(win.bottom() - c.height() - 8, c.top())));
+        m_card->move(c.topLeft());
+        return;
+    }
     // (a card the user has moved stays where they put it, inside the window, until the step changes)
     if (m_cardMoved)
     {
@@ -4438,10 +4876,16 @@ void Tutorial::layoutCard(const QRect& hole, const QVector<QRect>& keepClear)
     }
     if (!s.menuTitle.isEmpty() && !m_menuRect.isNull() && place != Center)
     {
-        // beside the menu: to its right, in line with its top; where there is no room, to its left
+        // The menu is open: the card stands beside it, to its right -- where there is no room, to its left.  The menu is shut: the card stands under its button, in line with it, so that the arrow
+        // comes straight up to the button, and does not run along the bar under the names of the other menus
         QRect c = card;
-        c.moveTopLeft(QPoint(m_menuRect.right() + margin, m_menuRect.top()));
-        if (!win.adjusted(8, 8, -8, -8).contains(c)) c.moveTopRight(QPoint(m_menuRect.left() - margin, m_menuRect.top()));
+        if (QApplication::activePopupWidget() || m_menuButtonRect.isNull())
+        {
+            c.moveTopLeft(QPoint(m_menuRect.right() + margin, m_menuRect.top()));
+            if (!win.adjusted(8, 8, -8, -8).contains(c)) c.moveTopRight(QPoint(m_menuRect.left() - margin, m_menuRect.top()));
+        }
+        else
+            c.moveTopLeft(QPoint(m_menuButtonRect.left(), m_menuButtonRect.bottom() + 64));
         c.moveLeft(std::max(8, std::min(win.right() - c.width() - 8, c.left())));
         c.moveTop(std::max(8, std::min(win.bottom() - c.height() - 8, c.top())));
         m_card->move(c.topLeft());
@@ -4539,7 +4983,7 @@ bool Tutorial::eventFilter(QObject* obj, QEvent* e)
         }
         if (e->type() == QEvent::MouseMove && m_dragging)
         {
-            const QRect win = m_window->rect();
+            const QRect win = m_card->parentWidget() ? m_card->parentWidget()->rect() : m_window->rect();
             QPoint to = m_dragStart + (static_cast<QMouseEvent*>(e)->globalPos() - m_dragPress);
             to.setX(std::max(0, std::min(win.right() - m_card->width() + 1, to.x())));
             to.setY(std::max(0, std::min(win.bottom() - m_card->height() + 1, to.y())));

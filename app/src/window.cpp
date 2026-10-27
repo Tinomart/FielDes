@@ -448,6 +448,7 @@ Window::Window(Arguments args)
         for (const auto& p : m_blocksChanged) names << QFileInfo(p).fileName();
         m_blocksChanged.clear();
         watchBlocks();      // (files that came or went)
+        view->reloadMenuCatalog();          // (the right-click menus list the blocks of the folder as it is now: a block that was saved, changed or removed shows there at once)
         // (only a script that uses a block of the folder is run again)
         if (editor->callSupport("blocks_used", editor->getScript(), nullptr) != "1") return;
         statusBar()->showMessage(T("Running the script again: %1 changed").arg(names.join(", ")), 6000);
@@ -540,6 +541,11 @@ Window::Window(Arguments args)
     auto save_as_action = file_menu->addAction(T("Save As..."));
     Shortcuts::add(save_as_action, "file.save-as", {QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S)});
     connect(save_as_action, &QAction::triggered, this, &Window::onSaveAs);
+
+    // The script as a block of one's own: a function in a file of the blocks folder, so that the whole model is one call in any script and an entry of the right-click menus
+    auto save_block_action = file_menu->addAction(T("Save as custom block"));
+    save_block_action->setToolTip(T("Save this script as a custom block: a function in a file of the blocks folder, so that the whole model is one call in any script and an entry of the right-click menus"));
+    connect(save_block_action, &QAction::triggered, this, [this]{ saveAsCustomBlock(false); });
 
     file_menu->addSeparator();
 
@@ -1098,8 +1104,10 @@ Window::Window(Arguments args)
         connect(view, &View::fieldViewersChanged, this, syncCard);
         connect(view->scenePanel(), &ScenePanel::fieldsSelected, view, &View::setOpenFields);
         connect(view, &View::fieldIconClicked, this, [=](QString key, bool ctrl) {
-            // (the icon selects the field in the tree, which opens its viewer: the tree and the scene say the same)
-            view->scenePanel()->selectFieldKey(key, ctrl);
+            // (the icon selects the field in the tree, which opens its viewer: the tree and the scene say the same.  A click on the icon of the one field that is open closes it
+            // again -- its row is let go, as the exported app does -- where it was only a click on empty space that did; Ctrl+click goes on adding and taking away)
+            if (!ctrl && view->openFieldKeys() == QStringList{key}) view->scenePanel()->clearSelection();
+            else view->scenePanel()->selectFieldKey(key, ctrl);
             view->setFocus(Qt::MouseFocusReason);
         });
         connect(fieldPanel, &FieldPanel::fieldChosen, view, &View::setActiveField);
@@ -1189,6 +1197,44 @@ Window::Window(Arguments args)
         connect(panel, &WorkPlanePanel::fromViewRequested, view, &View::workPlaneFromView);
         connect(panel, &WorkPlanePanel::newRequested, view, &View::newWorkPlane);
         connect(panel, &WorkPlanePanel::closeRequested, this, [=] { view->setWorkPlaneOpen(false); });
+    }
+
+    {   // The snapping mode: a grid of the whole space that everything that is moved goes to, and a step for every turn.  Tab, a single key like the work plane's: it acts while the viewport
+        // has the keyboard (in the script editor Tab indents).  The work plane view switches it off while it is open and back on when it is left (View::syncSnapWithWorkPlane)
+        auto panel = new GridPanel(view);
+        PopOut::attach(panel, T("Snapping"), "snapping", closeButtonOf(panel));
+        panel->hide();
+        auto snapAction = view_menu->addAction(T("Snapping mode"));
+        snapAction->setCheckable(true);
+        snapAction->setToolTip(T("Snap everything you move to a grid and every turn to a step of angle; a card sets them (Tab with the viewport in front; hold Alt to move freely)"));
+        Shortcuts::add(snapAction, "view.snapping", {QKeySequence(Qt::Key_Tab)});
+        // (only while the viewport itself has the keyboard, not its cards: Tab moves from box to box in them)
+        snapAction->setShortcutContext(Qt::WidgetShortcut);
+        view->addAction(snapAction);
+        // (what the card says is kept: the grid, the step of the turn and how far the lattice reaches are the same the next time FielDes opens)
+        view->setSnapOptions(settings.value("snap/show", true).toBool(), settings.value("snap/spacing", 0.0).toFloat(), settings.value("snap/angle", 5.0).toFloat(),
+                             settings.value("snap/reach", 8).toInt(), settings.value("snap/points", true).toBool());
+        connect(snapAction, &QAction::toggled, this, [=](bool on) { view->setSnapMode(on); });
+        connect(view, &View::snapChanged, this, [=] {
+            const SnapGrid grid = view->snapGrid();
+            {
+                QSignalBlocker block(snapAction);
+                snapAction->setChecked(grid.on);
+            }
+            panel->setGrid(grid, view->snapStep(), false);
+            panel->setVisible(grid.on);
+            if (grid.on) panel->raise();
+        });
+        connect(panel, &GridPanel::optionsChanged, this, [=](bool show, float spacing, float angle, int reach, bool snapPoints) {
+            settings.setValue("snap/show", show);
+            settings.setValue("snap/spacing", double(spacing));
+            settings.setValue("snap/angle", double(angle));
+            settings.setValue("snap/reach", reach);
+            settings.setValue("snap/points", snapPoints);
+            view->setSnapOptions(show, spacing, angle, reach, snapPoints);
+        });
+        connect(panel, &GridPanel::closeRequested, this, [=] { view->setSnapMode(false); });
+        connect(this, &Window::unitsChanged, panel, &GridPanel::refreshUnits);
     }
 
     {   // The symmetry: a model of the script (`mirror = symmetry_planes(...)`) that is selected in the model tree; what is made while it is in use is made at its images too.
@@ -2017,6 +2063,14 @@ Window::Window(Arguments args)
         // popout <key>: an element of the window is pulled out into a window of its own, or put back (popout.hpp); popouts: which are, and which there are
         a->add("popout", [=](const QString& what){ if (auto p = PopOut::find(what.trimmed())) p->toggle(); else std::cerr << "automation: popout: no element called " << what.trimmed().toStdString() << "\n"; });
         a->add("popouts", [=](const QString&){ std::cerr << "automation: popouts there " << PopOut::keys().join(",").toStdString() << " out " << PopOut::floatingKeys().join(",").toStdString() << "\n"; });
+        // popgrab <key> <path>: a picture of the window a pane was pulled out into (the `grab` of the main window does not show it)
+        a->add("popgrab", [=](const QString& args){
+            const QString key = args.trimmed().section(' ', 0, 0);
+            const QString path = args.trimmed().mid(key.size()).trimmed();
+            PopOut* p = PopOut::find(key);
+            if (!p || !p->floating() || !p->window()) { std::cerr << "automation: popgrab: " << key.toStdString() << " is not out\n"; return; }
+            p->window()->grab().save(path);
+        });
         // focusstate: the pane that has the keyboard (the one the frame is round), and the word and the tooltip the status bar gives it
         a->add("focusstate", [=](const QString&){
             const auto cue = findChild<FocusCue*>();
@@ -4878,8 +4932,10 @@ void Window::onReportBug(bool)
 
 void Window::onImportModel(bool)
 {
+    // (the guided tour's step about importing opens the window in the folder of the example parts: the part it asks for is there)
+    const QString tourDir = property("tourImportDir").toString();
     const QString f = QFileDialog::getOpenFileName(
-            this, T("Import model"), workingDirectory(),
+            this, T("Import model"), !tourDir.isEmpty() && QFileInfo(tourDir).isDir() ? tourDir : workingDirectory(),
             T("CAD models (*.step *.stp *.STEP *.STP *.stl *.STL *.obj *.OBJ *.ply *.PLY *.3mf *.3MF *.glb *.GLB *.gltf *.GLTF);;"
             "STEP (*.step *.stp);;Triangle meshes (*.stl *.obj *.ply *.3mf *.glb *.gltf);;Any files (*)"));
     if (!f.isEmpty())
@@ -5045,6 +5101,22 @@ void Window::watchImports(const QString& sceneJson)
     const QStringList had = m_stepWatcher.files();
     for (const auto& p : had) if (!paths.contains(p)) m_stepWatcher.removePath(p);
     for (const auto& p : paths) if (!had.contains(p)) m_stepWatcher.addPath(p);
+}
+
+void Window::saveAsCustomBlock(bool quiet)
+{
+    QString why;
+    const QString answer = editor->callSupport("save_as_block", editor->getScript(), &why);
+    const QJsonObject r = QJsonDocument::fromJson(answer.toUtf8()).object();
+    if (r.contains("path"))
+    {
+        if (!quiet) statusBar()->showMessage(T("Saved as the custom block %1: %2").arg(r["name"].toString(), QDir::toNativeSeparators(r["path"].toString())), 12000);
+        watchBlocks();
+        view->reloadMenuCatalog();          // (the menus are read once: the block is in them from now on, without waiting for the folder's watcher)
+    }
+    else if (!quiet)
+        QMessageBox::warning(this, T("Save as custom block"), r.contains("error") ? r["error"].toString()
+                                                                             : (why.isEmpty() ? T("The script could not be saved as a block.") : why));
 }
 
 void Window::watchBlocks()

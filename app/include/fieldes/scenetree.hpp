@@ -144,6 +144,8 @@ public:
      *  tree that is built until showAll(); and where a row is, without opening or scrolling to it (empty when it is not in view)  */
     void showOnly(const QStringList& open);
     void showAll();
+    /*  For the guided tour: whether a model is isolated (the I key shows only the models that are selected)  */
+    bool isolated() const { return m_isolated; }
     QRect visibleRowRect(const QString& prefix, QWidget* in);
     /*  Where the first placeholder row, and the first section row, are (in the coordinates of `in`; empty when there is none in view)  */
     QRect placeholderRect(QWidget* in);

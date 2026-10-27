@@ -977,6 +977,20 @@ public:
     QWidget* createEditor(QWidget*, const QStyleOptionViewItem&, const QModelIndex&) const override { return nullptr; }
 };
 
+// A column of buttons that no row has a button in takes no room.  The name column is what is left of the panel after the columns of the buttons, and the three that belong to an
+// imported part -- the cache, reimport, reset -- are empty for a model made in the script: 60 pixels of a panel that can be 220 wide, which is the room of the name (in the tour's
+// Rename step the rows showed their buttons and no name at all)
+static void fitButtonColumns(QTreeWidget* tree)
+{
+    for (int c : {int(COL_CACHE), int(COL_ACTION), int(COL_RESET)})
+    {
+        bool used = false;
+        for (QTreeWidgetItemIterator i(tree); *i && !used; ++i)
+            used = !(*i)->icon(c).isNull() || tree->itemWidget(*i, c) != nullptr;
+        tree->setColumnHidden(c, !used);
+    }
+}
+
 // The tree of the model tree: a model is dragged by its row with the mouse -- done here, from the mouse events, not with Qt's
 // drag and drop (which is slow to start, runs a loop of its own that holds the application, and cannot be driven by a test):
 // onto an operation (to be one of its inputs), or between two rows (to stand there in the script).  The tree draws where a drop
@@ -1851,8 +1865,9 @@ ScenePanel::ScenePanel(QWidget* parent)
     layout->addWidget(m_tree);
     layout->addWidget(m_note);
 
-    setMinimumWidth(220);
-    new CardController(this, "model-tree", m_header, QSize(220, 80));      // (dragged by its header, resized from its edges)
+    // (not narrower than the names need: at 220 the columns of the buttons left a row about 20 pixels for its name, and the tour's Rename step showed none)
+    setMinimumWidth(260);
+    new CardController(this, "model-tree", m_header, QSize(260, 80));      // (dragged by its header, resized from its edges)
     m_tree->setTextElideMode(Qt::ElideMiddle);
     if (parent)
     {
@@ -3272,6 +3287,7 @@ void ScenePanel::rebuild()
             bare = row->icon(c).isNull() && row->text(c).isEmpty() && !m_tree->itemWidget(row, c);
         if (bare) row->setFirstColumnSpanned(true);
     }
+    fitButtonColumns(m_tree);
 
     // Footer notes: analysis problems, truncated huge scripts
     QString note;
@@ -4797,6 +4813,7 @@ void ScenePanel::setCacheStates(const QHash<int, QString>& states)
         const auto target = type == "part" ? gizmoTarget(it, row->data(COL_NAME, ROLE_PART).toInt()) : it;
         if (!target.isEmpty()) setCacheButton(row, target);
     }
+    fitButtonColumns(m_tree);
 }
 
 void ScenePanel::toggleCache(const QJsonObject& target)

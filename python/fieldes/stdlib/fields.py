@@ -188,12 +188,21 @@ def z_field():
     return Z()
 
 
-def radial_field(center=(0, 0, 0), axis='z'):
-    ''' Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields '''
+def _point_radius(center, radius):
+    ''' The radius a field round a point is measured from: `radius` when it is given, else the influence the point itself says (`point(x, y, z, influence=r)`), else none --
+        the plain distance from the point '''
+    return getattr(center, '_influence', None) if radius is None else radius
+
+
+def radial_field(center=(0, 0, 0), axis='z', radius=None):
+    ''' Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields.  With a `radius` -- or the influence of the point that is given as
+        the centre, `point(x, y, z, influence=r)` -- it is the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside '''
+    radius = _point_radius(center, radius)
     c = _coords(center)
     x, y, z = X() - c[0], Y() - c[1], Z() - c[2]
     a, b = {'x': (y, z), 'y': (x, z), 'z': (x, y)}[axis]
-    return (a.square() + b.square()).sqrt()
+    out = (a.square() + b.square()).sqrt()
+    return out if radius is None else out - radius
 
 
 def angle_field(center=(0, 0, 0), axis='z'):
@@ -216,10 +225,14 @@ def polar_field(center=(0, 0, 0), axis='z'):
 ################################################################################
 # Distances
 
-def distance_to_point(p):
-    ''' Euclidean distance to a point (its coordinates may be fields: a point that is where a field says) '''
+def distance_to_point(p, radius=None):
+    ''' Euclidean distance to a point (its coordinates may be fields: a point that is where a field says).  With a `radius` -- or the influence of the point that is given,
+        `point(x, y, z, influence=r)`, which is the radius in mm -- it is the distance from the SPHERE of that radius round the point: negative inside it (-r at the point),
+        0 on it, positive outside: a sphere's value, as a field.  A point that says no influence, and no radius, is the plain distance from it '''
+    radius = _point_radius(p, radius)
     p = _coords(p)
-    return ((X() - p[0]).square() + (Y() - p[1]).square() + (Z() - p[2]).square()).sqrt()
+    out = ((X() - p[0]).square() + (Y() - p[1]).square() + (Z() - p[2]).square()).sqrt()
+    return out if radius is None else out - radius
 
 
 def distance_to_points(points):

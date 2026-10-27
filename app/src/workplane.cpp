@@ -18,6 +18,7 @@ of the License, or (at your option) any later version.
 #include <QPainterPath>
 #include <QPixmap>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -364,6 +365,265 @@ void WorkPlanePanel::showEvent(QShowEvent* e)
 void WorkPlanePanel::place()
 {
     if (!CardController::sized(this)) resize(300, std::max(minimumSizeHint().height(), sizeHint().height()));
+    if (parentWidget() && !CardController::moved(this))
+    {
+        // Top-right, below the orientation triad -- and below the section card when that is there too
+        int top = 124;
+        if (auto section = parentWidget()->findChild<QWidget*>("SectionPanel"))
+        {
+            if (section->isVisible()) top = section->geometry().bottom() + 8;
+        }
+        move(parentWidget()->width() - width() - 8, top);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// The card of the snapping mode
+
+GridPanel::GridPanel(QWidget* parent)
+    : QFrame(parent),
+      m_header(new QToolButton), m_close(new QToolButton), m_body(new QWidget),
+      m_show(new QToolButton), m_snapPoints(new QToolButton), m_auto(new QToolButton), m_half(new QToolButton), m_double(new QToolButton),
+      m_step(new Units::LengthSpinBox), m_angle(new QDoubleSpinBox), m_reach(new QSpinBox), m_hint(new QLabel)
+{
+    setObjectName("GridPanel");
+    setAttribute(Qt::WA_StyledBackground, true);
+    // (the look of the work plane's card, with the amber of the snapping mode in its border and in what is on)
+    setStyleSheet(
+        "#GridPanel { background: rgba(22, 76, 94, 222);"
+        "  border: 1px solid rgba(176, 130, 255, 150); border-radius: 6px; }"
+        "QLabel { color: #93a1a1; font-size: 8pt; }"
+        "QLabel#GridHint { color: #eee8d5; }"
+        "QToolButton { color: #eee8d5; background: rgba(147, 161, 161, 28);"
+        "  border: 1px solid rgba(147, 161, 161, 60); border-radius: 4px;"
+        "  padding: 2px 8px; font-size: 8pt; }"
+        "QToolButton:hover { background: rgba(147, 161, 161, 60); }"
+        "QToolButton:checked { background: rgba(110, 70, 190, 200);"
+        "  border-color: rgba(176, 130, 255, 230); color: white; }"
+        "QToolButton:disabled { color: rgba(147, 161, 161, 120); }"
+        "QToolButton#GridHeader { background: transparent; border: none; font-weight: bold;"
+        "  font-size: 9pt; padding: 3px 4px; color: #b182ff; }"
+        "QToolButton#GridClose { background: transparent; border: none; color: #93a1a1;"
+        "  padding: 2px 5px; font-size: 9pt; }"
+        "QToolButton#GridClose:hover { color: #eee8d5; }"
+        "QDoubleSpinBox, QSpinBox { color: #eee8d5; background: rgba(0, 0, 0, 70);"
+        "  border: 1px solid rgba(147, 161, 161, 70); border-radius: 3px; padding: 1px 2px;"
+        "  font-size: 8pt; selection-background-color: rgba(110, 70, 190, 200); }"
+        "QDoubleSpinBox:disabled, QSpinBox:disabled { color: rgba(147, 161, 161, 140); }");
+
+    m_header->setObjectName("GridHeader");
+    m_header->setText(QString(QChar(0x25be)) + "  " + T("Snapping"));
+    m_header->setCursor(Qt::PointingHandCursor);
+    m_header->setToolTip(T("Collapse / expand"));
+    m_close->setObjectName("GridClose");
+    m_close->setText(QString(QChar(0x2715)));
+    m_close->setToolTip(T("Leave the snapping mode (Tab)"));
+    auto head = new QHBoxLayout;
+    head->setContentsMargins(0, 0, 0, 0);
+    head->setSpacing(4);
+    head->addWidget(m_header);
+    head->addStretch();
+    head->addWidget(m_close);
+
+    auto label = [](const QString& t) {
+        auto l = new QLabel(t);
+        l->setFixedWidth(70);
+        return l;
+    };
+
+    m_show->setObjectName("gridShow");
+    m_show->setCheckable(true);
+    m_show->setChecked(true);
+    m_show->setText(T("Grid"));
+    m_show->setToolTip(T("Draw the grid: a lattice of lines in the whole space, faint with distance"));
+    m_snapPoints->setObjectName("gridSnapPoints");
+    m_snapPoints->setCheckable(true);
+    m_snapPoints->setChecked(true);
+    m_snapPoints->setText(T("To points"));
+    m_snapPoints->setToolTip(T("A model put down or pulled out also lands on the points that are already there, when it is near one"));
+    auto showRow = new QHBoxLayout;
+    showRow->addWidget(label(T("Show")));
+    showRow->addWidget(m_show);
+    showRow->addStretch();
+    auto snapRow = new QHBoxLayout;
+    snapRow->addWidget(label(T("Snap")));
+    snapRow->addWidget(m_snapPoints);
+    snapRow->addStretch();
+
+    // The step of the grid: automatic, from how large the picture is, or a number -- halved and doubled with a click
+    m_auto->setObjectName("gridAuto");
+    m_auto->setCheckable(true);
+    m_auto->setChecked(true);
+    m_auto->setText(T("Auto"));
+    m_auto->setToolTip(T("The grid's step from how large the picture is"));
+    m_step->setObjectName("gridStep");
+    m_step->setLengthDecimals(4);
+    m_step->setRange(1e-4, 1e6);
+    m_step->setValue(1);
+    m_step->setKeyboardTracking(false);
+    m_step->setButtonSymbols(QDoubleSpinBox::NoButtons);
+    m_step->setFixedWidth(96);
+    m_step->setEnabled(false);
+    m_step->setToolTip(T("The step of the grid: everything that is moved goes to a multiple of it"));
+    m_half->setObjectName("gridHalf");
+    m_half->setText(QString::fromUtf8("\xc2\xbd"));
+    m_half->setToolTip(T("Half the step"));
+    m_double->setObjectName("gridDouble");
+    m_double->setText(QString::fromUtf8("\xc3\x97" "2"));
+    m_double->setToolTip(T("Twice the step"));
+    auto stepRow = new QHBoxLayout;
+    stepRow->setSpacing(4);
+    stepRow->addWidget(label(T("Grid step")));
+    stepRow->addWidget(m_auto);
+    stepRow->addWidget(m_step, 1);
+    stepRow->addWidget(m_half);
+    stepRow->addWidget(m_double);
+
+    // The step of a turn: every turn in the mode, and the turn of the Shift gizmo whether the mode is on or not
+    m_angle->setObjectName("gridAngle");
+    m_angle->setRange(0.1, 180.0);
+    m_angle->setDecimals(1);
+    m_angle->setSingleStep(5.0);
+    m_angle->setSuffix(QString::fromUtf8("\xc2\xb0"));
+    m_angle->setValue(5.0);
+    m_angle->setKeyboardTracking(false);
+    m_angle->setButtonSymbols(QDoubleSpinBox::NoButtons);
+    m_angle->setFixedWidth(60);
+    m_angle->setToolTip(T("The step of a turn: every turn goes to a multiple of it -- the turn of the Shift gizmo too, in the mode or not"));
+    auto angleRow = new QHBoxLayout;
+    angleRow->setSpacing(4);
+    angleRow->addWidget(label(T("Angle step")));
+    angleRow->addWidget(m_angle);
+    angleRow->addStretch();
+    auto presetRow = new QHBoxLayout;               // (the steps people use, under the box: a row of its own, so that nothing is squeezed)
+    presetRow->setSpacing(4);
+    presetRow->addSpacing(74);
+    for (const int degrees : {1, 5, 15, 45, 90})
+    {
+        auto b = new QToolButton;
+        b->setText(QString::number(degrees) + QString::fromUtf8("\xc2\xb0"));
+        b->setToolTip(T("Turn in steps of %1 degrees").arg(degrees));
+        b->setStyleSheet("padding: 2px 6px;");
+        connect(b, &QToolButton::clicked, this, [this, degrees] { m_angle->setValue(degrees); });
+        presetRow->addWidget(b);
+    }
+    presetRow->addStretch();
+
+    m_reach->setObjectName("gridReach");
+    m_reach->setRange(2, 10);
+    m_reach->setValue(8);
+    m_reach->setSuffix(" " + T("steps"));
+    m_reach->setKeyboardTracking(false);
+    m_reach->setButtonSymbols(QSpinBox::NoButtons);
+    m_reach->setFixedWidth(70);
+    m_reach->setToolTip(T("How far the grid is drawn round the place you look at, in steps: the farther lines are left out, so that a far row does not distract"));
+    auto reachRow = new QHBoxLayout;
+    reachRow->addWidget(label(T("Distance")));
+    reachRow->addWidget(m_reach);
+    reachRow->addStretch();
+
+    m_hint->setObjectName("GridHint");
+    m_hint->setWordWrap(true);
+    m_hint->setFixedHeight(54);
+    m_hint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    m_hint->setText(T("Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode."));
+
+    auto body = new QVBoxLayout(m_body);
+    body->setContentsMargins(6, 2, 6, 4);
+    body->setSpacing(6);
+    body->addLayout(showRow);
+    body->addLayout(stepRow);
+    body->addLayout(angleRow);
+    body->addLayout(presetRow);
+    body->addLayout(reachRow);
+    body->addLayout(snapRow);
+    body->addWidget(m_hint);
+
+    auto layout = new QVBoxLayout(this);
+    layout->setContentsMargins(7, 4, 7, 7);            // (the margin is where a card is resized from)
+    layout->setSpacing(2);
+    layout->addLayout(head);
+    layout->addWidget(m_body);
+    setMinimumWidth(340);
+    resize(340, 100);
+
+    new CardController(this, "snapping", m_header, QSize(320, 60));
+    connect(m_header, &QToolButton::clicked, this, [this] {
+        m_collapsed = !m_collapsed;
+        m_body->setVisible(!m_collapsed);
+        m_header->setText(QString(QChar(m_collapsed ? 0x25b8 : 0x25be)) + "  " + T("Snapping"));
+        CardController::collapse(this, m_collapsed, m_header->sizeHint().height() + 14);
+        place();
+    });
+    connect(m_close, &QToolButton::clicked, this, &GridPanel::closeRequested);
+    connect(m_show, &QToolButton::toggled, this, [this] { emitOptions(); });
+    connect(m_snapPoints, &QToolButton::toggled, this, [this] { emitOptions(); });
+    connect(m_auto, &QToolButton::toggled, this, [this](bool on) {
+        m_step->setEnabled(!on);
+        emitOptions();
+    });
+    connect(m_step, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { emitOptions(); });
+    connect(m_angle, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { emitOptions(); });
+    connect(m_reach, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int) { emitOptions(); });
+    // (half and double are of the step that is shown: when it was automatic it becomes a number of its own, the one the automatic step worked out to, halved or doubled)
+    connect(m_half, &QToolButton::clicked, this, [this] {
+        const double v = m_step->value();
+        m_auto->setChecked(false);
+        m_step->setValue(std::max(1e-4, v / 2.0));
+    });
+    connect(m_double, &QToolButton::clicked, this, [this] {
+        const double v = m_step->value();
+        m_auto->setChecked(false);
+        m_step->setValue(std::min(1e6, v * 2.0));
+    });
+
+    if (parent) parent->installEventFilter(this);
+}
+
+void GridPanel::emitOptions()
+{
+    if (m_updating) return;
+    emit(optionsChanged(m_show->isChecked(), m_auto->isChecked() ? 0.0f : float(m_step->value()), float(m_angle->value()), m_reach->value(), m_snapPoints->isChecked()));
+}
+
+void GridPanel::setGrid(const SnapGrid& grid, float step, bool suspended)
+{
+    Q_UNUSED(suspended);
+    m_updating = true;
+    {
+        QSignalBlocker a(m_show), b(m_snapPoints), c(m_auto), d(m_step), e(m_angle), f(m_reach);
+        m_show->setChecked(grid.show);
+        m_snapPoints->setChecked(grid.snapPoints);
+        m_auto->setChecked(grid.spacing <= 0);
+        m_step->setEnabled(grid.spacing > 0);
+        m_step->setValue(grid.spacing > 0 ? grid.spacing : std::max(1e-4f, step));
+        m_angle->setValue(grid.angle);
+        m_reach->setValue(grid.reach);
+    }
+    m_updating = false;
+}
+
+void GridPanel::refreshUnits()
+{
+    QSignalBlocker a(m_step);
+    m_step->refreshUnit();
+}
+
+bool GridPanel::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == parentWidget() && e->type() == QEvent::Resize) place();
+    return QFrame::eventFilter(obj, e);
+}
+
+void GridPanel::showEvent(QShowEvent* e)
+{
+    QFrame::showEvent(e);
+    place();
+}
+
+void GridPanel::place()
+{
+    if (!CardController::sized(this)) resize(340, std::max(minimumSizeHint().height(), sizeHint().height()));
     if (parentWidget() && !CardController::moved(this))
     {
         // Top-right, below the orientation triad -- and below the section card when that is there too

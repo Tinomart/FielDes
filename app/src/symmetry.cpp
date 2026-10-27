@@ -520,7 +520,7 @@ void SymmetryPanel::place()
     {
         // Top-right, below the orientation triad -- and below the section card and the work plane's, when they are there too
         int top = 124;
-        for (const char* name : {"SectionPanel", "WorkPlanePanel"})
+        for (const char* name : {"SectionPanel", "WorkPlanePanel", "GridPanel"})
         {
             if (auto other = parentWidget()->findChild<QWidget*>(name))
                 if (other->isVisible()) top = std::max(top, other->geometry().bottom() + 8);

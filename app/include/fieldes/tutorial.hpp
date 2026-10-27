@@ -14,6 +14,7 @@ of the License, or (at your option) any later version.
 #include <QObject>
 #include <QPixmap>
 #include <QPoint>
+#include <QPointer>
 #include <QRect>
 #include <QString>
 #include <QElapsedTimer>
@@ -70,7 +71,7 @@ public:
     int stepIndex() const { return m_index; }
     int stepCount() const;
     QString stepTitle() const;
-    /*  The tour is in twelve chapters, one after the other: each ends with a card that congratulates and asks whether to go on or to explore alone.  `chapter()` is the one
+    /*  The tour is in thirteen chapters, one after the other: each ends with a card that congratulates and asks whether to go on or to explore alone.  `chapter()` is the one
      *  of the open step (-1: the welcome card and the card that says where the tour is found again); the first step of each is where the chapter menu of the card, and the
      *  progress that is kept, go to  */
     static int chapterCount();
@@ -117,6 +118,9 @@ private:
     void showDoneLook(bool done);
     void refresh();                         // (where things are now: the target, the card, the arrow)
     void layoutCard(const QRect& hole, const QVector<QRect>& keepClear);
+    /*  The window the card stands in: the main window, or -- for a step about a pane that was pulled out into a window of its own -- that window, where the user is looking.
+     *  `home` null: back in the main window  */
+    void setCardHome(QWidget* home);
     void updateMask();
     void setCursor(const QPoint& windowPos, bool pressed = false);
     void hideCursor();
@@ -219,6 +223,11 @@ private:
     bool m_dragging = false;
     QPoint m_dragPress, m_dragStart;        // (where the mouse was pressed, on the screen, and where the card was)
     int m_popState = 0;                     // (the step about pulling a pane out: 0 not yet, 1 the viewport has been out)
+    bool m_calcSeen = false;                // (a step that starts a calculation: the run has been seen going, and the step waits for it to end)
+    int m_calcTicks = 0;                    // (polls since the call was written without the run being seen: a result read back from the cache never shows a run)
+    QRect m_calcBarRect;                    // (where the bar of the run was, in the window: it is framed while the run goes on, and green once it is over)
+    QRect m_menuButtonRect;                 // (the button of the menu bar a step about a menu entry is about)
+    QPointer<QWidget> m_floatLayer;         // (the glowing frame and the arrow in the window of a pane that was pulled out, while the card stands there)
 };
 
 }   // namespace FielDes

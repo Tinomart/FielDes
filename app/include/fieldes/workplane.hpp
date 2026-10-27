@@ -14,6 +14,7 @@ of the License, or (at your option) any later version.
 
 class QDoubleSpinBox;
 class QLabel;
+class QSpinBox;
 class QToolButton;
 
 namespace FielDes {
@@ -42,6 +43,21 @@ struct WorkPlane
 
     QVector3D normal() const { return QVector3D::crossProduct(u, v).normalized(); }
     QVector3D origin() const { return base + normal() * offset; }
+};
+
+/*
+ *  The snapping mode (Tab in the viewport): a grid of the whole space, a lattice of lines a step apart whose nodes are the places that everything that is moved goes to --
+ *  models dragged by their arrows or squares, the faces and points that are pulled, what a click puts down -- and a step of angle that every turn is made in.  It is a tool of
+ *  the viewport like the work plane, and the work plane view switches it off while it is open (that plane has a grid of its own) and back on when it is left
+ */
+struct SnapGrid
+{
+    bool on = false;                // the mode is on
+    bool show = true;               // the lattice is drawn
+    float spacing = 0;              // the step of the lattice in mm; 0: automatic, from how large the picture is
+    float angle = 5.0f;             // the step of a turn in degrees: every turn while the mode is on, and the turn of the Shift gizmo whether it is on or not
+    int reach = 8;                  // how many steps of the lattice are drawn round the place the view looks at: the distance it can be seen from
+    bool snapPoints = true;         // what is put down or pulled also goes onto the points that are there
 };
 
 /*
@@ -90,6 +106,48 @@ protected:
     Units::LengthSpinBox* m_offset;
     QLabel* m_info;
     QLabel* m_readout;
+    bool m_collapsed = false;
+    bool m_updating = false;
+};
+
+/*
+ *  The card of the snapping mode, in the viewport's top-right corner like the work plane's: whether the lattice is drawn, its step (automatic or a number, halved and doubled with
+ *  a click), the step of a turn, how far the lattice reaches, and whether the points that are there are snapped to as well
+ */
+class GridPanel : public QFrame
+{
+    Q_OBJECT
+public:
+    explicit GridPanel(QWidget* parent = nullptr);
+
+public slots:
+    /*  The state of the mode, from the view; `step` is the lattice's step now (when it is automatic, what it works out to)  */
+    void setGrid(const SnapGrid& grid, float step, bool suspended);
+    /*  The units were changed (Settings > Units): the box of the step shows them in the unit chosen  */
+    void refreshUnits();
+
+signals:
+    void optionsChanged(bool show, float spacing, float angle, int reach, bool snapPoints);
+    void closeRequested();
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
+    void showEvent(QShowEvent* e) override;
+    void place();
+    void emitOptions();
+
+    QToolButton* m_header;
+    QToolButton* m_close;
+    QWidget* m_body;
+    QToolButton* m_show;
+    QToolButton* m_snapPoints;
+    QToolButton* m_auto;
+    QToolButton* m_half;
+    QToolButton* m_double;
+    Units::LengthSpinBox* m_step;
+    QDoubleSpinBox* m_angle;
+    QSpinBox* m_reach;
+    QLabel* m_hint;
     bool m_collapsed = false;
     bool m_updating = false;
 };
