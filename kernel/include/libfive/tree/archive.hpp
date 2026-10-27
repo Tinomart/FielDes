@@ -38,6 +38,12 @@ public:
     void serialize(std::ostream& out);
 
     /*
+     *  The same, with the free variables written as the numbers they stand for (a file holds none):
+     *  false when a free variable of the tree is not among `constants` (it comes back with no number)
+     */
+    bool serialize(std::ostream& out, const std::map<Tree::Id, float>& constants);
+
+    /*
      *  Deserialize from a set of raw bytes
      */
     static Archive deserialize(std::istream& in);

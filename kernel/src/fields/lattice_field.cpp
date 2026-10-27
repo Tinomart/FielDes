@@ -29,6 +29,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -40,6 +41,8 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/eval/tape.hpp"
 #include "libfive/oracle/oracle_clause.hpp"
 #include "libfive/oracle/oracle_storage.hpp"
+#include "libfive/tree/serializer.hpp"
+#include "libfive/tree/deserializer.hpp"
 
 namespace libfive {
 namespace fields {
@@ -258,9 +261,104 @@ public:
     std::string contentKey() const override { return data->key; }
     std::string persistentKey() const override { return data->key; }
 
+    // A lattice can be kept in a file (a result of the manufacturing tools is a field made of them): its frame, the values at the nodes and the key that names it.  The pyramid of ranges is built again
+    // when it is read back, and the key is the one it was made with, so that what was drawn of it is found in the render cache again.  Most of a lattice is one value (`cap`, or 0, far from anything it
+    // holds): the values are written as runs -- a stretch of four or more equal values (the same bits) is its length and the value, anything else a count and the values themselves --, which
+    // makes the 25 million nodes (100 MB) of the correction lattice of a small part a few megabytes
+    bool serialize(Serializer& out) const
+    {
+        for (int a = 0; a < 3; ++a) out.serializeBytes(int32_t(data->n[a]));
+        out.serializeBytes(data->h);
+        for (int a = 0; a < 3; ++a) out.serializeBytes(data->o[a]);
+        for (int a = 0; a < 3; ++a)
+            for (int c = 0; c < 3; ++c) out.serializeBytes(data->e[a][c]);
+        out.serializeBytes(data->cap);
+        out.serializeString(data->key);
+        const std::vector<float>& g = data->g;
+        out.serializeBytes(uint64_t(g.size()));
+        const auto same = [&](size_t a, size_t b) { return std::memcmp(&g[a], &g[b], sizeof(float)) == 0; };
+        const uint32_t kRun = 0x80000000u;
+        const size_t kMost = 0x7fffffffu;
+        size_t lit = 0;                                         // (the start of the values not written yet that are no run)
+        auto flush = [&](size_t end) {
+            while (lit < end)
+            {
+                const size_t n = std::min(end - lit, kMost);
+                out.serializeBytes(uint32_t(n));
+                for (size_t k = 0; k < n; ++k) out.serializeBytes(g[lit + k]);
+                lit += n;
+            }
+        };
+        size_t i = 0;
+        while (i < g.size())
+        {
+            size_t j = i + 1;
+            while (j < g.size() && same(i, j)) ++j;
+            if (j - i >= 4)
+            {
+                flush(i);
+                for (size_t at = i; at < j;)
+                {
+                    const size_t n = std::min(j - at, kMost);
+                    out.serializeBytes(uint32_t(kRun | uint32_t(n)));
+                    out.serializeBytes(g[i]);
+                    at += n;
+                }
+                lit = j;
+                i = j;
+            }
+            else
+            {
+                ++i;
+            }
+        }
+        flush(g.size());
+        return true;
+    }
+    static std::unique_ptr<const OracleClause> deserialize(Deserializer& in)
+    {
+        auto d = std::make_shared<LatticeData>();
+        for (int a = 0; a < 3; ++a) d->n[a] = int(in.deserializeBytes<int32_t>());
+        d->h = in.deserializeBytes<double>();
+        for (int a = 0; a < 3; ++a) d->o[a] = in.deserializeBytes<double>();
+        for (int a = 0; a < 3; ++a)
+            for (int c = 0; c < 3; ++c) d->e[a][c] = in.deserializeBytes<double>();
+        d->cap = in.deserializeBytes<float>();
+        d->key = in.deserializeString();
+        const uint64_t count = in.deserializeBytes<uint64_t>();
+        if (d->n[0] < 1 || d->n[1] < 1 || d->n[2] < 1 || count != uint64_t(d->n[0]) * uint64_t(d->n[1]) * uint64_t(d->n[2]))
+            return nullptr;                                    // (a file that is not what it says)
+        d->g.resize(size_t(count));
+        size_t at = 0;
+        while (at < size_t(count))
+        {
+            const uint32_t token = in.deserializeBytes<uint32_t>();
+            const size_t n = token & 0x7fffffffu;
+            if (n == 0 || at + n > size_t(count)) return nullptr;
+            if (token & 0x80000000u)
+            {
+                const float v = in.deserializeBytes<float>();
+                std::fill(d->g.begin() + at, d->g.begin() + at + n, v);
+            }
+            else
+            {
+                for (size_t k = 0; k < n; ++k) d->g[at + k] = in.deserializeBytes<float>();
+            }
+            at += n;
+        }
+        d->buildPyramid();
+        return std::make_unique<LatticeClause>(d);
+    }
+
 private:
     std::shared_ptr<const LatticeData> data;
 };
+
+struct LatticeClauseInstaller
+{
+    LatticeClauseInstaller() { OracleClause::install<LatticeClause>("OverhangLattice"); }
+};
+static LatticeClauseInstaller latticeClauseInstaller;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Threads

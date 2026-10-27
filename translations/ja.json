@@ -1328,7 +1328,7 @@
  "Hybrid": "ハイブリッド",
  "Meshing algorithm": "メッシュ化アルゴリズム",
  "Clear the caches": "キャッシュを消去",
- "Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next time they are needed, and kept again)": "レンダリングキャッシュが保持しているメッシュと、フィールドキャッシュが保持しているフィールドをすべて削除します（次に必要になったときに再計算され、再び保存されます）",
+ "Delete every mesh the render cache kept, every field the field cache kept and every solved problem the result cache kept (they are made again the next time they are needed, and kept again; the ones that come with the program stay)": "レンダリングキャッシュが保持しているメッシュ、フィールドキャッシュが保持しているフィールド、結果キャッシュが保持している解いた問題をすべて削除します（次に必要になったときに再び作られ、再び保存されます。プログラムに付属しているものは残ります）",
  "Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted": "キャッシュを消去しました: 保存されていたメッシュ %1 個、フィールド %2 個、%3 MB を削除",
  "Show hidden messages again": "非表示にしたメッセージを再び表示",
  "The messages you turned off with \"Do not show this message again\" are shown again": "「今後このメッセージを表示しない」で非表示にしたメッセージが、再び表示されます",

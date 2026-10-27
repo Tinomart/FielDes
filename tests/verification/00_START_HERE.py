@@ -220,6 +220,14 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     "Run the analysis" -> Show me, or do it by hand.  YOU MUST SEE the stress drawn at once, and in the console `[result cache] read the static analysis back (4.1 MB, 0.01 s, shipped with the program)`; the same
 #     for the flow of chapter 10.  Set FIELDES_NO_SEED=1 for the cold solve (the beam of chapter 9 about three seconds, the flow of chapter 10 about twenty -- the card says "FielDes is working on what this step
 #     shows. One moment." under its text, also while Show me does it).  The program carries eight solved problems (21.5 MB).
+#     (b) THE MANUFACTURING RESULTS AND THEIR PICTURES: the printer's analysis and optimization of chapter 12 are shipped the same way, in `seed-cache/result-cache/manufacturing/` (one folder to a result: all the fields
+#     in one file of the kernel, the checks and numbers as a head; 5 of them, 6 MB: the tour's own model and the model a selected part makes -- a part that is selected has its placement and handles as var()s)
+#     and the meshes of their pictures in `seed-cache/render-cache/` (8 meshes, 36.5 MB: the picture of the check of a selected part takes 80 s to make, the others 5 to 12).  Take the tour to "See where it breaks
+#     the rule" -> Show me, then "Let the tool fix it" -> Show me.  YOU MUST SEE each result on the screen about seven seconds after the pretend hand has finished (the hand itself takes a few seconds), and in the
+#     console `[manufacturing store] read the manufacturing analysis back (0.5 MB, 0.02 s, shipped with the program)`, `read the manufacturing optimization back (2.3 MB, 0.17 s, shipped with the program)` and
+#     `[render cache] read the mesh of line ...: 253283 vertices, 13 ms`.  With FIELDES_NO_SEED=1 the tool runs (10 s) and the pictures are made (up to 80 s) and the console says `kept the manufacturing
+#     optimization` and `[render cache] kept the mesh`; opening the program again the same call is read back from the user's own copy (no "shipped" then).  Settings > Clear the caches deletes the user's
+#     copies, the solved problems and these (not the shipped ones).
 #
 # 38. THE FOOT OF A PART ON INTEGER COORDINATES.  Paste into a new script: `view.set_bounds([-24, -12, -4], [24, 12, 28])`, `view.set_resolution(3)`, `stem = box((-6, -6, 0), (6, 6, 16))`, `cap = rounded_box((-18, -6, 16), (18, 6, 22), 0.3)`,
 #     `part = union(stem, cap)`, `result = manufacturing_optimization(part, constraints=[fff_constraint(nozzle=0.4, overhang=45)], remedies=['gaps'])`, and look at `result._preview` from the front (View > Front).

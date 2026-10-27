@@ -48,6 +48,11 @@ public:
      *  have already been serialized.  */
     std::map<Tree::Id, uint32_t> ids;
 
+    /*  A file holds no free variables: when this is set, a free variable that is in it is written as the number it stands for (the tree for those numbers), and one that is not
+     *  sets `unbound`.  Not set (the default): a free variable is written as it is, a variable of its own that comes back with no number.  */
+    const std::map<Tree::Id, float>* constants = nullptr;
+    bool unbound = false;
+
     /*  We use this flag to end a data stream, either of
      *  the tree of a shape or its vars.  */
     static const uint8_t END_OF_ITEM;

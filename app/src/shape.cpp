@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <vector>
 #include <Eigen/Dense>
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -4190,9 +4191,12 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
     // points: its key is a hash of the whole field, which costs seconds for a sweep, and the mesh is made faster than a file is read
     const auto renderStart = std::chrono::steady_clock::now();
     std::string cacheKey;
+    // (a result whose fields are expressions -- the check and the optimization of the manufacturing tools: no solver, no elements, no displacements -- is kept like any shape: its mesh with the values of
+    // every field at its vertices.  The result of a solver has a cache of its own)
+    const bool keepableResult = has_result && !run_has_deform && run_color_detail == 0 && !m_grid.isMesh && m_grid.fraction.empty();
     if (!m && m_cache_on.load())
     {
-        if (has_result)
+        if (has_result && !keepableResult)
         {
             cache_state.store(CACHE_RESULT);
         }
@@ -4474,6 +4478,22 @@ Shape::BoundedMesh Shape::renderMesh(RenderSettings s)
                 for (size_t q = 0; q < verts.size(); q++) out.disp[q][a] = vals[q];
             }
         }
+        if (!cacheKey.empty() && out.mesh && s.div == 0 && m_cache_on.load())
+        {
+            // (kept like the mesh of any shape, below: it took a while, or it was asked for by name)
+            const double sinceStart = std::chrono::duration<double>(std::chrono::steady_clock::now() - renderStart).count();
+            if (m_cache_forced.load() || sinceStart >= 0.4)
+            {
+                const auto tWrite = std::chrono::steady_clock::now();
+                const bool ok = writeRenderCache(cacheKey, out);
+                cache_state.store(ok ? CACHE_KEPT : CACHE_FAILED);
+                if (ok) cache_miss_key.clear();
+                if (std::getenv("FIELDES_TIMING"))
+                    fprintf(stderr, "[render cache] %s the mesh of line %d: %zu vertices, %zu fields, %.0f ms\n",
+                            ok ? "kept" : "could not keep", source_line + 1, out.mesh->verts.size(), out.channels.size(),
+                            1000.0 * std::chrono::duration<double>(std::chrono::steady_clock::now() - tWrite).count());
+            }
+        }
         return out;
     }
 
@@ -4626,12 +4646,25 @@ namespace {
 const char* const kRenderCacheVersion = "fdrc5";        // (5: the flank of a gusset or a teardrop is smoothed in the kernel's lattice: a mesh kept by fdrc4 has it in ribs.  4: the colour of a manufacturing check is read inside the big faces, cut as the change colour's are: a mesh kept by fdrc3 has the flat overhang of a sharp box grey under a card that says 12 %.  3: the change colour of a manufacturing result is a class read as the difference of two fields, and its triangles are cut where it changes: a mesh kept by fdrc1 or 2 has the pale red over untouched faces)
 
 const quint32 kCacheMagic = 0x43524446u;       // "FDRC"
-const quint32 kCacheFormat = 1;
+const quint32 kCacheFormat = 2;         // (2: after the colour values, the values of the fields of a result at the vertices -- a count, then for each its length and its values; 1: none, and still read)
 
 QString cacheFile(const std::string& key)
 {
     const QByteArray h = QCryptographicHash::hash(QByteArray::fromStdString(key), QCryptographicHash::Sha1).toHex();
     return Shape::renderCacheDir() + "/" + QString::fromLatin1(h) + ".fdmesh";
+}
+
+// What comes with the program: `seed-cache/render-cache` beside the executable, the meshes of what the guided tour shows and takes long to mesh, read where it is when the user's own folder has no file for
+// the key (the folder may be read-only; nothing is copied).  FIELDES_NO_SEED=1 has none; FIELDES_SEED_CACHE_DIR names the folder of the solved problems (`result-cache`), and the meshes are in `render-cache` beside it
+QString seedCacheFile(const std::string& key)
+{
+    if (!qEnvironmentVariableIsEmpty("FIELDES_NO_SEED")) return QString();
+    const QByteArray env = qgetenv("FIELDES_SEED_CACHE_DIR");
+    const QString dir = !env.isEmpty() ? QFileInfo(QString::fromLocal8Bit(env)).absoluteDir().absoluteFilePath("render-cache")
+                                       : QCoreApplication::applicationDirPath() + "/seed-cache/render-cache";
+    const QByteArray h = QCryptographicHash::hash(QByteArray::fromStdString(key), QCryptographicHash::Sha1).toHex();
+    const QString path = dir + "/" + QString::fromLatin1(h) + ".fdmesh";
+    return QFileInfo::exists(path) ? path : QString();
 }
 
 qint64 cacheLimitBytes()
@@ -4738,18 +4771,36 @@ std::string Shape::renderCacheKey(const RenderSettings& s, const libfive::Region
         cache_tree_gen = cache_vars_gen;
     }
     if (cache_tree_key.empty() || m_flat || hasControls()) return std::string();         // (a face and a line are quick to make, and have outlines)
+    // (the fields of a result are read at the vertices of its mesh, and the mesh holds them: what they are, and how the colour is cut, is part of what it holds)
+    std::string resultKey;
+    if (has_result)
+    {
+        for (const auto& c : m_channels)
+        {
+            const std::string k = libfive::treePersistentKey(c.tree, cache_vars);
+            if (k.empty()) return std::string();
+            resultKey += "|ch|" + c.name.toStdString() + "|" + k;
+        }
+        resultKey += "|map|" + color_map.toStdString();
+    }
     char buf[400];
     std::snprintf(buf, sizeof(buf), "|%a %a %a %a %a %a|%a|%a|%d",
                   region.lower.x(), region.lower.y(), region.lower.z(),
                   region.upper.x(), region.upper.y(), region.upper.z(),
                   res, double(s.settings.quality), int(s.alg));
-    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + buf + (m_flat ? "|flat" : "");
+    return std::string(kRenderCacheVersion) + "|" + cache_tree_key + resultKey + buf + (m_flat ? "|flat" : "");
 }
 
 bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
 {
     QFile f(cacheFile(key));
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) return false;
+    if (!f.exists())
+    {
+        const QString seed = seedCacheFile(key);            // (the user's own folder first)
+        if (seed.isEmpty()) return false;
+        f.setFileName(seed);
+    }
+    if (!f.open(QIODevice::ReadOnly)) return false;
     const QByteArray data = f.readAll();
     f.close();
 
@@ -4762,9 +4813,25 @@ bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
     std::memcpy(h, p, sizeof(h));
     double box[6];
     std::memcpy(box, p + sizeof(h), sizeof(box));
-    if (h[0] != kCacheMagic || h[1] != kCacheFormat) return false;
+    if (h[0] != kCacheMagic || (h[1] != 1 && h[1] != kCacheFormat)) return false;
     const quint64 keyLen = h[2], nv = h[3], nt = h[4], nc = h[5];
-    const quint64 need = quint64(head) + keyLen + nv * 12 + nt * 12 + nc * 4;
+    quint64 need = quint64(head) + keyLen + nv * 12 + nt * 12 + nc * 4;
+    std::vector<quint64> fieldLen;                   // (format 2: the values of the fields of a result at the vertices)
+    if (h[1] >= 2)
+    {
+        if (quint64(data.size()) < need + 4) return false;
+        quint32 count = 0;
+        std::memcpy(&count, data.constData() + need, 4);
+        need += 4;
+        for (quint32 i = 0; i < count; ++i)
+        {
+            if (quint64(data.size()) < need + 4) return false;
+            quint32 n = 0;
+            std::memcpy(&n, data.constData() + need, 4);
+            fieldLen.push_back(n);
+            need += 4 + quint64(n) * 4;
+        }
+    }
     if (quint64(data.size()) != need || keyLen != key.size()) return false;
     p += head;
     if (std::memcmp(p, key.data(), keyLen) != 0) return false;       // (the file name is a hash of the key)
@@ -4790,7 +4857,23 @@ bool Shape::readRenderCache(const std::string& key, BoundedMesh& out) const
     p += nt * 12;
     out.values.resize(nc);
     if (nc) std::memcpy(out.values.data(), p, nc * 4);
-    if (has_color && out.values.size() != nv) return false;
+    p += nc * 4;
+    if (has_result)
+    {
+        // (a result: the values of its fields at the vertices -- as many as it has fields now, each at every vertex)
+        if (fieldLen.size() != run_channels.size()) return false;
+        out.channels.resize(fieldLen.size());
+        p += 4;                                       // (the count)
+        for (size_t i = 0; i < fieldLen.size(); ++i)
+        {
+            if (fieldLen[i] != nv) return false;
+            p += 4;                                   // (its length)
+            out.channels[i].resize(fieldLen[i]);
+            if (fieldLen[i]) std::memcpy(out.channels[i].data(), p, fieldLen[i] * 4);
+            p += fieldLen[i] * 4;
+        }
+    }
+    else if (has_color && out.values.size() != nv) return false;
     out.mesh = mesh.release();
     out.region = libfive::Region<3>({box[0], box[1], box[2]}, {box[3], box[4], box[5]});
     return true;
@@ -4827,6 +4910,15 @@ bool Shape::writeRenderCache(const std::string& key, const BoundedMesh& out) con
     f.write(buf);
     if (!out.values.empty())
         f.write(reinterpret_cast<const char*>(out.values.data()), qint64(out.values.size() * 4));
+    // (the values of the fields of a result at the vertices: a count, then for each its length and its values)
+    const quint32 fields = quint32(out.channels.size());
+    f.write(reinterpret_cast<const char*>(&fields), 4);
+    for (const auto& c : out.channels)
+    {
+        const quint32 n = quint32(c.size());
+        f.write(reinterpret_cast<const char*>(&n), 4);
+        if (n) f.write(reinterpret_cast<const char*>(c.data()), qint64(n) * 4);
+    }
     if (!f.commit()) return false;
     pruneRenderCache();
     return true;

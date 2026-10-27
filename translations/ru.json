@@ -1328,7 +1328,7 @@
  "Hybrid": "Гибридный",
  "Meshing algorithm": "Алгоритм построения сетки",
  "Clear the caches": "Очистить кэши",
- "Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next time they are needed, and kept again)": "Удаляет все сетки, сохранённые кэшем рендеринга, и все поля, сохранённые кэшем полей (при следующей необходимости они вычисляются заново и снова сохраняются)",
+ "Delete every mesh the render cache kept, every field the field cache kept and every solved problem the result cache kept (they are made again the next time they are needed, and kept again; the ones that come with the program stay)": "Удаляет все сетки, сохранённые кэшем рендеринга, все поля, сохранённые кэшем полей, и все решённые задачи, сохранённые кэшем результатов (при следующей необходимости они создаются заново и снова сохраняются; поставляемые с программой остаются)",
  "Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted": "Кэши очищены: сохранённых сеток — %1, полей — %2, удалено %3 МБ",
  "Show hidden messages again": "Снова показывать скрытые сообщения",
  "The messages you turned off with \"Do not show this message again\" are shown again": "Сообщения, которые вы отключили флажком «Больше не показывать это сообщение», снова будут показываться",

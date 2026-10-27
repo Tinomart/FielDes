@@ -326,20 +326,45 @@ def _where(p):
 def _remembered(name, limit=6):
     ''' A call that was made before -- the same part (its expression, and the numbers it has), the same constraints and settings: a script run again after a model was shown or
         hidden, after a change to what comes after it -- gives back what it made, and does not measure and shape the part again (seconds to minutes).  Like every content
-        cache (content_cache.py) it keeps the very object a miss made, in this session.  A part, a constraint or a setting that has no content key is made every time. '''
+        cache (content_cache.py) it keeps the very object a miss made, in this session -- and in a folder for the next (manufacturing_store.py: read back instead of made, when the call is
+        the same).  A part, a constraint or a setting that has no content key is made every time. '''
     def deco(fn):
+        import inspect
         cache = cache_for(name, limit)
+        try:
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            signature = None
+
+        def canonical(args, kwargs):
+            ''' The call with every argument it did not give filled in with its default: `f(part, constraints=[c])` and `f(part, constraints=[c], keep=None, remedies=None, ...)` are one call --
+                what the right-click menu writes and what the guided tour writes differ by the defaults, and what is made is the same '''
+            if signature is not None:
+                try:
+                    bound = signature.bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    return bound.args, bound.kwargs
+                except TypeError:
+                    pass
+            return args, kwargs
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            cargs, ckwargs = canonical(args, kwargs)
             try:
-                part = args[0] if args else kwargs.get('part')
-                key = (value_key(args), value_key(kwargs), value_key([tuple(x) for x in locks_of(part)]), value_key(getattr(part, '_free', None)))
+                part = cargs[0] if cargs else ckwargs.get('part')
+                key = (value_key(cargs), value_key(ckwargs), value_key([tuple(x) for x in locks_of(part)]), value_key(getattr(part, '_free', None)))
             except Uncacheable:
                 return fn(*args, **kwargs)
             hit, value = cache.get(key)
             if not hit:
-                value = fn(*args, **kwargs)
+                # (made in an earlier session -- or made for the program, which carries what its guided tour shows: read back from the files of manufacturing_store.py)
+                from fieldes.stdlib import manufacturing_store
+                what = name.replace('_', ' ')
+                value = manufacturing_store.load(name, key, cargs, ckwargs, what)
+                if value is None:
+                    value = fn(*args, **kwargs)
+                    manufacturing_store.save(name, key, value, cargs, ckwargs, what)
                 cache.put(key, value)
             return value
         wrapper.cache = cache

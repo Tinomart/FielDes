@@ -939,6 +939,15 @@ int libfive_tree_axes(libfive_tree ptr);
 /*  Deserializes a tree from a file. */
 libfive_tree libfive_tree_load(const char* filename);
 
+/*  Several trees in ONE file: what they share (a lattice of the kernel, a subtree) is written once, and read back once.  libfive_trees_save refuses (false) when one of the `count` trees
+ *  cannot be kept (libfive_tree_can_save).  libfive_trees_load reads them back in the order they were written: `out` has room for `capacity` trees, the number the file holds is returned
+ *  (0 when it cannot be read, or holds more than `capacity`); each tree is the caller's, to free with libfive_tree_delete.  */
+bool libfive_trees_save(const libfive_tree* trees, int count, const char* filename);
+/*  The same for trees that hold free variables (a script's var()s): each of the `nvars` variables `vars` is written as the number `values` gives it, so that the file holds the trees for those
+ *  numbers.  False when a tree holds a free variable that is not among them.  */
+bool libfive_trees_save_bound(const libfive_tree* trees, int count, const libfive_tree* vars, const float* values, int nvars, const char* filename);
+int libfive_trees_load(const char* filename, libfive_tree* out, int capacity);
+
 /*  One part (placed solid) of a STEP file, reconstructed as its own tree
  *  with its own tight bounding box (see libfive_import_step_parts_reconstructed).
  *  `tree` is owned by the caller -- free it with libfive_tree_delete; it is

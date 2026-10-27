@@ -50,12 +50,28 @@ void Serializer::serializeTree(const Tree& t)
         {
             serializeTree(n->call().f);
         }
-        out.put(n->op());
+        // (a free variable the caller has a number for is written as that number)
+        Opcode::Opcode op = n->op();
+        float number = 0;
+        if (op == Opcode::VAR_FREE && constants)
+        {
+            const auto found = constants->find(n);
+            if (found == constants->end())
+            {
+                unbound = true;
+            }
+            else
+            {
+                op = Opcode::CONSTANT;
+                number = found->second;
+            }
+        }
+        out.put(op);
         ids.insert({ n, (uint32_t)ids.size() });
 
         // Write constants as raw bytes
-        if (n->op() == Opcode::CONSTANT) {
-            serializeBytes(n->value());
+        if (op == Opcode::CONSTANT) {
+            serializeBytes(n->op() == Opcode::CONSTANT ? n->value() : number);
         } else if (n->op ()== Opcode::ORACLE) {
             serializeString(n->oracle_clause().name());
             OracleClause::serialize(n->oracle_clause().name(), &n->oracle_clause(), *this);

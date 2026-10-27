@@ -75,6 +75,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <QTextBrowser>
 #include <QVBoxLayout>
 #include <QDir>
+#include <QDirIterator>
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -1441,8 +1442,8 @@ Window::Window(Arguments args)
     // The render cache (the model tree's cache button keeps a shape's mesh): everything it kept
     settings_menu->addSeparator();
     auto clear_cache = settings_menu->addAction(T("Clear the caches"));
-    clear_cache->setToolTip(T("Delete every mesh the render cache kept and every field the field cache kept (they are computed again the next "
-                            "time they are needed, and kept again)"));
+    clear_cache->setToolTip(T("Delete every mesh the render cache kept, every field the field cache kept and every solved problem the result cache kept (they are made again "
+                            "the next time they are needed, and kept again; the ones that come with the program stay)"));
     connect(clear_cache, &QAction::triggered, this, [this]{
         qint64 bytes = 0;
         for (const auto& f : QDir(Shape::renderCacheDir()).entryInfoList({"*.fdmesh"}, QDir::Files))
@@ -1456,6 +1457,25 @@ Window::Window(Arguments args)
             bytes += f.size();
             if (f.suffix() == "fdfield") ++fields;
             QFile::remove(f.absoluteFilePath());
+        }
+        // the result cache (result_cache.py: the solved problems, a file or two to each; the manufacturing results of manufacturing_store.py in folders of their own inside it) sits
+        // there as well.  What comes with the program is in the program's own folder (seed-cache) and stays
+        const QByteArray resultEnv = qgetenv("FIELDES_RESULT_CACHE_DIR");
+        const QDir resultDir(!resultEnv.isEmpty() ? QString::fromLocal8Bit(resultEnv) : QFileInfo(Shape::renderCacheDir()).absolutePath() + "/result-cache");
+        for (const auto& f : resultDir.entryInfoList({"*.fdresult", "*.json", "*.part"}, QDir::Files))
+        {
+            bytes += f.size();
+            QFile::remove(f.absoluteFilePath());
+        }
+        for (const auto& d : QDir(resultDir.absoluteFilePath("manufacturing")).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+        {
+            QDirIterator files(d.absoluteFilePath(), QDir::Files, QDirIterator::Subdirectories);
+            while (files.hasNext())
+            {
+                files.next();
+                bytes += files.fileInfo().size();
+            }
+            QDir(d.absoluteFilePath()).removeRecursively();
         }
         statusBar()->showMessage(T("Caches cleared: %1 kept mesh(es) and %2 kept field(s), %3 MB deleted")
                                      .arg(n).arg(fields).arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1), 8000);

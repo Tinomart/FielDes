@@ -27,6 +27,7 @@ approximation, and a hit returns the very thing a miss built. Nothing is ever sa
 | **The finished mesh of a shape you asked for** ([render cache](#the-render-cache)) | on disk, in FielDes's cache folder | the shape's expression with the numbers it is drawn with, its colours, the render region, resolution and quality |
 | **The model tree of a script** ([the model tree](#the-model-tree)) | on disk, in FielDes's cache folder (`scene-cache`) | the md5 of the script's text, and the program and library that made the tree |
 | **Analyses** (static, modal, thermal, flow, all optimisations — [the result cache](#the-result-cache)) | in memory, and on disk: the solved problem with its mesh, fields, modes, iterations and steps | the whole problem as asked: the part by its expression, every condition, the material, the fluid, the element size, every setting |
+| **Manufacturing analysis and optimization** (`manufacturing_analysis`, `manufacturing_optimization` — [manufacturing results](#manufacturing-results)) | in memory, and on disk: the result as a whole — its fields (the correction lattices of the kernel included), its checks and numbers | the whole call as made: the part by its expression, the constraints, every setting, and the manufacturing files of the library |
 | **Mesh imports** | in memory | path, size, modification time, units |
 | **Graph lattices** (`voronoi_graph`, `surface_graph`, `points_graph`) | in memory | their inputs |
 | **`mass_properties` / `volume_of`** | in memory | the shape, bounds and resolution |
@@ -138,6 +139,30 @@ the user's own files come first. The seeds are made for one version of the solve
 scripts copy them into the packages (they are not in git). `FIELDES_NO_SEED=1` reads none (to time a cold solve),
 `FIELDES_SEED_CACHE_DIR` names another folder.
 
+### Manufacturing results
+
+`manufacturing_analysis` measures a part and `manufacturing_optimization` shapes it until the rules of a process are kept: seconds to a minute for a small part, more for a
+topology-optimized one. A call that was made before in the same session is handed back from memory, as it always was; **a call made in an earlier session is read back from a
+folder now, and measures and shapes nothing.** The result is kept whole: its fields (the part changed, the colour of the change, the drawn lattice copy, the supports), the
+checks of the part as it was and as it is (`.before`, `.after`) and every number of the card. All the fields go into ONE file of the kernel (`trees.fdtrees`: what they share is written once; the correction lattices of the walls, the
+gaps, the draft, the gussets and the access fills know how to save themselves -- a lattice is tens of millions of nodes for a small part, 100 MB of numbers, and writes a stretch of one
+value as a count, so the printer's result of the tour is 2 MB in all --, with the key they are drawn under, so the renders of a result read back are found in the render cache too),
+the rest into one JSON head that says where each field goes back; the part and the constraints of the call are not written, the result is read back onto the ones of
+the call that asks. The key is the whole call as made (the part by its expression, every constraint, every setting), the version of the store, the content of the
+manufacturing files of the library (so a change of the tools makes new results, line endings aside) and the environment switches that change what they make
+(`FIELDES_BAKE`, `FIELDES_SCOPE`, ...). The log says `[manufacturing store] read the manufacturing optimization back (4.2 MB, 0.2 s)`, `kept` when it wrote one, and why when it
+did not (a part with an imported mesh holds a field that a file cannot): such a result stays in memory for the session
+and is made again in the next, as before -- the store never writes a file it could not read back. A script with `var()`s is kept too (a part that was selected has its placement and its handles as `var()`s, and the
+tour's Show me selects it): the fields are written with the numbers the variables have, which the key holds, so what is read back is the result for those numbers; dragging a variable
+is another number, and another call. The key also takes every argument the call did not give as its default, so the call the right-click menu writes and the one the tour's model
+writes (they differ by arguments left at their defaults) are one call.
+
+The files are in `manufacturing/<key>/` beside the result cache (`FIELDES_RESULT_CACHE_DIR` moves both); the folder holds at most 3 GB, oldest first out; **Settings → Clear the
+caches** deletes them with the rest. The program's own `seed-cache/result-cache/manufacturing/` carries what the guided tour shows (the printer's analysis and optimization of
+chapter 12), read where it is when the user's folder has none, and its `seed-cache/render-cache/` carries the meshes of those steps (the render cache reads them where they are, as
+it reads its own): the step shows the result at once instead of an empty viewport for the seconds the tool takes and the seconds the picture of it takes.
+`scripts/make-seed-cache.ps1` makes them with the solved problems above, for the manufacturing files of the packaged library.
+
 ## The render cache
 
 Meshing is the slow part of showing a big shape, and the viewport's memory of it ends with the session. So **every
@@ -159,7 +184,10 @@ anything about the math changes, `None` when the shape cannot be kept).
 
 A shape can be kept when everything it is made of can be recognised from one run to the next: operations, numbers,
 `var()`s, imported meshes and parts, lattices and their surface coordinates, field-driven sizes. A shape shown with the
-fields of an analysis (a result coloured by stress) cannot: the analyses have caches of their own. The folder holds at
+fields of a solver (a result coloured by stress) cannot: the solvers have caches of their own. The result of `manufacturing_analysis` and
+`manufacturing_optimization` can -- its fields are expressions -- and its mesh is kept with the values of every field at its vertices (the key holds each field).
+The meshes that come with the program (`seed-cache/render-cache`, the pictures of the guided tour's printer steps) are read where they are when the
+folder has none. The folder holds at
 most 4 GB (`FIELDES_RENDER_CACHE_MB` changes that), oldest files first out; **Settings → Clear the caches**
 deletes all of it (and the field cache's files). The mesher's output changes now and then; the cache then starts anew by a version number
 (`kRenderCacheVersion`), not on every build.

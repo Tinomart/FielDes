@@ -179,6 +179,16 @@ if hasattr(lib, 'libfive_tree_axes'):
 lib.libfive_tree_load.argtypes = [ctypes.c_char_p]
 lib.libfive_tree_load.restype = libfive_tree
 
+# (several trees in one file: what they share is written once -- see libfive.h)
+if hasattr(lib, 'libfive_trees_save'):
+    lib.libfive_trees_save.argtypes = [ctypes.POINTER(libfive_tree), ctypes.c_int, ctypes.c_char_p]
+    lib.libfive_trees_save.restype = ctypes.c_bool
+    lib.libfive_trees_load.argtypes = [ctypes.c_char_p, ctypes.POINTER(libfive_tree), ctypes.c_int]
+    lib.libfive_trees_load.restype = ctypes.c_int
+if hasattr(lib, 'libfive_trees_save_bound'):
+    lib.libfive_trees_save_bound.argtypes = [ctypes.POINTER(libfive_tree), ctypes.c_int, ctypes.POINTER(libfive_tree), ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_char_p]
+    lib.libfive_trees_save_bound.restype = ctypes.c_bool
+
 lib.libfive_import_step_last_message.argtypes = []
 lib.libfive_import_step_last_message.restype = ctypes.c_char_p
 

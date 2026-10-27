@@ -32,6 +32,14 @@ void Archive::serialize(std::ostream& out)
     Serializer(out).run(*this);
 }
 
+bool Archive::serialize(std::ostream& out, const std::map<Tree::Id, float>& constants)
+{
+    Serializer s(out);
+    s.constants = &constants;
+    s.run(*this);
+    return !s.unbound;
+}
+
 Archive Archive::deserialize(std::istream& data)
 {
     return Deserializer(data).run();

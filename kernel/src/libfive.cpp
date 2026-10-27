@@ -27,6 +27,7 @@ You can obtain one at http://mozilla.org/MPL/2.0/.
 #include "libfive/tree/tree.hpp"
 #include "libfive/tree/data.hpp"
 #include "libfive/tree/content_key.hpp"
+#include "libfive/tree/archive.hpp"
 #include "libfive/tree/derivative.hpp"
 #include "libfive/tree/expose.hpp"
 #include "libfive/eval/default_vars.hpp"
@@ -250,6 +251,89 @@ bool libfive_tree_save(libfive_tree ptr, const char* filename)
     {
         std::cerr << "libfive_tree_save: could not open file" << std::endl;
         return false;
+    }
+}
+
+bool libfive_trees_save(const libfive_tree* trees, int count, const char* filename)
+{
+    if (count < 1 || !trees) return false;
+    for (int i = 0; i < count; ++i)
+    {
+        if (!canKeep(Tree(trees[i])))
+        {
+            std::cerr << "libfive_trees_save: a tree holds an oracle that cannot be saved" << std::endl;
+            return false;
+        }
+    }
+    std::ofstream out;
+    out.open(filename, std::ios::out|std::ios::binary);
+    if (!out.is_open())
+    {
+        std::cerr << "libfive_trees_save: could not open file" << std::endl;
+        return false;
+    }
+    Archive a;
+    for (int i = 0; i < count; ++i) a.addShape(Tree(trees[i]));
+    a.serialize(out);
+    out.flush();
+    return bool(out);
+}
+
+bool libfive_trees_save_bound(const libfive_tree* trees, int count, const libfive_tree* vars, const float* values, int nvars, const char* filename)
+{
+    if (count < 1 || !trees || nvars < 0 || (nvars > 0 && (!vars || !values))) return false;
+    for (int i = 0; i < count; ++i)
+    {
+        if (!canKeep(Tree(trees[i])))
+        {
+            std::cerr << "libfive_trees_save_bound: a tree holds an oracle that cannot be saved" << std::endl;
+            return false;
+        }
+    }
+    std::map<Tree::Id, float> constants;
+    for (int i = 0; i < nvars; ++i) constants[static_cast<const void*>(vars[i])] = values[i];
+    std::ofstream out;
+    out.open(filename, std::ios::out|std::ios::binary);
+    if (!out.is_open())
+    {
+        std::cerr << "libfive_trees_save_bound: could not open file" << std::endl;
+        return false;
+    }
+    Archive a;
+    for (int i = 0; i < count; ++i) a.addShape(Tree(trees[i]));
+    const bool bound = a.serialize(out, constants);
+    out.flush();
+    if (!bound)
+    {
+        std::cerr << "libfive_trees_save_bound: a free variable has no number" << std::endl;
+        return false;
+    }
+    return bool(out);
+}
+
+int libfive_trees_load(const char* filename, libfive_tree* out, int capacity)
+{
+    if (!out || capacity < 1) return 0;
+    std::ifstream in(filename, std::ios::in|std::ios::binary);
+    if (!in.is_open()) return 0;
+    try
+    {
+        auto shapes = Archive::deserialize(in).shapes;
+        if (shapes.empty() || int(shapes.size()) > capacity) return 0;
+        for (const auto& s : shapes)
+            if (!s.tree.id() || !s.tree.is_valid()) return 0;
+        int n = 0;
+        for (const auto& s : shapes)
+        {
+            Tree t(s.tree);
+            out[n++] = t.release();
+        }
+        return n;
+    }
+    catch (...)
+    {
+        std::cerr << "libfive_trees_load: the file cannot be read" << std::endl;
+        return 0;
     }
 }
 
