@@ -735,6 +735,8 @@ void View::onSettingsFromScript(Settings s, bool first)
         {
             emit(boundsChanged(s.min, s.max));
             requestSlice();
+            // (the automatic step of the snapping grid is a tenth of this region: the card, which shows it, is told when it is another -- it said 2 mm while the grid was 0.5)
+            if (m_snap.on && !(m_snap.spacing > 0)) announceSnap();
         }
     }
 
@@ -1151,6 +1153,7 @@ void View::paintOverlay(QPainter& painter)
     drawMarkers(painter);
     drawPointDots(painter);
     drawGizmo(painter);
+    drawSnapMark(painter);
     drawHints(painter);
     if (!section_readout.isEmpty() && !section_drag)
     {
@@ -1868,6 +1871,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
                 if (m_wp.open && m_wp.exists && std::fabs(QVector3D::dotProduct(m_pullNormal, m_wp.normal())) > 0.999f) at = snapToWorkPlane(at);
                 else at = snapPoint(at);                    // (the snapping mode: a node of the grid, or a point that is there; unchanged when it is off)
                 m_pullLast = at;
+                if (snapActive()) setSnapMark(at, false);                // (where the point lands: marked)
                 setPullVirtual(at);
                 m_overlay->update();
             }
@@ -1901,6 +1905,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
                     // The snapping mode: the point of the face that is kept on the grid goes to a line of it -- along what a wall faces when it only moves that way
                     if (!m_faceWallDir.isNull()) d = m_faceWallDir.normalized() * snappedAlong(m_faceRef, m_faceWallDir.normalized(), QVector3D::dotProduct(d, m_faceWallDir.normalized()));
                     else d = snapPoint(m_faceRef + d, nullptr, false) - m_faceRef;
+                    setSnapMark(m_faceRef + d, false);                       // (where the point of the face that is kept on the grid lands: marked)
                 }
                 std::map<libfive::Tree::Id, float> numbers;
                 for (const FaceVar& v : m_faceVars) numbers[v.id] = v.value0 + d[v.axis];
@@ -2030,6 +2035,7 @@ void View::mouseMoveEvent(QMouseEvent* event)
             m_overlay->update();
         }
         updateSectionReadout(event->pos());
+        updateSnapHover(event->pos());                       // (the snapping mode: the node the cursor is over is marked)
     }
     if (show_triad && mouse.state == mouse.RELEASED)
     {
@@ -2656,6 +2662,7 @@ void View::mouseReleaseEvent(QMouseEvent* event)
     QOpenGLWidget::mouseReleaseEvent(event);
     event->accept();
     if (event->button() == Qt::LeftButton) m_leftDown = false;
+    clearSnapMark();                                          // (what was being moved has landed: the mark of where it landed goes, and the hover brings its own back)
     if (m_pullShape)
     {
         Shape* shape = m_pullShape;
@@ -3220,8 +3227,123 @@ float View::snappedAlong(const QVector3D& from, const QVector3D& dir, float dist
     return std::round(distance / step) * step;
 }
 
+// The lattice node that the cursor is over: the nearest to the viewer of those within a few pixels of the line of sight, between the nearest and the farthest rows of the lattice that is drawn.  What is
+// put down by a click, and what is hovered, goes to what is SEEN -- near the viewport as far from it --, and not to one plane through the middle of the scene (2026-10-27, the user: "You cant seem to
+// place anything close to the viewport and only far away")
+QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
+{
+    if (hit) *hit = false;
+    const float step = snapStep();
+    const float scale = camera.getScale();
+    const int W = width(), H = height();
+    if (!(step > 0) || !(scale > 0) || W < 8 || H < 8) return QVector3D();
+    constexpr float eyeV = 4.0f;
+    const QVector3D a = toModelPos(pos, -1.0f), b = toModelPos(pos, 1.0f);
+    QVector3D u = b - a;
+    if (!(u.lengthSquared() > 1e-12f)) return QVector3D();
+    u.normalize();
+    const QMatrix4x4 V = camera.view();
+    const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
+    const QVector3D origin = a + u * QVector3D::dotProduct(eye - a, u);                  // (the line of sight, from where the viewer is)
+    const float tNear = m_snapSlabValid ? m_snapSlabNear : 0.25f;
+    const float tFar = m_snapSlabValid ? m_snapSlabFar : std::max(1.0f, float(m_snap.distance) / 100.0f);
+    const float dNear = eyeV * tNear / scale, dFar = eyeV * tFar / scale;
+    int ax = 0;
+    for (int k = 1; k < 3; ++k)
+        if (std::fabs(u[k]) > std::fabs(u[ax])) ax = k;
+    if (std::fabs(u[ax]) < 1e-4f) return QVector3D();
+    // The planes of the lattice across the axis the line of sight goes along most, between the two limits, from the nearer one: on each, the node nearest the line is looked at
+    const float c0 = origin[ax] + u[ax] * dNear, c1 = origin[ax] + u[ax] * dFar;
+    qint64 first = qint64(std::ceil(std::min(c0, c1) / step - 1e-4)), last = qint64(std::floor(std::max(c0, c1) / step + 1e-4));
+    const bool up = u[ax] > 0;
+    if (last - first > 4000)
+    {
+        if (up) last = first + 4000;
+        else first = last - 4000;
+    }
+    const float pixel = 2.0f / (float(std::min(W, H)) * scale);                           // (the length of a pixel at the place looked at: the picture is about two view units high there)
+    // The node the cursor is nearest to ON THE SCREEN, within a few pixels: what is pointed at is what is picked, near the viewport as far from it.  Of two that are as near (within a pixel), the nearer to the viewer
+    QVector3D best;
+    float bestPixels = 1e30f;
+    bool found = false;
+    for (qint64 n = 0, count = last - first + 1; n < count; ++n)
+    {
+        const qint64 m = up ? first + n : last - n;
+        const float t = (float(m) * step - origin[ax]) / u[ax];
+        if (t < dNear || t > dFar) continue;
+        const QVector3D p = origin + u * t;
+        QVector3D node(std::round(p.x() / step) * step, std::round(p.y() / step) * step, std::round(p.z() / step) * step);
+        node[ax] = float(m) * step;
+        const QVector3D v = node - origin;
+        const float along = QVector3D::dotProduct(v, u);
+        if (along < dNear || along > dFar) continue;
+        const float tau = along * scale / eyeV;                                           // (how far it is, as a share of the way to the place looked at: a pixel is that much longer there)
+        const float pixels = (v - u * along).length() / std::max(1e-9f, pixel * tau);
+        if (pixels > 14.0f) continue;
+        if (V.map(node).z() + eyeV < 1.0f) continue;                                      // (a quarter of the way from the viewer at least: nearer is no line of the picture)
+        if (!found || pixels < bestPixels - 1.0f)
+        {
+            found = true;
+            bestPixels = pixels;
+            best = node;
+        }
+    }
+    if (hit) *hit = found;
+    return found ? best : QVector3D();
+}
+
+// Where a click puts something down, or a hover would: a point that is there, else the node the cursor is over, else the nearest node of the plane through the origin that faces the viewer
+QVector3D View::snapPlace(QPoint pos, const Shape* exclude, bool toPoints) const
+{
+    const QVector3D plane = placeOnRay(pos);
+    if (!snapActive()) return plane;
+    QVector3D dot;
+    if (toPoints && m_snap.snapPoints && pointNear(plane, exclude, dot)) return dot;
+    bool found = false;
+    const QVector3D node = snapNodeAlongRay(pos, &found);
+    return found ? node : snapPoint(plane, exclude, false);
+}
+
+// The mark of where it snaps to: a ring and a cross at the node (a square for a point that is there) with its numbers beside it -- under the cursor while nothing is held, and where it lands while
+// something is moved (2026-10-27, the user: "there is NO INDICATOR WHERE IT IS CURRENTLY SNAPPING TO")
+void View::setSnapMark(const QVector3D& at, bool onPoint)
+{
+    if (m_snapMark.valid && m_snapMark.at == at && m_snapMark.onPoint == onPoint) return;
+    m_snapMark.valid = true;
+    m_snapMark.at = at;
+    m_snapMark.onPoint = onPoint;
+    m_overlay->update();
+}
+
+void View::clearSnapMark()
+{
+    if (!m_snapMark.valid) return;
+    m_snapMark.valid = false;
+    m_overlay->update();
+}
+
+void View::updateSnapHover(QPoint pos)
+{
+    if (!snapActive())
+    {
+        clearSnapMark();
+        return;
+    }
+    const QVector3D plane = placeOnRay(pos);
+    QVector3D dot;
+    if (m_snap.snapPoints && pointNear(plane, nullptr, dot))
+    {
+        setSnapMark(dot, true);
+        return;
+    }
+    bool found = false;
+    const QVector3D node = snapNodeAlongRay(pos, &found);
+    setSnapMark(found ? node : snapPoint(plane, nullptr, false), false);
+}
+
 void View::announceSnap()
 {
+    if (!m_snap.on) m_snapMark.valid = false;
     emit(snapChanged());
     m_overlay->update();
 }
@@ -3269,6 +3391,7 @@ void View::syncSnapWithWorkPlane()
 bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
 {
     stride = 1;
+    m_snapSlabValid = false;
     float step = snapStep();
     const float scale = camera.getScale();
     const int W = width(), H = height();
@@ -3311,23 +3434,40 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     float hFar = float(m_snap.distance) / 100.0f - 1.0f;
     // (and at least about four rows deep however far the view is zoomed in: a step that is wider than the slice would leave nothing of the lattice to see or to snap to)
     hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
-    float hNear = std::min(0.4f * hFar, 0.5f);
-    auto nodesIn = [&](float s) {
-        const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
+    // The near side reaches out toward the viewer, to a quarter of the way to the place looked at (nothing nearer is a line of the picture): the lattice is everywhere, near the viewport as far from it
+    // (2026-10-27, the user: "the grid stops too far away from the viewport")
+    float hNear = 0.75f;
+    auto nodesIn = [&](float sFar, float sNear) {
+        const float b = 1.0f + sFar * hFar, a = 1.0f - sNear * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
     };
-    if (nodesIn(1.0f) > float(cap))
+    if (nodesIn(1.0f, 1.0f) > float(cap))
     {
         float lo = 0.0f, hi = 1.0f;
-        for (int i = 0; i < 30; ++i)
+        if (nodesIn(1.0f, 0.0f) <= float(cap))
         {
-            const float mid = 0.5f * (lo + hi);
-            (nodesIn(mid) > float(cap) ? hi : lo) = mid;
+            // (the near rows are most of the count -- the cross-section of the view grows with the distance --: they are brought in first, and the far side stays as the card asked)
+            for (int i = 0; i < 30; ++i)
+            {
+                const float mid = 0.5f * (lo + hi);
+                (nodesIn(1.0f, mid) > float(cap) ? hi : lo) = mid;
+            }
+            hNear *= lo;
         }
-        hFar *= lo;
-        hNear *= lo;
-        // (fewer than two rows across what is left of the slice: the lines are too fine to draw from here.  A slice that is thin only because the view is zoomed in is drawn: it holds what rows it holds)
-        if ((hFar + hNear) * eyeV < 2.0f * stepV) return false;
+        else
+        {
+            // (and when the place looked at and what lies behind it are too much already, both limits come in together)
+            hNear = std::min(0.4f * hFar, 0.5f);
+            for (int i = 0; i < 30; ++i)
+            {
+                const float mid = 0.5f * (lo + hi);
+                (nodesIn(mid, mid) > float(cap) ? hi : lo) = mid;
+            }
+            hFar *= lo;
+            hNear *= lo;
+            // (fewer than two rows across what is left of the slice: the lines are too fine to draw from here.  A slice that is thin only because the view is zoomed in is drawn: it holds what rows it holds)
+            if ((hFar + hNear) * eyeV < 2.0f * stepV) return false;
+        }
     }
     float tLimit = 1.0f + hFar, tNear = 1.0f - hNear;
 
@@ -3340,10 +3480,21 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // (how strong a line is at a distance t from the viewer, 1 being the place the view looks at: it falls steadily from the nearest limit to 0 at the far one -- the distance fog -- and fades in
     // over the first eighth of the way, so that the nearest rows do not start with an edge)
     auto strength = [&](float t) {
-        const float u = std::min(1.0f, std::max(0.0f, (t - tNear) / (tLimit - tNear)));
-        const float fall = (1.0f - u) * (1.0f - u);
-        const float rise = std::min(1.0f, u / 0.125f);
-        return fall * rise * rise * (3.0f - 2.0f * rise);
+        // (the nearer a line the stronger: from the nearest rows, 1, to the place looked at, 0.85, and from there to nothing at the far limit; fading in over the first eighth, so that the nearest
+        // rows do not start with an edge)
+        const float total = std::max(1e-3f, tLimit - tNear);
+        const float rise = std::min(1.0f, std::max(0.0f, (t - tNear) / (0.125f * total)));
+        float s;
+        if (t <= 1.0f)
+        {
+            s = 1.0f - 0.15f * std::min(1.0f, (t - tNear) / std::max(1e-3f, 1.0f - tNear));
+        }
+        else
+        {
+            const float u = std::min(1.0f, (t - 1.0f) / std::max(1e-3f, tLimit - 1.0f));
+            s = 0.85f * (1.0f - u) * (1.0f - u);
+        }
+        return s * rise * rise * (3.0f - 2.0f * rise);
     };
     auto collect = [&]() {
         nodes.clear();
@@ -3391,10 +3542,18 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         if (!collect()) return false;
         if (nodes.size() <= size_t(cap) * 3 / 2) break;
-        tLimit = 1.0f + (tLimit - 1.0f) * 0.8f;
-        tNear = 1.0f - (1.0f - tNear) * 0.8f;
-        if (attempt >= 8 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
+        tLimit = 1.0f + (tLimit - 1.0f) * 0.9f;
+        tNear = 1.0f - (1.0f - tNear) * 0.7f;               // (the near side first, as above)
+        if (attempt >= 12 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
     }
+    // (the rows that are drawn, kept: a click and a move go to a node between these two limits -- see snapNodeAlongRay)
+    m_snapSlabNear = tNear;
+    m_snapSlabFar = tLimit;
+    m_snapSlabValid = true;
+    // (how many rows deep the slice is: a lattice seen through a dozen rows is already a haze, and one seen through thirty would cover the model, so what is drawn gets the fainter the more rows
+    // there are -- the ink in the picture stays that of about a dozen -- and the lines never go out altogether)
+    const float rowsDeep = (tLimit - tNear) * eyeV / stepV;
+    const float tone = rowsDeep > 12.0f ? std::max(0.3f, 12.0f / rowsDeep) : 1.0f;
 
     // (eight steps of the fog, from the nearest to the farthest: tone, width and colour all fade, so that of two lines next to each other the nearer one is told at once)
     constexpr int kBands = 8;
@@ -3430,7 +3589,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         // (the near lines are a lighter violet and the far ones a deeper one, as well as fainter and thinner)
         const double k = double(b) / double(kBands - 1);
-        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), kAlpha[b]), kWidth[b]));
+        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), int(float(kAlpha[b]) * tone)), kWidth[b]));
         p.drawLines(bands[b]);
     }
     const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
@@ -3438,7 +3597,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         for (int b = 0; b < kBands; ++b)
         {
-            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), kAxisAlpha[b]), 2.0 - 0.6 * double(b) / double(kBands - 1)));
+            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), int(float(kAxisAlpha[b]) * std::max(tone, 0.55f))), 2.0 - 0.6 * double(b) / double(kBands - 1)));
             p.drawLines(axes[a][b]);
         }
     }
@@ -3488,6 +3647,46 @@ void View::drawSnapGrid(QPainter& painter)
     painter.drawRoundedRect(box, 4, 4);
     painter.setPen(violet);
     painter.drawText(box, Qt::AlignCenter, text);
+    painter.restore();
+}
+
+// Where it snaps to: a ring and a cross on the node that what is moved lands on, or that a click would put something on (a square for a point that is there), and its numbers beside it -- under the
+// cursor while nothing is held, and where it lands while something is moved.  It is drawn over the gizmo, so that the arrow that is held does not cover the numbers
+void View::drawSnapMark(QPainter& painter)
+{
+    if (!m_snap.on || (m_wp.open && m_wp.exists) || !m_snapMark.valid || !snapActive()) return;
+    const QPointF at = toScreen(m_snapMark.at);
+    if (!(std::isfinite(at.x()) && std::isfinite(at.y()) && at.x() > -40 && at.y() > -40 && at.x() < width() + 40 && at.y() < height() + 40)) return;
+    painter.save();
+    const QColor violet(176, 130, 255);
+    QFont font = painter.font();
+    font.setPointSizeF(8.5);
+    painter.setFont(font);
+    const QFontMetrics fm(font);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    const QColor white(255, 255, 255, 235);
+    painter.setBrush(Qt::NoBrush);
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        painter.setPen(QPen(pass == 0 ? white : violet, pass == 0 ? 4.0 : 2.0, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(at + QPointF(-15, 0), at + QPointF(15, 0));
+        painter.drawLine(at + QPointF(0, -15), at + QPointF(0, 15));
+    }
+    painter.setPen(QPen(white, 4.0));
+    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 7.5, at.y() - 7.5, 15, 15)); else painter.drawEllipse(at, 7.5, 7.5);
+    painter.setPen(QPen(violet, 2.0));
+    painter.setBrush(QColor(176, 130, 255, 110));
+    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 7.5, at.y() - 7.5, 15, 15)); else painter.drawEllipse(at, 7.5, 7.5);
+    auto num = [](float v) { return QString::number(v * float(Units::lengthScale()), 'f', Units::lengthDecimals(3)); };
+    const QString coords = QString("x %1   y %2   z %3  %4").arg(num(m_snapMark.at.x()), num(m_snapMark.at.y()), num(m_snapMark.at.z()), Units::lengthLabel());
+    QRectF label(QPointF(at.x() + 20, at.y() - fm.height() - 16), QSizeF(fm.horizontalAdvance(coords) + 12, fm.height() + 6));
+    if (label.right() > width() - 6) label.moveLeft(at.x() - 20 - label.width());
+    if (label.top() < 6) label.moveTop(at.y() + 16);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(22, 76, 94, 225));
+    painter.drawRoundedRect(label, 4, 4);
+    painter.setPen(violet);
+    painter.drawText(label, Qt::AlignCenter, coords);
     painter.restore();
 }
 
@@ -3582,7 +3781,7 @@ void View::placementAt(QPoint pos, QVector3D& point, double& scale) const
         scale = scaleAt(pos, point);
         return;
     }
-    point = snapPoint(placeOnRay(pos), nullptr, false);          // (the snapping mode: what a click puts down goes to a node of the grid)
+    point = snapPlace(pos, nullptr, false);          // (the snapping mode: what a click puts down goes to the node of the grid that the cursor is over, near or far)
     scale = scaleAt(pos, point);
     // Nothing outside the render region is drawn: a primitive whose place is outside it goes to the nearest place
     // that is inside (half its size in from the edge), so it is always seen
@@ -4859,7 +5058,7 @@ QVector3D View::placementExact(QPoint pos) const
         QVector3D hit;
         if (ringPoint(pos, m_wp.origin(), m_wp.normal(), hit)) return snapToWorkPlane(hit);
     }
-    return snapPoint(placeOnRay(pos));                    // (the snapping mode: a node of the grid, or a point that is there)
+    return snapPlace(pos);                                // (the snapping mode: the node of the grid that the cursor is over, or a point that is there; unchanged when it is off)
 }
 
 void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, double scale, bool onSurface)
@@ -8825,7 +9024,11 @@ void View::dragGizmo(QPoint pos)
             }
         }
         // The snapping mode: along an axis of the world the place it lands on is a line of the grid, any other way the move is whole steps
-        if (snapActive()) distance = snappedAlong(gizmo_pivot, gizmo_arrow, distance);
+        if (snapActive())
+        {
+            distance = snappedAlong(gizmo_pivot, gizmo_arrow, distance);
+            setSnapMark(gizmo_pivot + gizmo_arrow * distance, false);               // (where it lands: marked)
+        }
         for (const auto& v : gizmo_vars)
             numbers[v.id] = v.value0 + distance * (v.mapped ? QVector3D::dotProduct(v.w, gizmo_arrow) : v.weight);
         applyGizmoNumbers(numbers);
@@ -8847,9 +9050,11 @@ void View::dragGizmo(QPoint pos)
             // The snapping mode: the place it goes to is a node of the grid -- with a square of the gizmo along a plane of the world, a node of the lines of that plane, the way out of it kept
             QVector3D target = gizmo_pivot + d;
             QVector3D dot;
+            bool onDot = false;
             if (m_snap.snapPoints && pointNear(target, gizmo_active.shape, dot))
             {
                 target = dot;                       // (near the dot of a point that is there: on that point, and not on the grid)
+                onDot = true;
             }
             else
             {
@@ -8868,6 +9073,7 @@ void View::dragGizmo(QPoint pos)
                 }
             }
             d = target - gizmo_pivot;
+            setSnapMark(target, onDot);                                                 // (where it lands: marked)
         }
         std::map<libfive::Tree::Id, float> numbers;
         for (const auto& v : gizmo_vars) numbers[v.id] = v.value0 + (v.mapped ? QVector3D::dotProduct(v.w, d) : d[v.axis]);

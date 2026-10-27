@@ -830,7 +830,7 @@ Every command can be rebound in **Settings → Keyboard shortcuts…** (`Ctrl+K 
 | Copy / link the selected models (viewport or tree focused) | `Shift+D` / `Ctrl+D` |
 | Snap the first body onto the second by the selected faces, edges and points (viewport or tree focused) | `S` |
 | Work plane view: open / close, new work plane, set the view to it | `Shift+W`, `W` (viewport focused); `Ctrl+Shift+W` anywhere |
-| Snapping mode: a grid that everything you move goes to, and a step for every turn | `Tab` (viewport focused); `Alt` held moves freely |
+| Snapping mode: a grid that everything you move goes to, a ring with its numbers where it lands, and a step for every turn | `Tab` (viewport focused); `Alt` held moves freely |
 | Use the symmetry that is selected, or stop (with none in the script: make one) | `Shift+S` (viewport focused) |
 | In the work plane view: next kind of drawing (line, spline, point; after stopping: the one that was on) / stop drawing / end a line / take a point back / cancel | `E` / right click / `Enter` or a double click / `Backspace` / `Esc` |
 | Front / back / right / left / top / bottom / iso | `1` / `Ctrl+1` / `3` / `Ctrl+3` / `7` / `Ctrl+7` / `0` |

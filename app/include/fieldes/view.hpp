@@ -260,6 +260,9 @@ public slots:
     bool snapActive() const;
     /*  `p` moved to the nearest node of the grid -- or onto a point that is there, when `toPoints` and one is within a few pixels --; unchanged when nothing is snapped just now  */
     QVector3D snapPoint(const QVector3D& p, const Shape* exclude = nullptr, bool toPoints = true) const;
+    // (what a click puts down, and what is hovered: a point that is there, else the node of the lattice that the cursor is over -- the nearest to the viewer of those under it --, else the plane's)
+    QVector3D snapPlace(QPoint pos, const Shape* exclude = nullptr, bool toPoints = true) const;
+    QVector3D snapNodeAlongRay(QPoint pos, bool* hit = nullptr) const;
     /*  The step of a turn in degrees: the card's, for the turns of the mode and for the Shift gizmo  */
     float angleStep() const { return qMax(0.1f, m_snap.angle); }
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
@@ -711,6 +714,7 @@ protected:
     void announceSnap();
     void syncSnapWithWorkPlane();
     void drawSnapGrid(QPainter& painter);
+    void drawSnapMark(QPainter& painter);
     /*  The lattice of the snapping mode as a picture of the viewport (transparent, in device pixels): false when its lines are too fine to draw from here.  The lattice is seen out to the
      *  viewing distance of the card -- measured from the viewer, in the units of the view, so that it is the same picture whatever the zoom and wherever the view is panned  */
     bool renderSnapLattice(QImage& image, qreal ratio, int& stride) const;
@@ -722,6 +726,14 @@ protected:
     qreal m_snapImageRatio = 0;
     bool m_snapImageKept = false;            // (the numbers above are those of a picture that was made: it is made again only when one of them changes)
     bool m_snapImageDrawn = false;           // (and the lattice was drawn in it)
+    // The nearest and the farthest rows of the lattice that was drawn, as shares of the way from the viewer to the place looked at (a click goes to a node between them), and the mark of where it snaps to
+    mutable float m_snapSlabNear = 0.25f, m_snapSlabFar = 1.15f;
+    mutable bool m_snapSlabValid = false;
+    struct SnapMark { bool valid = false; QVector3D at; bool onPoint = false; };
+    SnapMark m_snapMark;
+    void setSnapMark(const QVector3D& at, bool onPoint);
+    void clearSnapMark();
+    void updateSnapHover(QPoint pos);
     int m_snapImageStride = 1;               // (every how manieth line of the lattice was drawn: 1 all of them, 5 every fifth -- when the lines would be too close to see -- the label says so)
     bool altHeld() const;
     /*  The dot of a point that is within a few pixels of `p` on the screen (not `exclude`, the one that is moved): where it is  */
