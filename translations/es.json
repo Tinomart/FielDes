@@ -1826,7 +1826,7 @@
  "Angle step": "Paso de ángulo",
  "Turn in steps of %1 degrees": "Girar en pasos de %1 grados",
  "Distance": "Alcance",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "Todo lo que mueva se ajusta a la cuadrícula y cada giro al paso de ángulo. Mantenga Alt para moverse libremente. Tab sale del modo.",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "Todo lo que mueva se ajusta a la cuadrícula y cada giro al paso de ángulo. Mantenga Alt para moverse libremente. Ctrl y la rueda del ratón acercan o alejan la cuadrícula. Tab sale del modo.",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes está calculando. La barra sobre la consola y la del borde inferior de la imagen muestran cuánto falta: el paso continúa cuando está llena.",
  "Show grid": "Mostrar cuadrícula",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "Un modelo que se coloca, se extrae o se mueve con un cuadrado del manipulador cae sobre un punto que ya existe cuando está cerca de él: sobre el punto y no sobre la cuadrícula",

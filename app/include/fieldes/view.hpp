@@ -729,6 +729,7 @@ protected:
     QMatrix4x4 m_snapImageM;                 // (the camera it was drawn for)
     float m_snapImageStep = 0;               // (and the step, the viewing distance, the size of the viewport and its pixel ratio)
     int m_snapImageDistance = 0;
+    float m_snapImageDepth = 0;
     QSize m_snapImageSize;
     qreal m_snapImageRatio = 0;
     bool m_snapImageKept = false;            // (the numbers above are those of a picture that was made: it is made again only when one of them changes)
@@ -755,6 +756,7 @@ protected:
     QVector3D m_previewPoint;
     double m_previewScale = 1.0;
     void setSnapMark(const QVector3D& at, bool onPoint);
+    void panSnapDepth(int wheelDelta);       // (Ctrl + the wheel in the snapping mode: the slice of the lattice moves toward or away from the viewer)
     void clearSnapMark();
     void updateSnapHover(QPoint pos);
     int m_snapImageStride = 1;               // (every how manieth line of the lattice was drawn: 1 all of them, 5 every fifth -- when the lines would be too close to see -- the label says so)

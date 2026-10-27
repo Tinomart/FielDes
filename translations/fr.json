@@ -1826,7 +1826,7 @@
  "Angle step": "Pas d’angle",
  "Turn in steps of %1 degrees": "Tourner par pas de %1 degrés",
  "Distance": "Portée",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "Tout ce que vous déplacez s’aimante à la grille, et chaque rotation au pas d’angle. Maintenez Alt pour vous déplacer librement. Tab quitte le mode.",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "Tout ce que vous déplacez s’aimante à la grille, et chaque rotation au pas d’angle. Maintenez Alt pour vous déplacer librement. Ctrl et la molette rapprochent ou éloignent la grille de vous. Tab quitte le mode.",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes calcule. La barre au-dessus de la console et celle en bas de l’image montrent où il en est : l’étape continue quand elle est pleine.",
  "Show grid": "Afficher la grille",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "Un modèle posé, tiré ou déplacé par un carré du manipulateur se pose sur un point déjà présent quand il en est proche : sur le point, et non sur la grille",

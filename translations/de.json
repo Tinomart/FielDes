@@ -1826,7 +1826,7 @@
  "Angle step": "Winkelschritt",
  "Turn in steps of %1 degrees": "In Schritten von %1 Grad drehen",
  "Distance": "Reichweite",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "Alles, was Sie bewegen, rastet am Raster ein, jede Drehung am Winkelschritt. Alt gedrückt halten für freie Bewegung. Tab verlässt den Modus.",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "Alles, was Sie bewegen, rastet am Raster ein, jede Drehung am Winkelschritt. Alt gedrückt halten für freie Bewegung. Strg und das Mausrad verschieben das Raster auf Sie zu oder von Ihnen weg. Tab verlässt den Modus.",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes rechnet. Der Balken über der Konsole und der am unteren Bildrand zeigen, wie weit es ist: Der Schritt geht weiter, wenn er voll ist.",
  "Show grid": "Raster anzeigen",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "Ein abgesetztes, herausgezogenes oder mit einem Quadrat des Manipulators bewegtes Modell landet auf einem vorhandenen Punkt, wenn es nahe daran ist: auf dem Punkt und nicht auf dem Raster",

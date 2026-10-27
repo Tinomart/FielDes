@@ -510,7 +510,7 @@ GridPanel::GridPanel(QWidget* parent)
     m_distance->setObjectName("gridDistance");
     m_distance->setRange(105, 400);
     m_distance->setSingleStep(5);
-    m_distance->setValue(115);
+    m_distance->setValue(135);
     m_distance->setSuffix(" %");
     m_distance->setKeyboardTracking(false);
     m_distance->setButtonSymbols(QSpinBox::NoButtons);
@@ -523,9 +523,9 @@ GridPanel::GridPanel(QWidget* parent)
 
     m_hint->setObjectName("GridHint");
     m_hint->setWordWrap(true);
-    m_hint->setFixedHeight(54);
+    m_hint->setFixedHeight(70);
     m_hint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    m_hint->setText(T("Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode."));
+    m_hint->setText(T("Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode."));
 
     auto body = new QVBoxLayout(m_body);
     body->setContentsMargins(6, 2, 6, 4);

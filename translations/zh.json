@@ -1826,7 +1826,7 @@
  "Angle step": "角度步长",
  "Turn in steps of %1 degrees": "按 %1 度的步长旋转",
  "Distance": "显示距离",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "你移动的一切都会吸附到网格，每次旋转都按角度步长进行。按住 Alt 可自由移动。按 Tab 退出该模式。",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "你移动的一切都会吸附到网格，每次旋转都按角度步长进行。按住 Alt 可自由移动。按住 Ctrl 并滚动滚轮可将网格移近或移远。按 Tab 退出该模式。",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes 正在计算。控制台上方的进度条和画面底部的进度条显示进度：进度条走满后进入下一步。",
  "Show grid": "显示网格",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "放下、拉出或用操纵器的平面方块移动的模型，靠近已有的点时会落在该点上，而不是落在网格上",

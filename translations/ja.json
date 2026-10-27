@@ -1826,7 +1826,7 @@
  "Angle step": "角度の刻み",
  "Turn in steps of %1 degrees": "%1 度刻みで回転",
  "Distance": "表示距離",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "動かすものはすべてグリッドに、回転は角度の刻みにスナップします。Alt を押している間は自由に動かせます。Tab でモードを終了します。",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "動かすものはすべてグリッドに、回転は角度の刻みにスナップします。Alt を押している間は自由に動かせます。Ctrl とマウスホイールでグリッドを手前や奥へ動かせます。Tab でモードを終了します。",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes が計算中です。コンソールの上のバーと画面下部のバーが進み具合を示します。いっぱいになると次のステップに進みます。",
  "Show grid": "グリッドを表示",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "置いた、引き出した、またはギズモの平面の四角で動かしたモデルは、既にある点の近くに来ると、グリッドではなくその点に吸着します",

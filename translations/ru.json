@@ -1826,7 +1826,7 @@
  "Angle step": "Шаг угла",
  "Turn in steps of %1 degrees": "Поворачивать шагами по %1 градусов",
  "Distance": "Дальность",
- "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Tab leaves the mode.": "Всё, что вы перемещаете, привязывается к сетке, а каждый поворот — к шагу угла. Удерживайте Alt, чтобы двигать свободно. Tab выходит из режима.",
+ "Everything you move snaps to the grid, and every turn to the angle step. Hold Alt to move freely. Ctrl and the scroll wheel move the grid toward or away from you. Tab leaves the mode.": "Всё, что вы перемещаете, привязывается к сетке, а каждый поворот — к шагу угла. Удерживайте Alt, чтобы двигать свободно. Ctrl и колесо мыши приближают сетку к вам или отдаляют её. Tab выходит из режима.",
  "FielDes is calculating. The bar above the console and the one at the bottom of the picture show how far it is: the step goes on when it is full.": "FielDes считает. Полоса над консолью и полоса внизу изображения показывают, как идёт расчёт: шаг продолжится, когда она заполнится.",
  "Show grid": "Показать сетку",
  "A model put down, pulled out or moved by a plane square lands on a point that is already there when it is near one, on the point and not on the grid": "Поставленная, вытянутая или сдвинутая квадратом манипулятора модель, оказавшись рядом с уже имеющейся точкой, попадает на эту точку, а не на сетку",

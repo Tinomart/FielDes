@@ -1214,7 +1214,7 @@ Window::Window(Arguments args)
         view->addAction(snapAction);
         // (what the card says is kept: the grid, the step of the turn and the viewing distance of the lattice are the same the next time FielDes opens)
         view->setSnapOptions(settings.value("snap/show", true).toBool(), settings.value("snap/spacing", 0.0).toFloat(), settings.value("snap/angle", 5.0).toFloat(),
-                             settings.value("snap/distance", 115).toInt(), settings.value("snap/points", true).toBool());
+                             settings.value("snap/distance2", 135).toInt(), settings.value("snap/points", true).toBool());      // (distance2: the viewing distance that reaches farther back than the first, 115 %, did -- a number of the first kind is not read)
         connect(snapAction, &QAction::toggled, this, [=](bool on) { view->setSnapMode(on); });
         connect(view, &View::snapChanged, this, [=] {
             const SnapGrid grid = view->snapGrid();
@@ -1230,7 +1230,7 @@ Window::Window(Arguments args)
             settings.setValue("snap/show", show);
             settings.setValue("snap/spacing", double(spacing));
             settings.setValue("snap/angle", double(angle));
-            settings.setValue("snap/distance", distance);
+            settings.setValue("snap/distance2", distance);
             settings.setValue("snap/points", snapPoints);
             view->setSnapOptions(show, spacing, angle, distance, snapPoints);
         });
