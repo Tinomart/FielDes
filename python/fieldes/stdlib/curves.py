@@ -118,8 +118,8 @@ class Control:
         self.rot_expr = vec(rotation) if rotation is not None else None
         self.rot = tuple(value_of(c) for c in self.rot_expr) if rotation is not None else (0.0, 0.0, 0.0)
         self.turned = any(abs(a) > 1e-12 for a in self.rot)
-        # the scale of a point is ONE number: the mean of the three of its gizmo (they are kept equal by the gizmo of a point).  It is how strongly a spline
-        # leaves the point (1: Catmull-Rom; more: rounder; less: tighter), and how thick `path_extrude` makes what it sweeps there
+        # the scale of a point is ONE number: the mean of the three of its gizmo (they are kept equal by the gizmo of a point).  It is how thick `path_extrude` makes what it sweeps there; the line
+        # itself does not look at it
         scale = getattr(item, '_gizmo', None)
         self.scale_expr = None
         self.scale = 1.0
@@ -127,6 +127,19 @@ class Control:
             parts = vec(scale[4])
             self.scale_expr = (parts[0] + parts[1] + parts[2]) * (1.0 / 3.0)
             self.scale = max(0.0, sum(value_of(c) for c in parts) / 3.0)
+        # the influence of a point is ONE number too, `point(..., influence=r)` -- a number or a var(), and the number the ring of a point's gizmo drags: how strongly a spline leaves the point
+        # (1: Catmull-Rom; more: rounder; less: tighter) and what multiplies the radius of a round corner at it.  It used to be the scale, so that a spline that is the path of a sweep had one
+        # number for the shape of its curve and for how thick the sweep is.  A point that says none has 1
+        given_influence = getattr(item, '_influence', None)
+        self.influence_expr = None
+        self.influence = 1.0
+        if given_influence is not None:
+            self.influence_expr = Shape.wrap(given_influence)
+            self.influence = max(0.0, value_of(given_influence))
+        elif not self.smooth(smooth_default):
+            # (a point that is no spline point and says no influence of its own: the ring of its gizmo -- its scale numbers -- is its influence, as it was while the scale was the one number for it)
+            self.influence_expr = self.scale_expr
+            self.influence = self.scale
         # A ROUND corner (a point of a profile -- `rounds` -- that says `point(..., radius=r)`, or the profile's own `radius` for the points that do not say): an exact arc of that
         # radius, tangent to both edges, takes the place of the corner.  The point's scale multiplies the radius -- the gold ring of its gizmo -- as the scale of a sphere multiplies
         # its radius.  A spline point has no radius (it says so itself, or the profile says it); radius=0 is a hard corner whatever the profile says
@@ -142,8 +155,15 @@ class Control:
             spline = self.flag == 1 or (self.flag < 0 and bool(smooth_default))
             if not spline and value_of(given) > 0.0:
                 self.flag = 0
-                self.radius_expr = Shape.wrap(given) * (self.scale_expr if self.scale_expr is not None else 1.0)
-                self.radius = value_of(given) * self.scale
+                self.radius_expr = Shape.wrap(given) * (self.influence_expr if self.influence_expr is not None else 1.0)
+                self.radius = value_of(given) * self.influence
+        # (a spline point -- the line leaves it in its own direction: the gold ring of its gizmo is its scale, how thick a sweep is there, and Shift turns it into its influence; the ring of any
+        # other point is its influence.  The viewport reads it from the point: see interpreter.cpp)
+        if self.smooth(smooth_default):
+            try:
+                item._spline_point = True
+            except AttributeError:
+                pass
 
     def smooth(self, default):
         return bool(default) if self.flag < 0 else self.flag == 1
@@ -181,6 +201,7 @@ def trace(ctrls, default, closed, pieces=PIECES, normal=None, arc_pieces=32):
     turned = _array(ctypes.c_int, [1 if ctl.turned else 0 for ctl in ctrls])
     rot = _array(ctypes.c_double, [a for ctl in ctrls for a in ctl.rot])
     scales = _array(ctypes.c_double, [ctl.scale for ctl in ctrls])
+    influences = _array(ctypes.c_double, [ctl.influence for ctl in ctrls])
     radii = _array(ctypes.c_double, [ctl.radius for ctl in ctrls])
     axis = _array(ctypes.c_double, list(normal)) if normal is not None else None
     cap = n * (pieces + 4 * max(arc_pieces, 1) + 2) + 2
@@ -188,7 +209,7 @@ def trace(ctrls, default, closed, pieces=PIECES, normal=None, arc_pieces=32):
         verts = (ctypes.c_double * (3 * cap))()
         owner = (ctypes.c_int * cap)()
         along = (ctypes.c_double * cap)()
-        got = lib.libfive_pointshape_polyline(pos, flags, turned, rot, scales, radii, axis, n, 1 if default else 0, 1 if closed else 0, pieces, arc_pieces, verts, owner, along, cap)
+        got = lib.libfive_pointshape_polyline(pos, flags, turned, rot, scales, influences, radii, axis, n, 1 if default else 0, 1 if closed else 0, pieces, arc_pieces, verts, owner, along, cap)
         if got <= cap:
             break
         cap = got
@@ -253,7 +274,8 @@ def viewport_data(out, ctrls, default, closed):
     out._ctrl_rot = [c.rot_expr for c in ctrls]
     out._ctrl_flag = [c.flag for c in ctrls]
     out._ctrl_scale = [c.scale_expr for c in ctrls]
-    out._ctrl_radius = [c.radius_expr for c in ctrls]          # (the radius of a round corner, as an expression -- the scale of the point is in it -- or None)
+    out._ctrl_influence = [c.influence_expr for c in ctrls]
+    out._ctrl_radius = [c.radius_expr for c in ctrls]          # (the radius of a round corner, as an expression -- the influence of the point is in it -- or None)
     out._ctrl_radius_own = [c.radius_own if c.rounded else None for c in ctrls]       # (the number the point itself gives: what an arc dragged in the viewport changes)
     out._ctrl_default = bool(default)
     out.closed = bool(closed)
@@ -518,7 +540,7 @@ def _linear_in(n, off):
 
 def _make(points, default, closed):
     items = list(points)
-    ctrls = controls(items)
+    ctrls = controls(items, smooth_default=default)         # (the line's default: whether a point that says nothing is a spline point -- its gizmo ring is then its scale, and its influence is its own number)
     mark(ctrls, default, 'curve')
     if len(ctrls) < 2:
         out = owned(Shape.wrap(1e9), Curve)

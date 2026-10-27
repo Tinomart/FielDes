@@ -68,8 +68,9 @@ rows): they are all unlocked, and still selected.
 **The dot in the middle of a gizmo** drags the model freely: it follows the cursor in the plane through the gizmo
 that faces the camera (all the selected models together, for the shared gizmo).
 
-**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **scale** -- a point has one, always uniform, dragged with the one
-gold ring round the dot -- is how strongly a spline leaves it and how thick a sweep is at it. **A point of a profile has no arrows**: its dot, pressed and dragged, moves it in the plane of the profile (several points of one profile selected
+**A point is that dot, and its rotation and scale mean something.** The rotation of a point turns the direction a spline leaves it (and twists what `path_extrude` sweeps); its **influence** -- `point(..., influence=r)`, one number, dragged with the one
+gold ring round the dot -- is how strongly a spline leaves it, what multiplies the radius of a round corner at it, and the radius of the field round it; its **scale**, always uniform, is how thick a sweep is at it. **On a spline point of a path the ring is its
+scale (the tube gets thicker there) and Shift and the ring drag its influence**; on every other point the ring is the influence. **A point of a profile has no arrows**: its dot, pressed and dragged, moves it in the plane of the profile (several points of one profile selected
 together have just the dot too), it has one rotation ring (in the plane) when it is a spline point, and the scale handle. See [Profiles](profiles.md).
 
 **The gizmo of a point of a curve faces the way the curve does.** Its blue axis -- the arrow and the ring -- is the direction the curve (the path of a `path_extrude`) takes through the point, and the red and green are

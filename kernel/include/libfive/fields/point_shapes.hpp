@@ -29,7 +29,9 @@ struct Control
     int smooth = -1;                                       // -1: what the shape says, 0: a corner, 1: a spline point
     bool turned = false;                                   // the point is rotated: the direction a spline leaves it is turned
     Eigen::Vector3d rotate = Eigen::Vector3d::Zero();      // degrees, about x, then y, then z (the way a gizmo turns a shape)
-    double scale = 1.0;                                    // how strongly a spline leaves it: the direction it leaves in is this many times as long (1: Catmull-Rom)
+    double scale = 1.0;                                    // how thick a sweep along the line is at the point (the size of the profile there); the line itself does not look at it
+    double influence = 1.0;                                // how strongly a spline leaves it: the direction it leaves in is this many times as long (1: Catmull-Rom) -- the point's own number,
+                                                           // apart from its scale (a spline that is a path of a sweep used to have one number for both)
     bool planar = false;                                   // the point belongs to a face: its rotation is ONE angle (the z number of `rotate`), about `normal`
     Eigen::Vector3d normal = Eigen::Vector3d::UnitZ();     // (the normal of the plane of the face)
     double radius = 0.0;                                   // > 0 at a corner of a face: a ROUND corner -- an exact circular arc of this radius, tangent to both edges, takes the
@@ -61,7 +63,7 @@ std::vector<Fillet> fillets(const std::vector<Control>& controls, bool smoothDef
 /*
  *  The direction the line leaves each spline point in (zero at a corner): half the way from the point before to the point after, turned by the point's
  *  rotation (about x, then y, then z; for a point of a face the one angle about the normal of its plane) and made as many times as long as the point's
- *  scale says; the end of an open line looks along its one edge
+ *  influence says; the end of an open line looks along its one edge
  */
 std::vector<Eigen::Vector3d> tangents(const std::vector<Control>& controls, bool smoothDefault, bool closed);
 

@@ -1540,6 +1540,8 @@ void Interpreter::recordShape(
             {
                 PyObject* cr = PyObject_GetAttrString(obj, "_ctrl_rot");
                 PyObject* cs = PyObject_GetAttrString(obj, "_ctrl_scale");
+                PyObject* ci = PyObject_GetAttrString(obj, "_ctrl_influence");
+                if (!ci) PyErr_Clear();
                 PyObject* cf = PyObject_GetAttrString(obj, "_ctrl_flag");
                 PyObject* crad = PyObject_GetAttrString(obj, "_ctrl_radius");
                 if (!crad) PyErr_Clear();
@@ -1578,6 +1580,12 @@ void Interpreter::recordShape(
                         c.scale = treeOfShape(sc);
                         c.hasScale = c.scale.is_valid();
                     }
+                    PyObject* inf = (ci && PyList_Check(ci) && i < PyList_Size(ci)) ? PyList_GetItem(ci, i) : nullptr;
+                    if (inf && inf != Py_None)
+                    {
+                        c.influence = treeOfShape(inf);
+                        c.hasInfluence = c.influence.is_valid();
+                    }
                     PyObject* flag = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
                     if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
                     PyObject* rad = (crad && PyList_Check(crad) && i < PyList_Size(crad)) ? PyList_GetItem(crad, i) : nullptr;
@@ -1613,6 +1621,7 @@ void Interpreter::recordShape(
                 }
                 Py_XDECREF(cr);
                 Py_XDECREF(cs);
+                Py_XDECREF(ci);
                 Py_XDECREF(cf);
                 Py_XDECREF(crad);
                 Py_XDECREF(cown);
@@ -1631,6 +1640,8 @@ void Interpreter::recordShape(
             {
                 PyObject* pr = PyObject_GetAttrString(obj, "_prism_rot");
                 PyObject* ps = PyObject_GetAttrString(obj, "_prism_scale");
+                PyObject* pi = PyObject_GetAttrString(obj, "_prism_influence");
+                if (!pi) PyErr_Clear();
                 PyObject* pf = PyObject_GetAttrString(obj, "_prism_flag");
                 PyObject* prad = PyObject_GetAttrString(obj, "_prism_radius");
                 if (!prad) PyErr_Clear();
@@ -1667,6 +1678,12 @@ void Interpreter::recordShape(
                         c.scale = treeOfShape(sc);
                         c.hasScale = c.scale.is_valid();
                     }
+                    PyObject* inf = (pi && PyList_Check(pi) && i < PyList_Size(pi)) ? PyList_GetItem(pi, i) : nullptr;
+                    if (inf && inf != Py_None)
+                    {
+                        c.influence = treeOfShape(inf);
+                        c.hasInfluence = c.influence.is_valid();
+                    }
                     PyObject* flag = (pf && PyList_Check(pf) && i < PyList_Size(pf)) ? PyList_GetItem(pf, i) : nullptr;
                     if (flag && PyLong_Check(flag)) c.flag = int(PyLong_AsLong(flag));
                     PyObject* rad = (prad && PyList_Check(prad) && i < PyList_Size(prad)) ? PyList_GetItem(prad, i) : nullptr;
@@ -1691,6 +1708,7 @@ void Interpreter::recordShape(
                 if (good && treeA.is_valid() && treeB.is_valid()) shape->setPrism(std::move(points), pd && PyObject_IsTrue(pd) == 1, treeA, treeB, std::move(guard));
                 Py_XDECREF(pr);
                 Py_XDECREF(ps);
+                Py_XDECREF(pi);
                 Py_XDECREF(pf);
                 Py_XDECREF(prad);
                 Py_XDECREF(pd);
@@ -1708,10 +1726,12 @@ void Interpreter::recordShape(
             PyObject* qp = PyObject_GetAttrString(obj, "_sweep_qpos");
             if (pp && PyList_Check(pp) && PyList_Size(pp) > 0 && qp && PyList_Check(qp) && PyList_Size(qp) > 0)
             {
-                auto readPoints = [&](const char* pos, const char* rot, const char* scale, const char* flag, const char* radius, std::vector<Shape::ControlPoint>& points) -> bool {
+                auto readPoints = [&](const char* pos, const char* rot, const char* scale, const char* influence, const char* flag, const char* radius, std::vector<Shape::ControlPoint>& points) -> bool {
                     PyObject* cp = PyObject_GetAttrString(obj, pos);
                     PyObject* cr = PyObject_GetAttrString(obj, rot);
                     PyObject* cs = PyObject_GetAttrString(obj, scale);
+                    PyObject* ci = PyObject_GetAttrString(obj, influence);
+                    if (!ci) PyErr_Clear();
                     PyObject* cf = PyObject_GetAttrString(obj, flag);
                     PyObject* crad = radius ? PyObject_GetAttrString(obj, radius) : nullptr;      // (the points of a path have no radius: a round corner is a corner of a face)
                     if (!crad) PyErr_Clear();
@@ -1742,6 +1762,12 @@ void Interpreter::recordShape(
                             c.scale = treeOfShape(sc);
                             c.hasScale = c.scale.is_valid();
                         }
+                        PyObject* inf = (ci && PyList_Check(ci) && i < PyList_Size(ci)) ? PyList_GetItem(ci, i) : nullptr;
+                        if (inf && inf != Py_None)
+                        {
+                            c.influence = treeOfShape(inf);
+                            c.hasInfluence = c.influence.is_valid();
+                        }
                         PyObject* fl = (cf && PyList_Check(cf) && i < PyList_Size(cf)) ? PyList_GetItem(cf, i) : nullptr;
                         if (fl && PyLong_Check(fl)) c.flag = int(PyLong_AsLong(fl));
                         PyObject* rd = (crad && PyList_Check(crad) && i < PyList_Size(crad)) ? PyList_GetItem(crad, i) : nullptr;
@@ -1755,13 +1781,14 @@ void Interpreter::recordShape(
                     Py_XDECREF(cp);
                     Py_XDECREF(cr);
                     Py_XDECREF(cs);
+                    Py_XDECREF(ci);
                     Py_XDECREF(cf);
                     Py_XDECREF(crad);
                     return good;
                 };
                 std::vector<Shape::ControlPoint> profile, path;
-                bool good = readPoints("_sweep_ppos", "_sweep_prot", "_sweep_pscale", "_sweep_pflag", "_sweep_pradius", profile) &&
-                            readPoints("_sweep_qpos", "_sweep_qrot", "_sweep_qscale", "_sweep_qflag", nullptr, path);
+                bool good = readPoints("_sweep_ppos", "_sweep_prot", "_sweep_pscale", "_sweep_pinfluence", "_sweep_pflag", "_sweep_pradius", profile) &&
+                            readPoints("_sweep_qpos", "_sweep_qrot", "_sweep_qscale", "_sweep_qinfluence", "_sweep_qflag", nullptr, path);
                 PyObject* pd = PyObject_GetAttrString(obj, "_sweep_pdefault");
                 PyObject* qd = PyObject_GetAttrString(obj, "_sweep_qdefault");
                 PyObject* qc = PyObject_GetAttrString(obj, "_sweep_qclosed");
@@ -2086,6 +2113,21 @@ void Interpreter::recordShape(
                     if (PyTuple_Check(mv) && PyTuple_Size(mv) == 3) hd.move[a] = idOf(PyTuple_GetItem(mv, a));
                     if (PyTuple_Check(rt) && PyTuple_Size(rt) == 3) hd.rotate[a] = idOf(PyTuple_GetItem(rt, a));
                     if (sc && PyTuple_Check(sc) && PyTuple_Size(sc) == 3) hd.scale[a] = idOf(PyTuple_GetItem(sc, a));
+                }
+                // A point's influence (`point(..., influence=r)`, a var()): the number the ring of its gizmo drags -- or, on a spline point, Shift and the ring (see curves.Control and View::dragGizmo)
+                if (PyObject_HasAttrString(obj, "_influence"))
+                {
+                    PyObject* inf = PyObject_GetAttrString(obj, "_influence");
+                    hd.influence = idOf(inf);
+                    Py_XDECREF(inf);
+                    PyErr_Clear();
+                }
+                if (PyObject_HasAttrString(obj, "_spline_point"))
+                {
+                    PyObject* sp = PyObject_GetAttrString(obj, "_spline_point");
+                    hd.splinePoint = sp && PyObject_IsTrue(sp) == 1;
+                    Py_XDECREF(sp);
+                    PyErr_Clear();
                 }
                 // The gizmo of an image (`_symmetry`: the matrix of the image, then its centre, then -- for the image that is a placed copy, see points.image_dot -- how far it is moved
                 // after): the original's numbers, placed where the image is -- its moves, its turn and its scale (a point's: how strongly a spline leaves it), which the viewport

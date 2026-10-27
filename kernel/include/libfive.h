@@ -871,14 +871,15 @@ libfive_tree libfive_beam_lattice(const float* nodes, int node_count, const int*
  */
 /*
  *  Shapes made of points (see libfive/fields/point_shapes.hpp).  pos: 3n numbers, smooth: n of -1 (what the shape says), 0 (a corner) or 1 (a spline
- *  point), turned: n of 0/1, rotate: 3n degrees, scale: n numbers (how strongly a spline leaves each point: 1 is Catmull-Rom; may be null), normal: 3 numbers
+ *  point), turned: n of 0/1, rotate: 3n degrees, scale: n numbers (how thick a sweep is at each point; the line does not look at it; may be null), influence: n numbers (how strongly a
+ *  spline leaves each point: 1 is Catmull-Rom; may be null), normal: 3 numbers
  *  (the normal of the plane of a face: the points' rotation is then one angle, the z number of rotate, about it; null for a line in space), radius: n numbers (> 0 at
  *  a corner: a round corner, an exact arc of that radius takes its place; may be null).
  *  The line through them is written to out_vertices (3 numbers each), out_owner (the control each
  *  vertex is after) and out_t (how far along towards the next, 0 to 1), up to `capacity` vertices; the number of vertices is returned (more than
  *  capacity: nothing is written, and that many are needed).  `arc_pieces` is how many pieces an arc is cut into for a quarter turn (0: only its two ends, the chord)
  */
-int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale, const double* radius,
+int libfive_pointshape_polyline(const double* pos, const int* smooth, const int* turned, const double* rotate, const double* scale, const double* influence, const double* radius,
                                 const double* normal, int n, int smooth_default, int closed, int pieces, int arc_pieces,
                                 double* out_vertices, int* out_owner, double* out_t, int capacity);
 /*  The round corners (arcs) of the same points, as 11 numbers each: the control, the two ends of the arc (a, b: 3 numbers each), its centre (3) and its radius as made

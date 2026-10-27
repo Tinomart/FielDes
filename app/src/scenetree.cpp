@@ -4158,11 +4158,13 @@ QString placementDefault(const QString& name)
 }
 
 // The arguments a model's gizmo drags, as (name, text) to write: position and rotation, and scale -- unless the model is a linked copy (only moved and turned) or a symmetry (no scale)
-QList<QPair<QString, QString>> gizmoArguments(bool scale)
+QList<QPair<QString, QString>> gizmoArguments(bool scale, bool point = false)
 {
     QList<QPair<QString, QString>> out;
     out << qMakePair(QString("position"), placementDefault("position")) << qMakePair(QString("rotation"), placementDefault("rotation"));
     if (scale) out << qMakePair(QString("scale"), placementDefault("scale"));
+    // (a point also has its influence, `point(..., influence=r)`: the number the ring of its gizmo drags -- see curves.Control)
+    if (point) out << qMakePair(QString("influence"), QString("var(1)"));
     return out;
 }
 
@@ -4429,7 +4431,7 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
         changed << t;
         if (next != "never" && !placementHasNumbers(t) && !t["no_gizmo"].toBool() && !t.contains("locked") && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool())
         {
-            if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t)), QStringList(), edits, imports)) names << t["var"].toString();
+            if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), t["type"].toString() == "point"), QStringList(), edits, imports)) names << t["var"].toString();
         }
     }
     if (changed.isEmpty()) return;
@@ -4685,7 +4687,7 @@ void ScenePanel::writePlacement(const QJsonObject& target, const QString& argume
     const QString var = target["var"].toString();
     QList<QPair<QString, QString>> wanted;
     if (argument == "alpha") wanted << qMakePair(QString("alpha"), placementDefault("alpha"));
-    else wanted = gizmoArguments(!linkedModel(target) && !symmetryModel(target));
+    else wanted = gizmoArguments(!linkedModel(target) && !symmetryModel(target), target["type"].toString() == "point");
     // (what is written stays as it is: only what is missing is added)
     const QJsonObject written = target["placement"].toObject()["args"].toObject();
     QList<QPair<QString, QString>> fresh;
@@ -7457,7 +7459,7 @@ void ScenePanel::prepareSelection()
         if (needGizmo)
         {
             const bool together = statement && !hasHandles;             // (the handles and the statement are one edit: they stand in that order)
-            if (!placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t)), QStringList(), edits, imports, together ? handlesText : QString()))
+            if (!placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), t["type"].toString() == "point"), QStringList(), edits, imports, together ? handlesText : QString()))
             {
                 refuseOutOfDate();
                 return;

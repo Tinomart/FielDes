@@ -178,8 +178,10 @@ public:
         libfive::Tree pos[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
         libfive::Tree rot[3] = {libfive::Tree::invalid(), libfive::Tree::invalid(), libfive::Tree::invalid()};
         bool hasRot = false;
-        libfive::Tree scale = libfive::Tree::invalid();                 // how strongly a spline leaves it, and how thick a sweep is there (one number: see curves.Control)
+        libfive::Tree scale = libfive::Tree::invalid();                 // how thick a sweep is there (one number: see curves.Control); the line itself does not look at it
         bool hasScale = false;
+        libfive::Tree influence = libfive::Tree::invalid();             // how strongly a spline leaves it (and what multiplies the radius of a round corner): the point's own number, apart from its scale
+        bool hasInfluence = false;
         libfive::Tree radius = libfive::Tree::invalid();                // the radius of a round corner (the scale of the point is in it); a hard corner or a spline point has none
         bool hasRadius = false;
         libfive::Tree::Id radiusVar = nullptr;                          // the one number the point itself gives for its radius (a var()), when it does: what the arc of the corner drags
@@ -456,6 +458,10 @@ public:
         libfive::Tree::Id move[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id rotate[3] = {nullptr, nullptr, nullptr};
         libfive::Tree::Id scale[3] = {nullptr, nullptr, nullptr};
+        // A point's influence (`point(..., influence=r)`, a var()): the number the ring of its gizmo drags -- or, on a spline point, where the ring is its scale (how thick a sweep is there), the number
+        // that Shift and the ring drag.  Null where the point says none
+        libfive::Tree::Id influence = nullptr;
+        bool splinePoint = false;       // (a line or a profile has it as a spline point: see curves.Control)
         // The gizmo of the image of a model (fieldes.stdlib.symmetry.symmetry_image): its numbers are the original's, and `map` takes a place of the original to the
         // image's: the gizmo is drawn there, and what is dragged moves the original by what the image's move is when it is taken back
         bool mapped = false;

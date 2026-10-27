@@ -123,6 +123,7 @@ class Point(Shape):
         click the dot to select it, and its full gizmo shows.  (As a field it is a tiny ball, which gives it a place for its gizmo and for the
         bounds of what is made of it: nothing of the ball is painted.) '''
     _kind = 'point'
+    _spline_point = False       # (set by a line or a profile that has the point as a spline point: its ring is its scale, Shift its influence -- see curves.Control and View::dragGizmo)
 
     def __init__(self, x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None):
         self.xyz = (_coord(x), _coord(y), _coord(z))

@@ -119,9 +119,11 @@ A point has the gizmo of any model, and two of its handles mean something to the
 - **Rotate a spline point** and the direction in which the curve leaves it turns (a line through the selected point shows it). With no rotation the direction comes from the neighbouring points (a Catmull-Rom spline).
   **A point of a profile has one rotation ring, in the plane of the profile, and only a spline point has it**: it turns the direction about the plane's normal, and a corner does not leave in a direction, so its ring is not shown.
   A point of a line in space has the three rings of any gizmo. In a `path_extrude` the rotation of a point **twists** the profile about the path there (between points the twist runs smoothly).
-- **Scale a point** with its **one scale handle**, a gold **ring** round the dot (the uniform scale handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has one scale,
-  always uniform; the three numbers of its `scale=` are moved together. On a **round corner it is the radius's factor** (see above). A spline **leaves it more strongly or less**: `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
-  it as straight as a corner). In a `path_extrude`, **the scale of a point is how thick the profile is there**, tapering smoothly between points: a point with scale 2 makes the tube twice as thick at that point.
+- **The gold ring of a point** (the uniform handle of Blender's scale gizmo): drag it outward to grow, inward to shrink, and the factor shows beside it. A point has two numbers that the ring can drag, both uniform: its **influence**
+  (`point(..., influence=r)`) and its **scale** (the three numbers of its `scale=`, moved together). The **influence** is how strongly a spline leaves the point -- `1` is the Catmull-Rom curve, more is a rounder bulge, less is tighter (`0` makes
+  it as straight as a corner) --, the factor of the radius of a **round corner** (see above), and the radius of the field round the point. The **scale** is how thick a `path_extrude` makes the tube at the point, tapering smoothly between points:
+  a point with scale 2 makes the tube twice as thick there. **The ring drags the influence on every point -- except a spline point, where it drags the scale; Shift and the ring drag the other number**, so the shape of a spline and the
+  thickness of its tube are two numbers that no longer move each other (they used to be one).
 - **Shift + the mouse wheel** (or **Ctrl + the mouse wheel**) scales the point the mouse is on, selected or not, else what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 
 ## How `extrude` works

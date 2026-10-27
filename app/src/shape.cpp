@@ -299,7 +299,7 @@ bool Shape::hasGizmo() const
             return true;
         }
     }
-    return false;
+    return m_gizmo.influence && vars.count(m_gizmo.influence);
 }
 
 bool Shape::dotPosition(QVector3D& p) const
@@ -337,6 +337,7 @@ std::set<libfive::Tree::Id> Shape::gizmoVars() const
             if (id) out.insert(id);
         }
     }
+    if (m_gizmo.influence) out.insert(m_gizmo.influence);
     return out;
 }
 
@@ -411,6 +412,12 @@ bool Shape::controlNumbersOf(const std::vector<ControlPoint>& points, bool face,
             const double s = owner->evalConstant(c.scale, v);
             if (!std::isfinite(s)) return false;
             k.scale = std::max(0.0, s);
+        }
+        if (c.hasInfluence)
+        {
+            const double s = owner->evalConstant(c.influence, v);
+            if (!std::isfinite(s)) return false;
+            k.influence = std::max(0.0, s);
         }
         if (c.hasRadius)
         {
@@ -1036,7 +1043,7 @@ bool Shape::filletHandle(int control, FilletHandle& out) const
         out.normal[a] = normal[a];
     }
     out.sinHalf = std::sin(0.5 * mine->theta);
-    out.scale = std::max(1e-6, cs[size_t(control)].scale);
+    out.scale = std::max(1e-6, cs[size_t(control)].influence);          // (the factor of the radius: the point's influence)
     out.radius = mine->radius;
     out.cap = cap;
     out.var = var;
@@ -3067,6 +3074,7 @@ void Shape::buildDeps() const
                 if (c.hasRot) add(c.rot[a]);
             }
             if (c.hasScale) add(c.scale);
+            if (c.hasInfluence) add(c.influence);
             if (c.hasRadius) add(c.radius);                 // (a round corner's radius: dragged by its arc)
         }
         for (const ControlPoint& c : m_prism_points)
@@ -3077,6 +3085,7 @@ void Shape::buildDeps() const
                 if (c.hasRot) add(c.rot[a]);
             }
             if (c.hasScale) add(c.scale);
+            if (c.hasInfluence) add(c.influence);
             if (c.hasRadius) add(c.radius);
         }
         add(m_prism_a);
@@ -3092,6 +3101,7 @@ void Shape::buildDeps() const
                     if (c.hasRot) add(c.rot[a]);
                 }
                 if (c.hasScale) add(c.scale);
+                if (c.hasInfluence) add(c.influence);
                 if (c.hasRadius) add(c.radius);
             }
         }
@@ -3111,6 +3121,7 @@ void Shape::buildDeps() const
             if (m_gizmo.rotate[a]) m_deps.insert(m_gizmo.rotate[a]);
             if (m_gizmo.scale[a]) m_deps.insert(m_gizmo.scale[a]);
         }
+        if (m_gizmo.influence) m_deps.insert(m_gizmo.influence);
         m_deps_known = true;
     }
 }
@@ -3978,6 +3989,7 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
                 if (c.hasRot)
                     for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(sid(c.rot[a]));
                 if (c.hasScale) key += QString(",s%1").arg(sid(c.scale));
+                if (c.hasInfluence) key += QString(",i%1").arg(sid(c.influence));
                 if (c.hasRadius) key += QString(",R%1").arg(sid(c.radius));
             }
         }
@@ -3995,6 +4007,7 @@ QString Shape::identityKey(std::unordered_map<libfive::TreeDataKey, libfive::Tre
         if (c.hasRot)
             for (int a = 0; a < 3; ++a) key += QString(",r%1").arg(id(c.rot[a]));
         if (c.hasScale) key += QString(",s%1").arg(id(c.scale));
+        if (c.hasInfluence) key += QString(",i%1").arg(id(c.influence));
         if (c.hasRadius) key += QString(",R%1").arg(id(c.radius));
     }
     return key;

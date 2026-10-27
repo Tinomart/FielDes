@@ -152,7 +152,7 @@ std::vector<Eigen::Vector3d> tangents(const std::vector<Control>& c, bool smooth
         else if (i == 0) t = c[1].pos - c[0].pos;
         else if (i == n - 1) t = c[size_t(n - 1)].pos - c[size_t(n - 2)].pos;
         else t = 0.5 * (c[size_t(i + 1)].pos - c[size_t(i - 1)].pos);
-        tangent[size_t(i)] = turnedBy(c[size_t(i)], t) * c[size_t(i)].scale;
+        tangent[size_t(i)] = turnedBy(c[size_t(i)], t) * c[size_t(i)].influence;
     }
     return tangent;
 }

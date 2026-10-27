@@ -253,7 +253,9 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     the Shift gizmo turns in the same step (5 degrees until you change it).  (d) Right-click empty space and make a sphere: it is put on a node.  (e) Open the work plane view (Shift+W): the mode goes off and its card goes; leave the
 #     view (Esc): the mode is back.  (f) The tour, chapter 2, "Snap to a grid": Tab turns the step green; Show me presses it for you.  (g) The icon of a field in the viewport: click it, its viewer opens; click the same icon again, it closes
 #     (before, only a click on empty space did).  (h) In a script: `p = point(0, 0, 0, influence=10)` and `distance_to_point(p)` is the distance from the sphere of radius 10 round p -- -10 at the point, 0 at 10 mm, positive outside;
-#     `radial_field(p, 'z')` is the same round the axis; `distance_to_point((0, 0, 0))` is the plain distance, as it always was.  NOT in this build: dragging the influence of a point with its gizmo, and the split of a spline point's
-#     scale (thickness) from its influence (how strongly the curve leaves the point) -- the influence is a number of the script, typed.
+#     `radial_field(p, 'z')` is the same round the axis; `distance_to_point((0, 0, 0))` is the plain distance, as it always was.    (i) THE INFLUENCE OF A POINT, APART FROM ITS SCALE.  A point has two numbers that its gold ring can drag: its influence
+#     (`point(..., influence=r)`: how strongly a spline leaves it, 1 is the natural curve; the factor of a round corner's radius; the radius of the field round it) and its scale (how thick a sweep along a spline is there).
+#     Make a `spline` through four points and sweep a circle along it (`path_extrude`): select a point of the path and drag its ring -- the TUBE gets thicker there and the curve does not move; hold Shift and drag the ring -- the CURVE
+#     bulges rounder or tighter there and the tube keeps its thickness.  On a point of a sketch (a corner, a round corner) the ring is its influence.  The two used to be one number.
 #
 print("Open one of the files listed above.")

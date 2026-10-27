@@ -256,6 +256,7 @@ def extrude(shape, a, b):
         out._prism_rot = shape._ctrl_rot
         out._prism_flag = shape._ctrl_flag
         out._prism_scale = shape._ctrl_scale
+        out._prism_influence = shape._ctrl_influence
         out._prism_radius = shape._ctrl_radius
         out._prism_default = shape._ctrl_default
         out._prism_a = Shape.wrap(a)
@@ -594,6 +595,7 @@ def path_extrude(profile, path, twist=0):
             out._sweep_prot = [None] * len(primitive_ring)
             out._sweep_pflag = [0] * len(primitive_ring)
             out._sweep_pscale = [None] * len(primitive_ring)
+            out._sweep_pinfluence = [None] * len(primitive_ring)
             out._sweep_pradius = [None] * len(primitive_ring)
             out._sweep_pdefault = False
             out._sweep_free = True
@@ -602,9 +604,11 @@ def path_extrude(profile, path, twist=0):
         else:
             out._sweep_ppos, out._sweep_prot = profile._ctrl_pos, profile._ctrl_rot
             out._sweep_pflag, out._sweep_pscale, out._sweep_pdefault = profile._ctrl_flag, profile._ctrl_scale, profile._ctrl_default
+            out._sweep_pinfluence = profile._ctrl_influence
             out._sweep_pradius = profile._ctrl_radius
         out._sweep_qpos, out._sweep_qrot = path._ctrl_pos, path._ctrl_rot
         out._sweep_qflag, out._sweep_qscale, out._sweep_qdefault = path._ctrl_flag, path._ctrl_scale, path._ctrl_default
+        out._sweep_qinfluence = path._ctrl_influence
         out._sweep_qclosed = bool(path.closed)
         out._sweep_twist = Shape.wrap(twist)
         out._drawn_key = _sweep_key          # (what tells whether two sweeps are the same shape without meshing either: see symmetries.symmetry_images, distinct=True)
@@ -630,11 +634,11 @@ def _sweep_key(s):
                 return None
             move = tuple(num(v) for v in mv)
 
-        def points(ppos, prot, pflag, pscale):
-            return [(tuple(q(num(p[i]) + move[i]) for i in range(3)), () if r is None else tuple(q(c) for c in r), int(f), () if sc is None else (q(sc),))
-                    for p, r, f, sc in zip(ppos, prot, pflag, pscale)]
-        ring = points(s._sweep_ppos, s._sweep_prot, s._sweep_pflag, s._sweep_pscale)
-        path = points(s._sweep_qpos, s._sweep_qrot, s._sweep_qflag, s._sweep_qscale)
+        def points(ppos, prot, pflag, pscale, pinfluence):
+            return [(tuple(q(num(p[i]) + move[i]) for i in range(3)), () if r is None else tuple(q(c) for c in r), int(f), () if sc is None else (q(sc),), () if inf is None else (q(inf),))
+                    for p, r, f, sc, inf in zip(ppos, prot, pflag, pscale, pinfluence)]
+        ring = points(s._sweep_ppos, s._sweep_prot, s._sweep_pflag, s._sweep_pscale, s._sweep_pinfluence)
+        path = points(s._sweep_qpos, s._sweep_qrot, s._sweep_qflag, s._sweep_qscale, s._sweep_qinfluence)
         n = len(ring)
         outline = min(tuple(run[i:] + run[:i]) for run in (ring, ring[::-1]) for i in range(max(n, 1)))
         return ('sweep', outline, tuple(path), bool(s._sweep_qclosed), q(s._sweep_twist), bool(getattr(s, '_sweep_free', False)),

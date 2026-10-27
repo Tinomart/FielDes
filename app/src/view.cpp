@@ -7315,6 +7315,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
+            any = any || (h.influence && vars.count(h.influence));
             // (the hard corner of a profile has no ring, as it has no rotation ring: its scale is how strongly a spline leaves a spline point, or the radius of a round corner)
             if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))             // (the radius of a round corner is the factor of this ring)
             {
@@ -8204,6 +8205,7 @@ void View::drawGizmo(QPainter& painter)
         {
             bool any = false;
             for (int a = 0; a < 3; ++a) any = any || (h.scale[a] && vars.count(h.scale[a]));
+            any = any || (h.influence && vars.count(h.influence));
             if (any && !(inPlane && pointStyleOf(s) != 2 && pointStyleOf(s) != 3))              // (not on the hard corner of a profile: see gizmoAt)
             {
                 const GizmoGrip& now = gizmo_drag ? gizmo_active : gizmo_hover;
@@ -8572,8 +8574,11 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         return;
     }
     const auto& h = g.shape->gizmo();
-    gizmo_id = g.kind == 1 ? h.rotate[g.axis] : h.scale[g.axis];
     const auto& vars = g.shape->getVars();
+    // The ring of a point drags its influence -- the `influence=` number of the point: how strongly a spline leaves it -- and, on a spline point, where the ring is its scale (how thick a sweep is
+    // there), Shift and the ring drag the influence; on any other point Shift takes the scale.  A point that has no influence number of its own yet drags its scale, as it always did
+    const bool influenceRing = g.kind == 2 && g.shape->isPoint() && h.influence && vars.count(h.influence) && (h.splinePoint == shiftHeld());
+    gizmo_id = g.kind == 1 ? h.rotate[g.axis] : (influenceRing ? h.influence : h.scale[g.axis]);
     const auto it = vars.find(gizmo_id);
     if (it == vars.end()) return;
     gizmo_value0 = it->second;
@@ -8582,8 +8587,9 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     gizmo_pivot = g.shape->gizmoPivot();
     for (int a = 0; a < 3; ++a)
     {
-        gizmo_scale_id[a] = h.scale[a];
-        const auto sv = h.scale[a] ? vars.find(h.scale[a]) : vars.end();
+        const libfive::Tree::Id id = influenceRing ? (a == 0 ? h.influence : nullptr) : h.scale[a];
+        gizmo_scale_id[a] = id;
+        const auto sv = id ? vars.find(id) : vars.end();
         gizmo_scale0[a] = sv == vars.end() ? 1.0f : sv->second;
     }
     if (g.kind == 2)
