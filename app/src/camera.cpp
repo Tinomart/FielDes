@@ -143,6 +143,12 @@ void Camera::panIncremental(QPoint delta)
     center += diff*2;
 }
 
+void Camera::panDepth(float notches)
+{
+    // (the point looked at is the world point -center; it moves away from the viewer by the notches, and the picture is about 2 / scale high)
+    center += towardViewer() * (0.1f * notches / scale);
+}
+
 void Camera::zoomIncremental(float ds, QPoint c)
 {
     QVector3D pt(c.x() / float(size.width()) - 0.5,

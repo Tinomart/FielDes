@@ -51,7 +51,7 @@ repeatability of code.
 | | |
 |---|---|
 | **Left: the editor** | the script, with colouring, completion (`Ctrl+Space`), call tips, go to definition (`Ctrl+click`, `F12`, also into the library: it opens in a tab), find (`Ctrl+F`). Below it, the **output**: what the script printed, and errors, with the line underlined |
-| **Right: the viewport** | the model, drawn by meshing the script's fields. Rotate: `Shift`+left-drag or middle-drag. Pan: right-drag. Zoom: the wheel. Double-click a model to frame it, the background to frame all (`Home`) |
+| **Right: the viewport** | the model, drawn by meshing the script's fields. Rotate: `Shift`+left-drag or middle-drag. Pan: right-drag. Zoom: the wheel. Depth pan, into the screen: `Ctrl`+wheel. Double-click a model to frame it, the background to frame all (`Home`) |
 | **Top left of the viewport: the model tree** | one row per thing the script makes, each with the icon of what it is: a 3D shape, a 2D shape, a field, a surface, a point, a simulation ... |
 | **Top: the menus** | *File* (open, import, save, export), *Edit*, *View*, *Settings* (shortcuts, the blocks folder), *Help* (this tutorial, the guide `Shift+F1`, the library reference `F1`) |
 
@@ -235,7 +235,7 @@ A few words mean something particular in FielDes, and some mean something else i
 | `Ctrl+O` / `Ctrl+S` / `Ctrl+Z` / `Ctrl+Y` | open / save / undo / redo (an edit made by the viewport is one undo) |
 | `Ctrl+I` | import a model |
 | `Ctrl+Space`, `Ctrl+click`, `F12`, `Ctrl+F` | complete, go to definition, find |
-| `Shift`+left-drag (or middle-drag), right-drag, wheel | rotate, pan, zoom; `1` front, `3` right, `7` top, `0` isometric, `Home` frame all |
+| `Shift`+left-drag (or middle-drag), right-drag, wheel, `Ctrl`+wheel | rotate, pan, zoom, pan into the screen; `1` front, `3` right, `7` top, `0` isometric, `Home` frame all |
 | left-drag a rectangle, `Ctrl`+click, `Shift`+click (tree) | select |
 | right-click | make things / operate on a model |
 | `E` `R` `V` `C` `I` `D` (viewport focused) | gizmo mode, lock, show / hide, render cache, isolate, delete |

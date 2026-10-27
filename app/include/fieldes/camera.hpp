@@ -100,6 +100,9 @@ public:
     /*  All QPoint coordinates are in window pixels  */
     void rotateIncremental(QPoint delta);
     void panIncremental(QPoint delta);
+    /*  The depth pan: the point looked at -- the pivot of the turns too -- moves along the line of sight, into the screen for a positive number of notches and out of it for a negative one, a twentieth of the
+        height of the picture for a notch.  It is the pan of the right mouse button, into the screen: a model that is passed through is behind the pivot when the view is turned round  */
+    void panDepth(float notches);
     void zoomIncremental(float ds, QPoint c);
 
     float getScale() const { return scale; }

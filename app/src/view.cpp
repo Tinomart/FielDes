@@ -3342,18 +3342,6 @@ void View::setSnapMark(const QVector3D& at, bool onPoint)
     m_overlay->update();
 }
 
-// The depth pan: a notch of the wheel moves the whole slice of the lattice a twenty-fifth of the way from you to the place you look at -- scroll up, deeper into the scene; scroll down, toward you -- and it
-// is as thick as it was, with as many junctions; the picture is made again, and what the cursor is over is looked at again
-void View::panSnapDepth(int wheelDelta)
-{
-    const float before = m_snap.depth;
-    m_snap.depth = std::max(-0.6f, std::min(3.0f, m_snap.depth + 0.04f * float(wheelDelta) / 120.0f));
-    if (m_snap.depth == before) return;
-    m_snapStickValid = false;
-    m_overlay->update();
-    if (m_snapCursorValid) updateSnapHover(m_snapCursor);
-}
-
 void View::clearSnapMark()
 {
     if (m_snapMarkHeld) return;                 // (a menu is open that puts something down at the mark: it stays where that will be)
@@ -3500,10 +3488,8 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // (it reaches as far toward the viewer as the fog begins, about a third of how far it reaches away: the user, 2026-10-28, of the slice that reached a fifth of the way to the viewer and an eighth of it
     // away from there: "there is no balance on how far you can see in the distance vs. how close to the screen you can get ... moving it somewhat back")
     float hNear = hOld;
-    // (the depth pan -- Ctrl + the wheel in the snapping mode -- moves the whole slice toward or away from the viewer, a share of the way to the place looked at; not nearer than about a quarter of the way)
-    const float slabMid = 1.0f + std::max(m_snap.depth, 0.3f - (1.0f - hNear));
     auto nodesIn = [&](float s) {
-        const float b = slabMid + s * hFar, a = slabMid - s * hNear;
+        const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
     };
     if (nodesIn(1.0f) > float(cap))
@@ -3520,7 +3506,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
         // (fewer than two rows across what is left of the slice: the lines are too fine to draw from here.  A slice that is thin only because the view is zoomed in is drawn: it holds what rows it holds)
         if ((hFar + hNear) * eyeV < 2.0f * stepV) return false;
     }
-    float tLimit = slabMid + hFar, tNear = slabMid - hNear, tOld = slabMid - hOld;
+    float tLimit = 1.0f + hFar, tNear = 1.0f - hNear, tOld = 1.0f - hOld;
 
     const QMatrix4x4 V = camera.view(), M = camera.M();
     const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
@@ -3585,9 +3571,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         if (!collect()) return false;
         if (nodes.size() <= size_t(cap) * 3 / 2) break;
-        tLimit = slabMid + (tLimit - slabMid) * 0.8f;
-        tNear = slabMid - (slabMid - tNear) * 0.8f;
-        tOld = slabMid - (slabMid - tOld) * 0.8f;
+        tLimit = 1.0f + (tLimit - 1.0f) * 0.8f;
+        tNear = 1.0f - (1.0f - tNear) * 0.8f;
+        tOld = 1.0f - (1.0f - tOld) * 0.8f;
         if (attempt >= 8 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
     }
     // (the rows that are drawn, kept: a click and a move go to a node between these two limits -- see snapNodeAlongRay -- and a node that is too faint to be drawn is not one of them)
@@ -3709,13 +3695,12 @@ void View::drawSnapGrid(QPainter& painter)
         const qreal ratio = painter.device()->devicePixelRatioF();
         const QMatrix4x4 M = camera.M();
         const float step = snapStep();
-        if (!m_snapImageKept || M != m_snapImageM || step != m_snapImageStep || m_snap.distance != m_snapImageDistance || m_snap.depth != m_snapImageDepth || size() != m_snapImageSize || ratio != m_snapImageRatio)
+        if (!m_snapImageKept || M != m_snapImageM || step != m_snapImageStep || m_snap.distance != m_snapImageDistance || size() != m_snapImageSize || ratio != m_snapImageRatio)
         {
             m_snapImageDrawn = renderSnapLattice(m_snapImage, ratio, m_snapImageStride);
             m_snapImageM = M;
             m_snapImageStep = step;
             m_snapImageDistance = m_snap.distance;
-            m_snapImageDepth = m_snap.depth;
             m_snapImageSize = size();
             m_snapImageRatio = ratio;
             m_snapImageKept = true;
@@ -6028,15 +6013,23 @@ void View::wheelEvent(QWheelEvent *event)
 {
     QOpenGLWidget::wheelEvent(event);
     event->accept();
-    // In the snapping mode Ctrl + wheel is the depth pan -- the lattice moves toward or away from you (the user, 2026-10-28: "we need some sort of depth pan. Does ctrl + scroll wheel sound good?"); Shift + wheel
-    // keeps scaling, and outside the mode Ctrl + wheel scales as it did
-    if ((event->modifiers() & Qt::ControlModifier) && !(event->modifiers() & Qt::ShiftModifier) && m_snap.on && !(m_wp.open && m_wp.exists))
+    // Ctrl + wheel is the depth pan (the user, 2026-10-28: "With depth pan, I literally just mean the same as right click panning, except into the screen"): the point looked at -- the pivot of the turns --
+    // moves along the line of sight, so that a model can be passed through and is behind you when the view is turned round.  Scroll up goes into the screen.  (Shift + wheel keeps scaling)
+    if ((event->modifiers() & Qt::ControlModifier) && !(event->modifiers() & Qt::ShiftModifier))
     {
-        panSnapDepth(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x());
+        const int delta = event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x();
+        camera.panDepth(float(delta) / 120.0f);
+        if (m_snapCursorValid)
+        {
+            m_snapStickValid = false;
+            updateSnapHover(m_snapCursor);
+        }
+        update();
+        pick_timer.start();
         return;
     }
-    // Shift + wheel, or Ctrl + wheel, scales what can be scaled: the point the mouse is on (selected or not), else the selection.  When there is nothing like that the wheel zooms, as it does
-    if ((event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+    // Shift + wheel scales what can be scaled: the point the mouse is on (selected or not), else the selection.  When there is nothing like that the wheel zooms, as it does
+    if ((event->modifiers() & Qt::ShiftModifier) &&
         scaleSelectionByWheel(event->angleDelta().y() != 0 ? event->angleDelta().y() : event->angleDelta().x(), event->pos())) return;
     const QPoint& center = zoom_cursor_centric ? mouse.pos : rect().center();
     camera.zoomIncremental(event->angleDelta().y(), center);

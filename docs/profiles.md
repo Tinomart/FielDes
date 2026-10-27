@@ -124,7 +124,7 @@ A point has the gizmo of any model, and two of its handles mean something to the
   it as straight as a corner) --, the factor of the radius of a **round corner** (see above), and the radius of the field round the point. The **scale** is how thick a `path_extrude` makes the tube at the point, tapering smoothly between points:
   a point with scale 2 makes the tube twice as thick there. **The ring drags the influence on every point -- except a spline point, where it drags the scale; Shift and the ring drag the other number**, so the shape of a spline and the
   thickness of its tube are two numbers that no longer move each other (they used to be one).
-- **Shift + the mouse wheel** (or **Ctrl + the mouse wheel**) scales the point the mouse is on, selected or not, else what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
+- **Shift + the mouse wheel** scales the point the mouse is on, selected or not, else what is selected: a point by its scale, any other model by its gizmo's scale numbers (a notch is 10 %). The numbers are written when the wheel has rested a moment. See [Handles](handles.md).
 
 ## How `extrude` works
 

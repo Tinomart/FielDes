@@ -19,7 +19,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     there.  YOU MUST SEE: its planes drawn, the whole model still in the picture and the camera where it was.  (Before, a click on the row took the camera in on the few millimetres round the
 #     symmetry's centre and every model left the picture.)
 #
-#  2. THE WHEEL ON A POINT.  Open examples/26_profiles_and_sweeps.py, select nothing, put the mouse on the dot of one of the five points of the plate and turn the wheel with Shift held -- or Ctrl held.
+#  2. THE WHEEL ON A POINT.  Open examples/26_profiles_and_sweeps.py, select nothing, put the mouse on the dot of one of the five points of the plate and turn the wheel with Shift held (Ctrl + wheel is the DEPTH PAN now, item 40 m, and no longer scales).
 #     YOU MUST SEE: the first notch selects the point (its gizmo and the gold ring appear, and `position=`, `rotation=` and `scale=` are written into its call); the next notches scale it, 10 % a notch, and the plate's outline follows
 #     (a spline point is rounder, a corner is not affected).  With the mouse on empty space the wheel zooms, as ever.
 #
@@ -282,8 +282,11 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     (l) THE SNAPPING LATTICE AS JUNCTIONS.  `view.set_bounds([-2, -0.5, -2], [2, 6, 2], auto_scale=True)`, `sphere(1, (0, 1.5, 0))`, press Tab: the lattice is a round patch round the middle of the viewport that fades toward its rim, each junction
 #     is a small star -- its beams full strength at the junction and fading out toward the middle of the line --, the beams of a near junction are longer than those of a far one, and the lines are whole at the near end (only the distance fades
 #     them).  The program starts in an ORTHOGRAPHIC view (View menu): switch to perspective and the stars are bigger toward you as well.  Rest the cursor on any junction, also a faint one in the background: the junction nearest the cursor on the
-#     screen, and no other, carries the violet mark (and its numbers) and is the one a click puts a model on, and the junctions within about 80 pixels of the cursor come up with longer beams, the nearest the most; move away and they go back.  The slice reaches about a third as far toward you as away from the place you look at (Distance 135 % on the card), the arms are short, and **Ctrl + the scroll wheel** (snapping mode on) moves the whole lattice
-#     away from you (up) or toward you (down), with about as many junctions all the time: scroll it deep and pick a junction far behind the model, scroll it back and pick one in front of it; Shift + wheel still scales a selected model.
+#     screen, and no other, carries the violet mark (and its numbers) and is the one a click puts a model on, and the junctions within about 80 pixels of the cursor come up with longer beams, the nearest the most; move away and they go back.  The slice reaches about a third as far toward you as away from the place you look at (Distance 135 % on the card) and the arms are short.
+#     (m) THE DEPTH PAN (docs/interface.md, the keys of the viewport).  Open any model (the sphere of the examples will do), orthographic or perspective, snapping mode on or off.  Hold **Ctrl** and turn the wheel: up, the point you look at moves INTO the
+#     screen along your line of sight (the same move as the right mouse button's pan, but into the screen); down, back.  YOU MUST SEE: in perspective the model gets bigger as you go toward it and, a few notches on, is passed through and gone from
+#     the picture; turn the view round (Shift + left drag, or the View menu's standard views) and the model is BEHIND the pivot -- you are on the other side of it.  In an orthographic view nothing grows (that is what orthographic is), but the lattice of
+#     the snapping mode goes with the pivot, and what is picked is deeper; passing the origin is no limit.  Shift + wheel still scales a selected model or point, and the wheel alone still zooms.
 #
 # 41. SURFACE, FRAME, CLIP AND POINT_CLOUD OF A FOAM (docs/lattices.md).  Paste into a new script: `view.set_bounds([-14, -10, -1], [14, 10, 7], auto_scale=True)`, `view.set_resolution(12)`, `plate = extrude(rounded_rectangle((-12, -8), (12, 8), 4), 0, 6)`,
 #     `points = random_points(plate, spacing=2.5, frame=True)`, `foam = voronoi_lattice(points, thickness=0.8)`.  YOU MUST SEE the plain foam, cut by the plate, and a full beam round the outline of the top and of the bottom -- straight along the

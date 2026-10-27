@@ -1348,7 +1348,7 @@ void Tutorial::buildSteps()
         currentChapter = 1;                 // (chapter 2: moving around)
         Step s;
         s.title = T("The viewport follows");
-        s.text = T("The model is drawn here. Shift + left mouse, or the middle mouse button, turns it; right mouse pans; the wheel zooms.");
+        s.text = T("The model is drawn here. Shift + left mouse, or the middle mouse button, turns it; right mouse pans; the wheel zooms; Ctrl + the wheel pans into the screen.");
         s.hint = T("The framed line of the script made the plate you see: the picture is that line, drawn.");
         s.code = linesWith("^plate =");
         s.holes = holesOf(viewWidget);

@@ -58,7 +58,6 @@ struct SnapGrid
     float angle = 5.0f;             // the step of a turn in degrees: every turn while the mode is on, and the turn of the Shift gizmo whether it is on or not
     int distance = 135;             // the viewing distance of the lattice, in per cent of the distance from the viewer to the place the view looks at: the lattice is seen out to there and fades out towards it
                                     // (a share of the way to what you look at, and not millimetres: the picture of it is the same at every zoom and every pan)
-    float depth = 0.0f;             // the depth pan (Ctrl + the wheel): how far the whole slice of the lattice is moved away from the viewer (+) or toward it (-), as a share of the way to the place the view looks at; not kept
     bool snapPoints = true;         // what is put down or pulled also goes onto the points that are there
 };
 
