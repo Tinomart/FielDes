@@ -268,6 +268,7 @@ view.set_bounds([-5, -7, -4], [3, 2, 5], auto_scale=True)
 #     (j) WHERE IT SNAPS TO, AND THE SAME STEP EVERYWHERE.  With the mode on, move the mouse over the viewport: a violet ring with a cross is on the node a click would land on (a square when it is a point that is there), and beside it its x, y, z in the unit.
 #     Drag an arrow, a square, a point or a face of a gizmo: the ring jumps from node to node where it will land, and goes when you let go.  Put `view.set_bounds([-2, -0.5, -2], [2, 6, 2], auto_scale=True)` in a script and press Tab: the card (Grid step: Auto),
 #     the line at the bottom left and the spacing of the lattice (read it against the scale bar) are the same number, 0.5 mm.  Move the mouse over the same place of a model and then a little to the side: the ring goes to the node the cursor is nearest to on the screen --
-#     one of the rows near you as well as one near the model; the lattice reaches from a quarter of the way to you out into the distance, and where it holds more than a dozen rows its lines are fainter, so that the model can still be seen.
+#     one of the rows near you as well as one near the model.  Right-click there (empty space, Primitives > New 3D shape > sphere): the sphere is made on that node, its numbers are the ring's numbers (with auto scale on, the region grows to hold it);
+#     the lattice reaches from a quarter of the way to you out into the distance, and where it holds more than a dozen rows its lines are fainter, so that the model can still be seen.
 #
 print("Open one of the files listed above.")

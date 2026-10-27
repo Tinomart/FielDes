@@ -3336,9 +3336,11 @@ void View::updateSnapHover(QPoint pos)
         setSnapMark(dot, true);
         return;
     }
-    bool found = false;
-    const QVector3D node = snapNodeAlongRay(pos, &found);
-    setSnapMark(found ? node : snapPoint(plane, nullptr, false), false);
+    // (the place a click would put a model: the node under the cursor, and inside the region when that is what a model gets -- see placementAt)
+    QVector3D landing;
+    double sizeHere = 1.0;
+    placementAt(pos, landing, sizeHere);
+    setSnapMark(landing, false);
 }
 
 void View::announceSnap()
@@ -3783,12 +3785,22 @@ void View::placementAt(QPoint pos, QVector3D& point, double& scale) const
     }
     point = snapPlace(pos, nullptr, false);          // (the snapping mode: what a click puts down goes to the node of the grid that the cursor is over, near or far)
     scale = scaleAt(pos, point);
+    // (the snapping mode with a region that grows to hold what is made: a node of the grid outside it, near the viewer as far from it, is where the model goes -- the region grows to hold it, it is not moved in)
+    if (snapActive() && settings.autoScale) return;
     // Nothing outside the render region is drawn: a primitive whose place is outside it goes to the nearest place
-    // that is inside (half its size in from the edge), so it is always seen
+    // that is inside (half its size in from the edge), so it is always seen -- in the snapping mode to the nearest node of the grid that is inside, so that it stays on the grid
     const QVector3D lo = settings.min, hi = settings.max;
     auto inside = [&](float v, float a, float b) {
         const float m = float(std::min(0.5 * scale, 0.5 * double(b - a)));
-        return std::max(a + m, std::min(b - m, v));
+        const float from = a + m, to = b - m;
+        float r = std::max(from, std::min(to, v));
+        if (snapActive())
+        {
+            const float st = snapStep();
+            const float first = std::ceil(from / st - 1e-4f) * st, last = std::floor(to / st + 1e-4f) * st;
+            if (st > 0 && first <= last) r = std::max(first, std::min(last, std::round(v / st) * st));
+        }
+        return r;
     };
     if (hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z())
         point = QVector3D(inside(point.x(), lo.x(), hi.x()), inside(point.y(), lo.y(), hi.y()), inside(point.z(), lo.z(), hi.z()));
