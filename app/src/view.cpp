@@ -3231,7 +3231,7 @@ float View::snappedAlong(const QVector3D& from, const QVector3D& dir, float dist
     return std::round(distance / step) * step;
 }
 
-// The lattice node that the cursor is over: the nearest to the viewer of those within a few pixels of the line of sight, between the nearest and the farthest rows of the lattice that is drawn.  What is
+// The lattice node that the cursor is over: the one nearest to the cursor on the screen, between the nearest and the farthest rows of the lattice that can be picked (see renderSnapLattice).  What is
 // put down by a click, and what is hovered, goes to what is SEEN -- near the viewport as far from it --, and not to one plane through the middle of the scene (2026-10-27, the user: "You cant seem to
 // place anything close to the viewport and only far away")
 QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
@@ -3265,8 +3265,8 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
         if (up) last = first + 4000;
         else first = last - 4000;
     }
-    const float pixel = 2.0f / (float(std::min(W, H)) * scale);                           // (the length of a pixel at the place looked at: the picture is about two view units high there)
-    // The node the cursor is nearest to ON THE SCREEN, within a few pixels: what is pointed at is what is picked, near the viewport as far from it.  Of two that are as near (within a pixel), the nearer to the viewer
+    // The node the cursor is nearest to ON THE SCREEN -- the plain distance in pixels from the cursor to where the node is drawn, whatever the projection (the user, 2026-10-28: "It hsould just be
+    // two dimensionally, where the cursor is the closest on the viewport") --, within a limit: what is pointed at is what is picked.  Of two that are as near (within half a pixel), the nearer to the viewer
     QVector3D best;
     float bestPixels = 1e30f;
     bool found = false;
@@ -3283,20 +3283,20 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
         const QVector3D v = node - origin;
         const float along = QVector3D::dotProduct(v, u);
         if (along < dNear || along > dFar) continue;
-        const float tau = along * scale / eyeV;                                           // (how far it is, as a share of the way to the place looked at: a pixel is that much longer there)
-        const float pixels = (v - u * along).length() / std::max(1e-9f, pixel * tau);
-        if (pixels > 14.0f) continue;
         if (V.map(node).z() + eyeV < 1.0f) continue;                                      // (a quarter of the way from the viewer at least: nearer is no line of the picture)
+        const QPointF drawn = toScreen(node);
+        const float pixels = float(std::hypot(drawn.x() - double(pos.x()), drawn.y() - double(pos.y())));
+        if (!(pixels < 40.0f)) continue;
         if (m_snapStickValid && (node - m_snapStick).lengthSquared() < 1e-6f) { stickFound = true; stickPixels = pixels; }
-        if (!found || pixels < bestPixels - 1.0f)
+        if (!found || pixels < bestPixels - 0.5f)
         {
             found = true;
             bestPixels = pixels;
             best = node;
         }
     }
-    // (the node that was marked last stays marked while the cursor is still near it -- within five pixels of being as near as the nearest --, so that the mark does not jump from row to row with every pixel the mouse moves)
-    if (found && stickFound && stickPixels <= bestPixels + 5.0f) best = m_snapStick;
+    // (the node that was marked last stays marked only while the cursor is within a pixel of being as near to it as to the nearest: the nearest on the screen is the one)
+    if (found && stickFound && stickPixels <= bestPixels + 1.0f) best = m_snapStick;
     if (found)
     {
         m_snapStick = best;
@@ -3346,6 +3346,11 @@ void View::clearSnapMark()
 {
     if (m_snapMarkHeld) return;                 // (a menu is open that puts something down at the mark: it stays where that will be)
     m_snapStickValid = false;
+    if (m_snapCursorValid)
+    {
+        m_snapCursorValid = false;              // (and the cursor's spotlight goes with it)
+        m_overlay->update();
+    }
     if (!m_snapMark.valid) return;
     m_snapMark.valid = false;
     m_overlay->update();
@@ -3357,6 +3362,12 @@ void View::updateSnapHover(QPoint pos)
     {
         clearSnapMark();
         return;
+    }
+    if (!m_snapCursorValid || m_snapCursor != pos)
+    {
+        m_snapCursor = pos;
+        m_snapCursorValid = true;
+        if (m_snap.show) m_overlay->update();                // (the spotlight of the cursor follows it)
     }
     const QVector3D plane = placeOnRay(pos);
     QVector3D dot;
@@ -3423,6 +3434,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
 {
     stride = 1;
     m_snapSlabValid = false;
+    m_snapLines.clear();
     float step = snapStep();
     const float scale = camera.getScale();
     const int W = width(), H = height();
@@ -3461,6 +3473,11 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // one is told by its tone and its width.  It is not thicker than its nodes can be told from each other and be counted: what the viewer sees between the two limits is a pyramid of the
     // picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that would be more than `cap` nodes both limits are brought in -- at the place looked
     // at there are always a few rows
+    // The lattice is a round patch, not the whole picture (the user, 2026-10-28: "I want to try it not covering the full viewport, but only a circular faded region like it was before (just a little
+    // bigger, so it almost touches the edges)"): a circle round the middle of the picture, as high as the picture, that fades out toward its rim (see the end of this function)
+    constexpr double kCircle = 1.12;
+    const QPointF centre(0.5 * double(W), 0.5 * double(H));
+    const double circle = 0.5 * double(std::min(W, H)) * kCircle;
     float hFar = float(m_snap.distance) / 100.0f - 1.0f;
     // (and at least about four rows deep however far the view is zoomed in: a step that is wider than the slice would leave nothing of the lattice to see or to snap to)
     hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
@@ -3468,7 +3485,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // looked way better and way way more readable ... I would have only tweaked it a little bit so that you can select some stuff closer to the viewport camera").  What is added toward the viewer,
     // so that something can be put down nearer to it, is the same rows as before and then a stretch of fainter ones that fade in from the nearest limit
     float hOld = std::min(0.4f * hFar, 0.5f);
-    float hNear = std::max(hOld, std::min(0.9f * hFar, 0.5f));          // (only a little nearer the viewer than the slice that was readable: twice as many layers of lines was the hatch that nothing could be told from)
+    // (it reaches about a fifth of the way to the viewer, and its rows are whole: with the lines faded between their junctions and the lattice a round patch, there is room for rows near the camera that were left out as a hatch --
+    // the user, 2026-10-28: "it is possible to increase the viewing distance to go closer to the screen as well, since the overall clutter on screen will be lower")
+    float hNear = std::max(hOld, std::min(1.5f * hFar, 0.5f));
     auto nodesIn = [&](float s) {
         const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
@@ -3498,11 +3517,8 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // (how strong a line is at a distance t from the viewer, 1 being the place the view looks at: from where the slice began, in front of that place, it falls steadily to 0 at the far limit -- the distance
     // fog --; the rows that are added in front of it fade in from the nearest limit to that strength, so that the lattice does not start with an edge)
     auto strength = [&](float t) {
-        if (t < tOld)
-        {
-            const float v = std::min(1.0f, std::max(0.0f, (t - tNear) / std::max(1e-3f, tOld - tNear)));
-            return v * v * (3.0f - 2.0f * v);
-        }
+        // (nearer than where the fog begins the lines are whole: the rows toward the viewer do not fade in -- 2026-10-28, the user: "their visbility should only fade in the distance, thats make depth easier to understand")
+        if (t < tOld) return 1.0f;
         const float u = std::min(1.0f, (t - tOld) / std::max(1e-3f, tLimit - tOld));
         return (1.0f - u) * (1.0f - u);
     };
@@ -3542,6 +3558,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
                     // (a line that crosses the picture has both of its ends within a line's length of it: a node farther off is not needed)
                     const float margin = 1.6f * stepV * halfSide / w + 8.0f;
                     if (at.x() < -margin || at.x() > W + margin || at.y() < -margin || at.y() > H + margin) continue;
+                    // (and outside the round patch there is nothing to draw: a node beyond it by more than a line's length is not needed either)
+                    const double rx = at.x() - centre.x(), ry = at.y() - centre.y(), reachOut = circle + double(margin);
+                    if (rx * rx + ry * ry > reachOut * reachOut) continue;
                     nodes[keyOf(i, j, k)] = Node{i, j, k, at, 1.0f - g};
                 }
             }
@@ -3558,7 +3577,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
         if (attempt >= 8 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
     }
     // (the rows that are drawn, kept: a click and a move go to a node between these two limits -- see snapNodeAlongRay -- and a node that is too faint to be drawn is not one of them)
-    m_snapSlabNear = tNear + 0.17f * (tOld - tNear);
+    // (what can be picked is what is drawn, the faint far junctions too: one that is hovered and drawn has to be the one that is selected -- the user, 2026-10-28, of a faint junction in the background that was
+    // hovered and not selected, the pick having gone to the plane through the origin because nothing that was drawn was near)
+    m_snapSlabNear = tNear;
     m_snapSlabFar = tOld + 0.75f * (tLimit - tOld);
     m_snapSlabValid = true;
 
@@ -3567,8 +3588,15 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     static const int kAlpha[kBands] = {120, 98, 80, 64, 50, 38, 27, 17};
     static const double kWidth[kBands] = {1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7};
     static const int kAxisAlpha[kBands] = {220, 190, 160, 132, 106, 82, 60, 42};
-    QVector<QLineF> bands[3][kBands];
+    // The lines between the junctions fade out (the user, 2026-10-28: "fade out the lines between every junction and only have the current opacity there ... a good way to remove things for readability while
+    // keeping the most important things"): a line is drawn at its full strength at each of its two junctions and fades toward its middle, in steps of a few pieces -- the first sixth of it from each end as it
+    // was, then half as strong, then a fifth as strong, and the middle not at all.  The axes of the world are the references and stay whole
+    struct Stub { double from, to, share; };
+    constexpr int kStubs = 3;
+    static const Stub kStub[kStubs] = {{0.0, 0.16, 1.0}, {0.16, 0.28, 0.5}, {0.28, 0.38, 0.2}};
+    QVector<QLineF> bands[3][kBands][kStubs];
     QVector<QLineF> axes[3][kBands];
+    const double reachSq = circle * circle;
     for (const auto& entry : nodes)
     {
         const Node& a = entry.second;
@@ -3581,8 +3609,24 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
             const QLineF line(a.at, b.at);
             // (a line of the grid that is an axis of the world -- the other two coordinates 0 -- is drawn in the colour of its axis)
             const bool onAxis = (axis == 0 && a.j == 0 && a.k == 0) || (axis == 1 && a.i == 0 && a.k == 0) || (axis == 2 && a.i == 0 && a.j == 0);
-            if (onAxis) axes[axis][band] << line;
-            else bands[axis][band] << line;
+            if (onAxis)
+            {
+                axes[axis][band] << line;
+                continue;
+            }
+            // (a line with both of its junctions out of the round patch is not seen)
+            const double ax = a.at.x() - centre.x(), ay = a.at.y() - centre.y(), bx = b.at.x() - centre.x(), by = b.at.y() - centre.y();
+            if (ax * ax + ay * ay > reachSq && bx * bx + by * by > reachSq) continue;
+            m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band])});
+            const QPointF d = b.at - a.at;
+            // (the beams of a junction are longer the nearer the layer it is in -- as drawn for the nearest, little more than half as long for the farthest --, so that the depth reads from the junction
+            // whatever the projection: in an orthographic view nothing else of a line gets shorter with the distance.  Longer than that, and the beams of the near layers run into each other)
+            const double stubScale = 1.0 - 0.45 * double(band) / double(kBands - 1);
+            for (int s = 0; s < kStubs; ++s)
+            {
+                bands[axis][band][s] << QLineF(a.at + d * (kStub[s].from * stubScale), a.at + d * (kStub[s].to * stubScale));
+                bands[axis][band][s] << QLineF(b.at - d * (kStub[s].from * stubScale), b.at - d * (kStub[s].to * stubScale));
+            }
         }
     }
 
@@ -3602,9 +3646,16 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
         {
             // (the near lines are the lighter tint and the far ones a deeper one, as well as fainter and thinner)
             const double k = double(b) / double(kBands - 1);
-            p.setPen(QPen(QColor(int(kTintNear[a][0] + (kTintFar[a][0] - kTintNear[a][0]) * k), int(kTintNear[a][1] + (kTintFar[a][1] - kTintNear[a][1]) * k),
-                                 int(kTintNear[a][2] + (kTintFar[a][2] - kTintNear[a][2]) * k), kAlpha[b]), kWidth[b]));
-            p.drawLines(bands[a][b]);
+            const int red = int(kTintNear[a][0] + (kTintFar[a][0] - kTintNear[a][0]) * k), green = int(kTintNear[a][1] + (kTintFar[a][1] - kTintNear[a][1]) * k),
+                      blue = int(kTintNear[a][2] + (kTintFar[a][2] - kTintNear[a][2]) * k);
+            for (int s = 0; s < kStubs; ++s)
+            {
+                // (a piece that would be fainter than a few of 255 is not drawn: the far lines are faint to begin with)
+                const int alpha = int(std::lround(double(kAlpha[b]) * kStub[s].share));
+                if (alpha < 5 || bands[a][b][s].isEmpty()) continue;
+                p.setPen(QPen(QColor(red, green, blue, alpha), kWidth[b]));
+                p.drawLines(bands[a][b][s]);
+            }
         }
     }
     const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
@@ -3616,6 +3667,19 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
             p.drawLines(axes[a][b]);
         }
     }
+    // The round patch: everything outside the circle is taken away, and what is inside it fades toward the rim -- whole in the middle, then in the smooth steps of a smoothstep out to nothing at the rim
+    p.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    p.setPen(Qt::NoPen);
+    QRadialGradient fade(centre, circle);
+    constexpr int kFadeStops = 10;
+    for (int i = 0; i <= kFadeStops; ++i)
+    {
+        const double t = double(i) / double(kFadeStops);                       // (0 at the middle, 1 at the rim)
+        const double u = std::min(1.0, std::max(0.0, (t - 0.45) / 0.55));      // (whole out to 0.45 of the radius)
+        fade.setColorAt(t, QColor(255, 255, 255, int(std::lround(255.0 * (1.0 - u * u * (3.0 - 2.0 * u))))));
+    }
+    p.setBrush(QBrush(fade));
+    p.drawRect(QRectF(0, 0, double(W), double(H)));
     return true;
 }
 
@@ -3641,6 +3705,7 @@ void View::drawSnapGrid(QPainter& painter)
             m_snapImageKept = true;
         }
         if (m_snapImageDrawn) painter.drawImage(0, 0, m_snapImage);
+        if (m_snapImageDrawn && m_snapCursorValid) drawSnapGlow(painter);
     }
     // The mode is a mode: a frame round the viewport says so, and a line says what it snaps to
     painter.setBrush(Qt::NoBrush);
@@ -3662,6 +3727,69 @@ void View::drawSnapGrid(QPainter& painter)
     painter.drawRoundedRect(box, 4, 4);
     painter.setPen(violet);
     painter.drawText(box, Qt::AlignCenter, text);
+    painter.restore();
+}
+
+// The spotlight of the cursor (the user, 2026-10-28: "the junction that the mouse is the closest to hovering (and the beams as well) gain opacity in a circular region around the cursor ... the closer they are
+// to being hovered, the higher the opacity gain"): the junctions of the lattice picture within a circle round the cursor are drawn over it again with their beams, each as much stronger and with beams as much
+// longer as it is nearer the cursor, so that the junction nearest the cursor, with its beams, is the strongest.  The picture itself is not made again for it
+void View::drawSnapGlow(QPainter& painter)
+{
+    // (a small circle -- about eighty pixels: the junctions that can be hovered are seen clearly, and the lattice farther off is left as it is)
+    const double rho = std::max(56.0, std::min(96.0, 0.075 * double(std::min(width(), height()))));
+    if (m_snapLines.isEmpty()) return;
+    const QPointF c(m_snapCursor);
+    // The spotlight is made of the junctions: each end of a line is a junction, and a junction within the circle gains by how near the cursor is to it -- its beams (the stubs of the lines that meet there) come
+    // up and grow longer, the whole length of half a line for the junction the cursor is at -- and in two steps, so that the end of a beam is not a cut.  The near layers of the lattice gain much more than the far ones
+    constexpr int kLevels = 6, kBandsN = 8;
+    static const int kTint[3][3] = {{255, 160, 170}, {170, 240, 150}, {150, 195, 255}};
+    static QVector<QLineF> pieces[3][kBandsN][kLevels][2];
+    int alphaOf[kBandsN] = {0};
+    float widthOf[kBandsN] = {0};
+    for (auto& axis : pieces)
+        for (auto& band : axis)
+            for (auto& level : band)
+                for (auto& taper : level) taper.clear();
+    for (const SnapLine& l : m_snapLines)
+    {
+        const int axis = int(l.axis), band = std::min(kBandsN - 1, std::max(0, int(l.band)));
+        const QPointF d = l.b - l.a;
+        for (int end = 0; end < 2; ++end)
+        {
+            const QPointF at = end == 0 ? l.a : l.b, to = end == 0 ? d : -d;
+            const double x = 1.0 - std::hypot(at.x() - c.x(), at.y() - c.y()) / rho;      // (1 at the cursor, 0 on the rim of the circle)
+            if (x <= 0.0) continue;
+            const double g = x * x * (3.0 - 2.0 * x);
+            const int level = std::min(kLevels, int(g * kLevels + 0.5));
+            if (level < 1) continue;
+            alphaOf[band] = int(l.alpha);
+            widthOf[band] = l.width;
+            const double reach = 0.16 + 0.34 * g;                                          // (how much of the line the beam reaches: from the first sixth to half of it)
+            pieces[axis][band][level - 1][0] << QLineF(at, at + to * (0.62 * reach));
+            pieces[axis][band][level - 1][1] << QLineF(at + to * (0.62 * reach), at + to * reach);
+        }
+    }
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    for (int a = 0; a < 3; ++a)
+    {
+        for (int b = 0; b < kBandsN; ++b)
+        {
+            // (how much a beam gains where the cursor is at its junction: a lot for every layer, a little more for the near ones -- a junction that is faint for being far has to come up when it is hovered)
+            const double lift = 0.7 * (0.6 + 0.4 * double(alphaOf[b]) / 120.0);
+            for (int s = 0; s < kLevels; ++s)
+            {
+                for (int taper = 0; taper < 2; ++taper)
+                {
+                    if (pieces[a][b][s][taper].isEmpty()) continue;
+                    const int alpha = int(std::lround(255.0 * lift * double(s + 1) / double(kLevels) * (taper == 0 ? 1.0 : 0.5)));
+                    if (alpha < 4) continue;
+                    painter.setPen(QPen(QColor(kTint[a][0], kTint[a][1], kTint[a][2], alpha), 1.2 * double(widthOf[b])));
+                    painter.drawLines(pieces[a][b][s][taper]);
+                }
+            }
+        }
+    }
     painter.restore();
 }
 

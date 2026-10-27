@@ -1609,6 +1609,19 @@ class _Hash:
                             return True
         return False
 
+    def nearest(self, p, r):
+        ''' The point within r of p that is nearest to it (None when there is none) '''
+        best, at = r * r, None
+        cx, cy, cz = self.key(p)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for q in self.cells.get((cx + dx, cy + dy, cz + dz), ()):
+                        d = (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2 + (q[2] - p[2]) ** 2
+                        if d <= best:
+                            best, at = d, q
+        return at
+
 
 def _bcc_points(lo, hi, nearest):
     ''' The points of a body-centred grid over the box whose nearest neighbours are `nearest` apart (every point has the same eight) '''
@@ -2175,7 +2188,7 @@ def _face_outline(body, n, c, spacing, lo, hi):
 def _frame_graph(body, spacing, seed, bounds):
     ''' The frame of a body: a graph of the beams along its sharp edges, or None when it has none.  The edges are found from the body itself: the flat faces of it are found from points on its surface, and the outline of each
         is a chain of edges -- unless the surface goes on past the outline with the same direction, give or take 35 degrees (the edge of a face that a round one runs into smoothly, a fillet, is no sharp edge).  An edge between
-        two flat faces is found twice, once from each: one is kept.  An edge between two round faces is not found '''
+        two flat faces is found twice, once from each: one is kept.  An edge between two round faces -- or a round and a flat one that no flat face has the outline of -- is followed along the surface (_round_creases) '''
     region = _region_of(body, bounds)
     lo, hi = (region.X.lower, region.Y.lower, region.Z.lower), (region.X.upper, region.Y.upper, region.Z.upper)
     fine = 0.5 * spacing
@@ -2203,8 +2216,6 @@ def _frame_graph(body, spacing, seed, bounds):
         for line, closed in _face_outline(body, n, c, spacing, lo, hi):
             pairs = [(line[i], line[i + 1]) for i in range(len(line) - 1)] + ([(line[-1], line[0])] if closed and len(line) > 2 else [])
             pieces.extend((p, q, n) for p, q in pairs if math.dist(p, q) > 1e-6)
-    if not pieces:
-        return None
     # (a sharp edge: the surface just beyond the outline, in the plane of the face, has another direction -- put onto the surface and looked at there)
     reach = 0.15 * spacing
     outs = []
@@ -2261,7 +2272,244 @@ def _frame_graph(body, spacing, seed, bounds):
             ids.append(index[key])
         if ids[0] != ids[1]:
             beams.append((ids[0], ids[1]))
+    for line, closed in _round_creases(body, skin, fine, spacing, kept, lo, hi):
+        ids = []
+        for x in line:
+            key = tuple(int(round(v / grain)) for v in x)
+            if key not in index:
+                index[key] = len(nodes)
+                nodes.append(x)
+            ids.append(index[key])
+        for a, b in zip(ids, ids[1:] + (ids[:1] if closed and len(ids) > 2 else [])):
+            if a != b:
+                beams.append((a, b))
     return LatticeGraph(nodes, beams) if beams else None
+
+
+_CREASE_COS = 0.82              # (a crease is sharp when the normals on its two sides are more than 35 degrees apart: the same as an edge of a flat face)
+
+
+def _v_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _v_add(a, b, s=1.0):
+    ''' a + s * b '''
+    return (a[0] + s * b[0], a[1] + s * b[1], a[2] + s * b[2])
+
+
+def _v_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _v_cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _v_unit(a):
+    m = math.sqrt(_v_dot(a, a))
+    return None if m < 1e-12 else (a[0] / m, a[1] / m, a[2] / m)
+
+
+def _on_surface(body, pts, unit, rounds=3):
+    ''' The points put onto the surface of the body (steps along the gradient of its field) and the unit normal that points out of it at each (None where there is none): ([point], [normal]) '''
+    for _ in range(rounds):
+        moved = []
+        for q, (v, g, slope) in zip(pts, _values_and_normals(body, pts, unit)):
+            if g is None or not slope > 1e-9:
+                moved.append(q)
+            else:
+                s = v / slope
+                moved.append((q[0] - s * g[0], q[1] - s * g[1], q[2] - s * g[2]))
+        pts = moved
+    return pts, [g for _v, g, _s in _values_and_normals(body, pts, unit)]
+
+
+def _flip_between(s, centre, jump=0.3):
+    ''' Where a row of numbers changes sign with a jump: the index k of the neighbours s[k], s[k + 1] that lie on the two sides of 0 and differ by at least `jump` (a jump, not a smooth crossing: along a round face the
+        numbers change by a few hundredths from place to place, across a crease by twice the sine of half the angle of its two sides), nearest to `centre`; None when there is none.  (A place that lies on the crease has
+        a blended normal and a number near 0: it is no reason to turn the pair down.  Within a step that is known to hold a crease any change of sign is it: jump 0) '''
+    best, at = None, None
+    for k in range(len(s) - 1):
+        a, b = s[k], s[k + 1]
+        if a is None or b is None or a * b >= 0 or abs(a - b) < jump:
+            continue
+        d = abs(k + 0.5 - centre)
+        if best is None or d < best:
+            best, at = d, k
+    return at
+
+
+def _crease_seeds(body, skin, fine, spacing, unit):
+    ''' Places on the creases of the body, found from the points of its skin: [(point on the crease, normal on one side, normal on the other, a direction across it)].  Two neighbouring skin points whose normals are more than
+        25 degrees apart may have a crease between them: nine places along the way from one to the other, put onto the surface, show it when one step of them holds most of the turn (a round face turns a little with each step, a
+        crease turns at once), and the crease is found within that step by halving it, always keeping the half where the normal is the one of the other face '''
+    cell = 1.7 * fine
+    grid = {}
+    for i, (p, _n) in enumerate(skin):
+        grid.setdefault((int(p[0] // cell), int(p[1] // cell), int(p[2] // cell)), []).append(i)
+    pairs = []
+    for i, (p, n) in enumerate(skin):
+        cx, cy, cz = int(p[0] // cell), int(p[1] // cell), int(p[2] // cell)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for j in grid.get((cx + dx, cy + dy, cz + dz), ()):
+                        if j > i and math.dist(p, skin[j][0]) <= cell and _v_dot(n, skin[j][1]) < 0.9:
+                            pairs.append((p, skin[j][0]))
+    if not pairs:
+        return []
+    steps = 8
+    pts = [_v_add(p, _v_sub(q, p), k / steps) for p, q in pairs for k in range(steps + 1)]
+    pts, nrm = _on_surface(body, pts, unit)
+    found = []
+    for i in range(len(pairs)):
+        ns = nrm[(steps + 1) * i:(steps + 1) * (i + 1)]
+        if any(n is None for n in ns):
+            continue
+        turns = [math.acos(max(-1.0, min(1.0, _v_dot(ns[k], ns[k + 1])))) for k in range(steps)]
+        total = math.acos(max(-1.0, min(1.0, _v_dot(ns[0], ns[steps]))))
+        k = max(range(steps), key=lambda m: turns[m])
+        if turns[k] >= 0.45 and turns[k] >= 0.6 * total:
+            found.append((i, ns[k], ns[k + 1], k))
+    if not found:
+        return []
+    lo = [f[3] / steps for f in found]
+    hi = [(f[3] + 1) / steps for f in found]
+    for _ in range(7):
+        mids = []
+        for m, (i, _a, _b, _k) in enumerate(found):
+            p, q = pairs[i]
+            mids.append(_v_add(p, _v_sub(q, p), 0.5 * (lo[m] + hi[m])))
+        _p, mn = _on_surface(body, mids, unit)
+        for m, (_i, na, nb, _k) in enumerate(found):
+            g = mn[m]
+            if g is None:
+                continue
+            mid = 0.5 * (lo[m] + hi[m])
+            if _v_dot(g, na) >= _v_dot(g, nb):
+                lo[m] = mid
+            else:
+                hi[m] = mid
+    eps = 0.05 * spacing
+    probes, ways = [], []
+    for m, (i, _a, _b, _k) in enumerate(found):
+        p, q = pairs[i]
+        c = _v_add(p, _v_sub(q, p), 0.5 * (lo[m] + hi[m]))
+        w = _v_unit(_v_sub(q, p))
+        ways.append(w)
+        probes.extend((c, _v_add(c, w, eps), _v_add(c, w, -eps)))
+    pts, nrm = _on_surface(body, probes, unit)
+    seeds = []
+    for m in range(len(found)):
+        c, na, nb = pts[3 * m], nrm[3 * m + 1], nrm[3 * m + 2]
+        if na is not None and nb is not None and ways[m] is not None and _v_dot(na, nb) < _CREASE_COS:
+            seeds.append((c, na, nb, ways[m]))
+    return seeds
+
+
+def _follow_crease(body, c, na, nb, w, sign, spacing, unit, blocks, lo, hi):
+    ''' One way along a crease of the body from the point c on it: ([the points after c], how it ended).  na and nb are the normals on its two sides at c, w a direction across it.  The crease runs along the cross
+        product of the two normals; a step of a quarter of a spacing that way, and the crease is found again across it: places in a row across the way, put onto the surface, have normals that turn a side at the crease
+        (the sign of normal . w changes there, with a jump), found in thirteen places and then in nine within the step that holds it; the normals on the two sides there give the way on.  It ends when the crease is lost, when
+        its two sides are less than 35 degrees apart (it fades out), when it turns by more than 60 degrees in one step (a corner), when it meets a beam that is there (`blocks`: the place is joined to it), when it leaves
+        the region, and when it comes round to where it began (a closed crease) '''
+    h, reach, eps = 0.25 * spacing, 0.3 * spacing, 0.05 * spacing
+    t = _v_unit(_v_cross(na, nb))
+    if t is None:
+        return [], 'lost'
+    t = (sign * t[0], sign * t[1], sign * t[2])
+    across = _v_unit(_v_sub(na, nb))
+    if across is not None:
+        w = across if _v_dot(across, w) >= 0 else (-across[0], -across[1], -across[2])      # (the way from one face to the other: the normals turn most along it)
+    start = c
+    line = []
+    for step in range(1, 1500):
+        c1 = _v_add(c, t, h)
+        w = _v_unit(_v_add(w, t, -_v_dot(w, t)))
+        if w is None:
+            return line, 'lost'
+        k1 = 12
+        lams = [-reach + 2.0 * reach * k / k1 for k in range(k1 + 1)]
+        _p, nrm = _on_surface(body, [_v_add(c1, w, lam) for lam in lams], unit)
+        k = _flip_between([None if g is None else _v_dot(g, w) for g in nrm], 0.5 * k1)
+        if k is None:
+            return line, 'lost'
+        k2 = 8
+        lams2 = [lams[k] + (lams[k + 1] - lams[k]) * m / k2 for m in range(k2 + 1)]
+        _p, nrm = _on_surface(body, [_v_add(c1, w, lam) for lam in lams2], unit)
+        m = _flip_between([None if g is None else _v_dot(g, w) for g in nrm], 0.5 * k2, 0.0)
+        if m is None:
+            return line, 'lost'
+        lam = 0.5 * (lams2[m] + lams2[m + 1])
+        pts, nrm = _on_surface(body, [_v_add(c1, w, lam), _v_add(c1, w, lam + eps), _v_add(c1, w, lam - eps)], unit)
+        c, na, nb = pts[0], nrm[1], nrm[2]
+        if na is None or nb is None or _v_dot(na, nb) >= _CREASE_COS:
+            return line, 'faded'
+        t2 = _v_unit(_v_cross(na, nb))
+        if t2 is None:
+            return line, 'lost'
+        if _v_dot(t2, t) < 0:
+            t2 = (-t2[0], -t2[1], -t2[2])
+        if _v_dot(t2, t) < 0.5:
+            line.append(c)
+            return line, 'corner'
+        t = t2
+        w2 = _v_unit(_v_sub(na, nb))
+        if w2 is not None:
+            w = w2 if _v_dot(w2, w) >= 0 else (-w2[0], -w2[1], -w2[2])
+        if not all(lo[i] - spacing < c[i] < hi[i] + spacing for i in range(3)):
+            return line, 'bounds'
+        for blk in blocks:
+            hit = blk.nearest(c, 0.15 * spacing)
+            if hit is not None:
+                line.append(hit)
+                return line, 'hit'
+        if step >= 8 and math.dist(c, start) < 0.9 * h:
+            return line, 'closed'
+        line.append(c)
+    return line, 'long'
+
+
+def _round_creases(body, skin, fine, spacing, kept, lo, hi):
+    ''' The creases of the body that no flat face has the outline of -- the edge between two round faces -- followed along the surface: [(points, closed)], polylines.  They begin at places found between neighbouring
+        points of the skin (_crease_seeds), run both ways from each (_follow_crease) and stop at a beam that is there: the beams of the edges of flat faces (`kept`) and the creases that were followed before '''
+    unit = 0.01 * spacing
+    near = _Hash(0.2 * spacing)
+
+    def trail(hash_, pts, closed):
+        pairs = list(zip(pts, pts[1:]))
+        if closed and len(pts) > 2:
+            pairs.append((pts[-1], pts[0]))
+        for a, b in pairs:
+            n = max(1, int(math.ceil(math.dist(a, b) / (0.1 * spacing))))
+            for k in range(n + 1):
+                hash_.add(_v_add(a, _v_sub(b, a), k / n))
+
+    for p, q in kept:
+        trail(near, [p, q], False)
+    out = []
+    seen = _Hash(0.3 * spacing)
+    for c, na, nb, w in _crease_seeds(body, skin, fine, spacing, unit):
+        if seen.any_within(c, 0.25 * spacing) or near.any_within(c, 0.15 * spacing):
+            continue
+        seen.add(c)
+        fwd, how = _follow_crease(body, c, na, nb, w, 1.0, spacing, unit, (near,), lo, hi)
+        if how == 'closed':
+            line, closed = [c] + fwd, True
+        else:
+            own = _Hash(0.2 * spacing)
+            trail(own, fwd[3:], False)
+            back, _how = _follow_crease(body, c, na, nb, w, -1.0, spacing, unit, (near, own), lo, hi)
+            line, closed = back[::-1] + [c] + fwd, False
+        if len(line) < 2:
+            continue
+        line = [line[i] for i in _simplify(line, 0.005 * spacing, closed)]          # (no more than 0.005 of a spacing off: a ring of a few millimetres is round, not a polygon of beams)
+        if len(line) < 2 or sum(math.dist(a, b) for a, b in zip(line, line[1:])) < 0.5 * spacing:
+            continue
+        trail(near, line, closed)
+        out.append((line, closed))
+    return out
 
 
 def _edge_beams(edges, r, blend):
@@ -2499,8 +2747,8 @@ def voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0,
         skin       the thickness of a solid skin on the surface of the body (0: none; a skin is joined to the foam cut by the body)
         blend      rounds the joints; skin_blend rounds the joints with the skin
         body       the body to fill -- only for a list of points.  Points from random_points() fill the body they were made in
-        clip       True (the default) cuts the foam by the body, so that nothing of it stands outside it: a beam that the body cuts ends flat (with frame or surface the cut lies one beam radius outside the
-                   surface, so that the beams of the net on it are not cut); False leaves the foam whole, its beams ending where the points make them end
+        clip       True (the default) cuts the whole lattice by the body, so that nothing of it stands outside it: a beam that the body cuts ends flat, and the frame and the net on the surface are cut with it;
+                   False leaves the lattice whole, its beams ending where the points make them end (the beams on the surface and on the edges stand half out of the body)
 
             points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
             foam = voronoi_lattice(points, thickness=1.0) '''

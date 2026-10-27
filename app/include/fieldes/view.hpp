@@ -733,6 +733,12 @@ protected:
     qreal m_snapImageRatio = 0;
     bool m_snapImageKept = false;            // (the numbers above are those of a picture that was made: it is made again only when one of them changes)
     bool m_snapImageDrawn = false;           // (and the lattice was drawn in it)
+    // The lines of that picture, in pixels (the whole lines, without their fade): the cursor's spotlight draws again the ones that run through the circle round it
+    struct SnapLine { QPointF a, b; qint8 axis; qint8 band; qint16 alpha; float width; };
+    mutable QVector<SnapLine> m_snapLines;
+    QPoint m_snapCursor;                     // (where the cursor is over the viewport in the snapping mode, in pixels: the middle of the spotlight)
+    bool m_snapCursorValid = false;
+    void drawSnapGlow(QPainter& painter);
     // The nearest and the farthest rows of the lattice that was drawn, as shares of the way from the viewer to the place looked at (a click goes to a node between them), and the mark of where it snaps to
     mutable float m_snapSlabNear = 0.25f, m_snapSlabFar = 1.15f;
     mutable bool m_snapSlabValid = false;
@@ -785,6 +791,11 @@ protected:
         {
             triad_hover = -1;       // no stale highlight on the triad
             update();
+        }
+        if (m_snapCursorValid && !m_snapMarkHeld)
+        {
+            m_snapCursorValid = false;       // (the cursor's spotlight of the snapping lattice goes out with the cursor)
+            m_overlay->update();
         }
         QOpenGLWidget::leaveEvent(event);
     }

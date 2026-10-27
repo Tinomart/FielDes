@@ -149,7 +149,9 @@ planes that touch a round one), the beams are the edges of the cells that are in
 body cuts it. `delaunay_lattice` joins the points along the surface, as it joins all its points. It is off by default.
 
 **A frame.** `random_points(part, spacing=8, frame=True)` gives the lattice a **full beam along every sharp edge** of the body: the outline of each of its flat faces -- straight along a side, round at a rounded corner, a full circle at the
-rim of a cylinder -- found from the body itself, not from the cells. A smooth fillet is no sharp edge (the surface must turn by more than 35 degrees), and a body with no flat face -- a ball, a ring -- has no frame. The frame is added to
+rim of a cylinder -- found from the body itself, not from the cells. **The edge between two round faces is a frame edge too**: a sphere that a cylinder cuts or runs through has a full beam round each circle where they meet,
+found by following the crease along the surface (where the normals on its two sides are more than 35 degrees apart; the beam follows it in steps of a quarter of a spacing and stops at a beam that is there, or where the crease fades out
+or turns a corner -- at a vertex where three creases meet the beams may stop a step short of each other). A smooth fillet is no sharp edge (the surface must turn by more than 35 degrees), and a body with no edge -- a ball, a ring -- has no frame. The frame is added to
 whatever the lattice is -- the plain foam, the foam of `surface=True`, a truss -- and does not touch the points or the cells: a frame alone is the plain foam with its edges. It is part of the lattice, so `clip` cuts it with the rest
 (`clip=False`: the foam is as wild as it is without a frame, and the frame is whole). `surface=True, frame=True` is the net on the faces and the beams on the edges.
 
