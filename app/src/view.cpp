@@ -3168,11 +3168,11 @@ void View::setWorkPlaneOffset(float offset)
 float View::snapStep() const
 {
     if (m_snap.spacing > 0) return m_snap.spacing;
-    // Automatic: a round number from the size of the region that is drawn -- a tenth of its longest side: a step that is big enough to snap to and to see -- and NOT from the zoom.  A grid has
+    // Automatic: a round number from the size of the region that is drawn -- a fifth of its longest side: a step that is big enough to snap to and to SEE (a tenth was a grid of tiny cells, 2026-10-27, the user: "the grid looks way too small") -- and NOT from the zoom.  A grid has
     // a size of its own: zooming in shows fewer of its lines, bigger, and does not change where they are, or what everything snaps to
     const QVector3D lo = settings.min, hi = settings.max;
     const float extent = (hi.x() > lo.x() && hi.y() > lo.y() && hi.z() > lo.z()) ? std::max({hi.x() - lo.x(), hi.y() - lo.y(), hi.z() - lo.z()}) : 100.0f;
-    return roundStep(extent / 10.0);
+    return roundStep(extent / 5.0);
 }
 
 bool View::altHeld() const
@@ -3266,6 +3266,8 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
     QVector3D best;
     float bestPixels = 1e30f;
     bool found = false;
+    bool stickFound = false;
+    float stickPixels = 1e30f;
     for (qint64 n = 0, count = last - first + 1; n < count; ++n)
     {
         const qint64 m = up ? first + n : last - n;
@@ -3281,6 +3283,7 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
         const float pixels = (v - u * along).length() / std::max(1e-9f, pixel * tau);
         if (pixels > 14.0f) continue;
         if (V.map(node).z() + eyeV < 1.0f) continue;                                      // (a quarter of the way from the viewer at least: nearer is no line of the picture)
+        if (m_snapStickValid && (node - m_snapStick).lengthSquared() < 1e-6f) { stickFound = true; stickPixels = pixels; }
         if (!found || pixels < bestPixels - 1.0f)
         {
             found = true;
@@ -3288,8 +3291,25 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
             best = node;
         }
     }
+    // (the node that was marked last stays marked while the cursor is still near it -- within five pixels of being as near as the nearest --, so that the mark does not jump from row to row with every pixel the mouse moves)
+    if (found && stickFound && stickPixels <= bestPixels + 5.0f) best = m_snapStick;
+    if (found)
+    {
+        m_snapStick = best;
+        m_snapStickValid = true;
+    }
     if (hit) *hit = found;
     return found ? best : QVector3D();
+}
+
+// The place of the surface of a model that is under the cursor (the picture of what is where says a shape is there; the depth there is the surface)
+bool View::surfacePointAt(QPoint pos, QVector3D& point) const
+{
+    if (!pick_img.valid(pos)) return false;
+    const unsigned int v = pick_img.pixel(pos) & 0xFFFFFF;
+    if (!v || int(v) > shapes.size()) return false;
+    point = toModelPos(pos);
+    return true;
 }
 
 // Where a click puts something down, or a hover would: a point that is there, else the node the cursor is over, else the nearest node of the plane through the origin that faces the viewer
@@ -3299,6 +3319,9 @@ QVector3D View::snapPlace(QPoint pos, const Shape* exclude, bool toPoints) const
     if (!snapActive()) return plane;
     QVector3D dot;
     if (toPoints && m_snap.snapPoints && pointNear(plane, exclude, dot)) return dot;
+    // A model under the cursor: the node nearest the place of its surface that is pointed at -- what is pointed at is put on the model, and not at whatever depth a node of the lattice happens to be
+    QVector3D surface;
+    if (surfacePointAt(pos, surface)) return snapPoint(surface, exclude, false);
     bool found = false;
     const QVector3D node = snapNodeAlongRay(pos, &found);
     return found ? node : snapPoint(plane, exclude, false);
@@ -3317,6 +3340,7 @@ void View::setSnapMark(const QVector3D& at, bool onPoint)
 
 void View::clearSnapMark()
 {
+    m_snapStickValid = false;
     if (!m_snapMark.valid) return;
     m_snapMark.valid = false;
     m_overlay->update();
@@ -3438,7 +3462,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
     // The near side reaches out toward the viewer, to a quarter of the way to the place looked at (nothing nearer is a line of the picture): the lattice is everywhere, near the viewport as far from it
     // (2026-10-27, the user: "the grid stops too far away from the viewport")
-    float hNear = 0.75f;
+    // (only a few rows of it, though: five in front of the place looked at, as many as the eye can tell apart -- thirty rows of lines on top of each other were a haze in which nothing could be told from anything,
+    // 2026-10-27, the user: "you can't tell what is where at all")
+    float hNear = std::min(0.75f, 5.0f * stepV / eyeV);
     auto nodesIn = [&](float sFar, float sNear) {
         const float b = 1.0f + sFar * hFar, a = 1.0f - sNear * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
@@ -3662,28 +3688,29 @@ void View::drawSnapMark(QPainter& painter)
     painter.save();
     const QColor violet(176, 130, 255);
     QFont font = painter.font();
-    font.setPointSizeF(8.5);
+    font.setPointSizeF(7.5);
     painter.setFont(font);
     const QFontMetrics fm(font);
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QColor white(255, 255, 255, 235);
     painter.setBrush(Qt::NoBrush);
+    // (small: a cross with arms of five pixels and a ring of three -- the mark is a point, not a thing that covers what it marks; 2026-10-27, the user: "the cursor is way too big")
     for (int pass = 0; pass < 2; ++pass)
     {
-        painter.setPen(QPen(pass == 0 ? white : violet, pass == 0 ? 4.0 : 2.0, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(at + QPointF(-15, 0), at + QPointF(15, 0));
-        painter.drawLine(at + QPointF(0, -15), at + QPointF(0, 15));
+        painter.setPen(QPen(pass == 0 ? white : violet, pass == 0 ? 2.6 : 1.2, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(at + QPointF(-6, 0), at + QPointF(6, 0));
+        painter.drawLine(at + QPointF(0, -6), at + QPointF(0, 6));
     }
-    painter.setPen(QPen(white, 4.0));
-    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 7.5, at.y() - 7.5, 15, 15)); else painter.drawEllipse(at, 7.5, 7.5);
-    painter.setPen(QPen(violet, 2.0));
-    painter.setBrush(QColor(176, 130, 255, 110));
-    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 7.5, at.y() - 7.5, 15, 15)); else painter.drawEllipse(at, 7.5, 7.5);
+    painter.setPen(QPen(white, 2.6));
+    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 3.5, at.y() - 3.5, 7, 7)); else painter.drawEllipse(at, 3.5, 3.5);
+    painter.setPen(QPen(violet, 1.2));
+    painter.setBrush(QColor(176, 130, 255, 140));
+    if (m_snapMark.onPoint) painter.drawRect(QRectF(at.x() - 3.5, at.y() - 3.5, 7, 7)); else painter.drawEllipse(at, 3.5, 3.5);
     auto num = [](float v) { return QString::number(v * float(Units::lengthScale()), 'f', Units::lengthDecimals(3)); };
-    const QString coords = QString("x %1   y %2   z %3  %4").arg(num(m_snapMark.at.x()), num(m_snapMark.at.y()), num(m_snapMark.at.z()), Units::lengthLabel());
-    QRectF label(QPointF(at.x() + 20, at.y() - fm.height() - 16), QSizeF(fm.horizontalAdvance(coords) + 12, fm.height() + 6));
-    if (label.right() > width() - 6) label.moveLeft(at.x() - 20 - label.width());
-    if (label.top() < 6) label.moveTop(at.y() + 16);
+    const QString coords = QString("x %1  y %2  z %3 %4").arg(num(m_snapMark.at.x()), num(m_snapMark.at.y()), num(m_snapMark.at.z()), Units::lengthLabel());
+    QRectF label(QPointF(at.x() + 10, at.y() - fm.height() - 8), QSizeF(fm.horizontalAdvance(coords) + 8, fm.height() + 3));
+    if (label.right() > width() - 6) label.moveLeft(at.x() - 10 - label.width());
+    if (label.top() < 6) label.moveTop(at.y() + 8);
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(22, 76, 94, 225));
     painter.drawRoundedRect(label, 4, 4);
@@ -5092,12 +5119,14 @@ void View::showSurfaceMenu(QPoint globalPos, int line, const QVector3D& point, d
     // makes `profile` the outline of that surface), not the way the menu was reached.  The primitives are in a menu of their own, the more complicated shapes made with
     // parameters in another, what is done to the model -- the operations on it -- under Operations, and what is worked out about it or made of it -- the analyses and the
     // lattices -- under Engineering; the quick ones (center, bounding_box) are below them
+    // (the snapping mode: what is made from the surface goes to the node nearest the place that was clicked -- where the mark was -- and not exactly onto the surface)
+    const QVector3D place = (onSurface && snapActive()) ? snapPoint(point, nullptr, false) : point;
     auto primitives = menu->addMenu(TypeIcons::icon("solid"), T("Primitives"));
     primitives->setToolTipsVisible(true);
-    addCreateEntries(primitives, point, point, point, scale, scale, -1, true);
+    addCreateEntries(primitives, place, place, place, scale, scale, -1, true);
     auto shapes = menu->addMenu(TypeIcons::icon("shapes"), T("Parametric shapes"));
     shapes->setToolTipsVisible(true);
-    addCreateEntries(shapes, point, point, point, scale, scale, -1, false);
+    addCreateEntries(shapes, place, place, place, scale, scale, -1, false);
     auto ops = menu->addMenu(TypeIcons::icon("operation"), T("Operations"));
     ops->setToolTipsVisible(true);
     fillOperationsMenu(ops, line, point, scale, -1);

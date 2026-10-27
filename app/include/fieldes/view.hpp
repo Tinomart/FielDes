@@ -263,6 +263,7 @@ public slots:
     // (what a click puts down, and what is hovered: a point that is there, else the node of the lattice that the cursor is over -- the nearest to the viewer of those under it --, else the plane's)
     QVector3D snapPlace(QPoint pos, const Shape* exclude = nullptr, bool toPoints = true) const;
     QVector3D snapNodeAlongRay(QPoint pos, bool* hit = nullptr) const;
+    bool surfacePointAt(QPoint pos, QVector3D& point) const;
     /*  The step of a turn in degrees: the card's, for the turns of the mode and for the Shift gizmo  */
     float angleStep() const { return qMax(0.1f, m_snap.angle); }
     /*  A click at `pos` on the work plane in the current mode: the next point of the line or the spline that is being drawn (the first point is where a click closes it
@@ -729,6 +730,8 @@ protected:
     // The nearest and the farthest rows of the lattice that was drawn, as shares of the way from the viewer to the place looked at (a click goes to a node between them), and the mark of where it snaps to
     mutable float m_snapSlabNear = 0.25f, m_snapSlabFar = 1.15f;
     mutable bool m_snapSlabValid = false;
+    mutable QVector3D m_snapStick;                  // (the node that was marked last: it stays marked while the cursor is near it)
+    mutable bool m_snapStickValid = false;
     struct SnapMark { bool valid = false; QVector3D at; bool onPoint = false; };
     SnapMark m_snapMark;
     void setSnapMark(const QVector3D& at, bool onPoint);
