@@ -3302,13 +3302,16 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     const float pixelsOfStep = std::max(1.0f, stepV * 0.5f * float(std::min(W, H)));
     const int cap = 12000 + int(std::min(60000.0f, 3.0f * float(W) * float(H) / (pixelsOfStep * pixelsOfStep)));
 
-    // The lattice is seen out to the viewing distance of the card, a share of the way from the viewer to the place looked at (1 is that place: the card's 125 % is a quarter of the way
-    // farther on); what is nearer than that place is seen as far in front of it as the lattice is behind it, so that the rows near the viewer, which are big and few, are seen as well as the
-    // far ones, and the lattice is a thick slice of the whole space round the place looked at, fading out on both sides.  It is not thicker than its nodes can be told from each other and be
-    // counted: what the viewer sees between the two limits is a pyramid of the picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that
-    // would be more than `cap` nodes both limits are brought in -- at the place looked at there are always a few rows
+    // The lattice is seen out to the viewing distance of the card, a share of the way from the viewer to the place looked at (1 is that place: the card's 115 % is fifteen hundredths of the way
+    // farther on), and fades steadily out into that distance: the lines nearest the viewer are the strongest and the thinnest-drawn farthest, so that of two lines next to each other the nearer
+    // one is told by its tone and its width.  A short stretch of rows in front of the place looked at is seen too -- the rows near the viewer are big and few --, which fades in, so that the
+    // lattice does not start with an edge and does not lie over a model at full strength.  It is not thicker than its nodes can be told from each other and be counted: what the viewer sees
+    // between the two limits is a pyramid of the picture's shape, area (b^3 - a^3) / 12 view units cubed, with a node to every stepV^3 of it, and where that would be more than `cap` nodes
+    // both limits are brought in -- at the place looked at there are always a few rows
     float hFar = float(m_snap.distance) / 100.0f - 1.0f;
-    float hNear = std::min(hFar, 0.7f);
+    // (and at least about four rows deep however far the view is zoomed in: a step that is wider than the slice would leave nothing of the lattice to see or to snap to)
+    hFar = std::max(hFar, 4.0f * stepV / (1.4f * eyeV));
+    float hNear = std::min(0.4f * hFar, 0.5f);
     auto nodesIn = [&](float s) {
         const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
@@ -3334,11 +3337,13 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     struct Node { int i, j, k; QPointF at; float f; };
     std::unordered_map<qint64, Node> nodes;
     auto keyOf = [](int i, int j, int k) { return (qint64(i + 1048576) << 42) | (qint64(j + 1048576) << 21) | qint64(k + 1048576); };
-    // (1 at the place the view looks at, 0 at the two limits: a bell, flat on top and smooth where it ends)
+    // (how strong a line is at a distance t from the viewer, 1 being the place the view looks at: it falls steadily from the nearest limit to 0 at the far one -- the distance fog -- and fades in
+    // over the first eighth of the way, so that the nearest rows do not start with an edge)
     auto strength = [&](float t) {
-        const float u = t <= 1.0f ? (1.0f - t) / (1.0f - tNear) : (t - 1.0f) / (tLimit - 1.0f);
-        const float v = std::min(1.0f, u * u);
-        return (1.0f - v) * (1.0f - v);
+        const float u = std::min(1.0f, std::max(0.0f, (t - tNear) / (tLimit - tNear)));
+        const float fall = (1.0f - u) * (1.0f - u);
+        const float rise = std::min(1.0f, u / 0.125f);
+        return fall * rise * rise * (3.0f - 2.0f * rise);
     };
     auto collect = [&]() {
         nodes.clear();
@@ -3391,9 +3396,11 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
         if (attempt >= 8 || (tLimit - tNear) * eyeV < 2.0f * stepV) return false;
     }
 
-    constexpr int kBands = 6;
-    static const int kAlpha[kBands] = {96, 76, 58, 40, 26, 14};
-    static const int kAxisAlpha[kBands] = {190, 160, 128, 96, 64, 38};
+    // (eight steps of the fog, from the nearest to the farthest: tone, width and colour all fade, so that of two lines next to each other the nearer one is told at once)
+    constexpr int kBands = 8;
+    static const int kAlpha[kBands] = {120, 98, 80, 64, 50, 38, 27, 17};
+    static const double kWidth[kBands] = {1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7};
+    static const int kAxisAlpha[kBands] = {220, 190, 160, 132, 106, 82, 60, 42};
     QVector<QLineF> bands[kBands];
     QVector<QLineF> axes[3][kBands];
     for (const auto& entry : nodes)
@@ -3421,7 +3428,9 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // (violet: the selection is amber, the gizmo red, green and blue, a selected surface magenta and the work plane blue -- the snapping mode has a colour of its own, which shows on a selected model too)
     for (int b = 0; b < kBands; ++b)
     {
-        p.setPen(QPen(QColor(176, 130, 255, kAlpha[b]), 1.0));
+        // (the near lines are a lighter violet and the far ones a deeper one, as well as fainter and thinner)
+        const double k = double(b) / double(kBands - 1);
+        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), kAlpha[b]), kWidth[b]));
         p.drawLines(bands[b]);
     }
     const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
@@ -3429,7 +3438,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     {
         for (int b = 0; b < kBands; ++b)
         {
-            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), kAxisAlpha[b]), 1.6));
+            p.setPen(QPen(QColor(axisColor[a].red(), axisColor[a].green(), axisColor[a].blue(), kAxisAlpha[b]), 2.0 - 0.6 * double(b) / double(kBands - 1)));
             p.drawLines(axes[a][b]);
         }
     }
