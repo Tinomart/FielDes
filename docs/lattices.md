@@ -124,13 +124,14 @@ own (it could only disagree with the points). To fill another body, make the poi
 | `min_distance` | no two points are closer than this (mm). Default: the spacing less 60 % of the randomness. A low number lets the points clump; the spacing itself makes them even |
 | `max_distance` | no point is farther than this from its nearest neighbour (mm): a point that is more alone gets a neighbour. Default: none. Not less than `min_distance` |
 | `seed` | another number is another pattern; the same number is the same points again |
-| `surface` | `True` adds a set of points **on the surface** of the body, about `spacing` apart, so that a foam made of the points has a clean net of beams all over the surface (see below). Needs a body. Default: off |
+| `surface` | `True` puts a set of points **on the surface** of the body, about `spacing` apart, that are cells of their own, and a `voronoi_lattice` made of them is **closed by the surface**: nothing is cut off, and the surface is a net of beams that wraps round the sharp edges (see below). Needs a body. Default: off |
+| `frame` | `True` gives the lattice made of the points a **frame**: a full beam along every sharp edge of the body (see below). Needs a body. Default: off |
 
 `min_distance` and `max_distance` are the range the distances to the nearest neighbour are in: the closer together they are, the more regular the
 points. The result is a `PointSet` (`len(points)`, `points.points`, `points.stats()` for the distances the points really have, `points.body` the body they were
 made in). A plain list of at least five `(x, y, z)` is a set of points too, but it does not know a body: `voronoi_lattice(my_points, body=part)`.
 
-`voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None)` and `delaunay_lattice(...)`, with the same arguments:
+`voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None, clip=True)` and `delaunay_lattice(...)`, with the same arguments:
 
 | Argument | What it does |
 |---|---|
@@ -139,15 +140,37 @@ made in). A plain list of at least five `(x, y, z)` is a set of points too, but 
 | `density` | instead of the beams' size: the share of the body that is material (0–1), calibrated. Not together with `thickness` or `radius` |
 | `skin`, `blend`, `skin_blend` | a solid skin of this thickness on the surface of the body; the rounding of the joints; the rounding of the joints with the skin |
 | `body` | only for a list of points, which does not know one. Points from `random_points` fill the body they were made in (giving another is an error that says so) |
+| `clip` | `True` (the default): the body cuts the lattice, the frame with it, so that nothing of it stands outside the body. `False`: the lattice is left whole -- the cells of a plain foam reach out past the body, and the beams on the surface and on the edges stand half out of it, as in nTop; clip them yourself if you want to |
 
 **A clean surface.** The surface of the body cuts a foam off: its beams end where the surface is, as stubs. `random_points(part, spacing=8, surface=True)` puts points **on**
-the surface as well -- the nodes of a random net over it, the ones [`surface_lattice`](#a-net-over-a-surface-surface_lattice) makes -- and a foam made of them has a clean net of beams all over the surface of
-the body, joined to the foam inside it. `delaunay_lattice` has its beams along the surface between those points; `voronoi_lattice` a net of beams one beam radius inside the surface, so that
-the beams touch the surface from inside. The other points keep their distance to the points of the skin. It is off by default.
+the surface as well, that are cells of their own -- and a `voronoi_lattice` made of them is **closed by the surface**: every cell near it is mirrored across it (across each flat face, found from the body, and across the
+planes that touch a round one), the beams are the edges of the cells that are in the body or in the surface, and the surface is a net of beams over the whole body that **wraps round the sharp edges** -- no beam runs along an edge
+(that is what the frame is for). The points follow the surface and nothing else: none is pulled onto an edge or a corner. The net lies on the surface, so half of each beam stands out of the body; `clip` says whether the
+body cuts it. `delaunay_lattice` joins the points along the surface, as it joins all its points. It is off by default.
+
+**A frame.** `random_points(part, spacing=8, frame=True)` gives the lattice a **full beam along every sharp edge** of the body: the outline of each of its flat faces -- straight along a side, round at a rounded corner, a full circle at the
+rim of a cylinder -- found from the body itself, not from the cells. A smooth fillet is no sharp edge (the surface must turn by more than 35 degrees), and a body with no flat face -- a ball, a ring -- has no frame. The frame is added to
+whatever the lattice is -- the plain foam, the foam of `surface=True`, a truss -- and does not touch the points or the cells: a frame alone is the plain foam with its edges. It is part of the lattice, so `clip` cuts it with the rest
+(`clip=False`: the foam is as wild as it is without a frame, and the frame is whole). `surface=True, frame=True` is the net on the faces and the beams on the edges.
+
+**Where the junctions are.** The beams of a foam run along the borders between the cells, and each point is the centre of its own cell: a point of a `voronoi_lattice` is never a junction, on the surface or inside. The
+points of a `delaunay_lattice` are its junctions: every point is joined to its neighbours.
 
 ```python
 points = random_points(part, spacing=8, surface=True)
 foam = voronoi_lattice(points, thickness=1.0)         # a foam with a clean net of beams on its surface
+
+framed = voronoi_lattice(random_points(part, spacing=8, frame=True), thickness=1.0)                  # the plain foam, and a beam along every sharp edge
+both = voronoi_lattice(random_points(part, spacing=8, surface=True, frame=True), thickness=1.0)      # the net on the faces and the beams on the edges
+wild = voronoi_lattice(random_points(part, spacing=8, frame=True), thickness=1.0, clip=False)        # nothing cut: the foam is as wild as it is, the frame is whole
+```
+
+**Points of your own.** `point_cloud(points, body=None)` makes a set of points where **you** put them -- places `(x, y, z)`, or the `point` models of the script, each dragged to the place by its gizmo -- and a foam or a truss is made
+around them as around the random ones: `voronoi_lattice(point_cloud(my_points))`. The body that clips the lattice is the one you give, and without one the box that just holds the points. At least five points.
+
+```python
+cloud = point_cloud([(0, 0, 0), (10, 0, 0), (0, 10, 0), (10, 10, 0), (5, 5, 8), (5, 5, -8)])
+foam = voronoi_lattice(cloud, thickness=0.8)
 ```
 
 ## A net over a surface: surface_lattice

@@ -1649,6 +1649,9 @@ void Editor::applyEditsNoted(QList<TextEdit> edits, const QString& description, 
     const bool joined = live && m_liveRevision >= 0 && m_liveRevision == script_doc->revision();
     const bool chain = m_readyDoc == script_doc && m_readyRevision >= 0 && script_doc->toPlainText() == m_readyText;
     applyEditsAs(edits, live);
+    // What the guided tour writes -- the model of a step, a line it hides or takes out -- is not a step of the user's: an undo that took it would take the model of the step away (the user, 2026-10-27, of the
+    // step "Snap one body onto another": "when I press ctrl+z then it deletes the cylinder"), and an undo that finds the program's own lines on top takes the edit before them too, which there is the tour's
+    if (description == "Tour") script_doc->clearUndoRedoStacks();
     if (joined)
     {
         if (chain)

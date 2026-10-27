@@ -91,7 +91,7 @@ from fieldes.stdlib.content_cache import content_cached
 from fieldes.stdlib.fieldargs import is_field, present, positive, number_or_field, returns_lattice
 
 __all__ = ['cell_periodic', 'cell_custom', 'cell_custom_truss', 'cell_custom_tpms', 'LatticeCell',
-           'random_points', 'PointSet', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice',
+           'random_points', 'point_cloud', 'PointSet', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice',
            'lattice', 'tpms', 'strut_lattice', 'planar_lattice', 'fill',
            'graph_lattice', 'voronoi_graph',
            'surface_graph', 'points_graph', 'LatticeGraph',
@@ -1490,7 +1490,7 @@ class PointSet:
 
     _no_gizmo = True             # (not something to drag: FielDes hides the handles button)
 
-    def __init__(self, points, spacing, bounds=None, seed=None, body=None, skin=None):
+    def __init__(self, points, spacing, bounds=None, seed=None, body=None, skin=None, frame=False):
         self.points = [tuple(float(c) for c in p) for p in points]
         self.spacing = float(spacing)
         self.bounds = bounds
@@ -1498,6 +1498,11 @@ class PointSet:
         self.body = body
         # (the points that lie ON the surface of the body -- the last `len(skin)` of `points` -- each with the unit normal that points out of the body there: random_points(surface=True))
         self.skin = [(tuple(float(c) for c in p), tuple(float(c) for c in n)) for p, n in (skin or [])]
+        # (random_points(surface=True, frame=True): the foam made around them is closed at the surface of the body -- surface: with a net of beams on it, frame: with a full beam on every sharp edge)
+        self.frame = bool(frame)
+        self.surface = False
+        # (point_cloud(): points that were placed, not made at random -- a lattice made of them without a body is clipped by their bounding box)
+        self.cloud = False
 
     def _display(self):
         ''' What FielDes shows for the points: a shape with no extent that carries them (`_markers`), and the viewport draws each of them
@@ -1636,29 +1641,74 @@ def _inside(body, pts, band):
 
 
 def _skin_points(body, spacing, seed, bounds):
-    ''' The skin of a body: places ON its surface about `spacing` apart (the nodes of the triangulation surface_graph makes), each with the unit normal that points out of the
-        body there (the gradient of its field by central differences).  [(point, normal), ...] '''
+    ''' Points ON the surface of a body about `spacing` apart, each with the unit normal that points out of the body there: [(point, normal), ...].  Random places near the surface are put onto it along the gradient
+        of the field, and thinned so that none is nearer than 0.85 of a spacing to another one.  A point is where the surface is under it: none is pulled onto an edge or a corner (the user, 2026-10-27: "the cylinder uses
+        the edge pulling that I said should be removed by default") '''
     from fieldes.stdlib.fields import evaluate
-    nodes = surface_graph(body, spacing, 'triangle', seed, bounds).nodes
+    region = _region_of(body, bounds)
+    lo = (region.X.lower, region.Y.lower, region.Z.lower)
+    hi = (region.X.upper, region.Y.upper, region.Z.upper)
+    rng = random.Random(int(seed))
+    c = float(spacing)
+    n = [max(1, int(math.ceil((hi[i] - lo[i]) / c))) for i in range(3)]
+    if n[0] * n[1] * n[2] > 4e6:
+        raise ValueError('random_points: the spacing is too small for this region (the surface would need more than four million cells to be found): make it larger, or the region smaller')
+    centres = [(lo[0] + (i + 0.5) * c, lo[1] + (j + 0.5) * c, lo[2] + (k + 0.5) * c) for i in range(n[0]) for j in range(n[1]) for k in range(n[2])]
+    vals = []
+    for start in range(0, len(centres), 40000):
+        vals.extend(evaluate(body, centres[start:start + 40000]))
+    cands = []
+    for q, v in zip(centres, vals):
+        if abs(v) < 0.9 * c:                                # (half the diagonal of a cell is 0.87 of its side)
+            for _ in range(12):
+                cands.append((q[0] + rng.uniform(-0.5 * c, 0.5 * c), q[1] + rng.uniform(-0.5 * c, 0.5 * c), q[2] + rng.uniform(-0.5 * c, 0.5 * c)))
     h = 0.01 * spacing
-    probes = []
-    for p in nodes:
-        probes.extend(((p[0] + h, p[1], p[2]), (p[0] - h, p[1], p[2]), (p[0], p[1] + h, p[2]), (p[0], p[1] - h, p[2]), (p[0], p[1], p[2] + h), (p[0], p[1], p[2] - h)))
-    v = evaluate(body, probes)
+    for _ in range(5):                                      # (onto the surface: steps along the gradient)
+        moved = []
+        for q, (v, g, slope) in zip(cands, _values_and_normals(body, cands, h)):
+            if g is None or not slope > 1e-9:
+                moved.append(q)
+            else:
+                s = v / slope
+                moved.append((q[0] - s * g[0], q[1] - s * g[1], q[2] - s * g[2]))
+        cands = moved
+    pool = [(q, g) for q, (v, g, slope) in zip(cands, _values_and_normals(body, cands, h)) if g is not None and slope > 1e-9 and abs(v) / slope < 1e-3 * spacing]
+    rng.shuffle(pool)
+    d = 0.85 * spacing
+    near = _Hash(d)
     out = []
-    for i, p in enumerate(nodes):
-        g = (v[6 * i] - v[6 * i + 1], v[6 * i + 2] - v[6 * i + 3], v[6 * i + 4] - v[6 * i + 5])
-        m = math.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2)
-        if m > 1e-12:
-            out.append((p, (g[0] / m, g[1] / m, g[2] / m)))
+    for q, g in pool:
+        if not near.any_within(q, d):
+            near.add(q)
+            out.append((q, g))
     return out
 
 
-def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False):
+def _values_and_normals(body, pts, h):
+    ''' The value of the body's field at each point, the unit gradient there (central differences of step h; None where there is none), and the slope (the length of the gradient) '''
+    from fieldes.stdlib.fields import evaluate
+    probes = []
+    for p in pts:
+        x, y, z = p
+        probes.extend(((x, y, z), (x + h, y, z), (x - h, y, z), (x, y + h, z), (x, y - h, z), (x, y, z + h), (x, y, z - h)))
+    v = []
+    for start in range(0, len(probes), 42000):
+        v.extend(evaluate(body, probes[start:start + 42000]))
+    out = []
+    for i in range(len(pts)):
+        b = 7 * i
+        g = (v[b + 1] - v[b + 2], v[b + 3] - v[b + 4], v[b + 5] - v[b + 6])
+        m = math.sqrt(g[0] ** 2 + g[1] ** 2 + g[2] ** 2)
+        out.append((v[b], (g[0] / m, g[1] / m, g[2] / m) if m > 1e-12 else None, m / (2.0 * h)))
+    return out
+
+
+def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max_distance=None, seed=1, bounds=None, surface=False, frame=False):
     ''' Points in a body -- with the say over how random they are.  A foam is made around them: voronoi_lattice(points).
 
         body          where the points are made: inside it, and a layer of one `spacing` outside, so that the cells at its surface are
-                      closed.  Without a body, give bounds=((x0, y0, z0), (x1, y1, z1))
+                      closed (with surface=True there is no layer outside: the boundary is the surface).  Without a body, give
+                      bounds=((x0, y0, z0), (x1, y1, z1))
         spacing       how far a point is from its nearest neighbour, on average (mm): the points are made so that they come out that far
                       apart whatever the randomness (points.stats() says how far they really are)
         randomness    0 to 1: how much the points are moved off a regular grid -- 0 is a regular body-centred grid (every cell the same),
@@ -1669,10 +1719,11 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
                       neighbour.  Default: none.  It cannot be less than min_distance.  (min_distance and max_distance are the range the
                       distances to the nearest neighbour are in: the closer together they are, the more regular the points)
         seed          another number is another pattern (the same number is the same points again)
-        surface       True adds a set of points ON the surface of the body, about `spacing` apart (the nodes of a random net on the surface, as surface_lattice() makes it),
-                      so that a lattice made of the points has a clean net of beams all over the surface of the body, and not beams that the surface cuts off:
-                      delaunay_lattice() has its beams along the surface between them, voronoi_lattice() a net of beams one beam radius inside the surface.  The other
-                      points keep their distance to them.  Needs a body
+        surface       True puts a set of points ON the surface of the body, about `spacing` apart, that are cells of their own, and the foam is closed by the surface: nothing is cut off, and the surface is a net of
+                      beams that wraps round the sharp edges -- no beam runs along an edge (that is what frame is for).  The points follow the surface and nothing else: none is pulled onto an edge or a corner.  Needs a body
+        frame         True gives the lattice made of the points a frame: a full beam along every sharp edge of the body, found from the body itself (the outline of each of its flat faces; a smooth fillet is no sharp
+                      edge).  The points and the cells stay as they are -- the plain foam, or the foam of surface -- and the body cuts them, the frame with them (clip); with clip=False the foam is as wild
+                      as it is without a frame, and the frame is whole: its beams lie on the edges, half of each stands out of the body.  Needs a body
 
         Returns a PointSet, which FielDes draws in the viewport (each point as the dot of a gizmo): len(points), points.stats() (the
         distances the points really have), points.body (the body they were made in), and
@@ -1703,14 +1754,18 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
         region = _region_of(body, bounds)
         lo = (region.X.lower, region.Y.lower, region.Z.lower)
         hi = (region.X.upper, region.Y.upper, region.Z.upper)
-    band = spacing                                 # (the layer outside the body that has points: its cells are closed)
+    # The layer of one spacing outside the body that has points, so that the cells at its surface are closed -- unless the surface is asked for: then the boundary IS the surface, the points are
+    # in the body and on its surface, and none stands outside it, cut off by it (the user, 2026-10-27: "the random points still creates points outside of the actual body ... This should be different
+    # when choosing surface, because then the boundary is the surface")
+    band = 0.0 if surface else spacing
     plo = tuple(c - band for c in lo)
     phi = tuple(c + band for c in hi)
 
     skin = []
-    if surface:
+    if surface or frame:
         if body is None:
-            raise ValueError('random_points: surface=True puts points on the surface of the body: give the body the points are made in')
+            raise ValueError('random_points: surface=True and frame=True are made at the surface of the body: give the body the points are made in')
+    if surface:
         skin = _skin_points(body, spacing, seed, bounds)
 
     def make(grid_spacing):
@@ -1779,10 +1834,56 @@ def random_points(body=None, spacing=8.0, randomness=0.5, min_distance=None, max
         kept = make(grid_spacing)
     if len(kept) < 5:
         raise ValueError('random_points: only {} points: the spacing is too large for this region'.format(len(kept)))
-    return PointSet(kept + [p for p, _n in skin], spacing, (lo, hi), seed, body, skin)
+    out = PointSet(kept + [p for p, _n in skin], spacing, (lo, hi), seed, body, skin, frame)
+    out.surface = bool(surface)
+    return out
 
 
 random_points._makes = 'points'
+
+
+def _bounding_box(points, spacing):
+    ''' The box that just holds the points, as a body (an axis they all share the place on is given a thin side, a quarter of the spacing each way, so that the box has some thickness) '''
+    lo = [min(p[i] for p in points) for i in range(3)]
+    hi = [max(p[i] for p in points) for i in range(3)]
+    for i in range(3):
+        if hi[i] - lo[i] < 1e-6 * max(1.0, spacing):
+            lo[i] -= 0.25 * spacing
+            hi[i] += 0.25 * spacing
+    return sys.modules['fieldes.stdlib'].box(tuple(lo), tuple(hi))
+
+
+def point_cloud(points, body=None):
+    ''' Points of your own, exactly where you put them -- nothing random.  A foam or a truss is made around them as around random_points(): voronoi_lattice(cloud), delaunay_lattice(cloud).
+
+        points   the points: places (x, y, z), or the points of the model tree (point(x, y, z): its dot is dragged by its gizmo, to put it exactly where it is wanted).  A lattice needs at least five
+        body     the body that clips the lattice (and that it fills): any body.  Without one, the bounding box of the points
+
+            cloud = point_cloud([(0, 0, 0), (10, 0, 0), (0, 10, 0), (10, 10, 0), (5, 5, 8), (5, 5, -8)])
+            foam = voronoi_lattice(cloud) '''
+    if isinstance(points, (str, bytes)) or not hasattr(points, '__iter__'):
+        raise TypeError('point_cloud: the points are a list of places (x, y, z) or of points: point_cloud([point_1, point_2, ...])')
+    places = []
+    for p in list(points):
+        place = getattr(p, '_point_pos', None)
+        if place is None:
+            try:
+                place = tuple(float(c) for c in p)
+            except (TypeError, ValueError):
+                place = None
+        if place is None or len(place) != 3 or not all(math.isfinite(c) for c in place):
+            raise ValueError('point_cloud: every point is a place (x, y, z) or a point whose place is known, and {!r} is not'.format(p))
+        places.append(place)
+    if len(places) < 5:
+        raise ValueError('point_cloud: {} points -- a foam or a truss is made around at least five'.format(len(places)))
+    if body is not None:
+        body = Shape.wrap(body)
+    out = PointSet(places, _mean_nearest(places), None, None, body)
+    out.cloud = True
+    return out
+
+
+point_cloud._makes = 'points'
 
 
 def _as_points(who, points):
@@ -1797,31 +1898,551 @@ def _as_points(who, points):
     raise TypeError('{}: the first argument is a set of points: random_points(body, ...), or a list of at least five (x, y, z)'.format(who))
 
 
-def _skin_pairs(pts, body, r):
-    ''' The points a Voronoi foam is made of when the points have a skin: the points inside the body, and for each point of the skin a PAIR of points either side of a plane that
-        lies one beam radius inside the surface -- the facet between the two cells is that plane, so the beams along its edges form a net there, and the beams, which are
-        that thick, touch the surface from inside.  A pair stays only when one of its points is in the body and the other outside it (not in a wall that is too thin, not in a
-        hollow too narrow) '''
+def _flat_planes(body, skin, spacing):
+    ''' The flat faces of the body, found from the points of its skin: [(unit normal, offset)], the plane  normal . x = offset  lying in the surface.  The candidates are the planes that several points of the
+        skin lie on with the same normal; one is a face when the surface lies in it all round them (four places a little way off in the plane have the value 0 in the field of the body) '''
     from fieldes.stdlib.fields import evaluate
-    depth = float(r) if isinstance(r, numbers.Number) else 0.08 * pts.spacing
-    half = max(0.25 * pts.spacing, 1.5 * depth)                            # (half the distance between the two points of a pair)
+    groups = {}
+    for p, n in skin:
+        groups.setdefault((round(n[0], 2), round(n[1], 2), round(n[2], 2)), []).append((p, n, n[0] * p[0] + n[1] * p[1] + n[2] * p[2]))
+    cands = []
+    for members in groups.values():
+        members.sort(key=lambda m: m[2])
+        clusters, run = [], [members[0]]
+        for m in members[1:]:
+            if m[2] - run[-1][2] > 0.1 * spacing:
+                clusters.append(run)
+                run = [m]
+            else:
+                run.append(m)
+        clusters.append(run)
+        for cl in clusters:
+            if len(cl) < 2:
+                continue
+            mean = tuple(sum(m[1][i] for m in cl) / len(cl) for i in range(3))
+            size = math.sqrt(mean[0] ** 2 + mean[1] ** 2 + mean[2] ** 2)
+            n = (mean[0] / size, mean[1] / size, mean[2] / size)
+            centre = tuple(sum(m[0][i] for m in cl) / len(cl) for i in range(3))
+            a = (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)
+            t1 = (n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0])
+            m1 = math.sqrt(t1[0] ** 2 + t1[1] ** 2 + t1[2] ** 2)
+            t1 = (t1[0] / m1, t1[1] / m1, t1[2] / m1)
+            t2 = (n[1] * t1[2] - n[2] * t1[1], n[2] * t1[0] - n[0] * t1[2], n[0] * t1[1] - n[1] * t1[0])
+            step = _PLANE_PROBE * spacing
+            probes = [tuple(centre[i] + s * step * t[i] for i in range(3)) for t in (t1, t2) for s in (1.0, -1.0)]
+            cands.append((n, n[0] * centre[0] + n[1] * centre[1] + n[2] * centre[2], probes))
+    vals = evaluate(body, [q for _n, _c, probes in cands for q in probes]) if cands else []
+    planes = []
+    for k, (n, c, _probes) in enumerate(cands):
+        if all(abs(v) < 0.05 * spacing for v in vals[4 * k:4 * k + 4]):
+            if not any(abs(n[0] - m[0]) + abs(n[1] - m[1]) + abs(n[2] - m[2]) < 0.03 and abs(c - d) < 0.1 * spacing for m, d in planes):
+                planes.append((n, c))
+    return planes
+
+
+_WALL_BAND = 0.12               # (how far outside the surface, in spacings, a node of the foam still counts as a node of the surface: of a body whose faces are all flat)
+_ROUND_FLAT_BAND = 0.25         # (of a body with a round face: outside a flat face of it ...)
+_ROUND_BAND = 0.3               # (... and outside a round one)
+_USE_PATCHES = True             # (a cell is mirrored across the surface patches that rays from it find, too)
+_REACH = 2.5                    # (a cell that is no farther than this, in spacings, from a face is mirrored across it)
+_PLANE_PROBE = 0.7              # (the four places that show a face is flat all round a group of skin points are this far, in spacings, from the middle of the group)
+
+
+def _surface_patches(body, sites, reach, spacing):
+    ''' The surfaces of the body that are near each site, as planes [(unit normal that points out, offset)] -- one list for each site: rays are cast from it in 26 directions as far as `reach`, and where one meets the surface the
+        plane is the plane that touches the surface there.  Planes that are alike (normals within 6 degrees, offsets within 0.15 of a spacing) are one; the three that were met nearest are kept, and of them only those that
+        support the body (no site is beyond them) '''
+    from fieldes.stdlib.fields import evaluate
+    dirs = []
+    for i in (-1, 0, 1):
+        for j in (-1, 0, 1):
+            for k in (-1, 0, 1):
+                if i or j or k:
+                    m = math.sqrt(i * i + j * j + k * k)
+                    dirs.append((i / m, j / m, k / m))
+    steps = 6
+    step = reach / steps
+    probes = [(q[0] + s * step * d[0], q[1] + s * step * d[1], q[2] + s * step * d[2]) for q in sites for d in dirs for s in range(steps + 1)]
+    vals = []
+    for start in range(0, len(probes), 40000):
+        vals.extend(evaluate(body, probes[start:start + 40000]))
+    hits = []
+    for si, q in enumerate(sites):
+        for di, d in enumerate(dirs):
+            base = (si * len(dirs) + di) * (steps + 1)
+            for s in range(1, steps + 1):
+                a, b = vals[base + s - 1], vals[base + s]
+                if a < 0.0 <= b:
+                    t = (s - 1 + (-a) / (b - a)) * step
+                    inside = max(0.0, t - 0.04 * spacing)
+                    hits.append((si, t, (q[0] + inside * d[0], q[1] + inside * d[1], q[2] + inside * d[2])))
+                    break
+    out = [[] for _ in sites]
+    if not hits:
+        return out
+    info = _values_and_normals(body, [h[2] for h in hits], 0.01 * spacing)
+    found = [[] for _ in sites]
+    for (si, t, p), (v, g, slope) in zip(hits, info):
+        if g is None or not slope > 1e-9:
+            continue
+        foot = (p[0] - v / slope * g[0], p[1] - v / slope * g[1], p[2] - v / slope * g[2])
+        found[si].append((t, g, g[0] * foot[0] + g[1] * foot[1] + g[2] * foot[2]))
+    for si, plan in enumerate(found):
+        for t, g, c in sorted(plan, key=lambda x: x[0]):
+            if len(out[si]) >= 3:
+                break
+            if not any(g[0] * m[0] + g[1] * m[1] + g[2] * m[2] > 0.9945 and abs(c - d) < 0.15 * spacing for m, d in out[si]):
+                out[si].append((g, c))
+    # (only a plane that supports the body: no point of the foam is beyond it -- a plane through an edge, that cuts the body, is none)
+    for si in range(len(sites)):
+        out[si] = [(g, c) for g, c in out[si] if all(g[0] * s[0] + g[1] * s[1] + g[2] * s[2] - c <= 0.05 * spacing for s in sites)]
+    return out
+
+
+def _without_islands(beams, smallest=3):
+    ''' The beams, less every piece of the graph that is fewer than `smallest` beams and touches nothing else '''
+    parent = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in beams:
+        parent[find(a)] = find(b)
+    count = {}
+    for a, b in beams:
+        r = find(a)
+        count[r] = count.get(r, 0) + 1
+    return [bm for bm in beams if count[find(bm[0])] >= smallest]
+
+
+def _normal_basis(n):
+    ''' Two unit vectors that lie in the plane whose unit normal is n '''
+    a = (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0)
+    t1 = (n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0])
+    m = math.sqrt(t1[0] ** 2 + t1[1] ** 2 + t1[2] ** 2)
+    t1 = (t1[0] / m, t1[1] / m, t1[2] / m)
+    t2 = (n[1] * t1[2] - n[2] * t1[1], n[2] * t1[0] - n[0] * t1[2], n[0] * t1[1] - n[1] * t1[0])
+    return t1, t2
+
+
+def _point_segment(p, a, b):
+    ''' The distance from the point p to the segment a-b '''
+    ab = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    d2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]
+    t = 0.0 if d2 < 1e-18 else max(0.0, min(1.0, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / d2))
+    return math.sqrt((p[0] - a[0] - t * ab[0]) ** 2 + (p[1] - a[1] - t * ab[1]) ** 2 + (p[2] - a[2] - t * ab[2]) ** 2)
+
+
+def _simplify(points, tol, closed=False):
+    ''' The indices of the points of a polyline (a loop when closed) that are left when it is made as short as it can be with no point farther than tol from it (Douglas and Peucker) '''
+    n = len(points)
+    if n < 3:
+        return list(range(n))
+    keep = [False] * n
+    if closed:
+        far = max(range(n), key=lambda i: math.dist(points[0], points[i]))
+        keep[0] = keep[far] = True
+        stack = [(0, far), (far, n)]
+    else:
+        keep[0] = keep[n - 1] = True
+        stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        pa, pb = points[a], points[b % n]
+        best, at = -1.0, None
+        for i in range(a + 1, b):
+            d = _point_segment(points[i % n], pa, pb)
+            if d > best:
+                best, at = d, i
+        if at is not None and best > tol:
+            keep[at % n] = True
+            stack.append((a, at))
+            stack.append((at, b))
+    return [i for i in range(n) if keep[i]]
+
+
+def _face_outline(body, n, c, spacing, lo, hi):
+    ''' The outline of the flat face that lies in the plane  n . x = c : [(points, closed)], polylines.  The plane is looked at on a grid a tenth of a spacing across, and a place belongs to the face where the field of the body is
+        0 (it is 0 all over a face, and more than 0 beyond it, less than 0 where the plane goes into the body); the outline is the border of that, found as the contour of the grid (each crossing of a line of the grid put exactly
+        onto the border by bisection), and then made as short as it can be with none of its points more than 0.02 of a spacing off '''
+    from fieldes.stdlib.fields import evaluate
+    t1, t2 = _normal_basis(n)
+    o = (n[0] * c, n[1] * c, n[2] * c)
+    us, vs = [], []
+    for x in (lo[0], hi[0]):
+        for y in (lo[1], hi[1]):
+            for z in (lo[2], hi[2]):
+                d = (x - o[0], y - o[1], z - o[2])
+                us.append(d[0] * t1[0] + d[1] * t1[1] + d[2] * t1[2])
+                vs.append(d[0] * t2[0] + d[1] * t2[1] + d[2] * t2[2])
+    h = 0.1 * spacing
+    while (math.ceil((max(us) - min(us)) / h) + 5) * (math.ceil((max(vs) - min(vs)) / h) + 5) > 300000:
+        h *= 1.25
+    nu = int(math.ceil((max(us) - min(us)) / h)) + 5
+    nv = int(math.ceil((max(vs) - min(vs)) / h)) + 5
+    u0, v0 = min(us) - 2 * h, min(vs) - 2 * h
+
+    def at(u, v):
+        return (o[0] + u * t1[0] + v * t2[0], o[1] + u * t1[1] + v * t2[1], o[2] + u * t1[2] + v * t2[2])
+
+    def values(pts):
+        out = []
+        for start in range(0, len(pts), 40000):
+            out.extend(evaluate(body, pts[start:start + 40000]))
+        return out
+
+    pts = [at(u0 + i * h, v0 + j * h) for j in range(nv) for i in range(nu)]
+    tol = 0.02 * spacing
+    ins = [abs(v) <= tol for v in values(pts)]
+    if not any(ins) or all(ins):
+        return []
+    edges = []
+    for j in range(nv):
+        for i in range(nu):
+            k = j * nu + i
+            if i + 1 < nu and ins[k] != ins[k + 1]:
+                edges.append((('h', i, j), k, k + 1))
+            if j + 1 < nv and ins[k] != ins[k + nu]:
+                edges.append((('v', i, j), k, k + nu))
+    a_pts = [pts[ka] if ins[ka] else pts[kb] for _key, ka, kb in edges]          # (the end of an edge of the grid that is in the face ...)
+    b_pts = [pts[kb] if ins[ka] else pts[ka] for _key, ka, kb in edges]          # (... and the end that is not)
+    lo_t, hi_t = [0.0] * len(edges), [1.0] * len(edges)
+    for _ in range(12):
+        mids = []
+        for q in range(len(edges)):
+            m, a, b = 0.5 * (lo_t[q] + hi_t[q]), a_pts[q], b_pts[q]
+            mids.append((a[0] + m * (b[0] - a[0]), a[1] + m * (b[1] - a[1]), a[2] + m * (b[2] - a[2])))
+        for q, v in enumerate(values(mids)):
+            m = 0.5 * (lo_t[q] + hi_t[q])
+            if abs(v) <= tol:
+                lo_t[q] = m
+            else:
+                hi_t[q] = m
+    cross = {}
+    for q, (key, _ka, _kb) in enumerate(edges):
+        m, a, b = 0.5 * (lo_t[q] + hi_t[q]), a_pts[q], b_pts[q]
+        cross[key] = (a[0] + m * (b[0] - a[0]), a[1] + m * (b[1] - a[1]), a[2] + m * (b[2] - a[2]))
+    adj = {}
+
+    def link(p, q):
+        adj.setdefault(p, []).append(q)
+        adj.setdefault(q, []).append(p)
+
+    for j in range(nv - 1):
+        for i in range(nu - 1):
+            f0, f1, f2, f3 = ins[j * nu + i], ins[j * nu + i + 1], ins[(j + 1) * nu + i + 1], ins[(j + 1) * nu + i]
+            bot, rgt, top, lft = ('h', i, j), ('v', i + 1, j), ('h', i, j + 1), ('v', i, j)
+            e = []
+            if f0 != f1:
+                e.append(bot)
+            if f1 != f2:
+                e.append(rgt)
+            if f3 != f2:
+                e.append(top)
+            if f0 != f3:
+                e.append(lft)
+            if len(e) == 2:
+                link(e[0], e[1])
+            elif len(e) == 4:                                  # (a cell with the face in two opposite corners: each corner is cut off by itself)
+                if f0:
+                    link(bot, lft)
+                    link(top, rgt)
+                else:
+                    link(bot, rgt)
+                    link(top, lft)
+    seen, out = set(), []
+    for start in [k for k, v in adj.items() if len(v) == 1] + list(adj):
+        if start in seen:
+            continue
+        chain, cur = [start], start
+        seen.add(start)
+        while True:
+            nxt = next((w for w in adj[cur] if w not in seen), None)
+            if nxt is None:
+                break
+            chain.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+        closed = len(chain) > 2 and chain[0] in adj[chain[-1]]
+        line = [cross[k] for k in chain]
+        out.append(([line[i] for i in _simplify(line, tol, closed)], closed))
+    return out
+
+
+def _frame_graph(body, spacing, seed, bounds):
+    ''' The frame of a body: a graph of the beams along its sharp edges, or None when it has none.  The edges are found from the body itself: the flat faces of it are found from points on its surface, and the outline of each
+        is a chain of edges -- unless the surface goes on past the outline with the same direction, give or take 35 degrees (the edge of a face that a round one runs into smoothly, a fillet, is no sharp edge).  An edge between
+        two flat faces is found twice, once from each: one is kept.  An edge between two round faces is not found '''
+    region = _region_of(body, bounds)
+    lo, hi = (region.X.lower, region.Y.lower, region.Z.lower), (region.X.upper, region.Y.upper, region.Z.upper)
+    fine = 0.5 * spacing
+    try:
+        skin = _skin_points(body, fine, seed, bounds)
+    except ValueError:
+        fine = spacing
+        skin = _skin_points(body, spacing, seed, bounds)
+    faces = []
+    for n, c in _flat_planes(body, skin, fine):
+        on = [p for p, _nn in skin if abs(n[0] * p[0] + n[1] * p[1] + n[2] * p[2] - c) < 0.05 * fine]
+        if len(on) < 3:
+            continue
+        t1, t2 = _normal_basis(n)
+        mean = [sum(p[i] for p in on) / len(on) for i in range(3)]
+        su = sum(((p[0] - mean[0]) * t1[0] + (p[1] - mean[1]) * t1[1] + (p[2] - mean[2]) * t1[2]) ** 2 for p in on) / len(on)
+        sv = sum(((p[0] - mean[0]) * t2[0] + (p[1] - mean[1]) * t2[1] + (p[2] - mean[2]) * t2[2]) ** 2 for p in on) / len(on)
+        suv = sum(((p[0] - mean[0]) * t1[0] + (p[1] - mean[1]) * t1[1] + (p[2] - mean[2]) * t1[2]) * ((p[0] - mean[0]) * t2[0] + (p[1] - mean[1]) * t2[1] + (p[2] - mean[2]) * t2[2]) for p in on) / len(on)
+        small = 0.5 * (su + sv) - math.sqrt(max(0.0, 0.25 * (su + sv) ** 2 - (su * sv - suv * suv)))
+        if math.sqrt(max(small, 0.0)) >= 0.3 * fine:        # (the points on a plane that only touches a round face lie along a line)
+            faces.append((len(on), n, c))
+    faces.sort(key=lambda f: -f[0])
+    pieces = []                                              # (beam: two points, the normal of the face)
+    for _count, n, c in faces[:24]:
+        for line, closed in _face_outline(body, n, c, spacing, lo, hi):
+            pairs = [(line[i], line[i + 1]) for i in range(len(line) - 1)] + ([(line[-1], line[0])] if closed and len(line) > 2 else [])
+            pieces.extend((p, q, n) for p, q in pairs if math.dist(p, q) > 1e-6)
+    if not pieces:
+        return None
+    # (a sharp edge: the surface just beyond the outline, in the plane of the face, has another direction -- put onto the surface and looked at there)
+    reach = 0.15 * spacing
+    outs = []
+    for p, q, n in pieces:
+        d = (q[0] - p[0], q[1] - p[1], q[2] - p[2])
+        w = (n[1] * d[2] - n[2] * d[1], n[2] * d[0] - n[0] * d[2], n[0] * d[1] - n[1] * d[0])
+        size = math.sqrt(w[0] ** 2 + w[1] ** 2 + w[2] ** 2)
+        m = (0.5 * (p[0] + q[0]), 0.5 * (p[1] + q[1]), 0.5 * (p[2] + q[2]))
+        w = (w[0] / size, w[1] / size, w[2] / size)
+        outs.append((m, w))
+    from fieldes.stdlib.fields import evaluate
+    side = []
+    for m, w in outs:
+        side.append((m[0] + reach * w[0], m[1] + reach * w[1], m[2] + reach * w[2]))
+        side.append((m[0] - reach * w[0], m[1] - reach * w[1], m[2] - reach * w[2]))
+    sv = []
+    for start in range(0, len(side), 40000):
+        sv.extend(evaluate(body, side[start:start + 40000]))
+    probes, which = [], []
+    for k in range(len(pieces)):
+        a, b = sv[2 * k], sv[2 * k + 1]
+        if max(abs(a), abs(b)) <= 0.02 * spacing:
+            which.append(False)                              # (the face goes on on both sides of the outline: no edge)
+            probes.append(side[2 * k])
+        else:
+            which.append(True)
+            probes.append(side[2 * k] if abs(a) >= abs(b) else side[2 * k + 1])
+    unit = 0.01 * spacing
+    for _ in range(5):
+        moved = []
+        for q, (v, g, slope) in zip(probes, _values_and_normals(body, probes, unit)):
+            if g is None or not slope > 1e-9:
+                moved.append(q)
+            else:
+                moved.append((q[0] - v / slope * g[0], q[1] - v / slope * g[1], q[2] - v / slope * g[2]))
+        probes = moved
+    normals = [g for _v, g, _slope in _values_and_normals(body, probes, unit)]
+    sharp = []
+    for (p, q, n), ok, g in zip(pieces, which, normals):
+        if ok and g is not None and n[0] * g[0] + n[1] * g[1] + n[2] * g[2] < 0.82:
+            sharp.append((p, q))
+    nodes, beams, index, kept = [], [], {}, []
+    grain = 0.02 * spacing
+    for p, q in sharp:
+        if any(_point_segment(p, a, b) < 0.08 * spacing and _point_segment(q, a, b) < 0.08 * spacing for a, b in kept):
+            continue                                        # (an edge between two flat faces, found from the other one)
+        kept.append((p, q))
+        ids = []
+        for x in (p, q):
+            key = tuple(int(round(v / grain)) for v in x)
+            if key not in index:
+                index[key] = len(nodes)
+                nodes.append(x)
+            ids.append(index[key])
+        if ids[0] != ids[1]:
+            beams.append((ids[0], ids[1]))
+    return LatticeGraph(nodes, beams) if beams else None
+
+
+def _edge_beams(edges, r, blend):
+    ''' The frame, as a body of its own: its beams, with the box that holds them '''
+    lat = edges.thicken(r, blend)
+    pad = float(r) if isinstance(r, numbers.Number) else 0.0
+    lat._bounds = (tuple(min(p[i] for p in edges.nodes) - pad for i in range(3)), tuple(max(p[i] for p in edges.nodes) + pad for i in range(3)))
+    return lat
+
+
+def _plus_edges(lat, edges, r, blend):
+    ''' The lattice with the frame added to it, whole (nothing cuts it) '''
+    if edges is None:
+        return lat
+    return sys.modules['fieldes.stdlib'].union(lat, _edge_beams(edges, r, blend))
+
+
+def _beam_kinds(body, place, walls, beams, spacing):
+    ''' What each beam of the closed foam is: 0 inside the body, 1 in the surface (a net on a face), 2 along a sharp edge (and for those the two normals of the surface on its two sides, as {beam: (n1, n2)}): (kinds, edges).  A beam is in the surface when both its ends are and its middle is.  It is along a sharp edge when
+        the surface has two different normals on the two sides of it: eight points a little way off its middle, put onto the surface, have normals that are more than 35 degrees apart (a flat face has one normal, a round
+        one turns by a few degrees over so short a way) '''
+    from fieldes.stdlib.fields import evaluate
+    unit = 0.01 * spacing
+    kinds = [0] * len(beams)
+    cand = [k for k, (a, b) in enumerate(beams) if a in walls and b in walls]
+    if not cand:
+        return kinds, {}
+    mids = [tuple(0.5 * (place[beams[k][0]][c] + place[beams[k][1]][c]) for c in range(3)) for k in cand]
+    vals = []
+    for start in range(0, len(mids), 40000):
+        vals.extend(evaluate(body, mids[start:start + 40000]))
+    on = [(k, m) for k, m, v in zip(cand, mids, vals) if abs(v) < 0.2 * spacing]
+    for k, _m in on:
+        kinds[k] = 1
+    if not on:
+        return kinds, {}
+    reach = 0.15 * spacing
+    turns = [(math.cos(i * math.pi / 4), math.sin(i * math.pi / 4)) for i in range(8)]
+    probes = []
+    for k, m in on:
+        a, b = place[beams[k][0]], place[beams[k][1]]
+        t = [b[c] - a[c] for c in range(3)]
+        size = math.sqrt(sum(x * x for x in t))
+        t = [1.0, 0.0, 0.0] if size < 1e-12 else [x / size for x in t]
+        h0 = (1.0, 0.0, 0.0) if abs(t[0]) < 0.9 else (0.0, 1.0, 0.0)
+        e1 = [t[1] * h0[2] - t[2] * h0[1], t[2] * h0[0] - t[0] * h0[2], t[0] * h0[1] - t[1] * h0[0]]
+        s1 = math.sqrt(sum(x * x for x in e1))
+        e1 = [x / s1 for x in e1]
+        e2 = [t[1] * e1[2] - t[2] * e1[1], t[2] * e1[0] - t[0] * e1[2], t[0] * e1[1] - t[1] * e1[0]]
+        for ca, sa in turns:
+            probes.append(tuple(m[c] + reach * (ca * e1[c] + sa * e2[c]) for c in range(3)))
+    for _ in range(5):                                      # (onto the surface: steps along the gradient)
+        moved = []
+        for q, (v, g, slope) in zip(probes, _values_and_normals(body, probes, unit)):
+            if g is None or not slope > 1e-9:
+                moved.append(q)
+            else:
+                s = v / slope
+                moved.append((q[0] - s * g[0], q[1] - s * g[1], q[2] - s * g[2]))
+        probes = moved
+    normals = [g for _v, g, _slope in _values_and_normals(body, probes, unit)]
+    edges = {}
+    for j, (k, _m) in enumerate(on):
+        ns = [n for n in normals[8 * j:8 * j + 8] if n is not None]
+        low, pair = 1.0, None
+        for i in range(len(ns)):
+            for q in range(i + 1, len(ns)):
+                d = ns[i][0] * ns[q][0] + ns[i][1] * ns[q][1] + ns[i][2] * ns[q][2]
+                if d < low:
+                    low, pair = d, (ns[i], ns[q])
+        if low < 0.82:
+            kinds[k] = 2
+            edges[k] = pair
+    return kinds, edges
+
+
+def _voronoi_skeleton(pts, body, keep='all'):
+    ''' The graph of a Voronoi foam that the surface of the body closes, as a Voronoi lattice of a body is made (the user, 2026-10-27: "have you never seen anyone use Voronoi in nTop? That is exactly what it
+        should be like", "I told you to not clip it off"): the cells are the cells of the points -- the points inside the body, and the points of the skin, which are cells that lie against the surface -- and every cell near the surface has its mirror image across the surface, so that it is closed there and nothing is cut off.  The beams are the edges of the cells
+        that are inside the body or in the surface (where the cells meet it: a Voronoi net of beams over the surface).  The walls are the surface itself: the beams lie on it, and nothing cuts them.
+        A flat face is mirrored in (the planes of the faces are found from the skin), a round one by the nearest surface of the field; near an edge a cell is mirrored across each face and across both.
+        keep says which beams are kept: 'all' (the whole foam), 'surface' (without the beams that run along a sharp edge: the net on the surface wraps round them), 'frame' (without the net on the faces: only the
+        beams in the surface that run along a sharp edge, and the foam inside) '''
+    import itertools
+    from fieldes.stdlib.fields import evaluate
+    spacing = pts.spacing
+    depth = 0.0                                             # (the walls are the surface itself)
     own = pts.points[:len(pts.points) - len(pts.skin)]
-    inside, outside = [], []
+    reach = _REACH * spacing
+    # 1. the cells: the points, and the points of the skin a little inside the surface (their cells lie against it)
+    sites = list(own)
     for p, n in pts.skin:
-        m = (p[0] - depth * n[0], p[1] - depth * n[1], p[2] - depth * n[2])
-        inside.append((m[0] - half * n[0], m[1] - half * n[1], m[2] - half * n[2]))
-        outside.append((m[0] + half * n[0], m[1] + half * n[1], m[2] + half * n[2]))
-    vi, vo = evaluate(body, inside), evaluate(body, outside)
-    return own + [q for a, b, x, y in zip(inside, outside, vi, vo) if x < 0 < y for q in (a, b)]
+        s = depth + 0.1 * spacing
+        sites.append((p[0] - s * n[0], p[1] - s * n[1], p[2] - s * n[2]))
+    skin = pts.skin or _skin_points(body, spacing, pts.seed, pts.bounds)
+    planes = _flat_planes(body, skin, spacing)
+    # (a body whose faces are all flat -- every point of its skin is in one of the planes -- is closed by those planes alone)
+    rounded = any(not any(abs(m[0] * p[0] + m[1] * p[1] + m[2] * p[2] - d) < 0.05 * spacing for m, d in planes) for p, _nn in skin)
+    unit = 0.01 * spacing
+    seen = {tuple(int(round(c / unit)) for c in q) for q in sites}
+    ghosts = []
+
+    def add(q):
+        k = tuple(int(round(c / unit)) for c in q)
+        if k not in seen:
+            seen.add(k)
+            ghosts.append(q)
+
+    # 2. their mirror images: across each flat face a cell is near (and across two or three of them in turn, near an edge or a corner) ...
+    patches = _surface_patches(body, sites, reach, spacing) if (_USE_PATCHES and rounded) else [[] for _ in sites]
+    for q, extra in zip(sites, patches):
+        near = [(n, c) for n, c in planes if -reach < n[0] * q[0] + n[1] * q[1] + n[2] * q[2] - (c - depth) < 0.0]
+        for n, c in extra:
+            if not any(n[0] * m[0] + n[1] * m[1] + n[2] * m[2] > 0.9945 and abs(c - d) < 0.15 * spacing for m, d in near):
+                near.append((n, c))
+                break                                       # (one more: the nearest surface that is new -- the round face that a flat one meets)
+        for size in range(1, min(3, len(near)) + 1):
+            for order in itertools.permutations(near, size):
+                g = q
+                for n, c in order:
+                    d = n[0] * g[0] + n[1] * g[1] + n[2] * g[2] - (c - depth)
+                    g = (g[0] - 2.0 * d * n[0], g[1] - 2.0 * d * n[1], g[2] - 2.0 * d * n[2])
+                add(g)
+    # ... and across the nearest surface of the field, which is what a round face is mirrored in
+    for q, (v, n, slope) in zip(sites, _values_and_normals(body, sites, unit)):
+        if n is None or not slope > 1e-9:
+            continue
+        d = -v / slope - depth
+        if 0.0 < d < reach:
+            add((q[0] + 2.0 * d * n[0], q[1] + 2.0 * d * n[1], q[2] + 2.0 * d * n[2]))
+    g = points_graph(sites + ghosts, 'voronoi')
+    nodes = g.nodes
+    f = []
+    for start in range(0, len(nodes), 40000):
+        f.extend(evaluate(body, nodes[start:start + 40000]))
+    # 3. the beams between nodes that are inside the body or in the wall (the surface).  The cells of a round face are closed by planes that touch the surface, and their nodes lie a little OUTSIDE it (up to
+    # 0.34 mm in a cylinder of 8): a node of the wall is put ON the surface, by a few steps along the gradient of the field, so that the foam has the shape of the body; a node farther out than the wall is left out
+    band = (_ROUND_FLAT_BAND if rounded else _WALL_BAND) * spacing
+    far = max(band, (_ROUND_BAND if rounded else _WALL_BAND) * spacing)
+    deep = [v < -depth - 0.1 * spacing for v in f]
+    wall = [i for i, v in enumerate(f) if not deep[i] and v <= -depth + far]
+    place = [list(p) for p in nodes]
+    for _ in range(4):
+        if not wall:
+            break
+        for i, (v, n, slope) in zip(wall, _values_and_normals(body, [tuple(place[i]) for i in wall], unit)):
+            if n is None or not slope > 1e-9:
+                continue
+            step = (v + depth) / slope
+            place[i] = [place[i][c] - step * n[c] for c in range(3)]
+    # (a node that lies outside the band of a flat face is kept only when, put onto the surface, it is where no flat face is)
+    wall = [i for i in wall if f[i] <= -depth + band or not any(abs(n[0] * place[i][0] + n[1] * place[i][1] + n[2] * place[i][2] - c) < 0.03 * spacing for n, c in planes)]
+    walls = set(wall)
+    ok = [deep[i] or i in walls for i in range(len(nodes))]
+    # nodes that land on one place (at an edge, where two walls meet) are one node: a beam of no length is no beam
+    weld, rep = {}, list(range(len(nodes)))
+    grain = 0.02 * spacing
+    for i in range(len(nodes)):
+        if ok[i]:
+            rep[i] = weld.setdefault(tuple(int(round(v / grain)) for v in place[i]), i)
+    beams = sorted({(min(rep[a], rep[b]), max(rep[a], rep[b])) for a, b in g.beams if ok[a] and ok[b] and rep[a] != rep[b]})
+    if keep != 'all' and beams:
+        kinds, _edges = _beam_kinds(body, place, walls, beams, spacing)
+        drop = 2 if keep == 'surface' else 1
+        beams = _without_islands([bm for bm, kind in zip(beams, kinds) if kind != drop])
+    if not beams:
+        raise ValueError('the points make no beams: there are too few of them')
+    used = sorted({n for beam in beams for n in beam})
+    remap = {n: k for k, n in enumerate(used)}
+    return LatticeGraph([tuple(place[n]) for n in used], [(remap[a], remap[b]) for a, b in beams])
 
 
-def _points_lattice(who, style, points, thickness, radius, density, skin, blend, skin_blend, body):
+def _points_lattice(who, style, points, thickness, radius, density, skin, blend, skin_blend, body, clip):
     ''' The beams of the Voronoi or Delaunay graph of the points that are in the body, as a body '''
     pts = _as_points(who, points)
     if body is not None and pts.body is not None:
         raise ValueError('{}: these points were made in a body, and the lattice fills that one -- to fill another, make the points in it: '
                          'random_points(other, ...)'.format(who))
     body = pts.body if body is None else body
+    if body is None and pts.cloud:
+        body = _bounding_box(pts.points, pts.spacing)
     if body is None:
         raise ValueError('{}: a list of points does not say which body to fill: {}(points, body=part) -- or make the points in the body '
                          'with random_points(part, ...), which knows it'.format(who, who))
@@ -1831,8 +2452,12 @@ def _points_lattice(who, style, points, thickness, radius, density, skin, blend,
         raise ValueError("{}: give either density or the beams' size (thickness or radius), not both".format(who))
     if r is None and density is None:
         r = 0.08 * pts.spacing
-    nodes = _skin_pairs(pts, body, r) if style == 'voronoi' and pts.skin else pts.points
-    g = _graph_in_body(points_graph(nodes, style), body, pts.spacing)
+    closed = style == 'voronoi' and pts.surface
+    if closed:
+        g = _voronoi_skeleton(pts, body, 'surface')
+    else:
+        g = _graph_in_body(points_graph(pts.points, style), body, pts.spacing)
+    edges = _frame_graph(body, pts.spacing, pts.seed, pts.bounds) if pts.frame else None       # (the frame is its own lattice: it does not touch the points or the cells)
     if density is not None:
         # beams of radius r fill about pi r^2 * (length inside) / volume
         from fieldes.stdlib.fields import volume_of
@@ -1841,42 +2466,54 @@ def _points_lattice(who, style, points, thickness, radius, density, skin, blend,
         hi = (region.X.upper, region.Y.upper, region.Z.upper)
         vol = volume_of(body, lo, hi)
         target = float(density)
-        r = math.sqrt(target * vol / (math.pi * sum(g.lengths())))
+        r = math.sqrt(target * vol / (math.pi * (sum(g.lengths()) + (sum(edges.lengths()) if edges is not None else 0.0))))
         # refine against the measured density (joints overlap, beams stick out)
         for _ in range(4):
-            got = volume_of(fill(body, g.thicken(r)), lo, hi) / vol
+            got = volume_of(fill(body, _plus_edges(g.thicken(r), edges, r, 0.0)), lo, hi) / vol
             if got <= 0:
                 break
             r *= math.sqrt(target / got)
-    lat = g.thicken(r, blend)
+    lat = _plus_edges(g.thicken(r, blend), edges, r, blend)       # (the frame is part of the lattice: the body cuts it as it cuts the rest)
+    solid_skin = isinstance(skin, numbers.Number) and skin > 0
+    if not clip and not solid_skin:
+        # (clip=False: the lattice is left whole -- the beams on the surface and on the edges stand half out of the body, as in nTop, and the user clips them if they want to; the user, 2026-10-28)
+        b = getattr(body, '_bounds', None)
+        if b:
+            pad = (0.0 if closed else 0.5 * pts.spacing) + (float(r) if isinstance(r, numbers.Number) else 0.0)
+            lat._bounds = (tuple(c - pad for c in b[0]), tuple(c + pad for c in b[1]))
+        return lat
     guarded = sys.modules['fieldes.stdlib'].fill
     return guarded(body, lat, skin=skin, blend=skin_blend)       # (the guarded fill: the locked places of an excluded body stay)
 
 
-def voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None):
-    ''' A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.
+def voronoi_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None, clip=True):
+    ''' A foam: the edges of the Voronoi cells around a set of points, as round beams, filling the body the points were made in.  With points made with surface=True (random_points(body, surface=True)) the points on the surface are cells of their own, the foam is closed by the surface and the surface is a net of beams that wraps round the sharp
+        edges; with frame=True every sharp edge of the body is a full beam, added to the foam whatever it is (the points and the cells are not changed by it).  The body cuts the lattice, the frame with it, unless clip=False
+        (then it is whole, and the beams on the surface and on the edges stand half out of the body).
 
         points     random_points(body, ...) -- how far apart they are, how random, the nearest and the farthest two may be -- or a list of
                    (x, y, z), which does not know a body: then say it with body=
         thickness  the diameter of the beams, mm: a number, or a field.  radius= is the same thing, half of it.  Default: 16 % of the
                    spacing of the points
         density    instead of the beams' size: the share of the body that is material (0..1), calibrated
-        skin       the thickness of a solid skin on the surface of the body (0: none)
+        skin       the thickness of a solid skin on the surface of the body (0: none; a skin is joined to the foam cut by the body)
         blend      rounds the joints; skin_blend rounds the joints with the skin
         body       the body to fill -- only for a list of points.  Points from random_points() fill the body they were made in
+        clip       True (the default) cuts the foam by the body, so that nothing of it stands outside it: a beam that the body cuts ends flat (with frame or surface the cut lies one beam radius outside the
+                   surface, so that the beams of the net on it are not cut); False leaves the foam whole, its beams ending where the points make them end
 
             points = random_points(part, spacing=8, randomness=0.7, min_distance=5, max_distance=11)
             foam = voronoi_lattice(points, thickness=1.0) '''
-    return _points_lattice('voronoi_lattice', 'voronoi', points, thickness, radius, density, skin, blend, skin_blend, body)
+    return _points_lattice('voronoi_lattice', 'voronoi', points, thickness, radius, density, skin, blend, skin_blend, body, clip)
 
 
-def delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None):
+def delaunay_lattice(points, thickness=None, radius=None, density=None, skin=0.0, blend=0.0, skin_blend=0.0, body=None, clip=True):
     ''' A stochastic truss: beams along the Delaunay edges between a set of points (every point joined to its neighbours), filling the
-        body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin ...
+        body the points were made in.  The arguments are those of voronoi_lattice(): the points, the beams' size, the skin, clip ...
 
             points = random_points(part, spacing=8)
             truss = delaunay_lattice(points, thickness=1.0) '''
-    return _points_lattice('delaunay_lattice', 'delaunay', points, thickness, radius, density, skin, blend, skin_blend, body)
+    return _points_lattice('delaunay_lattice', 'delaunay', points, thickness, radius, density, skin, blend, skin_blend, body, clip)
 
 
 voronoi_lattice = returns_lattice(voronoi_lattice)
@@ -2081,4 +2718,5 @@ lattice._takes = _declare(_BODIES | {'cell', 'field'}, [_BODIES])
 random_points._takes = _declare(_BODIES, [_BODIES])
 voronoi_lattice._takes = _declare({'points'}, [{'points'}])
 delaunay_lattice._takes = _declare({'points'}, [{'points'}])
+point_cloud._takes = _declare({'point'}, [{'point'}])
 surface_lattice._takes = _declare(_BODIES, [_BODIES])

@@ -6,7 +6,8 @@
 # A lattice that repeats is made of a cell (see 23_lattice_gallery.py).  One that does not repeat is made OVER a surface -- `surface_lattice(body, cell_size)`: a random net of
 # beams whose axes lie ON the surface, hollows and edges too -- or AROUND points: `random_points(body, ...)`, then `voronoi_lattice(points)` or `delaunay_lattice(points)`.
 # A foam is cut off by the surface of its body: the left tile of row 2, its beams end in stubs.  `random_points(body, surface=True)` puts points on the surface as well, and the
-# foam then has a clean net of beams there: the other two tiles of row 2.
+# foam then has a clean net of beams there: the other two tiles of row 2.  `random_points(body, frame=True)` is another argument: a full beam along every sharp edge of a body that has some (a block does, a ball
+# does not), on any lattice -- see docs/lattices.md.
 #
 # Tiles are 30 mm across and 44 mm apart.  Open the section card (Ctrl+Shift+X) to look inside any of them; change a number, and the tile follows.
 # About three minutes, nearly all of it the picture of six lattices of beams (the progress bar shows it).

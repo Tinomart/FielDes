@@ -2120,8 +2120,10 @@ A foam does not repeat, so it is not made of a cell: it is made around POINTS.  
 
 -- a lattice made of points fills the body the points were made in (so it takes no body of its own).
 
-The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, and the foam then has a clean net of beams all over it;
-surface_lattice(body, cell_size) is such a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
+The surface of the body cuts a foam off.  random_points(body, surface=True) puts points ON the surface as well, that are cells of their own: a voronoi_lattice then is closed by the surface, with a net of beams over it that wraps
+round the sharp edges and nothing cut off (a delaunay_lattice joins them along the surface); random_points(body, frame=True) gives the lattice a full beam along every sharp edge of the body, found from the body itself
+(the outline of each flat face; a smooth fillet is no sharp edge), whatever the lattice is; and clip=True (the default) lets the body cut the lattice, the frame with it, clip=False leaves it whole.
+point_cloud(points, body=None) is a set of points of your own, for the same lattices.  surface_lattice(body, cell_size) is a net on its own: a random lattice of one layer, that does not repeat, over the surface of any body.
 
 The one-call version:
 

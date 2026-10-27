@@ -3468,7 +3468,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // looked way better and way way more readable ... I would have only tweaked it a little bit so that you can select some stuff closer to the viewport camera").  What is added toward the viewer,
     // so that something can be put down nearer to it, is the same rows as before and then a stretch of fainter ones that fade in from the nearest limit
     float hOld = std::min(0.4f * hFar, 0.5f);
-    float hNear = std::max(hOld, std::min(2.0f * hFar, 0.5f));
+    float hNear = std::max(hOld, std::min(0.9f * hFar, 0.5f));          // (only a little nearer the viewer than the slice that was readable: twice as many layers of lines was the hatch that nothing could be told from)
     auto nodesIn = [&](float s) {
         const float b = 1.0f + s * hFar, a = 1.0f - s * hNear;
         return (16.0f / 3.0f) * area * (b * b * b - a * a * a) / (stepV * stepV * stepV);
@@ -3567,7 +3567,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     static const int kAlpha[kBands] = {120, 98, 80, 64, 50, 38, 27, 17};
     static const double kWidth[kBands] = {1.6, 1.4, 1.25, 1.1, 1.0, 0.9, 0.8, 0.7};
     static const int kAxisAlpha[kBands] = {220, 190, 160, 132, 106, 82, 60, 42};
-    QVector<QLineF> bands[kBands];
+    QVector<QLineF> bands[3][kBands];
     QVector<QLineF> axes[3][kBands];
     for (const auto& entry : nodes)
     {
@@ -3582,7 +3582,7 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
             // (a line of the grid that is an axis of the world -- the other two coordinates 0 -- is drawn in the colour of its axis)
             const bool onAxis = (axis == 0 && a.j == 0 && a.k == 0) || (axis == 1 && a.i == 0 && a.k == 0) || (axis == 2 && a.i == 0 && a.j == 0);
             if (onAxis) axes[axis][band] << line;
-            else bands[band] << line;
+            else bands[axis][band] << line;
         }
     }
 
@@ -3591,13 +3591,21 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     image.fill(Qt::transparent);
     QPainter p(&image);
     p.setRenderHint(QPainter::Antialiasing, nodes.size() <= 7000);
-    // (violet: the selection is amber, the gizmo red, green and blue, a selected surface magenta and the work plane blue -- the snapping mode has a colour of its own, which shows on a selected model too)
-    for (int b = 0; b < kBands; ++b)
+    // (the lines are a light tint -- the selection is amber, the gizmo red, green and blue, a selected surface magenta and the work plane blue, and the snapping mode has a colour of its own, which shows
+    // on a selected model too --: a pale red where they run along X, a pale green along Y and a pale blue along Z (the user, 2026-10-27: "coloring the different lines depending on what axis they are
+    // parallel to ... a subtle red green blue shift"), so that the direction of a line is read from its colour as well as from where it goes.  The axes of the world below are the strong ones)
+    static const int kTintNear[3][3] = {{255, 160, 170}, {170, 240, 150}, {150, 195, 255}};
+    static const int kTintFar[3][3] = {{200, 95, 120}, {105, 170, 100}, {95, 135, 225}};
+    for (int a = 0; a < 3; ++a)
     {
-        // (the near lines are a lighter violet and the far ones a deeper one, as well as fainter and thinner)
-        const double k = double(b) / double(kBands - 1);
-        p.setPen(QPen(QColor(int(214 - 74 * k), int(178 - 78 * k), int(255 - 25 * k), kAlpha[b]), kWidth[b]));
-        p.drawLines(bands[b]);
+        for (int b = 0; b < kBands; ++b)
+        {
+            // (the near lines are the lighter tint and the far ones a deeper one, as well as fainter and thinner)
+            const double k = double(b) / double(kBands - 1);
+            p.setPen(QPen(QColor(int(kTintNear[a][0] + (kTintFar[a][0] - kTintNear[a][0]) * k), int(kTintNear[a][1] + (kTintFar[a][1] - kTintNear[a][1]) * k),
+                                 int(kTintNear[a][2] + (kTintFar[a][2] - kTintNear[a][2]) * k), kAlpha[b]), kWidth[b]));
+            p.drawLines(bands[a][b]);
+        }
     }
     const QColor axisColor[3] = {QColor(220, 50, 47), QColor(116, 184, 31), QColor(38, 139, 210)};
     for (int a = 0; a < 3; ++a)
@@ -3705,7 +3713,7 @@ void View::watchPreview(QMenu* menu)
     {
         m_previewTimerReady = true;
         m_previewTimer.setSingleShot(true);
-        m_previewTimer.setInterval(160);
+        m_previewTimer.setInterval(50);
         connect(&m_previewTimer, &QTimer::timeout, this, [this]{ emit(previewRequested(m_previewKind, m_previewName, m_previewPoint, m_previewScale)); });
     }
     QList<QMenu*> all;
@@ -4457,7 +4465,17 @@ static void drawTurns(QPainter& painter, const std::function<QPointF(const QVect
 
 void View::drawSymmetry(QPainter& painter)
 {
+    // A symmetry that is not in use is drawn pale only while a body is bound to it -- an image made in a symmetry is in the scene --: the planes are then the mark that those bodies are symmetry
+    // bound.  With no body bound the symmetry that is off is not drawn at all: it is only the one that Shift+S would turn on again, and its planes in the picture were of no use (the user,
+    // 2026-10-27: "I like having a small indicator that shows that these bodies are symmetry bound. Having only the current symmetry though is useless ... should just be hidden completely").
+    // Its row and its card are still there
     if (!m_symExists) return;
+    if (!m_symInUse)
+    {
+        bool bound = false;
+        for (const Shape* s : shapes) bound = bound || s->isSymmetryImage();
+        if (!bound) return;
+    }
     const QColor ink(211, 54, 130);            // (magenta: not the red and green of the plane's own axes, nor the blue of the grid)
     auto to = [this](const QVector3D& p) { return toScreen(p); };
     painter.save();

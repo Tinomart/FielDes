@@ -3385,6 +3385,27 @@ void ScenePanel::rebuild()
             if (bar && bar->value() == 0 && !m_rebuilding) bar->setValue(scroll);
         });
     }
+    // A placeholder -- what the script needs written in it before it can run -- is always in view: the tree scrolls to the first row that holds one (the rows of a call that is open are many, and the
+    // placeholder of the last of them stood below the edge of the tree, with the note that names it above it: the user, 2026-10-27: "When something needs a placeholder to work, the placeholder should
+    // always be visible, meaning the model tree should scroll so it is in view always").  A row that is in view is not moved
+    {
+        QString holeKey;
+        for (QTreeWidgetItemIterator i(m_tree); *i && holeKey.isEmpty(); ++i)
+            if ((*i)->data(COL_NAME, ROLE_TYPE).toString() == "hole") holeKey = (*i)->data(COL_NAME, ROLE_KEY).toString();
+        if (!holeKey.isEmpty())
+        {
+            auto bringIn = [this, holeKey] {
+                for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
+                {
+                    if ((*i)->data(COL_NAME, ROLE_TYPE).toString() != "hole" || (*i)->data(COL_NAME, ROLE_KEY).toString() != holeKey) continue;
+                    m_tree->scrollToItem(*i, QAbstractItemView::EnsureVisible);
+                    break;
+                }
+            };
+            bringIn();
+            QTimer::singleShot(0, this, bringIn);               // (and once the rows have been laid out: the range of the scroll bar is known then)
+        }
+    }
     if (!nameKey.isEmpty())
     {
         for (QTreeWidgetItemIterator i(m_tree); *i; ++i)
@@ -4168,6 +4189,14 @@ QList<QPair<QString, QString>> gizmoArguments(bool scale, bool point = false)
     return out;
 }
 
+// Whether the call of a point takes an influence, `point(..., influence=r)`: the call of `point` does; a point that is found on a body -- corner_at, circle_center_at, the point a right-click makes --
+// is the body's, has no influence to say, and a call that is given one stops with "unexpected keyword argument 'influence'" (the user, 2026-10-27, a Ctrl+click on a point of the tour's step "Snap one
+// body onto another")
+bool pointTakesInfluence(const QJsonObject& it)
+{
+    return it["type"].toString() == "point" && it["callee"].toString() == "point";
+}
+
 }   // anonymous namespace
 
 QJsonObject ScenePanel::selectedTarget() const
@@ -4431,7 +4460,7 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
         changed << t;
         if (next != "never" && !placementHasNumbers(t) && !t["no_gizmo"].toBool() && !t.contains("locked") && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool())
         {
-            if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), t["type"].toString() == "point"), QStringList(), edits, imports)) names << t["var"].toString();
+            if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t)), QStringList(), edits, imports)) names << t["var"].toString();
         }
     }
     if (changed.isEmpty()) return;
@@ -4687,7 +4716,7 @@ void ScenePanel::writePlacement(const QJsonObject& target, const QString& argume
     const QString var = target["var"].toString();
     QList<QPair<QString, QString>> wanted;
     if (argument == "alpha") wanted << qMakePair(QString("alpha"), placementDefault("alpha"));
-    else wanted = gizmoArguments(!linkedModel(target) && !symmetryModel(target), target["type"].toString() == "point");
+    else wanted = gizmoArguments(!linkedModel(target) && !symmetryModel(target), pointTakesInfluence(target));
     // (what is written stays as it is: only what is missing is added)
     const QJsonObject written = target["placement"].toObject()["args"].toObject();
     QList<QPair<QString, QString>> fresh;
@@ -6821,7 +6850,28 @@ void ScenePanel::addCustomResolution(int line0)
     edits << TextEdit{last, int(lastText.size()), last, int(lastText.size()),
                       "\n" + indent + var + " = custom_resolution(" + var + ", " + QString::number(res, 'g', 3) + ")"};
     addImportIfMissing(edits, "custom_resolution", "custom_resolution");
+    // The new line stands under the model's statement, in the lines that fold with its row: the row is OPEN from the start -- the tree is built again once the script has run, and a row that was closed
+    // closed again, with the lines in the script, a frame after they had opened (the user, 2026-10-27: "the script and model tree expand for one frame before being collapsed again") -- and the number
+    // is selected, so that the user types it over (the user: "the model tree and script open and the value is selected so the user can just type it in")
+    const QString rowKey = keyOf(target);
+    m_expandState[rowKey] = true;
+    m_expandSaveTimer.start();
     emit(editScript(edits, "Custom resolution " + var));
+    const int newLine = last + 1;
+    const int firstLine = target["line"].toInt() - 1;
+    const QString lead = indent + var + " = custom_resolution(" + var + ", ";
+    const QString number = QString::number(res, 'g', 3);
+    const QString written = lead + number + ")";
+    QTimer::singleShot(250, this, [this, newLine, firstLine, lead, number, written] {
+        // (only while the line is as it was written: a number that is being typed over is not selected again.  The line is looked for in the script: the import that the edit may have put at the top
+        // moved every line down by one)
+        const QStringList lines = (m_source ? m_source() : QString()).split('\n');
+        const int at = lines.indexOf(written);
+        if (at < 0) return;
+        const int shift = at - newLine;
+        emit(foldRequested(firstLine + shift, false));
+        emit(spanRequested(at, lead.size(), at, lead.size() + number.size()));
+    });
 }
 
 void ScenePanel::addSurfaceSelection(int line0, QVector3D seed, QString mode, double angle, double radius)
@@ -7459,7 +7509,7 @@ void ScenePanel::prepareSelection()
         if (needGizmo)
         {
             const bool together = statement && !hasHandles;             // (the handles and the statement are one edit: they stand in that order)
-            if (!placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), t["type"].toString() == "point"), QStringList(), edits, imports, together ? handlesText : QString()))
+            if (!placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t)), QStringList(), edits, imports, together ? handlesText : QString()))
             {
                 refuseOutOfDate();
                 return;
@@ -8088,8 +8138,20 @@ void ScenePanel::previewFromMenu(QString kind, QString name, QVector3D point, do
     QElapsedTimer clock;
     clock.start();
     QString error;
-    const QString answer = m_support("preview_mesh", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
-    if (clock.elapsed() > 400) m_previewSlow.insert(name);
+    // (what an entry made at this place was asked before is not made again: the mouse goes over the same entries again and again)
+    const QString memoryKey = QString("%1|%2|%3|%4|%5|%6").arg(kind, name).arg(double(point.x()), 0, 'f', 4).arg(double(point.y()), 0, 'f', 4).arg(double(point.z()), 0, 'f', 4).arg(scale, 0, 'f', 4);
+    QString answer;
+    if (m_previewMemory.contains(memoryKey))
+    {
+        answer = m_previewMemory.value(memoryKey);
+    }
+    else
+    {
+        answer = m_support("preview_mesh", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+        if (clock.elapsed() > 900) m_previewSlow.insert(name);
+        if (m_previewMemory.size() > 24) m_previewMemory.clear();
+        m_previewMemory.insert(memoryKey, answer);
+    }
     static const bool timing = std::getenv("FIELDES_TIMING") != nullptr;
     if (timing)
         std::fprintf(stderr, "[preview] %s: %lld ms, %s%s\n", name.toUtf8().constData(), static_cast<long long>(clock.elapsed()),

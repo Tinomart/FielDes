@@ -803,7 +803,8 @@ protected:
     QStringList m_selectNewMore;                 // (a duplicate of several models: the other copies, selected with the last one)
     bool m_workPlaneActive = false;
     QJsonArray m_placed;                       // (the points of what createPlaced is making: read by createFromMenu)
-    QSet<QString> m_previewSlow;               // (the entries whose preview took longer than a moment: not asked for again -- the limit of a preview is how long it takes)
+    QHash<QString, QString> m_previewMemory;   // (the previews that were made, by entry and place: the answer of the library, as it came)
+    QSet<QString> m_previewSlow;              // (the entries whose preview took longer than a moment: not asked for again -- the limit of a preview is how long it takes)
     QJsonObject m_symmetryRequest;             // (the symmetry as the library takes it: the centre, and every image as a mirror and a turn; empty while it is off)
     QString m_activeSymVar;                    // (the symmetry model that is selected: what is made is made with its images while it is in use)
     QJsonObject m_symdefRequest;               // (the planes of a symmetry that is being made: planes, kind, centre, axis, first)

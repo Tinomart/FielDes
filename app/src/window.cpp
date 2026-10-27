@@ -4141,6 +4141,12 @@ void Window::onExportApp(bool)
     const bool untitled = filename.isEmpty() || filename.startsWith(":/");
     const QString base = untitled ? QString("app") : QFileInfo(filename).completeBaseName();
     const QString dir = untitled ? QDir::homePath() : QFileInfo(filename).dir().absolutePath();
+    // (the step of the guided tour that sends the script out as an app writes nothing either: see onExport)
+    if (property("tourNoWrite").toBool())
+    {
+        statusBar()->showMessage(T("In the tour nothing is written: the window that asks where to save it does not open."), 6000);
+        return;
+    }
     QString out = QFileDialog::getSaveFileName(this, T("Export as app"), QDir(dir).filePath(base + ".fieldesapp"), T("FielDes apps (*.fieldesapp)"));
     if (out.isEmpty()) return;
     exportAppTo(out);
@@ -4274,6 +4280,13 @@ void Window::onExport(bool)
 {
     static const QString filters = T("STL (*.stl);;OBJ (*.obj);;PLY (*.ply);;3MF (*.3mf);;glTF binary (*.glb);;glTF (*.gltf);;"
                                      "FBX (*.fbx);;OFF (*.off);;DXF (*.dxf)");
+    // The step of the guided tour that sends a model out writes nothing: the window that asks where to save it does not open, so the tour makes no file on the user's computer (the user, 2026-10-27:
+    // "this step actually making you save a real file on your pc is a little dangerous and confusing", and again: "actually forcing the user to save a physical file is dangerous and confusing")
+    if (property("tourNoWrite").toBool())
+    {
+        statusBar()->showMessage(T("In the tour nothing is written: the window that asks where to save it does not open."), 6000);
+        return;
+    }
     QString chosen;
     export_filename = QFileDialog::getSaveFileName(this, T("Export mesh"), workingDirectory(), filters, &chosen);
     if (export_filename.isEmpty())

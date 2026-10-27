@@ -597,41 +597,59 @@ def preview_mesh(request):
     shape = eval(expression.strip(), namespace)
     if not hasattr(shape, 'get_mesh'):
         return ''
+    import math
     centre = [float(req.get(k, 0.0)) for k in ('x', 'y', 'z')]
-    reach = 2.5 * max(float(req.get('scale', 1.0)), 1e-6)
-    # (a coarse mesh first, twelve cells across the region that the size of the click says: how long it takes says whether a finer one is worth it.  A shape that is larger than the region touches
-    # its sides and is cut open there -- the region is made larger, twice at most and with cells of the same size, and a shape that is still not inside it is not shown: what is many times larger
-    # than what the click is about would be drawn as a few huge faces over the whole picture)
-    cell = 2.0 * reach / 12.0
-    resolution = 1.0 / cell
-    inside = False
+    half = 2.5 * max(float(req.get('scale', 1.0)), 1e-6)
+    # The box of the shape: known for what the library makes with a size of its own (`_bounds`), so that the shape is meshed at its own size, as large or as small as it is.  Where it is not known, the box
+    # round the click is the guess, and is made larger (twice at most) while the shape touches its sides -- cut open there --; a shape that is still not inside is not shown
+    known = getattr(shape, '_bounds', None)
+    lo0 = hi0 = None
+    if known is not None:
+        lo0, hi0 = [float(c) for c in known[0]], [float(c) for c in known[1]]
+        if not all(math.isfinite(c) for c in lo0 + hi0) or max(hi0[i] - lo0[i] for i in range(3)) <= 0:
+            known = None
+
+    def mesh(n):
+        began = time.perf_counter()
+        v, f = shape.get_mesh(lo, hi, resolution=n / span)
+        return v, f, time.perf_counter() - began
+
     for _ in range(3):
-        lo, hi = [c - reach for c in centre], [c + reach for c in centre]
-        first = time.perf_counter()
-        verts, tris = shape.get_mesh(lo, hi, resolution=resolution)
-        coarse = time.perf_counter() - first
-        if coarse > 0.25:
-            return ''                   # (too slow to be shown as the mouse passes over an entry)
-        if not tris:
-            return ''
-        margin = 0.5 * cell
-        touches = any(min(v[i] for v in verts) < lo[i] + margin or max(v[i] for v in verts) > hi[i] - margin for i in range(3))
-        if not touches:
-            inside = True
+        if known is None:
+            lo0, hi0 = [c - half for c in centre], [c + half for c in centre]
+        pad = 0.04 * max(hi0[i] - lo0[i] for i in range(3))
+        lo, hi = [c - pad for c in lo0], [c + pad for c in hi0]
+        span = max(hi[i] - lo[i] for i in range(3))
+        # a coarse mesh first, 24 cells across the longest side: how long it takes says how fine the next one may be
+        verts, tris, first = mesh(24)
+        if first > 0.25 or not tris:
+            return ''                   # (too slow to be shown as the mouse passes over an entry, or nothing there)
+        if known is not None:
             break
-        reach *= 2.0
-    if not inside:
+        margin = 0.5 * span / 24
+        if not any(min(v[i] for v in verts) < lo[i] + margin or max(v[i] for v in verts) > hi[i] - margin for i in range(3)):
+            break
+        half *= 2.0
+    else:
         return ''
-    if tris and coarse < 0.05:
-        cells = 40.0 if coarse < 0.01 else 24.0
+    # then as fine as the time allows.  The mesher works on a number of cells across that is a power of two (what is asked is rounded up to the next one: a threaded rod comes out the same at 40 and at 56
+    # cells, and the next mesh is the one of 96), so the levels are 64 and 128 after the 32 of the coarse mesh above, and the cost of a level grows about with the square of its cells: the finest level that
+    # is expected to take about a third of a second at most is made -- 128 across, as fine as a click makes, for what is quick, such as a thread -- and a mesh that has more than 150000 triangles (the answer
+    # is passed on as text) gives way to the level below it, never to the coarse one: that threw away the 69572 triangles of a threaded rod and left it ragged.  The result is kept by the menu, so that the
+    # mouse that passes the entry again finds it at once
+    levels = []
+    cells = 64
+    while cells <= 128 and first * (cells / 32.0) ** 2 <= 0.35:
+        levels.append(cells)
+        cells *= 2
+    for cells in reversed(levels):
         try:
-            finer_verts, finer_tris = shape.get_mesh(lo, hi, resolution=cells / (2 * reach))
-            if len(finer_tris) <= 30000:
-                verts, tris = finer_verts, finer_tris
+            finer_verts, finer_tris, _took = mesh(cells - 0.5)
         except Exception:
-            pass
-    if not tris:
-        return ''
+            continue
+        if finer_tris and len(finer_tris) <= 150000:
+            verts, tris = finer_verts, finer_tris
+            break
     return json.dumps({'v': [round(c, 4) for v in verts for c in v], 't': [i for t in tris for i in t],
                        'ms': int((time.perf_counter() - started) * 1000)}, separators=(',', ':'))
 

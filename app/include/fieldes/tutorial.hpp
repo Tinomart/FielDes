@@ -176,6 +176,7 @@ private:
     QPushButton* m_back = nullptr;
     QPushButton* m_show = nullptr;
     QPushButton* m_next = nullptr;
+    QPushButton* m_examples = nullptr;      // (on the last card: ends the tour and opens the list of the examples)
 
     QVector<Step>* m_steps = nullptr;
     int m_index = -1;
@@ -198,6 +199,7 @@ private:
     int m_selectEpoch = 0;                  // (a selection that is asked for replaces the ones asked for before it: a late retry of the older one must not select over it)
     double m_baseline = 0;                  // (what a step compares the user's work with)
     QString m_baselineText;                 // (the same, when the work is a stretch of the script)
+    bool m_scriptBroken = false;            // (the script has an error: the step that starts from the work of the step before puts the model of its own there instead -- each step has its state)
     bool m_viewTouched = false;             // (the user has pressed in the view or turned the wheel since a step put its own model there: its camera is theirs)
     QTimer m_poll;
     QTimer m_tick;

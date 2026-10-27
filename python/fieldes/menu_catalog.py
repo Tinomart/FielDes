@@ -123,6 +123,7 @@ HINTS = {
     'lattice_surface_conform': tr('With a cell selected with the model: that cell.  Otherwise a first cell to change in the script.'),
     'random_points': tr("Points made in the model, drawn as dots: how far apart they are on average, how random, the nearest and the farthest two "
                         "may be.  A foam is made around them: select them and choose voronoi_lattice or delaunay_lattice"),
+    'point_cloud': tr('A set of points of your own, exactly where you put them: the points of the script, each dragged to its place by its gizmo.  Select at least five points and choose it; a foam or a truss is made around the set with voronoi_lattice or delaunay_lattice'),
     'surface_lattice': tr('A random net of beams over the whole surface of the model: a lattice of one layer, that does not repeat.  How far apart its nodes are, '
                           'and how thick its beams are, are the numbers to change in the script'),
     'voronoi_lattice': tr('A foam: the edges of the Voronoi cells around the selected points, as beams, filling the model the points were made in.  '
@@ -347,7 +348,7 @@ PRIMITIVE_DOMAINS = {'Supports and loads': 'structural', 'Thermal conditions': '
                      'Manufacturing constraints': 'manufacturing'}
 
 # What an operation makes, where it is not what its group makes (the operations of the lattice section make lattices, but random_points makes points)
-OPERATION_KINDS = {'random_points': 'points'}
+OPERATION_KINDS = {'random_points': 'points', 'point_cloud': 'points'}
 
 # (function, group, template, takes a second model: True = needs one, 'optional' = takes the other selected models if there are any)
 OPERATIONS = [
@@ -414,6 +415,8 @@ OPERATIONS = [
     ('lattice', 'Periodic lattices', "lattice({body}, cell_periodic('{cell}'), cell_size={cs}, thickness={ct})", 'optional'),
     ('lattice_surface_conform', 'Periodic lattices',
      "lattice_surface_conform({body}, cell_periodic('{cell}'), cell_size={cs})", 'optional'),
+    # (points of the user's own: the points that are selected, each a `point` of the script that is dragged to its place by its gizmo)
+    ('point_cloud', 'Non-periodic lattices', 'point_cloud([{body}{others}])', 'optional'),
     ('random_points', 'Non-periodic lattices', 'random_points({body}, spacing={cs})', False),
     ('voronoi_lattice', 'Non-periodic lattices', 'voronoi_lattice({body})', False),
     ('delaunay_lattice', 'Non-periodic lattices', 'delaunay_lattice({body})', False),
@@ -753,7 +756,7 @@ def _build_operation(name, v, others):
         if info.get('type') == 'cell':
             main = next((o for o in others if o.get('type') in _SHAPES), None)
             if main is not None:
-                others = [{'name': body, 'type': info.get('type')}] + [o for o in others if o is not main]
+                others = [{'name': body, 'type': info.get('type'), 'cls': info.get('cls')}] + [o for o in others if o is not main]
                 body = main['name']
                 v = dict(v, body=body)
     if name == 'lattice':
@@ -764,6 +767,11 @@ def _build_operation(name, v, others):
             v = dict(v)
             if fields:
                 v['ct'] = fields[0]
+            # A cell of any geometry (cell_custom) is the geometry as it was modelled, and the library refuses a thickness for it ("give the geometry the thickness you want"): the call the
+            # menu writes for it has none (the user, 2026-10-27, of the tour's step that fills the block with a true custom cell)
+            first = next((o for o in others if o.get('type') == 'cell'), None)
+            if first is not None and first.get('cls') == 'ShapeCell':
+                return 'lattice({body}, %s, cell_size={cs})'.format(**v) % cells[0]
             return ('lattice({body}, %s, cell_size={cs}, thickness={ct})' % (cells[0] if cells else "cell_periodic('{cell}')")).format(**v)
     if name == 'lattice_surface_conform':
         cells = [o['name'] for o in others if o.get('type') == 'cell']
@@ -777,6 +785,11 @@ def _build_operation(name, v, others):
         if info.get('type') in _SHAPES or not info.get('type') and body:
             var = v.get('var') or '%s_1' % name
             return '%s_points = random_points(%s, spacing=%s)\n%s_points%s%s(%s_points)' % (var, body, v.get('cs', 8), var, PRELUDE, name, var)
+    if name == 'point_cloud':
+        # (the points that are selected, in the order they were selected, are the cloud: each a `point` of the script, dragged to its place by its gizmo)
+        points = [m['name'] for m in [dict(v.get('body_info') or {}, name=body)] + list(others) if m.get('type') == 'point']
+        if points:
+            return 'point_cloud([%s])' % ', '.join(points)
     if name == 'texture':
         # (a surface, a field or a body that is selected with the body is where the texture goes)
         regions = [o['name'] for o in others if o.get('type') in ('surface', 'field', 'solid', 'profile', 'lattice')]
