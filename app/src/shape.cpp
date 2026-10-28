@@ -289,7 +289,10 @@ std::unique_ptr<libfive::Mesh> Shape::exactMeshOf(const ExactMesh& E, const doub
 
 bool Shape::hasGizmo() const
 {
-    if (m_locked || !m_gizmo.present || m_gizmo.hidden || (m_gizmo.dotOnly && !m_activeCopy) || m_gizmo.mode == Gizmo::NEVER) return false;
+    // A point that is locked to its body -- a corner, a point of an edge -- cannot be moved, but its influence is locked to nothing: the ring that drags it is the gizmo it has (the user, 2026-10-28:
+    // "the point is locked to the corner, but the influence is not and thus the influence gizmo should appear")
+    const bool ringOfLocked = m_locked && m_isPoint && m_gizmo.present && m_gizmo.influence && vars.count(m_gizmo.influence);
+    if ((m_locked && !ringOfLocked) || !m_gizmo.present || m_gizmo.hidden || (m_gizmo.dotOnly && !m_activeCopy) || m_gizmo.mode == Gizmo::NEVER) return false;
     if (m_gizmo.mode == Gizmo::CLICK && !isSelected()) return false;
     for (int a = 0; a < 3; ++a)
     {
@@ -313,6 +316,15 @@ bool Shape::dotPosition(QVector3D& p) const
     if (m_hasPointPos)
     {
         p = m_pointPos;
+        // (a point found on a body: carried by the numbers that move the faces it is made of, while one of them is pulled -- see LiveTerm)
+        for (const LiveTerm& t : m_liveTerms)
+        {
+            float now = t.v0;
+            const auto given = m_liveNow.find(t.id);
+            if (given != m_liveNow.end()) now = given->second;
+            else if (const auto own = vars.find(t.id); own != vars.end()) now = own->second;
+            p += t.j * (now - t.v0);
+        }
         return true;
     }
     return false;
@@ -2979,6 +2991,8 @@ bool Shape::updateFrom(const Shape* other)
     m_isPoint = other->m_isPoint;
     m_hasPointPos = other->m_hasPointPos;
     m_pointPos = other->m_pointPos;
+    m_liveTerms = other->m_liveTerms;
+    m_liveNow.clear();                              // (the script has run: the numbers are the script's now)
     m_appLabel = other->m_appLabel;
     m_appShown = other->m_appShown;
     bool started = false;

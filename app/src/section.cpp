@@ -164,7 +164,7 @@ QColor fieldColour(float t)
     return QColor::fromRgbF(c.r, c.g, c.b);
 }
 
-void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi)
+void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi, const QVector3D* anchor)
 {
     // The field on a coarse grid over the region: its range without the few extreme values (a field that blows up at one
     // point -- 1/x -- would otherwise paint everything else one colour)
@@ -199,6 +199,19 @@ void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi)
     src.lo = values[size_t(0.01 * double(values.size() - 1))];
     src.hi = values[size_t(0.99 * double(values.size() - 1))];
     if (!(src.hi > src.lo)) src.hi = src.lo + 1.0f;
+    // The value where the field is about is in the range: a point with a radius -- `distance_to_point(p)` with the influence of p -- is negative only in a ball of that radius, a few of the samples
+    // above, which the percentile cuts off: the range then began above zero, and the disc showed no radius (the user, 2026-10-28: "There is no radius created")
+    if (anchor)
+    {
+        e.set(Eigen::Vector3f(anchor->x(), anchor->y(), anchor->z()), 0);
+        const float at = e.values(1)(0);
+        if (std::isfinite(at))
+        {
+            src.lo = std::min(src.lo, at);
+            src.hi = std::max(src.hi, at);
+            if (!(src.hi > src.lo)) src.hi = src.lo + 1.0f;
+        }
+    }
 }
 
 FieldSlice sampleField(const QVector<FieldSource>& sources,

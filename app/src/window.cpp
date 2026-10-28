@@ -1088,6 +1088,7 @@ Window::Window(Arguments args)
         // about; with several fields open a menu in it chooses.  It closes when no field is open.  The section card is not touched
         auto syncCard = [=] {
             const QStringList keys = view->openFieldKeys();
+            view->scenePanel()->setOpenFieldKeys(keys);         // (the points the open fields are made of show their gizmos: that is how a field is controlled)
             if (keys.isEmpty())
             {
                 fieldPanel->hide();
@@ -1104,12 +1105,17 @@ Window::Window(Arguments args)
             fieldPanel->raise();
         };
         connect(view, &View::fieldViewersChanged, this, syncCard);
-        connect(view->scenePanel(), &ScenePanel::fieldsSelected, view, &View::setOpenFields);
+        // (selecting a field opens its viewer -- and letting it go does not close it: a viewer is closed by a click on its icon, and by nothing else: not by a click on empty space, not by selecting
+        // another model, the point of the field for one -- the user, 2026-10-28: "I want a field to only close when you click its field icon, not just when you click anything at all")
+        connect(view->scenePanel(), &ScenePanel::fieldsSelected, view, &View::openFieldsAlso);
         connect(view, &View::fieldIconClicked, this, [=](QString key, bool ctrl) {
-            // (the icon selects the field in the tree, which opens its viewer: the tree and the scene say the same.  A click on the icon of the one field that is open closes it
-            // again -- its row is let go, as the exported app does -- where it was only a click on empty space that did; Ctrl+click goes on adding and taking away)
-            if (!ctrl && view->openFieldKeys() == QStringList{key}) view->scenePanel()->clearSelection();
-            else view->scenePanel()->selectFieldKey(key, ctrl);
+            // (the icon of a field that is open closes its viewer; the icon of one that is not selects the field in the tree and opens it -- Ctrl+click adds it to the selection)
+            if (view->openFieldKeys().contains(key)) view->closeField(key);
+            else
+            {
+                view->scenePanel()->selectFieldKey(key, ctrl);
+                view->openFieldsAlso(QStringList{key});
+            }
             view->setFocus(Qt::MouseFocusReason);
         });
         connect(fieldPanel, &FieldPanel::fieldChosen, view, &View::setActiveField);
@@ -2408,6 +2414,11 @@ Window::Window(Arguments args)
             takeFocus();
             send(p[0] == "dbl" ? QEvent::MouseButtonDblClick : QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton);
             send(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton);
+        });
+        // snapcheck [how many misses to list]: the cursor put on each junction that the lattice picture draws (the snapping mode on, the picture painted), and what the pick gives there
+        a->add("snapcheck", [=](const QString& args){
+            const int shown = args.trimmed().isEmpty() ? 12 : args.trimmed().toInt();
+            std::cerr << view->snapSelfCheck(shown).toStdString() << std::flush;
         });
         // winmouse <move|press|drag|release> <x> <y>: a left-button mouse event at a place of the WINDOW (the coordinates of a picture of it), delivered the way a real one is: to the
         // widget that is on top there -- the tour's blocker and layer, the card, whatever stands over the viewport -- and, once a button is down, to the widget that took the press

@@ -1886,6 +1886,33 @@ void Interpreter::recordShape(
                 Py_XDECREF(pp);
                 PyErr_Clear();
                 shape->setPoint(pos, hasPos);
+                // (a point found on a body -- corner_at, edge_point_at -- says how it moves with the numbers of the script: [(the number, (dx, dy, dz) for one unit of it, its value now)]; the
+                // viewport carries the dot by them while a face is pulled, see fieldes.stdlib.features._live_terms)
+                PyObject* live = PyObject_GetAttrString(obj, "_live_terms");
+                if (live && PyList_Check(live))
+                {
+                    std::vector<Shape::LiveTerm> terms;
+                    for (Py_ssize_t k = 0; k < PyList_Size(live); ++k)
+                    {
+                        PyObject* t = PyList_GetItem(live, k);
+                        if (!PyTuple_Check(t) || PyTuple_Size(t) != 3) continue;
+                        PyObject* number = PyTuple_GetItem(t, 0);
+                        PyObject* slope = PyTuple_GetItem(t, 1);
+                        if (!number || !PyObject_HasAttrString(number, "ptr") || !PyTuple_Check(slope) || PyTuple_Size(slope) != 3) continue;
+                        PyObject* handle = PyObject_GetAttrString(number, "ptr");
+                        Shape::LiveTerm term;
+                        if (handle && PyLong_Check(handle)) term.id = static_cast<libfive::Tree::Id>(PyLong_AsVoidPtr(handle));
+                        Py_XDECREF(handle);
+                        term.j = QVector3D(float(PyFloat_AsDouble(PyTuple_GetItem(slope, 0))), float(PyFloat_AsDouble(PyTuple_GetItem(slope, 1))),
+                                           float(PyFloat_AsDouble(PyTuple_GetItem(slope, 2))));
+                        term.v0 = float(PyFloat_AsDouble(PyTuple_GetItem(t, 2)));
+                        if (term.id && !PyErr_Occurred()) terms.push_back(term);
+                        PyErr_Clear();
+                    }
+                    shape->setLiveTerms(std::move(terms));
+                }
+                Py_XDECREF(live);
+                PyErr_Clear();
             }
             Py_XDECREF(kind);
             PyErr_Clear();

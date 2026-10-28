@@ -263,6 +263,8 @@ public slots:
     // (what a click puts down, and what is hovered: a point that is there, else the node of the lattice that the cursor is over -- the nearest to the viewer of those under it --, else the plane's)
     QVector3D snapPlace(QPoint pos, const Shape* exclude = nullptr, bool toPoints = true) const;
     QVector3D snapNodeAlongRay(QPoint pos, bool* hit = nullptr) const;
+    /*  For a test window (the automation command snapcheck): the cursor put on each junction that the lattice picture draws, and the node the pick gives there; the report says where they differ  */
+    QString snapSelfCheck(int limit);
     bool surfacePointAt(QPoint pos, QVector3D& point) const;
     // The coarse mesh of what the entry of a menu under the mouse would make (x, y, z, ... and the corners of its triangles), drawn see-through where it would be made; empty takes it away
     void setPreviewMesh(QVector<float> vertices, QVector<int> triangles);
@@ -314,6 +316,9 @@ public slots:
     /*  The fields whose viewers are open (the ones selected in the model tree, or whose icons were clicked): by key (a variable's name, or
      *  "line:N").  A field that is not shown (its eye is off) has neither icon nor viewer  */
     void setOpenFields(QStringList keys);
+    /*  A viewer is opened by selecting its field or clicking its icon, and closed by clicking its icon -- and by nothing else: `openFieldsAlso` adds to what is open, `closeField` takes one away  */
+    void openFieldsAlso(QStringList keys);
+    void closeField(const QString& key);
     /*  The field the card is about (one of the open ones)  */
     void setActiveField(QString key);
     QString activeField() const { return m_activeField; }
@@ -550,6 +555,7 @@ protected:
 
     /*  The dot of a point (the middle point of a gizmo, always drawn), the point whose dot is at a widget position, and the names of an app  */
     void drawPointDots(QPainter& painter);
+    void drawOriginMarker(QPainter& painter);
     Shape* pointDotAt(QPoint pos) const;
     /*  The outlines of profiles and the lines of curves, drawn blue: the one the mouse is over is brighter  */
     void drawOutlines(QPainter& painter);
@@ -736,7 +742,7 @@ protected:
     bool m_snapImageKept = false;            // (the numbers above are those of a picture that was made: it is made again only when one of them changes)
     bool m_snapImageDrawn = false;           // (and the lattice was drawn in it)
     // The lines of that picture, in pixels (the whole lines, without their fade): the cursor's spotlight draws again the ones that run through the circle round it
-    struct SnapLine { QPointF a, b; qint8 axis; qint8 band; qint16 alpha; float width; };
+    struct SnapLine { QPointF a, b; qint8 axis; qint8 band; qint16 alpha; float width; QVector3D pa, pb; };
     mutable QVector<SnapLine> m_snapLines;
     QPoint m_snapCursor;                     // (where the cursor is over the viewport in the snapping mode, in pixels: the middle of the spotlight)
     bool m_snapCursorValid = false;

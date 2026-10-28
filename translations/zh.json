@@ -1021,6 +1021,7 @@
  "Key numbers as text (.txt)": "关键数值（文本 .txt）",
  "This result has no key numbers to write": "此结果没有可写出的关键数值",
  "A field: how far every place is from this point": "一个场：每个位置到这个点的距离",
+ "A field: how far every place is from the axis through this point": "一个场：每个位置到通过这个点的轴的距离",
  "The middle of the model's bounding box, as a point": "模型包围盒的中心，作为一个点",
  "The smallest box, aligned with the axes, that holds the model: a body of its own": "与坐标轴对齐、包住该模型的最小长方体：一个独立的实体",
  "Python": "Python",
@@ -1892,5 +1893,7 @@
  "Nice. The cells are closed by the surface now: nothing is cut off, and the surface is a net of beams.": "很好。现在表面把单元封住了：什么都没有被切掉，表面是一张梁网。",
  "Nice. A foam that does not repeat. Look at its surface: the block cuts the cells off there, and they are open.": "很好。一个不重复的泡沫。看看它的表面：块在那里把单元切开了，它们是开口的。",
  "Look at the surface of the foam: the block cuts its cells off, so they are open there. In the call of random_points_1 change surface=False to surface=True: points are put on the surface too, and they are cells like the others that lie against the surface: the surface closes the cells, nothing is cut off, and the surface is a net of beams.": "看看泡沫的表面：块把它的单元切开了，所以那里的单元是开口的。在 random_points_1 的调用中，把 surface=False 改成 surface=True：表面上也会放置点，它们和其他点一样是单元，只是贴着表面：表面把单元封住，什么都不会被切掉，表面就是一张梁网。",
- "A set of points of your own, exactly where you put them: the points of the script, each dragged to its place by its gizmo.  Select at least five points and choose it; a foam or a truss is made around the set with voronoi_lattice or delaunay_lattice": "由您自己的点组成的点集，点在哪里就在哪里：脚本中的点，每个用它的操纵器拖到位。选择至少五个点后选择它；再用 voronoi_lattice 或 delaunay_lattice 在点集周围生成泡沫或桁架"
+ "A set of points of your own, exactly where you put them: the points of the script, each dragged to its place by its gizmo.  Select at least five points and choose it; a foam or a truss is made around the set with voronoi_lattice or delaunay_lattice": "由您自己的点组成的点集，点在哪里就在哪里：脚本中的点，每个用它的操纵器拖到位。选择至少五个点后选择它；再用 voronoi_lattice 或 delaunay_lattice 在点集周围生成泡沫或桁架",
+"A field: how far every place is from the axis through a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: a new point to drag": "场：每个位置到经过某个点的轴的距离 -- 其半径是该点的影响值。选中一个点时：在该点上创建。未选中时：创建一个可拖动的新点",
+"A field: how far every place is from a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: a new point to drag": "场：每个位置到某个点的距离 -- 其半径是该点的影响值。选中一个点时：在该点上创建。未选中时：创建一个可拖动的新点"
 }

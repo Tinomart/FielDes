@@ -241,9 +241,12 @@ def facts_of(v):
     Shape, FailedPart = A._types()
     failed = bool(FailedPart) and isinstance(v, FailedPart)
     shape = isinstance(v, Shape)
-    result = not shape and callable(getattr(v, '_display', None))
+    # (a set of points -- random_points(), point_cloud() -- shows itself through a shape of its own but is placed like a model: it takes position=, rotation=, scale=, and so has a gizmo.  It is not the
+    # result of an analysis, whatever else has a `_display`: the user, 2026-10-28, "Point cloud does not have a gizmo for no reason")
+    placed = not shape and callable(getattr(v, '_placed_set', None))
+    result = not shape and not placed and callable(getattr(v, '_display', None))
     mkind = None if failed else kind_of(v)
-    shown = shape or result
+    shown = shape or result or placed
     f = {'model': bool(shape or failed or result or mkind is not None), 'failed': failed, 'result': result, 'type': mkind,
          'shown': shown, 'no_gizmo': bool(getattr(v, '_no_gizmo', False)) or result or not shown or mkind == 'field',   # (a field: its icon is what is dragged)
          'outline': bool(getattr(v, '_outline_gizmo', False)),         # (a profile, a polyline, a spline: no numbers of its own, but a gizmo mode)

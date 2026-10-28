@@ -135,18 +135,20 @@ HINTS = {
 
 # A profile or a curve made from the menu: its points are made with it (each a model of its own, drawn as a dot, with the gizmo that moves and
 # rotates it), in the horizontal plane at the place of the click
-def _gizmoed_point(name, x, y, z):
-    ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged) '''
-    return ('%s = point(\n    %s, %s, %s,\n    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n'
-            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, name))
+def _gizmoed_point(name, x, y, z, influence=None):
+    ''' The statements of a point that is a model of its own, with its gizmo (so that it can be dragged).  `influence` (the text of a number): the point says how far it reaches, `influence=var(r)`, so that the
+        ring of its gizmo drags it -- the radius of the field that is made of the point '''
+    said = '' if influence is None else '    influence=var(%s),\n' % influence
+    return ('%s = point(\n    %s, %s, %s,\n%s    position=(var(0), var(0), var(0)),\n    rotation=(var(0), var(0), var(0)),\n'
+            '    scale=(var(1), var(1), var(1)),\n)\n%s\n' % (name, x, y, z, said, name))
 
 
-def _points(*places, base='{var}'):
+def _points(*places, base='{var}', influence=None):
     ''' The points a profile or a line made from the menu is made of: each a model of its own, with its gizmo (so that it can be dragged, and the face or the line
         with all of them), written above the call.  `places` are the (x, y, z) texts of the template '''
     out = []
     for k, (x, y, z) in enumerate(places, 1):
-        out.append(_gizmoed_point('%s_p%d' % (base, k), x, y, z))
+        out.append(_gizmoed_point('%s_p%d' % (base, k), x, y, z, influence))
     return ''.join(out), ', '.join('%s_p%d' % (base, k) for k in range(1, len(places) + 1))
 
 
@@ -156,6 +158,15 @@ _PROFILE = _PROFILE_POINTS + '#@@#\nprofile([' + _PROFILE_LIST + '])'
 _LINE_POINTS, _LINE_LIST = _points(('{xm}', '{y}', '{z}'), ('{x}', '{yp}', '{z}'), ('{xp}', '{y}', '{z}'))
 _POLYLINE = _LINE_POINTS + '#@@#\npolyline([' + _LINE_LIST + '])'
 _SPLINE = _LINE_POINTS + '#@@#\nspline([' + _LINE_LIST + '])'
+
+# A radial field, or a distance to a point, made from the menu is made of a POINT (the Point class: a model of its own, with its gizmo), written above it -- not of a vector (the user, 2026-10-28:
+# "DO YOU KNOW WHAT THE POINT CLASS IS IN FIELDES?") --, and the point says its INFLUENCE, which is the radius of the field: negative inside it, 0 on it, positive outside, and the ring of the point's gizmo drags it
+# (the user, 2026-10-28: "A RADIUS MEANS EVERYTHING INSIDE THE RADIUS IS NEGATIVE, EVERYTHING OUTSIDE IS POSITIVE"; "IT ALREADY WORKED LIKE THAT IN THE PAST ... HAVING IT CONTROLLABLE TO THE POINT").  The radius it starts with is
+# a half of the span a hundred pixels show: seen at once
+_RADIAL_POINTS, _RADIAL_LIST = _points(('{x}', '{y}', '{z}'), influence='{h}')
+_RADIAL_FIELD = _RADIAL_POINTS + "#@@#\nradial_field(" + _RADIAL_LIST + ", 'z')"
+_DISTANCE_POINTS, _DISTANCE_LIST = _points(('{x}', '{y}', '{z}'), influence='{h}')
+_DISTANCE_FIELD = _DISTANCE_POINTS + "#@@#\ndistance_to_point(" + _DISTANCE_LIST + ")"
 
 # What an entry can be made OF the models selected, as DATA -- the entries that are made of what is selected, each with the words for its tooltip and the WAYS it is made, tried
 # in the order they are listed: (the kinds of model it is made of, the least and the most of them (None: any number), the call it is written as -- `{names}` is those models in
@@ -173,6 +184,14 @@ FROM_SELECTION = {
     'spline': (tr('A smooth curve through points.  With points selected: made from them, in the order you selected them.  With none: three new points to '
                   'drag.  Press the curve and drag to pull a point out of it; double-click a point to make it a corner or a spline point'),
                [({'point'}, 2, None, 'spline([{names}])')]),
+    # (a field of a point is made ON the point that is selected -- its influence is the radius -- and of a new point when none is: the user, 2026-10-28, "you dont create the radial field on a selected point,
+    # but ALWAYS insert your own new point.  That is obviously not what I want")
+    'radial_field': (tr('A field: how far every place is from the axis through a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: '
+                        'a new point to drag'),
+                     [({'point'}, 1, 1, "radial_field({name}, 'z')")]),
+    'distance_to_point': (tr('A field: how far every place is from a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: '
+                             'a new point to drag'),
+                          [({'point'}, 1, 1, 'distance_to_point({name})')]),
 }
 
 # (function, group, template)
@@ -208,8 +227,8 @@ PRIMITIVES = [
     ('sphere_surface', 'Surfaces', 'sphere_surface({h}, ({x}, {y}, {z}))'),
     ('cylinder_surface', 'Surfaces', "cylinder_surface({h}, 'z', ({x}, {y}, 0))"),
     ('wave_surface', 'Surfaces', 'wave_surface({q}, {s}, "x", {z})'),
-    ('distance_to_point', 'Fields', 'distance_to_point(({x}, {y}, {z}))'),
-    ('radial_field', 'Fields', "radial_field(({x}, {y}, {z}), 'z')"),
+    ('distance_to_point', 'Fields', _DISTANCE_FIELD),
+    ('radial_field', 'Fields', _RADIAL_FIELD),
     ('z_field', 'Fields', 'z_field()'),
     ('noise_field', 'Fields', 'noise_field({s}, {n})'),
     ('wave', 'Fields', "wave('x', {s}, {t})"),
@@ -410,6 +429,11 @@ OPERATIONS = [
     ('negate_field', 'Field math', 'negate_field({body})', False),
     ('sqrt_field', 'Field math', 'sqrt_field({body})', False),
     ('square_field', 'Field math', 'square_field({body})', False),
+    # (a field mapped linearly from a range of its values to another -- clamped, so that it holds the end values beyond the range: `ramp(z_field(), (0, 50), (2, 0.5))` is 2 at z = 0 and 0.5 from z = 50 up.  The
+    # two ranges are the numbers of the entry, to change in the script; the user, 2026-10-28: "is there a ramp feature to create ramps from fields like in nTop? ... It should be in the field math section")
+    ('ramp', 'Field math', 'ramp({body}, (0, 10), (0, 1))', False),
+    # (the value of the field at a point, a plain number: the second model is the point -- a field is read where a point of the model tree is)
+    ('evaluate', 'Field math', 'evaluate({body}, {other})', True),
     ('field_from_body', 'Field math', 'field_from_body({body})', False),
     ('body_from_field', 'Field math', 'body_from_field({body})', False),
     # Lattices (the cell is a first choice to change in the script: cell_periodic('octet'), ...; a cell that is selected with the body is the
@@ -431,6 +455,8 @@ OPERATIONS = [
     ('bounding_box', 'Measuring', 'bounding_box({body})', False),
     # A field made of a point: how far each place is from it (in the first menu of a point, and only there)
     ('distance_to_point', 'Fields', 'distance_to_point({body})', False),
+    # (the same for how far each place is from the axis through the point: the radius is the influence of the point)
+    ('radial_field', 'Fields', "radial_field({body}, 'z')", False),
     # Simulations: the model is the part (the fluid, for the flow); every kind of condition the analysis takes is an input of its own, written
     # as a placeholder (`supports=...`, `inlets=...`) -- nothing is made up to stand there: the statement waits until they are given.  The
     # conditions that are selected with the body are written in the input of their kind.  The completion writes the inputs from the signature
@@ -453,7 +479,7 @@ OPERATIONS = [
 
 
 # (operations that are in the first menu of a body, not under a group: used all the time)
-QUICK = ('center', 'bounding_box', 'distance_to_point')
+QUICK = ('center', 'bounding_box', 'distance_to_point', 'radial_field')
 
 # What is the first entry of the Engineering menu, on its own, above the categories of the domains: the optimisation that designs for an analysis of any domain -- a static, a modal, a thermal
 # one, a flow -- and so is in the category of none of them
@@ -1127,7 +1153,7 @@ def call(request):
     return head + marker + expression + _images_after(r, head, expression)
 
 
-KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice', 'extrude')
+KEEPS_ITS_TEMPLATE = ('lattice', 'lattice_surface_conform', 'random_points', 'voronoi_lattice', 'delaunay_lattice', 'surface_lattice', 'extrude', 'ramp')
 
 # (the shapes of the first groups are made where the user clicks, as big as the view shows: the place and the size are what the click says.
 # Everything else a menu writes is made of models and calls: the numbers in them are for the user to say)

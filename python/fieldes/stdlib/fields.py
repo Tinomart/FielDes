@@ -194,14 +194,24 @@ def _point_radius(center, radius):
     return getattr(center, '_influence', None) if radius is None else radius
 
 
-def radial_field(center=(0, 0, 0), axis='z', radius=None):
-    ''' Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields.  With a `radius` -- or the influence of the point that is given as
-        the centre, `point(x, y, z, influence=r)` -- it is the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside '''
-    radius = _point_radius(center, radius)
+def _radial_distance(center, axis):
+    ''' The plain distance from an axis through `center` (cylindrical radius, mm), whatever the influence of the centre is '''
     c = _coords(center)
     x, y, z = X() - c[0], Y() - c[1], Z() - c[2]
     a, b = {'x': (y, z), 'y': (x, z), 'z': (x, y)}[axis]
-    out = (a.square() + b.square()).sqrt()
+    return (a.square() + b.square()).sqrt()
+
+
+def radial_field(center, axis='z'):
+    ''' Distance from the axis through the point `center` (cylindrical radius, mm): a field made of a POINT, as `distance_to_point` is -- right-click a point, and radial_field is in its menu.  `center` is
+        a `point(x, y, z)` (its coordinates may be fields), the Point class: a vector -- (x, y, z) -- is not a point, and is refused.  The field has no radius of its own:
+        the INFLUENCE of the point, `point(x, y, z, influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of
+        that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside.  A point that says no influence gives the plain distance from the axis '''
+    if not hasattr(center, 'xyz'):
+        raise TypeError("radial_field takes a point -- `point(x, y, z)`, a model of its own, whose influence is the radius -- and not the vector %r: make the point (Primitives > Points, "
+                        "or right-click the place) and give it, `radial_field(point_1, 'z')`" % (center,))
+    out = _radial_distance(center, axis)
+    radius = getattr(center, '_influence', None)
     return out if radius is None else out - radius
 
 
@@ -1407,5 +1417,7 @@ from fieldes.kinds import takes as _declare, BODIES as _BODIES
 for _name in ('smooth', 'round_edges', 'fillet', 'shell_inside', 'shell_outside', 'shell_exact'):
     globals()[_name]._takes = _declare(_BODIES | {'field'}, [_BODIES])
 globals()['field_from_body']._takes = _declare(_BODIES)
+globals()['evaluate']._takes = _declare(_BODIES | {'field'}, [{'point'}])               # (a field or a body, and the point its value is read at, selected with it: the entry of Operations > Field math)
 globals()['distance_to_point']._takes = _declare({'point'})            # (the distance from a point: a point is what it is made of)
+globals()['radial_field']._takes = _declare({'point'})                 # (the distance from the axis through a point: made of a point as well -- the user, 2026-10-28: "it takes a point, like I said it should")
 globals()['texture']._takes = _declare(_BODIES | {'surface', 'field'}, [_BODIES])      # (a body, and a surface or a field selected with it is where the texture goes)

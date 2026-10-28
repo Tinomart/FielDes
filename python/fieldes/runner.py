@@ -532,6 +532,11 @@ def _continue(state, breakpoints, skip_first):
         state['src'] = app_support._Source(state['s'])
     if not skip_first:
         outline.run_began()
+        try:
+            from fieldes.stdlib import cad_import
+            cad_import._begin_run()             # (a script begins: it has imported nothing, and set no resolution of its own)
+        except Exception:
+            pass
     # Progress: which statement runs (how many there are is known now)
     progress_lib = run_progress._lib
     if progress_lib:

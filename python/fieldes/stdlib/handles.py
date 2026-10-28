@@ -242,6 +242,10 @@ def _place(shape, move=(0, 0, 0), rotate=(0, 0, 0), scale=(1, 1, 1), about=None,
     if all(_is_number(s) and s == 1 for s in scale) and callable(getattr(shape, '_remake', None)) and getattr(shape, 'points', None):
         # What is made of points -- a profile, a polyline, a spline: it can make itself again through other points -- is placed through them, whatever the numbers are
         return _placed_outline(shape, move, rotate, mode, about)
+    if callable(getattr(shape, '_placed_set', None)):
+        # A set of points -- random_points(), point_cloud() -- is placed through its points: every one moved, turned and scaled with the others (the user, 2026-10-28: "random points also has no
+        # gizmo? IT should if it doesnt", "Point cloud does not have a gizmo for no reason")
+        return shape._placed_set(move, rotate, scale, about, mode)
     if not isinstance(shape, Shape) and callable(getattr(shape, '_display', None)):
         # The result of an analysis or an optimisation is not a shape: it has no surface of its own to place (what it shows is made from
         # its part).  Placed by nothing it is the result itself; placed by something, there is nothing it could mean

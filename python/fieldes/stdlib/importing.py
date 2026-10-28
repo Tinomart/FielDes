@@ -183,6 +183,18 @@ def _worst_fit(path, survey):
     return out
 
 
+def _noting_imports(function):
+    ''' `function` that tells the import module what it gave, so that a script that sets no resolution gets the one `roi_resolution` picks (see cad_import._note_import) '''
+    import functools
+
+    @functools.wraps(function)
+    def noted(*args, **kwargs):
+        return _cad._note_import(function(*args, **kwargs))
+
+    return noted
+
+
+@_noting_imports
 def import_model(path, units='mm', file_units=None, rev=None, cache=True, threshold=THRESHOLD, quality=64,
                  thickness=None, auto_exclude=False, exclude_threshold=1.0, exclude_quality=64, fit_tolerance=FIT_TOLERANCE):
     ''' Imports a STEP file (.step, .stp) or a triangle mesh (.stl, .obj, .ply, .3mf, .glb, .gltf, .fbx, .off, .dxf) as a list of

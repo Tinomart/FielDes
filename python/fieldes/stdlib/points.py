@@ -254,8 +254,8 @@ def sphere_surface(radius=10.0, center=(0, 0, 0)):
 
 def cylinder_surface(radius=5.0, axis='z', center=(0, 0, 0)):
     ''' The surface of an infinite cylinder along an axis: a surface, negative inside '''
-    from fieldes.stdlib.fields import radial_field
-    return Surface(radial_field(center, axis, 0.0) - radius)
+    from fieldes.stdlib.fields import _radial_distance
+    return Surface(_radial_distance(center, axis) - radius)             # (the plain distance: the radius is the cylinder's own, not the influence of a centre that is a point)
 
 
 def wave_surface(amplitude=2.0, period=10.0, axis='x', height=0.0):

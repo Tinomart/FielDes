@@ -47,7 +47,7 @@ PLACEABLE = {
     'fields': ('bend_z', 'body_from_field', 'chamfer_union', 'fillet', 'intersection_all', 'mirror_x', 'mirror_y', 'mirror_z', 'offset_by', 'offset_exact', 'repeat',
                'repeat_polar', 'round_edges', 'shell_centered', 'shell_exact', 'shell_inside', 'shell_outside', 'smooth_difference', 'smooth_intersection', 'smooth_union',
                'thicken', 'twist_z', 'union_all'),
-    'lattices': ('delaunay_lattice', 'fill', 'graph_lattice', 'lattice', 'planar_lattice', 'strut_lattice', 'surface_lattice', 'tpms', 'voronoi_lattice'),
+    'lattices': ('delaunay_lattice', 'fill', 'graph_lattice', 'lattice', 'planar_lattice', 'point_cloud', 'random_points', 'strut_lattice', 'surface_lattice', 'tpms', 'voronoi_lattice'),
     'conformal': ('lattice_surface_conform',),
     'profile': ('extrude', 'path_extrude', 'profile'),
     'curves': ('polyline', 'spline'),

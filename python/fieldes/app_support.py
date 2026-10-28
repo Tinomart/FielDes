@@ -1150,7 +1150,32 @@ def feature_near(request):
             return '{}'
         lo, hi = _shape_bounds(shape, None)
         size = max(hi[i] - lo[i] for i in range(3)) or 1.0
-        found = features.features_near(lambda points: _eval_many(shape, points), tuple(float(c) for c in r['point']), float(r['reach']), size)
+        import os
+        if not os.environ.get('FIELDES_TIMING'):
+            return json.dumps(features.features_near(lambda points: _eval_many(shape, points), tuple(float(c) for c in r['point']), float(r['reach']), size))
+        # (FIELDES_TIMING: how long the search took, and how much of it was the field read: the reads, the points in them, the time in the kernel)
+        import sys
+        import time
+        count = {'calls': 0, 'points': 0, 'seconds': 0.0}
+
+        def counted(points):
+            began = time.perf_counter()
+            out = _eval_many(shape, points)
+            count['calls'] += 1
+            count['points'] += len(points)
+            count['seconds'] += time.perf_counter() - began
+            return out
+
+        began = time.perf_counter()
+        found = features.features_near(counted, tuple(float(c) for c in r['point']), float(r['reach']), size)
+        total = time.perf_counter() - began
+        line = '[features] %s at (%.4g, %.4g, %.4g): %.0f ms, %d reads of the field (%d points, %.0f ms in the kernel); found corner %s, edge %s, circle %s, rounded %s\n' % (
+            r['var'], r['point'][0], r['point'][1], r['point'][2], 1000.0 * total, count['calls'], count['points'], 1000.0 * count['seconds'],
+            bool(found.get('corner')), bool(found.get('edge')), bool(found.get('circle')), bool(found.get('rounded')))
+        try:
+            os.write(2, line.encode('utf-8', 'replace'))                  # (the program's own stderr: the output pane of the script is not where a log is read)
+        except OSError:
+            print(line, file=sys.stderr, flush=True)
         return json.dumps(found)
     except Exception:
         return '{}'

@@ -1069,7 +1069,7 @@ A plane through `point`, positive on the side `normal` points to: a surface
 
 ### `point(x=0.0, y=0.0, z=0.0, smooth=None, radius=None, influence=None)`
 
-`influence` is how far the point reaches, in mm -- a number or a `var()`: the RADIUS of the field round it, when the point is given to `distance_to_point` or `radial_field` (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone, and those fields are the plain distance from it.
+`influence` is how far the point reaches, in mm -- a number or a `var()`: the RADIUS of the field round it, when the point is given to `distance_to_point` or `radial_field` (the distance from the sphere, or the tube, of that radius: negative inside it, 0 on it, positive outside).  A point that does not say its influence is the point alone, and those fields are the plain distance from it.  Select a point and the ring of its gizmo is its influence: `influence=var(...)` is written into the call when it has none (a point that has its position, rotation and scale written already gets it too), and the field viewer of a field made of the point stays open until its icon is clicked, and shows the gizmo of the point while it is open, so the radius is seen as the ring is dragged.  The scale is only for the points of a spline or a path: the ring of such a point is its scale, and Shift and the ring its influence.
 
 A point at (x, y, z).  Its coordinates are numbers or fields.  It is drawn as a dot (the middle point of a gizmo): click it, and its gizmo shows.
 In a `profile` or the path of a `path_extrude` it is a spline point when `smooth` is True (the curve goes smoothly through it, in the direction
@@ -1713,9 +1713,9 @@ axis, pi/2 at its equator (spherical coordinates)
 The first field to the power of the next: (a ** b) ** ... at every point (NaN where a negative value meets a
 fractional power)
 
-### `radial_field(center=(0, 0, 0), axis='z', radius=None)`
+### `radial_field(center, axis='z')`
 
-Distance from an axis through `center` (cylindrical radius, mm); the centre's coordinates may be fields.  With a `radius` -- or the influence of the point that is given as the centre, `point(x, y, z, influence=r)` -- it is the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside
+Distance from the axis through the point `center` (cylindrical radius, mm): a field made of a POINT, as `distance_to_point` is -- right-click a point, and `radial_field` is in its menu.  `center` is a `point(x, y, z)` (its coordinates may be fields), the Point class; a vector -- `(x, y, z)` -- is not a point, and `radial_field` refuses it with a message.  *Primitives > Fields > radial_field* writes the point (a model of its own, with its gizmo) and the field made of it.  The field has no radius of its own: the INFLUENCE of the point, `point(x, y, z, influence=r)`, is the radius, as it is for `distance_to_point` -- the field is then the distance from the TUBE of that radius round the axis: negative inside it (-r on the axis), 0 on it, positive outside
 
 ### `ramp(field, input_range, output_range, clamped=True)`
 
@@ -2884,17 +2884,18 @@ This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this file,
 You can obtain one at http://mozilla.org/MPL/2.0/.
 
-### `circle_center_at(shape, near, scale=None, bounds=None)`
+### `circle_center_at(shape, near, scale=None, bounds=None, influence=None)`
 
 The centre of the circular edge of `shape` nearest `near`: a point on the axis of a cylinder's rim, of a hole's edge, of the base of a cone.  The circle is read from the
 edge itself at several places round it, so it is the circle that the edge is, not one fitted to a mesh.  Raises ValueError when the edge nearest `near` is not a circle
 (a straight edge, an oval, a corner).  See the module and `corner_at`.
 
-### `corner_at(shape, near, scale=None, bounds=None, rounded=False)`
+### `corner_at(shape, near, scale=None, bounds=None, rounded=False, influence=None)`
 
 The corner of `shape` nearest `near`: a point, where three faces of the surface meet at sharp angles.
 
 near    a place on or near the surface (x, y, z) -- where the corner is looked for
+influence  how far the point reaches, in mm -- a number or a `var()`: the radius of a field made of it (`radial_field`, `distance_to_point`), as for `point(x, y, z, influence=r)`.  Select the point and the ring of its gizmo drags it (the point is locked to its body, so the ring is all its gizmo has); the same for `edge_point_at` and `circle_center_at`
 scale   how far round `near` is looked, in mm (default: 3 % of the body)
 bounds  ((x0, y0, z0), (x1, y1, z1)) of the shape, if it cannot be found
 rounded True: a corner that the rounding of three edges replaced is found too -- the point where the planes of the flat faces round it meet
@@ -2906,7 +2907,7 @@ Raises ValueError when there is no corner round `near`.  See the module.
 The straight edge of `shape` nearest `near`: a polyline of two points, from the corner at one end of the edge to the corner at the other.  Raises ValueError
 when there is no edge round `near`, or when it curves (a circle is not a line: `edge_point_at` gives a point of it).  See the module and `corner_at`.
 
-### `edge_point_at(shape, near, scale=None, bounds=None, rounded=False)`
+### `edge_point_at(shape, near, scale=None, bounds=None, rounded=False, influence=None)`
 
 The point of an edge of `shape` nearest `near`: a point on the line where two faces meet at a sharp angle -- any edge, straight or curved (the rim of a
 cylinder too).  Where a corner is nearer, the corner.  With rounded=True an edge that a rounding replaced is found too: the point of the line where the planes of the

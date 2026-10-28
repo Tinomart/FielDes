@@ -1021,6 +1021,7 @@
  "Key numbers as text (.txt)": "主な数値をテキストで (.txt)",
  "This result has no key numbers to write": "この結果には書き出す主な数値がありません",
  "A field: how far every place is from this point": "フィールド：この点から各場所までの距離",
+ "A field: how far every place is from the axis through this point": "フィールド：この点を通る軸から各場所までの距離",
  "The middle of the model's bounding box, as a point": "モデルのバウンディングボックスの中心を点として作成します",
  "The smallest box, aligned with the axes, that holds the model: a body of its own": "モデルを含む、軸に平行な最小のボックス: 独立したボディとして作成します",
  "Python": "Python",
@@ -1892,5 +1893,7 @@
  "Nice. The cells are closed by the surface now: nothing is cut off, and the surface is a net of beams.": "いいですね。表面がセルを閉じるようになり、何も切り落とされず、表面は梁のネットになりました。",
  "Nice. A foam that does not repeat. Look at its surface: the block cuts the cells off there, and they are open.": "いいですね。繰り返さないフォームができました。その表面を見てください。ブロックがそこでセルを切り落とし、セルが開いています。",
  "Look at the surface of the foam: the block cuts its cells off, so they are open there. In the call of random_points_1 change surface=False to surface=True: points are put on the surface too, and they are cells like the others that lie against the surface: the surface closes the cells, nothing is cut off, and the surface is a net of beams.": "フォームの表面を見てください。ブロックがセルを切り落とすため、そこではセルが開いています。random_points_1 の呼び出しで surface=False を surface=True に変更します。表面にも点が置かれ、それらは表面に接する、ほかと同じセルになります。表面がセルを閉じるので、何も切り落とされず、表面は梁のネットになります。",
- "A set of points of your own, exactly where you put them: the points of the script, each dragged to its place by its gizmo.  Select at least five points and choose it; a foam or a truss is made around the set with voronoi_lattice or delaunay_lattice": "自分の点の集合を、置いた場所そのままに作ります。スクリプトの点を、それぞれのギズモで所定の位置へドラッグします。点を5つ以上選んで選択してください。voronoi_lattice または delaunay_lattice で、その集合のまわりに発泡体またはトラスができます"
+ "A set of points of your own, exactly where you put them: the points of the script, each dragged to its place by its gizmo.  Select at least five points and choose it; a foam or a truss is made around the set with voronoi_lattice or delaunay_lattice": "自分の点の集合を、置いた場所そのままに作ります。スクリプトの点を、それぞれのギズモで所定の位置へドラッグします。点を5つ以上選んで選択してください。voronoi_lattice または delaunay_lattice で、その集合のまわりに発泡体またはトラスができます",
+"A field: how far every place is from the axis through a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: a new point to drag": "フィールド：各位置が点を通る軸からどれだけ離れているか -- 半径は点の影響値です。点を選択している場合：その点の上に作成されます。選択していない場合：ドラッグできる新しい点",
+"A field: how far every place is from a point -- its radius is the influence of the point.  With a point selected: made on that point.  With none: a new point to drag": "フィールド：各位置が点からどれだけ離れているか -- 半径は点の影響値です。点を選択している場合：その点の上に作成されます。選択していない場合：ドラッグできる新しい点"
 }

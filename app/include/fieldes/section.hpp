@@ -114,8 +114,8 @@ struct FieldSource
 };
 
 /*  The colour range (lo, hi) of a field source: its values on a coarse grid over the region, without the extreme one percent
- *  at each end  */
-void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi);
+ *  at each end -- and the value at `anchor` (where the field is about: the point of a radius, whose few samples the percentile would cut off), when it is given  */
+void autoColorRange(FieldSource& src, QVector3D lo, QVector3D hi, const QVector3D* anchor = nullptr);
 
 /*
  *  Samples min(shape values) over the plane (the union of what is shown)

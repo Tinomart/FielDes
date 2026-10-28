@@ -291,6 +291,9 @@ public slots:
      *  variable's name or "line:N" -- is the selection, which opens its viewer; with `toggle` (Ctrl) it joins the selection or leaves it  */
     void selectFieldKey(const QString& key, bool toggle);
 
+    /*  The fields whose viewers are open (their keys): the points they are made of show their gizmos while they are, and are made ready to be dragged  */
+    void setOpenFieldKeys(const QStringList& keys);
+
     /*  A selection rectangle that holds the icons of fields: those fields are the selection (with `add`, they join it)  */
     void selectFieldKeys(const QStringList& keys, bool add);
 
@@ -654,6 +657,8 @@ protected:
     void removeCallArgument(const QJsonArray& span, QList<TextEdit>& edits) const;
     /*  Whether the numbers of a model's gizmo are written in the script: its position, rotation or scale is made of var()s  */
     static bool placementHasNumbers(const QJsonObject& target);
+    // A point of the call `point(...)` whose call has no `influence=var(...)` yet: selecting it writes the number (or turns a typed one into a var()), also when its other gizmo numbers are written
+    bool pointLacksInfluence(const QJsonObject& target) const;
     /*  A click on a placement row that is not written (or the number of the gizmo of a model that has none): the model is made ready for its gizmo, and the argument is selected
      *  in the code once the script has run  */
     void writePlacement(const QJsonObject& target, const QString& argument);
@@ -771,6 +776,8 @@ protected:
     void updateProvisional();
     void updateFieldView();
     QString m_fieldKeyShown;
+    QStringList m_openFieldKeys;                        // (the fields whose viewers are open, by key: the points they are made of show their gizmos)
+    QList<Model> fieldPointModels() const;
     /*  The lines that make a model's surfaces draggable (a handles() statement), indented like its definition; empty (and
      *  the reason) when it cannot be done.  addHandles writes them (the model's menu, for a shape too big to get them
      *  by being selected)  */

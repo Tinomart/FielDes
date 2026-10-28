@@ -290,6 +290,29 @@ public:
     bool dotPosition(QVector3D& p) const;
 
     /*
+     *  A point that is found on a body (corner_at, edge_point_at) says how it moves with the numbers of the script, to first order: `j` for one unit of the number `id`, which was `v0` where the point
+     *  is.  The dot is drawn where the point is plus the terms, so that it follows a surface that is pulled in real time, before the script has run again and said where it is for good
+     */
+    struct LiveTerm
+    {
+        libfive::Tree::Id id = libfive::Tree::Id();
+        QVector3D j;
+        float v0 = 0;
+    };
+    void setLiveTerms(std::vector<LiveTerm> terms) { m_liveTerms = std::move(terms); m_liveNow.clear(); }
+    size_t liveTermCount() const { return m_liveTerms.size(); }
+    // The numbers a pulled surface has now, for the terms: kept by the point itself -- the list of numbers the shape holds is the one of the run that made it, and does not have the ones that a later run
+    // made, which a model that was selected and written has (the user, 2026-10-28: his pyramid's corner stayed behind while the plain one followed)
+    void giveLiveNumbers(const std::map<libfive::Tree::Id, float>& numbers)
+    {
+        for (const LiveTerm& t : m_liveTerms)
+        {
+            const auto now = numbers.find(t.id);
+            if (now != numbers.end()) m_liveNow[t.id] = now->second;
+        }
+    }
+
+    /*
      *  A name given by the app (fieldes.app.viewport): the viewport of the app window draws it over the model, as a card in the style of the
      *  labels of boundary conditions.  `shown`: the model is one the app's viewport shows (the others the script displays are not shown there)
      */
@@ -1146,6 +1169,8 @@ protected:
     bool m_isPoint = false;
     bool m_hasPointPos = false;
     QVector3D m_pointPos;
+    std::vector<LiveTerm> m_liveTerms;
+    std::map<libfive::Tree::Id, float> m_liveNow;
     QString m_appLabel;
     bool m_appShown = false;
 

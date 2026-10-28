@@ -4206,6 +4206,14 @@ bool pointTakesInfluence(const QJsonObject& it)
     return it["type"].toString() == "point" && it["callee"].toString() == "point";
 }
 
+// A point that is FOUND on a body -- `corner_at`, `edge_point_at`, `circle_center_at` -- is locked to it: no position, turn or scale to write, but an influence all the same -- the radius of a field made of it,
+// and the ring of its gizmo drags it (the user, 2026-10-28: "EVERY POINT AUTOMATICALLY CHANGES INFLUENCE").  Only the influence is written into its call
+bool foundPointTakesInfluence(const QJsonObject& it)
+{
+    const QString c = it["callee"].toString();
+    return it["type"].toString() == "point" && (c == "corner_at" || c == "edge_point_at" || c == "circle_center_at");
+}
+
 }   // anonymous namespace
 
 QJsonObject ScenePanel::selectedTarget() const
@@ -4467,7 +4475,7 @@ void ScenePanel::applyModes(const QList<QJsonObject>& targets, const QString& ne
         if (t["kind"].toString() == "display" || !t.contains("var")) continue;
         m_gizmoModes[t["var"].toString()] = next;
         changed << t;
-        if (next != "never" && !placementHasNumbers(t) && !t["no_gizmo"].toBool() && !t.contains("locked") && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool())
+        if (next != "never" && (!placementHasNumbers(t) || pointLacksInfluence(t)) && !t["no_gizmo"].toBool() && !t.contains("locked") && t["visible"].toBool() && !t["failed"].toBool() && !t["reassigned"].toBool())
         {
             if (placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t)), QStringList(), edits, imports)) names << t["var"].toString();
         }
@@ -4590,6 +4598,29 @@ bool ScenePanel::placementHasNumbers(const QJsonObject& target)
     return target["placement"].toObject()["has_numbers"].toBool();
 }
 
+// Every point changes its influence with the ring of its gizmo -- the radius of the field it is the point of, the strength a spline leaves it with -- and its scale is only for the points of a path (the user,
+// 2026-10-28: "EVERY POINT AUTOMATICALLY FUCKING CHANGES INFLUENCE AND SCALE IS ONLY CHANGABLE FOR FUCKING PATH EXTRUDE POINTS").  The number is written when the point is selected: a point that has its
+// position, rotation and scale written already -- the point a menu makes, a point of an older script -- got none, and its ring dragged the scale
+bool ScenePanel::pointLacksInfluence(const QJsonObject& target) const
+{
+    if (!pointTakesInfluence(target) && !foundPointTakesInfluence(target)) return false;
+    const QJsonArray call = target["placement"].toObject()["call"].toArray();
+    if (call.size() != 4) return false;                                     // (no call to write it in)
+    static const QString kNumber = QStringLiteral(R"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)");
+    static const QRegularExpression keyword(QStringLiteral(R"(\binfluence\s*=)")), isVar(QStringLiteral(R"(\binfluence\s*=\s*var\()")),
+                                    typed(QStringLiteral(R"(\binfluence\s*=\s*%1(?=\s*[,)#]|\s*$))").arg(kNumber));
+    bool said = false;
+    for (int l = call[0].toInt() - 1; l <= call[2].toInt() - 1; ++l)
+    {
+        const QString line = lineText(l);
+        if (isVar.match(line).hasMatch()) return false;
+        if (!keyword.match(line).hasMatch()) continue;
+        said = true;
+        if (typed.match(line).hasMatch()) return true;                      // (a number that is typed: it becomes a var() with its value)
+    }
+    return !said;                                                           // (an influence that is an expression is the script's own)
+}
+
 void ScenePanel::appendCallArguments(const QJsonArray& call, const QStringList& args, QList<TextEdit>& edits) const
 {
     if (call.size() != 4 || args.isEmpty()) return;
@@ -4674,12 +4705,50 @@ bool ScenePanel::placementEdits(const QJsonObject& target, const QList<QPair<QSt
     if (!lineIs(target["line"].toInt() - 1, var, "definition")) return false;
     if (statement && !lineIs(pl["line"].toInt() - 1, var, "place")) return false;
     QStringList fresh;                                      // (the arguments that are not in the text yet)
+    static const QString kNumber = QStringLiteral(R"([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)");
+    // A point that says its influence already -- `point(x, y, z, influence=3)` -- keeps the one keyword it has: the number becomes a var() with its value (the ring of the gizmo drags it), and a
+    // second `influence=` is not written (a call with two stops with a SyntaxError: the user's point, 2026-10-28)
+    auto influenceWritten = [&]() {
+        const QJsonArray call = pl["call"].toArray();
+        if (call.size() != 4) return false;
+        const QRegularExpression keyword(QStringLiteral(R"(\binfluence\s*=\s*)")), value(QStringLiteral(R"(\binfluence\s*=\s*(%1)(?=\s*[,)#]|\s*$))").arg(kNumber));
+        for (int l = call[0].toInt() - 1; l <= call[2].toInt() - 1; ++l)
+        {
+            const QString line = lineText(l);
+            if (!keyword.match(line).hasMatch()) continue;
+            const auto m = value.match(line);
+            if (m.hasMatch()) edits << TextEdit{l, int(m.capturedStart(1)), l, int(m.capturedEnd(1)), "var(" + m.captured(1) + ")"};
+            return true;
+        }
+        return false;
+    };
     for (const auto& s : set)
     {
         if (written.contains(s.first))
         {
             const auto span = written[s.first].toObject()["span"].toArray();
-            if (span.size() == 4) edits << TextEdit{span[0].toInt() - 1, span[1].toInt(), span[2].toInt() - 1, span[3].toInt(), s.second};
+            if (span.size() == 4)
+            {
+                // What is written there is what the argument is: numbers that are typed -- `position=(-1, -1, 1)` -- become the numbers of the gizmo with their values kept, `(var(-1), var(-1), var(1))`,
+                // and not the defaults (the position would be lost: the user's pyramid, 2026-10-28); numbers that are var()s already stay
+                QString text = s.second;
+                const int l0 = span[0].toInt() - 1, c0 = span[1].toInt(), l1 = span[2].toInt() - 1, c1 = span[3].toInt();
+                if (l0 == l1 && c1 > c0)
+                {
+                    const QString old = lineText(l0).mid(c0, c1 - c0).trimmed();
+                    if (old.contains(QStringLiteral("var("))) continue;
+                    const QRegularExpression triple(QStringLiteral(R"(^\(\s*(%1)\s*,\s*(%1)\s*,\s*(%1)\s*\)$)").arg(kNumber)), one(QStringLiteral("^(%1)$").arg(kNumber));
+                    const auto t = triple.match(old);
+                    const auto o = one.match(old);
+                    if (t.hasMatch()) text = "(var(" + t.captured(1) + "), var(" + t.captured(2) + "), var(" + t.captured(3) + "))";
+                    else if (o.hasMatch() && s.first == "scale") text = "(var(" + o.captured(1) + "), var(" + o.captured(1) + "), var(" + o.captured(1) + "))";
+                }
+                edits << TextEdit{l0, c0, l1, c1, text};
+            }
+        }
+        else if (s.first == "influence" && influenceWritten())
+        {
+            // (written already: not asked for again)
         }
         else fresh << s.first + "=" + s.second;
     }
@@ -4699,7 +4768,7 @@ bool ScenePanel::placementEdits(const QJsonObject& target, const QList<QPair<QSt
         if (written.contains(name)) removeCallArgument(written[name].toObject()["arg_span"].toArray(), edits);
     }
     if (fresh.isEmpty()) return true;
-    if (statement || pl["placeable"].toBool())
+    if (statement || pl["placeable"].toBool() || foundPointTakesInfluence(target))
     {
         appendCallArguments(pl["call"].toArray(), fresh, edits);
         return true;
@@ -4776,7 +4845,46 @@ void ScenePanel::announceGizmoModes()
 
 int ScenePanel::gizmoModeOfLine(int line0) const
 {
-    return m_modeByLine.value(line0, -1);
+    const int own = m_modeByLine.value(line0, -1);
+    if (own == 1) return own;                       // (a gizmo that its button hides stays hidden)
+    // The point an open field is made of shows its gizmo as long as the field is open -- that is how the field is controlled: the ring is its radius (the user, 2026-10-28: "opening a field that is attached to a
+    // point should automatically also show the gizmo of the point. Because thats how you control it")
+    if (!m_openFieldKeys.isEmpty())
+        for (const Model& m : fieldPointModels())
+            if (linesOf(m.item).contains(line0)) return 2;           // (the lines that display the point: the shape of it is known by the one that shows it)
+    return own;
+}
+
+// The points the open fields are made of -- a field that is made of a `point(...)`: the point of `radial_field`, of `distance_to_point` --, as models
+QList<ScenePanel::Model> ScenePanel::fieldPointModels() const
+{
+    QList<Model> out;
+    if (m_openFieldKeys.isEmpty()) return out;
+    for (const auto v : m_scene["items"].toArray())
+    {
+        const QJsonObject f = v.toObject();
+        if (f["type"].toString() != "field" || f["failed"].toBool()) continue;
+        const QString key = f.contains("var") ? f["var"].toString() : "line:" + QString::number(f["line"].toInt());
+        if (!m_openFieldKeys.contains(key)) continue;
+        for (const QString& input : directInputs(f))
+        {
+            const QJsonObject p = itemForVar(input);
+            if (p.isEmpty() || (!pointTakesInfluence(p) && !foundPointTakesInfluence(p)) || p["failed"].toBool() || !p["visible"].toBool(true)) continue;
+            bool listed = false;
+            for (const Model& m : out) listed = listed || keyOf(m.item) == keyOf(p);
+            if (!listed) out << Model{p, QString(), 0};
+        }
+    }
+    return out;
+}
+
+void ScenePanel::setOpenFieldKeys(const QStringList& keys)
+{
+    if (keys == m_openFieldKeys) return;
+    m_openFieldKeys = keys;
+    // (the points of the fields that are open are made ready to be dragged -- their numbers, and their influence, are written -- and show their gizmos; the ones of a field that closed hide theirs)
+    m_prepareTimer.start();
+    emit(gizmoModesChanged());
 }
 
 QString ScenePanel::handlesBlock(const QJsonObject& target, QString* why, bool* later) const
@@ -7337,6 +7445,7 @@ void ScenePanel::updateFieldView()
 {
     // The selected models that are fields: the field viewer shows them (a field has no body to draw: it has a value at every point,
     // and the viewer colours a disc by that value); with several, a menu in it chooses the one shown
+    // (selecting a field opens its viewer; letting it go does not close it -- only a click on its icon does: the view keeps what is open, see View::openFieldsAlso)
     QStringList keys;
     for (const auto& m : selectedModels())
     {
@@ -7381,7 +7490,14 @@ void ScenePanel::prepareSelection()
     // moves what has numbers to move it
     // by -- the `position=`, `rotation=` and `scale=` arguments of its call, which a model that has none gets too (written when
     // it has no line).  Nothing else about the model changes
-    const auto models = selectedModels();
+    auto models = selectedModels();
+    // (and the points the open fields are made of: their gizmos are shown, so they are made ready to be dragged as if they were selected -- see gizmoModeOfLine)
+    for (const Model& fp : fieldPointModels())
+    {
+        bool listed = false;
+        for (const Model& m : models) listed = listed || keyOf(m.item) == keyOf(fp.item);
+        if (!listed) models << fp;
+    }
     // (a selection of several with a locked model in it is not moved or edited: nothing is written for it)
     if (models.isEmpty() || lockedInMulti())
     {
@@ -7417,12 +7533,19 @@ void ScenePanel::prepareSelection()
     // are for the models made of it), and it has no gizmo line with numbers or no way of pulling its surfaces yet
     const QString allText = m_source ? m_source() : QString();
     auto prepares = [&](const QJsonObject& t, bool* gizmoOut, bool* handlesOut) {
+        // (a point found on a body is given its influence, and nothing else -- see foundPointTakesInfluence)
+        if (foundPointTakesInfluence(t) && pointLacksInfluence(t) && t.contains("var") && !t["failed"].toBool() && !t["reassigned"].toBool() && !t.contains("locked") && t["visible"].toBool())
+        {
+            *gizmoOut = true;
+            *handlesOut = false;
+            return true;
+        }
         if (t["kind"].toString() == "display" || t["failed"].toBool() || t["reassigned"].toBool() ||
             t["no_gizmo"].toBool() || !t.contains("var") || t.contains("locked") || !t["visible"].toBool() ||
             t["type"].toString() == "field")                // (a field is not drawn: it has nothing to drag)
             return false;
         const QString var = t["var"].toString();
-        bool needGizmo = !placementHasNumbers(t);
+        bool needGizmo = !placementHasNumbers(t) || pointLacksInfluence(t);
         // (the scene may be a run behind the text: a placement that is there already is never written twice)
         const QJsonObject pl = t["placement"].toObject();
         if (needGizmo && pl["form"].toString("none") == "none")
@@ -7582,7 +7705,9 @@ void ScenePanel::prepareSelection()
         if (needGizmo)
         {
             const bool together = statement && !hasHandles;             // (the handles and the statement are one edit: they stand in that order)
-            if (!placementEdits(t, gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t)), QStringList(), edits, imports, together ? handlesText : QString()))
+            const QList<QPair<QString, QString>> wanted = foundPointTakesInfluence(t) ? QList<QPair<QString, QString>>{qMakePair(QString("influence"), QString("var(1)"))}
+                                                                                      : gizmoArguments(!linkedModel(t) && !symmetryModel(t), pointTakesInfluence(t));
+            if (!placementEdits(t, wanted, QStringList(), edits, imports, together ? handlesText : QString()))
             {
                 refuseOutOfDate();
                 return;
@@ -8927,6 +9052,30 @@ ScenePanel::OnPlan ScenePanel::planDropOn(const QList<QJsonObject>& models, cons
             return p;
         }
     }
+    // A model that the call holds by a reference only (`# shadow: n` in its statement), by a model that is no call's own yet, and is dropped onto that call is the call's own now: its row moves in.  A
+    // Ctrl+drag changes nothing, it is a reference already.  This goes before the rules of each kind of model below, so that none of them answers "changes nothing" to it -- the point's did, with
+    // "'corner_1' is already the point 'radial_field_1' is given" (the user, 2026-10-28: "I thought that was a universally implemented feature? Did you just hard code it in for every single situation?")
+    {
+        QStringList marked, held;
+        for (const auto sv : target["shadows"].toArray()) marked << sv.toString();
+        for (const auto iv : target["inputs"].toArray())
+        {
+            const auto in = iv.toObject();
+            if (in["deep"].toBool() || in.contains("keyword")) continue;
+            held << in["name"].toString();
+        }
+        bool onlyReference = !models.isEmpty();
+        for (const auto& m : models)
+            onlyReference = onlyReference && held.contains(m["var"].toString()) && marked.contains(m["var"].toString()) && !m.contains("owner");
+        if (onlyReference)
+        {
+            p.ok = true;
+            p.own = true;
+            p.what = (names.size() > 1 ? T("Move %1 into %2: they are its own now") : T("Move %1 into %2: it is its own now"))
+                         .arg(names.join(", "), tname);
+            return p;
+        }
+    }
     // (dropped on a statement that has placeholders: a model takes the first of them.  Conditions go in the inputs of their kinds -- the
     // placeholders among them -- one kind at a time, or all at once)
     bool onlyConditions = !models.isEmpty();
@@ -9224,20 +9373,7 @@ ScenePanel::OnPlan ScenePanel::planDropOn(const QList<QJsonObject>& models, cons
     {
         if (have.contains(n))
         {
-            // Held by a reference only (`# shadow: n` in its statement), by a model that is no call's own yet: dragged onto the call it
-            // is the call's own now (its row moves in); a Ctrl+drag changes nothing, it is a reference already
-            bool onlyReference = !models.isEmpty();
-            QStringList marked;
-            for (const auto sv : target["shadows"].toArray()) marked << sv.toString();
-            for (const auto& m : models) onlyReference = onlyReference && marked.contains(m["var"].toString()) && !m.contains("owner");
-            if (onlyReference)
-            {
-                p.ok = true;
-                p.own = true;
-                p.what = (names.size() > 1 ? T("Move %1 into %2: they are its own now") : T("Move %1 into %2: it is its own now"))
-                             .arg(names.join(", "), tname);
-                return p;
-            }
+            // (a model held by a reference only was dealt with above: it is the call's own now)
             p.why = T("'%1' is already one of the models '%2' is given, so dropping it here changes nothing. To change its "
                     "place among them, drop it between two of them.").arg(n, tname);
             return p;

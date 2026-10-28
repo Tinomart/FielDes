@@ -88,7 +88,7 @@ Both are in the right-click menu of the viewport: *Primitives → New point* and
 | | |
 |---|---|
 | `x_field()`, `y_field()`, `z_field()` | the coordinates (mm) |
-| `radial_field(center, axis, radius=None)` | distance from an axis (cylindrical radius); with a radius -- or the influence of a point given as the centre -- the distance from the tube of that radius round the axis: negative inside it |
+| `radial_field(center, axis)` | distance from the axis through a point (cylindrical radius); right-click a point to make it, as for `distance_to_point`; the influence of the point is its radius -- the distance from the tube of that radius round the axis: negative inside it |
 | `angle_field(center, axis)` | angle around an axis, −π..π |
 | `polar_field(center, axis)` | angle from an axis, 0..π (spherical coordinates) |
 

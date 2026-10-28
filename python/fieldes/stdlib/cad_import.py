@@ -587,6 +587,36 @@ def roi_resolution(*items, cells=150, part_cells=64, detail_cells=4.0,
     return r_scene
 
 
+# What a script that imports a model and says nothing of the render resolution gets: the resolution `roi_resolution` picks for the models it imported -- the one the import used to write into
+# the script as `view.set_resolution(roi_resolution(...))`.  Without it the scene is meshed at the default of 10 per mm, which for a bracket 180 mm long is 199 seconds of rendering (window t1,
+# 2026-10-28, after the import stopped writing the line: "When importing a model this code about the ROI and res should no longer be written"): the number is the program's to pick, and the
+# script does not say it.  A script that sets a resolution itself -- before or after the import -- keeps it.
+_run_imports = []
+_auto_resolution = {'value': None}
+
+
+def _begin_run():
+    ''' A script begins: it has imported nothing yet (the application has made the render settings empty) '''
+    del _run_imports[:]
+    _auto_resolution['value'] = None
+
+
+def _note_import(result):
+    ''' `import_model` gave `result`: the resolution is picked for everything that was imported by now, unless the script has said one of its own '''
+    _run_imports.append(result)
+    try:
+        import _fieldes_host as host
+        current = getattr(host, '__resolution', None)
+        ours = _auto_resolution['value']
+        if current is None or (ours is not None and abs(float(current) - ours) < 1e-12):
+            value = float(roi_resolution(*_run_imports))
+            host.set_resolution(value)
+            _auto_resolution['value'] = value
+    except Exception:
+        pass                                    # (outside the application, or a model without a size: the default stays)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Cache: a plain Python file next to the STEP file
 # ---------------------------------------------------------------------------

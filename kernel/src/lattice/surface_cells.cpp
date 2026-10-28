@@ -2035,6 +2035,14 @@ bool selectSurfacePatch(const Tree& body, const std::map<Tree::Id, float>& vars,
             double c, limit = cosLimit;
             if (mode == 0)
                 c = nq.dot(nSeed);
+            else if (angleDegrees >= 89.999)
+            {
+                // The largest angle in the smooth mode puts no limit on how tightly the surface bends -- the side of a cone, a cylinder or a sphere is one surface however small it is (a limit of 90
+                // degrees in 10 mm stops a walk round a cone a millimetre wide after a few steps: the user, 2026-10-28, "You seemingly cannot select a full cone surface, even when using an
+                // angle of 90 degrees") -- and stops only at a crease: a sample is left out when the surface turns by 89 degrees or more from the sample it was reached from
+                limit = std::cos(89.0 * M_PI / 180.0);
+                c = nq.dot(out.normals[parent[i]]);
+            }
             else
             {
                 // the sample about kSmoothLength back along the walk (or the seed, if the walk is not that long yet): the surface may have

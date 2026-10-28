@@ -123,7 +123,7 @@ the system's. The installer was tried under WSL (install, upgrade over it, refus
 **The one thing a package cannot bring is the C library.** A program asks for a glibc as new as the one it was built with, so a package built on a new system (Fedora 44, glibc 2.43)
 opens only on a system that new. The script says at its end which glibc the package asks for (`it needs GLIBC_2.35 or newer` for the packages of a release); to open on nearly everything **build on an old
 system** -- Ubuntu 22.04 (glibc 2.35) is what `.github/workflows/release.yml` uses: run it on GitHub (Actions → Release builds → Run workflow, or push a tag
-such as `v1.1.0`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. The same script on an Ubuntu 22.04 of your own
+such as `v1.1.1`), and the Linux package comes out as an artifact, after a check that starts it in a bare Ubuntu with only a virtual display. The same script on an Ubuntu 22.04 of your own
 (a WSL distribution does) makes the same packages. Install once:
 
 ```
@@ -193,4 +193,4 @@ to a text file of commands (`wait <ms>`, `action <name>`, `grab <file.png>`, `qu
 documentation are made. Among the commands: `treedump <file>` (the model tree as indented text, with each row's kind),
 `treedrop <source> > <target> > <above|on|below|end>` (a drag and drop in the tree, sent as the mouse events of a hand),
 `treerename <row> > <name>` (rename by double-click, or `f2`), `setting <fn> <index> <text>` (a render setting's field), `tour ...`
-(the guided tour, step by step), `treeclick`, `viewmouse`, `popup` (the context menus), `grabmenus`, `grabwidget`, `grabcrop`, `outdump` (the output pane), `blocksfolder <path>`.
+(the guided tour, step by step), `treeclick`, `viewmouse`, `snapcheck [n]` (the snapping mode: the cursor put on each junction the lattice picture draws, and what the pick gives there), `popup` (the context menus), `grabmenus`, `grabwidget`, `grabcrop`, `outdump` (the output pane), `blocksfolder <path>`.

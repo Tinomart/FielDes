@@ -1152,6 +1152,7 @@ void View::paintOverlay(QPainter& painter)
     drawSymmetry(painter);
     drawFieldIcons(painter);
     drawOutlines(painter);
+    if (show_axes) drawOriginMarker(painter);
     drawMarkers(painter);
     drawPointDots(painter);
     drawGizmo(painter);
@@ -2124,6 +2125,20 @@ void View::mouseMoveEvent(QMouseEvent* event)
                          double(cursor_pos.x()), double(cursor_pos.y()), double(cursor_pos.z()), double(sol.first));
             for (const auto& kv : sol.second) std::fprintf(stderr, " %.4g", double(kv.second));
             std::fprintf(stderr, "\n");
+        }
+        // (the dots of the points that are found on the body -- a corner, a point of an edge -- are carried by the numbers that were just given to the shapes: drawn again at once, whether or not
+        // a shape has to be rendered again)
+        for (auto& s : shapes) s->giveLiveNumbers(sol.second);
+        update();
+        m_overlay->update();
+        if (timing)
+        {
+            for (auto& s : shapes)
+            {
+                QVector3D at;
+                if (s->isPoint() && s->liveTermCount() > 0 && s->dotPosition(at))
+                    std::fprintf(stderr, "[live-dot] the point of line %d is carried by %zu numbers: its dot is at (%.4f, %.4f, %.4f)\n", s->sourceLine() + 1, s->liveTermCount(), double(at.x()), double(at.y()), double(at.z()));
+            }
         }
         if (changed)
         {
@@ -3240,6 +3255,13 @@ float View::snappedAlong(const QVector3D& from, const QVector3D& dir, float dist
     return std::round(distance / step) * step;
 }
 
+// How far from the cursor, in pixels, the spotlight of the snapping lattice reaches -- and the pick with it: the junction that the spotlight lights the strongest is the one that is marked (the user, 2026-10-28:
+// "the junction is not recognized as the closest one"; with the pick's own limit at forty pixels, a cursor between junctions lit one that the mark then did not go to)
+static double snapSpotRadius(int width, int height)
+{
+    return std::max(56.0, std::min(96.0, 0.075 * double(std::min(width, height))));
+}
+
 // The lattice node that the cursor is over: the one nearest to the cursor on the screen, between the nearest and the farthest rows of the lattice that can be picked (see renderSnapLattice).  What is
 // put down by a click, and what is hovered, goes to what is SEEN -- near the viewport as far from it --, and not to one plane through the middle of the scene (2026-10-27, the user: "You cant seem to
 // place anything close to the viewport and only far away")
@@ -3251,12 +3273,17 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
     const int W = width(), H = height();
     if (!(step > 0) || !(scale > 0) || W < 8 || H < 8) return QVector3D();
     constexpr float eyeV = 4.0f;
+    const float spot = float(snapSpotRadius(W, H));
     const QVector3D a = toModelPos(pos, -1.0f), b = toModelPos(pos, 1.0f);
     QVector3D u = b - a;
     if (!(u.lengthSquared() > 1e-12f)) return QVector3D();
     u.normalize();
     const QMatrix4x4 V = camera.view();
-    const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
+    const QMatrix4x4 viewBack = V.inverted();
+    const QVector3D eye = viewBack.map(QVector3D(0, 0, -eyeV));
+    // The line of sight runs away from the viewer.  Seen in perspective, the far end of the line that the cursor unprojects to lies BEHIND the viewer (the depth of the far plane is past the place where the
+    // perspective divides by nothing), so b - a runs toward the viewer and every node that is drawn lay at a negative depth: nothing was found in a perspective view at all
+    if (QVector3D::dotProduct(u, viewBack.map(QVector3D(0, 0, 1)) - viewBack.map(QVector3D(0, 0, 0))) < 0.0f) u = -u;
     const QVector3D origin = a + u * QVector3D::dotProduct(eye - a, u);                  // (the line of sight, from where the viewer is)
     const float tNear = m_snapSlabValid ? m_snapSlabNear : 0.25f;
     const float tFar = m_snapSlabValid ? m_snapSlabFar : std::max(1.0f, float(m_snap.distance) / 100.0f);
@@ -3265,8 +3292,16 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
     for (int k = 1; k < 3; ++k)
         if (std::fabs(u[k]) > std::fabs(u[ax])) ax = k;
     if (std::fabs(u[ax]) < 1e-4f) return QVector3D();
+    // A node is in the slice the way the picture has it: by its distance from the place of the viewer (the picture draws the nodes between two spheres round that place).  Its depth along this line of sight is
+    // not that distance: toward the edge of the picture a node is farther from the viewer than it is deep, so a test of the depth leaves out the drawn junctions at the near limit and the picture shows a
+    // junction that cannot be picked (the user, 2026-10-28: "The grid issue is not fixed" -- the cursor on a lit junction, the mark on a node of the plane through the origin, 70 pixels off)
+    const float footSquared = (origin - eye).lengthSquared();
+    const float nearSquared = dNear * dNear, farSquared = dFar * dFar;
+    if (farSquared < footSquared) return QVector3D();
+    // (the depths along the line, from where it passes the viewer, at which a node can be in the slice: two steps more at each end, for the nodes round the one that is nearest the line)
+    const float tLo = std::max(0.0f, std::sqrt(std::max(0.0f, nearSquared - footSquared)) - 2.0f * step), tHi = std::sqrt(farSquared - footSquared) + 2.0f * step;
     // The planes of the lattice across the axis the line of sight goes along most, between the two limits, from the nearer one: on each, the node nearest the line is looked at
-    const float c0 = origin[ax] + u[ax] * dNear, c1 = origin[ax] + u[ax] * dFar;
+    const float c0 = origin[ax] + u[ax] * tLo, c1 = origin[ax] + u[ax] * tHi;
     qint64 first = qint64(std::ceil(std::min(c0, c1) / step - 1e-4)), last = qint64(std::floor(std::max(c0, c1) / step + 1e-4));
     const bool up = u[ax] > 0;
     if (last - first > 4000)
@@ -3285,24 +3320,35 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
     {
         const qint64 m = up ? first + n : last - n;
         const float t = (float(m) * step - origin[ax]) / u[ax];
-        if (t < dNear || t > dFar) continue;
+        if (t < tLo || t > tHi) continue;
         const QVector3D p = origin + u * t;
-        QVector3D node(std::round(p.x() / step) * step, std::round(p.y() / step) * step, std::round(p.z() / step) * step);
-        node[ax] = float(m) * step;
-        const QVector3D v = node - origin;
-        const float along = QVector3D::dotProduct(v, u);
-        if (along < dNear || along > dFar) continue;
-        if (V.map(node).z() + eyeV < 1.0f) continue;                                      // (a quarter of the way from the viewer at least: nearer is no line of the picture)
-        const QPointF drawn = toScreen(node);
-        const float pixels = float(std::hypot(drawn.x() - double(pos.x()), drawn.y() - double(pos.y())));
-        if (!(pixels < 40.0f)) continue;
-        if (m_snapStickValid && (node - m_snapStick).lengthSquared() < 1e-6f) { stickFound = true; stickPixels = pixels; }
-        if (!found || pixels < bestPixels - 0.5f)
-        {
-            found = true;
-            bestPixels = pixels;
-            best = node;
-        }
+        const QVector3D base(std::round(p.x() / step) * step, std::round(p.y() / step) * step, std::round(p.z() / step) * step);
+        const int a1 = (ax + 1) % 3, a2 = (ax + 2) % 3;
+        // The nodes of this plane round the one that is nearest the line IN SPACE -- three by three of them: the node that is nearest on the SCREEN is not always that one.  Seen at a slant, the squares of a
+        // plane are parallelograms, and the junction that is under the cursor can be a neighbour of the one that is nearest the line (the user, 2026-10-28: "the junction is not recognized as the closest one",
+        // with the junction he was on shining by the spotlight, which goes by the distance on the screen)
+        static const int around[3] = {0, -1, 1};
+        for (int ii = 0; ii < 3; ++ii)
+            for (int jj = 0; jj < 3; ++jj)
+            {
+                QVector3D node = base;
+                node[a1] += float(around[ii]) * step;
+                node[a2] += float(around[jj]) * step;
+                node[ax] = float(m) * step;
+                const float fromViewer = (node - eye).lengthSquared();
+                if (fromViewer < nearSquared || fromViewer > farSquared) continue;
+                if (V.map(node).z() + eyeV < 1.0f) continue;                                  // (a quarter of the way from the viewer at least: nearer is no line of the picture)
+                const QPointF drawn = toScreen(node);
+                const float pixels = float(std::hypot(drawn.x() - double(pos.x()), drawn.y() - double(pos.y())));
+                if (!(pixels < spot)) continue;
+                if (m_snapStickValid && (node - m_snapStick).lengthSquared() < 1e-6f) { stickFound = true; stickPixels = pixels; }
+                if (!found || pixels < bestPixels - 0.5f)
+                {
+                    found = true;
+                    bestPixels = pixels;
+                    best = node;
+                }
+            }
     }
     // (the node that was marked last stays marked only while the cursor is within a pixel of being as near to it as to the nearest: the nearest on the screen is the one)
     if (found && stickFound && stickPixels <= bestPixels + 1.0f) best = m_snapStick;
@@ -3313,6 +3359,102 @@ QVector3D View::snapNodeAlongRay(QPoint pos, bool* hit) const
     }
     if (hit) *hit = found;
     return found ? best : QVector3D();
+}
+
+// For a test window: the cursor put, one by one, on junctions that the lattice picture draws, and the node that the pick gives there.  What is hovered exactly on a drawn junction has to be that junction (the
+// user, 2026-10-28: "the junction is not recognized as the closest one"); the report says how many are, and for the ones that are not, where the pick went and why the junction was not a candidate
+QString View::snapSelfCheck(int limit)
+{
+    if (!m_snapImageDrawn || m_snapLines.isEmpty()) return QStringLiteral("snapcheck: no lattice picture is drawn (is the snapping mode on, and the lattice shown?)\n");
+    const float step = snapStep(), scale = camera.getScale();
+    constexpr float eyeV = 4.0f;
+    const QMatrix4x4 V = camera.view();
+    const QVector3D eye = V.inverted().map(QVector3D(0, 0, -eyeV));
+    const double W = width(), H = height(), reach = 0.5 * std::min(W, H) * 1.12 * 0.8;
+    struct Junction { QPointF at; QVector3D p; };
+    QVector<Junction> junctions;
+    QSet<qint64> seen;
+    auto add = [&](const QPointF& at, const QVector3D& p) {
+        if (std::hypot(at.x() - 0.5 * W, at.y() - 0.5 * H) > reach) return;                  // (outside the round patch the junctions are faded away)
+        const qint64 key = ((qint64(qRound(p.x() * 100.0f)) & 0x1FFFFF) << 42) | ((qint64(qRound(p.y() * 100.0f)) & 0x1FFFFF) << 21) | (qint64(qRound(p.z() * 100.0f)) & 0x1FFFFF);
+        if (seen.contains(key)) return;
+        seen.insert(key);
+        junctions.push_back({at, p});
+    };
+    for (const SnapLine& l : m_snapLines)
+    {
+        add(l.a, l.pa);
+        add(l.b, l.pb);
+    }
+    int exact = 0, samePlace = 0, missed = 0, shown = 0;
+    QString lines;
+    const int every = std::max(1, int(junctions.size()) / 600);
+    int tested = 0;
+    for (int n = 0; n < junctions.size(); n += every)
+    {
+        const Junction& j = junctions[n];
+        const QPoint pos(qRound(j.at.x()), qRound(j.at.y()));
+        ++tested;
+        m_snapStickValid = false;
+        bool hit = false;
+        const QVector3D node = snapNodeAlongRay(pos, &hit);
+        const double truePixels = std::hypot(j.at.x() - pos.x(), j.at.y() - pos.y());
+        const QPointF got = toScreen(node);
+        const double gotPixels = hit ? std::hypot(got.x() - pos.x(), got.y() - pos.y()) : 1e9;
+        if (hit && (node - j.p).lengthSquared() < 1e-6f) { ++exact; continue; }
+        if (hit && gotPixels <= truePixels + 1.0) { ++samePlace; continue; }
+        ++missed;
+        if (shown >= limit) continue;
+        ++shown;
+        // (why the junction was not the pick: its depth along the line of sight against the two limits of the slice, and whether it is a candidate of its plane)
+        const QVector3D a = toModelPos(pos, -1.0f), b = toModelPos(pos, 1.0f);
+        QVector3D u = (b - a).normalized();
+        const QVector3D origin = a + u * QVector3D::dotProduct(eye - a, u);
+        const float tNear = m_snapSlabValid ? m_snapSlabNear : 0.25f, tFar = m_snapSlabValid ? m_snapSlabFar : 1.15f;
+        const float dNear = eyeV * tNear / scale, dFar = eyeV * tFar / scale;
+        const float along = (j.p - eye).length();
+        int ax = 0;
+        for (int k = 1; k < 3; ++k)
+            if (std::fabs(u[k]) > std::fabs(u[ax])) ax = k;
+        const QVector3D onPlane = origin + u * ((j.p[ax] - origin[ax]) / u[ax]);
+        lines += QString("  miss: junction drawn at (%1, %2) = node (%3, %4, %5); cursor %6, %7; pick %8 at %9 px (true %10 px) node (%11, %12, %13); distance from the viewer %14 in [%15, %16]; line of sight dominant axis %17, ray meets its plane at (%18, %19, %20); depth z %21\n")
+                     .arg(j.at.x(), 0, 'f', 1).arg(j.at.y(), 0, 'f', 1).arg(j.p.x()).arg(j.p.y()).arg(j.p.z()).arg(pos.x()).arg(pos.y())
+                     .arg(hit ? "yes" : "NONE").arg(gotPixels, 0, 'f', 1).arg(truePixels, 0, 'f', 1).arg(node.x()).arg(node.y()).arg(node.z())
+                     .arg(along, 0, 'f', 3).arg(dNear, 0, 'f', 3).arg(dFar, 0, 'f', 3).arg(ax).arg(onPlane.x()).arg(onPlane.y()).arg(onPlane.z()).arg(V.map(j.p).z() + eyeV, 0, 'f', 3);
+    }
+    // The cursor not on a junction but anywhere over the patch (a few hundred places, always the same): where a drawn junction is within forty pixels, the pick has to be the one that is nearest on the
+    // screen -- the one the spotlight lights
+    int nearTested = 0, nearMissed = 0, nearShown = 0;
+    QString nearLines;
+    quint32 lcg = 20261028u;
+    auto random01 = [&]() { lcg = lcg * 1664525u + 1013904223u; return double(lcg >> 8) / double(1u << 24); };
+    for (int n = 0; n < 400 && !junctions.isEmpty(); ++n)
+    {
+        const QPoint pos(int(0.5 * W + (random01() - 0.5) * 2.0 * reach * 0.8), int(0.5 * H + (random01() - 0.5) * 2.0 * reach * 0.8));
+        double nearest = 1e30;
+        int which = -1;
+        for (int i = 0; i < junctions.size(); ++i)
+        {
+            const double d = std::hypot(junctions[i].at.x() - pos.x(), junctions[i].at.y() - pos.y());
+            if (d < nearest) { nearest = d; which = i; }
+        }
+        if (which < 0 || !(nearest < snapSpotRadius(int(W), int(H)))) continue;
+        ++nearTested;
+        m_snapStickValid = false;
+        bool hit = false;
+        const QVector3D node = snapNodeAlongRay(pos, &hit);
+        const QPointF got = toScreen(node);
+        const double gotPixels = hit ? std::hypot(got.x() - pos.x(), got.y() - pos.y()) : 1e9;
+        if (hit && ((node - junctions[which].p).lengthSquared() < 1e-6f || gotPixels <= nearest + 0.5)) continue;
+        ++nearMissed;
+        if (nearShown++ >= limit) continue;
+        nearLines += QString("  near miss: cursor %1, %2; the junction nearest on the screen is node (%3, %4, %5) at %6 px; the pick is %7 (%8, %9, %10) at %11 px\n")
+                         .arg(pos.x()).arg(pos.y()).arg(junctions[which].p.x()).arg(junctions[which].p.y()).arg(junctions[which].p.z()).arg(nearest, 0, 'f', 1)
+                         .arg(hit ? "node" : "NONE").arg(node.x()).arg(node.y()).arg(node.z()).arg(gotPixels, 0, 'f', 1);
+    }
+    return QString("snapcheck: window %1x%2, step %3, lines drawn every %4 steps, junctions in the patch %5, tested %6: exactly that junction %7, another node as near on the screen %8, MISSED %9 (slice %10 .. %11 of the way)\n")
+               .arg(int(W)).arg(int(H)).arg(step).arg(m_snapImageStride).arg(junctions.size()).arg(tested).arg(exact).arg(samePlace).arg(missed).arg(m_snapSlabNear).arg(m_snapSlabFar) + lines
+           + QString("snapcheck: the cursor anywhere over the patch, a junction within the spotlight: %1 places, the pick was not the junction nearest on the screen at %2\n").arg(nearTested).arg(nearMissed) + nearLines;
 }
 
 // The place of the surface of a model that is under the cursor (the picture of what is where says a shape is there; the depth there is the surface)
@@ -3590,7 +3732,8 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
     // (what can be picked is what is drawn, the faint far junctions too: one that is hovered and drawn has to be the one that is selected -- the user, 2026-10-28, of a faint junction in the background that was
     // hovered and not selected, the pick having gone to the plane through the origin because nothing that was drawn was near)
     m_snapSlabNear = tNear;
-    m_snapSlabFar = tOld + 0.75f * (tLimit - tOld);
+    // (out to where the picture still draws a node: a strength of 0.06 -- (1 - u)^2 -- is at u = 0.755 of the way from where the fog begins to the far limit)
+    m_snapSlabFar = tOld + 0.755f * (tLimit - tOld);
     m_snapSlabValid = true;
 
     // (eight steps of the fog, from the nearest to the farthest: tone, width and colour all fade, so that of two lines next to each other the nearer one is told at once)
@@ -3628,7 +3771,8 @@ bool View::renderSnapLattice(QImage& image, qreal ratio, int& stride) const
             // (a line with both of its junctions out of the round patch is not seen)
             const double ax = a.at.x() - centre.x(), ay = a.at.y() - centre.y(), bx = b.at.x() - centre.x(), by = b.at.y() - centre.y();
             if (ax * ax + ay * ay > reachSq && bx * bx + by * by > reachSq) continue;
-            m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band])});
+            m_snapLines.push_back(SnapLine{a.at, b.at, qint8(axis), qint8(band), qint16(kAlpha[band]), float(kWidth[band]),
+                                           QVector3D(float(a.i) * step, float(a.j) * step, float(a.k) * step), QVector3D(float(b.i) * step, float(b.j) * step, float(b.k) * step)});
             const QPointF d = b.at - a.at;
             // (the beams of a junction are longer the nearer the layer it is in -- as drawn for the nearest, little more than half as long for the farthest --, so that the depth reads from the junction
             // whatever the projection: in an orthographic view nothing else of a line gets shorter with the distance.  Longer than that, and the beams of the near layers run into each other)
@@ -3705,6 +3849,7 @@ void View::drawSnapGrid(QPainter& painter)
         const qreal ratio = painter.device()->devicePixelRatioF();
         const QMatrix4x4 M = camera.M();
         const float step = snapStep();
+        bool rebuilt = false;
         if (!m_snapImageKept || M != m_snapImageM || step != m_snapImageStep || m_snap.distance != m_snapImageDistance || size() != m_snapImageSize || ratio != m_snapImageRatio)
         {
             m_snapImageDrawn = renderSnapLattice(m_snapImage, ratio, m_snapImageStride);
@@ -3714,8 +3859,12 @@ void View::drawSnapGrid(QPainter& painter)
             m_snapImageSize = size();
             m_snapImageRatio = ratio;
             m_snapImageKept = true;
+            rebuilt = true;
         }
         if (m_snapImageDrawn) painter.drawImage(0, 0, m_snapImage);
+        // The view moved under a cursor that did not (a wheel turn, the keys, an animation): the spotlight follows the cursor over the new picture at once, so the node that is marked is worked out again from it --
+        // not left where it was in space, a junction away from the one that is lit (not while something is held, or a menu is open at the mark)
+        if (rebuilt && m_snapCursorValid && !m_snapMarkHeld && mouse.state == mouse.RELEASED) updateSnapHover(m_snapCursor);
         if (m_snapImageDrawn && m_snapCursorValid) drawSnapGlow(painter);
     }
     // The mode is a mode: a frame round the viewport says so, and a line says what it snaps to
@@ -3747,7 +3896,7 @@ void View::drawSnapGrid(QPainter& painter)
 void View::drawSnapGlow(QPainter& painter)
 {
     // (a small circle -- about eighty pixels: the junctions that can be hovered are seen clearly, and the lattice farther off is left as it is)
-    const double rho = std::max(56.0, std::min(96.0, 0.075 * double(std::min(width(), height()))));
+    const double rho = snapSpotRadius(width(), height());
     if (m_snapLines.isEmpty()) return;
     const QPointF c(m_snapCursor);
     // The spotlight is made of the junctions: each end of a line is a junction, and a junction within the circle gains by how near the cursor is to it -- its beams (the stubs of the lines that meet there) come
@@ -5109,12 +5258,13 @@ void View::addQuickOperations(QMenu* menu, int line, const QVector3D& point, dou
         const auto o = v.toObject();
         if (!o["quick"].toBool()) continue;
         const QString name = o["name"].toString();
-        // (the distance from a point is made of a point: it is there for a point, and only then)
-        const bool fromPoint = name == "distance_to_point";
+        // (the distance from a point, and from the axis through it, are made of a point: they are there for a point, and only then)
+        const bool fromPoint = name == "distance_to_point" || name == "radial_field";
         if (fromPoint && (!m_scene || !m_scene->pointsOnly(line))) continue;
         auto action = menu->addAction(TypeIcons::icon(fromPoint ? "field" : name == "center" ? "point" : "solid"), name, this,
                                       [=]{ emit(createRequested("operation", name, point, scale, line, generation)); });
-        action->setToolTip(fromPoint ? T("A field: how far every place is from this point")
+        action->setToolTip(name == "radial_field" ? T("A field: how far every place is from the axis through this point")
+                           : fromPoint ? T("A field: how far every place is from this point")
                            : name == "center" ? T("The middle of the model's bounding box, as a point")
                                               : T("The smallest box, aligned with the axes, that holds the model: a body of its own"));
         if (m_scene && !m_scene->entryAllowed("operation", name, line)) action->setEnabled(false);
@@ -6388,6 +6538,20 @@ void View::setOpenFields(QStringList keys)
     update();
 }
 
+void View::openFieldsAlso(QStringList keys)
+{
+    QStringList all = m_wantedOpen;
+    for (const QString& k : keys) if (!all.contains(k)) all << k;
+    setOpenFields(all);
+}
+
+void View::closeField(const QString& key)
+{
+    QStringList all = m_wantedOpen;
+    all.removeAll(key);
+    setOpenFields(all);
+}
+
 void View::setActiveField(QString key)
 {
     const FieldViewer* v = viewer(key);
@@ -6642,6 +6806,7 @@ void View::startSliceAt(Plane& plane, bool fine, FieldViewer* viewer)
     const auto exactResolver = m_exactResolver;
     const auto exactMutex = m_exactMutex;
     const auto exactTrees = m_exactTrees;
+    const QVector3D anchorAt = fieldMode ? fieldPlace(*viewer) : QVector3D();     // (where the field is about: its value is in the colour range)
     plane.watcher.setFuture(QtConcurrent::run([=]() {
         const auto t0 = std::chrono::steady_clock::now();
         QVector<FieldSource> used = sources;
@@ -6668,7 +6833,7 @@ void View::startSliceAt(Plane& plane, bool fine, FieldViewer* viewer)
             }
             if (t.is_valid()) u.tree = t;
         }
-        if (!rangeKnown && !used.isEmpty()) autoColorRange(used[0], fieldMode ? rangeLo : lo, fieldMode ? rangeHi : hi);
+        if (!rangeKnown && !used.isEmpty()) autoColorRange(used[0], fieldMode ? rangeLo : lo, fieldMode ? rangeHi : hi, fieldMode ? &anchorAt : nullptr);
         FieldSlice s = sampleField(used, sec, lo, hi, samples, fade, g, gen);
         s.fine = fine;
         if (std::getenv("FIELDES_TIMING") && s.valid())
@@ -8174,6 +8339,36 @@ void View::drawMarkers(QPainter& painter)
     painter.restore();
 }
 
+// The origin, drawn over the picture.  The marker that is drawn with the scene (`axes`, in paintGL) is a thing in space: the near and far limits of the view cut it off, and every model hides it, so it is
+// gone in most of the views that are edited in (the user, 2026-10-28: "I also want the origin to be much more visible. Right now it has the same viewing distance as anything else, making it invisible in
+// most view edits I make").  Here it is put on the screen from where the origin is -- three axes of a fixed length in pixels, and a ring -- whatever the depth of the view and whatever stands in front of it
+void View::drawOriginMarker(QPainter& painter)
+{
+    const QMatrix4x4 M = camera.M();
+    if (!(M.row(3).w() > 1e-6f)) return;                                    // (behind the eye: nothing to put on the screen)
+    const QVector3D origin(0.0f, 0.0f, 0.0f);
+    const QPointF o = toScreen(origin);
+    if (o.x() < -80 || o.y() < -80 || o.x() > width() + 80 || o.y() > height() + 80) return;
+    // (the length of the marker of the scene, in the model: its direction on the screen is what is wanted)
+    const float len = 2 * 34.0f / (std::max(1, std::min(camera.size.width(), camera.size.height())) * camera.getScale());
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+    const struct { QVector3D dir; QColor color; } axis[3] = {
+        {QVector3D(1, 0, 0), QColor(230, 80, 80)}, {QVector3D(0, 1, 0), QColor(100, 205, 100)}, {QVector3D(0, 0, 1), QColor(90, 160, 240)}};
+    for (const auto& a : axis)
+    {
+        const QPointF v = toScreen(origin + a.dir * len) - o;
+        const double l = std::hypot(v.x(), v.y());
+        if (l < 1.0) continue;                                              // (an axis that points straight at the eye has no direction on the screen)
+        painter.setPen(QPen(a.color, 2.6, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(o, o + v * (34.0 / l));
+    }
+    painter.setPen(QPen(QColor(0xee, 0xe8, 0xd5), 1.4));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(o, 4.5, 4.5);
+    painter.restore();
+}
+
 // A point is a dot: the middle point of a gizmo (the same blue, lit up while it is hovered or selected), drawn whatever the mode of its gizmo
 void View::drawPointDots(QPainter& painter)
 {
@@ -9112,7 +9307,8 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
     const auto& vars = g.shape->getVars();
     // The ring of a point drags its influence -- the `influence=` number of the point: how strongly a spline leaves it -- and, on a spline point, where the ring is its scale (how thick a sweep is
     // there), Shift and the ring drag the influence; on any other point Shift takes the scale.  A point that has no influence number of its own yet drags its scale, as it always did
-    const bool influenceRing = g.kind == 2 && g.shape->isPoint() && h.influence && vars.count(h.influence) && (h.splinePoint == shiftHeld());
+    // (the ring of every point is its influence; the scale is the ring of a point of a path -- a spline point -- and the influence of that one is Shift and the ring: the user, 2026-10-28)
+    const bool influenceRing = g.kind == 2 && g.shape->isPoint() && h.influence && vars.count(h.influence) && (!h.splinePoint || shiftHeld());
     gizmo_id = g.kind == 1 ? h.rotate[g.axis] : (influenceRing ? h.influence : h.scale[g.axis]);
     const auto it = vars.find(gizmo_id);
     if (it == vars.end()) return;

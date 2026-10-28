@@ -1488,7 +1488,7 @@ class PointSet:
         .body       the body they were made in (None when they were not made in one): a lattice made of them fills it
         len(points), iterating it, points[i] work as for a list; points.stats() says how the points really are '''
 
-    _no_gizmo = True             # (not something to drag: FielDes hides the handles button)
+    _no_handles = True           # (no faces of its own to pull: the points are what it is.  Its gizmo moves, turns and scales all of them together -- see _placed_set)
 
     def __init__(self, points, spacing, bounds=None, seed=None, body=None, skin=None, frame=False):
         self.points = [tuple(float(c) for c in p) for p in points]
@@ -1503,16 +1503,73 @@ class PointSet:
         self.surface = False
         # (point_cloud(): points that were placed, not made at random -- a lattice made of them without a body is clipped by their bounding box)
         self.cloud = False
+        # (a set that was placed -- position=, rotation=, scale= of the call: the set it was made from, and the gizmo's numbers: see _placed_set)
+        self._carried_from = None
+        self._placement = None
+
+    def _middle(self):
+        ''' The middle of the box of the points: what a placement turns and scales the set about '''
+        if not self.points:
+            return (0.0, 0.0, 0.0)
+        return tuple(0.5 * (min(p[i] for p in self.points) + max(p[i] for p in self.points)) for i in range(3))
+
+    def _placed_set(self, move, rotate, scale, about=None, mode='click'):
+        ''' The set placed by the numbers of a gizmo -- `position`, `rotation` (degrees, x then y then z), `scale` -- about the middle of its box, or `about`: every point is moved, turned and scaled
+            with the others, and a lattice that is made around the set is made around the points where they now are.  The numbers may be var()s: the points are where the numbers put them in
+            this run, and the set carries the gizmo that drags the numbers (see _display).  The points that lie on the surface of a body keep the direction they face (turned, and
+            across a scale the way a surface's direction goes) '''
+        from fieldes.stdlib.curves import value_of
+        from fieldes.stdlib.symmetries import _turn_matrix
+        m = tuple(float(value_of(v)) for v in move)
+        r = tuple(float(value_of(v)) for v in rotate)
+        s = tuple(float(value_of(v)) for v in scale)
+        c = tuple(float(v) for v in about) if about is not None else self._middle()
+        R = [[float(v) for v in row] for row in _turn_matrix(r)]
+
+        def image(p):
+            d = [(p[i] - c[i]) * s[i] for i in range(3)]
+            return tuple(c[i] + m[i] + sum(R[i][j] * d[j] for j in range(3)) for i in range(3))
+
+        def facing(n):
+            d = [n[i] / s[i] if abs(s[i]) > 1e-12 else n[i] for i in range(3)]
+            t = tuple(sum(R[i][j] * d[j] for j in range(3)) for i in range(3))
+            length = math.sqrt(sum(v * v for v in t))
+            return tuple(v / length for v in t) if length > 1e-12 else tuple(n)
+
+        bounds = None
+        if self.bounds is not None:
+            lo, hi = self.bounds
+            corners = [image((x, y, z)) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+            bounds = (tuple(min(q[i] for q in corners) for i in range(3)), tuple(max(q[i] for q in corners) for i in range(3)))
+        volume = abs(s[0] * s[1] * s[2])
+        out = PointSet([image(p) for p in self.points], self.spacing * (volume ** (1.0 / 3.0) if volume > 1e-12 else 1.0), bounds, self.seed, self.body,
+                       [(image(p), facing(n)) for p, n in self.skin], self.frame)
+        out.surface = self.surface
+        out.cloud = self.cloud
+        out._carried_from = self
+        out._placement = (mode, c, tuple(move), tuple(rotate), tuple(scale))
+        return out
 
     def _display(self):
         ''' What FielDes shows for the points: a shape with no extent that carries them (`_markers`), and the viewport draws each of them
-            as the dot of a gizmo -- nothing is meshed.  The shape is a constant that depends on the points, so that two sets are two
-            shapes (shapes with the same field are one) '''
+            as the dot of a gizmo -- nothing is meshed.  The shape is a field that is positive everywhere (nothing is inside) and depends on the points, so that two sets are two
+            shapes (shapes with the same field are one).  A set that was placed is carried by that shape placed by the numbers of the gizmo, so that the gizmo has numbers in its field to
+            drag: the points are drawn where the numbers put them in this run '''
         shown = self.__dict__.get('_shown')
         if shown is None:
             import zlib
-            key = zlib.crc32(repr(self.points).encode('ascii'))
-            shown = Shape.wrap(float(1 + key % 1000003))              # (positive everywhere: nothing is inside)
+            if self._placement is not None and self._carried_from is not None:
+                from fieldes.stdlib.handles import _place
+                source = self._carried_from
+                key = zlib.crc32(repr(source.points).encode('ascii'))
+                mode, c, move, rotate, scale = self._placement
+                carrier = (Shape.X() - c[0]).square() + (Shape.Y() - c[1]).square() + (Shape.Z() - c[2]).square() + float(1 + key % 1000003)
+                if source.points:
+                    carrier._bounds = (tuple(min(p[i] for p in source.points) for i in range(3)), tuple(max(p[i] for p in source.points) for i in range(3)))
+                shown = _place(carrier, move=move, rotate=rotate, scale=scale, about=c, mode=mode)
+            else:
+                key = zlib.crc32(repr(self.points).encode('ascii'))
+                shown = Shape.wrap(float(1 + key % 1000003))              # (positive everywhere: nothing is inside)
             shown._kind = 'points'
             shown._markers = list(self.points)
             if self.points:
@@ -1887,8 +1944,7 @@ def point_cloud(points, body=None):
         if place is None or len(place) != 3 or not all(math.isfinite(c) for c in place):
             raise ValueError('point_cloud: every point is a place (x, y, z) or a point whose place is known, and {!r} is not'.format(p))
         places.append(place)
-    if len(places) < 5:
-        raise ValueError('point_cloud: {} points -- a foam or a truss is made around at least five'.format(len(places)))
+    # (a cloud of fewer than five points is a cloud: it is drawn and moved like any other; the lattice that is made around it says it needs five -- see _as_points)
     if body is not None:
         body = Shape.wrap(body)
     out = PointSet(places, _mean_nearest(places), None, None, body)
@@ -1902,6 +1958,9 @@ point_cloud._makes = 'points'
 def _as_points(who, points):
     ''' `points` as a PointSet: one from random_points(), or a list of (x, y, z) '''
     if isinstance(points, PointSet):
+        if len(points.points) < 5:
+            raise ValueError('{}: the set of points has {} -- a lattice of this kind is made around at least five points'.format(
+                who, '1 point' if len(points.points) == 1 else '{} points'.format(len(points.points))))
         return points
     if isinstance(points, Shape):
         raise TypeError('{}: a lattice of this kind is made around POINTS, not of a body: give it random_points(body, ...) (or a list of '

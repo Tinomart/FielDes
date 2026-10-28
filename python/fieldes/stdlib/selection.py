@@ -134,7 +134,8 @@ def select_surface(shape, seed, angle=15.0, mode='flat', radius=None, resolution
 
         seed        a point on (or near) the surface: (x, y, z)
         angle       degrees: with mode='flat' how far from the way the seed's surface faces it may face, with
-                    mode='smooth' how much it may turn within 10 mm of the surface (how tightly it may bend)
+                    mode='smooth' how much it may turn within 10 mm of the surface (how tightly it may bend); 90 puts no limit on the bend -- the side of a cone,
+                    a cylinder, a sphere, of any size, is all one surface -- and stops only at a crease (a turn of 89 degrees or more between neighbours)
         mode        'flat' (a face, flat or gently curved) or 'smooth' (round faces: a bend tighter than `angle` per 10 mm
                     stops it, and so does a sharp edge)
         radius     mm: stop this far from the seed (default: no limit)
