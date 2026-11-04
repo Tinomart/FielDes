@@ -667,6 +667,11 @@ protected:
     /*  A click on a placement row that is not written (or the number of the gizmo of a model that has none): the model is made ready for its gizmo, and the argument is selected
      *  in the code once the script has run  */
     void writePlacement(const QJsonObject& target, const QString& argument);
+    // The position of a body made of points (H151): the argument `position=` is written into its call by the click on its dimmed row, and kept in step with its points after every run
+    void writeBodyPosition(const QJsonObject& body);
+    void scheduleBodyPositions();
+    void applyBodyPositions();
+    int m_bodyGeneration = 0;
     /*  A displayed expression such as sphere(3) is given a name (`sphere_1 = sphere(3)`, and a line showing it),
      *  and `mode` -- "click", "never", "always", "lock" or "cache" -- is applied to the new variable once the script has
      *  run again; false if it cannot be named  */

@@ -1255,21 +1255,23 @@ def _faces_of_the_script():
         return None
 
 
-def morph_polyhedron(points, smooth=False, radius=0, *, _faces=None):
+def morph_polyhedron(points, smooth=False, radius=0, *, position=None, _faces=None):
     ''' A body made of points -- the 3D equivalent of `profile`: four points or more (not all in one plane), joined by flat faces, with a sharp corner at each point.  The faces are those of the convex
         hull of the points (the eight points of a cube, in the order x changes fastest, then y, then z, have its six squares) unless the script has a list of faces named after the body --
         `body_faces = [(0, 2, 3, 1), ...]` above `body = morph_polyhedron(...)`, three or four point numbers each, counterclockwise seen from outside --, which the program writes when the faces are not
         the hull's (a point pressed out of the surface, a dent); it is no argument of the call.  Press its surface and drag: a point is put there and follows the hand.  `smooth` is what a point is that does
         not say (point(..., smooth=True) is a spline point: the surface goes through it and is smooth there; smooth=False, a corner: the default); `radius` is what a corner is that does not say, 0 (a sharp
         corner) by default; point(..., radius=r) is a sphere point: a corner rounded by about a sphere of radius r.  See the module.  With the points at the corners of a box it is that box; made of corners
-        only it is exactly the polyhedron of its faces '''
+        only it is exactly the polyhedron of its faces.  `position` (x, y, z) is where the body is: the middle of the box of its points.  The body is made of its points, so the number adds no move of
+        its own: FielDes keeps the two in step -- a number typed in the code moves every point by the difference, a point or the whole body dragged writes the number again '''
     return _morph('morph_polyhedron', points, smooth, radius, _faces if _faces is not None else _faces_of_the_script())
 
 
-def morph_body(points, smooth=True, radius=0, *, _faces=None):
+def morph_body(points, smooth=True, radius=0, *, position=None, _faces=None):
     ''' The same body as `morph_polyhedron` (four points or more, the faces those of the convex hull unless the script has the list `body_faces` above the call), with a spline point at each point (a rounded body whose surface
         goes through its points, as the line of a spline goes through its points); `smooth=False` makes every point a corner that does not say otherwise, point(..., smooth=False) makes that one a corner, and
-        point(..., radius=r) a sphere point.  Press its surface and drag to put a point there.  See the module '''
+        point(..., radius=r) a sphere point.  Press its surface and drag to put a point there.  `position` (x, y, z) is where the body is: the middle of the box of its points; a number typed in the code
+        moves every point by the difference, and a point or the whole body dragged writes the number again.  See the module '''
     return _morph('morph_body', points, smooth, radius, _faces if _faces is not None else _faces_of_the_script())
 
 

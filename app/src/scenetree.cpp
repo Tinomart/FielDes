@@ -3031,7 +3031,11 @@ void ScenePanel::rebuild()
                 c->setForeground(COL_NAME, QColor(0xb4, 0xc0, 0xc0));
                 c->setToolTip(COL_NAME, T("An argument of %1: click it to select it in the code editor, where it is replaced by typing.").arg(it["var"].toString().isEmpty() ? it["label"].toString() : it["var"].toString())
                                            + "\n" + a["text"].toString());
-                if (a["default"].toBool())
+                if (a["points_position"].toBool())
+                {
+                    c->setToolTip(COL_NAME, T("The position of %1 is the middle of its points. Click to write it into the call; change the number in the code and every point moves by the difference.").arg(it["var"].toString()));
+                }
+                else if (a["default"].toBool())
                 {
                     // (a placement argument that is not written: it has its default and is shown dimmed; a click writes it, with the others of the gizmo, and selects it)
                     c->setForeground(COL_NAME, QColor(kDim.red(), kDim.green(), kDim.blue(), 190));
@@ -3751,22 +3755,39 @@ QList<QJsonObject> ScenePanel::ownedPointsOf(const QJsonObject& owner) const
     // (the bodies made of points too -- morph_polyhedron, morph_body --: the user, 2026-10-29, "just like profile and splines, if you delete it, it should delete all of its points")
     if (callee != "profile" && callee != "polyline" && callee != "spline" && callee != "morph_polyhedron" && callee != "morph_body") return out;
     QSet<QString> seen;
+    QList<QPair<QString, QJsonObject>> candidates;
     for (const QString& name : directInputs(owner))
     {
         const QJsonObject p = itemForVar(name);
         // (a point whose statement failed to run has no type, but it is still `point(...)`)
         if (p.isEmpty() || (p["type"].toString() != "point" && p["callee"].toString() != "point") || seen.contains(keyOf(p))) continue;
-        bool used = false;
-        for (const auto v : m_scene["items"].toArray())
-        {
-            const auto c = v.toObject();
-            if (keyOf(c) == keyOf(owner) || keyOf(c) == keyOf(p)) continue;
-            for (const auto iv : c["inputs"].toArray()) used = used || iv.toObject()["name"].toString() == name;
-        }
-        if (used) continue;
         seen << keyOf(p);
-        out << p;
+        candidates << qMakePair(name, p);
     }
+    // A point is used when anything else names it -- but not a point that goes with the body too: the image of a point (`p2 = symmetry_image(p1, ...)`) names its original, and it is
+    // deleted with the body, so the original is not used by it (the user, 2026-11-04, H149: "a deleted mirrored morph body should still not leave behind any points": the points p1, p3, p7
+    // and p9 stayed behind, named by the images that were deleted).  The points that go are found until no more are
+    QSet<QString> going;
+    for (bool changed = true; changed; )
+    {
+        changed = false;
+        for (const auto& cand : candidates)
+        {
+            if (going.contains(keyOf(cand.second))) continue;
+            bool used = false;
+            for (const auto v : m_scene["items"].toArray())
+            {
+                const auto c = v.toObject();
+                if (keyOf(c) == keyOf(owner) || keyOf(c) == keyOf(cand.second) || going.contains(keyOf(c))) continue;
+                for (const auto iv : c["inputs"].toArray()) used = used || iv.toObject()["name"].toString() == cand.first;
+            }
+            if (used) continue;
+            going << keyOf(cand.second);
+            changed = true;
+        }
+    }
+    for (const auto& cand : candidates)
+        if (going.contains(keyOf(cand.second))) out << cand.second;
     return out;
 }
 
@@ -6101,6 +6122,11 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items, bool automatic)
         QSet<QString> gone;
         for (const auto& o : all) gone << keyOf(o);
         QList<QJsonObject> points;
+        // (a point named only by a point that goes too -- the original of an image: `p2 = symmetry_image(p1, ...)` names p1, and goes with the body -- goes as well: the pass is made again until
+        // no point more goes, whatever the order the body lists them in; the user, 2026-11-04, H149, "a deleted mirrored morph body should still not leave behind any points")
+        for (bool again = true; again; )
+        {
+        again = false;
         for (const auto& o : all)
         {
             const QString callee = o["callee"].toString();
@@ -6121,7 +6147,9 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items, bool automatic)
                 if (used) continue;
                 points << p;
                 gone << keyOf(p);
+                again = true;
             }
+        }
         }
         for (const auto& p : points) all << p;
     }
@@ -6315,6 +6343,7 @@ void ScenePanel::deleteItems(const QList<QJsonObject>& items, bool automatic)
 // scene of a finished run holds the lost edge, no mouse button is down, and a moment later it is still lost -- an edge that collapses in the middle of a drag and comes back is not touched
 void ScenePanel::scheduleLostEdges()
 {
+    scheduleBodyPositions();
     bool any = false;
     if (m_scene["run_done"].toBool() && !m_scene["errored"].toBool())
         for (const auto v : m_scene["items"].toArray()) any = any || v.toObject()["lost"].toBool();
@@ -6811,6 +6840,11 @@ void ScenePanel::select(QTreeWidgetItem* row, bool focus)
             // (a number written as var(5), the draggable form, selects the number inside it: typing another keeps the var -- var(9) -- instead of replacing the whole call)
             const auto chosen = args[k].toObject();
             // (a placement argument that is not written: it is, with the others of the gizmo, and then selected)
+            if (chosen["points_position"].toBool())
+            {
+                writeBodyPosition(it);
+                return;
+            }
             if (chosen["default"].toBool())
             {
                 writePlacement(it, chosen["param"].toString());
@@ -8657,6 +8691,74 @@ bool ScenePanel::transformPointsInPlace(const QString& how, const QJsonArray& na
     m_editClock.start();
     emit(editScript(edits, doc["label"].toString()));
     return true;
+}
+
+void ScenePanel::writeBodyPosition(const QJsonObject& body)
+{
+    // `position=(x, y, z)` of a body made of points (H151, the user, 2026-11-04: "I SAID A POSITION ARGUMENT"): written into its call with the middle of its points when its dimmed row is clicked, as for
+    // every model.  The library works the edit out (profile_edit._body_position_write)
+    if (!m_support || !m_source || !body.contains("var")) return;
+    QJsonObject request;
+    request["op"] = "body_position_write";
+    request["source"] = m_source();
+    request["body"] = body["var"].toString();
+    QString error;
+    const QString answer = m_support("profile_edit", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)), &error);
+    if (answer.isEmpty())
+    {
+        notify(error.isEmpty() ? T("The position could not be written.") : error);
+        return;
+    }
+    const QJsonObject doc = QJsonDocument::fromJson(answer.toUtf8()).object();
+    QList<TextEdit> edits;
+    for (const auto v : doc["edits"].toArray())
+    {
+        const auto a = v.toArray();
+        if (a.size() == 5) edits << TextEdit{a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), a[4].toString()};
+    }
+    if (edits.isEmpty()) return;
+    m_editPending = true;
+    m_editClock.start();
+    emit(editScript(edits, doc["label"].toString()));
+}
+
+// The number and the points of a body made of points are kept in step (H151): the library says, with the item, the edits that do it (outline.py, profile_edit.body_sync) -- the points moved: the
+// position is written again as their middle; the position was typed: every point moves by the difference.  Done when a run is over and no mouse button is down (a drag in progress is not touched)
+void ScenePanel::scheduleBodyPositions()
+{
+    const int generation = ++m_bodyGeneration;
+    if (!m_scene["run_done"].toBool() || m_scene["errored"].toBool()) return;
+    bool any = false;
+    for (const auto v : m_scene["items"].toArray()) any = any || v.toObject().contains("position_sync");
+    if (!any) return;
+    QTimer::singleShot(700, this, [this, generation] { if (generation == m_bodyGeneration) applyBodyPositions(); });
+}
+
+void ScenePanel::applyBodyPositions()
+{
+    if (QGuiApplication::mouseButtons() != Qt::NoButton)
+    {
+        const int generation = ++m_bodyGeneration;
+        QTimer::singleShot(500, this, [this, generation] { if (generation == m_bodyGeneration) applyBodyPositions(); });
+        return;
+    }
+    QList<TextEdit> edits;
+    QString label;
+    for (const auto v : m_scene["items"].toArray())
+    {
+        const auto sync = v.toObject()["position_sync"].toObject();
+        if (sync.isEmpty()) continue;
+        for (const auto e : sync["edits"].toArray())
+        {
+            const auto a = e.toArray();
+            if (a.size() == 5) edits << TextEdit{a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(), a[4].toString()};
+        }
+        if (label.isEmpty()) label = sync["label"].toString();
+    }
+    if (edits.isEmpty()) return;
+    m_editPending = true;
+    m_editClock.start();
+    emit(editScript(edits, label));
 }
 
 bool ScenePanel::splitSharedPlane(const QString& plane, const QJsonArray& names)

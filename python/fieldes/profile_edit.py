@@ -743,6 +743,158 @@ def _transform_points(req):
     return json.dumps({'edits': edits, 'label': '%s %d point%s' % (label, len(found), '' if len(found) == 1 else 's'), 'line': -1, 'name': ''})
 
 
+def _body_point_numbers(tree, body):
+    ''' The numbers of the points a body made of points is made of (`body = morph_body([a, b, c, ...])`): [(name, [the three nodes of the numbers], [their values])], the images of points
+        (`p2 = symmetry_image(p1, ...)`) left out -- they follow their originals --, or None when the body is not written so or a number is not a plain number '''
+    assign = next((a for a in reversed(_assignments_of(tree, body)) if _call_name(a.value) in ('morph_polyhedron', 'morph_body')), None)
+    if assign is None or not assign.value.args or not isinstance(assign.value.args[0], ast.List):
+        return None
+    found, seen = [], set()
+    for elt in assign.value.args[0].elts:
+        if not isinstance(elt, ast.Name):
+            return None
+        if elt.id in seen:
+            continue
+        seen.add(elt.id)
+        made = next((a for a in reversed(_assignments_of(tree, elt.id)) if _call_name(a.value) == 'point'), None)
+        if made is None:
+            continue
+        pos = next((k.value for k in made.value.keywords if k.arg == 'position'), None)
+        if pos is None or not isinstance(pos, (ast.Tuple, ast.List)) or len(pos.elts) != 3:
+            return None
+        args = [e.args[0] if isinstance(e, ast.Call) and _call_name(e) == 'var' and len(e.args) == 1 else e for e in pos.elts]
+        values = [_literal(a) for a in args]
+        if any(v is None for v in values):
+            return None
+        found.append((elt.id, args, values))
+    return found or None
+
+
+def body_middle(source, body):
+    ''' The position of a body made of points: the middle of the box of its points (where the gizmo of the whole body stands), as (x, y, z), or None when it cannot be told from the script '''
+    try:
+        found = _body_point_numbers(ast.parse(source), body)
+    except SyntaxError:
+        return None
+    if not found:
+        return None
+    return tuple(0.5 * (min(f[2][k] for f in found) + max(f[2][k] for f in found)) for k in range(3))
+
+
+def _body_position(req):
+    ''' The position of a body made of points typed (H151, the user, 2026-11-04: "Have point dependent objects like the morph body also have a position argument, so you can precisely position
+        them"; the position is the middle of its points): every point moves by the difference between the new position and the old.  {op: 'body_position', source, body, position: [x, y, z]} '''
+    source, body = req['source'], req['body']
+    tree = ast.parse(source)
+    lines = source.split('\n')
+    found = _body_point_numbers(tree, body)
+    if not found:
+        raise ValueError('%s is not written as a list of points with plain numbers: change its position by hand' % body)
+    middle = body_middle(source, body)
+    want = [float(v) for v in req['position']]
+    delta = [want[k] - middle[k] for k in range(3)]
+    edits = []
+    for name, args, values in found:
+        for k, (arg, old) in enumerate(zip(args, values)):
+            if abs(delta[k]) < 5e-5:
+                continue
+            l0, l1 = arg.lineno - 1, arg.end_lineno - 1
+            edits.append([l0, _char_col(lines[l0], arg.col_offset), l1, _char_col(lines[l1], arg.end_col_offset), _num_text(old + delta[k])])
+    if not edits:
+        raise ValueError('%s is at that position already' % body)
+    return json.dumps({'edits': edits, 'label': 'Position of %s' % body, 'line': -1, 'name': ''})
+
+
+_LAST_MIDDLE = {}          # (the middle of the points of each body at the last run: which of the two, the points or the written position, changed since)
+
+
+def _morph_call(tree, body):
+    assign = next((a for a in reversed(_assignments_of(tree, body)) if _call_name(a.value) in ('morph_polyhedron', 'morph_body')), None)
+    return assign.value if assign is not None else None
+
+
+def _three(text_value):
+    return '(%s, %s, %s)' % tuple(_six(c) for c in text_value)
+
+
+def _position_values(node):
+    ''' The three numbers of a written `position=(x, y, z)` (a number inside var() too), or None when they are not plain numbers '''
+    if not isinstance(node, (ast.Tuple, ast.List)) or len(node.elts) != 3:
+        return None
+    args = [e.args[0] if isinstance(e, ast.Call) and _call_name(e) == 'var' and len(e.args) == 1 else e for e in node.elts]
+    values = [_literal(a) for a in args]
+    return None if any(v is None for v in values) else values
+
+
+def body_sync(source, body):
+    ''' What the tree needs to know of the position of a body made of points (H151): {middle, written (the numbers of its `position=` or None), edits (the edits that bring the points and the written
+        position in step, or none)}.  The points are the body: when they have moved since the last run (a drag of a point or of the body) the position is written again as their middle; when only the
+        position was changed (typed in the code) every point moves by the difference.  None when the body is not written as a list of points with plain numbers '''
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    call = _morph_call(tree, body)
+    found = _body_point_numbers(tree, body)
+    if call is None or not found:
+        return None
+    middle = body_middle(source, body)
+    out = {'middle': list(middle), 'written': None}
+    keyword = next((k for k in call.keywords if k.arg == 'position'), None)
+    if keyword is None:
+        _LAST_MIDDLE[body] = middle
+        return out
+    written = _position_values(keyword.value)
+    if written is None:
+        _LAST_MIDDLE[body] = middle
+        return out
+    out['written'] = written
+    if all(abs(written[k] - middle[k]) < 1e-3 for k in range(3)):
+        _LAST_MIDDLE[body] = middle
+        return out
+    last = _LAST_MIDDLE.get(body)
+    lines = source.split('\n')
+    if last is None or any(abs(middle[k] - last[k]) > 1e-3 for k in range(3)):
+        node = keyword.value
+        l0, l1 = node.lineno - 1, node.end_lineno - 1
+        out['edits'] = [[l0, _char_col(lines[l0], node.col_offset), l1, _char_col(lines[l1], node.end_col_offset), _three(middle)]]
+        out['label'] = 'Position of %s' % body
+        return out
+    delta = [written[k] - middle[k] for k in range(3)]
+    edits = []
+    for name, args, values in found:
+        for k, (arg, old) in enumerate(zip(args, values)):
+            if abs(delta[k]) < 5e-5:
+                continue
+            l0, l1 = arg.lineno - 1, arg.end_lineno - 1
+            edits.append([l0, _char_col(lines[l0], arg.col_offset), l1, _char_col(lines[l1], arg.end_col_offset), _num_text(old + delta[k])])
+    out['edits'] = edits
+    out['label'] = 'Position of %s' % body
+    return out
+
+
+def _body_position_write(req):
+    ''' The argument `position=(x, y, z)` written into the call of a body made of points, with the middle of its points (the click on its dimmed row, as for every model).  {op: 'body_position_write', source, body} '''
+    source, body = req['source'], req['body']
+    tree = ast.parse(source)
+    lines = source.split('\n')
+    call = _morph_call(tree, body)
+    middle = body_middle(source, body)
+    if call is None or middle is None:
+        raise ValueError('%s is not written as a list of points with plain numbers: write its position by hand' % body)
+    last = call.keywords[-1] if call.keywords else call.args[-1]
+    l1 = last.end_lineno - 1
+    at = _char_col(lines[l1], last.end_col_offset)
+    text = 'position=%s' % _three(middle)
+    if call.lineno != call.end_lineno:
+        indent = re.match(r'\s*', lines[l1]).group(0)
+        text = ',\n' + indent + text
+    else:
+        text = ', ' + text
+    _LAST_MIDDLE[body] = middle
+    return json.dumps({'edits': [[l1, at, l1, at, text]], 'label': 'Position of %s' % body, 'line': -1, 'name': ''})
+
+
 def _split_plane(req):
     """ A body of points whose symmetry plane other bodies are made through too gets a plane of its own (H62, the user, 2026-11-02: "If there are other bodies that are using that symmetry plane, then a new
         symmetry plane should be automatically generated"): the statement of the plane is written again right after it, under a new name -- the numbers of its position and rotation are the copy's own --
@@ -790,6 +942,10 @@ def edit(arg):
         return _snap(req)
     if req['op'] == 'points_transform':
         return _transform_points(req)
+    if req['op'] == 'body_position':
+        return _body_position(req)
+    if req['op'] == 'body_position_write':
+        return _body_position_write(req)
     if req['op'] == 'symmetry_add':
         return _add_to_symmetry(req)
     if req['op'] == 'split_plane':
@@ -802,6 +958,15 @@ def edit(arg):
         raise ValueError('nothing is displayed on that line')
     obj = runner.last_globals.get(name)
     if op == 'toggle':
+        # (a mirror image of a point -- `p2 = symmetry_image(p1, symmetry_1, 1)` -- has no kind of its own, it follows its original: a double click on it changes the original, and the image with it
+        # (the user, 2026-11-04, H148: "Double clicking a point on the mirrored points does not change it"))
+        for _ in range(4):
+            made = _assignments_of(tree, name, line)
+            last = made[-1] if made else None
+            if last is None or _call_name(last.value) != 'symmetry_image' or not last.value.args or not isinstance(last.value.args[0], ast.Name):
+                break
+            name = last.value.args[0].id
+            obj = runner.last_globals.get(name)
         return _toggle(tree, lines, name, line, obj)
     if op == 'symmetry_link':
         return _link_symmetry(tree, lines, name, line, obj, req)

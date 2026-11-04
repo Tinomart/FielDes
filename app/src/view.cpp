@@ -8616,6 +8616,7 @@ bool View::eventFilter(QObject* watched, QEvent* event)
 static QMatrix4x4 s_freeTurn;
 static QMatrix4x4 s_freeR0;                // (the rotation of the part at the press: the arrow lies along its +Y)
 static QPoint s_freeLast;
+static QMatrix4x4 s_freeMap;               // (the map of a copy -- a mirror image of a point: the arrow lies along the copy's +Y, the numbers turned are the original's; identity for anything else)
 
 // The orientation of the gizmo of a group of points selected together (a morph body, a profile, a line, a point cloud, random points: the user, 2026-11-04, "the real time rotation for the position
 // gizmo only works for standard objects, not for points and not for point based objects").  The points have no rotation of their own to turn it with: the group's gizmo keeps the turn the free-rotation
@@ -8827,7 +8828,7 @@ View::GizmoGrip View::gizmoAt(QPoint pos) const
         if (inPlane) ring[2] = facePlane;
         // The free-rotation arrow of the Shift gizmo (H131, the user, 2026-11-04: "an arrow that points in the forward facing direction for the objects and when dragged rotates around the center
         // point and the body follows rotation. So completely free rotation"): along the part's own +Y, for a shape that has all three rotation numbers
-        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && !s->gizmoMapped() && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
+        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
         {
             const double d = distanceToSegment(at, p0, toScreen(P + R.mapVector(unitAxis(1)) * L));
             if (d < bestDist) { bestDist = d; best = {s, 8, 0}; }
@@ -9877,7 +9878,7 @@ void View::drawGizmo(QPainter& painter)
             painter.drawRect(QRectF(q.x() - r, q.y() - r, 2 * r, 2 * r));
         }
         // The free-rotation arrow of the Shift gizmo (H131): along the part's own +Y, see gizmoAt
-        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && !s->gizmoMapped() && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
+        if (shift && (!s->isPoint() || !pointOfBody(s) || pointStyleOf(s) == 2) && !inPlane && h.rotate[0] && vars.count(h.rotate[0]) && h.rotate[1] && vars.count(h.rotate[1]) && h.rotate[2] && vars.count(h.rotate[2]))
         {
             const bool on = hot(8, 0);
             const QPointF tip = toScreen(P + R.mapVector(unitAxis(1)) * L);
@@ -10237,6 +10238,8 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
         gizmo_pivot = g.shape->gizmoPivot();
         s_freeTurn.setToIdentity();
         s_freeR0 = Shape::gizmoRotation(QVector3D(gizmo_rot0[0], gizmo_rot0[1], gizmo_rot0[2]));
+        s_freeMap.setToIdentity();
+        if (g.shape->gizmoMapped()) s_freeMap = g.shape->gizmoMapLinear();
         s_freeLast = pos;
         m_dotPressLine = -1;
         m_dotMoved = false;
@@ -10342,6 +10345,7 @@ void View::beginGizmoDrag(const GizmoGrip& g, QPoint pos)
                 groupFrameOf(members, false, unusedFrame);
             }
             s_freeR0 = s_groupFrame;                 // (the arrow lies along the +Y of the group's frame)
+            s_freeMap.setToIdentity();
             s_freeLast = pos;
         }
         else
@@ -10658,13 +10662,17 @@ void View::dragGizmo(QPoint pos)
             target = (a * right + b * up) / r;
         else
             target = ((a * right + b * up) + std::sqrt(radius * radius - r * r) * towards) / radius;
-        const QVector3D dir0 = s_freeR0.mapVector(QVector3D(0, 1, 0)).normalized();
+        const QVector3D dir0 = (s_freeMap * s_freeR0).mapVector(QVector3D(0, 1, 0)).normalized();
         QMatrix4x4 turn;
         turn.rotate(QQuaternion::rotationTo(dir0, target.normalized()));
         s_freeTurn = turn;
         if (gizmo_active.kind == 8)
         {
-            const QVector3D angles = gizmoEuler(s_freeTurn * s_freeR0);
+            // (a copy turns in the world it is seen in; the original, whose numbers are written, turns by that turn taken back through the map of the copy)
+            bool mapOk = true;
+            const QMatrix4x4 back = s_freeMap.isIdentity() ? s_freeMap : s_freeMap.inverted(&mapOk);
+            const QMatrix4x4 own = mapOk ? back * s_freeTurn * s_freeMap : s_freeTurn;
+            const QVector3D angles = gizmoEuler(own * s_freeR0);
             std::map<libfive::Tree::Id, float> numbers;
             for (int a = 0; a < 3; ++a) numbers[gizmo_rot_id[a]] = angles[a];
             applyGizmoNumbers(numbers);

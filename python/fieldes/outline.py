@@ -1564,6 +1564,17 @@ def outline_json(arg):
                     except (TypeError, ValueError):
                         pass
                 it['args'] = list(it.get('args', [])) + A._placement_rows(pl, it.get('type') == 'symmetry')
+            # A body made of points: `position=` is where it is, the middle of its points (H151).  Written, it is a row like any argument; not written, its dimmed row writes it when clicked.  The program keeps
+            # the number and the points in step (profile_edit.body_sync): the edits that do it go to the tree with the item
+            if it['kind'] == 'shape' and it.get('callee') in ('morph_polyhedron', 'morph_body'):
+                from fieldes import profile_edit as _PE
+                sync = _PE.body_sync('\n'.join(src.lines), it['var'])
+                if sync is not None:
+                    if sync['written'] is None and not any(a.get('param') == 'position' for a in it.get('args', [])):
+                        it['args'] = list(it.get('args', [])) + [{'param': 'position', 'text': '(%s)' % ', '.join(_PE._num_text(c) for c in sync['middle']), 'span': [], 'kind': 'expression',
+                                                                  'default': True, 'points_position': True}]
+                    if sync.get('edits'):
+                        it['position_sync'] = {'edits': sync['edits'], 'label': sync['label']}
 
     items.sort(key=lambda it: it['line'])
     for it in items:
